@@ -2146,6 +2146,13 @@ describe("WorkspaceGoalService", () => {
       objective: "Preview live cost",
       budgetCents: 1_000,
     });
+    // Capture activity events so we can assert that previews reach
+    // subscribers (the renderer's WorkspaceStore) via the transient
+    // activity emit. When a baseline activity snapshot exists,
+    // `previewStreamAccounting` does NOT write to extensionMetadata.json
+    // or goal.json. The durable record is updated only by
+    // `recordStreamAccounting` at stream end.
+    const activityUpdates = captureGoalActivity(service);
 
     const firstPreview = await service.previewStreamAccounting({
       workspaceId,
@@ -2160,8 +2167,16 @@ describe("WorkspaceGoalService", () => {
 
     expect(firstPreview).toMatchObject({ costCents: 50, budgetCents: 1_000 });
     expect(secondPreview).toMatchObject({ costCents: 125, budgetCents: 1_000 });
-    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+    // Transient activity snapshots reflect the latest preview so the UI
+    // updates without waiting on a disk write round-trip.
+    expect(activityUpdates.at(-1)).toMatchObject({
+      transientGoalOnly: true,
       goal: { costCents: 125, budgetCents: 1_000 },
+    });
+    // Neither extensionMetadata.json nor goal.json should carry the
+    // preview cost — both stay at the durable pre-stream value.
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { costCents: 0, budgetCents: 1_000 },
     });
     expect(await service.getGoal(workspaceId)).toMatchObject({ costCents: 0, budgetCents: 1_000 });
 
@@ -2189,9 +2204,72 @@ describe("WorkspaceGoalService", () => {
       streamStartedAtMs: created.createdAtMs + 1,
     });
     expect(previewAfterFinal).toBeNull();
+    // Final accounting persists to both goal.json and extensionMetadata.
     expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
       goal: { costCents: 125, budgetCents: 2_000 },
     });
+  });
+
+  test("previewStreamAccounting falls back when no activity snapshot exists", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Preview without metadata",
+      budgetCents: 1_000,
+    });
+    await extensionMetadata.deleteWorkspace(workspaceId);
+    const activityUpdates = captureGoalActivity(service);
+
+    const preview = await service.previewStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+    });
+
+    expect(preview).toMatchObject({ costCents: 125, budgetCents: 1_000 });
+    expect(activityUpdates.at(-1)).toMatchObject({
+      goal: { costCents: 125, budgetCents: 1_000 },
+    });
+    expect(activityUpdates.at(-1)?.transientGoalOnly).toBeUndefined();
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { costCents: 125, budgetCents: 1_000 },
+    });
+    expect(await service.getGoal(workspaceId)).toMatchObject({ costCents: 0, budgetCents: 1_000 });
+  });
+
+  test("budget edits preserve live preview activity while durable accounting stays pre-stream", async () => {
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "Budget edit keeps live used amount",
+      budgetCents: 1_000,
+    });
+    const activityUpdates = captureGoalActivity(service);
+
+    await service.previewStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+    });
+    const updated = await setGoalOk(service, { workspaceId, budgetCents: 2_000 });
+
+    expect(updated).toMatchObject({ costCents: 0, budgetCents: 2_000 });
+    // Updating only the limit writes the durable pre-stream accounting to
+    // goal.json, then emits a transient overlay so the Goals UI does not
+    // reset "used" from the live Stats cost back to $0.00 mid-stream.
+    expect(activityUpdates.at(-1)).toMatchObject({
+      transientGoalOnly: true,
+      goal: { costCents: 125, budgetCents: 2_000 },
+    });
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { costCents: 0, budgetCents: 2_000 },
+    });
+
+    const final = await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "goal_continuation",
+    });
+    expect(final).toMatchObject({ costCents: 125, budgetCents: 2_000 });
   });
 
   test("previewStreamAccounting preserves queued replacement snapshots", async () => {

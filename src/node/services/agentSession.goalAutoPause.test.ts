@@ -268,16 +268,40 @@ describe("AgentSession goal safety hooks", () => {
       objective: "Restore preview on error",
       budgetCents: 1_000,
     });
+    // Capture goal-related activity snapshots. `previewStreamAccounting`
+    // is transient and intentionally does NOT touch
+    // extensionMetadata.json or goal.json — the UI receives the preview
+    // through the activity stream instead, which we observe here.
+    const activitySnapshots: Array<{
+      goal?: { costCents?: number } | null;
+      transientGoalOnly?: boolean;
+    }> = [];
+    goalService.setOnActivityChange((_workspaceId, snapshot) => {
+      activitySnapshots.push(snapshot);
+    });
+    const failedStreamStartedAtMs = created.createdAtMs + 1;
     await goalService.previewStreamAccounting({
       workspaceId,
       costUsd: 1.25,
-      streamStartedAtMs: created.createdAtMs + 1,
+      streamStartedAtMs: failedStreamStartedAtMs,
     });
-    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+    expect(activitySnapshots.at(-1)).toMatchObject({
+      transientGoalOnly: true,
       goal: { costCents: 125 },
+    });
+    // The durable record stays untouched by the preview.
+    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
+      goal: { costCents: 0, budgetCents: 1_000 },
     });
 
     aiService.streamMessage = mock(() => {
+      aiService.emit("stream-start", {
+        type: "stream-start",
+        workspaceId,
+        messageId: "assistant-stream-error",
+        model: SEND_OPTIONS.model,
+        startTime: failedStreamStartedAtMs,
+      });
       aiService.emit("error", {
         workspaceId,
         messageId: "assistant-stream-error",
@@ -297,9 +321,32 @@ describe("AgentSession goal safety hooks", () => {
     });
     await waitForCondition(() => eventTypes.includes("stream-error"), { timeoutMs: 1_000 });
 
+    // After the error, restoreGoalAccountingSnapshot re-emits the durable
+    // goal so any UI that displayed the preview reverts to canonical
+    // costs. We assert via both the persisted snapshot and the activity
+    // stream because the preview never persisted in the first place.
     expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
       goal: { costCents: 0, budgetCents: 1_000 },
     });
+    expect(activitySnapshots.at(-1)?.goal).toMatchObject({ costCents: 0 });
+
+    expect(
+      await goalService.previewStreamAccounting({
+        workspaceId,
+        costUsd: 1.25,
+        streamStartedAtMs: failedStreamStartedAtMs,
+      })
+    ).toBeNull();
+
+    const budgetEditAfterFailure = await setGoalOk(goalService, {
+      workspaceId,
+      budgetCents: 2_000,
+    });
+    expect(budgetEditAfterFailure).toMatchObject({ costCents: 0, budgetCents: 2_000 });
+    expect(activitySnapshots.at(-1)).toMatchObject({
+      goal: { costCents: 0, budgetCents: 2_000 },
+    });
+    expect(activitySnapshots.at(-1)?.transientGoalOnly).toBeUndefined();
     session.dispose();
   });
 
