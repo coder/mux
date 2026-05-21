@@ -172,9 +172,11 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
           </span>
         )}
         {!isBackground && isIntentCommandSummary && (
+          // Anchor the duration/timeout chip to the bottom of the flex row so it
+          // sits next to the command line (which it describes), not floating mid-block.
           <span
             className={cn(
-              "ml-2 text-[10px] tabular-nums whitespace-nowrap [@container(max-width:500px)]:hidden",
+              "ml-2 self-end pb-px text-[10px] tabular-nums whitespace-nowrap [@container(max-width:500px)]:hidden",
               isPending ? "text-pending" : "text-text-secondary"
             )}
           >
