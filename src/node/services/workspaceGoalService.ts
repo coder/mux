@@ -345,6 +345,7 @@ export class WorkspaceGoalService {
   private readonly suppressKickoffContinuation: boolean;
   private readonly pendingGoalMutations = new Map<string, PendingGoalMutation>();
   private readonly pendingGoalSnapshots = new Map<string, GoalSnapshot>();
+  private readonly liveGoalPreviewSnapshots = new Map<string, GoalSnapshot>();
 
   private pendingContinuationCandidates = new Map<string, PendingGoalContinuationCandidate>();
   private continuationReRequestTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -382,6 +383,14 @@ export class WorkspaceGoalService {
       Number.isFinite(this.continuationCooldownMs) && this.continuationCooldownMs >= 0,
       "WorkspaceGoalService requires a non-negative continuation cooldown"
     );
+  }
+
+  async restoreGoalAccountingSnapshot(
+    workspaceId: string,
+    streamStartedAtMs: number | null = null
+  ): Promise<void> {
+    assert(workspaceId.trim().length > 0, "restoreGoalAccountingSnapshot requires workspaceId");
+    await this.restorePersistedGoalSnapshot(workspaceId, { streamStartedAtMs });
   }
 
   setOnActivityChange(
@@ -523,17 +532,49 @@ export class WorkspaceGoalService {
   private async pushTransientGoalSnapshot(
     workspaceId: string,
     snapshot: GoalSnapshot
-  ): Promise<void> {
+  ): Promise<boolean> {
     const activity = await this.extensionMetadata.getSnapshot(workspaceId);
-    if (activity) {
-      this.onActivityChange?.(workspaceId, {
-        ...activity,
-        goal: snapshot,
-        transientGoalOnly: true,
-      });
+    if (!activity) {
+      // No baseline activity snapshot to overlay the transient goal on
+      // (extensionMetadata has no entry for this workspace yet). Callers
+      // that must guarantee delivery — e.g. live cost previews — should
+      // observe this `false` return and fall back to `pushSnapshot`, which
+      // creates the entry and emits via the durable path. Pending-goal
+      // publication does not retry here because it only fires after a
+      // `setGoal` that already created the entry.
+      return false;
     }
+    this.onActivityChange?.(workspaceId, {
+      ...activity,
+      goal: snapshot,
+      transientGoalOnly: true,
+    });
+    return true;
   }
 
+  private async pushLiveGoalPreviewOverlay(
+    workspaceId: string,
+    durableGoal: GoalRecordV1
+  ): Promise<void> {
+    const livePreview = this.liveGoalPreviewSnapshots.get(workspaceId);
+    if (!livePreview || livePreview.goalId !== durableGoal.goalId) {
+      return;
+    }
+
+    const durableSnapshot = toGoalSnapshot(durableGoal);
+    if (livePreview.costCents <= durableSnapshot.costCents) {
+      return;
+    }
+
+    // Preserve live "budget used" while a user edits budget/turn limits mid-stream.
+    // The mutable edit must persist the durable pre-stream accounting to goal.json so
+    // final `recordStreamAccounting` can add the cumulative stream cost exactly once,
+    // but the Goals UI should keep showing the same live usage Stats already reports.
+    await this.pushTransientGoalSnapshot(workspaceId, {
+      ...durableSnapshot,
+      costCents: livePreview.costCents,
+    });
+  }
   private async publishPendingGoalSnapshot(workspaceId: string, goal: GoalRecordV1): Promise<void> {
     const snapshot = toPendingGoalSnapshot(goal);
     this.pendingGoalSnapshots.set(workspaceId, snapshot);
@@ -561,9 +602,16 @@ export class WorkspaceGoalService {
     return this.pushSnapshot(workspaceId, goal);
   }
 
-  private async restorePersistedGoalSnapshot(workspaceId: string): Promise<void> {
+  private async restorePersistedGoalSnapshot(
+    workspaceId: string,
+    options: { streamStartedAtMs?: number | null } = {}
+  ): Promise<void> {
     try {
       await this.fileLocks.withLock(workspaceId, async () => {
+        this.liveGoalPreviewSnapshots.delete(workspaceId);
+        if (options.streamStartedAtMs != null) {
+          this.recordedStreamStartedAtMsByWorkspace.set(workspaceId, options.streamStartedAtMs);
+        }
         const current = await this.readGoalFile(workspaceId);
         await this.pushSnapshot(workspaceId, current);
       });
@@ -789,6 +837,7 @@ export class WorkspaceGoalService {
     this.lastUserStopAtMsByWorkspace.set(workspaceId, stoppedAtMs);
     this.pendingContinuationCandidates.delete(workspaceId);
     this.pendingGoalSnapshots.delete(workspaceId);
+    this.liveGoalPreviewSnapshots.delete(workspaceId);
     // Drop queued goal mutations too. If a
     // user sets a goal mid-stream then stops the stream, the mutation would
     // otherwise stay queued and apply on the NEXT stream's stream-end via
@@ -1736,6 +1785,7 @@ export class WorkspaceGoalService {
         }
         await this.writeGoal(input.workspaceId, withEdits);
         await this.pushSnapshot(input.workspaceId, withEdits);
+        await this.pushLiveGoalPreviewOverlay(input.workspaceId, withEdits);
         this.emitBudgetChanged(current, withEdits, input);
         this.emitBudgetLimited(withEdits, previousStatus);
         this.emitStatusLifecycle(withEdits, previousStatus, input.initiator ?? "user");
@@ -1791,6 +1841,7 @@ export class WorkspaceGoalService {
           }
           await this.writeGoal(input.workspaceId, updated);
           await this.pushSnapshot(input.workspaceId, updated);
+          await this.pushLiveGoalPreviewOverlay(input.workspaceId, updated);
           this.emitBudgetChanged(current, updated, input);
           this.emitBudgetLimited(updated, previousStatus);
           this.emitStatusLifecycle(updated, previousStatus, input.initiator ?? "user");
@@ -1823,6 +1874,7 @@ export class WorkspaceGoalService {
           message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
         });
       }
+      this.liveGoalPreviewSnapshots.delete(input.workspaceId);
       // Archive the outgoing goal to history before we overwrite goal.json.
       // The new goal gets a fresh `goalId` so the right-sidebar GoalTab needs
       // a record of the prior one in its completed-goals list (cleared/
@@ -2090,9 +2142,25 @@ export class WorkspaceGoalService {
   }
 
   /**
-   * Push a live cost preview to the activity snapshot without persisting to
-   * goal.json. The cost is the cumulative current-stream cost on top of the
-   * durable base; `recordStreamAccounting` performs final accounting at stream end.
+   * Push a live cost preview to the activity snapshot. The cost is the
+   * cumulative current-stream cost on top of the durable base;
+   * `recordStreamAccounting` performs final accounting at stream end.
+   *
+   * Previously this path always called `pushSnapshot` which rewrote the
+   * shared `extensionMetadata.json` (writeFileAtomic, serialized through a
+   * global mutation lock) on every `usage-delta` event. That made the Goals
+   * UI cost lag behind the Stats/Costs tabs mid-stream: Stats reads the
+   * frontend aggregator in-memory, while Goal cost waited on a per-delta
+   * disk write + activity round-trip. Restart recovery overwrites
+   * extensionMetadata from goal.json anyway (`restorePersistedGoalSnapshot`
+   * and `restoreGoalAccountingSnapshot`), so preview writes were redundant
+   * once a baseline activity snapshot exists.
+   *
+   * Prefer `pushTransientGoalSnapshot` so subscribers (the renderer's
+   * WorkspaceStore, the Goal tab) receive the preview without the global
+   * write lock. If no baseline activity exists yet, fall back to
+   * `pushSnapshot` so the first preview still creates and emits the
+   * workspace activity entry instead of being dropped.
    */
   async previewStreamAccounting(input: StreamAccountingInput): Promise<GoalSnapshot | null> {
     assert(input.workspaceId.trim().length > 0, "previewStreamAccounting requires workspaceId");
@@ -2131,7 +2199,18 @@ export class WorkspaceGoalService {
         ...this.applyCostAccounting(current, costMicroCentsThisStream),
         updatedAtMs: Date.now(),
       });
-      return this.pushSnapshot(input.workspaceId, preview);
+      const snapshot = toGoalSnapshot(preview);
+      this.liveGoalPreviewSnapshots.set(input.workspaceId, snapshot);
+      const didEmitTransient = await this.pushTransientGoalSnapshot(input.workspaceId, snapshot);
+      if (!didEmitTransient) {
+        // If the baseline activity snapshot does not exist yet (for
+        // example, extensionMetadata was reset or stream-start's
+        // fire-and-forget metadata write has not finished), fall back to
+        // the durable path so this preview is still delivered to Goals UI
+        // subscribers instead of being dropped.
+        return this.pushSnapshot(input.workspaceId, preview);
+      }
+      return snapshot;
     });
   }
 
@@ -2145,6 +2224,7 @@ export class WorkspaceGoalService {
     }
 
     const costMicroCentsThisStream = costUsdToMicroCents(input.costUsd);
+    this.liveGoalPreviewSnapshots.delete(input.workspaceId);
     return this.fileLocks.withLock(input.workspaceId, async () => {
       const current = await this.readGoalFile(input.workspaceId);
       if (!current) {
@@ -2262,6 +2342,7 @@ export class WorkspaceGoalService {
       const current = await this.readGoalFile(workspaceId);
       this.pendingGoalMutations.delete(workspaceId);
       this.pendingGoalSnapshots.delete(workspaceId);
+      this.liveGoalPreviewSnapshots.delete(workspaceId);
       this.pendingContinuationCandidates.delete(workspaceId);
       this.recordedStreamStartedAtMsByWorkspace.delete(workspaceId);
       this.lastGoalStreamStamps.delete(workspaceId);
@@ -2339,6 +2420,7 @@ export class WorkspaceGoalService {
   }
 
   async applyPendingAfterStreamEnd(workspaceId: string): Promise<GoalRecordV1 | null> {
+    this.liveGoalPreviewSnapshots.delete(workspaceId);
     const pending = this.pendingGoalMutations.get(workspaceId);
     let drained: GoalRecordV1 | null = null;
 

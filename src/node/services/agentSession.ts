@@ -4171,7 +4171,16 @@ export class AgentSession {
     }
 
     try {
-      await this.workspaceGoalService.getGoal(this.workspaceId);
+      // Terminal stream errors do not run final goal accounting, so any
+      // live cost preview from the failed stream must be discarded before
+      // re-emitting the durable goal snapshot. Pass the stream start time so
+      // any queued usage-delta preview from the same failed stream is ignored
+      // under the goal service's workspace lock instead of repopulating stale
+      // "budget used" after this restore.
+      await this.workspaceGoalService.restoreGoalAccountingSnapshot(
+        this.workspaceId,
+        this.activeStreamStartedAtMs ?? null
+      );
     } catch (error) {
       log.warn("Failed to restore goal accounting snapshot", {
         workspaceId: this.workspaceId,
