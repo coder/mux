@@ -11,7 +11,6 @@
  * - Tool policy composition (agent → caller)
  */
 
-import { resolveAdvisorEnabledForAgent } from "@/common/constants/advisor";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import type { SendMessageError } from "@/common/types/errors";
 import type { Result } from "@/common/types/result";
@@ -53,8 +52,15 @@ export interface ResolveAgentOptions {
   cfg: ProjectsConfig;
   /** Emit an error event on the AIService EventEmitter (for disabled-agent subagent errors). */
   emitError: (event: ErrorEvent) => void;
-  /** Whether the advisor-tool experiment is enabled (from ExperimentsService). */
-  isAdvisorExperimentEnabled?: boolean;
+  /**
+   * Whether any advisor file is loaded for this stream (project + global).
+   *
+   * When true the tool policy enables the `advisor` regex_match, so the agent
+   * may see the tool. The runtime bundle in `aiService` separately decides
+   * whether to actually register the advisor tool (per-agent filtering via
+   * `agents:` frontmatter happens there).
+   */
+  advisorAvailable?: boolean;
 }
 
 /** Result of agent resolution — all computed values needed by the stream pipeline. */
@@ -100,7 +106,7 @@ export async function resolveAgentForStream(
     callerToolPolicy,
     cfg,
     emitError,
-    isAdvisorExperimentEnabled,
+    advisorAvailable,
   } = opts;
 
   const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
@@ -215,12 +221,12 @@ export async function resolveAgentForStream(
   // --- Tool policy composition ---
   // Agent policy establishes baseline (deny-all + enable whitelist + runtime restrictions).
   // Caller policy then narrows further if needed.
-  const advisorEnabled =
-    isAdvisorExperimentEnabled === true &&
-    resolveAdvisorEnabledForAgent(
-      effectiveAgentId,
-      cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled
-    );
+  //
+  // Advisor: post-GA the gate is "is any ADVISOR.md loaded?" rather than a
+  // per-agent toggle. The runtime bundle filters per-agent later via the
+  // `agents:` frontmatter field; the policy here just opens the tool name for
+  // the allowlist when at least one advisor exists.
+  const advisorEnabled = advisorAvailable === true;
   const agentToolPolicy = resolveToolPolicyForAgent({
     agents: agentsForInheritance,
     isSubagent: isSubagentWorkspace,

@@ -74,6 +74,11 @@ import {
   type ResolvedAgentSkill,
 } from "@/node/services/agentSkills/agentSkillsService";
 import {
+  discoverAdvisorsDiagnostics,
+  scaffoldProjectAdvisor,
+  toAdvisorDescriptor,
+} from "@/node/services/advisors/advisorsService";
+import {
   discoverAgentDefinitions,
   getSkipScopesAboveForKnownScope,
   readAgentDefinition,
@@ -1593,6 +1598,40 @@ export const router = (authToken?: string) => {
           const result = await readAgentSkill(runtime, discoveryPath, input.skillName);
           assertImagegenSkillAvailable(context, result);
           return result.package;
+        }),
+    },
+    advisors: {
+      list: t
+        .input(schemas.advisors.list.input)
+        .output(schemas.advisors.list.output)
+        .handler(async ({ context, input }) => {
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
+          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          const { advisors, invalidAdvisors } = await discoverAdvisorsDiagnostics(
+            runtime,
+            discoveryPath
+          );
+          return {
+            advisors: advisors.map(toAdvisorDescriptor),
+            invalidAdvisors,
+          };
+        }),
+      scaffold: t
+        .input(schemas.advisors.scaffold.input)
+        .output(schemas.advisors.scaffold.output)
+        .handler(async ({ context, input }) => {
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
+          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          const { sourcePath, advisorDir } = await scaffoldProjectAdvisor(
+            runtime,
+            discoveryPath,
+            input.name
+          );
+          return { sourcePath, advisorDir, name: input.name };
         }),
     },
     providers: {

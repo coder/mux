@@ -157,8 +157,23 @@ export const AskUserQuestionToolResultSchema = z.union([
 // advisor (nested strategic guidance)
 // -----------------------------------------------------------------------------
 
+/**
+ * Advisor tool input.
+ *
+ * `advisor_name` is REQUIRED and selects which configured advisor handles the
+ * question. The model discovers available advisors via the tool description
+ * (rebuilt on every stream from `.mux/advisors/<name>/ADVISOR.md` files). When
+ * the requested advisor is unknown — typically because a file was renamed or
+ * removed mid-session — the executor returns an error result with the live
+ * advisor list so the model can self-correct without crashing the turn.
+ */
 export const AdvisorToolInputSchema = z
   .object({
+    advisor_name: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
     // Advisor prompts often need tradeoff context; keep bounded while allowing a compact brief.
     question: z.string().min(1).max(2000).nullish(),
   })

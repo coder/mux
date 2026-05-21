@@ -329,18 +329,34 @@ describe("TOOL_DEFINITIONS", () => {
     }
   );
 
-  it("accepts an optional advisor question and encourages passing one", () => {
-    expect(TOOL_DEFINITIONS.advisor.schema.safeParse({}).success).toBe(true);
-    expect(TOOL_DEFINITIONS.advisor.schema.safeParse({ question: null }).success).toBe(true);
+  it("requires advisor_name and accepts an optional question", () => {
+    // Without advisor_name, the model cannot select which advisor to use.
+    expect(TOOL_DEFINITIONS.advisor.schema.safeParse({}).success).toBe(false);
+
+    // advisor_name alone is enough — question is optional.
+    expect(TOOL_DEFINITIONS.advisor.schema.safeParse({ advisor_name: "ml-fellow" }).success).toBe(
+      true
+    );
+    expect(
+      TOOL_DEFINITIONS.advisor.schema.safeParse({ advisor_name: "ml-fellow", question: null })
+        .success
+    ).toBe(true);
 
     const parsed = TOOL_DEFINITIONS.advisor.schema.safeParse({
+      advisor_name: "ml-fellow",
       question: "Should we split this refactor into smaller commits?",
     });
-
     expect(parsed.success).toBe(true);
     if (parsed.success) {
+      expect(parsed.data.advisor_name).toBe("ml-fellow");
       expect(parsed.data.question).toBe("Should we split this refactor into smaller commits?");
     }
+
+    // Bad name (uppercase, underscores) must be rejected so the on-disk loader
+    // and the tool input stay in sync.
+    expect(TOOL_DEFINITIONS.advisor.schema.safeParse({ advisor_name: "Bad_Name" }).success).toBe(
+      false
+    );
   });
 
   it("dispatches task tool description on runtime mode", () => {

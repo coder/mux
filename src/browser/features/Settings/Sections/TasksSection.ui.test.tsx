@@ -10,8 +10,6 @@ import {
 import { getThinkingOptionLabel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
-let advisorExperimentEnabled = false;
-
 let apiMock: {
   config: {
     getConfig: ReturnType<typeof mock>;
@@ -28,7 +26,7 @@ void mock.module("@/browser/contexts/WorkspaceContext", () => ({
 }));
 
 void mock.module("@/browser/hooks/useExperiments", () => ({
-  useExperimentValue: () => advisorExperimentEnabled,
+  useExperimentValue: () => false,
 }));
 
 void mock.module("@/browser/hooks/useModelsFromSettings", () => ({
@@ -153,7 +151,6 @@ describe("TasksSection Exec subagent defaults", () => {
 
   beforeEach(() => {
     restoreDom = installDom();
-    advisorExperimentEnabled = false;
     apiMock = null;
   });
 
@@ -173,15 +170,12 @@ describe("TasksSection Exec subagent defaults", () => {
     expect(view.getByText("Sub-agents")).toBeTruthy();
   });
 
-  test("defaults advisor on for Exec and Plan when the experiment is enabled", async () => {
-    advisorExperimentEnabled = true;
+  test("does not render any per-agent advisor toggle", async () => {
+    // Post-GA the advisor tool surface is configured via .mux/advisors/* files,
+    // not Settings switches. Confirm the deleted UI never resurrects.
     const view = renderTasksSection();
-
-    const planAdvisorSwitch = await view.findByRole("switch", { name: "Toggle plan advisor" });
-    const execAdvisorSwitch = view.getByRole("switch", { name: "Toggle exec advisor" });
-
-    expect(execAdvisorSwitch.getAttribute("aria-checked")).toBe("true");
-    expect(planAdvisorSwitch.getAttribute("aria-checked")).toBe("true");
+    await view.findByRole("group", { name: "Exec defaults" });
+    expect(view.queryByRole("switch", { name: /advisor/i })).toBeNull();
   });
 
   test("resetting a mirrored subagent model removes the stale mirrored entry", async () => {
@@ -213,7 +207,6 @@ describe("TasksSection Exec subagent defaults", () => {
       agentAiDefaults: {
         [customAgentId]: {
           enabled: true,
-          advisorEnabled: true,
           modelString: "anthropic:foo",
           thinkingLevel: "medium",
         },
@@ -237,7 +230,6 @@ describe("TasksSection Exec subagent defaults", () => {
 
     expect(payload.agentAiDefaults[customAgentId]).toEqual({
       enabled: true,
-      advisorEnabled: true,
     });
     expect(payload.subagentAiDefaults).toEqual({});
   });

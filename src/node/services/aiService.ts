@@ -12,10 +12,8 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SendMessageOptions, ProvidersConfigMap } from "@/common/orpc/types";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
-import {
-  ADVISOR_DEFAULT_MAX_USES_PER_TURN,
-  resolveAdvisorEnabledForAgent,
-} from "@/common/constants/advisor";
+import { ADVISOR_DEFAULT_MAX_USES_PER_TURN } from "@/common/constants/advisor";
+import { discoverAdvisors, filterAdvisorsForAgent } from "@/node/services/advisors/advisorsService";
 import {
   DEFAULT_IMAGE_GENERATION_MAX_IMAGES,
   DEFAULT_IMAGE_GENERATION_MODEL,
@@ -97,7 +95,6 @@ import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/work
 
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
 import type {
   ErrorEvent,
@@ -1130,13 +1127,19 @@ export class AIService extends EventEmitter {
 
       // Resolve agent definition, compute effective mode & tool policy.
       const cfg = this.config.loadConfigOrDefault();
-      const advisorExperimentEnabled =
-        experiments?.advisorTool ??
-        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL) === true;
       const imageGenerationExperimentEnabled =
         experiments?.imageGenerationTool ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL) === true;
       emitStartupBreadcrumb("loading_workspace_context");
+
+      // Discover advisors before agent resolution so the tool policy can be
+      // unconditionally aware of the advisor catalog. The runtime bundle
+      // assembled below filters this list to the effective agent — but the
+      // policy decision (whether to open the tool name in the allowlist)
+      // only needs "is anything loaded?", which is cheap to answer here.
+      const allAdvisors = await discoverAdvisors(runtime, workspacePath);
+      const advisorAvailable = allAdvisors.length > 0;
+
       const resolveAgentForStreamStartedAt = Date.now();
       const agentResult = await resolveAgentForStream({
         workspaceId,
@@ -1148,7 +1151,7 @@ export class AIService extends EventEmitter {
         callerToolPolicy: toolPolicy,
         cfg,
         emitError: (event) => this.emit("error", event),
-        isAdvisorExperimentEnabled: advisorExperimentEnabled,
+        advisorAvailable,
       });
       recordStartupPhaseTiming("resolveAgentForStreamMs", resolveAgentForStreamStartedAt);
       if (!agentResult.success) {
@@ -1169,13 +1172,10 @@ export class AIService extends EventEmitter {
       } = agentResult.data;
       const projectTrusted = isProjectTrusted(this.config, metadata.projectPath);
       const sharedExecutionTrusted = isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
-      const agentAdvisorEnabled = resolveAdvisorEnabledForAgent(
-        effectiveAgentId,
-        cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled
-      );
-      const advisorModelString = cfg.advisorModelString?.trim() ?? "";
-      const advisorToolEligible =
-        advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length > 0;
+      // Filter advisors by the effective agent's `agents:` frontmatter field.
+      // Advisors without `agents:` are visible to every agent.
+      const advisorsForAgent = filterAdvisorsForAgent(allAdvisors, effectiveAgentId);
+      const advisorToolEligible = advisorsForAgent.length > 0;
 
       // Goals graduated to GA: tools are gated solely on the workspace's
       // current goal status + agent capability, not on an experiment flag.
@@ -1287,38 +1287,34 @@ export class AIService extends EventEmitter {
         imageGenerationExperimentEnabled &&
         cfg.imageGeneration?.allowImageUploadsForEditing === true;
 
-      const buildStreamSystemContextForAdvisor = (advisorToolAvailable: boolean) =>
-        buildStreamSystemContext({
-          runtime,
-          metadata,
-          workspacePath,
-          workspaceId,
-          agentDefinition,
-          agentDiscoveryPath,
-          isSubagentWorkspace,
-          effectiveAdditionalInstructions,
-          planFilePath,
-          modelString,
-          cfg,
-          providersConfig: this.providerService.getConfig(),
-          mcpServers,
-          muxScope,
-          loadDesktopCapability,
-          advisorToolAvailable,
-          imageGenerationToolAvailable: imageGenerationDirectToolAvailable,
-        });
-
-      // Build provisional agent context before tool policy finalizes the toolset.
-      // The final system prompt is rebuilt after policy application so advisor guidance cannot
-      // survive when the resolved toolset strips the advisor tool.
+      // Post-GA, advisor guidance lives inside the advisor tool description
+      // (rebuilt with the live catalog at registration time), not in the
+      // system prompt. That removes the prior policy-driven prompt rebuild —
+      // a single system context build is now always correct.
       const buildStreamSystemContextStartedAt = Date.now();
-      const prePolicyStreamSystemContext =
-        await buildStreamSystemContextForAdvisor(advisorToolEligible);
+      const streamSystemContext = await buildStreamSystemContext({
+        runtime,
+        metadata,
+        workspacePath,
+        workspaceId,
+        agentDefinition,
+        agentDiscoveryPath,
+        isSubagentWorkspace,
+        effectiveAdditionalInstructions,
+        planFilePath,
+        modelString,
+        cfg,
+        providersConfig: this.providerService.getConfig(),
+        mcpServers,
+        muxScope,
+        loadDesktopCapability,
+        imageGenerationToolAvailable: imageGenerationDirectToolAvailable,
+      });
       recordStartupPhaseTiming("buildStreamSystemContextMs", buildStreamSystemContextStartedAt);
       const { agentSystemPrompt, agentDefinitions, availableSkills, ancestorPlanFilePaths } =
-        prePolicyStreamSystemContext;
-      let systemMessageTokens = prePolicyStreamSystemContext.systemMessageTokens;
-      let systemMessage = prePolicyStreamSystemContext.systemMessage;
+        streamSystemContext;
+      let systemMessageTokens = streamSystemContext.systemMessageTokens;
+      let systemMessage = streamSystemContext.systemMessage;
 
       // Load project secrets for local tool execution and MCP server startup.
       const projectSecrets = isMultiProject(metadata)
@@ -1389,20 +1385,6 @@ export class AIService extends EventEmitter {
         workspaceId.trim().length > 0,
         "AIService.streamMessage requires a non-empty workspaceId"
       );
-      if (advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length === 0) {
-        workspaceLog.warn(
-          "Advisor tool enabled for agent without advisorModelString; suppressing",
-          {
-            effectiveAgentId,
-          }
-        );
-      }
-      if (advisorToolEligible) {
-        assert(
-          advisorModelString.length > 0,
-          "AIService advisorModelString must be non-empty when advisor is eligible"
-        );
-      }
       // Mutable ref updated by StreamManager.prepareStep so the advisor tool reads the live
       // transcript lazily at execute time instead of capturing a stale snapshot here.
       const advisorTranscriptRef: { messages?: ModelMessage[] } = {};
@@ -1469,26 +1451,6 @@ export class AIService extends EventEmitter {
       // providerMetadata, so remember the resolved billing mode from model creation and
       // re-stamp it before converting usage into display/session costs.
       const toolModelCostsIncludedByModelString = new Map<string, boolean>();
-      // Normalize: undefined -> default, null -> unlimited, positive int -> exact cap.
-      const advisorMaxUses =
-        cfg.advisorMaxUsesPerTurn === null
-          ? null
-          : (cfg.advisorMaxUsesPerTurn ?? ADVISOR_DEFAULT_MAX_USES_PER_TURN);
-      assert(
-        cfg.advisorMaxOutputTokens == null ||
-          (Number.isInteger(cfg.advisorMaxOutputTokens) && cfg.advisorMaxOutputTokens > 0),
-        "AIService advisorMaxOutputTokens must be null, undefined, or a positive integer"
-      );
-      const advisorMaxOutputTokens =
-        cfg.advisorMaxOutputTokens != null && cfg.advisorMaxOutputTokens > 0
-          ? cfg.advisorMaxOutputTokens
-          : undefined;
-      // Clamp the persisted advisor thinking level so the tool metadata matches the
-      // providerOptions actually sent to generateText().
-      const advisorReasoningLevel = enforceThinkingPolicy(
-        advisorModelString,
-        cfg.advisorThinkingLevel ?? THINKING_LEVEL_OFF
-      );
       const muxEnv = getMuxEnv(
         metadata.projectPath,
         getRuntimeType(metadata.runtimeConfig),
@@ -1528,10 +1490,8 @@ export class AIService extends EventEmitter {
           ...(advisorToolEligible
             ? {
                 advisorRuntime: {
-                  advisorModelString,
-                  reasoningLevel: advisorReasoningLevel,
-                  maxUsesPerTurn: advisorMaxUses,
-                  maxOutputTokens: advisorMaxOutputTokens,
+                  advisors: advisorsForAgent,
+                  defaultMaxUsesPerTurn: ADVISOR_DEFAULT_MAX_USES_PER_TURN,
                   getTranscriptSnapshot: () => {
                     const messages = advisorTranscriptRef.messages;
                     assert(
@@ -1718,24 +1678,6 @@ export class AIService extends EventEmitter {
         "applyToolPolicyAndExperimentsMs",
         applyToolPolicyAndExperimentsStartedAt
       );
-
-      const advisorToolAvailable = tools.advisor !== undefined;
-      const finalStreamSystemContext =
-        advisorToolAvailable === advisorToolEligible
-          ? prePolicyStreamSystemContext
-          : await (async () => {
-              // Rebuild only when policy/experiments changed advisor availability. On SSH this
-              // context build scans agents, skills, and instruction files over many small remote ops.
-              const rebuildStreamSystemContextStartedAt = Date.now();
-              const rebuiltContext = await buildStreamSystemContextForAdvisor(advisorToolAvailable);
-              recordStartupPhaseTiming(
-                "rebuildStreamSystemContextMs",
-                rebuildStreamSystemContextStartedAt
-              );
-              return rebuiltContext;
-            })();
-      systemMessageTokens = finalStreamSystemContext.systemMessageTokens;
-      systemMessage = finalStreamSystemContext.systemMessage;
 
       if (mcpStats && mcpStats.failedServerCount > 0) {
         const failedNames = mcpStats.failedServerNames.join(", ");

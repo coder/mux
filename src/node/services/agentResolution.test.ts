@@ -29,11 +29,8 @@ function createSubagentMetadata(params: {
   };
 }
 
-async function resolvePolicyForAgent(params: {
-  agentId: string;
-  agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
-}) {
-  using tempDir = new DisposableTempDir("agent-resolution-advisor-defaults");
+async function resolvePolicyForAgent(params: { agentId: string; advisorAvailable?: boolean }) {
+  using tempDir = new DisposableTempDir("agent-resolution-advisor-gating");
   const projectPath = path.join(tempDir.path, "project");
   await fs.mkdir(projectPath, { recursive: true });
 
@@ -61,7 +58,6 @@ async function resolvePolicyForAgent(params: {
         },
       ],
     ]),
-    ...(params.agentAiDefaults ? { agentAiDefaults: params.agentAiDefaults } : {}),
   };
 
   const result = await resolveAgentForStream({
@@ -74,7 +70,7 @@ async function resolvePolicyForAgent(params: {
     callerToolPolicy: undefined,
     cfg,
     emitError: () => undefined,
-    isAdvisorExperimentEnabled: true,
+    advisorAvailable: params.advisorAvailable ?? true,
   });
 
   if (!result.success) {
@@ -83,22 +79,19 @@ async function resolvePolicyForAgent(params: {
   return result.data.effectiveToolPolicy ?? [];
 }
 
-describe("resolveAgentForStream advisor defaults", () => {
-  test("enables advisor by default for Exec and Plan sub-agents when the experiment is enabled", async () => {
+describe("resolveAgentForStream advisor gating", () => {
+  test("enables the advisor regex when an advisor is available, regardless of agent id", async () => {
     const [execPolicy, planPolicy] = await Promise.all([
-      resolvePolicyForAgent({ agentId: "exec" }),
-      resolvePolicyForAgent({ agentId: "plan" }),
+      resolvePolicyForAgent({ agentId: "exec", advisorAvailable: true }),
+      resolvePolicyForAgent({ agentId: "plan", advisorAvailable: true }),
     ]);
 
     expect(execPolicy).toContainEqual({ regex_match: "advisor", action: "enable" });
     expect(planPolicy).toContainEqual({ regex_match: "advisor", action: "enable" });
   });
 
-  test("keeps explicit advisor disable overrides authoritative for default-enabled agents", async () => {
-    const policy = await resolvePolicyForAgent({
-      agentId: "exec",
-      agentAiDefaults: { exec: { advisorEnabled: false } },
-    });
+  test("disables the advisor regex when no advisor file is loaded", async () => {
+    const policy = await resolvePolicyForAgent({ agentId: "exec", advisorAvailable: false });
 
     expect(policy).toContainEqual({ regex_match: "advisor", action: "disable" });
     expect(policy).not.toContainEqual({ regex_match: "advisor", action: "enable" });

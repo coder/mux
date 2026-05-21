@@ -137,6 +137,7 @@ describe("AdvisorToolCall", () => {
       result: {
         type: "advice",
         advice: "Prefer the smaller diff so reviewers can verify it quickly.",
+        advisorName: "test-advisor",
         advisorModel: "openai:gpt-4.1-mini",
         remainingUses: 1,
       },
@@ -193,6 +194,7 @@ describe("AdvisorToolCall", () => {
           result={{
             type: "advice",
             advice: "Final persisted advice",
+            advisorName: "test-advisor",
             advisorModel: "openai:gpt-4.1-mini",
             remainingUses: 1,
           }}
@@ -218,6 +220,7 @@ describe("AdvisorToolCall", () => {
         name: "limit",
         result: {
           type: "limit_reached",
+          advisorName: "test-advisor",
           advisorModel: "openai:gpt-4.1-mini",
           message: "Unique advisor limit reached message",
         },
@@ -274,6 +277,7 @@ describe("AdvisorToolCall", () => {
       result: {
         type: "advice",
         advice: "Final persisted advice",
+        advisorName: "test-advisor",
         advisorModel: "openai:gpt-4.1-mini",
         remainingUses: 1,
       },
@@ -293,6 +297,7 @@ describe("AdvisorToolCall", () => {
       result: {
         type: "advice",
         advice: "Prefer the smaller diff so reviewers can verify it quickly.",
+        advisorName: "test-advisor",
         advisorModel: "openai:gpt-4.1-mini",
         remainingUses: 1,
       },

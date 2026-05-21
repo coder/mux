@@ -29,14 +29,12 @@ export function normalizeAgentAiDefaults(raw: unknown): AgentAiDefaults {
     const thinkingLevel: ThinkingLevel | undefined = coerceThinkingLevel(entry.thinkingLevel);
 
     const enabled = typeof entry.enabled === "boolean" ? entry.enabled : undefined;
-    const advisorEnabled =
-      typeof entry.advisorEnabled === "boolean" ? entry.advisorEnabled : undefined;
 
-    if (!modelString && !thinkingLevel && enabled === undefined && advisorEnabled === undefined) {
+    if (!modelString && !thinkingLevel && enabled === undefined) {
       continue;
     }
 
-    result[agentId] = { modelString, thinkingLevel, enabled, advisorEnabled };
+    result[agentId] = { modelString, thinkingLevel, enabled };
   }
 
   return result;

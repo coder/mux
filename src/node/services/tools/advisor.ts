@@ -3,18 +3,21 @@ import assert from "node:assert/strict";
 import { streamText, tool, type Tool } from "ai";
 
 import {
+  ADVISOR_DEFAULT_MAX_USES_PER_TURN,
   ADVISOR_HANDOFF_MAX_REASONING_CHARS,
   ADVISOR_HANDOFF_MAX_TEXT_CHARS,
-  ADVISOR_SYSTEM_PROMPT,
+  buildAdvisorToolDescription,
+  composeAdvisorSystemPrompt,
 } from "@/common/constants/advisor";
 import type { ModelMessage } from "@/common/types/message";
+import type { AdvisorPackage } from "@/common/types/advisor";
 import { THINKING_LEVEL_OFF, coerceThinkingLevel } from "@/common/types/thinking";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 import { getErrorMessage } from "@/common/utils/errors";
 import { sanitizeErrorMessageForDisplay } from "@/common/utils/providerOutputSanitization";
 import type { AdvisorOutputEvent, AdvisorPhaseEvent } from "@/common/types/stream";
-import { AdvisorToolInputSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import { AdvisorToolInputSchema } from "@/common/utils/tools/toolDefinitions";
 import type { AdvisorToolCallSnapshot, ToolConfiguration } from "@/common/utils/tools/tools";
 import { log } from "@/node/services/log";
 
@@ -106,32 +109,51 @@ function getAdvisorTextDelta(chunk: unknown): string | undefined {
   return text.length > 0 ? text : undefined;
 }
 
+/**
+ * Resolve the effective per-turn usage cap for a single advisor.
+ *
+ * Resolution order (most specific wins):
+ * 1. `frontmatter.max_uses_per_turn === null` → unlimited
+ * 2. `frontmatter.max_uses_per_turn === <positive int>` → exact cap
+ * 3. Falls back to the runtime-wide default
+ */
+function resolveAdvisorMaxUsesPerTurn(
+  advisor: AdvisorPackage,
+  runtimeDefault: number
+): number | null {
+  const override = advisor.frontmatter.max_uses_per_turn;
+  if (override === null) {
+    return null;
+  }
+  if (override != null) {
+    return override;
+  }
+  return runtimeDefault;
+}
+
+function resolveAdvisorMaxOutputTokens(advisor: AdvisorPackage): number | undefined {
+  // `null` and `undefined` both mean unlimited; positive int means explicit cap.
+  return advisor.frontmatter.max_output_tokens ?? undefined;
+}
+
+function formatAvailableAdvisorList(advisors: readonly AdvisorPackage[]): string {
+  if (advisors.length === 0) {
+    return "(none configured)";
+  }
+  return advisors.map((a) => a.directoryName).join(", ");
+}
+
 export function createAdvisorTool(config: ToolConfiguration): Tool {
   assert(config.advisorRuntime, "advisorRuntime must be set when advisor tool is registered");
 
   const runtime = config.advisorRuntime;
-  const advisorModelString = runtime.advisorModelString.trim();
-  const reasoningLevel = runtime.reasoningLevel?.trim();
-  const effectiveReasoningLevel = coerceThinkingLevel(reasoningLevel) ?? THINKING_LEVEL_OFF;
-
-  assert(advisorModelString.length > 0, "advisorModelString must be a non-empty string");
   assert(
-    reasoningLevel === undefined || reasoningLevel.length > 0,
-    "advisor reasoningLevel must be undefined or a non-empty string"
+    runtime.advisors.length > 0,
+    "advisorRuntime.advisors must be non-empty when the advisor tool is registered"
   );
   assert(
-    reasoningLevel === undefined || effectiveReasoningLevel === reasoningLevel,
-    "advisor reasoningLevel must be a valid ThinkingLevel when provided"
-  );
-  assert(
-    runtime.maxUsesPerTurn === null ||
-      (Number.isInteger(runtime.maxUsesPerTurn) && runtime.maxUsesPerTurn > 0),
-    "advisor maxUsesPerTurn must be null or a positive integer"
-  );
-  assert(
-    runtime.maxOutputTokens === undefined ||
-      (Number.isInteger(runtime.maxOutputTokens) && runtime.maxOutputTokens > 0),
-    "advisor maxOutputTokens must be undefined or a positive integer"
+    Number.isInteger(runtime.defaultMaxUsesPerTurn) && runtime.defaultMaxUsesPerTurn > 0,
+    "advisor defaultMaxUsesPerTurn must be a positive integer"
   );
   assert(
     typeof runtime.getTranscriptSnapshot === "function",
@@ -143,18 +165,48 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
   );
   assert(typeof runtime.createModel === "function", "advisor createModel must be a function");
 
-  let usesThisTurn = 0;
-  const providerOptions = buildProviderOptions(advisorModelString, effectiveReasoningLevel);
+  // Per-advisor turn-scoped usage counters. Keying on directoryName mirrors how
+  // the model selects an advisor (by name in `advisor_name`), so a busy
+  // ml-fellow advisor can't starve a separately-configured code-review one.
+  const usesThisTurnByAdvisor = new Map<string, number>();
+
+  // The base default-cap fallback gets resolved once at registration. Per-turn
+  // counter resets are handled by the parent stream rebuilding the runtime
+  // bundle on every prepareStep — we never need to mutate state across turns.
+  const advisorsByName = new Map(runtime.advisors.map((a) => [a.directoryName, a]));
 
   return tool({
-    description: TOOL_DEFINITIONS.advisor.description,
+    description: buildAdvisorToolDescription(runtime.advisors),
     inputSchema: AdvisorToolInputSchema,
     execute: async (args, { abortSignal, toolCallId }) => {
+      const requestedName = args.advisor_name.trim();
       const question = args.question != null ? args.question.trim() || undefined : undefined;
       assert(
         question == null || question.length > 0,
         "advisor question must be undefined or a non-empty string after trimming"
       );
+
+      const advisor = advisorsByName.get(requestedName);
+      if (advisor == null) {
+        // Self-correctable: include the live catalog so the model can retry
+        // with a valid name in the same turn.
+        return {
+          type: "error" as const,
+          isError: true,
+          message: `Advisor '${requestedName}' is not configured. Available advisors: ${formatAvailableAdvisorList(runtime.advisors)}.`,
+        };
+      }
+
+      const advisorModelString = advisor.frontmatter.model.trim();
+      assert(
+        advisorModelString.length > 0,
+        `advisor '${advisor.directoryName}' has empty model after trim; should have been rejected at parse time`
+      );
+      const reasoningLevel = advisor.frontmatter.thinking ?? THINKING_LEVEL_OFF;
+      const effectiveReasoningLevel = coerceThinkingLevel(reasoningLevel) ?? THINKING_LEVEL_OFF;
+
+      const maxUsesPerTurn = resolveAdvisorMaxUsesPerTurn(advisor, runtime.defaultMaxUsesPerTurn);
+      const maxOutputTokens = resolveAdvisorMaxOutputTokens(advisor);
 
       const emitAdvisorPhase = (phase: AdvisorPhaseEvent["phase"]): void => {
         if (!config.emitChatEvent || !config.workspaceId || !toolCallId) {
@@ -187,18 +239,19 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
 
       emitAdvisorPhase("preparing_context");
 
-      if (runtime.maxUsesPerTurn !== null && usesThisTurn >= runtime.maxUsesPerTurn) {
+      const usesThisTurn = usesThisTurnByAdvisor.get(advisor.directoryName) ?? 0;
+      if (maxUsesPerTurn !== null && usesThisTurn >= maxUsesPerTurn) {
         return {
           type: "limit_reached" as const,
+          advisorName: advisor.directoryName,
           advisorModel: advisorModelString,
           reasoningLevel,
-          message: `Advisor limit reached for this turn (max ${runtime.maxUsesPerTurn} uses).`,
+          message: `Advisor '${advisor.directoryName}' limit reached for this turn (max ${maxUsesPerTurn} uses).`,
         };
       }
       // Reserve the slot before any await so concurrent advisor calls cannot bypass the per-turn cap.
-      usesThisTurn++;
-      const remainingUses =
-        runtime.maxUsesPerTurn !== null ? runtime.maxUsesPerTurn - usesThisTurn : null;
+      usesThisTurnByAdvisor.set(advisor.directoryName, usesThisTurn + 1);
+      const remainingUses = maxUsesPerTurn !== null ? maxUsesPerTurn - (usesThisTurn + 1) : null;
 
       const transcript = runtime.getTranscriptSnapshot();
       assert(Array.isArray(transcript), "advisor transcript snapshot must be an array");
@@ -210,6 +263,9 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
       const messages: ModelMessage[] =
         handoffMessage != null ? [...transcript, handoffMessage] : transcript;
 
+      const providerOptions = buildProviderOptions(advisorModelString, effectiveReasoningLevel);
+      const systemPrompt = composeAdvisorSystemPrompt(advisor.body);
+
       try {
         const model = await runtime.createModel(advisorModelString);
 
@@ -219,13 +275,13 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
         const streamedAdviceChunks: string[] = [];
         const result = streamText({
           model,
-          system: ADVISOR_SYSTEM_PROMPT,
+          system: systemPrompt,
           messages,
           // Advisor requests are intentionally tool-less strategic consultations.
           tools: {},
           providerOptions,
           abortSignal: abortSignal ?? runtime.abortSignal,
-          ...(runtime.maxOutputTokens != null ? { maxOutputTokens: runtime.maxOutputTokens } : {}),
+          ...(maxOutputTokens != null ? { maxOutputTokens } : {}),
           onError: ({ error }) => {
             advisorStreamError = error;
           },
@@ -259,10 +315,6 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
 
         if (config.reportModelUsage != null && usage != null) {
           try {
-            assert(
-              advisorModelString.length > 0,
-              "advisorModelString must remain non-empty when reporting usage"
-            );
             // Keep advisor costs under the advisor model bucket instead of folding them into
             // the parent chat stream's model totals.
             config.reportModelUsage({
@@ -284,6 +336,7 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
         return {
           type: "advice" as const,
           advice,
+          advisorName: advisor.directoryName,
           advisorModel: advisorModelString,
           reasoningLevel,
           remainingUses,
@@ -306,3 +359,7 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
     },
   });
 }
+
+// Re-export the default for convenience; aiService.ts uses it as the fallback
+// when an advisor entry omits `max_uses_per_turn`.
+export { ADVISOR_DEFAULT_MAX_USES_PER_TURN };

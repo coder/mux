@@ -41,12 +41,14 @@ type AdvisorToolResult =
   | {
       type: "advice";
       advice: string;
+      advisorName: string;
       advisorModel: string;
       reasoningLevel?: string;
       remainingUses: number | null;
     }
   | {
       type: "limit_reached";
+      advisorName: string;
       advisorModel: string;
       reasoningLevel?: string;
       message: string;
@@ -98,6 +100,29 @@ function getAdvisorQuestion(args: Record<string, unknown>): string | undefined {
   return question.length > 0 ? question : undefined;
 }
 
+/**
+ * Extract the advisor name from the tool input args.
+ *
+ * The header surfaces the advisor name as the lead identity pill — model and
+ * thinking metadata live in the expanded details. This stays available even
+ * when the tool errors before producing a result (e.g., unknown advisor name)
+ * because the args are still emitted on the tool-call boundary.
+ */
+function getAdvisorName(
+  args: Record<string, unknown>,
+  result: AdvisorToolResult | null
+): string | undefined {
+  if (result?.type === "advice" || result?.type === "limit_reached") {
+    return result.advisorName;
+  }
+  const rawName = args.advisor_name;
+  if (typeof rawName !== "string") {
+    return undefined;
+  }
+  const name = rawName.trim();
+  return name.length > 0 ? name : undefined;
+}
+
 function isRemainingUses(value: unknown): value is number | null {
   return value === null || (typeof value === "number" && Number.isInteger(value) && value >= 0);
 }
@@ -115,12 +140,14 @@ function isAdvisorToolResult(value: unknown): value is AdvisorToolResult {
     case "advice":
       return (
         isNonEmptyString(record.advice) &&
+        isNonEmptyString(record.advisorName) &&
         isNonEmptyString(record.advisorModel) &&
         hasValidReasoningLevel &&
         isRemainingUses(record.remainingUses)
       );
     case "limit_reached":
       return (
+        isNonEmptyString(record.advisorName) &&
         isNonEmptyString(record.advisorModel) &&
         hasValidReasoningLevel &&
         isNonEmptyString(record.message)
@@ -217,6 +244,7 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = (props) => {
   const toolStatus = isToolStatus(props.status) ? props.status : "pending";
   const question = getAdvisorQuestion(props.args);
   const advisorResult = isAdvisorToolResult(props.result) ? props.result : null;
+  const advisorName = getAdvisorName(props.args, advisorResult);
   const hasUnrecognizedResult =
     props.result !== undefined && props.result !== null && advisorResult === null;
   const isExecutingWithoutResult =
@@ -229,6 +257,7 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = (props) => {
       {...props}
       toolStatus={toolStatus}
       question={question}
+      advisorName={advisorName}
       advisorResult={advisorResult}
       hasUnrecognizedResult={hasUnrecognizedResult}
       isExecutingWithoutResult={isExecutingWithoutResult}
@@ -239,6 +268,7 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = (props) => {
 interface AdvisorToolCallContentProps extends AdvisorToolCallProps {
   toolStatus: ToolStatus;
   question: string | undefined;
+  advisorName: string | undefined;
   advisorResult: AdvisorToolResult | null;
   hasUnrecognizedResult: boolean;
   isExecutingWithoutResult: boolean;
@@ -251,6 +281,7 @@ const AdvisorToolCallContent: React.FC<AdvisorToolCallContentProps> = ({
   startedAt,
   toolStatus,
   question,
+  advisorName,
   advisorResult,
   hasUnrecognizedResult,
   isExecutingWithoutResult,
@@ -289,6 +320,11 @@ const AdvisorToolCallContent: React.FC<AdvisorToolCallContentProps> = ({
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon toolName="advisor" />
         <ToolName>advisor</ToolName>
+        {advisorName && (
+          // Lead identity pill — which advisor handled this turn matters more
+          // than the underlying model when multiple advisors are configured.
+          <MetadataBadge className="text-foreground">{advisorName}</MetadataBadge>
+        )}
         <StatusIndicator
           status={statusPresentation.status}
           className={statusPresentation.className}

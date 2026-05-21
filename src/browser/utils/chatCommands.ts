@@ -547,6 +547,26 @@ export async function processSlashCommand(
           api: client,
           workspaceId: context.workspaceId,
         } as CommandHandlerContext);
+      case "advisor-list":
+        if (!context.workspaceId) throw new Error("Workspace ID required");
+        if (!requireClient()) {
+          return { clearInput: false, toastShown: true };
+        }
+        return handleAdvisorListCommand({
+          ...context,
+          api: client,
+          workspaceId: context.workspaceId,
+        } as CommandHandlerContext);
+      case "advisor-init":
+        if (!context.workspaceId) throw new Error("Workspace ID required");
+        if (!requireClient()) {
+          return { clearInput: false, toastShown: true };
+        }
+        return handleAdvisorInitCommand(parsed.name, {
+          ...context,
+          api: client,
+          workspaceId: context.workspaceId,
+        } as CommandHandlerContext);
       case "plan-open":
         if (!context.workspaceId) throw new Error("Workspace ID required");
         if (!requireClient()) {
@@ -1653,6 +1673,129 @@ export async function handlePlanOpenCommand(
     message: "Opened plan in editor",
   });
   return { clearInput: true, toastShown: true };
+}
+
+// ============================================================================
+// Advisor Command Handlers
+// ============================================================================
+
+function formatAdvisorListMessage(
+  advisors: ReadonlyArray<{
+    name: string;
+    description: string;
+    scope: "project" | "global";
+    model: string;
+    thinking?: string;
+    agents?: string[];
+  }>,
+  invalidAdvisors: ReadonlyArray<{
+    directoryName: string;
+    scope: "project" | "global";
+    message: string;
+  }>
+): string {
+  const lines: string[] = ["# Advisors"];
+
+  if (advisors.length === 0) {
+    lines.push("");
+    lines.push("No advisors configured. Run `/advisor init <name>` to scaffold one.");
+    lines.push("");
+    lines.push(
+      "Advisors live at `.mux/advisors/<name>/ADVISOR.md` (project) or `~/.mux/advisors/<name>/ADVISOR.md` (global)."
+    );
+  } else {
+    for (const advisor of advisors) {
+      const scopeLabel = advisor.scope === "project" ? "project" : "global";
+      const thinkingLabel = advisor.thinking ? ` · thinking: ${advisor.thinking}` : "";
+      const agentsLabel =
+        advisor.agents && advisor.agents.length > 0
+          ? ` · agents: ${advisor.agents.join(", ")}`
+          : "";
+      lines.push("");
+      lines.push(`## ${advisor.name} _(${scopeLabel})_`);
+      lines.push(advisor.description);
+      lines.push(`\`${advisor.model}\`${thinkingLabel}${agentsLabel}`);
+    }
+  }
+
+  if (invalidAdvisors.length > 0) {
+    lines.push("");
+    lines.push("## Skipped (invalid)");
+    for (const issue of invalidAdvisors) {
+      lines.push(`- **${issue.directoryName}** _(${issue.scope})_: ${issue.message}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+export async function handleAdvisorListCommand(
+  context: CommandHandlerContext
+): Promise<CommandHandlerResult> {
+  const { api, workspaceId, setInput, setToast } = context;
+
+  setInput("");
+  try {
+    const { advisors, invalidAdvisors } = await api.advisors.list({ workspaceId });
+    const content = formatAdvisorListMessage(advisors, invalidAdvisors);
+
+    addEphemeralMessage(workspaceId, {
+      id: `advisor-list-${Date.now()}`,
+      role: "assistant",
+      parts: [{ type: "text", text: content }],
+      metadata: {
+        historySequence: Number.MAX_SAFE_INTEGER,
+      },
+    });
+
+    trackCommandUsed("advisor");
+    return { clearInput: true, toastShown: false };
+  } catch (error) {
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: `Failed to list advisors: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    return { clearInput: true, toastShown: true };
+  }
+}
+
+export async function handleAdvisorInitCommand(
+  name: string,
+  context: CommandHandlerContext
+): Promise<CommandHandlerResult> {
+  const { api, workspaceId, setInput, setToast } = context;
+
+  setInput("");
+  try {
+    const result = await api.advisors.scaffold({ workspaceId, name });
+    const message = [
+      `# Advisor \`${result.name}\` scaffolded`,
+      "",
+      `Wrote a starter template to \`${result.sourcePath}\`.`,
+      "Edit the file to set the model, description, and any per-advisor knobs. The advisor",
+      "becomes selectable in the next agent turn — no restart needed.",
+    ].join("\n");
+
+    addEphemeralMessage(workspaceId, {
+      id: `advisor-init-${Date.now()}`,
+      role: "assistant",
+      parts: [{ type: "text", text: message }],
+      metadata: {
+        historySequence: Number.MAX_SAFE_INTEGER,
+      },
+    });
+
+    trackCommandUsed("advisor");
+    return { clearInput: true, toastShown: false };
+  } catch (error) {
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: `Failed to scaffold advisor: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    return { clearInput: true, toastShown: true };
+  }
 }
 
 // ============================================================================
