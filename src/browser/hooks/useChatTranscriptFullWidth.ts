@@ -15,8 +15,20 @@ export function useChatTranscriptFullWidth(): boolean {
   );
   const chatTranscriptFullWidth = rawChatTranscriptFullWidth === true;
   const chatTranscriptFullWidthRef = useRef(chatTranscriptFullWidth);
+  const persistedValueRef = useRef(chatTranscriptFullWidth);
+  const backendPersistedValueRef = useRef<boolean | undefined>(undefined);
 
   useEffect(() => {
+    if (persistedValueRef.current !== chatTranscriptFullWidth) {
+      persistedValueRef.current = chatTranscriptFullWidth;
+      const backendPersistedValue = backendPersistedValueRef.current;
+      backendPersistedValueRef.current = undefined;
+      if (backendPersistedValue !== chatTranscriptFullWidth) {
+        // Settings writes update persisted state first, so old backend reads must not overwrite them.
+        fetchVersionRef.current++;
+      }
+    }
+
     chatTranscriptFullWidthRef.current = chatTranscriptFullWidth;
   }, [chatTranscriptFullWidth]);
 
@@ -36,6 +48,7 @@ export function useChatTranscriptFullWidth(): boolean {
       }
 
       chatTranscriptFullWidthRef.current = enabled;
+      backendPersistedValueRef.current = enabled;
       updatePersistedState<boolean | undefined>(
         CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
         enabled ? true : undefined

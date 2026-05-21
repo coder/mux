@@ -128,6 +128,82 @@ describe("useChatTranscriptFullWidth", () => {
     expect(result.current).toBe(true);
   });
 
+  test("accepts a newer backend refresh after a backend-driven cache update", async () => {
+    const firstFetch = Promise.withResolvers<TranscriptWidthConfig>();
+    const secondFetch = Promise.withResolvers<TranscriptWidthConfig>();
+    const stream = createConfigEventStream();
+    const getConfigMock = mock(() => {
+      if (getConfigMock.mock.calls.length === 1) {
+        return firstFetch.promise;
+      }
+
+      return secondFetch.promise;
+    });
+    const client = {
+      config: {
+        getConfig: getConfigMock,
+        onConfigChanged: mock(() => Promise.resolve(stream.iterator)),
+      },
+    } as unknown as APIClient;
+
+    const { result } = renderHook(() => useChatTranscriptFullWidth(), {
+      wrapper: createWrapper(client),
+    });
+
+    await waitFor(() => {
+      expect(getConfigMock).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      firstFetch.resolve({ chatTranscriptFullWidth: true });
+      await firstFetch.promise;
+      stream.emit();
+    });
+    await waitFor(() => {
+      expect(getConfigMock).toHaveBeenCalledTimes(2);
+    });
+
+    await act(async () => {
+      secondFetch.resolve({ chatTranscriptFullWidth: false });
+      await secondFetch.promise;
+    });
+
+    await waitFor(() => {
+      expect(result.current).toBe(false);
+    });
+  });
+
+  test("keeps a local persisted update when an older backend fetch resolves", async () => {
+    const fetch = Promise.withResolvers<TranscriptWidthConfig>();
+    const client = {
+      config: {
+        getConfig: mock(() => fetch.promise),
+        onConfigChanged: mock(() => Promise.resolve(createConfigEventStream().iterator)),
+      },
+    } as unknown as APIClient;
+
+    const { result } = renderHook(() => useChatTranscriptFullWidth(), {
+      wrapper: createWrapper(client),
+    });
+
+    expect(result.current).toBe(false);
+
+    act(() => {
+      updatePersistedState<boolean>(CHAT_TRANSCRIPT_FULL_WIDTH_KEY, true);
+    });
+    await waitFor(() => {
+      expect(result.current).toBe(true);
+    });
+
+    await act(async () => {
+      fetch.resolve({ chatTranscriptFullWidth: false });
+      await fetch.promise;
+    });
+
+    expect(result.current).toBe(true);
+    expect(window.localStorage.getItem(CHAT_TRANSCRIPT_FULL_WIDTH_KEY)).toBe(JSON.stringify(true));
+  });
+
   test("ignores invalid cached preference values", () => {
     updatePersistedState<string>(CHAT_TRANSCRIPT_FULL_WIDTH_KEY, "false");
     const getConfig = Promise.withResolvers<TranscriptWidthConfig>();
