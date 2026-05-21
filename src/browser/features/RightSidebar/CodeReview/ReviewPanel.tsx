@@ -613,7 +613,7 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
   // tab badge in lock-step with dismissals so the user doesn't get attention
   // cues for pins they explicitly silenced — even when the Review panel
   // itself isn't mounted.
-  const [dismissedAssistedKeys] = usePersistedState<string[]>(
+  const [dismissedAssistedKeys, setDismissedAssistedKeys] = usePersistedState<string[]>(
     STORAGE_KEYS.reviewAssistedDismissed(workspaceId),
     [],
     { listener: true }
@@ -623,6 +623,25 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     const dismissed = new Set(dismissedAssistedKeys);
     return rawAssistedHunks.filter((entry) => !dismissed.has(formatAssistedFilter(entry)));
   }, [rawAssistedHunks, dismissedAssistedKeys]);
+
+  // Self-heal the dismissed-pin list whenever the agent's set changes:
+  // drop any dismissed key that is no longer present in the agent's pins
+  // so the localStorage entry stays bounded across long-lived workspaces.
+  //
+  // This effect lives in the always-mounted stats reporter (not the panel)
+  // because the user may dismiss pins, switch tabs, the agent then
+  // clears/replaces the set, and the panel never remounts — without this
+  // the dismissed entry would silently filter a future re-appearance of
+  // the same key until manual restore. The panel's `usePersistedState`
+  // listener picks up the pruned value automatically on next mount.
+  useEffect(() => {
+    if (dismissedAssistedKeys.length === 0) return;
+    const liveKeys = new Set(rawAssistedHunks.map((h) => formatAssistedFilter(h)));
+    const pruned = dismissedAssistedKeys.filter((key) => liveKeys.has(key));
+    if (pruned.length !== dismissedAssistedKeys.length) {
+      setDismissedAssistedKeys(pruned);
+    }
+  }, [rawAssistedHunks, dismissedAssistedKeys, setDismissedAssistedKeys]);
 
   const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
   const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
@@ -1057,17 +1076,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     );
   }, [rawAssistedHunks, dismissedAssistedKeySet]);
 
-  // Self-heal the dismissed set whenever the agent clears or replaces its
-  // pins: drop dismissed keys that are no longer present so the localStorage
-  // entry stays bounded across long-lived workspaces.
-  useEffect(() => {
-    if (dismissedAssistedKeys.length === 0) return;
-    const liveKeys = new Set(rawAssistedHunks.map((h) => formatAssistedFilter(h)));
-    const pruned = dismissedAssistedKeys.filter((key) => liveKeys.has(key));
-    if (pruned.length !== dismissedAssistedKeys.length) {
-      setDismissedAssistedKeys(pruned);
-    }
-  }, [rawAssistedHunks, dismissedAssistedKeys, setDismissedAssistedKeys]);
+  // The self-healing prune of stale dismissed keys lives in
+  // `ReviewAssistedStatsReporter` (always mounted) so it runs even when the
+  // user is on another tab — see the note next to its prune effect.
 
   const handleDismissAssistedPin = useCallback(
     (key: string) => {
@@ -2123,6 +2134,29 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       // Immersive mode has its own keyboard handler; don't double-handle
       if (isImmersive) return;
 
+      // The Assisted-toggle shortcut must work even in empty states (no
+      // selected hunk, or selection filtered out by the active set of
+      // pins). Handle it BEFORE the selection-required guards below so
+      // the escape hatch advertised in the empty-state UI ("press p")
+      // actually fires.
+      if (matchesKeybind(e, KEYBINDS.TOGGLE_ASSISTED_REVIEW)) {
+        // Skip the keystroke only when nothing assisted is reachable: no
+        // live pins, no currently-active worklist mode, AND no dismissed
+        // pins waiting to be restored. The last condition lets users
+        // re-enter Assisted via the keyboard to discover the restore
+        // button in the empty state, instead of getting stuck.
+        if (
+          assistedHunks.length === 0 &&
+          !filters.assistedOnly &&
+          dismissedAssistedKeys.length === 0
+        ) {
+          return;
+        }
+        e.preventDefault();
+        setFilters((prev) => ({ ...prev, assistedOnly: !prev.assistedOnly }));
+        return;
+      }
+
       if (!selectedHunkId) return;
 
       const currentIndex = filteredHunks.findIndex((h) => h.id === selectedHunkId);
@@ -2162,22 +2196,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         if (toggleFn) {
           toggleFn();
         }
-      } else if (matchesKeybind(e, KEYBINDS.TOGGLE_ASSISTED_REVIEW)) {
-        // Toggle the Assisted filter. Skip the keystroke only when nothing
-        // assisted is reachable: no live pins, no currently-active worklist
-        // mode, AND no dismissed pins waiting to be restored. The last
-        // condition lets users re-enter Assisted via the keyboard to discover
-        // the restore button in the empty state, instead of getting stuck.
-        if (
-          assistedHunks.length === 0 &&
-          !filters.assistedOnly &&
-          dismissedAssistedKeys.length === 0
-        ) {
-          return;
-        }
-        e.preventDefault();
-        setFilters((prev) => ({ ...prev, assistedOnly: !prev.assistedOnly }));
       }
+      // Note: TOGGLE_ASSISTED_REVIEW is handled above the selection guards so
+      // it works in empty-state cases (no selected hunk, all pins filtered).
     };
 
     window.addEventListener("keydown", handleKeyDown);
