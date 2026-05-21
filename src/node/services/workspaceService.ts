@@ -5916,20 +5916,6 @@ export class WorkspaceService extends EventEmitter {
         void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
       }
 
-      // Auto-unsnooze on real user sends — re-engaging with a chat by sending a
-      // message should release it from the Snoozed section the way Gmail/Slack
-      // snoozes clear on user interaction. Synthetic sends (heartbeats, idle
-      // compaction, goal continuations) are backend-initiated maintenance and
-      // must NOT count as re-engagement, otherwise the next scheduled
-      // heartbeat would drain the section right after the user snoozed.
-      //
-      // Fire-and-forget mirrors the recency update above; the persisted
-      // snooze state is best-effort and a transient write failure must never
-      // block the actual message send.
-      if (internal?.synthetic !== true) {
-        void this.clearSnoozeOnUserMessage(workspaceId);
-      }
-
       const normalizedOptions = this.normalizeSendMessageAgentId(options);
 
       // Reject before any settings persistence so an unpriced model can never
@@ -6002,6 +5988,16 @@ export class WorkspaceService extends EventEmitter {
 
         if (effectiveQueueDispatchMode === "tool-end") {
           this.taskService?.backgroundForegroundWaitsForWorkspace(workspaceId);
+        }
+
+        // Auto-unsnooze only after the queue accepted the user's message —
+        // Codex P2 catch: doing this earlier (alongside the recency update)
+        // would drain the snooze even for sends that fail validation
+        // (pricing gate, queued-task block, requireIdle, etc.). Synthetic
+        // sends are excluded so heartbeats/idle compaction/goal continuations
+        // can't drain the section the moment the user snoozes.
+        if (internal?.synthetic !== true) {
+          void this.clearSnoozeOnUserMessage(workspaceId);
         }
 
         return Ok(undefined);
@@ -6082,6 +6078,13 @@ export class WorkspaceService extends EventEmitter {
         }
 
         return result;
+      }
+
+      // Auto-unsnooze only after the message was actually accepted by the
+      // session (see queue-path comment above for rationale). Same synthetic
+      // gate so backend-initiated maintenance sends never drain the section.
+      if (internal?.synthetic !== true) {
+        void this.clearSnoozeOnUserMessage(workspaceId);
       }
 
       if (claimedAutoTitle) {
