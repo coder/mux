@@ -1903,6 +1903,18 @@ export class WorkspaceGoalService {
       });
   }
 
+  private armContinuationForPromotedGoal(workspaceId: string, goal: GoalRecordV1): void {
+    // Promotion is an explicit handoff to this queued goal. Any stop/ack gate
+    // was attached to an older active turn and would otherwise strand the
+    // promoted goal until the user pause/unpauses it.
+    this.lastUserStopAtMsByWorkspace.delete(workspaceId);
+    if (goal.status === "active") {
+      this.armKickoffContinuationIfIdle(workspaceId, goal);
+    } else if (goal.status === "budget_limited") {
+      this.armBudgetWrapupForBudgetLimitedGoal(workspaceId, goal);
+    }
+  }
+
   /**
    * Re-arm pending continuation / budget-wrap-up dispatches after a process
    * restart. `pendingContinuationCandidates` and `lastGoalStreamStamps` are
@@ -2831,9 +2843,8 @@ export class WorkspaceGoalService {
    * which `recordStreamAccounting` reads on every chunk to attribute
    * cost. If we promote while a stream is still running for the
    * current active goal, the freshly-promoted goal would absorb the
-   * previous goal's cost. Reject up front with a typed transition
-   * error; the caller surfaces a "wait for the stream to finish"
-   * message and the user retries.
+   * previous goal's cost. Interrupt/poll first so the promoted goal can
+   * safely receive its kickoff continuation once the workspace is idle.
    *
    * Returns the new active record (the promoted goal, with status
    * flipped to `active` via the normal createGoal-like path) or
@@ -2845,13 +2856,13 @@ export class WorkspaceGoalService {
     // Interrupt the active stream (if any) before promoting so the
     // in-flight turn's costs are attributed to the goal that ran them.
     // The promoted goal's view (via the agent's `get_goal` tool) then
-    // takes effect on the next user message; otherwise a mid-stream
+    // takes effect on the kickoff continuation; otherwise a mid-stream
     // promote could attribute the current stream tail to the new goal.
     //
     // Behavior intentionally fails open: if no interrupter is wired
     // (tests) or the interrupt errors, we still proceed to promote.
-    // The next turn picks up the new goal via `get_goal`; worst case
-    // is the small slice of stream tail that lands before the abort
+    // The promotion arm below picks up the new goal via `get_goal`; worst
+    // case is the small slice of stream tail that lands before the abort
     // settles. We log so production paths flag the rare error.
     if (await this.isWorkspaceStreaming(workspaceId)) {
       if (this.streamInterrupter) {
@@ -2871,7 +2882,7 @@ export class WorkspaceGoalService {
       }
     }
 
-    return this.fileLocks.withLock(workspaceId, async () => {
+    const promotedGoal = await this.fileLocks.withLock(workspaceId, async () => {
       const [currentActive, board] = await Promise.all([
         this.readGoalFile(workspaceId),
         this.readBoard(workspaceId),
@@ -2905,6 +2916,7 @@ export class WorkspaceGoalService {
         status: "active",
         updatedAtMs: now,
         completionSummary: undefined,
+        requireUserAcknowledgmentSinceMs: null,
       });
       const activated = this.applyBudgetDrivenStatus(baseActivated);
 
@@ -2947,6 +2959,10 @@ export class WorkspaceGoalService {
       this.emitLifecycle("goal_resumed", { initiator: "user" });
       return activated;
     });
+    if (promotedGoal) {
+      this.armContinuationForPromotedGoal(workspaceId, promotedGoal);
+    }
+    return promotedGoal;
   }
 
   /**
@@ -3017,10 +3033,10 @@ export class WorkspaceGoalService {
   /**
    * Called after a goal is marked complete (by agent or user) or
    * cleared. If `upcoming` has a head, promote it to active so the
-   * agent has a roadmap to pick up on the next user message. Does NOT
-   * auto-fire a continuation turn — the user controls when work
-   * resumes (consistent with the no-auto-message-on-promotion design
-   * decision).
+   * agent has a roadmap to pick up immediately. Promotion also arms the
+   * kickoff continuation when a runtime bridge can supply send options; this
+   * matches explicit resume and prevents queued goals from waiting on a
+   * pause/unpause nudge.
    *
    * Caller must hold the workspace file lock. Returns the new active
    * record if a promotion happened, null otherwise.
@@ -3059,6 +3075,7 @@ export class WorkspaceGoalService {
       status: "active",
       updatedAtMs: now,
       completionSummary: undefined,
+      requireUserAcknowledgmentSinceMs: null,
     });
     const activated = this.applyBudgetDrivenStatus(baseActivated);
     // same pricing gate as `promoteUpcomingGoal`. If the next
@@ -3086,6 +3103,7 @@ export class WorkspaceGoalService {
       hasBudget: activated.budgetCents != null,
       hasTurnCap: activated.turnCap != null,
     });
+    this.armContinuationForPromotedGoal(workspaceId, activated);
     return activated;
   }
 }

@@ -2839,10 +2839,22 @@ describe("WorkspaceGoalService", () => {
     test("auto-promotes the next upcoming goal when the active goal completes", async () => {
       const active = await setGoalOk(service, { workspaceId, objective: "First" });
       const queued = await service.addUpcomingGoal({ workspaceId, objective: "Second" });
+      const dispatcher = new IdleDispatcher();
+      const executed: string[] = [];
+      service.registerGoalContinuationConsumer(dispatcher, {
+        hasActiveDescendantTasks: () => false,
+        getRuntimeState: () => ({ isRuntimeCompatible: true }),
+        executeGoalContinuation: (input) => {
+          executed.push(input.message);
+          return Promise.resolve(true);
+        },
+        getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      });
 
       // Mark the active goal complete. The board's invariant is: the
       // completed goal moves to history + the next upcoming becomes
-      // active in the same write.
+      // active in the same write, then the promoted goal starts without a
+      // manual pause/unpause nudge.
       await setGoalOk(service, {
         workspaceId,
         status: "complete",
@@ -2853,6 +2865,9 @@ describe("WorkspaceGoalService", () => {
       const activeEntry = board.entries.find((e) => e.section === "active");
       expect(activeEntry?.goal.goalId).toBe(queued.goalId);
       expect(activeEntry?.goal.status).toBe("active");
+
+      await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+      expect(executed[0]).toContain("Second");
 
       const completed = board.entries.find(
         (e) => e.section === "complete" && e.goal.goalId === active.goalId
@@ -2972,6 +2987,44 @@ describe("WorkspaceGoalService", () => {
         .filter((e) => e.section === "upcoming")
         .map((e) => e.goal.goalId);
       expect(upcomingIds[0]).toBe(active.goalId);
+    });
+
+    test("promoteUpcomingGoal starts the promoted goal and clears stale stop gates", async () => {
+      const active = await setGoalOk(service, { workspaceId, objective: "Stopped active" });
+      const queued = await service.addUpcomingGoal({
+        workspaceId,
+        objective: "Promote after stop",
+      });
+      // The user stopped the previous active turn, then explicitly promoted a
+      // queued goal. That old stop/ack gate must not suppress the promoted
+      // goal's kickoff and force a pause/unpause workaround.
+      await service.recordUserStoppedStream(workspaceId, Date.now());
+
+      const dispatcher = new IdleDispatcher();
+      const executed: string[] = [];
+      service.registerGoalContinuationConsumer(dispatcher, {
+        hasActiveDescendantTasks: () => false,
+        getRuntimeState: () => ({ isRuntimeCompatible: true }),
+        executeGoalContinuation: (input) => {
+          executed.push(input.message);
+          return Promise.resolve(true);
+        },
+        getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      });
+
+      const promoted = await service.promoteUpcomingGoal(workspaceId, queued.goalId);
+      expect(promoted?.goalId).toBe(queued.goalId);
+      await waitForCondition(() => executed.length >= 1, { timeoutMs: 1_000 });
+      expect(executed[0]).toContain("Promote after stop");
+
+      const rePromoted = await service.promoteUpcomingGoal(workspaceId, active.goalId);
+      expect(rePromoted?.goalId).toBe(active.goalId);
+      await waitForCondition(() => executed.length >= 2, { timeoutMs: 1_000 });
+      expect(executed[1]).toContain("Stopped active");
+      expect(await service.getGoal(workspaceId)).toMatchObject({
+        goalId: active.goalId,
+        requireUserAcknowledgmentSinceMs: null,
+      });
     });
 
     test("promoteUpcomingGoal archives a completed active goal instead of demoting to upcoming", async () => {
