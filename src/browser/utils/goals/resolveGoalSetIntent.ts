@@ -50,12 +50,27 @@ export interface GoalSetIntentInput {
   objective: string;
   budgetCents?: number | null;
   turnCap?: number | null;
+  /**
+   * Per-goal auto-compaction threshold override. Tri-state same as
+   * `budgetCents` / `turnCap`: `undefined` = no opinion (no field on
+   * the resolved intent), `null` = explicit clear, number = explicit
+   * percent. No workspace-level default exists for this field yet, so
+   * the resolver just passes the value through verbatim instead of
+   * filling in a default.
+   */
+  autoCompactionThresholdPct?: number | null;
 }
 
 export interface GoalSetIntent {
   objective: string;
   budgetCents: number | null;
   turnCap: number | null;
+  // Only present on the resolved intent when the caller actually opted
+  // in (slash command flag, create-form input, or inline editor). Keeps
+  // omitted-from-input distinguishable from null-from-input so the
+  // downstream `setGoal` payload doesn't accidentally clear an existing
+  // per-goal override on plain `/goal <objective>` invocations.
+  autoCompactionThresholdPct?: number | null;
 }
 
 /**
@@ -93,6 +108,14 @@ export function resolveGoalSetIntent(
     objective: input.objective,
     budgetCents,
     turnCap,
+    // Pass through verbatim — including the explicit `null` clear — so
+    // the slash command's `--compact default` reaches `setGoal`. Omit
+    // the key entirely when the caller didn't set it; otherwise a
+    // plain `/goal <objective>` would unintentionally clear an existing
+    // override on every replace.
+    ...(input.autoCompactionThresholdPct !== undefined
+      ? { autoCompactionThresholdPct: input.autoCompactionThresholdPct }
+      : {}),
   };
 }
 

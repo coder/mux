@@ -458,6 +458,41 @@ function parseGoalTurnCap(value: unknown): number | null {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+/**
+ * Parse the `--compact <value>` flag for `/goal`. Returns:
+ *   - integer 0–100 — explicit per-goal auto-compact threshold percent
+ *   - `null` — sentinel for "off" / "default" / "off" / "clear", which
+ *     the handler maps to either explicit-disabled (`100`) or
+ *     clear-override (`null`) below.
+ *   - `undefined` — parse error; caller returns `command-invalid-args`.
+ *
+ * `"off"` is mapped to `100` (per-goal disabled) at the handler level so
+ * the slash command surfaces the same semantics the inline editor uses.
+ * `"default"` / `"none"` map to a literal `null` so the user can clear
+ * an existing override without opening the GoalTab.
+ */
+function parseGoalCompactionThreshold(
+  value: unknown
+): { kind: "value"; pct: number } | { kind: "clear" } | { kind: "off" } | null {
+  if (typeof value !== "string" && typeof value !== "number") {
+    return null;
+  }
+  const raw = String(value).trim().toLowerCase();
+  if (raw === "default" || raw === "none" || raw === "clear") {
+    return { kind: "clear" };
+  }
+  if (raw === "off" || raw === "disable" || raw === "disabled") {
+    return { kind: "off" };
+  }
+  const numericPart = raw.endsWith("%") ? raw.slice(0, -1).trim() : raw;
+  if (!/^\d+$/.test(numericPart)) return null;
+  const parsed = Number.parseInt(numericPart, 10);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    return null;
+  }
+  return { kind: "value", pct: parsed };
+}
+
 const GOAL_USAGE = `/goal ${SLASH_COMMAND_HINTS.goal}`;
 const GOAL_BUDGET_USAGE = "/goal budget <amount>";
 
@@ -566,6 +601,7 @@ const goalCommandDefinition: SlashCommandDefinition = {
 
     let budgetCents: number | undefined;
     let turnCap: number | undefined;
+    let autoCompactionThresholdPct: number | null | undefined;
     let objectiveStartIndex = 0;
 
     if (headerTokens[0] === "-b") {
@@ -608,6 +644,31 @@ const goalCommandDefinition: SlashCommandDefinition = {
       objectiveStartIndex += 2;
     }
 
+    // `--compact <value>` is order-sensitive like `--turns`: it must
+    // appear before the objective text begins. Accepted values: 0–100
+    // integer percent, "off"/"disable" (= 100), "default"/"none"/"clear"
+    // (= null). The handler maps these into the discriminated tri-state
+    // the rest of the goal pipeline already understands.
+    if (headerTokens[objectiveStartIndex] === "--compact") {
+      const rawCompact = headerTokens[objectiveStartIndex + 1];
+      const parsedCompact = parseGoalCompactionThreshold(rawCompact);
+      if (parsedCompact == null) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: String(rawCompact),
+          usage: GOAL_USAGE,
+        };
+      }
+      autoCompactionThresholdPct =
+        parsedCompact.kind === "value"
+          ? parsedCompact.pct
+          : parsedCompact.kind === "off"
+            ? 100
+            : null;
+      objectiveStartIndex += 2;
+    }
+
     // Only a leading budget/turn flag prefix is command syntax; everything
     // after that is user-authored goal text so objectives can mention
     // flag-looking strings (including deprecated-looking budget flags).
@@ -630,6 +691,9 @@ const goalCommandDefinition: SlashCommandDefinition = {
     }
     if (turnCap !== undefined) {
       result.turnCap = turnCap;
+    }
+    if (autoCompactionThresholdPct !== undefined) {
+      result.autoCompactionThresholdPct = autoCompactionThresholdPct;
     }
 
     return result;

@@ -47,6 +47,25 @@ export const GoalRecordV1Schema = z.object({
   budgetLimitOriginKind: GoalBudgetLimitOriginKindSchema.optional(),
   requireUserAcknowledgmentSinceMs: z.number().int().nonnegative().nullable(),
   lastContinuationFiredAtMs: z.number().int().nonnegative().nullable().optional(),
+  /**
+   * Per-goal override for the auto-compaction threshold, expressed as an
+   * integer percentage of the model's max context window.
+   *
+   *   - `null` / `undefined` (default) → no override; the workspace's
+   *     per-model auto-compact slider governs as today.
+   *   - `0` – `99` → compact at this percent of context for this goal,
+   *     regardless of the model-level setting.
+   *   - `100` → auto-compaction is explicitly disabled for this goal.
+   *
+   * Optional + nullable so legacy persisted goal records keep loading
+   * without migration; new writes set it explicitly. Lives on the goal
+   * because goal-based flows often have different cost-vs-fidelity
+   * preferences than the workspace's default model setting — a long
+   * research goal might want aggressive compaction for cost, while a
+   * short refactor goal might prefer no compaction so the agent keeps
+   * the full plan in view.
+   */
+  autoCompactionThresholdPct: z.number().int().min(0).max(100).nullable().optional(),
   completionSummary: z.string().optional(),
   createdAtMs: z.number().int().nonnegative(),
   updatedAtMs: z.number().int().nonnegative(),
@@ -60,6 +79,12 @@ export const GoalSnapshotSchema = z.object({
   costCents: z.number().int().nonnegative(),
   turnsUsed: z.number().int().nonnegative(),
   turnCap: z.number().int().positive().nullable(),
+  // Surface the per-goal auto-compact override to the renderer so the
+  // ChatPane warning banner and the GoalTab tile both see the same
+  // effective threshold. Same semantics as `GoalRecordV1Schema.autoCompactionThresholdPct`:
+  // `null`/`undefined` = no override (model-level slider applies);
+  // 0–99 = explicit threshold for this goal; 100 = disabled for this goal.
+  autoCompactionThresholdPct: z.number().int().min(0).max(100).nullable().optional(),
   completionSummary: z.string().optional(),
   startedAtMs: z.number().int().nonnegative(),
   pendingPersistence: z.boolean().optional(),
@@ -115,6 +140,11 @@ export const GoalSetInputSchema = z.object({
   status: PublicGoalStatusSchema.nullish(),
   budgetCents: z.number().int().nonnegative().nullable().optional(),
   turnCap: z.number().int().positive().nullable().optional(),
+  // Optional per-goal auto-compact override. Same tri-state as
+  // `budgetCents` / `turnCap`: `undefined` = no change, `null` = clear
+  // the override (fall back to model-level setting), explicit number =
+  // set the per-goal threshold percent (0–100, 100 = disabled).
+  autoCompactionThresholdPct: z.number().int().min(0).max(100).nullable().optional(),
   completionSummary: z.string().nullish(),
   expectedGoalId: z.string().uuid().nullish(),
   // When true and a current goal already exists, an objective update mutates
@@ -198,6 +228,7 @@ export const GoalBoardAddUpcomingInputSchema = z.object({
   objective: z.string().min(1),
   budgetCents: z.number().int().nonnegative().nullable().optional(),
   turnCap: z.number().int().positive().nullable().optional(),
+  autoCompactionThresholdPct: z.number().int().min(0).max(100).nullable().optional(),
 });
 
 export const GoalBoardArchiveInputSchema = z.object({
@@ -238,4 +269,5 @@ export const GoalBoardUpdateUpcomingInputSchema = z.object({
   objective: z.string().min(1).optional(),
   budgetCents: z.number().int().nonnegative().nullable().optional(),
   turnCap: z.number().int().positive().nullable().optional(),
+  autoCompactionThresholdPct: z.number().int().min(0).max(100).nullable().optional(),
 });

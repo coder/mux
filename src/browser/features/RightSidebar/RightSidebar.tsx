@@ -302,6 +302,14 @@ interface RightSidebarTabsetNodeProps {
   onGoalUpdateObjective: (objective: string) => Promise<void>;
   onGoalUpdateBudget: (budgetCents: number | null) => Promise<void>;
   onGoalUpdateTurnCap: (turnCap: number | null) => Promise<void>;
+  /**
+   * Persist the active goal's per-goal auto-compact override. `null`
+   * clears the override (workspace per-model slider applies); a number
+   * 0–100 sets the percent. Wired through `setGoalWithSingleConflictRetry`
+   * just like budget / turn-cap edits so the optimistic-concurrency
+   * loop covers all three.
+   */
+  onGoalUpdateAutoCompactionThresholdPct: (pct: number | null) => Promise<void>;
   onGoalClear: () => Promise<void>;
   /**
    * Create a brand-new goal from the GoalTab's in-tab form. Matches the
@@ -465,6 +473,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       onUpdateObjective: props.onGoalUpdateObjective,
       onUpdateBudget: props.onGoalUpdateBudget,
       onUpdateTurnCap: props.onGoalUpdateTurnCap,
+      onUpdateAutoCompactionThresholdPct: props.onGoalUpdateAutoCompactionThresholdPct,
       onClear: props.onGoalClear,
       onCreate: props.onGoalCreate,
     },
@@ -701,6 +710,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     objective?: string;
     budgetCents?: number | null;
     turnCap?: number | null;
+    // Tri-state: `undefined` = no change, `null` = clear the override,
+    // explicit number = set per-goal threshold percent.
+    autoCompactionThresholdPct?: number | null;
     completionSummary?: string;
     // `editInPlace` is forwarded verbatim to `setGoal`; it tells the backend
     // to mutate the existing goal record instead of archiving+recreating.
@@ -737,6 +749,14 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   const handleGoalUpdateTurnCap = async (turnCap: number | null) => {
     await setGoalWithSingleConflictRetry({ turnCap });
+  };
+
+  const handleGoalUpdateAutoCompactionThresholdPct = async (pct: number | null) => {
+    // No model-pricing pre-check (unlike `handleGoalUpdateBudget`):
+    // the per-goal auto-compact override doesn't gate on budget pricing
+    // — it only changes when the compaction loop triggers. The shared
+    // retry helper handles the optimistic-concurrency loop.
+    await setGoalWithSingleConflictRetry({ autoCompactionThresholdPct: pct });
   };
 
   const handleGoalUpdateObjective = async (objective: string) => {
@@ -1624,6 +1644,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onGoalUpdateObjective={handleGoalUpdateObjective}
         onGoalUpdateBudget={handleGoalUpdateBudget}
         onGoalUpdateTurnCap={handleGoalUpdateTurnCap}
+        onGoalUpdateAutoCompactionThresholdPct={handleGoalUpdateAutoCompactionThresholdPct}
         onGoalClear={handleGoalClear}
         onGoalCreate={handleGoalCreate}
         onAutoFocusConsumed={() => setAutoFocusTerminalSession(null)}

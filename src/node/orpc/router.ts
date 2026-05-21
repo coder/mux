@@ -4174,6 +4174,7 @@ export const router = (authToken?: string) => {
               objective: input.objective,
               budgetCents: input.budgetCents,
               turnCap: input.turnCap,
+              autoCompactionThresholdPct: input.autoCompactionThresholdPct,
             })
           );
         }),
@@ -4220,6 +4221,7 @@ export const router = (authToken?: string) => {
               objective: input.objective,
               budgetCents: input.budgetCents,
               turnCap: input.turnCap,
+              autoCompactionThresholdPct: input.autoCompactionThresholdPct,
             })
           );
         }),
