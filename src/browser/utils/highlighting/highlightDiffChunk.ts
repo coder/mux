@@ -15,11 +15,14 @@ import type { DiffChunk } from "./diffChunking";
  * Future optimization: Could render entire <code> blocks and use CSS to style
  * .line spans instead of extracting per-line HTML. Would simplify parsing
  * and reduce dangerouslySetInnerHTML usage.
+ *
+ * Size policy: we deliberately do NOT impose a byte cap here. Real-world
+ * human-authored files routinely exceed any value we'd pick (a 10k-LoC file at
+ * typical line widths is ~500 KB), and the worker client enforces a per-call
+ * time budget that terminates pathological inputs without blocking the UI. So
+ * "render plain text on cost overrun" is a property of the worker boundary,
+ * not of this layer.
  */
-
-// Maximum diff size to highlight (in bytes)
-// Diffs larger than this fall back to plain text for performance
-const MAX_DIFF_SIZE_BYTES = 32768; // 32kb
 
 export interface HighlightedLine {
   html: string; // HTML content (already escaped and tokenized)
@@ -57,14 +60,6 @@ export async function highlightDiffChunk(
       })),
       usedFallback: false,
     };
-  }
-
-  // Enforce size limit for performance
-  // Calculate size by summing line lengths + newlines (more performant than TextEncoder)
-  const sizeBytes =
-    chunk.lines.reduce((total, line) => total + line.length, 0) + chunk.lines.length - 1;
-  if (sizeBytes > MAX_DIFF_SIZE_BYTES) {
-    return createFallbackChunk(chunk);
   }
 
   const code = chunk.lines.join("\n");
