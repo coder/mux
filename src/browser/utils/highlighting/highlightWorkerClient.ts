@@ -118,16 +118,31 @@ function recycleWorker(expectedWorker?: Worker): void {
     return;
   }
 
-  if (worker !== null) {
+  const currentWorker = worker;
+  const currentWorkerAPI = workerAPI;
+  worker = null;
+  workerAPI = null;
+
+  if (currentWorkerAPI !== null) {
     try {
-      worker.terminate();
+      // Tell Comlink this proxy is intentionally done before terminating the
+      // endpoint. Otherwise Comlink's finalizer can later try to post a release
+      // message to an already-terminated worker, which surfaces as an
+      // unhandled InvalidStateError in Bun's test runner.
+      currentWorkerAPI[Comlink.releaseProxy]();
+    } catch {
+      // If the worker is already gone, clearing our references is enough.
+    }
+  }
+
+  if (currentWorker !== null) {
+    try {
+      currentWorker.terminate();
     } catch {
       // terminate() can't really fail, but be defensive — we just want the
       // module state cleared either way.
     }
   }
-  worker = null;
-  workerAPI = null;
 }
 
 function getWorkerAPI(): Comlink.Remote<HighlightWorkerAPI> | null {
