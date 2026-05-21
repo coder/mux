@@ -135,3 +135,103 @@ describe("WorkspaceService.setSnooze", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("WorkspaceService.clearSnoozeOnUserMessage", () => {
+  let currentProjectsConfig: ProjectsConfig;
+  let mockConfig: Config;
+  let editConfigMock: ReturnType<typeof mock>;
+  let service: WorkspaceService;
+
+  // Access the private helper without exposing it on the public surface.
+  type PrivateClear = (workspaceId: string) => Promise<void>;
+  const callPrivateHelper = (svc: WorkspaceService, workspaceId: string): Promise<void> => {
+    return (svc as unknown as { clearSnoozeOnUserMessage: PrivateClear }).clearSnoozeOnUserMessage(
+      workspaceId
+    );
+  };
+
+  beforeEach(() => {
+    currentProjectsConfig = createProjectsConfig(createWorkspace());
+
+    // Captured separately so tests can assert call counts without the
+    // `unbound-method` lint rule firing on `mockConfig.editConfig`.
+    editConfigMock = mock(
+      (mutate: (config: ProjectsConfig) => ProjectsConfig | undefined): Promise<void> => {
+        const next = mutate(currentProjectsConfig);
+        if (next) currentProjectsConfig = next;
+        return Promise.resolve();
+      }
+    );
+
+    mockConfig = {
+      loadConfigOrDefault: mock(() => currentProjectsConfig),
+      findWorkspace: mock(() => ({
+        workspacePath: TEST_WORKSPACE_PATH,
+        projectPath: TEST_PROJECT_PATH,
+      })),
+      editConfig: editConfigMock,
+      saveConfig: mock((nextConfig: ProjectsConfig) => {
+        currentProjectsConfig = nextConfig;
+        return Promise.resolve();
+      }),
+    } as unknown as Config;
+
+    service = new WorkspaceService(
+      mockConfig,
+      {} as HistoryService,
+      new EventEmitter() as unknown as AIService,
+      new EventEmitter() as unknown as InitStateManager,
+      {
+        updateRecency: mock(() =>
+          Promise.resolve({
+            recency: Date.now(),
+            streaming: false,
+            lastModel: null,
+            lastThinkingLevel: null,
+            agentStatus: null,
+          })
+        ),
+      } as unknown as ExtensionMetadataService,
+      {} as BackgroundProcessManager
+    );
+    (
+      service as unknown as { emitCurrentWorkspaceMetadata: () => Promise<void> }
+    ).emitCurrentWorkspaceMetadata = mock(() => Promise.resolve());
+  });
+
+  afterEach(() => {
+    mock.restore();
+  });
+
+  test("clears an active snooze so a user message releases the chat from the Snoozed section", async () => {
+    currentProjectsConfig = createProjectsConfig(
+      createWorkspace(new Date(Date.now() + 60 * 60_000).toISOString())
+    );
+
+    await callPrivateHelper(service, TEST_WORKSPACE_ID);
+
+    const persisted = currentProjectsConfig.projects.get(TEST_PROJECT_PATH)?.workspaces.at(0);
+    expect(persisted?.snoozedUntil).toBeUndefined();
+  });
+
+  test("fast-paths the not-snoozed case without calling editConfig", async () => {
+    // The not-snoozed branch must avoid a `setSnooze` round-trip so the
+    // per-message overhead stays at "single sync config read".
+    await callPrivateHelper(service, TEST_WORKSPACE_ID);
+
+    expect(editConfigMock).not.toHaveBeenCalled();
+  });
+
+  test("swallows errors so a transient config failure can't block the message send", async () => {
+    currentProjectsConfig = createProjectsConfig(
+      createWorkspace(new Date(Date.now() + 60 * 60_000).toISOString())
+    );
+    editConfigMock = mock(() => Promise.reject(new Error("disk full")));
+    mockConfig.editConfig = editConfigMock as unknown as Config["editConfig"];
+
+    // Direct await keeps the assertion compatible with the lint rule that
+    // flags `expect(...).resolves` chains as non-thenable in some configs.
+    const result = await callPrivateHelper(service, TEST_WORKSPACE_ID);
+    expect(result).toBeUndefined();
+  });
+});

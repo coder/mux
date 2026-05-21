@@ -4418,6 +4418,41 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Best-effort: clear any active snooze on a workspace when the user sends a
+   * real (non-synthetic) message. Called fire-and-forget from `sendMessage`.
+   *
+   * Fast-paths the common "not snoozed" case with a cheap config read so we
+   * don't pay a `setSnooze` write on every single message send. Failures are
+   * logged at debug and swallowed so a transient config write error can never
+   * block the actual message — the user can re-snooze manually if needed.
+   */
+  private async clearSnoozeOnUserMessage(workspaceId: string): Promise<void> {
+    try {
+      const found = this.config.findWorkspace(workspaceId);
+      if (!found) return;
+      const config = this.config.loadConfigOrDefault();
+      const projectConfig = config.projects.get(found.projectPath);
+      const entry = projectConfig?.workspaces.find((w) => w.id === workspaceId);
+      if (!entry?.snoozedUntil) {
+        // Fast path: most sends land here since most workspaces aren't snoozed.
+        return;
+      }
+      const result = await this.setSnooze(workspaceId, null);
+      if (!result.success) {
+        log.debug("Failed to auto-unsnooze workspace on user message", {
+          workspaceId,
+          error: result.error,
+        });
+      }
+    } catch (error) {
+      log.debug("Auto-unsnooze threw on user message", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /**
    * Archive a workspace. Archived workspaces are hidden from the main sidebar
    * but can be viewed on the project page.
    *
@@ -5879,6 +5914,20 @@ export class WorkspaceService extends EventEmitter {
       const messageTimestamp = Date.now();
       if (!isIdleCompaction) {
         void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
+      }
+
+      // Auto-unsnooze on real user sends — re-engaging with a chat by sending a
+      // message should release it from the Snoozed section the way Gmail/Slack
+      // snoozes clear on user interaction. Synthetic sends (heartbeats, idle
+      // compaction, goal continuations) are backend-initiated maintenance and
+      // must NOT count as re-engagement, otherwise the next scheduled
+      // heartbeat would drain the section right after the user snoozed.
+      //
+      // Fire-and-forget mirrors the recency update above; the persisted
+      // snooze state is best-effort and a transient write failure must never
+      // block the actual message send.
+      if (internal?.synthetic !== true) {
+        void this.clearSnoozeOnUserMessage(workspaceId);
       }
 
       const normalizedOptions = this.normalizeSendMessageAgentId(options);
