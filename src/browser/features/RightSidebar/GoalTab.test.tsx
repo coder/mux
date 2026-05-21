@@ -495,15 +495,15 @@ describe("GoalTab", () => {
     expect(getByLabelText("Edit goal objective")).toBeTruthy();
   });
 
-  test("clear control is de-prominent and relabels for completed goals", () => {
+  test("active goals expose a de-prominent Clear; completed goals promote Archive as primary", () => {
     const { getByLabelText, getByText, rerender, queryByText } = render(
       <GoalTab goal={goal()} onSetStatus={mock()} onClear={mock()} />
     );
 
-    // Active goal: the clear control exists but is rendered as a small
-    // chip-style row-action button (same `RowActionButton` styling as the
-    // Archive / Revive controls on the board) — explicitly NOT the
-    // primary accent button used by Save / Set goal.
+    // Lifecycle-active goals: Clear is rendered as a small chip-style
+    // row-action button — explicitly NOT the primary accent button used
+    // by Save / Set goal / Archive-on-complete. Keeps a destructive
+    // option visible without competing with Pause / Mark complete.
     const clearButton = getByLabelText("Clear goal");
     expect(clearButton.className).not.toContain("bg-accent");
     expect(getByText("Clear goal")).toBeTruthy();
@@ -515,13 +515,19 @@ describe("GoalTab", () => {
         onClear={mock()}
       />
     );
-    // Completed goals: the action is "archive" (moves the goal into the
-    // board's Archived section via `workspace.archiveGoal`, not into
-    // history under `endReason: "completed"`). The visible label,
-    // aria-label, and the absence of the "Clear goal" wording are all
-    // part of the user-visible UX contract.
-    expect(getByLabelText("Archive goal")).toBeTruthy();
-    expect(getByText("Archive this goal")).toBeTruthy();
+    // Completed goals: Archive sits next to Reopen as the accent-colored
+    // primary action ("file this away" is the obvious next step for a
+    // finished goal). Reopen stays available as the secondary recovery
+    // path with a neutral border style — the inverse of the previous
+    // green Reopen / underlined Archive layout. The "Clear goal" wording
+    // disappears entirely for completed goals; Archive routes through
+    // the goal-board endpoint instead.
+    const archiveButton = getByLabelText("Archive goal");
+    expect(archiveButton.className).toContain("bg-accent");
+    expect(getByText("Archive")).toBeTruthy();
+    const reopenButton = getByLabelText("Reopen goal");
+    expect(reopenButton.className).not.toContain("bg-accent");
+    expect(getByText("Reopen")).toBeTruthy();
     expect(queryByText("Clear goal")).toBeNull();
   });
 
