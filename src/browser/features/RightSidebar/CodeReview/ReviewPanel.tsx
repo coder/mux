@@ -635,17 +635,32 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
   // the same key until manual restore. The panel's `usePersistedState`
   // listener picks up the pruned value automatically on next mount.
   //
-  // IMPORTANT: only prune when `rawAssistedHunks` is non-empty. An empty
-  // list is ambiguous — it could mean the agent really cleared its set,
-  // or that the workspace hasn't replayed its transcript yet (cold load,
-  // workspace switch). Erasing dismissed keys in the latter case would
-  // make dismissals non-durable across restarts: previously-dismissed
-  // pins would resurface as soon as hydration completes. Bounding the
-  // dismissed list via `ASSISTED_REVIEW_MAX_HUNKS` makes the cost of
-  // "never prune while empty" acceptable.
+  // Empty `rawAssistedHunks` is ambiguous on its own — could be cold-load
+  // replay-not-finished, or an explicit agent clear. We disambiguate by
+  // tracking whether we've ever observed a non-empty set during this
+  // session: that confirms hydration completed (or the agent actively
+  // added pins), at which point an empty live set is a real clear and
+  // we should drop ALL dismissed keys so a future re-add of the same
+  // path:range surfaces normally.
+  const everSeenAssistedRef = useRef(false);
   useEffect(() => {
+    if (rawAssistedHunks.length > 0) {
+      everSeenAssistedRef.current = true;
+    }
     if (dismissedAssistedKeys.length === 0) return;
-    if (rawAssistedHunks.length === 0) return;
+
+    if (rawAssistedHunks.length === 0) {
+      if (everSeenAssistedRef.current) {
+        // Agent explicitly cleared its set after we'd already seen
+        // pins; drop the user-side dismissals so a re-add of the same
+        // key surfaces in the UI.
+        setDismissedAssistedKeys([]);
+      }
+      // else: cold-load with no pins yet — preserve dismissals until
+      // hydration produces evidence one way or the other.
+      return;
+    }
+
     const liveKeys = new Set(rawAssistedHunks.map((h) => formatAssistedFilter(h)));
     const pruned = dismissedAssistedKeys.filter((key) => liveKeys.has(key));
     if (pruned.length !== dismissedAssistedKeys.length) {
@@ -2548,9 +2563,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                         ? "The agent hasn't pinned any hunks."
                         : assistedMatchByHunkId.size === 0
                           ? "None of the agent-flagged hunks match the current diff. The branch may have moved since the agent flagged them."
-                          : unreadAssistedInDiff === 0
-                            ? "You've read every agent-flagged hunk. Toggle Read to see them again, or exit Assisted to keep reviewing the rest of the diff."
-                            : "All agent-flagged hunks in this diff are read. Toggle Read or exit Assisted to see more."
+                          : debouncedSearchTerm.trim()
+                            ? // Search-driven empty state takes precedence over
+                              // the read-state copy: claiming "all read" when
+                              // the user simply has unmatched search terms is
+                              // confusing (they'd flip Read and still see
+                              // nothing). Point them at clearing the search.
+                              `No agent-flagged hunks match "${debouncedSearchTerm}". Clear the search or try a different term.`
+                            : unreadAssistedInDiff === 0
+                              ? "You've read every agent-flagged hunk. Toggle Read to see them again, or exit Assisted to keep reviewing the rest of the diff."
+                              : "All agent-flagged hunks in this diff are read. Toggle Read or exit Assisted to see more."
                       : debouncedSearchTerm.trim()
                         ? `No hunks match "${debouncedSearchTerm}". Try a different search term.`
                         : selectedFilePath
