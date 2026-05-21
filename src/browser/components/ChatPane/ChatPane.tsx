@@ -32,6 +32,7 @@ import {
   shouldBypassDeferredMessages,
 } from "@/browser/utils/messages/messageUtils";
 import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
+import { BashCollapsedSummaryModeProvider } from "@/browser/features/Tools/BashCollapsedSummaryModeContext";
 import { BashOutputCollapsedIndicator } from "@/browser/features/Tools/BashOutputCollapsedIndicator";
 import {
   getInterruptionContext,
@@ -1073,8 +1074,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                     </p>
                   </div>
                 ) : (
-                  <MessageListProvider value={messageListContextValue}>
-                    <>
+                  <BashCollapsedSummaryModeProvider>
+                    <MessageListProvider value={messageListContextValue}>
                       {shouldRenderLoadOlderMessagesButton && (
                         <div className="flex justify-center py-3">
                           <TooltipIfPresent
@@ -1164,8 +1165,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                           </React.Fragment>
                         );
                       })}
-                    </>
-                  </MessageListProvider>
+                    </MessageListProvider>
+                  </BashCollapsedSummaryModeProvider>
                 )}
                 <LayoutStackLane
                   workspaceId={workspaceId}

@@ -305,7 +305,7 @@ async function requireGoalSetSuccess(
 }
 
 function openGoalPanel(workspaceId: string, openCompleteInput = false): void {
-  if (typeof window === "undefined") {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
     return;
   }
   window.dispatchEvent(

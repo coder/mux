@@ -782,7 +782,7 @@ async function handleGoalCommand(
     if (parsed.type === "goal-show") {
       const result = await api.workspace.getGoal({ workspaceId });
       if (result.goal) {
-        window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
+        window.dispatchEvent?.(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
         return { clearInput: true, toastShown: false };
       }
 
@@ -827,7 +827,7 @@ async function handleGoalCommand(
 
     if (parsed.type === "goal-complete") {
       if (!parsed.summary) {
-        window.dispatchEvent(
+        window.dispatchEvent?.(
           createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, {
             workspaceId,
             openCompleteInput: true,
@@ -845,7 +845,7 @@ async function handleGoalCommand(
         return { clearInput: false, toastShown: true };
       }
       setToast({ id: Date.now().toString(), type: "success", message: "Goal marked complete" });
-      window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
+      window.dispatchEvent?.(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
       trackCommandUsed("goal");
       return { clearInput: true, toastShown: true };
     }
@@ -875,7 +875,7 @@ async function handleGoalCommand(
         return { clearInput: false, toastShown: true };
       }
       setToast({ id: Date.now().toString(), type: "success", message: "Goal budget updated" });
-      window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
+      window.dispatchEvent?.(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
       trackCommandUsed("goal");
       return { clearInput: true, toastShown: true };
     }
@@ -895,7 +895,7 @@ async function handleGoalCommand(
       showGoalSetErrorToast(setToast, result.error);
       return { clearInput: false, toastShown: true };
     }
-    window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
+    window.dispatchEvent?.(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
     trackCommandUsed("goal");
     return { clearInput: true, toastShown: false };
   } catch (error) {

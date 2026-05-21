@@ -1,15 +1,21 @@
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
+import {
+  DEFAULT_BASH_COLLAPSED_SUMMARY_MODE,
+  type BashCollapsedSummaryMode,
+} from "@/common/constants/storage";
 import { capitalize } from "@/common/utils/capitalize";
 import { formatDuration } from "@/common/utils/formatDuration";
 
 export type BashCollapsedSummary =
   | { kind: "command"; command: string }
+  | { kind: "intent"; intent: string }
   | { kind: "intent-command"; intent: string; command: string; durationLabel?: string };
 
 interface BuildBashCollapsedSummaryOptions {
   args: BashToolArgs;
   result?: BashToolResult;
   isBackground: boolean;
+  mode?: BashCollapsedSummaryMode;
 }
 
 const DURATION_TOKEN_PATTERN = String.raw`\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)`;
@@ -21,14 +27,29 @@ const TRAILING_USING_PATTERN = /^(?:(.*)\s+)?using\s+(.+?)\.?$/isu;
 /** Two passes catch nested patterns, for example "doing work using cmd for 5s for 3m". */
 const MAX_SANITIZE_PASSES = 2;
 
-/** Intent improves scanability, command lets users verify what ran. */
+/** Intent improves scanability; command display remains configurable for verification. */
 export function buildBashCollapsedSummary(
   options: BuildBashCollapsedSummaryOptions
 ): BashCollapsedSummary {
   const command = typeof options.args.script === "string" ? options.args.script : "";
+  const mode = options.mode ?? DEFAULT_BASH_COLLAPSED_SUMMARY_MODE;
+  if (mode === "command") {
+    return { kind: "command", command };
+  }
 
   const intent = sanitizeModelIntent(options.args.model_intent, command);
-  if (!intent || normalizeForComparison(intent) === normalizeForComparison(command)) {
+  const displayIntent =
+    intent && normalizeForComparison(intent) !== normalizeForComparison(command)
+      ? intent
+      : undefined;
+  if (mode === "intent") {
+    return {
+      kind: "intent",
+      intent: displayIntent ?? getIntentOnlyFallback(options.args, command),
+    };
+  }
+
+  if (!displayIntent) {
     return { kind: "command", command };
   }
 
@@ -38,7 +59,7 @@ export function buildBashCollapsedSummary(
       : undefined;
 
   // So users can verify what ran.
-  return { kind: "intent-command", intent, command, durationLabel };
+  return { kind: "intent-command", intent: displayIntent, command, durationLabel };
 }
 
 /** Models may echo `using <command>` and `for <duration>` despite schema guidance, so strip those since Mux appends them. */
@@ -68,6 +89,15 @@ export function sanitizeModelIntent(rawIntent: unknown, command: string): string
   }
 
   return capitalize(intent);
+}
+
+function getIntentOnlyFallback(args: BashToolArgs, command: string): string {
+  const displayName = typeof args.display_name === "string" ? args.display_name.trim() : "";
+  if (displayName && normalizeForComparison(displayName) !== normalizeForComparison(command)) {
+    return capitalize(displayName);
+  }
+
+  return "Bash command";
 }
 
 function stripTrailingDuration(intent: string): string {

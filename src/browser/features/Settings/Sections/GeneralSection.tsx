@@ -18,6 +18,11 @@ import {
   TERMINAL_FONT_CONFIG_KEY,
   DEFAULT_TERMINAL_FONT_CONFIG,
   LAUNCH_BEHAVIOR_KEY,
+  BASH_COLLAPSED_SUMMARY_MODE_KEY,
+  BASH_COLLAPSED_SUMMARY_MODES,
+  DEFAULT_BASH_COLLAPSED_SUMMARY_MODE,
+  normalizeBashCollapsedSummaryMode,
+  type BashCollapsedSummaryMode,
   type EditorConfig,
   type EditorType,
   type LaunchBehavior,
@@ -143,6 +148,15 @@ const LAUNCH_BEHAVIOR_OPTIONS = [
   { value: "new-chat", label: "New chat on recent project" },
   { value: "last-workspace", label: "Last visited workspace" },
 ] as const;
+const BASH_COLLAPSED_SUMMARY_MODE_LABELS: Record<BashCollapsedSummaryMode, string> = {
+  command: "Command",
+  "intent-command": "Intent and command",
+  intent: "Intent",
+};
+const BASH_COLLAPSED_SUMMARY_MODE_OPTIONS = BASH_COLLAPSED_SUMMARY_MODES.map((value) => ({
+  value,
+  label: BASH_COLLAPSED_SUMMARY_MODE_LABELS[value],
+}));
 const ARCHIVE_BEHAVIOR_OPTIONS = [
   { value: "keep", label: "Keep running" },
   { value: "stop", label: "Stop workspace" },
@@ -167,6 +181,11 @@ export function GeneralSection() {
     LAUNCH_BEHAVIOR_KEY,
     "dashboard"
   );
+  const [rawBashCollapsedSummaryMode, setBashCollapsedSummaryMode] = usePersistedState<unknown>(
+    BASH_COLLAPSED_SUMMARY_MODE_KEY,
+    DEFAULT_BASH_COLLAPSED_SUMMARY_MODE
+  );
+  const bashCollapsedSummaryMode = normalizeBashCollapsedSummaryMode(rawBashCollapsedSummaryMode);
   const [rawTerminalFontConfig, setTerminalFontConfig] = usePersistedState<TerminalFontConfig>(
     TERMINAL_FONT_CONFIG_KEY,
     DEFAULT_TERMINAL_FONT_CONFIG
@@ -494,6 +513,33 @@ export function GeneralSection() {
               </SelectTrigger>
               <SelectContent>
                 {LAUNCH_BEHAVIOR_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Collapsed bash summaries</div>
+              <div className="text-muted text-xs">
+                Choose whether collapsed bash tools show the raw command, the model&apos;s intent,
+                or both.
+              </div>
+            </div>
+            <Select
+              value={bashCollapsedSummaryMode}
+              onValueChange={(value) =>
+                setBashCollapsedSummaryMode(value as BashCollapsedSummaryMode)
+              }
+            >
+              <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {BASH_COLLAPSED_SUMMARY_MODE_OPTIONS.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>

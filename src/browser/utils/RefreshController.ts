@@ -438,8 +438,14 @@ export class RefreshController {
   bindListeners(): void {
     if (this.listenersBound) return;
     if (typeof document === "undefined" || typeof window === "undefined") return;
-
-    this.listenersBound = true;
+    if (
+      typeof document.addEventListener !== "function" ||
+      typeof document.removeEventListener !== "function" ||
+      typeof window.addEventListener !== "function" ||
+      typeof window.removeEventListener !== "function"
+    ) {
+      return;
+    }
 
     this.boundHandleVisibility = () => {
       if (document.visibilityState === "visible") {
@@ -453,6 +459,7 @@ export class RefreshController {
 
     document.addEventListener("visibilitychange", this.boundHandleVisibility);
     window.addEventListener("focus", this.boundHandleFocus);
+    this.listenersBound = true;
   }
 
   /**
@@ -505,10 +512,10 @@ export class RefreshController {
     }
 
     if (this.listenersBound) {
-      if (this.boundHandleVisibility) {
+      if (this.boundHandleVisibility && typeof document.removeEventListener === "function") {
         document.removeEventListener("visibilitychange", this.boundHandleVisibility);
       }
-      if (this.boundHandleFocus) {
+      if (this.boundHandleFocus && typeof window.removeEventListener === "function") {
         window.removeEventListener("focus", this.boundHandleFocus);
       }
       this.listenersBound = false;

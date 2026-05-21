@@ -25,6 +25,7 @@ import { useForegroundBashToolCallIds } from "@/browser/stores/BackgroundBashSto
 import { useBackgroundBashActions } from "@/browser/contexts/BackgroundBashContext";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { buildBashCollapsedSummary } from "./bashCollapsedSummary";
+import { useBashCollapsedSummaryMode } from "./BashCollapsedSummaryModeContext";
 import { BackgroundBashOutputDialog } from "@/browser/components/BackgroundBashOutputDialog/BackgroundBashOutputDialog";
 
 interface BashToolCallProps {
@@ -55,6 +56,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 }) => {
   const { expanded, setExpanded, toggleExpanded } = useToolExpansion();
   const [outputDialogOpen, setOutputDialogOpen] = useState(false);
+  const bashCollapsedSummaryMode = useBashCollapsedSummaryMode();
 
   const resultHasOutput = typeof result?.output === "string";
   const shouldTrackLiveBashState = Boolean(
@@ -112,8 +114,9 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     args,
     result,
     isBackground,
+    mode: bashCollapsedSummaryMode,
   });
-  const isIntentCommandSummary = bashCollapsedSummary.kind === "intent-command";
+  const showsDurationInCollapsedSummary = bashCollapsedSummary.kind === "intent-command";
 
   // Override status for backgrounded processes: the aggregator sees success=true and marks "completed",
   // but for a foreground→background migration we want to show "backgrounded"
@@ -191,6 +194,8 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               )}
             </span>
           </span>
+        ) : bashCollapsedSummary.kind === "intent" ? (
+          <span className="text-text max-w-96 truncate">{bashCollapsedSummary.intent}</span>
         ) : (
           <span className="text-text font-monospace max-w-96 truncate">
             {bashCollapsedSummary.command}
@@ -220,7 +225,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
             {args.display_name}
           </span>
         )}
-        {!isBackground && !isIntentCommandSummary && (
+        {!isBackground && !showsDurationInCollapsedSummary && (
           // Normal mode: show timeout and duration
           <span
             className={cn(

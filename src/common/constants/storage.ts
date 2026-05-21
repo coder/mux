@@ -376,6 +376,29 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
 };
 
 /**
+ * Collapsed bash tool summary display mode (global)
+ * Stores: "command" | "intent-command" | "intent"
+ */
+export const BASH_COLLAPSED_SUMMARY_MODE_KEY = "bashCollapsedSummaryMode";
+
+export const BASH_COLLAPSED_SUMMARY_MODES = ["command", "intent-command", "intent"] as const;
+
+export type BashCollapsedSummaryMode = (typeof BASH_COLLAPSED_SUMMARY_MODES)[number];
+
+export const DEFAULT_BASH_COLLAPSED_SUMMARY_MODE: BashCollapsedSummaryMode = "intent-command";
+
+export function isBashCollapsedSummaryMode(value: unknown): value is BashCollapsedSummaryMode {
+  return (
+    typeof value === "string" &&
+    BASH_COLLAPSED_SUMMARY_MODES.includes(value as BashCollapsedSummaryMode)
+  );
+}
+
+export function normalizeBashCollapsedSummaryMode(value: unknown): BashCollapsedSummaryMode {
+  return isBashCollapsedSummaryMode(value) ? value : DEFAULT_BASH_COLLAPSED_SUMMARY_MODE;
+}
+
+/**
  * Integrated terminal font configuration (global)
  * Stores: { fontFamily: string; fontSize: number }
  */

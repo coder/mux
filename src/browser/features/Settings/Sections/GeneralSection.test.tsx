@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import * as ActualSelectPrimitiveModule from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { installDom } from "../../../../../tests/ui/dom";
+import { BASH_COLLAPSED_SUMMARY_MODE_KEY } from "@/common/constants/storage";
 import {
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
   type CoderWorkspaceArchiveBehavior,
@@ -301,6 +302,22 @@ describe("GeneralSection", () => {
       expect(trigger.textContent).toContain(optionText);
     });
   }
+
+  test("persists the collapsed bash summaries display mode", async () => {
+    const { view } = renderGeneralSection();
+
+    await waitFor(() => {
+      expect(getSelectTrigger(view, "Collapsed bash summaries").textContent).toContain(
+        "Intent and command"
+      );
+    });
+
+    await chooseSelectOption(view, "Collapsed bash summaries", "Intent");
+
+    expect(window.localStorage.getItem(BASH_COLLAPSED_SUMMARY_MODE_KEY)).toBe(
+      JSON.stringify("intent")
+    );
+  });
 
   test("renders the worktree archive behavior copy and loads the saved value", async () => {
     const { view } = renderGeneralSection({

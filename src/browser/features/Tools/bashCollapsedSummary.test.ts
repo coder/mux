@@ -38,6 +38,47 @@ describe("buildBashCollapsedSummary", () => {
     });
   });
 
+  test("honors command-only and intent-only display modes", () => {
+    expect(
+      buildBashCollapsedSummary({
+        args: createArgs({ model_intent: "waiting for the dev instance to start" }),
+        result: completedResult,
+        isBackground: false,
+        mode: "command",
+      })
+    ).toEqual({ kind: "command", command });
+
+    expect(
+      buildBashCollapsedSummary({
+        args: createArgs({ model_intent: "waiting for the dev instance to start" }),
+        result: completedResult,
+        isBackground: false,
+        mode: "intent",
+      })
+    ).toEqual({
+      kind: "intent",
+      intent: "Waiting for the dev instance to start",
+    });
+  });
+
+  test("intent-only mode uses display name fallback instead of the command when intent is unavailable", () => {
+    expect(
+      buildBashCollapsedSummary({
+        args: createArgs({ model_intent: null, display_name: "Dev server readiness" }),
+        isBackground: false,
+        mode: "intent",
+      })
+    ).toEqual({ kind: "intent", intent: "Dev server readiness" });
+
+    expect(
+      buildBashCollapsedSummary({
+        args: createArgs({ model_intent: command, display_name: command }),
+        isBackground: false,
+        mode: "intent",
+      })
+    ).toEqual({ kind: "intent", intent: "Bash command" });
+  });
+
   test("falls back to the command when intent is missing, blank, or repeats the command", () => {
     expect(
       buildBashCollapsedSummary({
