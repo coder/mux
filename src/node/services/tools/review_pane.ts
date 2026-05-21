@@ -109,9 +109,14 @@ export function applyReviewPaneUpdate(
   // Dedup by formatted path:range key, preferring the latest comment when
   // the same region is flagged twice (typical when an agent calls `add`
   // and then re-flags a refined comment).
+  //
+  // The seed loop uses the iteration index directly (instead of
+  // `base.indexOf(h)`) so seeding is O(n) and the position the map stores
+  // is unambiguously the slot we just visited — `indexOf` would have been
+  // O(n²) and only worked correctly when every entry was a unique reference.
   const seen = new Map<string, number>();
-  for (const h of base) {
-    seen.set(formatAssistedFilter(h), base.indexOf(h));
+  for (const [i, h] of base.entries()) {
+    seen.set(formatAssistedFilter(h), i);
   }
   for (const h of parsed) {
     const key = formatAssistedFilter(h);

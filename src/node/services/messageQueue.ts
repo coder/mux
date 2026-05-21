@@ -1,4 +1,4 @@
-import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
+import type { FilePart, GoalInterventionPolicy, SendMessageOptions } from "@/common/orpc/types";
 import type { ReviewNoteData } from "@/common/types/review";
 
 // Type guard for compaction request metadata (for display text)
@@ -42,9 +42,10 @@ function hasReviews(meta: unknown): meta is MetadataWithReviews {
   return Array.isArray(obj.reviews);
 }
 
-type GoalInterventionPolicy = NonNullable<SendMessageOptions["goalInterventionPolicy"]>;
-
 // Derive from the Zod schema (SendMessageOptions) to stay in sync automatically.
+// `GoalInterventionPolicy` lives in `@/common/orpc/types` next to
+// `SendMessageOptions` so the ChatInput + AgentSession callsites share the
+// same alias instead of each privately re-deriving it.
 type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
 
 /**

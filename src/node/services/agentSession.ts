@@ -19,6 +19,7 @@ import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFinger
 import type {
   WorkspaceChatMessage,
   SendMessageOptions,
+  GoalInterventionPolicy,
   FilePart,
   DeleteMessage,
   OnChatMode,
@@ -177,8 +178,6 @@ interface CompactionRequestMetadata {
   };
 }
 
-type GoalInterventionPolicy = NonNullable<SendMessageOptions["goalInterventionPolicy"]>;
-
 interface AutoRetryResumeRequest {
   // Same-session auto-retry must preserve the full normalized request because
   // ACP correlation/delegation lives in transient send options that are
@@ -217,6 +216,35 @@ function coerceGoalSyntheticMessageKind(value: unknown): GoalSyntheticMessageKin
     return value;
   }
   return undefined;
+}
+
+/**
+ * Last non-empty text part, trimmed and length-capped; falls back to a constant.
+ *
+ * Pure helper used by the silent-continuation auto-complete hook to synthesize
+ * a completion summary when a `goal_continuation` turn ends with text only and
+ * no `complete_goal` tool call. Kept as a free function (not a method) because
+ * it depends only on its input — matches the existing helper style above and
+ * makes the no-`this` contract obvious to readers.
+ */
+function synthesizeSilentContinuationSummary(parts: StreamEndEvent["parts"]): string {
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (part.type !== "text") {
+      continue;
+    }
+    const trimmed = part.text.trim();
+    if (trimmed.length === 0) {
+      continue;
+    }
+    if (trimmed.length <= SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH) {
+      return trimmed;
+    }
+    // Reserve one character for the ellipsis so the persisted summary
+    // stays under the configured cap.
+    return `${trimmed.slice(0, SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH - 1)}…`;
+  }
+  return SILENT_CONTINUATION_COMPLETION_SUMMARY_FALLBACK;
 }
 
 const MAX_CONSECUTIVE_AGENT_SWITCHES = 3;
@@ -4935,7 +4963,7 @@ export class AgentSession {
     if (payload.parts.some((part) => part.type === "dynamic-tool")) {
       return;
     }
-    const summary = this.synthesizeSilentContinuationSummary(payload.parts);
+    const summary = synthesizeSilentContinuationSummary(payload.parts);
     try {
       await this.workspaceGoalService.completeGoalFromSilentContinuation({
         workspaceId: this.workspaceId,
@@ -4951,27 +4979,6 @@ export class AgentSession {
         error: getErrorMessage(error),
       });
     }
-  }
-
-  /** Last non-empty text part, trimmed and length-capped; falls back to a constant. */
-  private synthesizeSilentContinuationSummary(parts: StreamEndEvent["parts"]): string {
-    for (let index = parts.length - 1; index >= 0; index -= 1) {
-      const part = parts[index];
-      if (part.type !== "text") {
-        continue;
-      }
-      const trimmed = part.text.trim();
-      if (trimmed.length === 0) {
-        continue;
-      }
-      if (trimmed.length <= SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH) {
-        return trimmed;
-      }
-      // Reserve one character for the ellipsis so the persisted summary
-      // stays under the configured cap.
-      return `${trimmed.slice(0, SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH - 1)}…`;
-    }
-    return SILENT_CONTINUATION_COMPLETION_SUMMARY_FALLBACK;
   }
 
   /** Extract a successful switch_agent tool result from stream-end parts (latest wins). */

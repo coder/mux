@@ -10,7 +10,7 @@ import {
 import type { ModelMessage } from "@/common/types/message";
 import { THINKING_LEVEL_OFF, coerceThinkingLevel } from "@/common/types/thinking";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
-import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
+import { extractChunkDeltaText, TEXT_OUTPUT_DELTA_FIELDS } from "@/common/utils/ai/streamChunks";
 import { getErrorMessage } from "@/common/utils/errors";
 import { sanitizeErrorMessageForDisplay } from "@/common/utils/providerOutputSanitization";
 import type { AdvisorOutputEvent, AdvisorPhaseEvent } from "@/common/types/stream";
@@ -102,7 +102,7 @@ function getAdvisorTextDelta(chunk: unknown): string | undefined {
     return undefined;
   }
 
-  const text = extractChunkDeltaText(record, ["text", "delta", "textDelta"]);
+  const text = extractChunkDeltaText(record, TEXT_OUTPUT_DELTA_FIELDS);
   return text.length > 0 ? text : undefined;
 }
 

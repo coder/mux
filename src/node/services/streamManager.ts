@@ -64,7 +64,7 @@ import { runLanguageModelCleanup } from "./languageModelCleanup";
 import { shellQuote } from "@/common/utils/shell";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 import { normalizeLiteralRequiredToolPattern } from "@/common/utils/agentTools";
-import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
+import { extractChunkDeltaText, TEXT_OUTPUT_DELTA_FIELDS } from "@/common/utils/ai/streamChunks";
 
 // Disable noisy AI SDK warning logging.
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -1837,11 +1837,7 @@ export class StreamManager extends EventEmitter {
                 // Providers/SDKs may stream text deltas under different keys.
                 const textDeltaPart = part as Record<string, unknown>;
 
-                const deltaText = extractChunkDeltaText(textDeltaPart, [
-                  "text",
-                  "delta",
-                  "textDelta",
-                ]);
+                const deltaText = extractChunkDeltaText(textDeltaPart, TEXT_OUTPUT_DELTA_FIELDS);
 
                 if (deltaText.length === 0) {
                   if (
