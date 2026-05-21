@@ -544,6 +544,68 @@ describe("GoalTab", () => {
     await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledWith(100));
   });
 
+  test("touch + synthesized mouseup from the same gesture commits only once (Codex P2)", async () => {
+    // Touch browsers emit `touchend` and then synthesize `mouseup`
+    // within ~50–100ms. Codex review on PR #3357 caught that without
+    // a per-gesture guard, both events run `commit()` before the
+    // async parent mutation lands — `draft !== value` is still true
+    // the second time around — and a single drag yields two
+    // `setGoal` writes (and two `goal_replaced` history entries).
+    // The `justCommittedRef` flag in the component dedupes these so
+    // one finger release ⇒ one backend write. This test pins that
+    // contract; without the fix the assertion fails with two calls.
+    const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
+    const { getByLabelText } = render(
+      <GoalTab
+        goal={goal({ autoCompactionThresholdPct: 70 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+        onUpdateAutoCompactionThresholdPct={onUpdateAutoCompactionThresholdPct}
+      />
+    );
+
+    const slider = getByLabelText("Goal auto-compact threshold percent");
+    fireEvent.input(slider, { target: { value: "55" } });
+    // First release: touchend (real touch endpoint).
+    fireEvent.touchEnd(slider);
+    // Second release: synthesized mouseup, same gesture.
+    fireEvent.mouseUp(slider);
+
+    await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledWith(55));
+    // The critical assertion: not 2, not 3 — exactly 1.
+    expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledTimes(1);
+  });
+
+  test("a fresh drag after a release commits again (per-gesture flag resets)", async () => {
+    // Counterpart to the dedup test above: the per-gesture flag must
+    // reset when the user starts a new drag, otherwise the slider
+    // would permanently lock up after a single edit. The reset
+    // happens in `updateDraftFromEvent` (the onInput/onChange path)
+    // because `input` is what fires when a fresh gesture begins.
+    const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
+    const { getByLabelText } = render(
+      <GoalTab
+        goal={goal({ autoCompactionThresholdPct: 70 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+        onUpdateAutoCompactionThresholdPct={onUpdateAutoCompactionThresholdPct}
+      />
+    );
+
+    const slider = getByLabelText("Goal auto-compact threshold percent");
+    // First gesture
+    fireEvent.input(slider, { target: { value: "55" } });
+    fireEvent.mouseUp(slider);
+    await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledWith(55));
+    // Second gesture — must commit again. (The component re-renders
+    // with value=55 between gestures in production; here we drive
+    // the gesture without re-render to prove the flag resets on
+    // input alone, not on value-prop change.)
+    fireEvent.input(slider, { target: { value: "40" } });
+    fireEvent.mouseUp(slider);
+    await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledTimes(2));
+  });
+
   test("releasing the slider without changing value does not commit", async () => {
     const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
     const { getByLabelText } = render(

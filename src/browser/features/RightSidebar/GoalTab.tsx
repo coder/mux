@@ -1178,16 +1178,39 @@ function GoalAutoCompactSliderOverride(props: GoalAutoCompactSliderOverrideProps
   const primary = isOff ? "Off" : `${draft}%`;
   const helper = isOff ? "compaction disabled" : "of context window";
 
+  // Per-gesture commit flag. Touch-capable browsers fire `touchend`
+  // and then synthesize a `mousedown`/`mouseup` pair within a short
+  // window (often ~50–100ms). With handlers on both events the
+  // backend `onChange(draft)` was being called twice for one finger
+  // release — the parent's async mutation hasn't resolved by the
+  // second event, so `draft !== value` still passes. The Codex P2
+  // review flagged this as a duplicate-write bug. Use a ref-tracked
+  // flag (not state — we don't want a re-render between commit() and
+  // the synthetic mouseup that's about to fire on the same tick) and
+  // reset it whenever the user starts a fresh gesture (input event).
+  // We deliberately don't use `setTimeout` here per AGENTS.md's
+  // "avoid timing-based coordination" rule — the input-event reset
+  // ties the flag lifetime to actual user intent.
+  const justCommittedRef = useRef(false);
+
   const commit = () => {
-    // Only fire the backend mutation when the slider actually moved.
-    // Avoids spurious `goal_replaced` history entries from someone
-    // clicking the thumb without dragging.
+    // Only fire the backend mutation when the slider actually moved
+    // (avoids spurious `goal_replaced` history entries from a thumb
+    // tap), and only once per gesture (the touch + synthetic mouse
+    // sequence above must not double-commit).
+    if (justCommittedRef.current) return;
     if (draft !== value) {
+      justCommittedRef.current = true;
       void onChange(draft);
     }
   };
 
   const updateDraftFromEvent = (e: React.SyntheticEvent<HTMLInputElement>) => {
+    // The native `input` event fires when a fresh drag/keyboard
+    // gesture starts (and on every subsequent step). Clearing the
+    // commit-once flag here means the next release will commit
+    // again, exactly as the user expects.
+    justCommittedRef.current = false;
     setDraft(snapAutoCompactSliderValue(Number(e.currentTarget.value)));
   };
 
