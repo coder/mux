@@ -529,23 +529,6 @@ export function buildReviewDiffPathFilterSpecs(params: {
   }));
 }
 
-export function buildReviewDiffPathFilter(params: {
-  isImmersive: boolean;
-  assistedOnly: boolean;
-  assistedHunks: readonly AssistedReviewHunk[];
-  selectedFilePath: string | null;
-  selectedDiffPath: string;
-  workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined;
-  repoRootProjectPath: string | null | undefined;
-}): string {
-  return (
-    buildReviewDiffPathFilterSpecs({
-      ...params,
-      projectPath: params.repoRootProjectPath ?? "",
-    })[0]?.pathFilter ?? ""
-  );
-}
-
 export function getEffectiveReviewIncludeUncommitted(params: {
   assistedOnly: boolean;
   includeUncommitted: boolean;
