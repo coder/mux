@@ -1748,20 +1748,49 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   }, [assistedMatchByHunkId]);
 
   // Set of hunkIds whose pin was added recently enough to qualify for the
-  // transient "new" badge. We snapshot a one-time cutoff at mount + on each
-  // new addition to keep the predicate stable until something materially
-  // changes (so React.memo on HunkViewer continues to dedupe renders).
+  // transient "new" badge.
+  //
+  // Subtle: we need wall-clock invalidation, not just structural — otherwise
+  // a badge can linger far beyond the threshold if no further assisted
+  // updates land (the memo never re-runs). To fix that we drive recomputation
+  // off a `newPinTick` state and schedule a single `setTimeout` for the next
+  // pending expiry; the timeout re-bumps the tick and the effect itself
+  // re-evaluates, which schedules the following expiry (or stops if none).
+  // This is cheaper than a periodic interval and keeps idle workspaces
+  // completely quiet once every pin has expired.
   const newAssistedPinThresholdMs = 60_000;
+  const [newPinTick, setNewPinTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (assistedMatchByHunkId.size === 0) return;
+    const now = Date.now();
+    let nextExpiry = Infinity;
+    for (const match of assistedMatchByHunkId.values()) {
+      const addedAt = match.entry.addedAt;
+      if (!addedAt) continue;
+      const expiry = addedAt + newAssistedPinThresholdMs;
+      if (expiry > now && expiry < nextExpiry) {
+        nextExpiry = expiry;
+      }
+    }
+    if (nextExpiry === Infinity) return;
+    // Round up by 50ms so the recompute lands just after the boundary —
+    // avoids a flap where the tick fires a hair too early and re-schedules
+    // itself for the same expiry.
+    const delay = nextExpiry - now + 50;
+    const id = window.setTimeout(() => setNewPinTick(Date.now()), delay);
+    return () => window.clearTimeout(id);
+  }, [assistedMatchByHunkId, newPinTick, newAssistedPinThresholdMs]);
+
   const assistedNewByHunkId = useMemo(() => {
     if (assistedMatchByHunkId.size === 0) return new Set<string>();
-    const cutoff = Date.now() - newAssistedPinThresholdMs;
+    const cutoff = newPinTick - newAssistedPinThresholdMs;
     const result = new Set<string>();
     for (const [hunkId, match] of assistedMatchByHunkId) {
       const addedAt = match.entry.addedAt;
       if (addedAt && addedAt >= cutoff) result.add(hunkId);
     }
     return result;
-  }, [assistedMatchByHunkId]);
+  }, [assistedMatchByHunkId, newPinTick, newAssistedPinThresholdMs]);
 
   // Stable Set view over the match-map keys so the immersive view (and any
   // future read-only consumer) can do O(1) "is this assisted?" lookups
