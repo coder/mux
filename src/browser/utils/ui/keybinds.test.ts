@@ -1,6 +1,14 @@
-import { describe, it, expect, test } from "bun:test";
+import { afterEach, describe, it, expect, test } from "bun:test";
 import { isMac, matchesKeybind, KEYBINDS } from "./keybinds";
 import type { Keybind } from "@/common/types/keybind";
+
+const originalWindow = globalThis.window;
+const originalNavigator = globalThis.navigator;
+
+afterEach(() => {
+  globalThis.window = originalWindow;
+  globalThis.navigator = originalNavigator;
+});
 
 // Helper to create a minimal keyboard event
 function createEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
