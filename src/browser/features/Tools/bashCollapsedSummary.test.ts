@@ -191,6 +191,7 @@ describe("summarizeBashCommands", () => {
       "cat <<'EOF'\nhello from heredoc\nEOF\ngit status",
       "cat, git",
     ],
+    ["ignores heredoc markers inside shell comments", "# <<EOF\ngit status", "git"],
     [
       "keeps pipeline commands from heredoc declaration lines",
       "cat <<-EOF | sed -n '1p'\n\thello\n\tEOF\ngh pr view 1",

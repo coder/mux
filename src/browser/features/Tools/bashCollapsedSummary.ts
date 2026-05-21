@@ -230,6 +230,10 @@ function findHeredocDelimiters(line: string): HeredocDelimiter[] {
       continue;
     }
 
+    if (char === "#" && (i === 0 || /\s/u.test(line[i - 1] ?? ""))) {
+      break;
+    }
+
     if (char === "(" && line[i + 1] === "(") {
       i = skipArithmeticExpression(line, i + 2);
       continue;
