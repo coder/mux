@@ -2113,11 +2113,18 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
           toggleFn();
         }
       } else if (matchesKeybind(e, KEYBINDS.TOGGLE_ASSISTED_REVIEW)) {
-        // Toggle the Assisted filter — only meaningful when the agent has
-        // flagged hunks (or the user is already in Assisted mode and wants
-        // to exit). When the toggle isn't reachable from the UI we also skip
-        // the keystroke so users don't fight an invisible filter.
-        if (assistedHunks.length === 0 && !filters.assistedOnly) return;
+        // Toggle the Assisted filter. Skip the keystroke only when nothing
+        // assisted is reachable: no live pins, no currently-active worklist
+        // mode, AND no dismissed pins waiting to be restored. The last
+        // condition lets users re-enter Assisted via the keyboard to discover
+        // the restore button in the empty state, instead of getting stuck.
+        if (
+          assistedHunks.length === 0 &&
+          !filters.assistedOnly &&
+          dismissedAssistedKeys.length === 0
+        ) {
+          return;
+        }
         e.preventDefault();
         setFilters((prev) => ({ ...prev, assistedOnly: !prev.assistedOnly }));
       }
@@ -2135,6 +2142,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     handleMarkAsUnread,
     assistedHunks.length,
     filters.assistedOnly,
+    dismissedAssistedKeys.length,
     setFilters,
     handleMarkFileAsRead,
     isImmersive,

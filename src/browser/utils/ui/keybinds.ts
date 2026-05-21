@@ -478,12 +478,13 @@ export const KEYBINDS = {
   /**
    * Toggle the Assisted (agent-flagged hunks only) filter in the Code Review panel.
    *
-   * Shift+A so the binding is review-scoped and doesn't collide with the
-   * global `FOCUS_INPUT_A` ("a" focuses chat input). Plan-annotate uses the
-   * same combo but is gated behind an active `propose_plan` tool so the
-   * two panels never compete for the same keystroke in practice.
+   * Plain "p" (Pin filter) — chosen to avoid the global FOCUS_INPUT_A
+   * collision on plain "a" and the dual-handler clash with
+   * `TOGGLE_PLAN_ANNOTATE` on Shift+A. The review-panel handler already
+   * gates on `isPanelFocused` + `isEditableElement`, so this single-letter
+   * binding only fires when the user is genuinely in the review pane.
    */
-  TOGGLE_ASSISTED_REVIEW: { key: "A", shift: true },
+  TOGGLE_ASSISTED_REVIEW: { key: "p" },
 
   /** Navigate to next file in immersive review */
   REVIEW_NEXT_FILE: { key: "l" },
