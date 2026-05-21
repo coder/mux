@@ -642,15 +642,26 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
   // added pins), at which point an empty live set is a real clear and
   // we should drop ALL dismissed keys so a future re-add of the same
   // path:range surfaces normally.
-  const everSeenAssistedRef = useRef(false);
+  //
+  // The sentinel is keyed by workspaceId so switching workspaces does
+  // not carry forward a previous workspace's hydration assumption — that
+  // would let an unrelated workspace's mid-hydration empty list nuke
+  // dismissals here.
+  const everSeenAssistedRef = useRef<{ workspaceId: string; seen: boolean }>({
+    workspaceId,
+    seen: false,
+  });
+  if (everSeenAssistedRef.current.workspaceId !== workspaceId) {
+    everSeenAssistedRef.current = { workspaceId, seen: false };
+  }
   useEffect(() => {
     if (rawAssistedHunks.length > 0) {
-      everSeenAssistedRef.current = true;
+      everSeenAssistedRef.current.seen = true;
     }
     if (dismissedAssistedKeys.length === 0) return;
 
     if (rawAssistedHunks.length === 0) {
-      if (everSeenAssistedRef.current) {
+      if (everSeenAssistedRef.current.seen) {
         // Agent explicitly cleared its set after we'd already seen
         // pins; drop the user-side dismissals so a re-add of the same
         // key surfaces in the UI.
@@ -666,7 +677,7 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     if (pruned.length !== dismissedAssistedKeys.length) {
       setDismissedAssistedKeys(pruned);
     }
-  }, [rawAssistedHunks, dismissedAssistedKeys, setDismissedAssistedKeys]);
+  }, [rawAssistedHunks, dismissedAssistedKeys, setDismissedAssistedKeys, workspaceId]);
 
   const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
   const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
@@ -2093,15 +2104,19 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       // Mark all hunks in the file as read
       markAsRead(fileHunkIds);
 
-      // If marking the selected hunk's file as read and hunks will be filtered out, navigate
-      if (hunkId === selectedHunkId && !filters.showReadHunks) {
+      // If marking the selected hunk's file as read and hunks will be filtered out, navigate.
+      // Consult the *effective* show-read flag via `showReadHunksRef` so this stays in sync
+      // with Assisted mode (which uses `assistedShowReadHunks`). Reading `filters.showReadHunks`
+      // directly meant that marking a file read in Assisted mode left the selection on a now-
+      // hidden hunk, breaking subsequent keyboard navigation when `currentIndex` became -1.
+      if (hunkId === selectedHunkId && !showReadHunksRef.current) {
         // Use ref to get current filtered/sorted list, then find next hunk not in same file
         setSelectedHunkId(
           findNextHunkIdAfterFileRemoval(filteredHunksRef.current, hunkId, hunk.filePath)
         );
       }
     },
-    [hunks, markAsRead, filters.showReadHunks, selectedHunkId, setSelectedHunkId]
+    [hunks, markAsRead, selectedHunkId, setSelectedHunkId]
   );
 
   // Count agent-flagged hunks the user hasn't acked. The panel still reports
