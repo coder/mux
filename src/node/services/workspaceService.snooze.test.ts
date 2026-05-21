@@ -234,4 +234,24 @@ describe("WorkspaceService.clearSnoozeOnUserMessage", () => {
     const result = await callPrivateHelper(service, TEST_WORKSPACE_ID);
     expect(result).toBeUndefined();
   });
+
+  test("clears legacy entries identified only by path (no id in config)", async () => {
+    // Reproduces Codex P2: legacy config rows that have a `path` but no `id`
+    // must still be picked up by the auto-unsnooze fast-path. Without the
+    // path fallback, `find((w) => w.id === workspaceId)` returns undefined,
+    // the fast-path treats it as "not snoozed", and the workspace stays
+    // stuck in the Snoozed section forever on re-engagement.
+    const legacyEntry: Workspace = {
+      path: TEST_WORKSPACE_PATH,
+      name: "test",
+      snoozedUntil: new Date(Date.now() + 60 * 60_000).toISOString(),
+    } as unknown as Workspace;
+    currentProjectsConfig = createProjectsConfig(legacyEntry);
+
+    await callPrivateHelper(service, TEST_WORKSPACE_ID);
+
+    expect(editConfigMock).toHaveBeenCalled();
+    const persisted = currentProjectsConfig.projects.get(TEST_PROJECT_PATH)?.workspaces.at(0);
+    expect(persisted?.snoozedUntil).toBeUndefined();
+  });
 });

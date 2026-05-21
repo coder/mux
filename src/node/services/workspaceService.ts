@@ -4432,7 +4432,13 @@ export class WorkspaceService extends EventEmitter {
       if (!found) return;
       const config = this.config.loadConfigOrDefault();
       const projectConfig = config.projects.get(found.projectPath);
-      const entry = projectConfig?.workspaces.find((w) => w.id === workspaceId);
+      // Mirror `setSnooze`'s id-or-path fallback so legacy config entries
+      // (those only identified by `path`, with no `id` yet) still match.
+      // Without the path fallback, the fast-path would silently treat legacy
+      // entries as "not snoozed" and leave the workspace stuck.
+      const entry =
+        projectConfig?.workspaces.find((w) => w.id === workspaceId) ??
+        projectConfig?.workspaces.find((w) => w.path === found.workspacePath);
       if (!entry?.snoozedUntil) {
         // Fast path: most sends land here since most workspaces aren't snoozed.
         return;
