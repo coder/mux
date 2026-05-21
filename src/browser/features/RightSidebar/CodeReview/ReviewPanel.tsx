@@ -634,8 +634,18 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
   // the dismissed entry would silently filter a future re-appearance of
   // the same key until manual restore. The panel's `usePersistedState`
   // listener picks up the pruned value automatically on next mount.
+  //
+  // IMPORTANT: only prune when `rawAssistedHunks` is non-empty. An empty
+  // list is ambiguous — it could mean the agent really cleared its set,
+  // or that the workspace hasn't replayed its transcript yet (cold load,
+  // workspace switch). Erasing dismissed keys in the latter case would
+  // make dismissals non-durable across restarts: previously-dismissed
+  // pins would resurface as soon as hydration completes. Bounding the
+  // dismissed list via `ASSISTED_REVIEW_MAX_HUNKS` makes the cost of
+  // "never prune while empty" acceptable.
   useEffect(() => {
     if (dismissedAssistedKeys.length === 0) return;
+    if (rawAssistedHunks.length === 0) return;
     const liveKeys = new Set(rawAssistedHunks.map((h) => formatAssistedFilter(h)));
     const pruned = dismissedAssistedKeys.filter((key) => liveKeys.has(key));
     if (pruned.length !== dismissedAssistedKeys.length) {
