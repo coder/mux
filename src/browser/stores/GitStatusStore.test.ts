@@ -11,6 +11,7 @@ import {
 import type { RuntimeStatus, RuntimeStatusStore } from "./RuntimeStatusStore";
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { installTestWindow } from "@/browser/testUtils";
 
 /**
  * Unit tests for GitStatusStore.
@@ -186,6 +187,8 @@ function createStore(
 describe("GitStatusStore", () => {
   let store: GitStatusStore;
 
+  let restoreTestWindow: (() => void) | undefined;
+
   beforeEach(() => {
     mockExecuteBash.mockReset();
     mockGetProjectGitStatuses.mockReset();
@@ -200,24 +203,23 @@ describe("GitStatusStore", () => {
     } as Result<BashToolResult, string>);
     mockGetProjectGitStatuses.mockResolvedValue([]);
 
-    (globalThis as unknown as { window: unknown }).window = {
-      addEventListener: jest.fn(),
-      removeEventListener: jest.fn(),
+    restoreTestWindow = installTestWindow({
       api: {
         workspace: {
           executeBash: mockExecuteBash,
           getProjectGitStatuses: mockGetProjectGitStatuses,
         },
       },
-    } as unknown as Window & typeof globalThis;
+      ensureEventTargetMethods: true,
+    }).restore;
 
     store = createStore();
   });
 
   afterEach(() => {
     store.dispose();
-    // Cleanup mocked window to avoid leaking between tests
-    delete (globalThis as { window?: unknown }).window;
+    restoreTestWindow?.();
+    restoreTestWindow = undefined;
   });
 
   test("subscribe and unsubscribe", () => {
