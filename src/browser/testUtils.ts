@@ -25,3 +25,81 @@ export type RecursivePartial<T> = {
       ? RecursivePartial<T[P]>
       : T[P];
 };
+
+export interface ControllableAsyncIterable<T> {
+  iterable: AsyncIterableIterator<T>;
+  push(value: T): void;
+  close(): void;
+}
+
+export function createControllableAsyncIterable<T>(
+  options: {
+    onReturn?: () => void;
+  } = {}
+): ControllableAsyncIterable<T> {
+  const buffered: T[] = [];
+  const pending: Array<(result: IteratorResult<T>) => void> = [];
+  let closed = false;
+
+  const doneResult = (): IteratorResult<T> => ({
+    value: undefined as T,
+    done: true,
+  });
+
+  const flushDone = () => {
+    while (pending.length > 0) {
+      pending.shift()?.(doneResult());
+    }
+  };
+
+  const close = () => {
+    if (closed) {
+      return;
+    }
+
+    closed = true;
+    flushDone();
+  };
+
+  const iterable: AsyncIterableIterator<T> = {
+    [Symbol.asyncIterator]() {
+      return iterable;
+    },
+    next() {
+      if (closed) {
+        return Promise.resolve(doneResult());
+      }
+
+      if (buffered.length > 0) {
+        return Promise.resolve({ value: buffered.shift() as T, done: false });
+      }
+
+      return new Promise((resolve) => {
+        pending.push(resolve);
+      });
+    },
+    return() {
+      options.onReturn?.();
+      close();
+      return Promise.resolve(doneResult());
+    },
+  };
+
+  return {
+    iterable,
+    push(value: T) {
+      if (closed) {
+        return;
+      }
+
+      const resolve = pending.shift();
+      if (resolve) {
+        resolve({ value, done: false });
+        return;
+      }
+
+      buffered.push(value);
+    },
+    close,
+  };
+}

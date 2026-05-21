@@ -54,6 +54,47 @@ describe("Config", () => {
     });
   });
 
+  describe("chat transcript settings", () => {
+    it("persists the full-width transcript flag", async () => {
+      await config.editConfig((cfg) => {
+        cfg.chatTranscriptFullWidth = true;
+        return cfg;
+      });
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.loadConfigOrDefault().chatTranscriptFullWidth).toBe(true);
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        chatTranscriptFullWidth?: unknown;
+      };
+      expect(raw.chatTranscriptFullWidth).toBe(true);
+    });
+
+    it("omits the full-width transcript flag when disabled", async () => {
+      await config.editConfig((cfg) => {
+        cfg.chatTranscriptFullWidth = false;
+        return cfg;
+      });
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        chatTranscriptFullWidth?: unknown;
+      };
+      expect(raw.chatTranscriptFullWidth).toBeUndefined();
+    });
+
+    it("ignores invalid full-width transcript values on load", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          chatTranscriptFullWidth: "yes",
+        })
+      );
+
+      expect(config.loadConfigOrDefault().chatTranscriptFullWidth).toBeUndefined();
+    });
+  });
+
   describe("api server settings", () => {
     it("should persist apiServerBindHost, apiServerPort, and apiServerServeWebUi", async () => {
       await config.editConfig((cfg) => {

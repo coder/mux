@@ -9,7 +9,7 @@ import {
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { Input } from "@/browser/components/Input/Input";
 import { Switch } from "@/browser/components/Switch/Switch";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
@@ -20,6 +20,7 @@ import {
   LAUNCH_BEHAVIOR_KEY,
   BASH_COLLAPSED_SUMMARY_MODE_KEY,
   BASH_COLLAPSED_SUMMARY_MODES,
+  CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
   DEFAULT_BASH_COLLAPSED_SUMMARY_MODE,
   normalizeBashCollapsedSummaryMode,
   type BashCollapsedSummaryMode,
@@ -224,6 +225,7 @@ export function GeneralSection() {
     DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR
   );
   const [archiveSettingsLoaded, setArchiveSettingsLoaded] = useState(false);
+  const [chatTranscriptFullWidth, setChatTranscriptFullWidth] = useState(false);
   const [llmDebugLogs, setLlmDebugLogs] = useState(false);
   const archiveBehaviorLoadNonceRef = useRef(0);
   const archiveBehaviorRef = useRef<CoderWorkspaceArchiveBehavior>(DEFAULT_CODER_ARCHIVE_BEHAVIOR);
@@ -231,11 +233,13 @@ export function GeneralSection() {
     DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR
   );
 
+  const chatTranscriptFullWidthLoadNonceRef = useRef(0);
   const llmDebugLogsLoadNonceRef = useRef(0);
 
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
   // selections can't race and persist a stale value via out-of-order writes.
   const archiveBehaviorUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const chatTranscriptFullWidthUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const llmDebugLogsUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const archiveBehaviorPendingUpdateRef = useRef<CoderWorkspaceArchiveBehavior | undefined>(
     undefined
@@ -251,6 +255,7 @@ export function GeneralSection() {
 
     setArchiveSettingsLoaded(false);
     const archiveBehaviorNonce = ++archiveBehaviorLoadNonceRef.current;
+    const chatTranscriptFullWidthNonce = ++chatTranscriptFullWidthLoadNonceRef.current;
     const llmDebugLogsNonce = ++llmDebugLogsLoadNonceRef.current;
 
     void api.config
@@ -274,7 +279,16 @@ export function GeneralSection() {
           setArchiveSettingsLoaded(true);
         }
 
-        // Use an independent nonce so debug-log toggles do not discard archive-setting updates.
+        // Use independent nonces so appearance/debug toggles do not discard archive updates.
+        if (chatTranscriptFullWidthNonce === chatTranscriptFullWidthLoadNonceRef.current) {
+          const enabled = cfg.chatTranscriptFullWidth === true;
+          setChatTranscriptFullWidth(enabled);
+          updatePersistedState<boolean | undefined>(
+            CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
+            enabled ? true : undefined
+          );
+        }
+
         if (llmDebugLogsNonce === llmDebugLogsLoadNonceRef.current) {
           setLlmDebugLogs(cfg.llmDebugLogs === true);
         }
@@ -360,6 +374,29 @@ export function GeneralSection() {
     },
     [api, archiveSettingsLoaded, queueArchiveBehaviorUpdate]
   );
+
+  const handleChatTranscriptFullWidthChange = (checked: boolean) => {
+    // Invalidate any in-flight config load so it does not overwrite the user's selection.
+    chatTranscriptFullWidthLoadNonceRef.current++;
+    setChatTranscriptFullWidth(checked);
+    updatePersistedState<boolean | undefined>(
+      CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
+      checked ? true : undefined
+    );
+
+    if (!api?.config?.updateChatTranscriptFullWidth) {
+      return;
+    }
+
+    chatTranscriptFullWidthUpdateChainRef.current = chatTranscriptFullWidthUpdateChainRef.current
+      .catch(() => {
+        // Best-effort only.
+      })
+      .then(() => api.config.updateChatTranscriptFullWidth({ enabled: checked }))
+      .catch(() => {
+        // Best-effort persistence.
+      });
+  };
 
   const handleLlmDebugLogsChange = (checked: boolean) => {
     // Invalidate any in-flight debug-log load so it doesn't overwrite the user's selection.
@@ -519,6 +556,20 @@ export function GeneralSection() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Full-width chat transcript</div>
+              <div className="text-muted text-xs">
+                Let messages use the full chat pane instead of the default readable column.
+              </div>
+            </div>
+            <Switch
+              checked={chatTranscriptFullWidth}
+              onCheckedChange={handleChatTranscriptFullWidthChange}
+              aria-label="Toggle full-width chat transcript"
+            />
           </div>
 
           <div className="flex items-center justify-between gap-4">

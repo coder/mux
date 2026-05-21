@@ -73,6 +73,7 @@ import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useAPI } from "@/browser/contexts/API";
+import { useChatTranscriptFullWidth } from "@/browser/hooks/useChatTranscriptFullWidth";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { ReviewsBanner } from "../ReviewsBanner/ReviewsBanner";
 import type { ReviewNoteData } from "@/common/types/review";
@@ -187,6 +188,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     workspaceState,
     immersiveHidden = false,
   } = props;
+  const chatTranscriptFullWidth = useChatTranscriptFullWidth();
   const { api } = useAPI();
   const { workspaceMetadata } = useWorkspaceContext();
   const chatAreaRef = useRef<HTMLDivElement>(null);
@@ -1044,7 +1046,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
             >
               <div
                 className={cn(
-                  "max-w-4xl mx-auto",
+                  chatTranscriptFullWidth ? "w-full" : "max-w-4xl mx-auto",
                   (showTranscriptHydrationPlaceholder || showEmptyTranscriptPlaceholder) && "h-full"
                 )}
               >

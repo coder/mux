@@ -17,6 +17,7 @@ import {
 interface MockConfig {
   coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
   worktreeArchiveBehavior: WorktreeArchiveBehavior;
+  chatTranscriptFullWidth: boolean;
   llmDebugLogs: boolean;
 }
 
@@ -27,6 +28,7 @@ interface MockAPIClient {
       coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
       worktreeArchiveBehavior: WorktreeArchiveBehavior;
     }) => Promise<void>;
+    updateChatTranscriptFullWidth: (input: { enabled: boolean }) => Promise<void>;
     updateLlmDebugLogs: (input: { enabled: boolean }) => Promise<void>;
   };
   server: {
@@ -168,6 +170,7 @@ import { GeneralSection } from "./GeneralSection";
 interface RenderGeneralSectionOptions {
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
   worktreeArchiveBehavior?: WorktreeArchiveBehavior;
+  chatTranscriptFullWidth?: boolean;
 }
 
 interface MockAPISetup {
@@ -181,12 +184,16 @@ interface MockAPISetup {
       }) => Promise<void>
     >
   >;
+  updateChatTranscriptFullWidthMock: ReturnType<
+    typeof mock<(input: { enabled: boolean }) => Promise<void>>
+  >;
 }
 
 function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup {
   const config: MockConfig = {
     coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
     worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
+    chatTranscriptFullWidth: false,
     llmDebugLogs: false,
     ...configOverrides,
   };
@@ -204,11 +211,18 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     }
   );
 
+  const updateChatTranscriptFullWidthMock = mock(({ enabled }: { enabled: boolean }) => {
+    config.chatTranscriptFullWidth = enabled;
+
+    return Promise.resolve();
+  });
+
   return {
     api: {
       config: {
         getConfig: getConfigMock,
         updateCoderPrefs: updateCoderPrefsMock,
+        updateChatTranscriptFullWidth: updateChatTranscriptFullWidthMock,
         updateLlmDebugLogs: mock(({ enabled }: { enabled: boolean }) => {
           config.llmDebugLogs = enabled;
 
@@ -226,6 +240,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     },
     getConfigMock,
     updateCoderPrefsMock,
+    updateChatTranscriptFullWidthMock,
   };
 }
 
@@ -248,7 +263,8 @@ describe("GeneralSection", () => {
   });
 
   function renderGeneralSection(options: RenderGeneralSectionOptions = {}) {
-    const { api, updateCoderPrefsMock } = createMockAPI({
+    const { api, updateCoderPrefsMock, updateChatTranscriptFullWidthMock } = createMockAPI({
+      chatTranscriptFullWidth: options.chatTranscriptFullWidth,
       coderWorkspaceArchiveBehavior: options.coderWorkspaceArchiveBehavior,
       worktreeArchiveBehavior: options.worktreeArchiveBehavior,
     });
@@ -260,7 +276,7 @@ describe("GeneralSection", () => {
       </ThemeProvider>
     );
 
-    return { updateCoderPrefsMock, view };
+    return { updateCoderPrefsMock, updateChatTranscriptFullWidthMock, view };
   }
 
   function getSelectTrigger(view: ReturnType<typeof render>, label: string): HTMLElement {
@@ -317,6 +333,24 @@ describe("GeneralSection", () => {
     expect(window.localStorage.getItem(BASH_COLLAPSED_SUMMARY_MODE_KEY)).toBe(
       JSON.stringify("intent")
     );
+  });
+
+  test("loads and persists the full-width chat transcript toggle", async () => {
+    const { updateChatTranscriptFullWidthMock, view } = renderGeneralSection({
+      chatTranscriptFullWidth: true,
+    });
+
+    const toggle = view.getByRole("switch", { name: "Toggle full-width chat transcript" });
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+    });
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      expect(updateChatTranscriptFullWidthMock).toHaveBeenCalledWith({ enabled: false });
+    });
   });
 
   test("renders the worktree archive behavior copy and loads the saved value", async () => {

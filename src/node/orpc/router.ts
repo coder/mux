@@ -698,6 +698,7 @@ export const router = (authToken?: string) => {
             // Mux Governor enrollment status (safe fields only - token never exposed)
             muxGovernorUrl,
             muxGovernorEnrolled,
+            chatTranscriptFullWidth: config.chatTranscriptFullWidth === true,
             llmDebugLogs: config.llmDebugLogs === true,
             heartbeatDefaultPrompt: config.heartbeatDefaultPrompt ?? undefined,
             heartbeatDefaultIntervalMs: config.heartbeatDefaultIntervalMs ?? undefined,
@@ -1108,6 +1109,19 @@ export const router = (authToken?: string) => {
 
           // Re-evaluate task queue in case more slots opened up
           await context.taskService.maybeStartQueuedTasks();
+        }),
+      updateChatTranscriptFullWidth: t
+        .input(schemas.config.updateChatTranscriptFullWidth.input)
+        .output(schemas.config.updateChatTranscriptFullWidth.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            if (input.enabled) {
+              config.chatTranscriptFullWidth = true;
+            } else {
+              delete config.chatTranscriptFullWidth;
+            }
+            return config;
+          });
         }),
       updateLlmDebugLogs: t
         .input(schemas.config.updateLlmDebugLogs.input)

@@ -161,14 +161,10 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon toolName="bash" />
         {bashCollapsedSummary.kind === "intent-command" ? (
-          // Two lines: intent (primary) on top, command (muted mono) below.
-          // The duration chip sits on the command row so it inherits the same
-          // line-height and stays vertically centered on the command, not
-          // floating between the two lines.
-          <span className="flex max-w-[28rem] min-w-0 flex-col leading-tight">
+          <span className="flex min-w-0 flex-1 flex-col leading-tight">
             <span className="text-text truncate">{bashCollapsedSummary.intent}</span>
             <span className="flex min-w-0 items-center gap-2">
-              <span className="text-muted font-monospace min-w-0 truncate text-[10px]">
+              <span className="text-muted font-monospace min-w-0 flex-1 truncate text-[10px]">
                 {bashCollapsedSummary.command}
               </span>
               {!isBackground && (

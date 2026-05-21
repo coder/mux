@@ -83,6 +83,11 @@ export const LAUNCH_BEHAVIOR_KEY = "launchBehavior";
 export type LaunchBehavior = "dashboard" | "new-chat" | "last-workspace";
 
 /**
+ * Synchronous mirror for the backend full-width transcript preference.
+ */
+export const CHAT_TRANSCRIPT_FULL_WIDTH_KEY = "chatTranscriptFullWidth";
+
+/**
  * Get the localStorage key for expanded projects in sidebar (global)
  * Format: "expandedProjects"
  */

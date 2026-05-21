@@ -112,6 +112,22 @@ describe("router config.saveConfig", () => {
     expect(saved.subagentAiDefaults?.foo).toBeUndefined();
   });
 
+  test("persists the full-width chat transcript config flag", async () => {
+    const client = createRouterClient(router(), { context: createContext() });
+
+    expect((await client.config.getConfig()).chatTranscriptFullWidth).toBe(false);
+
+    await client.config.updateChatTranscriptFullWidth({ enabled: true });
+
+    expect((await client.config.getConfig()).chatTranscriptFullWidth).toBe(true);
+    expect(config.loadConfigOrDefault().chatTranscriptFullWidth).toBe(true);
+
+    await client.config.updateChatTranscriptFullWidth({ enabled: false });
+
+    expect((await client.config.getConfig()).chatTranscriptFullWidth).toBe(false);
+    expect(config.loadConfigOrDefault().chatTranscriptFullWidth).toBeUndefined();
+  });
+
   test("preserves optional task settings when a save omits them", async () => {
     await config.editConfig((current) => ({
       ...current,

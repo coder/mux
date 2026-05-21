@@ -81,6 +81,8 @@ export interface ProjectsConfig {
   taskSettings?: TaskSettings;
   /** UI layout presets + hotkeys (shared via ~/.mux/config.json). */
   layoutPresets?: LayoutPresetsConfig;
+  /** Let chat transcripts use the full chat pane width instead of the default readable column. */
+  chatTranscriptFullWidth?: boolean;
   /**
    * Mux Gateway routing preferences (shared via ~/.mux/config.json).
    * Mirrors browser localStorage so switching server ports doesn't reset the UI.

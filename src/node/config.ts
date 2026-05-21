@@ -878,6 +878,7 @@ export class Config {
           viewedSplashScreens: parsed.viewedSplashScreens,
           layoutPresets,
           taskSettings,
+          chatTranscriptFullWidth: parseOptionalBoolean(parsed.chatTranscriptFullWidth),
           muxGatewayEnabled,
           llmDebugLogs: parseOptionalBoolean(parsed.llmDebugLogs),
           heartbeatDefaultPrompt: parseOptionalNonEmptyString(parsed.heartbeatDefaultPrompt),
@@ -952,6 +953,11 @@ export class Config {
       const muxGatewayEnabled = parseOptionalBoolean(config.muxGatewayEnabled);
       if (muxGatewayEnabled !== undefined) {
         data.muxGatewayEnabled = muxGatewayEnabled;
+      }
+
+      const chatTranscriptFullWidth = parseOptionalBoolean(config.chatTranscriptFullWidth);
+      if (chatTranscriptFullWidth === true) {
+        data.chatTranscriptFullWidth = true;
       }
 
       const llmDebugLogs = parseOptionalBoolean(config.llmDebugLogs);

@@ -90,6 +90,7 @@ export const AppConfigOnDiskSchema = z
     featureFlagOverrides: z.record(z.string(), FeatureFlagOverrideSchema).optional(),
     layoutPresets: z.unknown().optional(),
     taskSettings: TaskSettingsSchema.optional(),
+    chatTranscriptFullWidth: z.boolean().optional(),
     muxGatewayEnabled: z.boolean().optional(),
     llmDebugLogs: z.boolean().optional(),
     heartbeatDefaultPrompt: z.string().optional(),

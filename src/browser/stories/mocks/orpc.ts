@@ -132,6 +132,8 @@ export interface MockORPCClientOptions {
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
   /** What to do with mux-managed worktrees when archiving a chat. */
   worktreeArchiveBehavior?: WorktreeArchiveBehavior;
+  /** Initial full-width transcript toggle for config.getConfig */
+  chatTranscriptFullWidth?: boolean;
   /** Initial runtime enablement for config.getConfig */
   runtimeEnablement?: Record<string, boolean>;
   /** Initial default runtime for config.getConfig (global) */
@@ -369,6 +371,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     agentAiDefaults: initialAgentAiDefaults,
     coderWorkspaceArchiveBehavior: initialCoderWorkspaceArchiveBehavior = "stop",
     worktreeArchiveBehavior: initialWorktreeArchiveBehavior = "keep",
+    chatTranscriptFullWidth: initialChatTranscriptFullWidth = false,
     runtimeEnablement: initialRuntimeEnablement,
     defaultRuntime: initialDefaultRuntime,
     onePasswordAccountName: initialOnePasswordAccountName = null,
@@ -501,6 +504,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let muxGatewayModels: string[] | undefined = undefined;
   let coderWorkspaceArchiveBehavior = initialCoderWorkspaceArchiveBehavior;
   let worktreeArchiveBehavior = initialWorktreeArchiveBehavior;
+  let chatTranscriptFullWidth = initialChatTranscriptFullWidth;
   let runtimeEnablement: Record<string, boolean> = initialRuntimeEnablement ?? {
     local: true,
     worktree: true,
@@ -710,6 +714,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           heartbeatDefaultIntervalMs,
           imageGeneration,
           goalDefaults,
+          chatTranscriptFullWidth,
           muxGovernorEnrolled,
           llmDebugLogs: false,
         }),
@@ -778,6 +783,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       }) => {
         routePriority = [...input.routePriority];
         routeOverrides = { ...(input.routeOverrides ?? {}) };
+        notifyConfigChanged();
+        return Promise.resolve(undefined);
+      },
+      updateChatTranscriptFullWidth: (input: { enabled: boolean }) => {
+        chatTranscriptFullWidth = input.enabled;
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },

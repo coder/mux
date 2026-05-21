@@ -1961,6 +1961,15 @@ const GoalDefaultsConfigSchema = z.object({
     .default(DEFAULT_GOAL_DEFAULTS.alwaysRequireExplicitBudget),
 });
 
+const booleanToggleRoute = {
+  input: z
+    .object({
+      enabled: z.boolean(),
+    })
+    .strict(),
+  output: z.void(),
+};
+
 export const config = {
   getConfig: {
     input: z.void(),
@@ -1987,6 +1996,7 @@ export const config = {
       // Mux Governor enrollment status (safe fields only - token never exposed)
       muxGovernorUrl: z.string().nullable(),
       muxGovernorEnrolled: z.boolean(),
+      chatTranscriptFullWidth: z.boolean(),
       llmDebugLogs: z.boolean(),
       heartbeatDefaultPrompt: z.string().optional(),
       heartbeatDefaultIntervalMs: z.number().optional(),
@@ -2072,14 +2082,8 @@ export const config = {
       .strict(),
     output: z.void(),
   },
-  updateLlmDebugLogs: {
-    input: z
-      .object({
-        enabled: z.boolean(),
-      })
-      .strict(),
-    output: z.void(),
-  },
+  updateChatTranscriptFullWidth: booleanToggleRoute,
+  updateLlmDebugLogs: booleanToggleRoute,
   updateHeartbeatDefaultPrompt: {
     input: z
       .object({

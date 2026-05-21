@@ -15,6 +15,13 @@ describe("AppConfigOnDiskSchema", () => {
     expect(AppConfigOnDiskSchema.safeParse(valid).success).toBe(true);
   });
 
+  it("validates the full-width chat transcript flag", () => {
+    expect(AppConfigOnDiskSchema.safeParse({ chatTranscriptFullWidth: true }).success).toBe(true);
+    expect(AppConfigOnDiskSchema.safeParse({ chatTranscriptFullWidth: "true" }).success).toBe(
+      false
+    );
+  });
+
   it("validates taskSettings with limits", () => {
     const valid = {
       taskSettings: {
