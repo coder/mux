@@ -86,7 +86,7 @@ describe("AdvisorToolCall", () => {
     globalThis.document = originalDocument;
   });
 
-  test("shows live phase timing in collapsed and expanded executing states", () => {
+  test("auto-expands while executing and shows live phase timing", () => {
     const startedAt = 1_700_000_000_123;
 
     useAdvisorToolLivePhaseMock.mockReturnValue({
@@ -97,22 +97,22 @@ describe("AdvisorToolCall", () => {
     const view = renderAdvisorToolCall({ startedAt });
 
     expect(useAdvisorToolLivePhaseMock).toHaveBeenCalledWith("workspace-1", "advisor-call-1");
-    expect(view.getByText("Waiting for response")).toBeTruthy();
+    expect(view.getAllByText("Waiting for response")).toHaveLength(2);
 
     let timers = view.getAllByTestId("elapsed-time");
-    expect(timers).toHaveLength(1);
-    expect(timers[0]?.dataset.active).toBe("true");
-    expect(timers[0]?.dataset.startedAt).toBe(String(startedAt));
-
-    fireEvent.click(view.getByText("advisor"));
-
-    expect(view.getAllByText("Waiting for response")).toHaveLength(2);
-    timers = view.getAllByTestId("elapsed-time");
     expect(timers).toHaveLength(2);
     for (const timer of timers) {
       expect(timer.dataset.active).toBe("true");
       expect(timer.dataset.startedAt).toBe(String(startedAt));
     }
+
+    fireEvent.click(view.getByText("advisor"));
+
+    expect(view.getAllByText("Waiting for response")).toHaveLength(1);
+    timers = view.getAllByTestId("elapsed-time");
+    expect(timers).toHaveLength(1);
+    expect(timers[0]?.dataset.active).toBe("true");
+    expect(timers[0]?.dataset.startedAt).toBe(String(startedAt));
   });
 
   test("falls back to a generic running state before a live phase arrives", () => {
@@ -120,10 +120,12 @@ describe("AdvisorToolCall", () => {
 
     const view = renderAdvisorToolCall();
 
-    expect(view.getByText("Running")).toBeTruthy();
+    expect(view.getAllByText("Running")).toHaveLength(2);
     const timers = view.getAllByTestId("elapsed-time");
-    expect(timers).toHaveLength(1);
-    expect(timers[0]?.dataset.active).toBe("true");
+    expect(timers).toHaveLength(2);
+    for (const timer of timers) {
+      expect(timer.dataset.active).toBe("true");
+    }
   });
 
   test("renders the advisor question when present", () => {
@@ -146,7 +148,7 @@ describe("AdvisorToolCall", () => {
     expect(view.getByText("Should we split the refactor into smaller commits?")).toBeTruthy();
   });
 
-  test("renders live advisor output while executing", () => {
+  test("renders live advisor output while auto-expanded during execution", () => {
     useAdvisorToolLivePhaseMock.mockReturnValue({
       phase: "waiting_for_response",
       timestamp: 1,
@@ -159,11 +161,105 @@ describe("AdvisorToolCall", () => {
     const view = renderAdvisorToolCall({ status: "executing" });
 
     expect(useAdvisorToolLiveOutputMock).toHaveBeenCalledWith("workspace-1", "advisor-call-1");
+    expect(view.getByText("Advice")).toBeTruthy();
+    expect(view.getByText("Streamed partial advice")).toBeTruthy();
+  });
+
+  test("collapses back to the settled default when execution completes", () => {
+    useAdvisorToolLivePhaseMock.mockReturnValue({
+      phase: "waiting_for_response",
+      timestamp: 1,
+    });
+    useAdvisorToolLiveOutputMock.mockReturnValue({
+      text: "Streamed partial advice",
+      timestamp: 2,
+    });
+
+    const view = renderAdvisorToolCall({ status: "executing" });
+
+    expect(view.getByText("Streamed partial advice")).toBeTruthy();
+
+    useAdvisorToolLivePhaseMock.mockReturnValue(undefined);
+    useAdvisorToolLiveOutputMock.mockReturnValue(null);
+
+    view.rerender(
+      <TooltipProvider>
+        <AdvisorToolCall
+          args={{}}
+          status="completed"
+          workspaceId="workspace-1"
+          toolCallId="advisor-call-1"
+          startedAt={1_700_000_000_000}
+          result={{
+            type: "advice",
+            advice: "Final persisted advice",
+            advisorModel: "openai:gpt-4.1-mini",
+            remainingUses: 1,
+          }}
+        />
+      </TooltipProvider>
+    );
+
+    expect(view.queryByText("Final persisted advice")).toBeNull();
 
     fireEvent.click(view.getByText("advisor"));
 
-    expect(view.getByText("Advice")).toBeTruthy();
-    expect(view.getByText("Streamed partial advice")).toBeTruthy();
+    expect(view.getByText("Final persisted advice")).toBeTruthy();
+  });
+
+  test("does not auto-expand executing rows that already have terminal results", () => {
+    const cases: Array<{
+      name: string;
+      result: unknown;
+      textAfterExpand: string;
+      verifyExpandedDetails?: boolean;
+    }> = [
+      {
+        name: "limit",
+        result: {
+          type: "limit_reached",
+          advisorModel: "openai:gpt-4.1-mini",
+          message: "Unique advisor limit reached message",
+        },
+        textAfterExpand: "Unique advisor limit reached message",
+      },
+      {
+        name: "error",
+        result: {
+          type: "error",
+          message: "Unique advisor failure message",
+        },
+        textAfterExpand: "Unique advisor failure message",
+      },
+      {
+        name: "unrecognized",
+        result: {
+          type: "unexpected",
+          message: "unexpected raw payload",
+        },
+        textAfterExpand: "Unrecognized advisor tool output shape",
+        // Expanding unrecognized output renders JsonHighlight, which needs ThemeProvider;
+        // this case only needs to prove terminal-result rows stay collapsed by default.
+        verifyExpandedDetails: false,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const view = renderAdvisorToolCall({
+        status: "executing",
+        result: testCase.result,
+        toolCallId: `advisor-call-${testCase.name}`,
+      });
+
+      expect(view.queryByText(testCase.textAfterExpand)).toBeNull();
+
+      if (testCase.verifyExpandedDetails !== false) {
+        fireEvent.click(view.getByText("advisor"));
+
+        expect(view.getByText(testCase.textAfterExpand)).toBeTruthy();
+      }
+      view.unmount();
+    }
   });
 
   test("completed advice supersedes live advisor output", () => {
