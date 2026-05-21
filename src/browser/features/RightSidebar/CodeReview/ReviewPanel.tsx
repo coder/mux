@@ -580,6 +580,24 @@ export function getEffectiveReviewFrontendFilters(params: {
   return { showReadHunks: effectiveShowRead, searchTerm: params.searchTerm };
 }
 
+export function getNextDismissedAssistedKeys(params: {
+  dismissedKeys: string[];
+  rawAssistedHunks: readonly AssistedReviewHunk[];
+  isTranscriptHydrated: boolean;
+}): string[] {
+  if (params.dismissedKeys.length === 0) {
+    return params.dismissedKeys;
+  }
+
+  if (params.rawAssistedHunks.length === 0) {
+    return params.isTranscriptHydrated ? [] : params.dismissedKeys;
+  }
+
+  const liveKeys = new Set(params.rawAssistedHunks.map((hunk) => formatAssistedFilter(hunk)));
+  const pruned = params.dismissedKeys.filter((key) => liveKeys.has(key));
+  return pruned.length === params.dismissedKeys.length ? params.dismissedKeys : pruned;
+}
+
 interface ReviewAssistedStatsReporterProps {
   workspaceId: string;
   workspacePath: string;
@@ -608,6 +626,9 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
   const rawAssistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
     rawWorkspaceStore.getAssistedReviewHunks(workspaceId)
   );
+  const isTranscriptHydrated = useSyncExternalStore(subscribeAssistedHunks, () =>
+    rawWorkspaceStore.isWorkspaceTranscriptCaughtUp(workspaceId)
+  );
   // Subscribe to the user's per-workspace dismissed pin list (same key the
   // panel writes via `usePersistedState`). Listening here keeps the Review
   // tab badge in lock-step with dismissals so the user doesn't get attention
@@ -635,49 +656,21 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
   // the same key until manual restore. The panel's `usePersistedState`
   // listener picks up the pruned value automatically on next mount.
   //
-  // Empty `rawAssistedHunks` is ambiguous on its own — could be cold-load
-  // replay-not-finished, or an explicit agent clear. We disambiguate by
-  // tracking whether we've ever observed a non-empty set during this
-  // session: that confirms hydration completed (or the agent actively
-  // added pins), at which point an empty live set is a real clear and
-  // we should drop ALL dismissed keys so a future re-add of the same
-  // path:range surfaces normally.
-  //
-  // The sentinel is keyed by workspaceId so switching workspaces does
-  // not carry forward a previous workspace's hydration assumption — that
-  // would let an unrelated workspace's mid-hydration empty list nuke
-  // dismissals here.
-  const everSeenAssistedRef = useRef<{ workspaceId: string; seen: boolean }>({
-    workspaceId,
-    seen: false,
-  });
-  if (everSeenAssistedRef.current.workspaceId !== workspaceId) {
-    everSeenAssistedRef.current = { workspaceId, seen: false };
-  }
+  // Empty `rawAssistedHunks` is ambiguous on its own. Before transcript replay
+  // catches up, it can be only a cold-load or reconnect placeholder, so keep
+  // dismissals. Once replay is caught up, an empty set is authoritative: the
+  // agent either had no pins or cleared them while the app was closed, so clear
+  // local dismissals to avoid suppressing a future re-add of the same path:range.
   useEffect(() => {
-    if (rawAssistedHunks.length > 0) {
-      everSeenAssistedRef.current.seen = true;
+    const nextDismissedAssistedKeys = getNextDismissedAssistedKeys({
+      dismissedKeys: dismissedAssistedKeys,
+      rawAssistedHunks,
+      isTranscriptHydrated,
+    });
+    if (nextDismissedAssistedKeys !== dismissedAssistedKeys) {
+      setDismissedAssistedKeys(nextDismissedAssistedKeys);
     }
-    if (dismissedAssistedKeys.length === 0) return;
-
-    if (rawAssistedHunks.length === 0) {
-      if (everSeenAssistedRef.current.seen) {
-        // Agent explicitly cleared its set after we'd already seen
-        // pins; drop the user-side dismissals so a re-add of the same
-        // key surfaces in the UI.
-        setDismissedAssistedKeys([]);
-      }
-      // else: cold-load with no pins yet — preserve dismissals until
-      // hydration produces evidence one way or the other.
-      return;
-    }
-
-    const liveKeys = new Set(rawAssistedHunks.map((h) => formatAssistedFilter(h)));
-    const pruned = dismissedAssistedKeys.filter((key) => liveKeys.has(key));
-    if (pruned.length !== dismissedAssistedKeys.length) {
-      setDismissedAssistedKeys(pruned);
-    }
-  }, [rawAssistedHunks, dismissedAssistedKeys, setDismissedAssistedKeys, workspaceId]);
+  }, [rawAssistedHunks, dismissedAssistedKeys, isTranscriptHydrated, setDismissedAssistedKeys]);
 
   const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
   const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);

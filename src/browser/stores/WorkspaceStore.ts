@@ -2195,6 +2195,15 @@ export class WorkspaceStore {
   }
 
   /**
+   * Whether the active transcript replay has reached its authoritative caught-up marker.
+   * Consumers use this to distinguish a still-hydrating empty derived list from an
+   * intentionally empty persisted transcript state.
+   */
+  isWorkspaceTranscriptCaughtUp(workspaceId: string): boolean {
+    return this.chatTransientState.get(workspaceId)?.caughtUp ?? false;
+  }
+
+  /**
    * Extract usage from session-usage.json (no tokenization or message iteration).
    *
    * Returns empty state if workspace doesn't exist (e.g., creation mode).
