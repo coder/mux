@@ -605,9 +605,24 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     (callback: () => void) => rawWorkspaceStore.subscribeKey(workspaceId, callback),
     [rawWorkspaceStore, workspaceId]
   );
-  const assistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
+  const rawAssistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
     rawWorkspaceStore.getAssistedReviewHunks(workspaceId)
   );
+  // Subscribe to the user's per-workspace dismissed pin list (same key the
+  // panel writes via `usePersistedState`). Listening here keeps the Review
+  // tab badge in lock-step with dismissals so the user doesn't get attention
+  // cues for pins they explicitly silenced — even when the Review panel
+  // itself isn't mounted.
+  const [dismissedAssistedKeys] = usePersistedState<string[]>(
+    STORAGE_KEYS.reviewAssistedDismissed(workspaceId),
+    [],
+    { listener: true }
+  );
+  const assistedHunks = useMemo(() => {
+    if (dismissedAssistedKeys.length === 0) return rawAssistedHunks;
+    const dismissed = new Set(dismissedAssistedKeys);
+    return rawAssistedHunks.filter((entry) => !dismissed.has(formatAssistedFilter(entry)));
+  }, [rawAssistedHunks, dismissedAssistedKeys]);
 
   const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
   const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
@@ -1758,14 +1773,20 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // re-evaluates, which schedules the following expiry (or stops if none).
   // This is cheaper than a periodic interval and keeps idle workspaces
   // completely quiet once every pin has expired.
+  //
+  // We schedule against the FULL `assistedHunks` list rather than just the
+  // currently-matched subset: a pin that's added while it doesn't match the
+  // diff (e.g., wrong base) still needs its 60s clock to tick down, so that
+  // if/when it becomes matched later (refresh, rebase) the badge has already
+  // expired and we don't surface a stale "new" cue.
   const newAssistedPinThresholdMs = 60_000;
   const [newPinTick, setNewPinTick] = useState(() => Date.now());
   useEffect(() => {
-    if (assistedMatchByHunkId.size === 0) return;
+    if (assistedHunks.length === 0) return;
     const now = Date.now();
     let nextExpiry = Infinity;
-    for (const match of assistedMatchByHunkId.values()) {
-      const addedAt = match.entry.addedAt;
+    for (const entry of assistedHunks) {
+      const addedAt = entry.addedAt;
       if (!addedAt) continue;
       const expiry = addedAt + newAssistedPinThresholdMs;
       if (expiry > now && expiry < nextExpiry) {
@@ -1779,7 +1800,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const delay = nextExpiry - now + 50;
     const id = window.setTimeout(() => setNewPinTick(Date.now()), delay);
     return () => window.clearTimeout(id);
-  }, [assistedMatchByHunkId, newPinTick, newAssistedPinThresholdMs]);
+  }, [assistedHunks, newPinTick, newAssistedPinThresholdMs]);
 
   const assistedNewByHunkId = useMemo(() => {
     if (assistedMatchByHunkId.size === 0) return new Set<string>();
