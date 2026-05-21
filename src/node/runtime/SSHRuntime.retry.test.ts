@@ -224,11 +224,15 @@ class CleanupCommandSSHRuntime extends SSHRuntime {
 // Detached gc invocation: `setsid -f` puts gc in its own session/PGID before
 // execing git so that neither the SSH channel closing nor the `timeout -s KILL`
 // process-group kill that `RemoteRuntime.exec` wraps every command in can
-// SIGKILL gc mid-finalization. A mid-finalization kill between
-// `tmp_pack_X → pack-<sha>.pack` and `tmp_idx_X → pack-<sha>.idx` would
-// corrupt the object store — see the doc comment in `repairBaseRepoForSync`.
-function expectedDetachedGcCommand(baseRepoPathArg: string): string {
-  return `setsid -f git -C ${baseRepoPathArg} gc --prune=now </dev/null >>/tmp/.mux-base-repo-gc.log 2>&1`;
+// SIGKILL gc mid-finalization. Retry cleanup uses `setsid -w` to wait for
+// the detached child; proactive preflight only waits for the detached spawn.
+function expectedGcCommand(baseRepoPathArg: string, waitForGc: boolean): string {
+  const setsidArgs = waitForGc ? "-f -w" : "-f";
+  return [
+    `base_repo=${baseRepoPathArg}`,
+    "command -v setsid >/dev/null 2>&1 || { echo 'setsid command not found; cannot detach git gc' >&2; exit 127; }",
+    `setsid ${setsidArgs} sh -c 'exec git -C "$1" gc --prune=now >>/tmp/.mux-base-repo-gc.log 2>&1' sh "$base_repo" </dev/null`,
+  ].join("\n");
 }
 
 function expectedStripPromisorCommand(baseRepoPathArg: string): string {
@@ -261,11 +265,11 @@ describe("SSHRuntime project sync retry orchestration", () => {
     expect(runtime.commands).toEqual([
       expectedStripPromisorCommand(baseRepoPathArg),
       `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
-      expectedDetachedGcCommand(baseRepoPathArg),
+      expectedGcCommand(baseRepoPathArg, true),
     ]);
-    // Last timeout is the SSH spawn round-trip, NOT gc itself. gc is detached
-    // on the remote and we intentionally do not bound it client-side.
-    expect(runtime.timeouts).toEqual([10, 10, 10]);
+    // Last timeout waits for `setsid -w`. It can stop waiting without killing
+    // the detached gc process itself.
+    expect(runtime.timeouts).toEqual([10, 10, 30 * 60]);
   });
 
   it("proactively repairs fragmented base repos before sync", async () => {
@@ -282,7 +286,7 @@ describe("SSHRuntime project sync retry orchestration", () => {
       `git -C ${baseRepoPathArg} count-objects -v`,
       expectedStripPromisorCommand(baseRepoPathArg),
       `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
-      expectedDetachedGcCommand(baseRepoPathArg),
+      expectedGcCommand(baseRepoPathArg, false),
     ]);
     // Last timeout is the SSH spawn round-trip, NOT gc itself.
     expect(runtime.timeouts).toEqual([10, 10, 10, 10]);
@@ -329,7 +333,7 @@ describe("SSHRuntime project sync retry orchestration", () => {
       `git -C ${baseRepoPathArg} count-objects -v`,
       expectedStripPromisorCommand(baseRepoPathArg),
       `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
-      expectedDetachedGcCommand(baseRepoPathArg),
+      expectedGcCommand(baseRepoPathArg, false),
     ]);
     expect(runtime.timeouts).toEqual([10, 10, 10, 10]);
   });

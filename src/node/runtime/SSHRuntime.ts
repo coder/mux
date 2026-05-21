@@ -71,11 +71,17 @@ const BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS = [50, 100, 200];
 const BASE_REPO_HEALTH_PROBE_TIMEOUT_SECONDS = 10;
 const BASE_REPO_PROMISOR_CLEANUP_TIMEOUT_SECONDS = 10;
 /**
- * Timeout for *spawning* the remote detached gc, not for gc itself. The
- * remote shell returns as soon as it has started `git gc` in the background,
- * so this only needs to cover one SSH round-trip.
+ * Timeout for *spawning* remote detached gc, not for gc itself. The remote
+ * shell returns as soon as it has started `git gc` in the background, so this
+ * only needs to cover one SSH round-trip.
  */
 const BASE_REPO_MAINTENANCE_SPAWN_TIMEOUT_SECONDS = 10;
+/**
+ * Retry-time maintenance should still wait for gc so the next sync attempt can
+ * benefit from the repair. The gc process itself is detached, so this timeout
+ * can stop waiting without SIGKILLing Git mid-pack-finalization.
+ */
+const BASE_REPO_MAINTENANCE_WAIT_TIMEOUT_SECONDS = 30 * 60;
 /** Git config keys that announce a bare repo as a promisor remote to
  *  `repo_has_promisor_remote()`. Unsetting all three is what makes
  *  receive-pack's `check_connected()` skip the buggy partial-clone fast
@@ -620,7 +626,8 @@ export class SSHRuntime extends RemoteRuntime {
   protected async repairBaseRepoForSync(
     baseRepoPathArg: string,
     repairContext: string,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    options: { waitForGc?: boolean } = {}
   ): Promise<void> {
     if (abortSignal?.aborted) {
       throw new Error("Operation aborted");
@@ -654,38 +661,38 @@ export class SSHRuntime extends RemoteRuntime {
       );
     }
 
-    // Spawn `git gc` detached on the remote and return immediately. We must NOT
-    // hold a client-side timeout over gc itself: a SIGKILL between
+    // Always detach `git gc` from mux's SSH command timeout. A SIGKILL between
     // `tmp_pack_X → pack-<sha>.pack` and `tmp_idx_X → pack-<sha>.idx` leaves a
-    // .pack with no .idx, which silently hides every object inside that pack
-    // and makes thin pushes fail with `unresolved deltas left after unpacking`.
+    // .pack with no .idx, hiding every object inside that pack and making thin
+    // pushes fail with `unresolved deltas left after unpacking`.
     //
-    // `setsid -f` forks gc into its own session (and therefore its own process
-    // group) before execing git, which is what makes gc survive the SSH channel
-    // closing AND the `timeout -s KILL` group-kill that `RemoteRuntime.exec`
-    // wraps every remote command in. `nohup` + `&` + `disown` would not be
-    // enough: timeout(1) by default sends SIGKILL to its whole child process
-    // group, and SIGKILL ignores SIGHUP-disposition tricks. Git's own `gc.pid`
-    // lock prevents concurrent gcs from racing on the same repo.
+    // `setsid -f` forks gc into its own session/process group before execing
+    // Git, so gc survives SSH channel shutdown and the `timeout -s KILL` group
+    // kill that `RemoteRuntime.exec` wraps every remote command in. `nohup` is
+    // not enough because SIGKILL ignores SIGHUP-disposition tricks. Git's own
+    // `gc.pid` lock prevents concurrent gcs from racing on the same repo.
     //
-    // We deliberately do not capture gc's exit code: the maintenance is
-    // advisory (it keeps pushes fast on long-lived repos) and any real
-    // failure surfaces on the next push, which falls back to the normal
-    // retry/cleanup path. Logs land in /tmp/.mux-base-repo-gc.log on the
-    // remote for postmortems.
-    const gcSpawnResult = await execBuffered(
-      this,
-      `setsid -f git -C ${baseRepoPathArg} gc --prune=now </dev/null >>/tmp/.mux-base-repo-gc.log 2>&1`,
-      {
-        cwd: "/tmp",
-        timeout: BASE_REPO_MAINTENANCE_SPAWN_TIMEOUT_SECONDS,
-        abortSignal,
-      }
-    );
-    if (gcSpawnResult.exitCode !== 0) {
-      log.warn(
-        `Failed to spawn remote git gc during base repo maintenance: ${gcSpawnResult.stderr || gcSpawnResult.stdout}`
-      );
+    // Proactive preflight is advisory and only waits for the detached spawn.
+    // Retry cleanup uses `setsid -w` to wait for the detached child, so the
+    // retry can benefit from completed maintenance without ever putting gc
+    // itself under a client-side kill timeout. Logs land in
+    // /tmp/.mux-base-repo-gc.log.
+    const setsidArgs = options.waitForGc ? "-f -w" : "-f";
+    const gcCommand = [
+      `base_repo=${baseRepoPathArg}`,
+      "command -v setsid >/dev/null 2>&1 || { echo 'setsid command not found; cannot detach git gc' >&2; exit 127; }",
+      `setsid ${setsidArgs} sh -c 'exec git -C "$1" gc --prune=now >>/tmp/.mux-base-repo-gc.log 2>&1' sh "$base_repo" </dev/null`,
+    ].join("\n");
+    const gcResult = await execBuffered(this, gcCommand, {
+      cwd: "/tmp",
+      timeout: options.waitForGc
+        ? BASE_REPO_MAINTENANCE_WAIT_TIMEOUT_SECONDS
+        : BASE_REPO_MAINTENANCE_SPAWN_TIMEOUT_SECONDS,
+      abortSignal,
+    });
+    if (gcResult.exitCode !== 0) {
+      const detail = (gcResult.stderr || gcResult.stdout).trim() || `exit ${gcResult.exitCode}`;
+      log.warn(`Remote git gc maintenance failed: ${detail}`);
     }
   }
 
@@ -736,7 +743,8 @@ export class SSHRuntime extends RemoteRuntime {
       await this.repairBaseRepoForSync(
         baseRepoPathArg,
         `Running remote promisor cleanup and git gc before retrying sync push (attempt ${attempt + 1}/${maxAttempts})`,
-        abortSignal
+        abortSignal,
+        { waitForGc: true }
       );
     } catch (cleanupError) {
       const cleanupErrorMsg = getErrorMessage(cleanupError);
