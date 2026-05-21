@@ -90,6 +90,16 @@ interface GoalTabProps {
 const parseBudgetInput = parseGoalBudgetInputCents;
 const parseTurnCapInput = parseGoalTurnCapInput;
 
+// Shared className for the neutral lifecycle action buttons in the active-goal
+// header (Pause / Mark complete / Reopen). All three render with the same
+// bordered surface-secondary chip styling so they read as visual peers; the
+// accent-colored Archive and success-tinted Resume buttons keep their own
+// inline class strings because they are the only primary / positive variants.
+// Centralizing the neutral string here keeps the next tone tweak to those
+// three buttons a one-line edit instead of three duplicated copies.
+const GOAL_LIFECYCLE_NEUTRAL_BUTTON_CLASS =
+  "border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm";
+
 type EditingField = "objective" | "budget" | "turnCap";
 
 export function GoalTab(props: GoalTabProps) {
@@ -613,7 +623,7 @@ export function GoalTab(props: GoalTabProps) {
           {canPause && (
             <button
               type="button"
-              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm"
+              className={GOAL_LIFECYCLE_NEUTRAL_BUTTON_CLASS}
               aria-label="Pause goal"
               onClick={() => void setStatus("paused")}
             >
@@ -641,7 +651,7 @@ export function GoalTab(props: GoalTabProps) {
           {canComplete && (
             <button
               type="button"
-              className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm"
+              className={GOAL_LIFECYCLE_NEUTRAL_BUTTON_CLASS}
               aria-label="Mark goal complete"
               onClick={(event) => openSummaryInput(event.currentTarget)}
             >
@@ -660,7 +670,7 @@ export function GoalTab(props: GoalTabProps) {
             <>
               <button
                 type="button"
-                className="border-border-light bg-surface-secondary text-foreground hover:bg-surface-tertiary inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm"
+                className={GOAL_LIFECYCLE_NEUTRAL_BUTTON_CLASS}
                 aria-label="Reopen goal"
                 onClick={() => void setStatus("active")}
               >
