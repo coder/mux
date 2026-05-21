@@ -301,11 +301,16 @@ describe("CompactionMonitor", () => {
   test("invalid threshold overrides fall back to the monitor's own threshold", () => {
     const { monitor } = createMonitor();
 
-    // null, NaN, negatives, and 0 must all degrade gracefully to the
-    // monitor's own threshold rather than throwing — these can come
-    // from a corrupt persisted goal record and must not interrupt
-    // the on-send / mid-stream pipelines.
-    for (const bad of [null, Number.NaN, Number.POSITIVE_INFINITY, -0.1, 0]) {
+    // null, NaN, ±Infinity, and negatives must all degrade gracefully
+    // to the monitor's own threshold rather than throwing — these can
+    // come from a corrupt persisted goal record and must not interrupt
+    // the on-send / mid-stream pipelines. `0` is intentionally NOT in
+    // this list — see the dedicated "0% override compacts on every
+    // check" test below. The schema admits 0 as the aggressive extreme,
+    // so treating it as invalid would create a renderer/backend
+    // mismatch (the UI shows "0%" but the backend would behave like
+    // the override was absent).
+    for (const bad of [null, Number.NaN, Number.POSITIVE_INFINITY, -0.1]) {
       const result = monitor.checkBeforeSend({
         model: BETA_SONNET_MODEL,
         usage: { lastContextUsage: createUsageDisplay(150_000) },
@@ -315,6 +320,46 @@ describe("CompactionMonitor", () => {
       });
       expect(result.thresholdPercentage).toBe(70);
     }
+  });
+
+  test("override of 0% is honored (Codex P2: renderer/backend must agree)", () => {
+    const { monitor, statusEvents } = createMonitor();
+
+    // Codex review on PR #3357 caught that `resolveEffectiveThreshold`
+    // was rejecting `override <= 0`, but the schema admits `0` as a
+    // valid per-goal value (the aggressive extreme of the slider). The
+    // contract is: if the UI lets the user set 0 and persist it, the
+    // backend must honor it. A silent fallback to the workspace setting
+    // creates a renderer/backend mismatch the user has no way to
+    // diagnose. This test pins both code paths.
+    const beforeSend = monitor.checkBeforeSend({
+      model: BETA_SONNET_MODEL,
+      usage: { lastContextUsage: createUsageDisplay(20_000) },
+      use1MContext: false,
+      providersConfig: null,
+      thresholdOverride: 0,
+    });
+    // The critical assertion: the effective threshold is 0%, not the
+    // workspace default (70%). 10% usage is above the 0% + 5% buffer
+    // force point so shouldForceCompact must trip too.
+    expect(beforeSend.thresholdPercentage).toBe(0);
+    expect(beforeSend.usagePercentage).toBe(10);
+    expect(beforeSend.shouldForceCompact).toBe(true);
+
+    // Mid-stream: 20k tokens = 10% of the 200k context, above the
+    // 0% + 5% buffer force point. Without the fix this would be false
+    // (override <= 0 was treated as invalid and the monitor's default
+    // 70% threshold would govern).
+    expect(
+      monitor.checkMidStream({
+        model: BETA_SONNET_MODEL,
+        usage: createMidStreamUsage(20_000),
+        use1MContext: false,
+        providersConfig: null,
+        thresholdOverride: 0,
+      })
+    ).toBe(true);
+    expect(statusEvents).toHaveLength(1);
   });
 });
 

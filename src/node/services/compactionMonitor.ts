@@ -169,18 +169,25 @@ export class CompactionMonitor {
 
   /**
    * Pick the threshold that should govern this single check. A finite,
-   * positive override (passed by the caller, typically derived from the
+   * in-range override (passed by the caller, typically derived from the
    * active goal's `autoCompactionThresholdPct`) wins over the monitor's
-   * own per-workspace value. We intentionally keep validation loose here:
-   * `null` / `undefined` / non-finite / non-positive values fall back to
-   * `this.threshold` instead of throwing, because the override is
+   * own per-workspace value. We intentionally keep validation loose
+   * here: `null` / `undefined` / non-finite / negative values fall back
+   * to `this.threshold` instead of throwing, because the override is
    * sourced from optional persisted state and a malformed entry must
    * never brick the compaction pipeline mid-stream.
+   *
+   * `0` is honored as "compact at 0% context" (i.e. compact on every
+   * send) — the schema admits it as a valid extreme of the aggressive
+   * end of the slider, and treating it as a fallback would silently
+   * make the renderer and backend disagree on what the override means
+   * (renderer renders "0%", backend behaves as workspace default).
    */
   private resolveEffectiveThreshold(override: number | null | undefined): number {
     if (override == null) return this.threshold;
     if (!Number.isFinite(override)) return this.threshold;
-    if (override <= 0) return this.threshold;
+    // Only negative values are corrupt; `0` is a valid per-goal extreme.
+    if (override < 0) return this.threshold;
     // Clamp the upper bound so an out-of-range "200%" override behaves the
     // same way `setThreshold(1)` would: compaction disabled, not skewed
     // higher than the model's actual context.
