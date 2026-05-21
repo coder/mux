@@ -3239,4 +3239,163 @@ describe("WorkspaceGoalService", () => {
       expect(patched?.budgetCents).toBeNull();
     });
   });
+
+  // ────────────────────────────────────────────────────────────────
+  // Per-goal auto-compaction threshold override.
+  //
+  // The field is tri-state: omitted (key not on the input) = no change,
+  // `null` = clear, integer 0–100 = explicit percent. Pinned here for
+  // every mutator that has its own assignment path so a future refactor
+  // can't silently drop one. Legacy/loading compatibility is covered by
+  // a schema-level test in the GoalRecordV1Schema describe block at the
+  // bottom of this file.
+  // ────────────────────────────────────────────────────────────────
+  describe("autoCompactionThresholdPct", () => {
+    test("setGoal persists the per-goal override and applyMutableFields can clear it", async () => {
+      const created = await setGoalOk(service, {
+        workspaceId,
+        objective: "Long research goal",
+        autoCompactionThresholdPct: 40,
+      });
+      expect(created.autoCompactionThresholdPct).toBe(40);
+
+      // applyMutableFields branch: editInPlace replace with the same
+      // objective should patch the threshold without touching budget /
+      // turnCap / costs.
+      const updated = await setGoalOk(service, {
+        workspaceId,
+        objective: created.objective,
+        autoCompactionThresholdPct: 80,
+      });
+      expect(updated.goalId).toBe(created.goalId);
+      expect(updated.autoCompactionThresholdPct).toBe(80);
+
+      // Explicit `null` clears the override; the field round-trips as
+      // `null` on the persisted record so the renderer's tile shows
+      // "Default" again.
+      const cleared = await setGoalOk(service, {
+        workspaceId,
+        objective: created.objective,
+        autoCompactionThresholdPct: null,
+      });
+      expect(cleared.autoCompactionThresholdPct).toBeNull();
+    });
+
+    test("setGoal without the key leaves the existing override intact", async () => {
+      const created = await setGoalOk(service, {
+        workspaceId,
+        objective: "Aggressive compaction goal",
+        autoCompactionThresholdPct: 30,
+      });
+
+      // An unrelated mutation (budget change) must not silently drop
+      // the per-goal threshold — this is the key reason `applyMutableFields`
+      // uses `Object.hasOwn` instead of a truthy check.
+      const budgetUpdated = await setGoalOk(service, {
+        workspaceId,
+        objective: created.objective,
+        budgetCents: 1000,
+      });
+      expect(budgetUpdated.autoCompactionThresholdPct).toBe(30);
+      expect(budgetUpdated.budgetCents).toBe(1000);
+    });
+
+    test("setGoal value 100 round-trips (per-goal disable, distinct from clear)", async () => {
+      // 100 (per-goal disabled) and `null` (no override) are visually
+      // similar in the UI but mean very different things on the backend:
+      // 100 must override the workspace setting to disable compaction
+      // for this specific goal, while `null` falls through. The
+      // persistence layer must preserve that distinction.
+      const created = await setGoalOk(service, {
+        workspaceId,
+        objective: "No-compaction goal",
+        autoCompactionThresholdPct: 100,
+      });
+      expect(created.autoCompactionThresholdPct).toBe(100);
+
+      const reloaded = await service.getGoal(workspaceId);
+      expect(reloaded?.autoCompactionThresholdPct).toBe(100);
+    });
+
+    test("addUpcomingGoal seeds the override on the queued record", async () => {
+      const queued = await service.addUpcomingGoal({
+        workspaceId,
+        objective: "Queued with threshold",
+        autoCompactionThresholdPct: 60,
+      });
+      expect(queued.autoCompactionThresholdPct).toBe(60);
+
+      const board = await service.getGoalBoard(workspaceId);
+      const found = board.entries.find(
+        (entry) => entry.section === "upcoming" && entry.goal.goalId === queued.goalId
+      );
+      expect(found?.goal.autoCompactionThresholdPct).toBe(60);
+    });
+
+    test("updateUpcomingGoal patches the override without touching unrelated fields", async () => {
+      const queued = await service.addUpcomingGoal({
+        workspaceId,
+        objective: "Patchable",
+        budgetCents: 500,
+        autoCompactionThresholdPct: 50,
+      });
+
+      // Patch only the threshold; budget / objective must stay put.
+      const patched = await service.updateUpcomingGoal({
+        workspaceId,
+        goalId: queued.goalId,
+        autoCompactionThresholdPct: 90,
+      });
+      expect(patched?.autoCompactionThresholdPct).toBe(90);
+      expect(patched?.budgetCents).toBe(500);
+      expect(patched?.objective).toBe("Patchable");
+
+      // And `null` clears the override on an upcoming goal too.
+      const cleared = await service.updateUpcomingGoal({
+        workspaceId,
+        goalId: queued.goalId,
+        autoCompactionThresholdPct: null,
+      });
+      expect(cleared?.autoCompactionThresholdPct).toBeNull();
+      expect(cleared?.budgetCents).toBe(500);
+    });
+  });
+
+  describe("autoCompactionThresholdPct legacy compatibility", () => {
+    test("legacy goal records without the field still parse and load", async () => {
+      // Simulate a legacy persisted goal record by writing a raw
+      // goal.json that pre-dates the field. The schema must accept
+      // it (the field is optional + nullable) and `getGoal` must
+      // return the parsed record with the field absent. This is
+      // the back-compat guarantee that lets us roll out the feature
+      // without a migration step.
+      const sessionDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(sessionDir, { recursive: true });
+      const legacyRecord = {
+        version: 1,
+        goalId: "11111111-1111-4111-8111-111111111111",
+        objective: "Legacy goal",
+        status: "active",
+        budgetCents: null,
+        turnCap: null,
+        costCents: 0,
+        costMicroCents: 0,
+        turnsUsed: 0,
+        attributedChildren: [],
+        budgetLimitInjectedForGoalId: null,
+        requireUserAcknowledgmentSinceMs: null,
+        createdAtMs: 1_700_000_000_000,
+        updatedAtMs: 1_700_000_000_000,
+      };
+      await fs.writeFile(path.join(sessionDir, "goal.json"), JSON.stringify(legacyRecord, null, 2));
+
+      const loaded = await service.getGoal(workspaceId);
+      expect(loaded).not.toBeNull();
+      expect(loaded?.goalId).toBe(legacyRecord.goalId);
+      // No `autoCompactionThresholdPct` key means "no override" — the
+      // renderer/backend treat this the same as `null` (workspace
+      // setting applies).
+      expect(loaded?.autoCompactionThresholdPct).toBeUndefined();
+    });
+  });
 });

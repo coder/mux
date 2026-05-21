@@ -403,6 +403,157 @@ describe("GoalTab", () => {
     await waitFor(() => expect(onUpdateTurnCap).toHaveBeenCalledWith(15));
   });
 
+  test("auto-compact tile shows 'Default' when no per-goal override is set", () => {
+    const { getByText, queryByText } = render(
+      <GoalTab
+        goal={goal({ autoCompactionThresholdPct: null })}
+        onSetStatus={mock()}
+        onClear={mock()}
+        onUpdateAutoCompactionThresholdPct={mock()}
+      />
+    );
+
+    // Null override → fall back to the workspace setting. The tile
+    // must distinguish "no override" from "explicit value" so users
+    // can tell at a glance whether the model-level slider is in effect.
+    expect(getByText("Auto-compact")).toBeTruthy();
+    expect(getByText("Default")).toBeTruthy();
+    expect(getByText("workspace setting")).toBeTruthy();
+    expect(queryByText("Off")).toBeNull();
+  });
+
+  test("auto-compact tile shows 'Off' at the per-goal-disabled sentinel", () => {
+    const { getByText, queryByText } = render(
+      <GoalTab
+        goal={goal({ autoCompactionThresholdPct: 100 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+        onUpdateAutoCompactionThresholdPct={mock()}
+      />
+    );
+
+    // 100 = explicit per-goal disable. Distinct from null (default)
+    // and from 0–99 (numeric threshold). The "Off" label is the
+    // user-visible cue that this specific goal won't auto-compact.
+    expect(getByText("Off")).toBeTruthy();
+    expect(getByText("compaction disabled")).toBeTruthy();
+    expect(queryByText("Default")).toBeNull();
+  });
+
+  test("auto-compact tile renders an explicit numeric override", () => {
+    const { getByText } = render(
+      <GoalTab
+        goal={goal({ autoCompactionThresholdPct: 50 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+        onUpdateAutoCompactionThresholdPct={mock()}
+      />
+    );
+
+    expect(getByText("50%")).toBeTruthy();
+    expect(getByText("of context window")).toBeTruthy();
+  });
+
+  test("edits auto-compact threshold inline and persists the percent", async () => {
+    const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
+    const { getByLabelText, getByText } = render(
+      <GoalTab
+        goal={goal({ autoCompactionThresholdPct: null })}
+        onSetStatus={mock()}
+        onClear={mock()}
+        onUpdateAutoCompactionThresholdPct={onUpdateAutoCompactionThresholdPct}
+      />
+    );
+
+    fireEvent.click(getByLabelText("Edit goal auto-compact threshold"));
+    const input = getByLabelText("Goal auto-compact threshold percent");
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    fireEvent.input(input, { target: { value: "60" } });
+    fireEvent.click(getByText("Save threshold"));
+
+    await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledWith(60));
+  });
+
+  test("editing auto-compact with 'off' submits the per-goal-disabled sentinel (100)", async () => {
+    const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
+    const { getByLabelText, getByText } = render(
+      <GoalTab
+        goal={goal()}
+        onSetStatus={mock()}
+        onClear={mock()}
+        onUpdateAutoCompactionThresholdPct={onUpdateAutoCompactionThresholdPct}
+      />
+    );
+
+    fireEvent.click(getByLabelText("Edit goal auto-compact threshold"));
+    const input = getByLabelText("Goal auto-compact threshold percent");
+    fireEvent.input(input, { target: { value: "off" } });
+    fireEvent.click(getByText("Save threshold"));
+
+    // "off" must round-trip to 100, not to null — these are different
+    // states (explicit disable vs. clear override). The parser path
+    // and the test path must agree.
+    await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledWith(100));
+  });
+
+  test("editing auto-compact with a blank value clears the override (null)", async () => {
+    const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
+    const { getByLabelText, getByText } = render(
+      <GoalTab
+        goal={goal({ autoCompactionThresholdPct: 50 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+        onUpdateAutoCompactionThresholdPct={onUpdateAutoCompactionThresholdPct}
+      />
+    );
+
+    fireEvent.click(getByLabelText("Edit goal auto-compact threshold"));
+    const input = getByLabelText("Goal auto-compact threshold percent");
+    fireEvent.input(input, { target: { value: "" } });
+    fireEvent.click(getByText("Save threshold"));
+
+    await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledWith(null));
+  });
+
+  test("auto-compact editor surfaces an error for out-of-range input", async () => {
+    const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
+    const { getByLabelText, getByText, queryByText } = render(
+      <GoalTab
+        goal={goal()}
+        onSetStatus={mock()}
+        onClear={mock()}
+        onUpdateAutoCompactionThresholdPct={onUpdateAutoCompactionThresholdPct}
+      />
+    );
+
+    fireEvent.click(getByLabelText("Edit goal auto-compact threshold"));
+    const input = getByLabelText("Goal auto-compact threshold percent");
+    fireEvent.input(input, { target: { value: "150" } });
+    fireEvent.click(getByText("Save threshold"));
+
+    // 150 is out of range → handler should not be called and the
+    // editor must surface the help text as a visible error message.
+    await waitFor(() => expect(queryByText(/0[–-]100/)).toBeTruthy());
+    expect(onUpdateAutoCompactionThresholdPct).not.toHaveBeenCalled();
+  });
+
+  test("auto-compact tile hides the Edit affordance when the handler is omitted", () => {
+    // Read-only stories / storybook variants render without
+    // `onUpdateAutoCompactionThresholdPct`. The tile still shows the
+    // value, but the Edit button is gated so users can't open an
+    // editor that has nowhere to submit.
+    const { queryByLabelText, getByText } = render(
+      <GoalTab
+        goal={goal({ autoCompactionThresholdPct: 50 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+      />
+    );
+
+    expect(getByText("50%")).toBeTruthy();
+    expect(queryByLabelText("Edit goal auto-compact threshold")).toBeNull();
+  });
+
   test("opens completion summary input, traps focus, submits, and restores focus", async () => {
     const onSetStatus = mock(() => Promise.resolve(undefined));
     const { getByLabelText, getByText, queryByLabelText } = render(

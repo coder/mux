@@ -175,4 +175,96 @@ describe("/goal slash command", () => {
       command: "goal",
     });
   });
+
+  // ────────────────────────────────────────────────────────────────
+  // /goal --compact <value>
+  //
+  // Mirrors the inline editor / create-form vocabulary so the slash,
+  // palette, and tab paths agree on what the user can type. Order-
+  // sensitive: must appear after `--turns` (or after `-b`) and before
+  // the objective.
+  // ────────────────────────────────────────────────────────────────
+  test("parses --compact with an integer percent", () => {
+    expect(parseCommand("/goal --compact 50 Ship the slice")).toEqual({
+      type: "goal-set",
+      objective: "Ship the slice",
+      autoCompactionThresholdPct: 50,
+    });
+    // `100` (per-goal disabled) is distinct from "off" but both must
+    // resolve to the same value so /goal --compact 100 and /goal
+    // --compact off produce identical persisted state.
+    expect(parseCommand("/goal --compact 100 Long context")).toEqual({
+      type: "goal-set",
+      objective: "Long context",
+      autoCompactionThresholdPct: 100,
+    });
+  });
+
+  test("parses --compact off / disable / disabled as 100 (per-goal disabled)", () => {
+    for (const word of ["off", "disable", "disabled"]) {
+      expect(parseCommand(`/goal --compact ${word} Stay long`)).toEqual({
+        type: "goal-set",
+        objective: "Stay long",
+        autoCompactionThresholdPct: 100,
+      });
+    }
+  });
+
+  test("parses --compact default / none / clear as null (clear override)", () => {
+    for (const word of ["default", "none", "clear"]) {
+      expect(parseCommand(`/goal --compact ${word} Use workspace setting`)).toEqual({
+        type: "goal-set",
+        objective: "Use workspace setting",
+        autoCompactionThresholdPct: null,
+      });
+    }
+  });
+
+  test("accepts a trailing percent sign", () => {
+    expect(parseCommand("/goal --compact 75% Tight context")).toEqual({
+      type: "goal-set",
+      objective: "Tight context",
+      autoCompactionThresholdPct: 75,
+    });
+  });
+
+  test("composes with -b and --turns in the documented order", () => {
+    // The parser walks `-b → --turns → --compact → objective` exactly
+    // in that sequence; pin that order here so a future refactor can't
+    // silently break it.
+    expect(parseCommand("/goal -b $5 --turns 10 --compact 60 Run the full plan")).toEqual({
+      type: "goal-set",
+      objective: "Run the full plan",
+      budgetCents: 500,
+      turnCap: 10,
+      autoCompactionThresholdPct: 60,
+    });
+  });
+
+  test("rejects --compact with invalid values", () => {
+    expect(parseCommand("/goal --compact 200 oops")).toMatchObject({
+      type: "command-invalid-args",
+      command: "goal",
+    });
+    expect(parseCommand("/goal --compact abc oops")).toMatchObject({
+      type: "command-invalid-args",
+      command: "goal",
+    });
+    // Missing value falls through to "abc" as the rejected token —
+    // the test below uses an explicit dangling flag form.
+    expect(parseCommand("/goal --compact -1 oops")).toMatchObject({
+      type: "command-invalid-args",
+      command: "goal",
+    });
+  });
+
+  test("treats non-leading --compact tokens as goal text", () => {
+    // Mirrors the same defensive behavior `--budget` already has —
+    // only the leading flag prefix is command syntax; anything after
+    // the objective starts is preserved verbatim.
+    expect(parseCommand("/goal Ship it --compact 50 stays prose")).toEqual({
+      type: "goal-set",
+      objective: "Ship it --compact 50 stays prose",
+    });
+  });
 });
