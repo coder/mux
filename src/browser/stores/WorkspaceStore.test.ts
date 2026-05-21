@@ -1,4 +1,15 @@
-import { describe, expect, it, beforeEach, afterEach, mock, spyOn, type Mock } from "bun:test";
+import { GlobalWindow } from "happy-dom";
+import {
+  describe,
+  expect,
+  it,
+  beforeEach,
+  afterEach,
+  afterAll,
+  mock,
+  spyOn,
+  type Mock,
+} from "bun:test";
 import type { CompactionFollowUpRequest, DisplayedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream";
@@ -132,21 +143,37 @@ const mockLocalStorage: Storage = {
   },
 };
 
-const mockWindow = {
-  localStorage: mockLocalStorage,
+type WorkspaceStoreTestWindow = Omit<Window & typeof globalThis, "api"> & {
   api: {
     workspace: {
-      onChat: mock((_workspaceId, _callback) => {
-        return () => {
-          // cleanup
-        };
-      }),
-    },
-  },
+      onChat: (_workspaceId: unknown, _callback: unknown) => () => void;
+    };
+  };
 };
 
-global.window = mockWindow as unknown as Window & typeof globalThis;
-global.window.dispatchEvent = mock();
+const originalWindow = global.window;
+
+const mockWindow = new GlobalWindow() as unknown as WorkspaceStoreTestWindow;
+Object.defineProperty(mockWindow, "localStorage", {
+  configurable: true,
+  value: mockLocalStorage,
+});
+mockWindow.api = {
+  workspace: {
+    onChat: mock((_workspaceId, _callback) => {
+      return () => {
+        // cleanup
+      };
+    }),
+  },
+};
+mockWindow.dispatchEvent = mock();
+
+global.window = mockWindow as Window & typeof globalThis;
+
+afterAll(() => {
+  global.window = originalWindow;
+});
 
 // Mock queueMicrotask
 global.queueMicrotask = (fn) => fn();
