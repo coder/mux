@@ -304,21 +304,27 @@ export async function highlightCode(
   language: string,
   theme: "dark" | "light"
 ): Promise<string> {
-  const api = getWorkerAPI();
-  if (!api) {
-    // Worker is structurally unavailable (vscode webview / test env).
-    // Main-thread Shiki is the only option; the timeout protection does not
-    // apply here, but these environments are not the ones that hit the
-    // pathological-input bug in practice.
-    return highlightMainThread(code, language, theme);
-  }
-
   try {
     return await enqueueHighlightWithBudget(
       code,
       language,
       theme,
-      () => api.highlight(code, language, theme),
+      async () => {
+        // Resolve the worker when this queued job starts, not when it is
+        // enqueued. If an earlier job timed out and recycled the worker,
+        // later queued jobs must talk to the fresh worker rather than a dead
+        // Comlink proxy captured from the old worker.
+        const api = getWorkerAPI();
+        if (!api) {
+          // Worker is structurally unavailable (vscode webview / test env).
+          // Main-thread Shiki is the only option; timeout protection cannot
+          // preempt synchronous work here, but these environments are not the
+          // ones that hit the pathological-input bug in practice.
+          return highlightMainThread(code, language, theme);
+        }
+
+        return api.highlight(code, language, theme);
+      },
       recycleWorker
     );
   } catch (e) {
