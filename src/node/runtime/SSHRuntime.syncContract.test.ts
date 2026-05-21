@@ -106,7 +106,8 @@ interface GitPushPrivateApi {
     layout: RemoteProjectLayout,
     currentSnapshotPath: string,
     initLogger: InitLogger,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    options?: { forceNoThin?: boolean }
   ): Promise<void>;
 }
 
@@ -271,6 +272,64 @@ describe("SSHRuntime authoritative sync contract", () => {
     expect(pushCalls[0]).toContain("--atomic");
     expect(pushCalls[0]).toContain("+refs/heads/*:refs/mux-bundle/*");
     expect(pushCalls[0]).not.toContain("+refs/tags/*:refs/tags/*");
+  });
+
+  it("forces --no-thin pushes when the retry path requests a self-contained pack", async () => {
+    // After an `unresolved deltas` / `unpacker error` push failure, the retry
+    // loop opts the next attempt out of thin-pack encoding so the receiver
+    // does not need to resolve delta bases. Without this flag the retry could
+    // resend a thin pack and fail the same way.
+    const runtime = new CommandCaptureSSHRuntime();
+    const layout = createLayout();
+    const gitCalls: string[][] = [];
+
+    spyOn(disposableExec, "execFileAsync").mockImplementation((file, args) => {
+      expect(file).toBe("git");
+      gitCalls.push([...args]);
+      const isTagCheck = args.includes("for-each-ref") && args.includes("refs/tags");
+      return createMockExecResult(
+        Promise.resolve({ stdout: isTagCheck ? "refs/tags/v1.0.0\n" : "", stderr: "" })
+      );
+    });
+
+    await (runtime as unknown as GitPushPrivateApi).syncProjectSnapshotViaGitPush(
+      "/local/project",
+      layout,
+      layout.currentSnapshotPath,
+      noopInitLogger,
+      undefined,
+      { forceNoThin: true }
+    );
+
+    const pushCalls = gitCalls.filter((args) => args.includes("push"));
+
+    expect(pushCalls).toHaveLength(2);
+    // Branch push and tag push both carry --no-thin.
+    expect(pushCalls[0]).toContain("--no-thin");
+    expect(pushCalls[1]).toContain("--no-thin");
+  });
+
+  it("omits --no-thin on the happy push path", async () => {
+    // Default sync (no retry pressure) must still use Git's thin-pack
+    // optimization. --no-thin is opt-in via the retry loop only.
+    const runtime = new CommandCaptureSSHRuntime();
+    const layout = createLayout();
+    const gitCalls: string[][] = [];
+
+    spyOn(disposableExec, "execFileAsync").mockImplementation((_file, args) => {
+      gitCalls.push([...args]);
+      return createMockExecResult(Promise.resolve({ stdout: "", stderr: "" }));
+    });
+
+    await (runtime as unknown as GitPushPrivateApi).syncProjectSnapshotViaGitPush(
+      "/local/project",
+      layout,
+      layout.currentSnapshotPath,
+      noopInitLogger
+    );
+
+    const pushCalls = gitCalls.filter((args) => args.includes("push"));
+    expect(pushCalls.every((args) => !args.includes("--no-thin"))).toBe(true);
   });
 
   it("uses the upstream source branch over the synced local snapshot for fresh workspaces", async () => {
