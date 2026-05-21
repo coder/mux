@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { GlobalWindow } from "happy-dom";
 import type React from "react";
+import { installDom } from "../../../tests/ui/dom";
 
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { createControllableAsyncIterable } from "@/browser/testUtils";
@@ -34,15 +34,17 @@ function createWrapper(client: APIClient): React.FC<{ children: React.ReactNode 
 }
 
 describe("useChatTranscriptFullWidth", () => {
+  let cleanupDom: (() => void) | null = null;
+
   beforeEach(() => {
-    globalThis.window = new GlobalWindow({ url: "https://mux.example.com/" }) as unknown as Window &
-      typeof globalThis;
-    globalThis.document = globalThis.window.document;
+    cleanupDom = installDom();
   });
 
   afterEach(() => {
     cleanup();
     updatePersistedState<boolean | undefined>(CHAT_TRANSCRIPT_FULL_WIDTH_KEY, undefined);
+    cleanupDom?.();
+    cleanupDom = null;
   });
 
   test("uses the cached preference until backend config resolves", async () => {
