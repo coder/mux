@@ -222,6 +222,11 @@ describe("summarizeBashCommands", () => {
       "gh",
     ],
     [
+      "skips shell negation before command names",
+      "if ! git diff --quiet; then echo changed; fi && ! gh pr view 1",
+      "git, echo, gh",
+    ],
+    [
       "does not split control operators inside quoted text",
       "printf 'a && b' && git status",
       "printf, git",

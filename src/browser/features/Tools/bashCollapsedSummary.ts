@@ -37,6 +37,7 @@ const SKIP_WHOLE_FRAGMENT_KEYWORDS = new Set([
   "select",
 ]);
 const STRIP_PREFIX_KEYWORDS = new Set([
+  "!",
   "(",
   ")",
   "{",
