@@ -100,7 +100,36 @@ const PROJECT_SYNC_RETRYABLE_ERRORS = [
   "Broken pipe",
   "EPIPE",
   "Command killed by signal",
+  // Receive-pack thin-pack resolution failures. These happen when the bare
+  // base repo routes a small push through `unpack-objects` (because object
+  // count < `transfer.unpackLimit`, default 100) and the thin pack references
+  // delta bases that unpack-objects cannot resolve, or when the on-disk pack
+  // store is missing the assumed-present base objects (e.g. a `.pack` with no
+  // `.idx`). The retry path runs `repairBaseRepoForSync`, which sets
+  // `receive.unpackLimit=1` (forcing index-pack with `--fix-thin`) and runs
+  // gc, and the next push is force-promoted to `--no-thin` so the pack is
+  // self-contained. See `isUnresolvedDeltaPushFailure`.
+  "unresolved deltas",
+  "unpacker error",
+  "unpack-objects abnormal exit",
+  "remote unpack failed",
 ] as const;
+
+/**
+ * Patterns matching the receive-pack failure described above. Detected
+ * separately from generic retryable errors so the retry path can opt the next
+ * push into `--no-thin` instead of just rerunning the same thin push.
+ */
+const UNRESOLVED_DELTA_PUSH_PATTERNS = [
+  "unresolved deltas",
+  "unpacker error",
+  "unpack-objects abnormal exit",
+  "remote unpack failed",
+] as const;
+
+function isUnresolvedDeltaPushFailure(errorMsg: string): boolean {
+  return UNRESOLVED_DELTA_PUSH_PATTERNS.some((pattern) => errorMsg.includes(pattern));
+}
 
 const sharedProjectSyncTails = new Map<string, Promise<void>>();
 
@@ -661,6 +690,55 @@ export class SSHRuntime extends RemoteRuntime {
       );
     }
 
+    // Rebuild any orphaned pack indexes (`pack-<sha>.pack` with no matching
+    // `pack-<sha>.idx`). A previous gc that was SIGKILLed mid-finalization
+    // can leave a pack on disk whose `.idx` was never written, hiding every
+    // object inside that pack from negotiation. Subsequent thin pushes then
+    // assume those objects are missing → the remote pulls in delta bases
+    // that aren't actually reachable → `unresolved deltas left after
+    // unpacking`. `git index-pack` rebuilds the missing `.idx` from the
+    // `.pack` so the objects rejoin the negotiation surface before the next
+    // push. Best-effort: a corrupt `.pack` or environment without `git
+    // index-pack` will fall through to `gc` and ultimately the `--no-thin`
+    // retry push.
+    const reindexCommand = [
+      `pack_dir=${promisorPackDirArg}`,
+      'if [ ! -d "$pack_dir" ]; then exit 0; fi',
+      // Use `find` to enumerate orphan packs; for each, run `git index-pack`
+      // and log a line so the count is visible in the maintenance log.
+      `for pack in "$pack_dir"/pack-*.pack; do`,
+      '  [ -e "$pack" ] || continue',
+      '  idx="${pack%.pack}.idx"',
+      '  if [ -f "$idx" ]; then continue; fi',
+      `  if git index-pack "$pack" >/dev/null 2>&1; then`,
+      '    echo "reindexed $pack"',
+      "  else",
+      '    echo "reindex-failed $pack" >&2',
+      "  fi",
+      "done",
+    ].join("\n");
+    const reindexResult = await execBuffered(this, reindexCommand, {
+      cwd: "/tmp",
+      timeout: BASE_REPO_PROMISOR_CLEANUP_TIMEOUT_SECONDS,
+      abortSignal,
+    });
+    const reindexedCount = reindexResult.stdout
+      .split("\n")
+      .filter((line) => line.startsWith("reindexed ")).length;
+    if (reindexedCount > 0) {
+      log.info(
+        `Rebuilt ${reindexedCount} orphaned pack index file(s) during base repo maintenance`
+      );
+    }
+    const reindexFailures = reindexResult.stderr
+      .split("\n")
+      .filter((line) => line.startsWith("reindex-failed ")).length;
+    if (reindexFailures > 0) {
+      log.warn(
+        `Failed to rebuild ${reindexFailures} pack index file(s) during base repo maintenance`
+      );
+    }
+
     // Always detach `git gc` from mux's SSH command timeout. A SIGKILL between
     // `tmp_pack_X → pack-<sha>.pack` and `tmp_idx_X → pack-<sha>.idx` leaves a
     // .pack with no .idx, hiding every object inside that pack and making thin
@@ -954,6 +1032,17 @@ export class SSHRuntime extends RemoteRuntime {
       //    See stripBaseRepoPromisorConfig() docstring for the upstream Git
       //    sideband-deadlock bug this guards against.
       promisorUnsetCmds,
+      // 4. Force receive-pack to use index-pack (with `--fix-thin`) instead of
+      //    `unpack-objects` for incoming pushes, regardless of object count.
+      //    This avoids the "unresolved deltas left after unpacking" /
+      //    "unpacker error" failure mode where small thin pushes (below the
+      //    default `transfer.unpackLimit=100`) reach `unpack-objects`, which
+      //    cannot resolve thin-pack delta bases. Best-effort: an older Git
+      //    that does not honor this key still works under the retry path.
+      //    Trade-off: more small packs, but the existing fragmented-base-repo
+      //    maintenance (`ensureHealthyBaseRepoForSync`) collapses them on a
+      //    schedule, so this is a net robustness win.
+      `git -C ${baseRepoPathArg} config --local receive.unpackLimit 1 2>/dev/null || true`,
     ].join("\n");
 
     const result = await execBuffered(this, cmd, {
@@ -1317,11 +1406,19 @@ export class SSHRuntime extends RemoteRuntime {
         initLogger.logStep("Pre-fetched from origin on remote host");
       } else {
         initLogger.logStep("Pre-fetch from origin skipped (fetch failed)");
+        // Preserve the stderr in debug logs so we can diagnose recurrent
+        // prefetch misses (auth, unreachable URL, mismatched origin) without
+        // surfacing noisy detail on the happy path.
+        const detail = (result.stderr || result.stdout).trim();
+        if (detail) {
+          log.debug("Pre-fetch from origin failed", { detail });
+        }
       }
-    } catch {
+    } catch (error) {
       // Best-effort — if origin is unreachable or not configured, the local
       // push will still transfer all required objects.
       initLogger.logStep("Pre-fetch from origin skipped (not reachable)");
+      log.debug("Pre-fetch from origin errored", { error: getErrorMessage(error) });
     }
     return { refreshedOrigin: true };
   }
@@ -1665,8 +1762,15 @@ export class SSHRuntime extends RemoteRuntime {
     layout: RemoteProjectLayout,
     currentSnapshotPath: string,
     initLogger: InitLogger,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    options: { forceNoThin?: boolean } = {}
   ): Promise<void> {
+    // `forceNoThin` opts the push out of thin-pack delta-base optimization.
+    // This is set by the retry path after an "unresolved deltas" / "unpacker
+    // error" failure: the remote couldn't resolve the thin pack's delta
+    // bases, so we resend a self-contained pack on the next attempt instead
+    // of rerunning the same thin push and failing the same way.
+    const forceNoThin = options.forceNoThin === true;
     const prepareSnapshotDir = await execBuffered(
       this,
       `mkdir -p ${this.quoteForRemote(path.posix.dirname(currentSnapshotPath))}`,
@@ -1764,6 +1868,9 @@ export class SSHRuntime extends RemoteRuntime {
       }
       throw new Error(`Failed to push to remote: ${errorMsg}`);
     };
+    // `--no-thin` flag is positioned before the URL so it applies to the
+    // pack-objects step git invokes for this push (and to nothing else).
+    const noThinFlag = forceNoThin ? ["--no-thin"] : [];
     const branchPushArgsBase = [
       "-C",
       projectPath,
@@ -1771,6 +1878,7 @@ export class SSHRuntime extends RemoteRuntime {
       "--force",
       "--prune",
       "--no-verify",
+      ...noThinFlag,
       remoteUrl,
       `+refs/heads/*:${BUNDLE_REF_PREFIX}*`,
     ];
@@ -1809,6 +1917,7 @@ export class SSHRuntime extends RemoteRuntime {
         "push",
         "--force",
         "--no-verify",
+        ...noThinFlag,
         remoteUrl,
         "+refs/tags/*:refs/tags/*",
       ]);
@@ -1846,13 +1955,20 @@ export class SSHRuntime extends RemoteRuntime {
     // Keep retries, cancellation handling, and retry cleanup inside the project-scoped
     // sync lock so a follow-up init cannot race the shared base repo while we are healing it.
     await enqueueProjectSync(projectKey, abortSignal, async () => {
+      // Latches once a thin-pack delta-base failure is observed so every
+      // subsequent attempt in this sync push a self-contained pack (`--no-thin`).
+      // Stays `false` for connection-reset / killed-by-signal retries since
+      // those don't benefit from forcing a larger pack.
+      let forceNoThinNextAttempt = false;
       for (let attempt = 1; attempt <= PROJECT_SYNC_MAX_ATTEMPTS; attempt++) {
         if (abortSignal?.aborted) {
           throw new Error("Operation aborted");
         }
 
         try {
-          await this.syncProjectToRemoteOnce(projectPath, layout, initLogger, abortSignal);
+          await this.syncProjectToRemoteOnce(projectPath, layout, initLogger, abortSignal, {
+            forceNoThin: forceNoThinNextAttempt,
+          });
           return;
         } catch (error) {
           const errorMsg = getErrorMessage(error);
@@ -1864,6 +1980,10 @@ export class SSHRuntime extends RemoteRuntime {
             attempt === PROJECT_SYNC_MAX_ATTEMPTS
           ) {
             throw new Error(`Failed to sync project: ${errorMsg}`);
+          }
+
+          if (isUnresolvedDeltaPushFailure(errorMsg)) {
+            forceNoThinNextAttempt = true;
           }
 
           log.info(
@@ -1891,7 +2011,8 @@ export class SSHRuntime extends RemoteRuntime {
     projectPath: string,
     layout: RemoteProjectLayout,
     initLogger: InitLogger,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    options: { forceNoThin?: boolean } = {}
   ): Promise<void> {
     if (abortSignal?.aborted) {
       throw new Error("Operation aborted");
@@ -1981,7 +2102,8 @@ export class SSHRuntime extends RemoteRuntime {
         layout,
         currentSnapshotPath,
         initLogger,
-        abortSignal
+        abortSignal,
+        { forceNoThin: options.forceNoThin === true }
       );
     } else {
       await this.syncProjectSnapshotViaBundle(
