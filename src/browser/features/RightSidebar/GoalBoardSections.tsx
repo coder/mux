@@ -137,10 +137,15 @@ function SectionShell(props: SectionShellProps) {
  *   • neutral     — Edit / Archive / Revive (Inbox-style moves)
  *   • positive    — Promote (upcoming → active)
  *   • destructive — Remove (drops the goal from the board)
+ *
+ * Exported so the active-goal card in `GoalTab.tsx` can render the
+ * "Archive this goal" / "Clear goal" affordance with the same chip
+ * styling (the de-emphasized text-link variant was visually inconsistent
+ * with every other Archive control on the same surface).
  */
-type RowActionTone = "neutral" | "positive" | "destructive";
+export type RowActionTone = "neutral" | "positive" | "destructive";
 
-interface RowActionButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+export interface RowActionButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   tone?: RowActionTone;
 }
 
@@ -151,7 +156,7 @@ const ROW_ACTION_TONE_CLASS: Record<RowActionTone, string> = {
     "text-muted hover:text-danger-soft hover:bg-danger-soft/10 hover:border-danger-soft/40",
 };
 
-function RowActionButton(props: RowActionButtonProps) {
+export function RowActionButton(props: RowActionButtonProps) {
   const { tone = "neutral", className, type, ...rest } = props;
   return (
     <button

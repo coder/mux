@@ -1,4 +1,14 @@
-import { CheckCircle2, Pause, Pencil, Play, RotateCcw, Settings2, Target } from "lucide-react";
+import {
+  CheckCircle2,
+  Inbox,
+  Pause,
+  Pencil,
+  Play,
+  RotateCcw,
+  Settings2,
+  Target,
+  Trash2,
+} from "lucide-react";
 import { useContext, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   goalActiveMode,
@@ -20,7 +30,10 @@ import { cn } from "@/common/lib/utils";
 // the tool-call cards as goal status labels evolve.
 import { formatGoalElapsed, goalStatusLabel } from "@/browser/features/Tools/Goal/goalToolUtils";
 import { GoalDefaultsModal } from "@/browser/features/RightSidebar/GoalDefaultsModal";
-import { GoalBoardSections } from "@/browser/features/RightSidebar/GoalBoardSections";
+import {
+  GoalBoardSections,
+  RowActionButton,
+} from "@/browser/features/RightSidebar/GoalBoardSections";
 import { useGoalBoard } from "@/browser/features/RightSidebar/useGoalBoard";
 
 /**
@@ -648,16 +661,19 @@ export function GoalTab(props: GoalTabProps) {
       )}
 
       {/*
-        Clear is intentionally de-emphasized so it does not compete visually
-        with Pause / Resume / Mark complete. Gated on `canEdit` so
-        transcript-only / pending-persistence goals do not expose a
+        Clear / Archive stays de-emphasized relative to Pause / Resume /
+        Mark complete above by virtue of the smaller `RowActionButton`
+        chip size + its position below the primary action row, but it
+        still renders as a real button so it visually matches the
+        Archive / Revive controls on the same tab (the row Archive in
+        CompletedSection calls the same `archiveGoal` endpoint as this
+        button does when `lifecycle === "complete"`). Gated on `canEdit`
+        so transcript-only / pending-persistence goals do not expose a
         destructive action.
       */}
       {canEdit && (
-        <div className="-mt-1 text-xs">
-          <button
-            type="button"
-            className="text-muted hover:text-foreground underline"
+        <div className="-mt-1">
+          <RowActionButton
             aria-label={lifecycle === "complete" ? "Archive goal" : "Clear goal"}
             onClick={() => {
               // when the active goal is complete, the user-
@@ -682,8 +698,13 @@ export function GoalTab(props: GoalTabProps) {
               }
             }}
           >
+            {lifecycle === "complete" ? (
+              <Inbox className="h-3 w-3" aria-hidden="true" />
+            ) : (
+              <Trash2 className="h-3 w-3" aria-hidden="true" />
+            )}
             {lifecycle === "complete" ? "Archive this goal" : "Clear goal"}
-          </button>
+          </RowActionButton>
         </div>
       )}
 

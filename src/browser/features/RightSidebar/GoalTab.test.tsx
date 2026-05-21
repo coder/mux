@@ -500,11 +500,12 @@ describe("GoalTab", () => {
       <GoalTab goal={goal()} onSetStatus={mock()} onClear={mock()} />
     );
 
-    // Active goal: the clear control exists but is rendered as a small text
-    // link — no primary-button background classes are applied.
+    // Active goal: the clear control exists but is rendered as a small
+    // chip-style row-action button (same `RowActionButton` styling as the
+    // Archive / Revive controls on the board) — explicitly NOT the
+    // primary accent button used by Save / Set goal.
     const clearButton = getByLabelText("Clear goal");
     expect(clearButton.className).not.toContain("bg-accent");
-    expect(clearButton.className).toContain("underline");
     expect(getByText("Clear goal")).toBeTruthy();
 
     rerender(
