@@ -56,6 +56,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   MARK_HUNK_UNREAD: "Mark hunk unread",
   MARK_FILE_READ: "Mark file read",
   TOGGLE_HUNK_COLLAPSE: "Toggle hunk collapse",
+  TOGGLE_ASSISTED_REVIEW: "Toggle Assisted filter",
   OPEN_SETTINGS: "Open settings",
   OPEN_ANALYTICS: "Open analytics",
   TOGGLE_VOICE_INPUT: "Toggle voice input",
@@ -163,6 +164,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "MARK_HUNK_UNREAD",
       "MARK_FILE_READ",
       "TOGGLE_HUNK_COLLAPSE",
+      "TOGGLE_ASSISTED_REVIEW",
     ],
   },
   {

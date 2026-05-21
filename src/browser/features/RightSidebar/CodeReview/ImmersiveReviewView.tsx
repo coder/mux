@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Circle,
   MessageSquare,
+  Sparkles,
   ThumbsDown,
   ThumbsUp,
   Trash2,
@@ -74,6 +75,18 @@ interface ImmersiveReviewViewProps {
   reviewsByFilePath: Map<string, Review[]>;
   /** Map of hunkId -> first-seen timestamp */
   firstSeenMap: Record<string, number>;
+  /**
+   * Set of hunkIds the agent flagged for review (via `review_pane_update`).
+   * When the selected hunk is in this set, the header surfaces an "Assisted"
+   * indicator so the agent's focus signal survives the immersive transition.
+   */
+  assistedHunkIds?: ReadonlySet<string>;
+  /**
+   * Per-hunkId agent comments, when available. Rendered next to the assisted
+   * indicator so the user gets the same "why was this flagged?" context they
+   * see in the side panel.
+   */
+  assistedCommentByHunkId?: Map<string, string>;
 }
 
 interface InlineComposerRequest {
@@ -396,7 +409,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     onReviewNote,
     isRead,
     isTouchImmersive,
+    assistedHunkIds,
+    assistedCommentByHunkId,
   } = props;
+  const selectedAssistedComment =
+    selectedHunkId !== null ? (assistedCommentByHunkId?.get(selectedHunkId) ?? null) : null;
+  const isSelectedAssisted =
+    selectedHunkId !== null && (assistedHunkIds?.has(selectedHunkId) ?? false);
   const isTouchExperience = isTouchImmersive === true;
 
   // Flatten file tree into ordered file list
@@ -1855,6 +1874,29 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           </div>
         )}
       </div>
+
+      {/* Assisted-review banner — surfaces the agent's flag + comment when
+          the selected hunk is one the agent pinned for review. We render it
+          between the header and the diff so the focus signal is impossible
+          to miss after entering immersive mode, where the side-panel cues
+          aren't visible. */}
+      {isSelectedAssisted && (
+        <div
+          className="border-review-accent/40 bg-review-accent/5 text-foreground flex items-start gap-2 border-b px-3 py-1.5 text-[11px] leading-[1.4]"
+          data-testid="immersive-assisted-banner"
+          role="status"
+          aria-live="polite"
+        >
+          <Sparkles aria-hidden="true" className="text-review-accent mt-[2px] h-3 w-3 shrink-0" />
+          {selectedAssistedComment ? (
+            <span className="min-w-0 break-words whitespace-pre-wrap">
+              {selectedAssistedComment}
+            </span>
+          ) : (
+            <span className="text-muted italic">Flagged by agent for review</span>
+          )}
+        </div>
+      )}
 
       {/* Unified whole-file diff with hunk overlays + notes sidebar */}
       <div className="flex min-h-0 flex-1">

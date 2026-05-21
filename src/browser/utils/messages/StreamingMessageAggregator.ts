@@ -33,7 +33,7 @@ import type {
   AgentSkillReadToolResult,
 } from "@/common/types/tools";
 import type { AssistedReviewHunk } from "@/common/types/review";
-import { parseAssistedFilter } from "@/common/utils/review/assistedReview";
+import { formatAssistedFilter, parseAssistedFilter } from "@/common/utils/review/assistedReview";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
 import { AgentSkillReadToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
@@ -504,6 +504,12 @@ export class StreamingMessageAggregator {
   // Agent-flagged "Assisted review" hunks (updated by review_pane_update).
   // Reconstructed from chat history on reload via processToolResult so the
   // pinned set survives restarts; not persisted to disk.
+  //
+  // Each entry carries optional `sourceMessageId` + `addedAt` metadata so the
+  // UI can render "jump to source turn" and "new since last update" cues. These
+  // fields are populated when the surrounding message context is known (i.e.
+  // when processing tool results); they are intentionally optional so callers
+  // without message context (legacy paths, tests) don't have to fabricate them.
   private assistedReviewHunks: AssistedReviewHunk[] = [];
 
   // Loaded skills (updated when agent_skill_read succeeds)
@@ -1160,7 +1166,13 @@ export class StreamingMessageAggregator {
           let assistantUpdatedTodos = false;
           for (const part of message.parts) {
             if (isDynamicToolPart(part) && part.state === "output-available") {
-              this.processToolResult(part.toolName, part.input, part.output);
+              // Pass messageId so derived state like assisted-review pins can
+              // remember which turn introduced them. We intentionally skip the
+              // timestamp on replay so historical pins don't all light up as
+              // "new" on initial load; only live updates get a fresh addedAt.
+              this.processToolResult(part.toolName, part.input, part.output, {
+                messageId: message.id,
+              });
               if (
                 part.toolName === "todo_write" &&
                 hasSuccessResult(part.output) &&
@@ -2480,8 +2492,17 @@ export class StreamingMessageAggregator {
    * @param toolName - Name of the tool that was called
    * @param input - Tool input arguments
    * @param output - Tool output result
+   * @param messageContext - Optional metadata about the assistant message that
+   *   owns this tool call. Used by `review_pane_update` to remember which turn
+   *   introduced each agent-flagged hunk so the UI can offer a "jump to source
+   *   message" affordance and a "new since last update" badge.
    */
-  private processToolResult(toolName: string, input: unknown, output: unknown): void {
+  private processToolResult(
+    toolName: string,
+    input: unknown,
+    output: unknown,
+    messageContext?: { messageId?: string; timestamp?: number }
+  ): void {
     // Update TODO state if this was a successful todo_write.
     // We still reconstruct from history so interrupted/incomplete plans survive reloads;
     // final completed plans are cleared later when the last active stream ends.
@@ -2499,18 +2520,48 @@ export class StreamingMessageAggregator {
     // by the handler), so we just re-parse the formatted strings into our
     // structured AssistedReviewHunk form. Re-running this across the entire
     // history naturally reconstructs the final state on reload.
+    //
+    // We additionally carry `sourceMessageId` + `addedAt` per pin so the UI
+    // can show a "jump to source turn" affordance and a transient "new" badge.
+    // Carryover semantics: when a previously-seen `path[:range]` key reappears
+    // in the new snapshot, we preserve its original metadata so a refined
+    // comment via `operation: "add"` doesn't make the pin look brand-new.
     if (toolName === "review_pane_update") {
       const parsed = ReviewPaneUpdateSuccessResultSchema.safeParse(output);
       if (parsed.success) {
+        const previousByKey = new Map<string, AssistedReviewHunk>();
+        for (const prev of this.assistedReviewHunks) {
+          previousByKey.set(formatAssistedFilter(prev), prev);
+        }
+
         const next: AssistedReviewHunk[] = [];
         for (const entry of parsed.data.hunks) {
           const filter = parseAssistedFilter(entry.path);
           if (!filter) continue;
-          next.push({
+          const candidate: AssistedReviewHunk = {
             path: filter.path,
             range: filter.range,
             comment: entry.comment ?? undefined,
-          });
+          };
+          const key = formatAssistedFilter(candidate);
+          const previous = previousByKey.get(key);
+          if (previous) {
+            // Carry forward sourceMessageId/addedAt so a refined comment in
+            // a follow-up `add` call doesn't reset the "new" badge.
+            candidate.sourceMessageId = previous.sourceMessageId;
+            candidate.addedAt = previous.addedAt;
+          } else {
+            // First time we've seen this pin in this session: record the
+            // owning turn id, and only stamp `addedAt` when the caller
+            // supplied a real timestamp. Replay deliberately omits this
+            // so historical pins don't all light up as "new" on load —
+            // only live updates qualify a pin for the transient badge.
+            candidate.sourceMessageId = messageContext?.messageId;
+            if (messageContext?.timestamp !== undefined) {
+              candidate.addedAt = messageContext.timestamp;
+            }
+          }
+          next.push(candidate);
         }
         this.assistedReviewHunks = next;
       }
@@ -2642,7 +2693,13 @@ export class StreamingMessageAggregator {
         };
 
         // Process tool result to update derived state (todos, agentStatus, etc.)
-        this.processToolResult(data.toolName, toolPart.input, data.result);
+        // Live updates stamp a fresh `Date.now()` so the Assisted-review "new"
+        // badge can highlight just-introduced pins (the replay path
+        // intentionally omits this so historical pins don't flash on load).
+        this.processToolResult(data.toolName, toolPart.input, data.result, {
+          messageId: data.messageId,
+          timestamp: Date.now(),
+        });
 
         // Tool output is now stable - invalidate all caches.
         this.markMessageDirty(data.messageId);

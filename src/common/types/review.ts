@@ -82,8 +82,17 @@ export type ReviewSortOrder = "file-order" | "last-edit";
  * Filter options for review panel
  */
 export interface ReviewFilters {
-  /** Whether to show hunks marked as read */
+  /** Whether to show hunks marked as read (used outside of Assisted mode). */
   showReadHunks: boolean;
+  /**
+   * Whether to show read hunks while {@link assistedOnly} is on. Tracked
+   * separately so the "Read:" toggle in Assisted mode is a worklist
+   * affordance ("hide done") without overwriting the user's general
+   * review preference. Defaults to false so marking an assisted pin
+   * as read actually clears it from the view — the user's most-asked
+   * fix once Assisted shipped.
+   */
+  assistedShowReadHunks: boolean;
   /** File path filter (regex or glob pattern) */
   filePathFilter?: string;
   /** Base reference to diff against (e.g., "HEAD", "main", "origin/main") */
@@ -112,6 +121,26 @@ export interface AssistedReviewHunk {
   range?: { start: number; end: number };
   /** Optional agent comment explaining why this area needs review. */
   comment?: string;
+  /**
+   * Frontend-only: id of the assistant message whose `review_pane_update`
+   * tool call produced this pin. Tracked during history replay so the UI
+   * can offer a "jump to source turn" affordance for each pin. Carried
+   * forward across subsequent `operation: "add"` calls so a refined comment
+   * doesn't make the pin look like it was just introduced.
+   *
+   * Not persisted to disk; recomputed from the transcript on every load.
+   */
+  sourceMessageId?: string;
+  /**
+   * Frontend-only: timestamp (ms since epoch) when this pin was first
+   * observed during this client's lifetime — i.e., when `review_pane_update`
+   * introduced the path:range key. Used to render a transient "new" badge
+   * on freshly-added pins so the user can tell incremental adds apart from
+   * carried-over entries.
+   *
+   * Not persisted to disk; recomputed from the transcript on every load.
+   */
+  addedAt?: number;
 }
 
 /**

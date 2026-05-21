@@ -154,21 +154,50 @@ describe("getEffectiveReviewIncludeUncommitted", () => {
 });
 
 describe("getEffectiveReviewFrontendFilters", () => {
-  test("assisted mode bypasses user filters that could hide accepted pins", () => {
+  test("assisted mode honors the user search term", () => {
+    // Previously the assisted-only branch wiped the search term so a pin
+    // couldn't be hidden by stale state. That clobbered legitimate
+    // narrowing — we now leave the user's query alone in both modes.
     expect(
       getEffectiveReviewFrontendFilters({
         assistedOnly: true,
         showReadHunks: false,
-        searchTerm: "does-not-match",
+        assistedShowReadHunks: false,
+        searchTerm: "needle",
+      })
+    ).toEqual({ showReadHunks: false, searchTerm: "needle" });
+  });
+
+  test("assisted mode uses assistedShowReadHunks for the read filter", () => {
+    // Marking a pin as read should clear it from the worklist by default,
+    // so the assisted-scoped flag drives this decision instead of the
+    // global "showReadHunks" preference. The user's general preference is
+    // intentionally ignored here.
+    expect(
+      getEffectiveReviewFrontendFilters({
+        assistedOnly: true,
+        showReadHunks: true, // user prefers showing read globally
+        assistedShowReadHunks: false, // worklist default: hide read pins
+        searchTerm: "",
+      })
+    ).toEqual({ showReadHunks: false, searchTerm: "" });
+
+    expect(
+      getEffectiveReviewFrontendFilters({
+        assistedOnly: true,
+        showReadHunks: false, // user prefers hiding read globally
+        assistedShowReadHunks: true, // explicit "show read" in worklist mode
+        searchTerm: "",
       })
     ).toEqual({ showReadHunks: true, searchTerm: "" });
   });
 
-  test("non-assisted mode keeps user filters", () => {
+  test("non-assisted mode keeps user filters and ignores assistedShowReadHunks", () => {
     expect(
       getEffectiveReviewFrontendFilters({
         assistedOnly: false,
         showReadHunks: false,
+        assistedShowReadHunks: true, // ignored outside Assisted mode
         searchTerm: "needle",
       })
     ).toEqual({ showReadHunks: false, searchTerm: "needle" });

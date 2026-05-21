@@ -475,6 +475,16 @@ export const KEYBINDS = {
   /** Toggle immersive review mode */
   TOGGLE_REVIEW_IMMERSIVE: { key: "i", shift: true },
 
+  /**
+   * Toggle the Assisted (agent-flagged hunks only) filter in the Code Review panel.
+   *
+   * Shift+A so the binding is review-scoped and doesn't collide with the
+   * global `FOCUS_INPUT_A` ("a" focuses chat input). Plan-annotate uses the
+   * same combo but is gated behind an active `propose_plan` tool so the
+   * two panels never compete for the same keystroke in practice.
+   */
+  TOGGLE_ASSISTED_REVIEW: { key: "A", shift: true },
+
   /** Navigate to next file in immersive review */
   REVIEW_NEXT_FILE: { key: "l" },
 
