@@ -44,6 +44,11 @@ def load_json(path: Path) -> dict | None:
         return None
 
 
+def env_flag(name: str) -> bool:
+    """Return True for the env boolean spellings emitted by workflows."""
+    return (os.environ.get(name) or "").strip().lower() in {"1", "true"}
+
+
 def extract_trial_score(trial_result: dict) -> float | None:
     """Extract score from trial result, supporting multiple Harbor formats."""
     score = trial_result.get("score")
@@ -185,6 +190,7 @@ def build_rows(job_folder: Path) -> list[dict]:
         dataset = job_config.get("dataset")
 
     experiments = os.environ.get("MUX_EXPERIMENTS")
+    mux_run_as_goal = env_flag("MUX_RUN_AS_GOAL")
 
     # Raw JSON for future-proofing
     run_result_json = json.dumps(job_result) if job_result else None
@@ -233,6 +239,7 @@ def build_rows(job_folder: Path) -> list[dict]:
             "mode": mode,
             "dataset": dataset,
             "experiments": experiments,
+            "mux_run_as_goal": mux_run_as_goal,
             "run_started_at": None,  # Not available in Harbor format
             "run_completed_at": None,
             "n_resolved": None,  # Will be set after counting all trials

@@ -434,6 +434,44 @@ describe("WorkspaceGoalService", () => {
     );
   });
 
+  test("can suppress setGoal kickoff continuation for CLI-controlled kickoff", async () => {
+    service = new WorkspaceGoalService(config, historyService, extensionMetadata, analytics, {
+      suppressKickoffContinuation: true,
+    });
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
+
+    await setGoalOk(service, { workspaceId, objective: "Wait for the CLI kickoff message" });
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("allows zero cooldown for immediate CLI-style continuations", async () => {
+    service = new WorkspaceGoalService(config, historyService, extensionMetadata, analytics, {
+      continuationCooldownMs: 0,
+    });
+    await setGoalOk(service, { workspaceId, objective: "Keep going without idle delay" });
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
+
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 10_000,
+    });
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 10_001,
+    });
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
   test("dispatches one budget-limit wrap-up after a continuation-origin stream exhausts the budget", async () => {
     const created = await setGoalOk(service, {
       workspaceId,
@@ -741,6 +779,39 @@ describe("WorkspaceGoalService", () => {
     expect(await service.getGoal(workspaceId)).toMatchObject({
       status: "budget_limited",
       budgetLimitInjectedForGoalId: null,
+    });
+  });
+
+  test("can allow budget-limit wrap-up after user-origin stream exhaustion", async () => {
+    service = new WorkspaceGoalService(config, historyService, extensionMetadata, analytics, {
+      allowUserOriginBudgetWrapup: true,
+    });
+    const created = await setGoalOk(service, {
+      workspaceId,
+      objective: "CLI owns over-budget kickoff",
+      budgetCents: 100,
+    });
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
+
+    await service.recordStreamAccounting({
+      workspaceId,
+      costUsd: 1.25,
+      streamStartedAtMs: created.createdAtMs + 1,
+      streamOriginKind: "user",
+    });
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: 20_000,
+    });
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      status: "budget_limited",
+      budgetLimitInjectedForGoalId: created.goalId,
     });
   });
 

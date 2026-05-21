@@ -34,6 +34,16 @@ MUX_MODEL="${MUX_MODEL:-anthropic:claude-sonnet-4-5}"
 MUX_TIMEOUT_MS="${MUX_TIMEOUT_MS:-}"
 MUX_WORKSPACE_ID="${MUX_WORKSPACE_ID:-mux-bench}"
 MUX_EXPERIMENTS="${MUX_EXPERIMENTS:-}"
+MUX_RUN_AS_GOAL="${MUX_RUN_AS_GOAL:-}"
+
+mux_run_as_goal_normalized="${MUX_RUN_AS_GOAL,,}"
+mux_run_as_goal_normalized="${mux_run_as_goal_normalized#"${mux_run_as_goal_normalized%%[![:space:]]*}"}"
+mux_run_as_goal_normalized="${mux_run_as_goal_normalized%"${mux_run_as_goal_normalized##*[![:space:]]}"}"
+case "${mux_run_as_goal_normalized}" in
+  "" | "0" | "false") mux_run_as_goal_enabled=0 ;;
+  "1" | "true") mux_run_as_goal_enabled=1 ;;
+  *) fatal "MUX_RUN_AS_GOAL must be one of: 1, true, 0, false" ;;
+esac
 
 resolve_project_path() {
   if [[ -n "${MUX_PROJECT_PATH}" ]]; then
@@ -80,11 +90,27 @@ if [[ -n "${MUX_EXPERIMENTS}" ]]; then
   done
 fi
 
+if [[ "${mux_run_as_goal_enabled}" == "1" ]]; then
+  log "strict mux goal mode enabled"
+  cmd+=(--goal "${instruction}")
+else
+  log "strict mux goal mode disabled"
+fi
+
+mux_run_args=()
 # Append arbitrary mux run flags (e.g., --thinking high --mode exec --use-1m --budget 5.00)
 if [[ -n "${MUX_RUN_ARGS:-}" ]]; then
-  # Word-split intentional: MUX_RUN_ARGS contains space-separated CLI flags
+  # Word-split intentional: MUX_RUN_ARGS contains space-separated CLI flags.
   # shellcheck disable=SC2206
-  cmd+=(${MUX_RUN_ARGS})
+  mux_run_args=(${MUX_RUN_ARGS})
+  if [[ "${mux_run_as_goal_enabled}" == "1" ]]; then
+    for arg in "${mux_run_args[@]}"; do
+      if [[ "${arg}" == "--goal" || "${arg}" == --goal=* ]]; then
+        fatal "MUX_RUN_ARGS must not include --goal when MUX_RUN_AS_GOAL is enabled"
+      fi
+    done
+  fi
+  cmd+=("${mux_run_args[@]}")
 fi
 
 # NOTE: Harbor only automatically collects /logs/agent on timeouts.
@@ -103,13 +129,19 @@ if [[ -n "${MUX_TIMEOUT_MS}" ]]; then
 fi
 
 # Capture output to file while streaming to terminal for token extraction.
-# Keep stderr separate so the stdout log stays valid JSONL.
-if ! printf '%s' "${instruction}" \
+# Keep stderr separate so the stdout log stays valid JSONL. Temporarily disable
+# errexit so token extraction still runs after mux returns a meaningful nonzero
+# code such as strict goal-mode exit 3.
+set +e
+printf '%s' "${instruction}" \
   | "${cmd[@]}" \
     2> >(tee "${MUX_STDERR_FILE}" >&2) \
-  | tee "${MUX_OUTPUT_FILE}"; then
-  fatal "mux agent session failed"
-fi
+  | tee "${MUX_OUTPUT_FILE}"
+pipeline_status=("${PIPESTATUS[@]}")
+set -e
+stdin_status="${pipeline_status[0]}"
+mux_status="${pipeline_status[1]}"
+tee_status="${pipeline_status[2]}"
 
 # Extract usage and cost from the JSONL output.
 # Prefer the run-complete event (emitted at end of --json run) which has aggregated
@@ -159,4 +191,19 @@ for usage in cumulative_by_msg.values():
 result["input"] += subagent_input
 result["output"] += subagent_output
 print(json.dumps(result))
-' "${MUX_OUTPUT_FILE}" > "${MUX_TOKEN_FILE}" 2>/dev/null || true
+' "${MUX_OUTPUT_FILE}" >"${MUX_TOKEN_FILE}" 2>/dev/null || true
+
+if [[ "${mux_status}" -ne 0 ]]; then
+  printf '[mux-run] ERROR: mux agent session failed (exit %s)\n' "${mux_status}" >&2
+  exit "${mux_status}"
+fi
+
+if [[ "${tee_status}" -ne 0 ]]; then
+  printf '[mux-run] ERROR: failed to capture mux stdout (exit %s)\n' "${tee_status}" >&2
+  exit "${tee_status}"
+fi
+
+if [[ "${stdin_status}" -ne 0 ]]; then
+  printf '[mux-run] ERROR: failed to send instruction to mux (exit %s)\n' "${stdin_status}" >&2
+  exit "${stdin_status}"
+fi

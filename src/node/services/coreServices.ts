@@ -16,6 +16,7 @@ import { log } from "@/node/services/log";
 import {
   WorkspaceGoalService,
   type GoalLifecycleAnalyticsSink,
+  type WorkspaceGoalServiceOptions,
 } from "@/node/services/workspaceGoalService";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager, type MCPServerManagerOptions } from "@/node/services/mcpServerManager";
@@ -41,6 +42,7 @@ export interface CoreServicesOptions {
   policyService?: PolicyService;
   telemetryService?: TelemetryService;
   analyticsService?: GoalLifecycleAnalyticsSink;
+  goalServiceOptions?: WorkspaceGoalServiceOptions;
   experimentsService?: ExperimentsService;
   sessionTimingService?: SessionTimingService;
   opResolver?: ExternalSecretResolver;
@@ -83,7 +85,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     config,
     historyService,
     extensionMetadata,
-    opts.analyticsService
+    opts.analyticsService,
+    opts.goalServiceOptions
   );
 
   const aiService = new AIService(

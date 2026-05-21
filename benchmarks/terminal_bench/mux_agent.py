@@ -78,6 +78,7 @@ class MuxAgent(BaseInstalledAgent):
         # Generic pass-through for arbitrary mux run CLI flags (e.g., --thinking
         # high --use-1m --budget 5.00). Avoids per-flag plumbing.
         "MUX_RUN_ARGS",
+        "MUX_RUN_AS_GOAL",
     )
 
     def __init__(
@@ -167,11 +168,30 @@ class MuxAgent(BaseInstalledAgent):
             if not project_path.strip():
                 raise ValueError("MUX_PROJECT_PATH must be non-empty when provided")
 
+        mux_run_as_goal = self._normalize_mux_run_as_goal(env.get("MUX_RUN_AS_GOAL"))
+        if mux_run_as_goal is None:
+            env.pop("MUX_RUN_AS_GOAL", None)
+        else:
+            env["MUX_RUN_AS_GOAL"] = mux_run_as_goal
+
         # Set experiments from kwarg (takes precedence over env var)
         if self._experiments:
             env["MUX_EXPERIMENTS"] = self._experiments
 
         return env
+
+    @staticmethod
+    def _normalize_mux_run_as_goal(value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        normalized = value.strip().lower()
+        if normalized in ("", "0", "false"):
+            return None
+        if normalized in ("1", "true"):
+            return "1"
+
+        raise ValueError("MUX_RUN_AS_GOAL must be one of: 1, true, 0, false")
 
     @property
     def _install_agent_template_path(self) -> Path:
@@ -288,6 +308,7 @@ class MuxAgent(BaseInstalledAgent):
     ) -> None:
         """Run agent commands, download token file, then populate context."""
         # Execute commands (from base class logic, but without calling populate_context)
+        failed_command: tuple[int, int] | None = None
         for i, exec_input in enumerate(self.create_run_agent_commands(instruction)):
             command_dir = self.logs_dir / f"command-{i}"
             command_dir.mkdir(parents=True, exist_ok=True)
@@ -305,6 +326,9 @@ class MuxAgent(BaseInstalledAgent):
                 (command_dir / "stdout.txt").write_text(result.stdout)
             if result.stderr:
                 (command_dir / "stderr.txt").write_text(result.stderr)
+            if result.return_code != 0:
+                failed_command = (i, result.return_code)
+                break
 
         # Download token file from container BEFORE populating context
         # Clear any stale token file first to avoid reading outdated data if download fails
@@ -316,6 +340,12 @@ class MuxAgent(BaseInstalledAgent):
             pass  # Token file may not exist if agent crashed early
 
         self.populate_context_post_run(context)
+
+        if failed_command is not None:
+            command_index, return_code = failed_command
+            raise RuntimeError(
+                f"mux agent command failed (command {command_index}, exit {return_code})"
+            )
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Extract token usage and cost from the token file written by mux-run.sh."""

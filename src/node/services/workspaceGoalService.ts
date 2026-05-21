@@ -329,8 +329,20 @@ function continuationSendOptions(sendOptions: SendMessageOptions): SendMessageOp
   return pickStartupRetrySendOptions(sendOptions) as SendMessageOptions;
 }
 
+export interface WorkspaceGoalServiceOptions {
+  /** Override interactive continuation cooldown; CLI goal runs use 0 to drive immediately. */
+  continuationCooldownMs?: number;
+  /** Allow CLI kickoff turns to receive the same budget-limit wrap-up as continuations. */
+  allowUserOriginBudgetWrapup?: boolean;
+  /** Prevent setGoal from queuing an automatic kickoff when the CLI sends its own message. */
+  suppressKickoffContinuation?: boolean;
+}
+
 export class WorkspaceGoalService {
   private readonly fileLocks = workspaceFileLocks;
+  private readonly continuationCooldownMs: number;
+  private readonly allowUserOriginBudgetWrapup: boolean;
+  private readonly suppressKickoffContinuation: boolean;
   private readonly pendingGoalMutations = new Map<string, PendingGoalMutation>();
   private readonly pendingGoalSnapshots = new Map<string, GoalSnapshot>();
 
@@ -359,8 +371,18 @@ export class WorkspaceGoalService {
     private readonly config: Config,
     private readonly historyService: HistoryService,
     private readonly extensionMetadata: ExtensionMetadataService,
-    private readonly analytics?: GoalLifecycleAnalyticsSink
-  ) {}
+    private readonly analytics?: GoalLifecycleAnalyticsSink,
+    options: WorkspaceGoalServiceOptions = {}
+  ) {
+    this.continuationCooldownMs =
+      options.continuationCooldownMs ?? DEFAULT_GOAL_CONTINUATION_COOLDOWN_MS;
+    this.allowUserOriginBudgetWrapup = options.allowUserOriginBudgetWrapup === true;
+    this.suppressKickoffContinuation = options.suppressKickoffContinuation === true;
+    assert(
+      Number.isFinite(this.continuationCooldownMs) && this.continuationCooldownMs >= 0,
+      "WorkspaceGoalService requires a non-negative continuation cooldown"
+    );
+  }
 
   setOnActivityChange(
     listener: (workspaceId: string, snapshot: WorkspaceActivitySnapshot) => void
@@ -1012,12 +1034,12 @@ export class WorkspaceGoalService {
     const lastContinuationFiredAtMs = goal.lastContinuationFiredAtMs ?? null;
     if (
       lastContinuationFiredAtMs != null &&
-      nowMs - lastContinuationFiredAtMs < DEFAULT_GOAL_CONTINUATION_COOLDOWN_MS
+      nowMs - lastContinuationFiredAtMs < this.continuationCooldownMs
     ) {
       return {
         eligible: false,
         reason: "cooldown",
-        deferUntilMs: lastContinuationFiredAtMs + DEFAULT_GOAL_CONTINUATION_COOLDOWN_MS,
+        deferUntilMs: lastContinuationFiredAtMs + this.continuationCooldownMs,
       };
     }
 
@@ -1115,7 +1137,7 @@ export class WorkspaceGoalService {
   }
 
   private isBudgetWrapupEligibleOrigin(originKind: GoalStreamOriginKind): boolean {
-    return originKind !== "user";
+    return this.allowUserOriginBudgetWrapup || originKind !== "user";
   }
 
   private async tryMarkBudgetLimitInjected(
@@ -1836,6 +1858,9 @@ export class WorkspaceGoalService {
   }
 
   private armKickoffContinuationIfIdle(workspaceId: string, goal: GoalRecordV1): void {
+    if (this.suppressKickoffContinuation) {
+      return;
+    }
     if (goal.status !== "active") {
       return;
     }

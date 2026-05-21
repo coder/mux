@@ -27,7 +27,7 @@ on:
         required: false
         type: string
       extra_args:
-        description: "Additional arguments to pass to harbor"
+        description: "Additional arguments to pass to harbor (e.g., --n-tasks 5 for quick dispatch runs)"
         required: false
         type: string
       experiments:
@@ -50,10 +50,15 @@ on:
         type: string
         default: ""
       mux_run_args:
-        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m --budget 5.00)"
+        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m --budget 5.00; with goal mode, add --goal-turns/--goal-budget)"
         required: false
         type: string
         default: ""
+      mux_run_as_goal:
+        description: "Run each task instruction as a mux CLI Goal Run"
+        required: false
+        type: boolean
+        default: false
     secrets:
       # Keep the runtime env name stable while routing benchmark spend to its own key.
       TERMINAL_BENCH_ANTHROPIC_API_KEY:
@@ -92,11 +97,16 @@ on:
         required: false
         type: string
       mux_run_args:
-        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m)"
+        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m; with goal mode, add --goal-turns/--goal-budget)"
         required: false
         type: string
+      mux_run_as_goal:
+        description: "Run each task instruction as a mux CLI Goal Run"
+        required: false
+        default: false
+        type: boolean
       extra_args:
-        description: "Additional arguments to pass to harbor"
+        description: "Additional arguments to pass to harbor (e.g., --n-tasks 5 for quick dispatch runs)"
         required: false
         type: string
       experiments:
@@ -105,10 +115,6 @@ on:
         type: string
       timeout:
         description: "Agent timeout in seconds (default: 1800 = 30 min)"
-        required: false
-        type: string
-      max_tasks:
-        description: "Maximum number of tasks to run (for faster iteration)"
         required: false
         type: string
 
@@ -206,6 +212,7 @@ jobs:
             ${{ inputs.extra_args || '' }}
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
           MUX_RUN_ARGS: ${{ inputs.mux_run_args }}
+          MUX_RUN_AS_GOAL: ${{ inputs.mux_run_as_goal && '1' || '' }}
           ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
@@ -358,6 +365,7 @@ jobs:
           GCP_PROJECT_ID: mux-benchmarks
           BQ_DATASET: benchmarks
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
+          MUX_RUN_AS_GOAL: ${{ inputs.mux_run_as_goal && '1' || '' }}
         run: |
           if [ -z "$GCP_SA_KEY" ]; then
             echo "GCP_SA_KEY not set, skipping BigQuery upload"
@@ -376,6 +384,7 @@ jobs:
           GCP_PROJECT_ID: mux-benchmarks
           BQ_DATASET: benchmarks
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
+          MUX_RUN_AS_GOAL: ${{ inputs.mux_run_as_goal && '1' || '' }}
         run: |
           if [ -z "$GCP_SA_KEY" ]; then
             echo "GCP_SA_KEY not set, skipping BigQuery upload"

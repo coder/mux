@@ -77,6 +77,16 @@ import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 import { EXPERIMENT_IDS } from "../common/constants/experiments";
 import { getErrorMessage } from "@/common/utils/errors";
+import { describeCliGoalStop, driveCliGoalUntilTerminal } from "./goalRunDriver";
+import {
+  parseGoalBudgetInputCents,
+  parseGoalTurnCapInput,
+} from "@/common/utils/goals/budgetParser";
+import {
+  CLI_GOAL_STREAM_START_TIMEOUT_MS,
+  GOAL_CONTINUATION_IDLE_CONSUMER_NAME,
+} from "@/constants/goals";
+import type { GoalRecordV1 } from "@/common/types/goal";
 
 // Display labels for CLI help (OFF, LOW, MED, HIGH, MAX).
 // Deduplicate because xhigh and max both display as "MAX" for default/Anthropic
@@ -148,6 +158,26 @@ function parseMode(value: string | undefined): CLIMode {
   if (normalized === "exec" || normalized === "execute") return "exec";
 
   throw new Error(`Invalid mode "${value}". Expected: plan, exec`);
+}
+
+function parseGoalBudgetFlag(value: string | undefined): number | null | undefined {
+  if (value == null) return undefined;
+  const parsed = parseGoalBudgetInputCents(value);
+  if (parsed === undefined) {
+    throw new Error(
+      'Invalid --goal-budget "' + value + '". Expected dollars like 5, $5.00, or cents like 500c'
+    );
+  }
+  return parsed;
+}
+
+function parseGoalTurnsFlag(value: string | undefined): number | undefined {
+  if (value == null) return undefined;
+  const parsed = parseGoalTurnCapInput(value);
+  if (parsed == null) {
+    throw new Error('Invalid --goal-turns "' + value + '". Expected a positive integer');
+  }
+  return parsed;
 }
 
 function generateWorkspaceId(): string {
@@ -305,6 +335,9 @@ program
   .option("--no-mcp-config", "ignore global + repo MCP config files (use only --mcp servers)")
   .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
   .option("-b, --budget <usd>", "stop when session cost exceeds budget (USD)", parseFloat)
+  .option("--goal <objective>", "drive an ephemeral CLI Goal Run until complete")
+  .option("--goal-budget <budget>", "goal budget, e.g. $5, 5.00, or 500c")
+  .option("--goal-turns <turns>", "maximum automatic goal continuation turns")
   .option("--service-tier <tier>", "OpenAI service tier: auto, default, flex, priority")
   .option("--use-1m", "enable 1M context window for supported Anthropic models")
   .option(
@@ -318,6 +351,8 @@ Examples:
   $ mux run "Fix the failing tests"
   $ mux run --dir /path/to/project "Add authentication"
   $ mux run --runtime "ssh user@host" "Deploy changes"
+  $ mux run --goal "Fix tests and verify they pass"
+  $ mux run --goal "Ship the refactor" --goal-budget 5.00 --goal-turns 10
   $ mux run --mode plan "Refactor the auth module"
   $ mux run --budget 1.50 "Quick code review"
   $ echo "Add logging" | mux run
@@ -344,6 +379,9 @@ interface CLIOptions {
   mcpConfig: boolean;
   experiment: string[];
   budget?: number;
+  goal?: string;
+  goalBudget?: string;
+  goalTurns?: string;
   serviceTier?: ServiceTier;
   use1m?: boolean;
   keepBackgroundProcesses?: boolean;
@@ -371,10 +409,17 @@ async function main(): Promise<number> {
 
   // Get message from arg or stdin
   const stdinMessage = await gatherMessageFromStdin();
-  const message = messageArg?.trim() || stdinMessage.trim();
+  const goalObjective = opts.goal?.trim() ?? "";
+  const hasGoal = opts.goal !== undefined;
+  if (hasGoal && goalObjective.length === 0) {
+    console.error("Error: --goal requires a non-empty objective");
+    process.exit(1);
+  }
+
+  const message = messageArg?.trim() || stdinMessage.trim() || goalObjective;
 
   if (!message) {
-    console.error("Error: No message provided. Pass as argument or pipe via stdin.");
+    console.error("Error: No message provided. Pass as argument, pipe via stdin, or use --goal.");
     console.error('Usage: mux run "Your instruction here"');
     process.exit(1);
   }
@@ -453,6 +498,12 @@ async function main(): Promise<number> {
     }
   }
 
+  const goalBudgetCents = parseGoalBudgetFlag(opts.goalBudget);
+  const goalTurnCap = parseGoalTurnsFlag(opts.goalTurns);
+  if (!hasGoal && (goalBudgetCents !== undefined || goalTurnCap !== undefined)) {
+    console.error("Error: --goal-budget and --goal-turns require --goal");
+    process.exit(1);
+  }
   const suppressHumanOutput = emitJson || quiet;
   const stdoutIsTTY = process.stdout.isTTY === true;
   const stderrIsTTY = process.stderr.isTTY === true;
@@ -508,6 +559,8 @@ async function main(): Promise<number> {
     mcpServerManager,
     providerService,
     workspaceService,
+    workspaceGoalService,
+    idleDispatcher,
   } = createCoreServices({
     config,
     extensionMetadataPath: path.join(tempDir.path, "extensionMetadata.json"),
@@ -516,6 +569,13 @@ async function main(): Promise<number> {
       inlineServers,
       ignoreConfigFile: !opts.mcpConfig,
     },
+    goalServiceOptions: hasGoal
+      ? {
+          continuationCooldownMs: 0,
+          allowUserOriginBudgetWrapup: true,
+          suppressKickoffContinuation: true,
+        }
+      : undefined,
   });
 
   // `mux run` uses createCoreServices directly (without ServiceContainer), so wire
@@ -556,6 +616,7 @@ async function main(): Promise<number> {
     aiService,
     initStateManager,
     backgroundProcessManager,
+    workspaceGoalService,
     keepBackgroundProcesses,
   });
   // Register with WorkspaceService so TaskService operations that target the parent
@@ -718,6 +779,37 @@ async function main(): Promise<number> {
     // Plan agent instructions are handled by the backend (has access to plan file path)
   });
 
+  let goalStopReason: string | null = null;
+  if (hasGoal) {
+    const setGoalResult = await workspaceGoalService.setGoal({
+      workspaceId,
+      objective: goalObjective,
+      budgetCents: goalBudgetCents ?? null,
+      turnCap: goalTurnCap ?? null,
+      initiator: "user",
+    });
+    if (!setGoalResult.success) {
+      throw new Error(`Failed to set CLI goal: ${setGoalResult.error.type}`);
+    }
+    const warning =
+      goalBudgetCents == null && goalTurnCap == null
+        ? "CLI Goal Run has no --goal-budget or --goal-turns limit. It will continue until the goal is complete or another stop condition occurs."
+        : null;
+    if (warning) {
+      emitJsonLine({ type: "goal-warning", workspaceId, warning });
+      writeHumanLine(`[goal] warning: ${warning}`);
+    }
+    emitJsonLine({
+      type: "goal-started",
+      workspaceId,
+      goalId: setGoalResult.data.goalId,
+      objective: goalObjective,
+      budgetCents: setGoalResult.data.budgetCents,
+      turnCap: setGoalResult.data.turnCap,
+    });
+    writeHumanLine(`[goal] started: ${goalObjective}`);
+  }
+
   const liveEvents: WorkspaceChatMessage[] = [];
   let readyForLive = false;
 
@@ -795,8 +887,14 @@ async function main(): Promise<number> {
   let rejectCompletion: ((reason?: unknown) => void) | null = null;
   let completionPromise: Promise<void> = Promise.resolve();
 
+  let resolveStreamStarted: (() => void) | null = null;
+  let streamStartedPromise: Promise<void> = Promise.resolve();
+
   const createCompletionPromise = (): Promise<void> => {
     streamEnded = false;
+    streamStartedPromise = new Promise<void>((resolve) => {
+      resolveStreamStarted = resolve;
+    });
     return new Promise<void>((resolve, reject) => {
       resolveCompletion = resolve;
       rejectCompletion = reject;
@@ -811,9 +909,35 @@ async function main(): Promise<number> {
     }
   };
 
+  const waitForStreamStarted = async (timeoutMs?: number): Promise<void> => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const streamFailedOrEndedBeforeStart = completionPromise.then(() => {
+      throw new Error("Goal continuation stream ended before it started");
+    });
+    const waits: Array<Promise<void>> = [streamStartedPromise, streamFailedOrEndedBeforeStart];
+    if (timeoutMs != null) {
+      waits.push(
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error("Timed out waiting for goal continuation stream to start"));
+          }, timeoutMs);
+          timer.unref?.();
+        })
+      );
+    }
+    try {
+      await Promise.race(waits);
+    } finally {
+      if (timer != null) {
+        clearTimeout(timer);
+      }
+    }
+  };
+
   const resetCompletionHandlers = () => {
     resolveCompletion = null;
     rejectCompletion = null;
+    resolveStreamStarted = null;
   };
 
   const rejectStream = (error: Error) => {
@@ -853,6 +977,11 @@ async function main(): Promise<number> {
       throw new Error(`Failed to send message: ${formattedError}`);
     }
     await waitForCompletion();
+  };
+
+  const getGoal = async (): Promise<GoalRecordV1 | null> => {
+    if (!hasGoal) return null;
+    return workspaceGoalService.getGoal(workspaceId);
   };
 
   const handleToolStart = (payload: WorkspaceChatMessage): boolean => {
@@ -941,6 +1070,7 @@ async function main(): Promise<number> {
         );
         return;
       }
+      resolveStreamStarted?.();
       activeMessageId = payload.messageId;
       return;
     }
@@ -1133,6 +1263,9 @@ async function main(): Promise<number> {
     }
   };
 
+  let finalGoalRecord: GoalRecordV1 | null = null;
+  let goalDriverError: unknown = null;
+
   const unsubscribe = await session.subscribeChat(chatListener);
 
   try {
@@ -1145,7 +1278,10 @@ async function main(): Promise<number> {
       const planWasProposed = planProposed;
       planProposed = false;
       if (initialMode === "plan" && !planWasProposed) {
-        throw new Error("Plan mode was requested, but the assistant never proposed a plan.");
+        const goalAfterFirstTurn = await getGoal();
+        if (!hasGoal || goalAfterFirstTurn?.status !== "budget_limited") {
+          throw new Error("Plan mode was requested, but the assistant never proposed a plan.");
+        }
       }
       if (planWasProposed) {
         writeHumanLineClosed(
@@ -1153,23 +1289,73 @@ async function main(): Promise<number> {
         );
         await sendAndAwait("Plan approved. Execute it.", buildSendOptions("exec"));
       }
+      if (hasGoal && !budgetExceeded) {
+        try {
+          await driveCliGoalUntilTerminal({
+            workspaceId,
+            getGoal,
+            buildExecSendOptions: () => buildSendOptions("exec"),
+            requestContinuationAfterStreamEnd: (input) =>
+              workspaceGoalService.requestContinuationAfterStreamEnd({
+                workspaceId,
+                ...input,
+              }),
+            requestDispatch: () =>
+              idleDispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME),
+            checkGoalContinuationEligibility: (nowMs) =>
+              workspaceGoalService.checkGoalContinuationEligibility(workspaceId, nowMs),
+            prepareForContinuation: () => {
+              completionPromise = createCompletionPromise();
+            },
+            waitForStreamStarted,
+            waitForCompletion,
+            streamStartTimeoutMs: CLI_GOAL_STREAM_START_TIMEOUT_MS,
+            isSessionBudgetExceeded: () => budgetExceeded,
+            nowMs: Date.now,
+            emitJsonLine,
+            writeHumanLineClosed,
+            setGoalStopReason: (reason) => {
+              goalStopReason = reason;
+            },
+            describeError: getErrorMessage,
+          });
+        } catch (error) {
+          goalDriverError = error;
+          goalStopReason = getErrorMessage(error);
+        }
+      }
+    }
+
+    finalGoalRecord = await getGoal();
+
+    if (
+      budgetExceeded &&
+      hasGoal &&
+      goalStopReason == null &&
+      finalGoalRecord?.status !== "complete"
+    ) {
+      goalStopReason = "session budget exceeded";
     }
 
     // Output final result for --quiet mode
     if (quiet) {
-      let finalEvent: WorkspaceChatMessage | undefined;
-      for (let i = liveEvents.length - 1; i >= 0; i--) {
-        if (isStreamEnd(liveEvents[i])) {
-          finalEvent = liveEvents[i];
-          break;
+      if (finalGoalRecord?.status === "complete" && finalGoalRecord.completionSummary) {
+        console.log(finalGoalRecord.completionSummary);
+      } else {
+        let finalEvent: WorkspaceChatMessage | undefined;
+        for (let i = liveEvents.length - 1; i >= 0; i--) {
+          if (isStreamEnd(liveEvents[i])) {
+            finalEvent = liveEvents[i];
+            break;
+          }
         }
-      }
-      if (finalEvent && isStreamEnd(finalEvent)) {
-        const parts = (finalEvent as unknown as { parts?: unknown[] }).parts ?? [];
-        for (const part of parts) {
-          if (part && typeof part === "object" && "type" in part && part.type === "text") {
-            const text = (part as { text?: string }).text;
-            if (text) console.log(text);
+        if (finalEvent && isStreamEnd(finalEvent)) {
+          const parts = (finalEvent as unknown as { parts?: unknown[] }).parts ?? [];
+          for (const part of parts) {
+            if (part && typeof part === "object" && "type" in part && part.type === "text") {
+              const text = (part as { text?: string }).text;
+              if (text) console.log(text);
+            }
           }
         }
       }
@@ -1194,6 +1380,16 @@ async function main(): Promise<number> {
             }
           : null,
         cost_usd: totalCost ?? null,
+        goal: finalGoalRecord
+          ? {
+              status: finalGoalRecord.status,
+              goalId: finalGoalRecord.goalId,
+              completionSummary: finalGoalRecord.completionSummary ?? null,
+              stopReason: goalStopReason,
+              costCents: finalGoalRecord.costCents,
+              turnsUsed: finalGoalRecord.turnsUsed,
+            }
+          : null,
       });
     }
 
@@ -1216,8 +1412,19 @@ async function main(): Promise<number> {
     }
   }
 
-  // Exit codes: 2 for budget exceeded, agent-specified exit code, or 0 for success
   if (budgetExceeded) return 2;
+  if (hasGoal && (goalDriverError != null || finalGoalRecord?.status !== "complete")) {
+    const reason = goalStopReason ?? describeCliGoalStop(finalGoalRecord);
+    writeHumanLineClosed(`[goal] stopped: ${reason}`);
+    emitJsonLine({
+      type: "goal-incomplete",
+      workspaceId,
+      goalId: finalGoalRecord?.goalId ?? null,
+      status: finalGoalRecord?.status ?? null,
+      stopReason: reason,
+    });
+    return 3;
+  }
   return agentExitCode ?? 0;
 }
 

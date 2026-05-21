@@ -59,6 +59,7 @@ make benchmark-terminal TB_ENV=daytona TB_CONCURRENCY=48 TB_TASK_NAMES="chess-be
 - `TB_TASK_NAMES`: Space-separated task names to run (default: all tasks)
 - `TB_ARGS`: Additional arguments passed to harbor
 - `MUX_RUN_ARGS`: CLI flags passed directly to `mux run` inside the container (e.g., `--thinking high --use-1m --budget 5.00`). This is the primary mechanism for all `mux run` flags — avoids per-flag plumbing.
+- `MUX_RUN_AS_GOAL`: When set to `1`, runs each task instruction as a strict `mux run --goal` objective while still piping the instruction to stdin. Use `MUX_RUN_ARGS` for goal limits such as `--goal-turns` and `--goal-budget`.
 
 ### Timeout Handling
 
@@ -107,6 +108,22 @@ gh workflow run terminal-bench.yml \
 gh workflow run terminal-bench.yml \
   -f model_name=openai/gpt-5.5 \
   -f mux_run_args="--thinking high --budget 5.00"
+```
+
+**Strict goal-mode runs:**
+
+```bash
+# Run a single task as a strict CLI Goal Run
+MUX_RUN_AS_GOAL=1 \
+MUX_RUN_ARGS="--thinking high --goal-turns 30 --goal-budget 10.00" \
+make benchmark-terminal TB_TASK_NAMES="chess-best-move"
+
+# CI dispatch
+gh workflow run terminal-bench.yml \
+  -f model_name=anthropic/claude-sonnet-4-5 \
+  -f task_names=chess-best-move \
+  -f mux_run_as_goal=true \
+  -f mux_run_args="--thinking high --goal-turns 30 --goal-budget 10.00"
 ```
 
 **Local runs:**

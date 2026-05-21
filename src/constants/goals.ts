@@ -1,6 +1,14 @@
 export const GOAL_CONTINUATION_IDLE_CONSUMER_NAME = "goal_continuation";
 export const GOAL_CONTINUATION_IDLE_CONSUMER_PRIORITY = 100;
 export const DEFAULT_GOAL_CONTINUATION_COOLDOWN_MS = 60_000;
+export const CLI_GOAL_CONTINUATION_SAFETY_LIMIT = 10_000;
+
+/**
+ * Upper bound for waiting on a CLI goal continuation to actually start. This is
+ * intentionally much longer than normal stream startup so slow CI/runtime warmup
+ * does not fail goal runs, while still preventing indefinite benchmark hangs.
+ */
+export const CLI_GOAL_STREAM_START_TIMEOUT_MS = 5 * 60 * 1000;
 export const GOAL_CONTINUATION_KIND = "goal_continuation";
 export const GOAL_BUDGET_LIMIT_KIND = "goal_budget_limit";
 export const GOAL_OBJECTIVE_OPEN_TAG = "<untrusted_objective>";
