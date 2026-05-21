@@ -1,4 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
+import { APIProvider } from "@/browser/contexts/API";
+import { CHROMATIC_SMOKE_MODES } from "@/browser/stories/meta";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import type { GoalBoardEntry, GoalBoardSnapshot, GoalRecordV1 } from "@/common/types/goal";
+
 import { GoalTab } from "./GoalTab";
 
 const meta: Meta<typeof GoalTab> = {
@@ -119,4 +126,132 @@ export const ActiveWithBudget: Story = {
       startedAtMs: Date.now() - 30_000,
     },
   },
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// CompleteWithBoard — full tab populated with Upcoming / Completed /
+// Archived sections so the Archive row button (Completed → Archive),
+// Revive (Archived), Promote / Remove / Edit (Upcoming), and the
+// de-emphasized "Archive this goal" link on the active complete card all
+// render in one screenshot. Required visual coverage for the row-action
+// button restyle, which `GoalTab.test.tsx` cannot see (it mocks
+// `GoalBoardSections` away).
+//
+// `GoalBoardSections` only mounts when `workspaceId` is provided, and
+// the populated board reaches it through `useGoalBoard → api.workspace
+// .getGoalBoard`. The decorator below mounts the story under an
+// `APIProvider` backed by the mock client, with a seeded snapshot keyed
+// by the story's workspaceId.
+// ─────────────────────────────────────────────────────────────────────────
+
+const STORY_WORKSPACE_ID = "ws-story-goaltab";
+const NOW = Date.UTC(2026, 4, 20, 12, 0, 0);
+
+function makeBoardGoal(
+  overrides: Partial<GoalRecordV1> & Pick<GoalRecordV1, "goalId">
+): GoalRecordV1 {
+  return {
+    version: 1,
+    goalId: overrides.goalId,
+    objective: overrides.objective ?? "Untitled goal",
+    status: overrides.status ?? "paused",
+    budgetCents: overrides.budgetCents ?? null,
+    turnCap: overrides.turnCap ?? null,
+    costCents: overrides.costCents ?? 0,
+    turnsUsed: overrides.turnsUsed ?? 0,
+    attributedChildren: overrides.attributedChildren ?? [],
+    budgetLimitInjectedForGoalId: overrides.budgetLimitInjectedForGoalId ?? null,
+    requireUserAcknowledgmentSinceMs: overrides.requireUserAcknowledgmentSinceMs ?? null,
+    createdAtMs: overrides.createdAtMs ?? NOW,
+    updatedAtMs: overrides.updatedAtMs ?? NOW,
+    ...(overrides.completionSummary != null
+      ? { completionSummary: overrides.completionSummary }
+      : {}),
+  };
+}
+
+function boardEntry(
+  section: GoalBoardEntry["section"],
+  goal: GoalRecordV1,
+  endedAtMs?: number
+): GoalBoardEntry {
+  return endedAtMs != null ? { section, goal, endedAtMs } : { section, goal };
+}
+
+const FULL_BOARD: GoalBoardSnapshot = {
+  entries: [
+    boardEntry(
+      "upcoming",
+      makeBoardGoal({
+        goalId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        objective: "Wire goal-board reorder to the keyboard",
+        budgetCents: 500,
+      })
+    ),
+    boardEntry(
+      "upcoming",
+      makeBoardGoal({
+        goalId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        objective: "Audit goal continuation telemetry",
+      })
+    ),
+    boardEntry(
+      "complete",
+      makeBoardGoal({
+        goalId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        objective: "Ship the goal primitive vertical slice",
+        status: "complete",
+        budgetCents: 500,
+        costCents: 412,
+        turnsUsed: 8,
+        completionSummary: "Lifecycle controls shipped with persistence and tests.",
+      }),
+      NOW - 60_000
+    ),
+    boardEntry(
+      "archived",
+      makeBoardGoal({
+        goalId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        objective: "Sketch goal-board mobile layout",
+      }),
+      NOW - 3_600_000
+    ),
+  ],
+};
+
+export const CompleteWithBoard: Story = {
+  args: {
+    workspaceId: STORY_WORKSPACE_ID,
+    goal: {
+      goalId: "33333333-3333-4333-8333-333333333333",
+      status: "complete",
+      objective: "Ship the goal primitive vertical slice",
+      budgetCents: null,
+      costCents: 250,
+      turnsUsed: 5,
+      turnCap: null,
+      completionSummary: "The lifecycle controls shipped with persistence and tests.",
+      startedAtMs: NOW,
+    },
+  },
+  // Dual-theme smoke coverage: the row-action button restyle should not
+  // regress in either light or dark mode.
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
+  decorators: [
+    (Story) => (
+      <APIProvider
+        client={createMockORPCClient({
+          goalBoardSnapshots: new Map([[STORY_WORKSPACE_ID, FULL_BOARD]]),
+        })}
+      >
+        <TooltipProvider>
+          <div className="max-w-md p-3">
+            <Story />
+          </div>
+        </TooltipProvider>
+      </APIProvider>
+    ),
+  ],
 };

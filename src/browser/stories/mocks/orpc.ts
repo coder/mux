@@ -4,6 +4,7 @@
  * Creates a client that matches the AppRouter interface with configurable mock data.
  */
 import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults, type GoalDefaults } from "@/constants/goals";
+import type { GoalBoardSnapshot } from "@/common/types/goal";
 import type { APIClient } from "@/browser/contexts/API";
 import type {
   AgentDefinitionDescriptor,
@@ -145,6 +146,13 @@ export interface MockORPCClientOptions {
   imageGeneration?: Partial<ImageGenerationConfig>;
   /** Initial global goal defaults for config.getConfig */
   goalDefaults?: GoalDefaults;
+  /**
+   * Pre-seeded goal-board snapshots per workspaceId. Stories that want
+   * the GoalTab's Upcoming / Completed / Archived sections to render
+   * populated (rather than the default empty board) pass a snapshot here
+   * keyed by the workspace ID the story uses.
+   */
+  goalBoardSnapshots?: Map<string, GoalBoardSnapshot>;
   /** Initial route priority for config.getConfig */
   routePriority?: string[];
   /** Initial per-model route overrides for config.getConfig */
@@ -368,6 +376,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     heartbeatDefaultIntervalMs: initialHeartbeatDefaultIntervalMs,
     imageGeneration: initialImageGeneration,
     goalDefaults: initialGoalDefaults,
+    goalBoardSnapshots = new Map<string, GoalBoardSnapshot>(),
     routePriority: initialRoutePriority = ["direct"],
     routeOverrides: initialRouteOverrides = {},
     agentDefinitions: initialAgentDefinitions,
@@ -1426,11 +1435,14 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         get: () => Promise.resolve(null),
         set: () => Promise.resolve({ success: true, data: undefined }),
       },
-      // Goal board (multi-goal queue) endpoints. Stories never call into
-      // these but the GoalTab subscribes to `getGoalBoard` on mount; the
-      // mutation endpoints exist for stories that simulate user
-      // interactions (currently none — they resolve voids).
-      getGoalBoard: () => Promise.resolve({ entries: [] }),
+      // Goal board (multi-goal queue) endpoints. Stories that want the
+      // GoalTab's Upcoming / Completed / Archived sections populated
+      // pass a snapshot via `goalBoardSnapshots` keyed by workspaceId;
+      // everything else falls back to an empty board. The mutation
+      // endpoints exist for stories that simulate user interactions
+      // (currently none — they resolve voids).
+      getGoalBoard: (input: { workspaceId: string }) =>
+        Promise.resolve(goalBoardSnapshots.get(input.workspaceId) ?? { entries: [] }),
       addUpcomingGoal: () =>
         Promise.resolve({
           version: 1 as const,
