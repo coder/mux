@@ -512,10 +512,18 @@ export class RefreshController {
     }
 
     if (this.listenersBound) {
-      if (this.boundHandleVisibility && typeof document.removeEventListener === "function") {
+      if (
+        this.boundHandleVisibility &&
+        typeof document !== "undefined" &&
+        typeof document.removeEventListener === "function"
+      ) {
         document.removeEventListener("visibilitychange", this.boundHandleVisibility);
       }
-      if (this.boundHandleFocus && typeof window.removeEventListener === "function") {
+      if (
+        this.boundHandleFocus &&
+        typeof window !== "undefined" &&
+        typeof window.removeEventListener === "function"
+      ) {
         window.removeEventListener("focus", this.boundHandleFocus);
       }
       this.listenersBound = false;
