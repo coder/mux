@@ -27,6 +27,19 @@ function startSshAgent(): { sshAuthSock: string; sshAgentPid: string } {
   return { sshAuthSock: sockMatch[1], sshAgentPid: pidMatch[1] };
 }
 
+/**
+ * Restore (or delete) a process.env entry to a previously-captured value.
+ * Mirrors the original "if saved was undefined, delete; else assign" semantics
+ * so the env is left exactly as it was before the test mutated it.
+ */
+function restoreEnvVar(key: string, savedValue: string | undefined): void {
+  if (savedValue === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = savedValue;
+  }
+}
+
 /** Run test body with SSH_AUTH_SOCK cleared to ensure disk keys are used */
 async function withoutSshAgent<T>(fn: () => Promise<T>): Promise<T> {
   const savedSock = process.env.SSH_AUTH_SOCK;
@@ -38,17 +51,8 @@ async function withoutSshAgent<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } finally {
-    if (savedSock === undefined) {
-      delete process.env.SSH_AUTH_SOCK;
-    } else {
-      process.env.SSH_AUTH_SOCK = savedSock;
-    }
-
-    if (savedPid === undefined) {
-      delete process.env.SSH_AGENT_PID;
-    } else {
-      process.env.SSH_AGENT_PID = savedPid;
-    }
+    restoreEnvVar("SSH_AUTH_SOCK", savedSock);
+    restoreEnvVar("SSH_AGENT_PID", savedPid);
   }
 }
 
@@ -83,17 +87,8 @@ describe("SigningService", () => {
   afterAll(() => {
     rmSync(testDir, { recursive: true, force: true });
 
-    if (prevEnv.SSH_AUTH_SOCK === undefined) {
-      delete process.env.SSH_AUTH_SOCK;
-    } else {
-      process.env.SSH_AUTH_SOCK = prevEnv.SSH_AUTH_SOCK;
-    }
-
-    if (prevEnv.SSH_AGENT_PID === undefined) {
-      delete process.env.SSH_AGENT_PID;
-    } else {
-      process.env.SSH_AGENT_PID = prevEnv.SSH_AGENT_PID;
-    }
+    restoreEnvVar("SSH_AUTH_SOCK", prevEnv.SSH_AUTH_SOCK);
+    restoreEnvVar("SSH_AGENT_PID", prevEnv.SSH_AGENT_PID);
   });
 
   describe("with Ed25519 key", () => {
