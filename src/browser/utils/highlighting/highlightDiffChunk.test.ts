@@ -1,4 +1,4 @@
-import { highlightDiffChunk } from "./highlightDiffChunk";
+import { highlightDiffChunk, isWithinDiffHighlightSyncBudget } from "./highlightDiffChunk";
 import type { DiffChunk } from "./diffChunking";
 
 /**
@@ -15,6 +15,33 @@ describe("highlightDiffChunk", () => {
     oldLineNumbers: [null, null],
     newLineNumbers: [1, 2],
   };
+
+  describe("sync pre-worker budget", () => {
+    it("allows human-scale 10k-line chunks to attempt worker highlighting", () => {
+      const humanScaleLines = Array.from(
+        { length: 10_000 },
+        (_, i) => `const value${i} = computeValue(${i});`
+      );
+
+      expect(isWithinDiffHighlightSyncBudget(humanScaleLines)).toBe(true);
+    });
+
+    it("falls back before joining generated single-line chunks", async () => {
+      const generatedChunk: DiffChunk = {
+        type: "add",
+        lines: [`const generated = "${"x".repeat(25_000)}";`],
+        startIndex: 0,
+        oldLineNumbers: [null],
+        newLineNumbers: [1],
+      };
+
+      const result = await highlightDiffChunk(generatedChunk, "typescript");
+
+      expect(result.usedFallback).toBe(true);
+      expect(result.lines).toHaveLength(1);
+      expect(result.lines[0].html).toContain("const generated");
+    });
+  });
 
   describe("plain text files", () => {
     it("should return plain text for text/plaintext language", async () => {

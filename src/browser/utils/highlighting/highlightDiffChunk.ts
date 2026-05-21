@@ -16,13 +16,27 @@ import type { DiffChunk } from "./diffChunking";
  * .line spans instead of extracting per-line HTML. Would simplify parsing
  * and reduce dangerouslySetInnerHTML usage.
  *
- * Size policy: we deliberately do NOT impose a byte cap here. Real-world
- * human-authored files routinely exceed any value we'd pick (a 10k-LoC file at
- * typical line widths is ~500 KB), and the worker client enforces a per-call
- * time budget that terminates pathological inputs without blocking the UI. So
- * "render plain text on cost overrun" is a property of the worker boundary,
- * not of this layer.
+ * Size policy: allow human-scale files (including 10k-LoC chunks) to attempt
+ * highlighting, but skip payloads that are too large or too minified to hand to
+ * the worker without visible renderer-thread pre-processing cost. The worker
+ * client still owns the runtime budget once a payload is handed off.
  */
+
+// Synchronous safety budget before the worker boundary. These are intentionally
+// far above human-scale source files but catch generated/minified hunks where
+// joining and structured-cloning the payload would itself be the UI stall.
+const MAX_DIFF_HIGHLIGHT_SYNC_CHARS = 2_000_000;
+const MAX_DIFF_HIGHLIGHT_LINE_CHARS = 20_000;
+
+export function isWithinDiffHighlightSyncBudget(lines: string[]): boolean {
+  let totalChars = Math.max(0, lines.length - 1); // account for join("\n") separators
+  for (const line of lines) {
+    if (line.length > MAX_DIFF_HIGHLIGHT_LINE_CHARS) return false;
+    totalChars += line.length;
+    if (totalChars > MAX_DIFF_HIGHLIGHT_SYNC_CHARS) return false;
+  }
+  return true;
+}
 
 export interface HighlightedLine {
   html: string; // HTML content (already escaped and tokenized)
@@ -60,6 +74,10 @@ export async function highlightDiffChunk(
       })),
       usedFallback: false,
     };
+  }
+
+  if (!isWithinDiffHighlightSyncBudget(chunk.lines)) {
+    return createFallbackChunk(chunk);
   }
 
   const code = chunk.lines.join("\n");
