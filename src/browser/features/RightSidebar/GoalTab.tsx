@@ -23,6 +23,11 @@ import {
   parseGoalBudgetInputCents,
   parseGoalTurnCapInput,
 } from "@/common/utils/goals/budgetParser";
+import {
+  AUTO_COMPACTION_THRESHOLD_MAX,
+  AUTO_COMPACTION_THRESHOLD_MIN,
+  DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT,
+} from "@/common/constants/ui";
 import { APIContext } from "@/browser/contexts/API";
 import { useGoalDefaults } from "@/browser/utils/goals/useGoalDefaults";
 import { cn } from "@/common/lib/utils";
@@ -104,36 +109,34 @@ interface GoalTabProps {
 const parseBudgetInput = parseGoalBudgetInputCents;
 const parseTurnCapInput = parseGoalTurnCapInput;
 
-type EditingField = "objective" | "budget" | "turnCap" | "compactThreshold";
+type EditingField = "objective" | "budget" | "turnCap";
 
 /**
- * Parse the user-typed value from the auto-compact inline editor / create
- * form into the tri-state the rest of the goal pipeline expects.
- *
- *   - blank, "default", "—" → `null` (clear the override; workspace slider applies)
- *   - "off" / "disable" / "disabled" → `100` (explicit per-goal disable)
- *   - integer 0–100 → that integer
- *   - anything else → `undefined` (parse error; caller surfaces a message)
- *
- * Defined alongside the budget / turn-cap parsers in
- * `@/common/utils/goals/budgetParser` to keep the slash command + UI
- * forms in lockstep — but this one stays inline because the slash-command
- * path is not yet plumbed (follow-up).
+ * Sentinel "this goal opts out of auto-compaction" value. Mirrors the
+ * workspace per-model slider, which uses `100` as the disabled marker —
+ * keeping the encoding identical means the renderer banner, the goal
+ * record, and the compaction monitor all share one disable rule.
  */
-function parseGoalAutoCompactionThresholdInput(raw: string): number | null | undefined {
-  const trimmed = raw.trim().toLowerCase();
-  if (trimmed.length === 0 || trimmed === "default" || trimmed === "—") {
-    return null;
-  }
-  if (trimmed === "off" || trimmed === "disable" || trimmed === "disabled") {
-    return 100;
-  }
-  // Strip an optional trailing "%" so "50%" parses the same as "50".
-  const numericPart = trimmed.endsWith("%") ? trimmed.slice(0, -1).trim() : trimmed;
-  if (!/^\d+$/.test(numericPart)) return undefined;
-  const value = Number.parseInt(numericPart, 10);
-  if (!Number.isFinite(value) || value < 0 || value > 100) return undefined;
-  return value;
+const PER_GOAL_COMPACT_DISABLED_PCT = 100;
+
+/**
+ * Snap a raw slider position (0–100) into the persisted-percent
+ * vocabulary the goal record uses:
+ *   - dragging at or past `100 - one-step-of-headroom` → `100` (Off /
+ *     per-goal disabled). Same "drag to the right end disables" behavior
+ *     the workspace per-model slider uses.
+ *   - everything else clamps into `[MIN, MAX]` and snaps to 5%
+ *     increments, matching the workspace slider's grid so values
+ *     entered here look like values entered there.
+ */
+function snapAutoCompactSliderValue(raw: number): number {
+  if (!Number.isFinite(raw)) return DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT;
+  if (raw >= PER_GOAL_COMPACT_DISABLED_PCT) return PER_GOAL_COMPACT_DISABLED_PCT;
+  const clamped = Math.max(
+    AUTO_COMPACTION_THRESHOLD_MIN,
+    Math.min(AUTO_COMPACTION_THRESHOLD_MAX, raw)
+  );
+  return Math.round(clamped / 5) * 5;
 }
 
 export function GoalTab(props: GoalTabProps) {
@@ -215,20 +218,6 @@ export function GoalTab(props: GoalTabProps) {
     setEditingField("turnCap");
   };
 
-  const openCompactThresholdEditor = (origin: HTMLElement | null) => {
-    originRef.current = origin;
-    // Mirror the budget/turnCap pattern: seed the input with the current
-    // explicit value, or leave blank when there's no override so the
-    // placeholder ("default — workspace setting applies") is visible.
-    // `100` round-trips as "100" rather than "off"; the parser accepts
-    // both, so this keeps the value the user sees aligned with what
-    // they'd see in a /goal --compact 100 invocation.
-    const current = props.goal?.autoCompactionThresholdPct;
-    setEditValue(current == null ? "" : String(current));
-    setError(null);
-    setEditingField("compactThreshold");
-  };
-
   const closeEditor = () => {
     setEditingField(null);
     setError(null);
@@ -269,16 +258,6 @@ export function GoalTab(props: GoalTabProps) {
           return;
         }
         await props.onUpdateTurnCap?.(turnCap);
-      } else if (editingField === "compactThreshold") {
-        const submittedValue = editInputRef.current?.value ?? editValue;
-        const pct = parseGoalAutoCompactionThresholdInput(submittedValue);
-        if (pct === undefined) {
-          setError(
-            'Enter a whole number 0–100, type "off" to disable, or blank to use the workspace default.'
-          );
-          return;
-        }
-        await props.onUpdateAutoCompactionThresholdPct?.(pct);
       }
       closeEditor();
     } catch (caught) {
@@ -588,16 +567,30 @@ export function GoalTab(props: GoalTabProps) {
         Layout now consolidates by metric so each card answers a single
         question:
 
-          • Budget (full-width): "Have I run out of money yet?"
-            shows cost / cap with remaining + a thin progress bar.
-          • Turns (half): "Have I run out of turns yet?"
-            always shows turns / cap (or `no cap`).
-          • Elapsed (half): wall-clock time, unchanged.
+          • Budget: "Have I run out of money yet?" — cost / cap with
+            remaining + a thin progress bar. Full-width at narrow widths
+            so the cost / remaining pair stays on one line; compresses
+            into a 1/3-width tile at wider widths where its internal
+            copy stacks vertically (see `BudgetTile`).
+          • Turns: "Have I run out of turns yet?" — always shows
+            turns / cap (or `no cap`).
+          • Auto-compact: "When will this goal compact?" — embedded
+            slider, "Default" mode when no per-goal override is set.
+          • Elapsed: wall-clock time, shown as a thin full-width row
+            at wider widths so it doesn't compete with the three
+            decision-driving tiles above.
+
+        Container queries (`[container-type:inline-size]` + `@md:`)
+        scale the grid from 2 cols (narrow) to 3 cols (wider) so that,
+        as the sidebar is resized, Budget / Turn cap / Auto-compact
+        line up on one row exactly the way the user asked for. Per
+        `AGENTS.md`, the sidebar is dynamically resizable, so a viewport
+        breakpoint (`sm:` / `md:`) wouldn't have worked here.
 
         Edit affordances stay on each tile (same aria-labels as before)
         so the inline editor path is untouched.
       */}
-      <dl className="grid grid-cols-2 gap-2 text-sm">
+      <dl className="@container [container-type:inline-size] grid grid-cols-2 gap-2 text-sm @md:grid-cols-3">
         <BudgetTile
           costCents={props.goal.costCents}
           budgetCents={props.goal.budgetCents}
@@ -610,69 +603,45 @@ export function GoalTab(props: GoalTabProps) {
           canEdit={canEdit}
           onEdit={(event) => openTurnCapEditor(event.currentTarget)}
         />
-        <div className="bg-surface-secondary rounded-md p-3">
+        {/* Auto-compact override (per-goal). When the goal has no
+            override, the tile renders a "Default — workspace setting"
+            row with a `Customize` button. Clicking Customize commits an
+            override at the global default (70%) so the slider has a
+            concrete value to drag from; from there the slider commits
+            on release. `Use default` clears back to null. Sized as a
+            tile peer to Turns/Elapsed at wider widths; spans both
+            columns at narrow widths so the slider has room to breathe. */}
+        <GoalAutoCompactSlider
+          value={props.goal.autoCompactionThresholdPct ?? null}
+          canEdit={canEdit && props.onUpdateAutoCompactionThresholdPct != null}
+          onChange={(pct) => props.onUpdateAutoCompactionThresholdPct?.(pct)}
+        />
+        <div className="bg-surface-secondary rounded-md p-3 @md:col-span-3 @md:flex @md:items-baseline @md:justify-between @md:gap-3">
           <dt className="text-muted text-xs">Elapsed</dt>
-          <dd className="counter-nums text-foreground mt-1 text-base leading-tight font-medium">
+          <dd className="counter-nums text-foreground mt-1 text-base leading-tight font-medium @md:mt-0">
             {formatGoalElapsed(props.goal.startedAtMs)}
           </dd>
         </div>
-        {/* Auto-compact override (per-goal). Shows the user's current
-            knob position: "Default" when the goal has no override (the
-            workspace per-model slider applies), "Off" when the goal
-            explicitly disables compaction (`100`), and the percent
-            value otherwise. Editable via the same inline editor that
-            drives Budget / Turn cap so the create / edit vocabulary is
-            consistent across all goal fields. */}
-        <AutoCompactThresholdTile
-          autoCompactionThresholdPct={props.goal.autoCompactionThresholdPct ?? null}
-          canEdit={canEdit && props.onUpdateAutoCompactionThresholdPct != null}
-          onEdit={(event) => openCompactThresholdEditor(event.currentTarget)}
-        />
       </dl>
 
-      {(editingField === "budget" ||
-        editingField === "turnCap" ||
-        editingField === "compactThreshold") && (
+      {(editingField === "budget" || editingField === "turnCap") && (
         <div
           className="border-border-light bg-surface-secondary rounded-md border p-3"
           role="group"
-          aria-label={
-            editingField === "budget"
-              ? "Edit goal budget"
-              : editingField === "turnCap"
-                ? "Edit goal turn cap"
-                : "Edit goal auto-compact threshold"
-          }
+          aria-label={editingField === "budget" ? "Edit goal budget" : "Edit goal turn cap"}
         >
           <label
             className="text-foreground mb-2 block text-sm font-medium"
             htmlFor={`goal-${editingField}-editor`}
           >
-            {editingField === "budget"
-              ? "Budget"
-              : editingField === "turnCap"
-                ? "Turn cap"
-                : "Auto-compact threshold"}
+            {editingField === "budget" ? "Budget" : "Turn cap"}
           </label>
           <input
             ref={editInputRef}
             id={`goal-${editingField}-editor`}
             className="border-border bg-surface-primary text-foreground focus:border-accent w-full rounded-md border p-2 text-sm outline-none"
-            aria-label={
-              editingField === "budget"
-                ? "Goal budget amount"
-                : editingField === "turnCap"
-                  ? "Goal turn cap"
-                  : "Goal auto-compact threshold percent"
-            }
-            // Numeric inputmode hints mobile keyboards even on the
-            // compactThreshold field (which also accepts "off" — desktop
-            // users can still type letters).
-            inputMode={
-              editingField === "turnCap" || editingField === "compactThreshold"
-                ? "numeric"
-                : undefined
-            }
+            aria-label={editingField === "budget" ? "Goal budget amount" : "Goal turn cap"}
+            inputMode={editingField === "turnCap" ? "numeric" : undefined}
             value={editValue}
             autoFocus
             onFocus={(event) => event.currentTarget.select()}
@@ -691,12 +660,7 @@ export function GoalTab(props: GoalTabProps) {
           <p className="text-muted mt-1 text-xs">
             {editingField === "budget"
               ? "Use $5, 500c, 0, or blank for no budget."
-              : editingField === "turnCap"
-                ? "Use a positive whole number, or blank for no cap."
-                : // The auto-compact help text spells out the tri-state
-                  // so the user understands what blank means without
-                  // having to guess against the model-level slider.
-                  'Use 0–99 to compact at that % of context. Type 100 or "off" to disable for this goal. Blank uses the workspace default.'}
+              : "Use a positive whole number, or blank for no cap."}
           </p>
           <div className="mt-2 flex gap-2">
             <button
@@ -705,11 +669,7 @@ export function GoalTab(props: GoalTabProps) {
               disabled={isSubmitting}
               onClick={() => void submitEditor()}
             >
-              {editingField === "budget"
-                ? "Save budget"
-                : editingField === "turnCap"
-                  ? "Save turn cap"
-                  : "Save threshold"}
+              {editingField === "budget" ? "Save budget" : "Save turn cap"}
             </button>
             <button
               type="button"
@@ -967,7 +927,11 @@ function BudgetTile(props: BudgetTileProps) {
     hasBudget && budgetCents > 0 ? Math.min(100, Math.round((costCents / budgetCents) * 100)) : 0;
 
   return (
-    <div className="bg-surface-secondary col-span-2 rounded-md p-3">
+    // `col-span-2` keeps Budget full-width at narrow widths so the cost
+    // and "X left" stay on one line. At wider widths (`@md:col-span-1`)
+    // it shares the row with Turn cap and Auto-compact, and the
+    // dd line below switches to a vertical stack to fit ~150px content.
+    <div className="bg-surface-secondary col-span-2 rounded-md p-3 @md:col-span-1">
       <div className="flex items-baseline justify-between gap-2">
         <dt className="text-muted text-xs">Budget</dt>
         {canEdit && (
@@ -981,7 +945,7 @@ function BudgetTile(props: BudgetTileProps) {
           </button>
         )}
       </div>
-      <dd className="counter-nums text-foreground mt-1 flex items-baseline justify-between gap-3 leading-tight">
+      <dd className="counter-nums text-foreground mt-1 flex items-baseline justify-between gap-3 leading-tight @md:flex-col @md:items-start @md:gap-0.5">
         <span className="text-base font-medium">
           <span>{formatGoalCents(costCents)}</span>
           {hasBudget && (
@@ -1086,50 +1050,159 @@ function TurnsTile(props: TurnsTileProps) {
   );
 }
 
-interface AutoCompactThresholdTileProps {
-  autoCompactionThresholdPct: number | null;
+interface GoalAutoCompactSliderProps {
+  /**
+   * Tri-state per-goal override:
+   *   - `null` → no override; the workspace per-model slider governs
+   *     and the tile renders in "Default" mode (no slider visible, a
+   *     `Customize` button reveals it).
+   *   - `100`  → per-goal disabled. Slider sits at the right end with
+   *     "Off" labeling.
+   *   - `0`–`99` (snapped to 5%) → explicit percent threshold.
+   */
+  value: number | null;
+  /** When false, the tile is read-only (no Customize / no slider drag). */
   canEdit: boolean;
-  onEdit: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  /**
+   * Commit a new override. `null` clears (back to Default mode); a
+   * number creates / patches the override. Called on slider release —
+   * NOT on every intermediate drag step — so the backend mutation rate
+   * stays bounded by user gestures, not pointer-move events.
+   */
+  onChange: (pct: number | null) => Promise<void> | void;
 }
 
 /**
- * Auto-compact threshold (per-goal) tile. Sits next to Budget / Turns /
- * Elapsed in the active-goal grid and answers "at what point does this
- * goal compact?" without making the user open Settings. Display rules:
+ * Auto-compact threshold (per-goal) tile with an embedded slider.
  *
- *   - `null`  → "Default" + helper "(workspace setting)"  — the
- *               per-model slider in the right sidebar governs.
- *   - `100`   → "Off" + helper "compaction disabled" — explicit per-goal
- *               disable so a long-context goal can run without forced
- *               summarization.
- *   - 0–99    → "{n}%" + helper "of context window".
+ * Two visual modes:
  *
- * Kept structurally identical to `TurnsTile` (same dt/dd shape, same
- * Edit affordance) so the row reads as a peer of the other tiles.
+ *   1. Default (`value == null`)  — workspace per-model slider applies.
+ *      Renders a compact header + `Customize` button. We deliberately
+ *      hide the range input here because the slider has no concrete
+ *      value to anchor against (we don't know the workspace per-model
+ *      threshold at this layer), and a "ghost" thumb at an arbitrary
+ *      position would suggest a value that isn't really in effect.
+ *
+ *   2. Override (`value` is a number) — slider visible with thumb at
+ *      `value`. Releasing the thumb commits via `onChange`. A
+ *      `Use default` button clears the override back to null.
+ *
+ * `Customize` seeds an override at `DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT`
+ * (70%) so the slider has something concrete to drag from. The user
+ * can clear back to "Default" with one click on `Use default`, so the
+ * cost of an accidental Customize is one click.
+ *
+ * Snap behavior matches the workspace `ThresholdSlider`:
+ *   - 5% increments
+ *   - drag to the rightmost end (≥ 100) → `100` (Off / disabled)
+ *   - drag past the enabled max (90) → clamped to 90 unless ≥ 100
+ *
+ * Tile sizing: spans both columns at narrow widths so the slider has
+ * room to breathe; compresses to a 1/3-width tile at wider widths next
+ * to the Turn cap tile (see the grid container's `@md:grid-cols-3`).
  */
-function AutoCompactThresholdTile(props: AutoCompactThresholdTileProps) {
-  const { autoCompactionThresholdPct, canEdit, onEdit } = props;
-  const isUnset = autoCompactionThresholdPct == null;
-  const isOff = autoCompactionThresholdPct === 100;
-  const primary = isUnset ? "Default" : isOff ? "Off" : `${autoCompactionThresholdPct}%`;
-  const helper = isUnset
-    ? "workspace setting"
-    : isOff
-      ? "compaction disabled"
-      : "of context window";
+function GoalAutoCompactSlider(props: GoalAutoCompactSliderProps) {
+  const { value, canEdit, onChange } = props;
+
+  if (value == null) {
+    return (
+      <div className="bg-surface-secondary col-span-2 flex flex-col gap-1 rounded-md p-3 @md:col-span-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <dt className="text-muted text-xs">Auto-compact</dt>
+          {canEdit && (
+            <button
+              type="button"
+              className="text-muted hover:text-foreground text-xs underline"
+              aria-label="Customize goal auto-compact threshold"
+              // Seed the override at the global default so the slider
+              // has a concrete value to render. The user immediately
+              // sees "70%" and can drag from there.
+              onClick={() => void onChange(DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT)}
+            >
+              Customize
+            </button>
+          )}
+        </div>
+        {/* Match the `dl` shape of the other tiles so screen readers
+            announce the tile as a term/definition pair. Helper line
+            spells out the tri-state without dumping the workspace's
+            actual percent (we don't have it here). */}
+        <dd className="counter-nums text-foreground mt-1 leading-tight">
+          <div className="text-base font-medium">Default</div>
+          <div className="text-muted text-xs">workspace setting</div>
+        </dd>
+      </div>
+    );
+  }
+
+  return <GoalAutoCompactSliderOverride value={value} canEdit={canEdit} onChange={onChange} />;
+}
+
+interface GoalAutoCompactSliderOverrideProps {
+  value: number;
+  canEdit: boolean;
+  onChange: (pct: number | null) => Promise<void> | void;
+}
+
+/**
+ * Override mode of the per-goal auto-compact tile. Split into its own
+ * component so the local "draft" state (used while dragging) lives
+ * alongside the slider that needs it — and so this state is created
+ * fresh whenever the user re-enters override mode from Default.
+ *
+ * Why a draft instead of committing every `onChange`? `onChange` for a
+ * native range input fires continuously during drag (React unifies the
+ * native `input` event with `change`). Committing every step would
+ * spam `setGoal` with a backend round-trip per drag pixel. We track a
+ * local draft, render it in the value label so dragging feels live,
+ * and commit on release (`onPointerUp` / `onKeyUp`).
+ *
+ * Why no `useEffect` to sync the draft with `value`? Per the
+ * `react-effects` skill, syncing prop -> state via effect is an
+ * anti-pattern. Instead we use the "store previous prop" pattern
+ * (https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes)
+ * so the draft resets only when the *external* value actually changes
+ * (e.g., after a remote goal reload), not while the user is dragging.
+ */
+function GoalAutoCompactSliderOverride(props: GoalAutoCompactSliderOverrideProps) {
+  const { value, canEdit, onChange } = props;
+  const [draft, setDraft] = useState(value);
+  const [prevValue, setPrevValue] = useState(value);
+  if (prevValue !== value) {
+    setPrevValue(value);
+    setDraft(value);
+  }
+
+  const isOff = draft === PER_GOAL_COMPACT_DISABLED_PCT;
+  const primary = isOff ? "Off" : `${draft}%`;
+  const helper = isOff ? "compaction disabled" : "of context window";
+
+  const commit = () => {
+    // Only fire the backend mutation when the slider actually moved.
+    // Avoids spurious `goal_replaced` history entries from someone
+    // clicking the thumb without dragging.
+    if (draft !== value) {
+      void onChange(draft);
+    }
+  };
+
+  const updateDraftFromEvent = (e: React.SyntheticEvent<HTMLInputElement>) => {
+    setDraft(snapAutoCompactSliderValue(Number(e.currentTarget.value)));
+  };
 
   return (
-    <div className="bg-surface-secondary rounded-md p-3">
+    <div className="bg-surface-secondary col-span-2 flex flex-col gap-1 rounded-md p-3 @md:col-span-1">
       <div className="flex items-baseline justify-between gap-2">
         <dt className="text-muted text-xs">Auto-compact</dt>
         {canEdit && (
           <button
             type="button"
             className="text-muted hover:text-foreground text-xs underline"
-            aria-label="Edit goal auto-compact threshold"
-            onClick={onEdit}
+            aria-label="Use workspace default for goal auto-compact"
+            onClick={() => void onChange(null)}
           >
-            Edit
+            Use default
           </button>
         )}
       </div>
@@ -1139,6 +1212,60 @@ function AutoCompactThresholdTile(props: AutoCompactThresholdTileProps) {
         </div>
         <div className="text-muted text-xs">{helper}</div>
       </dd>
+      <div className="mt-2 flex items-center gap-2">
+        <input
+          type="range"
+          min={AUTO_COMPACTION_THRESHOLD_MIN}
+          max={PER_GOAL_COMPACT_DISABLED_PCT}
+          step={5}
+          value={draft}
+          disabled={!canEdit}
+          // Route drag updates through BOTH `onInput` and `onChange`
+          // because:
+          //   1. happy-dom (the `tests/ui` runtime) only fires
+          //      `onInput` for range inputs — `onChange` is never
+          //      called from `fireEvent.input` / `fireEvent.change`,
+          //      so the slider would feel read-only in tests.
+          //   2. React still needs an `onChange` on every controlled
+          //      input or it warns about a missing handler.
+          //   3. The handler is idempotent (setDraft to the same
+          //      snapped value), so even when both events fire in real
+          //      browsers (input first, change on release) the second
+          //      call is a no-op state update.
+          onInput={updateDraftFromEvent}
+          onChange={updateDraftFromEvent}
+          // Use the discrete pointer-end events instead of
+          // `onPointerUp` because happy-dom does not synthesize pointer
+          // events for `fireEvent.pointerUp`. We mirror the rest of the
+          // codebase: `mouseUp` for mouse, `touchEnd` for touch,
+          // `keyUp` for keyboard arrows. Modern browsers fire all
+          // three from the same gesture so commit() may be called
+          // twice on a touch interaction — the `draft !== value` guard
+          // inside `commit()` collapses that to a single backend call.
+          onMouseUp={commit}
+          onTouchEnd={commit}
+          onKeyUp={commit}
+          aria-label="Goal auto-compact threshold percent"
+          aria-valuetext={primary}
+          className={cn(
+            "thinking-slider flex-1",
+            // Highlight the thumb so it's visible against the slider
+            // track. Mirrors the workspace per-model slider's accent.
+            "[--thumb-bg:var(--color-plan-mode)]"
+          )}
+        />
+        {/* "Off" label at the right end mirrors the workspace slider's
+            tooltip; the user can drag here to disable compaction
+            specifically for this goal. */}
+        <span
+          className={cn(
+            "text-[10px] leading-none uppercase",
+            isOff ? "text-plan-mode font-medium" : "text-muted"
+          )}
+        >
+          Off
+        </span>
+      </div>
     </div>
   );
 }
@@ -1182,11 +1309,13 @@ function GoalCreateForm(props: GoalCreateFormProps) {
   const objectiveRef = useRef<HTMLTextAreaElement | null>(null);
   const budgetRef = useRef<HTMLInputElement | null>(null);
   const turnCapRef = useRef<HTMLInputElement | null>(null);
-  // Auto-compact threshold uses the same ref-driven pattern: blank means
-  // "no override (workspace setting applies)", a number / "off" means
-  // explicit per-goal override. Matches the slash-command path the
-  // follow-up will plumb (`/goal --compact N|off`).
-  const compactThresholdRef = useRef<HTMLInputElement | null>(null);
+  // Auto-compact override uses local state (not a ref) because the
+  // slider component is controlled — its value drives the slider's
+  // thumb position. `null` means "no override" and the create intent
+  // omits the field on submit; a number is sent verbatim. Matches the
+  // tri-state vocabulary every other goal entry-point (slash command,
+  // inline tile editor) uses.
+  const [compactThresholdPct, setCompactThresholdPct] = useState<number | null>(null);
 
   // Effective defaults shown as placeholder text. We seed the inputs with
   // `defaultValue` rather than `value` so the user can clear them; the
@@ -1244,19 +1373,14 @@ function GoalCreateForm(props: GoalCreateFormProps) {
         intent.turnCap = parsedTurnCap;
       }
 
-      // Auto-compact threshold: leave omitted when blank so the goal
-      // gets no override (workspace setting applies). Explicit values
-      // ("off", 100, 0–99, "default") flow through the shared parser.
-      const compactRaw = (compactThresholdRef.current?.value ?? "").trim();
-      if (compactRaw.length > 0) {
-        const parsedPct = parseGoalAutoCompactionThresholdInput(compactRaw);
-        if (parsedPct === undefined) {
-          setError(
-            'Enter a whole number 0–100, type "off" to disable, or blank to use the workspace default.'
-          );
-          return;
-        }
-        intent.autoCompactionThresholdPct = parsedPct;
+      // Auto-compact threshold: omit when the slider is in "Default"
+      // mode (null) so the goal inherits the workspace per-model
+      // setting. When the user has customized via the slider, send the
+      // explicit percent verbatim — including `100` (per-goal off) and
+      // `0` (the aggressive extreme; honored end-to-end per the Codex
+      // P2 fix in `resolveEffectiveThreshold`).
+      if (compactThresholdPct !== null) {
+        intent.autoCompactionThresholdPct = compactThresholdPct;
       }
 
       await props.onCreate(intent);
@@ -1267,7 +1391,7 @@ function GoalCreateForm(props: GoalCreateFormProps) {
       if (objectiveRef.current) objectiveRef.current.value = "";
       if (budgetRef.current) budgetRef.current.value = "";
       if (turnCapRef.current) turnCapRef.current.value = "";
-      if (compactThresholdRef.current) compactThresholdRef.current.value = "";
+      setCompactThresholdPct(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Goal creation failed");
     } finally {
@@ -1351,29 +1475,18 @@ function GoalCreateForm(props: GoalCreateFormProps) {
         </div>
       </div>
 
-      {/* Per-goal auto-compact override. Spans the full width because the
-          helper text is the educational part (most users won't reach for
-          this); shrinking to a tile-sized input would compete with
-          Budget / Turn cap visually for no real value. */}
-      <div className="flex flex-col gap-1">
-        <label className="text-foreground text-sm font-medium" htmlFor="goal-create-compact">
-          Auto-compact <span className="text-muted text-xs font-normal">(optional)</span>
-        </label>
-        <input
-          ref={compactThresholdRef}
-          id="goal-create-compact"
-          className="border-border bg-surface-primary text-foreground focus:border-accent w-full rounded-md border p-2 text-sm outline-none"
-          aria-label="Goal auto-compact threshold percent"
-          // Placeholder is the prevailing "no override" copy so a blank
-          // input visibly reads as "use the workspace setting".
-          placeholder="default (workspace setting)"
-          inputMode="numeric"
-          defaultValue=""
-        />
-        <span className="text-muted text-[11px] leading-4">
-          0–99 to compact at that % of context, 100 / &quot;off&quot; to disable for this goal.
-        </span>
-      </div>
+      {/* Per-goal auto-compact override. Reuses the same slider tile
+          the active-goal view shows so the create / edit vocabulary is
+          identical: "Default" mode = no override (the create intent
+          omits the field entirely); Override mode = explicit percent
+          that flows verbatim into `setGoal`. The col-span classes on
+          the tile are inert in a flex column, so the tile renders at
+          its natural full width here. */}
+      <GoalAutoCompactSlider
+        value={compactThresholdPct}
+        canEdit={true}
+        onChange={(pct) => setCompactThresholdPct(pct)}
+      />
 
       {props.workspaceId != null && (
         <div className="text-muted -mt-1 flex items-center justify-between text-[11px]">

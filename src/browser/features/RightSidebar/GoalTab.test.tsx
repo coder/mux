@@ -403,8 +403,19 @@ describe("GoalTab", () => {
     await waitFor(() => expect(onUpdateTurnCap).toHaveBeenCalledWith(15));
   });
 
-  test("auto-compact tile shows 'Default' when no per-goal override is set", () => {
-    const { getByText, queryByText } = render(
+  // ────────────────────────────────────────────────────────────────
+  // GoalAutoCompactSlider tile (per-goal auto-compaction override).
+  //
+  // The tile has two visual modes — "Default" (no override; renders a
+  // Customize button) and "Override" (slider visible; renders Use
+  // default + Off label). These tests pin the user-visible behavior of
+  // both modes plus the mode transitions; rendering literals like
+  // "workspace setting" / "of context window" are asserted because they
+  // map 1:1 to the tri-state contract the backend honors, NOT as copy
+  // tests — change the contract and the test should re-validate.
+  // ────────────────────────────────────────────────────────────────
+  test("auto-compact tile renders Default mode with a Customize button when no override is set", () => {
+    const { getByText, queryByText, getByLabelText, queryByLabelText } = render(
       <GoalTab
         goal={goal({ autoCompactionThresholdPct: null })}
         onSetStatus={mock()}
@@ -414,16 +425,20 @@ describe("GoalTab", () => {
     );
 
     // Null override → fall back to the workspace setting. The tile
-    // must distinguish "no override" from "explicit value" so users
-    // can tell at a glance whether the model-level slider is in effect.
+    // must distinguish "no override" from "explicit value", and must
+    // NOT show the slider — we have no concrete value to anchor it
+    // against in Default mode (see the component's docblock).
     expect(getByText("Auto-compact")).toBeTruthy();
     expect(getByText("Default")).toBeTruthy();
     expect(getByText("workspace setting")).toBeTruthy();
     expect(queryByText("Off")).toBeNull();
+    expect(getByLabelText("Customize goal auto-compact threshold")).toBeTruthy();
+    // Slider is hidden in Default mode.
+    expect(queryByLabelText("Goal auto-compact threshold percent")).toBeNull();
   });
 
-  test("auto-compact tile shows 'Off' at the per-goal-disabled sentinel", () => {
-    const { getByText, queryByText } = render(
+  test("auto-compact tile shows the slider with Off labeling at the per-goal-disabled sentinel", () => {
+    const { getAllByText, getByText, getByLabelText, queryByText } = render(
       <GoalTab
         goal={goal({ autoCompactionThresholdPct: 100 })}
         onSetStatus={mock()}
@@ -433,15 +448,19 @@ describe("GoalTab", () => {
     );
 
     // 100 = explicit per-goal disable. Distinct from null (default)
-    // and from 0–99 (numeric threshold). The "Off" label is the
-    // user-visible cue that this specific goal won't auto-compact.
-    expect(getByText("Off")).toBeTruthy();
+    // and from 0–99 (numeric threshold). At this value both the
+    // primary value display AND the right-end slider label read "Off"
+    // — the redundancy is intentional (the right-end label is also a
+    // drag target). Using `getAllByText` documents that contract.
+    expect(getAllByText("Off").length).toBe(2);
     expect(getByText("compaction disabled")).toBeTruthy();
     expect(queryByText("Default")).toBeNull();
+    const slider = getByLabelText("Goal auto-compact threshold percent") as HTMLInputElement;
+    expect(slider.value).toBe("100");
   });
 
-  test("auto-compact tile renders an explicit numeric override", () => {
-    const { getByText } = render(
+  test("auto-compact tile renders the slider at an explicit numeric override", () => {
+    const { getByText, getByLabelText } = render(
       <GoalTab
         goal={goal({ autoCompactionThresholdPct: 50 })}
         onSetStatus={mock()}
@@ -452,11 +471,13 @@ describe("GoalTab", () => {
 
     expect(getByText("50%")).toBeTruthy();
     expect(getByText("of context window")).toBeTruthy();
+    const slider = getByLabelText("Goal auto-compact threshold percent") as HTMLInputElement;
+    expect(slider.value).toBe("50");
   });
 
-  test("edits auto-compact threshold inline and persists the percent", async () => {
+  test("clicking Customize commits an override at the global default percent (70)", async () => {
     const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
-    const { getByLabelText, getByText } = render(
+    const { getByLabelText } = render(
       <GoalTab
         goal={goal({ autoCompactionThresholdPct: null })}
         onSetStatus={mock()}
@@ -465,93 +486,136 @@ describe("GoalTab", () => {
       />
     );
 
-    fireEvent.click(getByLabelText("Edit goal auto-compact threshold"));
-    const input = getByLabelText("Goal auto-compact threshold percent");
-    await waitFor(() => expect(document.activeElement).toBe(input));
-    fireEvent.input(input, { target: { value: "60" } });
-    fireEvent.click(getByText("Save threshold"));
+    // Customize is the explicit "I want to override the workspace
+    // setting" affordance. It seeds the override at 70 so the slider
+    // (which only renders in Override mode) has a concrete value to
+    // drag from — the user is one click away from a usable slider
+    // rather than having to type a starting number.
+    fireEvent.click(getByLabelText("Customize goal auto-compact threshold"));
 
-    await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledWith(60));
+    await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledWith(70));
   });
 
-  test("editing auto-compact with 'off' submits the per-goal-disabled sentinel (100)", async () => {
+  test("dragging the slider commits the snapped value on release", async () => {
     const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
-    const { getByLabelText, getByText } = render(
+    const { getByLabelText } = render(
       <GoalTab
-        goal={goal()}
+        goal={goal({ autoCompactionThresholdPct: 70 })}
         onSetStatus={mock()}
         onClear={mock()}
         onUpdateAutoCompactionThresholdPct={onUpdateAutoCompactionThresholdPct}
       />
     );
 
-    fireEvent.click(getByLabelText("Edit goal auto-compact threshold"));
-    const input = getByLabelText("Goal auto-compact threshold percent");
-    fireEvent.input(input, { target: { value: "off" } });
-    fireEvent.click(getByText("Save threshold"));
+    const slider = getByLabelText("Goal auto-compact threshold percent");
+    // React unifies range-input `change` and `input` events into one
+    // `onChange` handler driven by the native `input` event (so the
+    // value updates continuously during drag like a text input). Use
+    // `fireEvent.input` here — `fireEvent.change` doesn't actually
+    // trigger React's onChange for `type="range"`.
+    fireEvent.input(slider, { target: { value: "50" } });
+    expect(onUpdateAutoCompactionThresholdPct).not.toHaveBeenCalled();
 
-    // "off" must round-trip to 100, not to null — these are different
-    // states (explicit disable vs. clear override). The parser path
-    // and the test path must agree.
+    fireEvent.mouseUp(slider);
+
+    await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledWith(50));
+  });
+
+  test("dragging the slider to the right end commits the Off sentinel (100)", async () => {
+    const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
+    const { getByLabelText } = render(
+      <GoalTab
+        goal={goal({ autoCompactionThresholdPct: 70 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+        onUpdateAutoCompactionThresholdPct={onUpdateAutoCompactionThresholdPct}
+      />
+    );
+
+    const slider = getByLabelText("Goal auto-compact threshold percent");
+    fireEvent.input(slider, { target: { value: "100" } });
+    fireEvent.mouseUp(slider);
+
+    // 100 must reach the backend as the explicit per-goal-disabled
+    // sentinel, distinct from `null` (workspace setting applies). The
+    // monitor honors 100 by short-circuiting compaction; if we sent
+    // null instead, the workspace's per-model slider would govern and
+    // the user would see compaction fire unexpectedly.
     await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledWith(100));
   });
 
-  test("editing auto-compact with a blank value clears the override (null)", async () => {
+  test("releasing the slider without changing value does not commit", async () => {
     const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
-    const { getByLabelText, getByText } = render(
+    const { getByLabelText } = render(
       <GoalTab
-        goal={goal({ autoCompactionThresholdPct: 50 })}
+        goal={goal({ autoCompactionThresholdPct: 70 })}
         onSetStatus={mock()}
         onClear={mock()}
         onUpdateAutoCompactionThresholdPct={onUpdateAutoCompactionThresholdPct}
       />
     );
 
-    fireEvent.click(getByLabelText("Edit goal auto-compact threshold"));
-    const input = getByLabelText("Goal auto-compact threshold percent");
-    fireEvent.input(input, { target: { value: "" } });
-    fireEvent.click(getByText("Save threshold"));
+    // MouseUp without a preceding change must NOT trigger a backend
+    // mutation — otherwise tapping the thumb without dragging would
+    // emit a spurious `goal_replaced` event each time. This is the
+    // invariant the `if (draft !== value)` guard in `commit()` enforces.
+    fireEvent.mouseUp(getByLabelText("Goal auto-compact threshold percent"));
 
-    await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledWith(null));
-  });
-
-  test("auto-compact editor surfaces an error for out-of-range input", async () => {
-    const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
-    const { getByLabelText, getByText, queryByText } = render(
-      <GoalTab
-        goal={goal()}
-        onSetStatus={mock()}
-        onClear={mock()}
-        onUpdateAutoCompactionThresholdPct={onUpdateAutoCompactionThresholdPct}
-      />
-    );
-
-    fireEvent.click(getByLabelText("Edit goal auto-compact threshold"));
-    const input = getByLabelText("Goal auto-compact threshold percent");
-    fireEvent.input(input, { target: { value: "150" } });
-    fireEvent.click(getByText("Save threshold"));
-
-    // 150 is out of range → handler should not be called and the
-    // editor must surface the help text as a visible error message.
-    await waitFor(() => expect(queryByText(/0[–-]100/)).toBeTruthy());
+    // Give any errant async commit a chance to fire.
+    await new Promise((resolve) => setTimeout(resolve, 10));
     expect(onUpdateAutoCompactionThresholdPct).not.toHaveBeenCalled();
   });
 
-  test("auto-compact tile hides the Edit affordance when the handler is omitted", () => {
+  test("clicking Use default clears the override to null", async () => {
+    const onUpdateAutoCompactionThresholdPct = mock(() => Promise.resolve(undefined));
+    const { getByLabelText } = render(
+      <GoalTab
+        goal={goal({ autoCompactionThresholdPct: 50 })}
+        onSetStatus={mock()}
+        onClear={mock()}
+        onUpdateAutoCompactionThresholdPct={onUpdateAutoCompactionThresholdPct}
+      />
+    );
+
+    fireEvent.click(getByLabelText("Use workspace default for goal auto-compact"));
+
+    // `null` (not `undefined`) is the documented "clear the per-goal
+    // override" sentinel — the persisted record stores `null`, which
+    // `applyMutableFields` honors via `Object.hasOwn`. Sending
+    // undefined would leave the override intact.
+    await waitFor(() => expect(onUpdateAutoCompactionThresholdPct).toHaveBeenCalledWith(null));
+  });
+
+  test("auto-compact tile hides Customize / Use default when the handler is omitted", () => {
     // Read-only stories / storybook variants render without
     // `onUpdateAutoCompactionThresholdPct`. The tile still shows the
-    // value, but the Edit button is gated so users can't open an
-    // editor that has nowhere to submit.
-    const { queryByLabelText, getByText } = render(
+    // current value, but the affordances are gated so users can't open
+    // a workflow that has nowhere to submit.
+    const { queryByLabelText, getByText, rerender } = render(
       <GoalTab
         goal={goal({ autoCompactionThresholdPct: 50 })}
         onSetStatus={mock()}
         onClear={mock()}
       />
     );
-
     expect(getByText("50%")).toBeTruthy();
-    expect(queryByLabelText("Edit goal auto-compact threshold")).toBeNull();
+    expect(queryByLabelText("Use workspace default for goal auto-compact")).toBeNull();
+    const slider = queryByLabelText(
+      "Goal auto-compact threshold percent"
+    ) as HTMLInputElement | null;
+    expect(slider?.disabled).toBe(true);
+
+    // Default mode (null) also gates: no Customize button when there's
+    // no handler. The tile renders read-only.
+    rerender(
+      <GoalTab
+        goal={goal({ autoCompactionThresholdPct: null })}
+        onSetStatus={mock()}
+        onClear={mock()}
+      />
+    );
+    expect(getByText("Default")).toBeTruthy();
+    expect(queryByLabelText("Customize goal auto-compact threshold")).toBeNull();
   });
 
   test("opens completion summary input, traps focus, submits, and restores focus", async () => {
