@@ -23,40 +23,12 @@ const completedResult: BashToolResult = {
 };
 
 describe("buildBashCollapsedSummary", () => {
-  test("returns the legacy command summary in command mode", () => {
-    expect(
-      buildBashCollapsedSummary({
-        args: createArgs({ model_intent: "Waiting for the dev instance to start" }),
-        result: completedResult,
-        isBackground: false,
-        displayMode: "command",
-      })
-    ).toEqual({ kind: "command", command });
-  });
-
-  test("falls back to the default summary mode for invalid display mode values", () => {
-    expect(
-      buildBashCollapsedSummary({
-        args: createArgs({ model_intent: "Waiting for the dev instance to start" }),
-        result: completedResult,
-        isBackground: false,
-        displayMode: "invalid",
-      })
-    ).toEqual({
-      kind: "intent-command",
-      intent: "Waiting for the dev instance to start",
-      command,
-      durationLabel: "30.1s",
-    });
-  });
-
-  test("returns intent, command, and completed duration in intent-command mode", () => {
+  test("returns intent, command, and completed duration when intent is present", () => {
     expect(
       buildBashCollapsedSummary({
         args: createArgs({ model_intent: "waiting for the dev instance to start" }),
         result: completedResult,
         isBackground: false,
-        displayMode: "intent-command",
       })
     ).toEqual({
       kind: "intent-command",
@@ -71,7 +43,6 @@ describe("buildBashCollapsedSummary", () => {
       buildBashCollapsedSummary({
         args: createArgs(),
         isBackground: false,
-        displayMode: "intent-command",
       })
     ).toEqual({ kind: "command", command });
 
@@ -79,7 +50,6 @@ describe("buildBashCollapsedSummary", () => {
       buildBashCollapsedSummary({
         args: createArgs({ model_intent: "   " }),
         isBackground: false,
-        displayMode: "intent-command",
       })
     ).toEqual({ kind: "command", command });
 
@@ -87,7 +57,6 @@ describe("buildBashCollapsedSummary", () => {
       buildBashCollapsedSummary({
         args: createArgs({ model_intent: null }),
         isBackground: false,
-        displayMode: "intent-command",
       })
     ).toEqual({ kind: "command", command });
 
@@ -95,7 +64,6 @@ describe("buildBashCollapsedSummary", () => {
       buildBashCollapsedSummary({
         args: createArgs({ model_intent: command.toUpperCase() }),
         isBackground: false,
-        displayMode: "intent-command",
       })
     ).toEqual({ kind: "command", command });
   });
@@ -113,7 +81,6 @@ describe("buildBashCollapsedSummary", () => {
           backgroundProcessId: "proc-1",
         },
         isBackground: true,
-        displayMode: "intent-command",
       })
     ).toEqual({
       kind: "intent-command",

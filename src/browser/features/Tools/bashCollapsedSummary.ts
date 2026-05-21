@@ -1,8 +1,4 @@
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
-import {
-  DEFAULT_TOOL_COLLAPSED_DISPLAY_MODE,
-  isToolCollapsedDisplayMode,
-} from "@/common/constants/storage";
 import { capitalize } from "@/common/utils/capitalize";
 import { formatDuration } from "@/common/utils/formatDuration";
 
@@ -14,7 +10,6 @@ interface BuildBashCollapsedSummaryOptions {
   args: BashToolArgs;
   result?: BashToolResult;
   isBackground: boolean;
-  displayMode: unknown;
 }
 
 const DURATION_TOKEN_PATTERN = String.raw`\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)`;
@@ -31,13 +26,6 @@ export function buildBashCollapsedSummary(
   options: BuildBashCollapsedSummaryOptions
 ): BashCollapsedSummary {
   const command = typeof options.args.script === "string" ? options.args.script : "";
-  const displayMode = isToolCollapsedDisplayMode(options.displayMode)
-    ? options.displayMode
-    : DEFAULT_TOOL_COLLAPSED_DISPLAY_MODE;
-
-  if (displayMode === "command") {
-    return { kind: "command", command };
-  }
 
   const intent = sanitizeModelIntent(options.args.model_intent, command);
   if (!intent || normalizeForComparison(intent) === normalizeForComparison(command)) {

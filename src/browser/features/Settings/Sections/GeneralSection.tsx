@@ -18,14 +18,10 @@ import {
   TERMINAL_FONT_CONFIG_KEY,
   DEFAULT_TERMINAL_FONT_CONFIG,
   LAUNCH_BEHAVIOR_KEY,
-  DEFAULT_TOOL_COLLAPSED_DISPLAY_MODE,
-  TOOL_COLLAPSED_DISPLAY_MODE_KEY,
-  isToolCollapsedDisplayMode,
   type EditorConfig,
   type EditorType,
   type LaunchBehavior,
   type TerminalFontConfig,
-  type ToolCollapsedDisplayMode,
 } from "@/common/constants/storage";
 import {
   appendTerminalIconFallback,
@@ -147,13 +143,6 @@ const LAUNCH_BEHAVIOR_OPTIONS = [
   { value: "new-chat", label: "New chat on recent project" },
   { value: "last-workspace", label: "Last visited workspace" },
 ] as const;
-const TOOL_COLLAPSED_DISPLAY_MODE_OPTIONS: Array<{
-  value: ToolCollapsedDisplayMode;
-  label: string;
-}> = [
-  { value: "command", label: "Command" },
-  { value: "intent-command", label: "Intent and command" },
-];
 const ARCHIVE_BEHAVIOR_OPTIONS = [
   { value: "keep", label: "Keep running" },
   { value: "stop", label: "Stop workspace" },
@@ -178,13 +167,6 @@ export function GeneralSection() {
     LAUNCH_BEHAVIOR_KEY,
     "dashboard"
   );
-  const [rawToolCollapsedDisplayMode, setToolCollapsedDisplayMode] = usePersistedState<unknown>(
-    TOOL_COLLAPSED_DISPLAY_MODE_KEY,
-    DEFAULT_TOOL_COLLAPSED_DISPLAY_MODE
-  );
-  const toolCollapsedDisplayMode = isToolCollapsedDisplayMode(rawToolCollapsedDisplayMode)
-    ? rawToolCollapsedDisplayMode
-    : DEFAULT_TOOL_COLLAPSED_DISPLAY_MODE;
   const [rawTerminalFontConfig, setTerminalFontConfig] = usePersistedState<TerminalFontConfig>(
     TERMINAL_FONT_CONFIG_KEY,
     DEFAULT_TERMINAL_FONT_CONFIG
@@ -421,12 +403,6 @@ export function GeneralSection() {
     setEditorConfig((prev) => ({ ...normalizeEditorConfig(prev), editor }));
   };
 
-  const handleToolCollapsedDisplayModeChange = (value: string) => {
-    if (isToolCollapsedDisplayMode(value)) {
-      setToolCollapsedDisplayMode(value);
-    }
-  };
-
   const handleTerminalFontFamilyChange = (fontFamily: string) => {
     setTerminalFontConfig((prev) => ({ ...normalizeTerminalFontConfig(prev), fontFamily }));
   };
@@ -518,31 +494,6 @@ export function GeneralSection() {
               </SelectTrigger>
               <SelectContent>
                 {LAUNCH_BEHAVIOR_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex-1">
-              <div className="text-foreground text-sm">Collapsed bash summaries</div>
-              <div className="text-muted text-xs">
-                Choose whether collapsed bash tools show the raw command or the model&apos;s intent
-                plus the command.
-              </div>
-            </div>
-            <Select
-              value={toolCollapsedDisplayMode}
-              onValueChange={handleToolCollapsedDisplayModeChange}
-            >
-              <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TOOL_COLLAPSED_DISPLAY_MODE_OPTIONS.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>

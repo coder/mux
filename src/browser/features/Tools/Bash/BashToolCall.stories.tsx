@@ -7,8 +7,6 @@ import { BashBackgroundTerminateToolCall } from "@/browser/features/Tools/BashBa
 import { BashOutputToolCall } from "@/browser/features/Tools/BashOutputToolCall";
 import { BashToolCall } from "@/browser/features/Tools/BashToolCall";
 import { lightweightMeta } from "@/browser/stories/meta.js";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { TOOL_COLLAPSED_DISPLAY_MODE_KEY } from "@/common/constants/storage";
 
 const meta = {
   ...lightweightMeta,
@@ -21,10 +19,6 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 const STORYBOOK_WORKSPACE_ID = "storybook-bash";
-
-function setCollapsedDisplayMode(mode: "command" | "intent-command") {
-  updatePersistedState(TOOL_COLLAPSED_DISPLAY_MODE_KEY, mode);
-}
 
 function ToolStoryShell(props: { children: ReactNode }) {
   return (
@@ -92,34 +86,31 @@ export const WithTerminal: Story = {
   ),
 };
 
-/** collapsed bash header variants for command-only and intent-aware display modes */
+/** collapsed bash header showing intent on top and command on the second line */
 export const IntentCollapsedSummary: Story = {
-  render: () => {
-    setCollapsedDisplayMode("intent-command");
-    return (
-      <ToolStoryShell>
-        <BashToolCall
-          workspaceId={STORYBOOK_WORKSPACE_ID}
-          toolCallId="intent-summary"
-          args={{
-            script: "sleep 30 && tail -30 /tmp/develop.log",
-            model_intent:
-              "Waiting for the dev instance to start using sleep 30 && tail -30 /tmp/develop.log for 30.1s",
-            run_in_background: false,
-            timeout_secs: 120,
-            display_name: "Dev server readiness",
-          }}
-          result={{
-            success: true,
-            output: "VITE ready on the sandbox frontend. Backend health check passed.",
-            exitCode: 0,
-            wall_duration_ms: 30_100,
-          }}
-          status="completed"
-        />
-      </ToolStoryShell>
-    );
-  },
+  render: () => (
+    <ToolStoryShell>
+      <BashToolCall
+        workspaceId={STORYBOOK_WORKSPACE_ID}
+        toolCallId="intent-summary"
+        args={{
+          script: "sleep 30 && tail -30 /tmp/develop.log",
+          model_intent:
+            "Waiting for the dev instance to start using sleep 30 && tail -30 /tmp/develop.log for 30.1s",
+          run_in_background: false,
+          timeout_secs: 120,
+          display_name: "Dev server readiness",
+        }}
+        result={{
+          success: true,
+          output: "VITE ready on the sandbox frontend. Backend health check passed.",
+          exitCode: 0,
+          wall_duration_ms: 30_100,
+        }}
+        status="completed"
+      />
+    </ToolStoryShell>
+  ),
   play: async ({ canvasElement }) => {
     await waitFor(() => {
       const textContent = canvasElement.textContent ?? "";
@@ -127,10 +118,10 @@ export const IntentCollapsedSummary: Story = {
         throw new Error("Intent summary text should be visible");
       }
       if (!textContent.includes("sleep 30 && tail -30 /tmp/develop.log")) {
-        throw new Error("Raw command should stay visible in intent mode");
+        throw new Error("Raw command should stay visible alongside intent");
       }
       if (!textContent.includes("for 30.1s")) {
-        throw new Error("Completed duration should be visible outside the truncated intent");
+        throw new Error("Completed duration should be visible outside the intent text");
       }
       if (textContent.includes("timeout: 120s")) {
         throw new Error("Completed intent summaries should not repeat the timeout chip");
@@ -140,26 +131,23 @@ export const IntentCollapsedSummary: Story = {
 };
 
 export const IntentExecutingSummary: Story = {
-  render: () => {
-    setCollapsedDisplayMode("intent-command");
-    return (
-      <ToolStoryShell>
-        <BashToolCall
-          workspaceId={STORYBOOK_WORKSPACE_ID}
-          toolCallId="intent-executing-summary"
-          args={{
-            script: "sleep 30 && tail -30 /tmp/develop.log",
-            model_intent: "Waiting for the dev instance to start",
-            run_in_background: false,
-            timeout_secs: 120,
-            display_name: "Dev server readiness",
-          }}
-          status="executing"
-          startedAt={Date.now() - 1_000}
-        />
-      </ToolStoryShell>
-    );
-  },
+  render: () => (
+    <ToolStoryShell>
+      <BashToolCall
+        workspaceId={STORYBOOK_WORKSPACE_ID}
+        toolCallId="intent-executing-summary"
+        args={{
+          script: "sleep 30 && tail -30 /tmp/develop.log",
+          model_intent: "Waiting for the dev instance to start",
+          run_in_background: false,
+          timeout_secs: 120,
+          display_name: "Dev server readiness",
+        }}
+        status="executing"
+        startedAt={Date.now() - 1_000}
+      />
+    </ToolStoryShell>
+  ),
   play: async ({ canvasElement }) => {
     await waitFor(() => {
       const textContent = canvasElement.textContent ?? "";
@@ -176,46 +164,40 @@ export const IntentExecutingSummary: Story = {
   },
 };
 
-export const CommandCollapsedSummary: Story = {
-  render: () => {
-    setCollapsedDisplayMode("command");
-    return (
-      <ToolStoryShell>
-        <BashToolCall
-          workspaceId={STORYBOOK_WORKSPACE_ID}
-          toolCallId="command-summary"
-          args={{
-            script: "sleep 30 && tail -30 /tmp/develop.log",
-            model_intent: "Waiting for the dev instance to start",
-            run_in_background: false,
-            timeout_secs: 120,
-            display_name: "Dev server readiness",
-          }}
-          result={{
-            success: true,
-            output: "VITE ready on the sandbox frontend. Backend health check passed.",
-            exitCode: 0,
-            wall_duration_ms: 30_100,
-          }}
-          status="completed"
-        />
-      </ToolStoryShell>
-    );
-  },
+/** when the model omits `model_intent`, the collapsed row falls back to the bare command */
+export const NoIntentSummary: Story = {
+  render: () => (
+    <ToolStoryShell>
+      <BashToolCall
+        workspaceId={STORYBOOK_WORKSPACE_ID}
+        toolCallId="command-summary"
+        args={{
+          script: "sleep 30 && tail -30 /tmp/develop.log",
+          run_in_background: false,
+          timeout_secs: 120,
+          display_name: "Dev server readiness",
+        }}
+        result={{
+          success: true,
+          output: "VITE ready on the sandbox frontend. Backend health check passed.",
+          exitCode: 0,
+          wall_duration_ms: 30_100,
+        }}
+        status="completed"
+      />
+    </ToolStoryShell>
+  ),
   play: async ({ canvasElement }) => {
     await waitFor(() => {
       const textContent = canvasElement.textContent ?? "";
       if (!textContent.includes("sleep 30 && tail -30 /tmp/develop.log")) {
-        throw new Error("Raw command should be visible in command mode");
+        throw new Error("Raw command should be visible when intent is absent");
       }
       if (!textContent.includes("timeout: 120s")) {
-        throw new Error("Command mode should keep timeout metadata visible");
+        throw new Error("Command-only mode should keep timeout metadata visible");
       }
       if (!textContent.includes("took 30s")) {
-        throw new Error("Command mode should keep duration metadata visible");
-      }
-      if (textContent.includes("Waiting for the dev instance to start")) {
-        throw new Error("Command mode should not show model intent text");
+        throw new Error("Command-only mode should keep duration metadata visible");
       }
     });
   },
