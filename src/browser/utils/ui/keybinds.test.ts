@@ -1,77 +1,50 @@
 import { afterEach, describe, it, expect, test } from "bun:test";
+import {
+  installTestNavigator,
+  installTestWindow,
+  type TestWindowWithApi,
+} from "@/browser/testUtils";
 import { isMac, matchesKeybind, KEYBINDS } from "./keybinds";
 import type { Keybind } from "@/common/types/keybind";
 
-type PlatformWindow = Window & typeof globalThis & { api?: unknown };
-
-let mockedWindow: PlatformWindow | undefined;
-let createdMockWindow = false;
-let previousApiDescriptor: PropertyDescriptor | undefined;
-let previousNavigator: Navigator | undefined;
-let mockedNavigator: Navigator | undefined;
+let testWindow: TestWindowWithApi | undefined;
+let restoreTestWindow: (() => void) | undefined;
+let restoreTestNavigator: (() => void) | undefined;
 
 function setPlatform(platform: "darwin" | "linux") {
-  const targetWindow = ensureWindow();
-  Object.defineProperty(targetWindow, "api", {
+  Object.defineProperty(ensureWindow(), "api", {
     configurable: true,
     value: { platform },
   });
 }
 
 function clearWindowAPI() {
-  const targetWindow = ensureWindow();
-  delete targetWindow.api;
+  delete ensureWindow().api;
 }
 
-function ensureWindow(): PlatformWindow {
-  if (mockedWindow) {
-    return mockedWindow;
+function ensureWindow(): TestWindowWithApi {
+  if (!testWindow) {
+    const installedWindow = installTestWindow();
+    testWindow = installedWindow.window;
+    restoreTestWindow = installedWindow.restore;
   }
 
-  const existingWindow = globalThis.window as PlatformWindow | undefined;
-  mockedWindow = existingWindow ?? (Object.create(null) as PlatformWindow);
-  createdMockWindow = existingWindow == null;
-  previousApiDescriptor = Object.getOwnPropertyDescriptor(mockedWindow, "api");
-
-  if (createdMockWindow) {
-    globalThis.window = mockedWindow;
-  }
-
-  return mockedWindow;
+  return testWindow;
 }
 
 function setNavigatorPlatform(platform: string) {
-  previousNavigator = globalThis.navigator;
-  mockedNavigator = { platform, userAgent: "Mozilla/5.0" } as unknown as Navigator;
-  globalThis.navigator = mockedNavigator;
+  restoreTestNavigator = installTestNavigator({
+    platform,
+    userAgent: "Mozilla/5.0",
+  } as unknown as Navigator);
 }
 
 afterEach(() => {
-  if (mockedWindow) {
-    if (previousApiDescriptor) {
-      Object.defineProperty(mockedWindow, "api", previousApiDescriptor);
-    } else {
-      delete mockedWindow.api;
-    }
-
-    if (createdMockWindow && globalThis.window === mockedWindow) {
-      delete (globalThis as { window?: unknown }).window;
-    }
-  }
-
-  if (mockedNavigator && globalThis.navigator === mockedNavigator) {
-    if (previousNavigator) {
-      globalThis.navigator = previousNavigator;
-    } else {
-      delete (globalThis as { navigator?: unknown }).navigator;
-    }
-  }
-
-  mockedWindow = undefined;
-  createdMockWindow = false;
-  previousApiDescriptor = undefined;
-  previousNavigator = undefined;
-  mockedNavigator = undefined;
+  restoreTestNavigator?.();
+  restoreTestWindow?.();
+  testWindow = undefined;
+  restoreTestWindow = undefined;
+  restoreTestNavigator = undefined;
 });
 
 // Helper to create a minimal keyboard event

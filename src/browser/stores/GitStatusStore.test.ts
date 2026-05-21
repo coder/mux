@@ -11,6 +11,7 @@ import {
 import type { RuntimeStatus, RuntimeStatusStore } from "./RuntimeStatusStore";
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { installTestWindow } from "@/browser/testUtils";
 
 /**
  * Unit tests for GitStatusStore.
@@ -183,90 +184,10 @@ function createStore(
   return store;
 }
 
-type MockableWindow = Window & typeof globalThis & { api?: unknown };
-type WindowEventMethod = "addEventListener" | "removeEventListener" | "dispatchEvent";
-
-let mockedWindow: MockableWindow | undefined;
-let createdMockWindow = false;
-let previousApiDescriptor: PropertyDescriptor | undefined;
-let previousEventMethodDescriptors: Partial<
-  Record<WindowEventMethod, PropertyDescriptor | undefined>
-> = {};
-
-function installMockWindowAPI() {
-  const existingWindow = globalThis.window as MockableWindow | undefined;
-  const targetWindow = existingWindow ?? (Object.create(null) as MockableWindow);
-
-  mockedWindow = targetWindow;
-  createdMockWindow = existingWindow == null;
-  previousApiDescriptor = Object.getOwnPropertyDescriptor(targetWindow, "api");
-  previousEventMethodDescriptors = {};
-
-  if (createdMockWindow) {
-    globalThis.window = targetWindow;
-  }
-
-  Object.defineProperty(targetWindow, "api", {
-    configurable: true,
-    value: {
-      workspace: {
-        executeBash: mockExecuteBash,
-        getProjectGitStatuses: mockGetProjectGitStatuses,
-      },
-    },
-  });
-
-  ensureWindowEventMethod(targetWindow, "addEventListener", () => undefined);
-  ensureWindowEventMethod(targetWindow, "removeEventListener", () => undefined);
-  ensureWindowEventMethod(targetWindow, "dispatchEvent", () => true);
-}
-
-function ensureWindowEventMethod(
-  targetWindow: MockableWindow,
-  method: WindowEventMethod,
-  replacement: EventTarget[WindowEventMethod]
-) {
-  if (typeof targetWindow[method] === "function") {
-    return;
-  }
-
-  previousEventMethodDescriptors[method] = Object.getOwnPropertyDescriptor(targetWindow, method);
-  Object.defineProperty(targetWindow, method, { configurable: true, value: replacement });
-}
-
-function restoreMockWindowAPI() {
-  const targetWindow = mockedWindow;
-  if (!targetWindow) {
-    return;
-  }
-
-  if (previousApiDescriptor) {
-    Object.defineProperty(targetWindow, "api", previousApiDescriptor);
-  } else {
-    delete targetWindow.api;
-  }
-
-  for (const method of Object.keys(previousEventMethodDescriptors) as WindowEventMethod[]) {
-    const descriptor = previousEventMethodDescriptors[method];
-    if (descriptor) {
-      Object.defineProperty(targetWindow, method, descriptor);
-    } else {
-      delete (targetWindow as Partial<Record<WindowEventMethod, unknown>>)[method];
-    }
-  }
-
-  if (createdMockWindow && globalThis.window === targetWindow) {
-    delete (globalThis as { window?: unknown }).window;
-  }
-
-  mockedWindow = undefined;
-  createdMockWindow = false;
-  previousApiDescriptor = undefined;
-  previousEventMethodDescriptors = {};
-}
-
 describe("GitStatusStore", () => {
   let store: GitStatusStore;
+
+  let restoreTestWindow: (() => void) | undefined;
 
   beforeEach(() => {
     mockExecuteBash.mockReset();
@@ -282,14 +203,23 @@ describe("GitStatusStore", () => {
     } as Result<BashToolResult, string>);
     mockGetProjectGitStatuses.mockResolvedValue([]);
 
-    installMockWindowAPI();
+    restoreTestWindow = installTestWindow({
+      api: {
+        workspace: {
+          executeBash: mockExecuteBash,
+          getProjectGitStatuses: mockGetProjectGitStatuses,
+        },
+      },
+      ensureEventTargetMethods: true,
+    }).restore;
 
     store = createStore();
   });
 
   afterEach(() => {
     store.dispose();
-    restoreMockWindowAPI();
+    restoreTestWindow?.();
+    restoreTestWindow = undefined;
   });
 
   test("subscribe and unsubscribe", () => {
