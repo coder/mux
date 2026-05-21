@@ -2523,9 +2523,17 @@ export class StreamingMessageAggregator {
     //
     // We additionally carry `sourceMessageId` + `addedAt` per pin so the UI
     // can show a "jump to source turn" affordance and a transient "new" badge.
-    // Carryover semantics: when a previously-seen `path[:range]` key reappears
-    // in the new snapshot, we preserve its original metadata so a refined
-    // comment via `operation: "add"` doesn't make the pin look brand-new.
+    //
+    // Carryover semantics:
+    //   - `operation: "add"` — the agent is appending to or refining the
+    //     existing set, so a previously-seen key keeps its original
+    //     metadata. This prevents an `add` that just tweaks a comment
+    //     from re-arming the "new" badge.
+    //   - `operation: "replace"` — the agent is republishing a fresh
+    //     snapshot. Treat every entry as new for metadata purposes (the
+    //     same key reappearing is an explicit re-flag, not a refinement),
+    //     so the UI can highlight the snapshot and link to the latest
+    //     source turn.
     if (toolName === "review_pane_update") {
       const parsed = ReviewPaneUpdateSuccessResultSchema.safeParse(output);
       if (parsed.success) {
@@ -2533,6 +2541,8 @@ export class StreamingMessageAggregator {
         for (const prev of this.assistedReviewHunks) {
           previousByKey.set(formatAssistedFilter(prev), prev);
         }
+
+        const isAdd = parsed.data.operation === "add";
 
         const next: AssistedReviewHunk[] = [];
         for (const entry of parsed.data.hunks) {
@@ -2545,17 +2555,18 @@ export class StreamingMessageAggregator {
           };
           const key = formatAssistedFilter(candidate);
           const previous = previousByKey.get(key);
-          if (previous) {
-            // Carry forward sourceMessageId/addedAt so a refined comment in
-            // a follow-up `add` call doesn't reset the "new" badge.
+          if (isAdd && previous) {
+            // Carry forward sourceMessageId/addedAt for `add` ops only so
+            // a refined comment doesn't reset the "new" badge.
             candidate.sourceMessageId = previous.sourceMessageId;
             candidate.addedAt = previous.addedAt;
           } else {
-            // First time we've seen this pin in this session: record the
-            // owning turn id, and only stamp `addedAt` when the caller
-            // supplied a real timestamp. Replay deliberately omits this
-            // so historical pins don't all light up as "new" on load —
-            // only live updates qualify a pin for the transient badge.
+            // `replace` op (or first time we've seen this key under any op):
+            // stamp with the current message's metadata. `replace` is an
+            // explicit republish, so reuse of an old key should still be
+            // surfaced with fresh "source turn" + "new" cues. Replay
+            // deliberately omits the timestamp so historical pins don't
+            // all light up as "new" on initial load.
             candidate.sourceMessageId = messageContext?.messageId;
             if (messageContext?.timestamp !== undefined) {
               candidate.addedAt = messageContext.timestamp;

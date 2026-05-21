@@ -3308,4 +3308,32 @@ describe("review_pane_update -> assistedReviewHunks", () => {
     expect(pins[0].path).toBe("src/bar.ts");
     expect(pins[0].sourceMessageId).toBe("assistant-2");
   });
+
+  test("a `replace` republishing an existing key refreshes sourceMessageId", () => {
+    // `replace` is an explicit re-publish: even if the same path:range
+    // key reappears in the new snapshot, that's the agent intentionally
+    // re-flagging the region, not a refinement. Metadata should refresh
+    // so the UI's "jump to source turn" link points at the latest turn
+    // and the "new" badge can re-arm.
+    const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+    aggregator.loadHistoricalMessages([
+      historicalReviewPaneUpdateMessage(
+        "assistant-1",
+        [{ path: "src/foo.ts", comment: "original" }],
+        "replace",
+        { historySequence: 1 }
+      ),
+      historicalReviewPaneUpdateMessage(
+        "assistant-2",
+        [{ path: "src/foo.ts", comment: "republished" }],
+        "replace",
+        { historySequence: 2, toolCallId: "tc-2" }
+      ),
+    ]);
+
+    const pins = aggregator.getAssistedReviewHunks();
+    expect(pins).toHaveLength(1);
+    expect(pins[0].sourceMessageId).toBe("assistant-2");
+    expect(pins[0].comment).toBe("republished");
+  });
 });
