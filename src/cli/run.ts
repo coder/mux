@@ -164,7 +164,7 @@ function parseGoalBudgetFlag(value: string | undefined): number | null | undefin
   const parsed = parseGoalBudgetInputCents(value);
   if (parsed === undefined) {
     throw new Error(
-      'Invalid --goal-budget "' + value + '". Expected dollars like 5, $5.00, or cents like 500c'
+      `Invalid --goal-budget "${value}". Expected dollars like 5, $5.00, or cents like 500c`
     );
   }
   return parsed;
@@ -174,7 +174,7 @@ function parseGoalTurnsFlag(value: string | undefined): number | undefined {
   if (value == null) return undefined;
   const parsed = parseGoalTurnCapInput(value);
   if (parsed == null) {
-    throw new Error('Invalid --goal-turns "' + value + '". Expected a positive integer');
+    throw new Error(`Invalid --goal-turns "${value}". Expected a positive integer`);
   }
   return parsed;
 }
