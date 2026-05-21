@@ -24,6 +24,11 @@ import { useBashToolLiveOutput, useLatestStreamingBashId } from "@/browser/store
 import { useForegroundBashToolCallIds } from "@/browser/stores/BackgroundBashStore";
 import { useBackgroundBashActions } from "@/browser/contexts/BackgroundBashContext";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  DEFAULT_TOOL_COLLAPSED_DISPLAY_MODE,
+  TOOL_COLLAPSED_DISPLAY_MODE_KEY,
+} from "@/common/constants/storage";
 import { buildBashCollapsedSummary } from "./bashCollapsedSummary";
 import { BackgroundBashOutputDialog } from "@/browser/components/BackgroundBashOutputDialog/BackgroundBashOutputDialog";
 
@@ -108,12 +113,17 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     result && "backgroundProcessId" in result ? result.backgroundProcessId : null;
   const isBackground = args.run_in_background ?? Boolean(backgroundProcessId);
 
+  const [rawToolCollapsedDisplayMode] = usePersistedState<unknown>(
+    TOOL_COLLAPSED_DISPLAY_MODE_KEY,
+    DEFAULT_TOOL_COLLAPSED_DISPLAY_MODE,
+    { listener: true }
+  );
   const bashCollapsedSummary = buildBashCollapsedSummary({
     args,
     result,
     isBackground,
+    displayMode: rawToolCollapsedDisplayMode,
   });
-  const isIntentCommandSummary = bashCollapsedSummary.kind === "intent-command";
 
   // Override status for backgrounded processes: the aggregator sees success=true and marks "completed",
   // but for a foreground→background migration we want to show "backgrounded"
@@ -191,6 +201,13 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               )}
             </span>
           </span>
+        ) : bashCollapsedSummary.kind === "compact-command" ? (
+          <span
+            className="text-text font-monospace max-w-96 truncate [word-spacing:-0.25ch]"
+            title={bashCollapsedSummary.command}
+          >
+            {bashCollapsedSummary.commandSummary}
+          </span>
         ) : (
           <span className="text-text font-monospace max-w-96 truncate">
             {bashCollapsedSummary.command}
@@ -220,8 +237,8 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
             {args.display_name}
           </span>
         )}
-        {!isBackground && !isIntentCommandSummary && (
-          // Normal mode: show timeout and duration
+        {!isBackground && bashCollapsedSummary.kind === "command" && (
+          // Command mode keeps the legacy timeout and duration metadata.
           <span
             className={cn(
               "ml-2 text-[10px] tabular-nums whitespace-nowrap [@container(max-width:500px)]:hidden",

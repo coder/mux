@@ -83,6 +83,19 @@ export const LAUNCH_BEHAVIOR_KEY = "launchBehavior";
 export type LaunchBehavior = "dashboard" | "new-chat" | "last-workspace";
 
 /**
+ * User preference for collapsed bash tool summaries (global).
+ */
+export const TOOL_COLLAPSED_DISPLAY_MODE_KEY = "toolCollapsedDisplayMode";
+
+export type ToolCollapsedDisplayMode = "intent-command" | "compact" | "command";
+
+export const DEFAULT_TOOL_COLLAPSED_DISPLAY_MODE: ToolCollapsedDisplayMode = "intent-command";
+
+export function isToolCollapsedDisplayMode(value: unknown): value is ToolCollapsedDisplayMode {
+  return value === "intent-command" || value === "compact" || value === "command";
+}
+
+/**
  * Get the localStorage key for expanded projects in sidebar (global)
  * Format: "expandedProjects"
  */

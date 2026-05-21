@@ -209,6 +209,9 @@ describe("GitStatusStore", () => {
           getProjectGitStatuses: mockGetProjectGitStatuses,
         },
       },
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => true,
     } as unknown as Window & typeof globalThis;
 
     store = createStore();

@@ -8,6 +8,7 @@ import {
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
   type CoderWorkspaceArchiveBehavior,
 } from "@/common/config/coderArchiveBehavior";
+import { TOOL_COLLAPSED_DISPLAY_MODE_KEY } from "@/common/constants/storage";
 import {
   DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
   type WorktreeArchiveBehavior,
@@ -301,6 +302,41 @@ describe("GeneralSection", () => {
       expect(trigger.textContent).toContain(optionText);
     });
   }
+
+  async function waitForArchiveSettingsLoad(view: ReturnType<typeof render>): Promise<void> {
+    // Storage-only tests still need the async backend config load to settle before cleanup.
+    await waitFor(() => {
+      expect(getSelectTrigger(view, "Worktree archive behavior").textContent).toContain(
+        "Keep checkout"
+      );
+    });
+  }
+
+  test("updates the collapsed bash summary mode selection", async () => {
+    const { view } = renderGeneralSection();
+
+    expect(getSelectTrigger(view, "Collapsed bash summaries").textContent).toContain(
+      "Intent and command"
+    );
+
+    await chooseSelectOption(view, "Collapsed bash summaries", "Compact");
+
+    expect(window.localStorage.getItem(TOOL_COLLAPSED_DISPLAY_MODE_KEY)).toBe(
+      JSON.stringify("compact")
+    );
+    await waitForArchiveSettingsLoad(view);
+  });
+
+  test("falls back to the default collapsed bash summary mode for invalid storage", async () => {
+    window.localStorage.setItem(TOOL_COLLAPSED_DISPLAY_MODE_KEY, JSON.stringify("invalid"));
+
+    const { view } = renderGeneralSection();
+
+    expect(getSelectTrigger(view, "Collapsed bash summaries").textContent).toContain(
+      "Intent and command"
+    );
+    await waitForArchiveSettingsLoad(view);
+  });
 
   test("renders the worktree archive behavior copy and loads the saved value", async () => {
     const { view } = renderGeneralSection({
