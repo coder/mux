@@ -2,12 +2,76 @@ import { afterEach, describe, it, expect, test } from "bun:test";
 import { isMac, matchesKeybind, KEYBINDS } from "./keybinds";
 import type { Keybind } from "@/common/types/keybind";
 
-const originalWindow = globalThis.window;
-const originalNavigator = globalThis.navigator;
+type PlatformWindow = Window & typeof globalThis & { api?: unknown };
+
+let mockedWindow: PlatformWindow | undefined;
+let createdMockWindow = false;
+let previousApiDescriptor: PropertyDescriptor | undefined;
+let previousNavigator: Navigator | undefined;
+let mockedNavigator: Navigator | undefined;
+
+function setPlatform(platform: "darwin" | "linux") {
+  const targetWindow = ensureWindow();
+  Object.defineProperty(targetWindow, "api", {
+    configurable: true,
+    value: { platform },
+  });
+}
+
+function clearWindowAPI() {
+  const targetWindow = ensureWindow();
+  delete targetWindow.api;
+}
+
+function ensureWindow(): PlatformWindow {
+  if (mockedWindow) {
+    return mockedWindow;
+  }
+
+  const existingWindow = globalThis.window as PlatformWindow | undefined;
+  mockedWindow = existingWindow ?? (Object.create(null) as PlatformWindow);
+  createdMockWindow = existingWindow == null;
+  previousApiDescriptor = Object.getOwnPropertyDescriptor(mockedWindow, "api");
+
+  if (createdMockWindow) {
+    globalThis.window = mockedWindow;
+  }
+
+  return mockedWindow;
+}
+
+function setNavigatorPlatform(platform: string) {
+  previousNavigator = globalThis.navigator;
+  mockedNavigator = { platform, userAgent: "Mozilla/5.0" } as unknown as Navigator;
+  globalThis.navigator = mockedNavigator;
+}
 
 afterEach(() => {
-  globalThis.window = originalWindow;
-  globalThis.navigator = originalNavigator;
+  if (mockedWindow) {
+    if (previousApiDescriptor) {
+      Object.defineProperty(mockedWindow, "api", previousApiDescriptor);
+    } else {
+      delete mockedWindow.api;
+    }
+
+    if (createdMockWindow && globalThis.window === mockedWindow) {
+      delete (globalThis as { window?: unknown }).window;
+    }
+  }
+
+  if (mockedNavigator && globalThis.navigator === mockedNavigator) {
+    if (previousNavigator) {
+      globalThis.navigator = previousNavigator;
+    } else {
+      delete (globalThis as { navigator?: unknown }).navigator;
+    }
+  }
+
+  mockedWindow = undefined;
+  createdMockWindow = false;
+  previousApiDescriptor = undefined;
+  previousNavigator = undefined;
+  mockedNavigator = undefined;
 });
 
 // Helper to create a minimal keyboard event
@@ -25,45 +89,35 @@ function createEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
 
 describe("isMac", () => {
   it("falls back to navigator.platform when Electron API is missing", () => {
-    const originalWindow = globalThis.window;
-    const originalNavigator = globalThis.navigator;
-
-    // Simulate browser mode on macOS (no Electron preload API)
-    globalThis.window = {} as unknown as Window & typeof globalThis;
-    globalThis.navigator = {
-      platform: "MacIntel",
-      userAgent: "Mozilla/5.0",
-    } as unknown as Navigator;
+    clearWindowAPI();
+    setNavigatorPlatform("MacIntel");
 
     expect(isMac()).toBe(true);
 
     // Ctrl-style keybinds should match Cmd (Meta) on macOS
     const event = createEvent({ key: "P", metaKey: true, shiftKey: true });
     expect(matchesKeybind(event, KEYBINDS.OPEN_COMMAND_PALETTE)).toBe(true);
-
-    globalThis.window = originalWindow;
-    globalThis.navigator = originalNavigator;
   });
 });
 
 describe("CYCLE_MODEL keybind (Ctrl+/)", () => {
   it("matches Ctrl+/ on Linux/Windows", () => {
     // Mock non-Mac platform
-    globalThis.window = { api: { platform: "linux" } } as unknown as Window & typeof globalThis;
+    setPlatform("linux");
     const event = createEvent({ key: "/", ctrlKey: true });
     expect(matchesKeybind(event, { key: "/", ctrl: true })).toBe(true);
   });
 
   it("matches Cmd+/ on macOS", () => {
     // Mock Mac platform
-    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    setPlatform("darwin");
     const event = createEvent({ key: "/", metaKey: true });
     expect(matchesKeybind(event, { key: "/", ctrl: true })).toBe(true);
   });
 
   it("matches Ctrl+/ on macOS (either behavior)", () => {
     // Mock Mac platform
-    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    setPlatform("darwin");
     const event = createEvent({ key: "/", ctrlKey: true });
     expect(matchesKeybind(event, { key: "/", ctrl: true })).toBe(true);
   });
@@ -81,13 +135,13 @@ describe("CYCLE_MODEL keybind (Ctrl+/)", () => {
 
 describe("CYCLE_AGENT keybind (Ctrl/Cmd+.)", () => {
   it("matches Cmd+. on macOS via the Period key code", () => {
-    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    setPlatform("darwin");
     const event = createEvent({ key: ".", code: "Period", metaKey: true });
     expect(matchesKeybind(event, KEYBINDS.CYCLE_AGENT)).toBe(true);
   });
 
   it("matches Cmd+Shift+Period on layouts where Period requires Shift", () => {
-    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    setPlatform("darwin");
     const event = createEvent({ key: ">", code: "Period", metaKey: true, shiftKey: true });
     expect(matchesKeybind(event, KEYBINDS.CYCLE_AGENT)).toBe(true);
   });
@@ -100,25 +154,25 @@ test("removed auto agent toggle keybind", () => {
 
 describe("SEND_MESSAGE_AFTER_TURN keybind (Ctrl/Cmd+Enter)", () => {
   it("matches Ctrl+Enter", () => {
-    globalThis.window = { api: { platform: "linux" } } as unknown as Window & typeof globalThis;
+    setPlatform("linux");
     const event = createEvent({ key: "Enter", ctrlKey: true, metaKey: false });
     expect(matchesKeybind(event, KEYBINDS.SEND_MESSAGE_AFTER_TURN)).toBe(true);
   });
 
   it("matches Cmd+Enter on macOS", () => {
-    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    setPlatform("darwin");
     const event = createEvent({ key: "Enter", metaKey: true, ctrlKey: false });
     expect(matchesKeybind(event, KEYBINDS.SEND_MESSAGE_AFTER_TURN)).toBe(true);
   });
 
   it("does not match plain Enter", () => {
-    globalThis.window = { api: { platform: "linux" } } as unknown as Window & typeof globalThis;
+    setPlatform("linux");
     const event = createEvent({ key: "Enter" });
     expect(matchesKeybind(event, KEYBINDS.SEND_MESSAGE_AFTER_TURN)).toBe(false);
   });
 
   it("SEND_MESSAGE does not match Ctrl+Enter", () => {
-    globalThis.window = { api: { platform: "linux" } } as unknown as Window & typeof globalThis;
+    setPlatform("linux");
     const event = createEvent({ key: "Enter", ctrlKey: true });
     expect(matchesKeybind(event, KEYBINDS.SEND_MESSAGE)).toBe(false);
   });
