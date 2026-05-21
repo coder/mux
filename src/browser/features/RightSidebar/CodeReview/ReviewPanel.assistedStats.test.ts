@@ -1,13 +1,34 @@
 import { describe, expect, test } from "bun:test";
 
 import type { AssistedReviewHunk, DiffHunk } from "@/common/types/review";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import {
-  buildReviewDiffPathFilter,
   buildReviewDiffPathFilterSpecs,
   countUnreadAssistedHunks,
   getEffectiveReviewFrontendFilters,
   getEffectiveReviewIncludeUncommitted,
 } from "./ReviewPanel";
+
+// Test-only single-result wrapper around `buildReviewDiffPathFilterSpecs`.
+// Production callers go through the multi-spec form directly to handle the
+// multi-project case; these tests only exercise the first spec's pathFilter,
+// so the wrapper lives here instead of polluting ReviewPanel's exported API.
+function buildReviewDiffPathFilter(params: {
+  isImmersive: boolean;
+  assistedOnly: boolean;
+  assistedHunks: readonly AssistedReviewHunk[];
+  selectedFilePath: string | null;
+  selectedDiffPath: string;
+  workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined;
+  repoRootProjectPath: string | null | undefined;
+}): string {
+  return (
+    buildReviewDiffPathFilterSpecs({
+      ...params,
+      projectPath: params.repoRootProjectPath ?? "",
+    })[0]?.pathFilter ?? ""
+  );
+}
 
 function hunk(overrides: Partial<DiffHunk>): DiffHunk {
   return {
