@@ -87,11 +87,23 @@ class _ExecResult:
 
 
 class _FakeEnvironment:
-    def __init__(self, result: _ExecResult) -> None:
+    def __init__(
+        self,
+        result: _ExecResult,
+        command_dir: Path | None = None,
+    ) -> None:
         self.result = result
+        self.command_dir = command_dir
         self.download_attempts: list[tuple[str, Path]] = []
 
     async def exec(self, **_kwargs: object) -> _ExecResult:
+        if self.command_dir is not None:
+            stdout_path = self.command_dir / MuxAgent._COMMAND_STDOUT_NAME
+            stderr_path = self.command_dir / MuxAgent._COMMAND_STDERR_NAME
+            assert stdout_path.exists()
+            assert stderr_path.exists()
+            stdout_path.write_text("sandbox out")
+            stderr_path.write_text("sandbox err")
         return self.result
 
     async def download_file(self, source_path: str, target_path: Path) -> None:
@@ -114,14 +126,32 @@ def test_run_raises_after_preserving_logs_for_nonzero_exit(
 
     command_dir = tmp_path / "command-0"
     assert (command_dir / "return-code.txt").read_text() == "3"
-    assert (command_dir / "stdout.txt").read_text() == "out"
-    assert (command_dir / "stderr.txt").read_text() == "err"
+    assert (command_dir / MuxAgent._COMMAND_STDOUT_NAME).read_text() == "out"
+    assert (command_dir / MuxAgent._COMMAND_STDERR_NAME).read_text() == "err"
     assert environment.download_attempts == [
         (agent._TOKEN_FILE_PATH, tmp_path / "mux-tokens.json")
     ]
     assert getattr(context, "n_input_tokens") == 7
     assert getattr(context, "n_output_tokens") == 11
     assert getattr(context, "cost_usd") == 0.42
+
+
+def test_run_preseeds_command_logs_before_sandbox_exec(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MUX_AGENT_REPO_ROOT", str(_repo_root()))
+    agent = MuxAgent(logs_dir=tmp_path)
+    command_dir = tmp_path / "command-0"
+    environment = _FakeEnvironment(
+        _ExecResult(return_code=0, stdout="out", stderr="err"),
+        command_dir=command_dir,
+    )
+    context = SimpleNamespace()
+
+    asyncio.run(agent.run("do the task", environment, context))
+
+    assert (command_dir / MuxAgent._COMMAND_STDOUT_NAME).read_text() == "out"
+    assert (command_dir / MuxAgent._COMMAND_STDERR_NAME).read_text() == "err"
 
 
 def test_run_populates_context_for_successful_exit(
@@ -138,8 +168,8 @@ def test_run_populates_context_for_successful_exit(
 
     command_dir = tmp_path / "command-0"
     assert (command_dir / "return-code.txt").read_text() == "0"
-    assert (command_dir / "stdout.txt").read_text() == "out"
-    assert (command_dir / "stderr.txt").read_text() == "err"
+    assert (command_dir / MuxAgent._COMMAND_STDOUT_NAME).read_text() == "out"
+    assert (command_dir / MuxAgent._COMMAND_STDERR_NAME).read_text() == "err"
     assert getattr(context, "n_input_tokens") == 7
     assert getattr(context, "n_output_tokens") == 11
     assert getattr(context, "cost_usd") == 0.42

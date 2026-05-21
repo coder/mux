@@ -32,6 +32,8 @@ class MuxAgent(BaseInstalledAgent):
     _ARCHIVE_NAME = "mux-app.tar.gz"
     _RUNNER_NAME = "mux-run.sh"
     _SETUP_SCRIPT_NAME = "mux_setup.sh"
+    _COMMAND_STDOUT_NAME = "stdout.txt"
+    _COMMAND_STDERR_NAME = "stderr.txt"
     _DEFAULT_MODEL = "anthropic:claude-sonnet-4-5"
     _DEFAULT_PROJECT_CANDIDATES = "/workspace:/app:/workspaces:/root/project"
     _INCLUDE_PATHS: Sequence[str] = (
@@ -314,6 +316,13 @@ class MuxAgent(BaseInstalledAgent):
             command_dir.mkdir(parents=True, exist_ok=True)
             (command_dir / "command.txt").write_text(exec_input.command)
 
+            # /logs is bind-mounted; pre-create files so sandbox tee output
+            # does not leave root-owned files that host-side log writes cannot replace.
+            stdout_path = command_dir / self._COMMAND_STDOUT_NAME
+            stderr_path = command_dir / self._COMMAND_STDERR_NAME
+            for output_path in (stdout_path, stderr_path):
+                output_path.write_text("")
+
             result = await environment.exec(
                 command=exec_input.command,
                 cwd=exec_input.cwd,
@@ -323,9 +332,9 @@ class MuxAgent(BaseInstalledAgent):
 
             (command_dir / "return-code.txt").write_text(str(result.return_code))
             if result.stdout:
-                (command_dir / "stdout.txt").write_text(result.stdout)
+                stdout_path.write_text(result.stdout)
             if result.stderr:
-                (command_dir / "stderr.txt").write_text(result.stderr)
+                stderr_path.write_text(result.stderr)
             if result.return_code != 0:
                 failed_command = (i, result.return_code)
                 break

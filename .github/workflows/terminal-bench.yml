@@ -298,9 +298,10 @@ jobs:
             echo "❌ No result.json found - benchmark failed to produce results"
             exit 1
           fi
-          # Harbor format: n_total_trials, stats.n_trials, stats.n_errors, stats.evals.<key>.metrics[0].mean
+          # Harbor has used both top-level stats.n_errors and stats.n_errored_trials;
+          # fall back to per-eval n_errors so schema drift cannot hide broken runs.
           N_TRIALS=$(jq -r '.n_total_trials // .stats.n_trials // 0' "$RESULTS_FILE")
-          N_ERRORS=$(jq -r '.stats.n_errors // 0' "$RESULTS_FILE")
+          N_ERRORS=$(jq -r '.stats.n_errors // .stats.n_errored_trials // (reduce ((.stats.evals // {}) | to_entries[]) as $eval (0; . + ($eval.value.n_errors // 0)))' "$RESULTS_FILE")
           # Get mean score from first eval entry (pass rate 0-1)
           MEAN_SCORE=$(jq -r '[.stats.evals | to_entries[].value.metrics[0].mean] | add // 0' "$RESULTS_FILE")
           echo "Trials: $N_TRIALS, Errors: $N_ERRORS, Mean score: $MEAN_SCORE"
