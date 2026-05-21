@@ -1371,7 +1371,7 @@ function GoalCreateForm(props: GoalCreateFormProps) {
           defaultValue=""
         />
         <span className="text-muted text-[11px] leading-4">
-          0–99 to compact at that % of context, 100 / "off" to disable for this goal.
+          0–99 to compact at that % of context, 100 / &quot;off&quot; to disable for this goal.
         </span>
       </div>
 
