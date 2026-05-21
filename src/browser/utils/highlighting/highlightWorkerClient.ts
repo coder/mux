@@ -110,7 +110,14 @@ let warnedVscodeWorkerDisabled = false;
  * inputs are tracked separately by fingerprint, and well-formed inputs deserve
  * a fresh attempt against a fresh worker.
  */
-function recycleWorker(): void {
+function recycleWorker(expectedWorker?: Worker): void {
+  if (expectedWorker !== undefined && worker !== expectedWorker) {
+    // A stale worker can still emit asynchronous errors after a replacement has
+    // been created. Do not let that stale event tear down the healthy current
+    // worker and cascade fallback through unrelated queued highlights.
+    return;
+  }
+
   if (worker !== null) {
     try {
       worker.terminate();
@@ -147,20 +154,23 @@ function getWorkerAPI(): Comlink.Remote<HighlightWorkerAPI> | null {
 
   try {
     // Use relative path - @/ alias doesn't work in worker context.
-    worker = new Worker(new URL("../../workers/highlightWorker.ts", import.meta.url), {
+    const createdWorker = new Worker(new URL("../../workers/highlightWorker.ts", import.meta.url), {
       type: "module",
       name: "shiki-highlighter", // Shows up in DevTools
     });
+    worker = createdWorker;
 
-    worker.onerror = (e) => {
+    createdWorker.onerror = (e) => {
       // A worker that errored out is not necessarily permanently broken — the
       // error may be confined to a single grammar/input. Clear state so the
-      // next highlight call builds a fresh worker.
+      // next highlight call builds a fresh worker, but only if this is still
+      // the active worker. Stale error events from already-replaced workers
+      // must not terminate a healthy replacement.
       console.error("[highlightWorkerClient] Worker errored; recycling:", e);
-      recycleWorker();
+      recycleWorker(createdWorker);
     };
 
-    workerAPI = Comlink.wrap<HighlightWorkerAPI>(worker);
+    workerAPI = Comlink.wrap<HighlightWorkerAPI>(createdWorker);
     return workerAPI;
   } catch (e) {
     // Workers not available (e.g., test environment). Construction failures
