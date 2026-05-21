@@ -93,6 +93,26 @@ const BASE_REPO_PROMISOR_CONFIG_KEYS = [
 ] as const;
 const BASE_REPO_FRAGMENTED_PACK_THRESHOLD = 25;
 const PROJECT_SYNC_MAX_ATTEMPTS = 3;
+/**
+ * Receive-pack thin-pack resolution failures. These happen when the bare base
+ * repo routes a small push through `unpack-objects` (because object count <
+ * `transfer.unpackLimit`, default 100) and the thin pack references delta
+ * bases that unpack-objects cannot resolve, or when the on-disk pack store is
+ * missing the assumed-present base objects (e.g. a `.pack` with no `.idx`).
+ *
+ * Tracked as a distinct sub-class of retryable errors so the retry path can
+ * opt the next push into `--no-thin` instead of just rerunning the same thin
+ * push. The retry path also runs `repairBaseRepoForSync`, which sets
+ * `receive.unpackLimit=1` (forcing index-pack with `--fix-thin`) and runs gc.
+ * See `isUnresolvedDeltaPushFailure`.
+ */
+const UNRESOLVED_DELTA_PUSH_PATTERNS = [
+  "unresolved deltas",
+  "unpacker error",
+  "unpack-objects abnormal exit",
+  "remote unpack failed",
+] as const;
+
 const PROJECT_SYNC_RETRYABLE_ERRORS = [
   "pack-objects died",
   "Connection reset",
@@ -100,31 +120,8 @@ const PROJECT_SYNC_RETRYABLE_ERRORS = [
   "Broken pipe",
   "EPIPE",
   "Command killed by signal",
-  // Receive-pack thin-pack resolution failures. These happen when the bare
-  // base repo routes a small push through `unpack-objects` (because object
-  // count < `transfer.unpackLimit`, default 100) and the thin pack references
-  // delta bases that unpack-objects cannot resolve, or when the on-disk pack
-  // store is missing the assumed-present base objects (e.g. a `.pack` with no
-  // `.idx`). The retry path runs `repairBaseRepoForSync`, which sets
-  // `receive.unpackLimit=1` (forcing index-pack with `--fix-thin`) and runs
-  // gc, and the next push is force-promoted to `--no-thin` so the pack is
-  // self-contained. See `isUnresolvedDeltaPushFailure`.
-  "unresolved deltas",
-  "unpacker error",
-  "unpack-objects abnormal exit",
-  "remote unpack failed",
-] as const;
-
-/**
- * Patterns matching the receive-pack failure described above. Detected
- * separately from generic retryable errors so the retry path can opt the next
- * push into `--no-thin` instead of just rerunning the same thin push.
- */
-const UNRESOLVED_DELTA_PUSH_PATTERNS = [
-  "unresolved deltas",
-  "unpacker error",
-  "unpack-objects abnormal exit",
-  "remote unpack failed",
+  // Receive-pack thin-pack resolution failures — see `UNRESOLVED_DELTA_PUSH_PATTERNS`.
+  ...UNRESOLVED_DELTA_PUSH_PATTERNS,
 ] as const;
 
 function isUnresolvedDeltaPushFailure(errorMsg: string): boolean {
