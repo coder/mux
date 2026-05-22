@@ -166,6 +166,10 @@ export function TerminalView({
   const autoFocusRef = useRef(autoFocus);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const exitHandledRef = useRef(false);
+  const onExitRef = useRef(onExit);
+  // The right sidebar can recreate onExit while chat streams; keep the latest callback in
+  // a ref so terminal subscriptions do not tear down and clear the screen for callback churn.
+  onExitRef.current = onExit;
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
   // Track whether we've received the initial screen state from backend
@@ -214,26 +218,23 @@ export function TerminalView({
     onAutoFocusConsumed?.();
   }, [onAutoFocusConsumed]);
 
-  const handleExit = useCallback(
-    (code: number) => {
-      if (exitHandledRef.current) {
-        return;
-      }
-      exitHandledRef.current = true;
+  const handleExit = useCallback((code: number) => {
+    if (exitHandledRef.current) {
+      return;
+    }
+    exitHandledRef.current = true;
 
-      const term = termRef.current;
-      if (term) {
-        try {
-          term.write(`\r\n[Process exited with code ${code}]\r\n`);
-        } catch (err) {
-          console.warn("[TerminalView] Error writing exit message:", err);
-        }
+    const term = termRef.current;
+    if (term) {
+      try {
+        term.write(`\r\n[Process exited with code ${code}]\r\n`);
+      } catch (err) {
+        console.warn("[TerminalView] Error writing exit message:", err);
       }
+    }
 
-      onExit?.(code);
-    },
-    [onExit]
-  );
+    onExitRef.current?.(code);
+  }, []);
 
   useEffect(() => {
     autoFocusRef.current = autoFocus;
