@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, useLayoutEffect } from "react";
 import { init, Terminal, FitAddon } from "ghostty-web";
 import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -167,9 +167,11 @@ export function TerminalView({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const exitHandledRef = useRef(false);
   const onExitRef = useRef(onExit);
-  // The right sidebar can recreate onExit while chat streams; keep the latest callback in
-  // a ref so terminal subscriptions do not tear down and clear the screen for callback churn.
-  onExitRef.current = onExit;
+  // The right sidebar can recreate onExit while chat streams. Sync the latest committed
+  // callback through a ref so subscriptions stay stable without exposing render-time props.
+  useLayoutEffect(() => {
+    onExitRef.current = onExit;
+  }, [onExit]);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
   // Track whether we've received the initial screen state from backend
