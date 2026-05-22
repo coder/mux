@@ -38,10 +38,7 @@ export function buildBashCollapsedSummary(
   }
 
   const intent = sanitizeModelIntent(options.args.model_intent, command);
-  const displayIntent =
-    intent && normalizeForComparison(intent) !== normalizeForComparison(command)
-      ? intent
-      : undefined;
+  const displayIntent = intent && !matchesCommand(intent, command) ? intent : undefined;
   if (mode === "intent") {
     return {
       kind: "intent",
@@ -93,7 +90,7 @@ export function sanitizeModelIntent(rawIntent: unknown, command: string): string
 
 function getIntentOnlyFallback(args: BashToolArgs, command: string): string {
   const displayName = typeof args.display_name === "string" ? args.display_name.trim() : "";
-  if (displayName && normalizeForComparison(displayName) !== normalizeForComparison(command)) {
+  if (displayName && !matchesCommand(displayName, command)) {
     return capitalize(displayName);
   }
 
@@ -112,7 +109,7 @@ function stripTrailingUsingCommand(intent: string, command: string): string {
 
   const prefix = match[1]?.trim() ?? "";
   const candidate = stripWrappingQuotes(match[2] ?? "");
-  if (normalizeForComparison(candidate) !== normalizeForComparison(command)) {
+  if (!matchesCommand(candidate, command)) {
     return intent;
   }
 
@@ -127,4 +124,9 @@ function stripWrappingQuotes(value: string): string {
 
 function normalizeForComparison(value: string): string {
   return value.trim().replace(/\s+/gu, " ").toLowerCase();
+}
+
+/** Whitespace- and case-insensitive equality so an intent that echoes the command is treated as redundant. */
+function matchesCommand(value: string, command: string): boolean {
+  return normalizeForComparison(value) === normalizeForComparison(command);
 }
