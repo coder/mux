@@ -3,6 +3,7 @@ import type { TelemetryRuntimeType } from "@/common/telemetry/payload";
 import type { Review } from "@/common/types/review";
 import type { EditingMessageState, PendingUserMessage } from "@/browser/utils/chatEditing";
 import type { SendMessageOptions } from "@/common/orpc/types";
+import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 
 export type GoalInterventionPolicy = NonNullable<SendMessageOptions["goalInterventionPolicy"]>;
 export type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
@@ -79,6 +80,13 @@ export interface ChatInputCreationVariant {
   onModelChange?: (model: string) => void;
   disabled?: boolean;
   onReady?: (api: ChatInputAPI) => void;
+  /**
+   * Per-workspace MCP overrides staged in the creation UI (e.g. via the
+   * "Manage MCP servers" modal on the project page). When provided and
+   * non-empty, they are persisted via `api.workspace.mcp.set` immediately
+   * after the workspace is successfully created.
+   */
+  stagedMcpOverrides?: WorkspaceMCPOverrides;
 }
 
 export type ChatInputProps = ChatInputWorkspaceVariant | ChatInputCreationVariant;

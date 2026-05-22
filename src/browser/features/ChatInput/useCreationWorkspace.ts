@@ -39,6 +39,8 @@ import { ConfirmationModal } from "@/browser/components/ConfirmationModal/Confir
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import type { WorkspaceCreatedOptions } from "@/browser/features/ChatInput/types";
+import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
+import { hasAnyOverride } from "@/common/utils/workspaceMcpEffective";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { processSlashCommand, type SlashCommandContext } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -77,6 +79,13 @@ interface UseCreationWorkspaceOptions {
   draftId?: string | null;
   /** User's currently selected model (for name generation fallback) */
   userModel?: string;
+  /**
+   * Per-workspace MCP overrides staged by the user (via the "Manage MCP servers"
+   * modal on the project page). Applied via `api.workspace.mcp.set` immediately
+   * after workspace creation succeeds; non-blocking and fire-and-forget so the
+   * initial prompt can start streaming without waiting on the override write.
+   */
+  stagedMcpOverrides?: WorkspaceMCPOverrides;
 }
 
 function syncCreationPreferences(projectPath: string, workspaceId: string): void {
@@ -215,6 +224,7 @@ export function useCreationWorkspace({
   subProjectPath,
   draftId,
   userModel,
+  stagedMcpOverrides,
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
   const workspaceContext = useOptionalWorkspaceContext();
   const promoteWorkspaceDraft = workspaceContext?.promoteWorkspaceDraft;
@@ -517,6 +527,29 @@ export function useCreationWorkspace({
         const { metadata } = createResult;
         createdWorkspaceId = metadata.id;
 
+        // Best-effort: persist per-workspace MCP overrides staged on the creation page.
+        // Fire-and-forget so navigation / first prompt are not blocked by this write
+        // (remote runtimes like SSH/Coder can make the write slow). If it fails, the
+        // workspace simply uses project defaults; the user can re-apply via the
+        // post-creation "Configure MCP servers" modal.
+        if (stagedMcpOverrides && hasAnyOverride(stagedMcpOverrides)) {
+          void api.workspace.mcp
+            .set({ workspaceId: metadata.id, overrides: stagedMcpOverrides })
+            .then((result) => {
+              if (!result.success) {
+                console.warn(
+                  `Failed to apply staged MCP overrides to workspace ${metadata.id}: ${result.error}`
+                );
+              }
+            })
+            .catch((err) => {
+              console.warn(
+                `Failed to apply staged MCP overrides to workspace ${metadata.id}:`,
+                err
+              );
+            });
+        }
+
         // Best-effort: persist the initial AI settings to the backend immediately so this workspace
         // is portable across devices even before the first stream starts. Initial /goal commands do
         // not send a normal user message, so they await this write before setting the goal; that lets
@@ -694,6 +727,7 @@ export function useCreationWorkspace({
       promoteWorkspaceDraft,
       deleteWorkspaceDraft,
       providersConfig,
+      stagedMcpOverrides,
     ]
   );
 

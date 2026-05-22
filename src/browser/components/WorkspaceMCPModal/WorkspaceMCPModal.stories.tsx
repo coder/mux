@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import type { FC, ReactNode } from "react";
+import type { ComponentType, FC, ReactNode } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, waitFor, within } from "@storybook/test";
 
@@ -15,7 +15,7 @@ import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { getMCPTestResultsKey } from "@/common/constants/storage";
 import type { MCPServerInfo } from "@/common/types/mcp";
 
-import { WorkspaceMCPModal } from "./WorkspaceMCPModal";
+import { WorkspaceMCPModal, type WorkspaceMCPModalWorkspaceProps } from "./WorkspaceMCPModal";
 
 const PROJECT_PATH = "/Users/test/my-app";
 const WORKSPACE_ID = "ws-mcp-test";
@@ -189,9 +189,15 @@ async function findWorkspaceMCPDialog(canvasElement: HTMLElement): Promise<HTMLE
   );
 }
 
-const meta: Meta<typeof WorkspaceMCPModal> = {
+// Stories use their own `render` and ignore args, but Storybook's typed StoryObj
+// requires args to satisfy the component's prop type. WorkspaceMCPModal accepts
+// a discriminated union (workspace mode vs. draft mode); pin the stories to the
+// workspace-mode shape so `StoryObj` doesn't demand `never` for args.
+const meta: Meta<WorkspaceMCPModalWorkspaceProps> = {
   title: "Components/WorkspaceMCPModal",
-  component: WorkspaceMCPModal,
+  // Cast: WorkspaceMCPModal's prop type is a discriminated union; the stories all
+  // render in workspace mode, so we narrow the meta's component to that branch.
+  component: WorkspaceMCPModal as ComponentType<WorkspaceMCPModalWorkspaceProps>,
   parameters: {
     layout: "fullscreen",
     chromatic: {
@@ -202,7 +208,7 @@ const meta: Meta<typeof WorkspaceMCPModal> = {
 
 export default meta;
 
-type Story = StoryObj<typeof meta>;
+type Story = StoryObj<WorkspaceMCPModalWorkspaceProps>;
 
 export const WorkspaceMCPNoOverrides: Story = {
   render: () =>

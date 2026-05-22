@@ -849,6 +849,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           message: creationNameMessage,
           draftId: props.pendingDraftId,
           userModel: preferredModel,
+          stagedMcpOverrides: props.stagedMcpOverrides,
         }
       : {
           // Dummy values for workspace variant (never used)
