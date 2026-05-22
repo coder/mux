@@ -72,6 +72,18 @@ model: ${VALID_MODEL}
     }
   });
 
+  test("rejects whitespace-only model values at load time", () => {
+    const content = `---\ndescription: Whitespace model.\nmodel: "   "\n---\nbody\n`;
+    let error: AdvisorParseError | null = null;
+    try {
+      parseAdvisorMarkdown({ content, byteSize: byteSize(content) });
+    } catch (err) {
+      error = err as AdvisorParseError;
+    }
+    expect(error).toBeInstanceOf(AdvisorParseError);
+    expect(error?.message).toMatch(/model/i);
+  });
+
   test("rejects malformed thinking level", () => {
     const content = `---\ndescription: Bad thinking.\nmodel: ${VALID_MODEL}\nthinking: maximum-overdrive\n---\n`;
     expect(() => parseAdvisorMarkdown({ content, byteSize: byteSize(content) })).toThrow(

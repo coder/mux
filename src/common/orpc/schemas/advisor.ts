@@ -33,7 +33,17 @@ export const AdvisorScopeSchema = z.enum(["project", "global"]);
  */
 export const AdvisorFrontmatterSchema = z.object({
   description: z.string().min(1).max(1024),
-  model: z.string().min(1).max(256),
+  // Reject whitespace-only model strings at load time so the diagnostics
+  // pipeline surfaces them inline instead of failing later at tool execute
+  // time (where the per-advisor invariant `advisorModelString.length > 0`
+  // would otherwise crash the turn).
+  model: z
+    .string()
+    .min(1)
+    .max(256)
+    .refine((value) => value.trim().length > 0, {
+      message: "model must contain non-whitespace characters",
+    }),
   thinking: ThinkingLevelSchema.optional(),
   max_uses_per_turn: z.number().int().positive().nullable().optional(),
   max_output_tokens: z.number().int().positive().nullable().optional(),
