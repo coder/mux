@@ -3164,17 +3164,15 @@ describe("StreamingMessageAggregator", () => {
 /**
  * Tests for `review_pane_update` -> assistedReviewHunks bookkeeping.
  *
- * Cover the metadata bits added when implementing the assisted-review UX
- * fixes:
- *   - sourceMessageId: the assistant turn id is recorded with each pin so
- *     the UI can offer a "jump to source turn" affordance.
+ * Cover the metadata bits the aggregator tracks for the assisted-review UI:
  *   - addedAt: set on first sight of each pin's path[:range] key during a
  *     live update, used to drive the transient "new" badge. Replay
  *     intentionally skips this so historical pins don't flash as "new" on
  *     initial load.
- *   - Carryover: re-flagging an existing key (typical with `operation: "add"`
- *     when an agent refines a comment) preserves the original metadata so a
- *     refined comment does not make the pin look brand-new.
+ *   - Carryover: re-flagging an existing key with `operation: "add"`
+ *     preserves the original `addedAt` so a refined comment does not make
+ *     the pin look brand-new.
+ *   - Dedup: a fresh `replace` snapshot drops keys that aren't reincluded.
  *
  * Lives in this file (rather than its own test file) so test ordering stays
  * stable — adding a new `*.test.ts` shifts the alphabetical order across the
@@ -3203,11 +3201,10 @@ function historicalReviewPaneUpdateMessage(
 }
 
 describe("review_pane_update -> assistedReviewHunks", () => {
-  test("replay tags pins with sourceMessageId but skips addedAt", () => {
-    // Initial-load case: we never want replayed history to light up the
+  test("replay parses pins without lighting up the addedAt badge", () => {
+    // Initial-load case: we never want replayed history to flash the
     // transient "new" badge. The aggregator deliberately omits the
-    // timestamp on replay, so addedAt stays undefined while
-    // sourceMessageId is set.
+    // timestamp on replay, so addedAt stays undefined for every pin.
     const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
     aggregator.loadHistoricalMessages([
       historicalReviewPaneUpdateMessage("assistant-1", [
@@ -3219,15 +3216,17 @@ describe("review_pane_update -> assistedReviewHunks", () => {
     const pins = aggregator.getAssistedReviewHunks();
     expect(pins).toHaveLength(2);
     expect(pins[0].path).toBe("src/foo.ts");
-    expect(pins[0].sourceMessageId).toBe("assistant-1");
+    expect(pins[0].range).toEqual({ start: 10, end: 12 });
     expect(pins[0].addedAt).toBeUndefined();
 
     expect(pins[1].path).toBe("src/bar.ts");
-    expect(pins[1].sourceMessageId).toBe("assistant-1");
     expect(pins[1].addedAt).toBeUndefined();
   });
 
-  test("carryover: re-flagging an existing path:range preserves sourceMessageId", () => {
+  test("`add` re-flagging an existing path:range refines the comment in place", () => {
+    // `add` semantics: dedup the existing key, but let the latest comment
+    // win so an agent can revise its rationale without producing a second
+    // pin for the same range.
     const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
     aggregator.loadHistoricalMessages([
       historicalReviewPaneUpdateMessage(
@@ -3246,47 +3245,12 @@ describe("review_pane_update -> assistedReviewHunks", () => {
 
     const refreshed = aggregator.getAssistedReviewHunks();
     expect(refreshed).toHaveLength(1);
-    // Carry-over: sourceMessageId sticks to the first turn that introduced
-    // this path:range key so "jump to source" still points at the original
-    // rationale, even after an `add` refined the comment.
-    expect(refreshed[0].sourceMessageId).toBe("assistant-1");
-    // But the refined comment wins, mirroring the tool's last-writer-wins
-    // behavior on duplicate keys.
+    // Last-writer-wins on the comment for duplicate keys under `add`.
     expect(refreshed[0].comment).toBe("look at parser (revised)");
   });
 
-  test("brand-new pins during a later turn get that turn's sourceMessageId", () => {
-    const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-    aggregator.loadHistoricalMessages([
-      historicalReviewPaneUpdateMessage(
-        "assistant-1",
-        [{ path: "src/foo.ts", comment: null }],
-        "replace",
-        { historySequence: 1 }
-      ),
-      historicalReviewPaneUpdateMessage(
-        "assistant-2",
-        [
-          { path: "src/foo.ts", comment: null }, // existing — carryover
-          { path: "src/baz.ts:5", comment: "new turn introduced this" },
-        ],
-        "add",
-        { historySequence: 2, toolCallId: "tc-2" }
-      ),
-    ]);
-
-    const pins = aggregator.getAssistedReviewHunks();
-    expect(pins).toHaveLength(2);
-    const foo = pins.find((p) => p.path === "src/foo.ts");
-    const baz = pins.find((p) => p.path === "src/baz.ts");
-    expect(foo?.sourceMessageId).toBe("assistant-1");
-    expect(baz?.sourceMessageId).toBe("assistant-2");
-  });
-
-  test("a `replace` with a fresh key drops sourceMessageId of dropped entries", () => {
+  test("a `replace` drops keys that the new snapshot does not reinclude", () => {
     // Sanity check: when the agent replaces the set, dropped keys vanish.
-    // We don't carry forward sourceMessageId for entries that the replace
-    // didn't reinclude.
     const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
     aggregator.loadHistoricalMessages([
       historicalReviewPaneUpdateMessage(
@@ -3306,34 +3270,5 @@ describe("review_pane_update -> assistedReviewHunks", () => {
     const pins = aggregator.getAssistedReviewHunks();
     expect(pins).toHaveLength(1);
     expect(pins[0].path).toBe("src/bar.ts");
-    expect(pins[0].sourceMessageId).toBe("assistant-2");
-  });
-
-  test("a `replace` republishing an existing key refreshes sourceMessageId", () => {
-    // `replace` is an explicit re-publish: even if the same path:range
-    // key reappears in the new snapshot, that's the agent intentionally
-    // re-flagging the region, not a refinement. Metadata should refresh
-    // so the UI's "jump to source turn" link points at the latest turn
-    // and the "new" badge can re-arm.
-    const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-    aggregator.loadHistoricalMessages([
-      historicalReviewPaneUpdateMessage(
-        "assistant-1",
-        [{ path: "src/foo.ts", comment: "original" }],
-        "replace",
-        { historySequence: 1 }
-      ),
-      historicalReviewPaneUpdateMessage(
-        "assistant-2",
-        [{ path: "src/foo.ts", comment: "republished" }],
-        "replace",
-        { historySequence: 2, toolCallId: "tc-2" }
-      ),
-    ]);
-
-    const pins = aggregator.getAssistedReviewHunks();
-    expect(pins).toHaveLength(1);
-    expect(pins[0].sourceMessageId).toBe("assistant-2");
-    expect(pins[0].comment).toBe("republished");
   });
 });

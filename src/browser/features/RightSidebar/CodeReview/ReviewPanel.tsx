@@ -32,7 +32,7 @@ import React, {
   useRef,
   useSyncExternalStore,
 } from "react";
-import { findAssistedMatch, formatAssistedFilter } from "@/common/utils/review/assistedReview";
+import { findAssistedMatch } from "@/common/utils/review/assistedReview";
 import { createPortal } from "react-dom";
 import { HunkViewer } from "./HunkViewer";
 import { InlineReviewNote, type ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
@@ -580,24 +580,6 @@ export function getEffectiveReviewFrontendFilters(params: {
   return { showReadHunks: effectiveShowRead, searchTerm: params.searchTerm };
 }
 
-export function getNextDismissedAssistedKeys(params: {
-  dismissedKeys: string[];
-  rawAssistedHunks: readonly AssistedReviewHunk[];
-  isTranscriptHydrated: boolean;
-}): string[] {
-  if (params.dismissedKeys.length === 0) {
-    return params.dismissedKeys;
-  }
-
-  if (params.rawAssistedHunks.length === 0) {
-    return params.isTranscriptHydrated ? [] : params.dismissedKeys;
-  }
-
-  const liveKeys = new Set(params.rawAssistedHunks.map((hunk) => formatAssistedFilter(hunk)));
-  const pruned = params.dismissedKeys.filter((key) => liveKeys.has(key));
-  return pruned.length === params.dismissedKeys.length ? params.dismissedKeys : pruned;
-}
-
 interface ReviewAssistedStatsReporterProps {
   workspaceId: string;
   workspacePath: string;
@@ -623,54 +605,9 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     (callback: () => void) => rawWorkspaceStore.subscribeKey(workspaceId, callback),
     [rawWorkspaceStore, workspaceId]
   );
-  const rawAssistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
+  const assistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
     rawWorkspaceStore.getAssistedReviewHunks(workspaceId)
   );
-  const isTranscriptHydrated = useSyncExternalStore(subscribeAssistedHunks, () =>
-    rawWorkspaceStore.isWorkspaceTranscriptCaughtUp(workspaceId)
-  );
-  // Subscribe to the user's per-workspace dismissed pin list (same key the
-  // panel writes via `usePersistedState`). Listening here keeps the Review
-  // tab badge in lock-step with dismissals so the user doesn't get attention
-  // cues for pins they explicitly silenced — even when the Review panel
-  // itself isn't mounted.
-  const [dismissedAssistedKeys, setDismissedAssistedKeys] = usePersistedState<string[]>(
-    STORAGE_KEYS.reviewAssistedDismissed(workspaceId),
-    [],
-    { listener: true }
-  );
-  const assistedHunks = useMemo(() => {
-    if (dismissedAssistedKeys.length === 0) return rawAssistedHunks;
-    const dismissed = new Set(dismissedAssistedKeys);
-    return rawAssistedHunks.filter((entry) => !dismissed.has(formatAssistedFilter(entry)));
-  }, [rawAssistedHunks, dismissedAssistedKeys]);
-
-  // Self-heal the dismissed-pin list whenever the agent's set changes:
-  // drop any dismissed key that is no longer present in the agent's pins
-  // so the localStorage entry stays bounded across long-lived workspaces.
-  //
-  // This effect lives in the always-mounted stats reporter (not the panel)
-  // because the user may dismiss pins, switch tabs, the agent then
-  // clears/replaces the set, and the panel never remounts — without this
-  // the dismissed entry would silently filter a future re-appearance of
-  // the same key until manual restore. The panel's `usePersistedState`
-  // listener picks up the pruned value automatically on next mount.
-  //
-  // Empty `rawAssistedHunks` is ambiguous on its own. Before transcript replay
-  // catches up, it can be only a cold-load or reconnect placeholder, so keep
-  // dismissals. Once replay is caught up, an empty set is authoritative: the
-  // agent either had no pins or cleared them while the app was closed, so clear
-  // local dismissals to avoid suppressing a future re-add of the same path:range.
-  useEffect(() => {
-    const nextDismissedAssistedKeys = getNextDismissedAssistedKeys({
-      dismissedKeys: dismissedAssistedKeys,
-      rawAssistedHunks,
-      isTranscriptHydrated,
-    });
-    if (nextDismissedAssistedKeys !== dismissedAssistedKeys) {
-      setDismissedAssistedKeys(nextDismissedAssistedKeys);
-    }
-  }, [rawAssistedHunks, dismissedAssistedKeys, isTranscriptHydrated, setDismissedAssistedKeys]);
 
   const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
   const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
@@ -1076,52 +1013,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     (callback: () => void) => rawWorkspaceStore.subscribeKey(workspaceId, callback),
     [rawWorkspaceStore, workspaceId]
   );
-  const rawAssistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
+  const assistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
     rawWorkspaceStore.getAssistedReviewHunks(workspaceId)
   );
 
-  // Per-workspace user-dismissed pin keys (formatted path[:range]). This is
-  // a purely user-side quiet list — we don't mutate the agent's view of the
-  // assisted set, we just filter dismissed entries out of the panel so users
-  // can quiet a noisy agent without waiting for the agent to clear/replace
-  // its pins. Cleared entries naturally fall off the list once the agent
-  // drops them.
-  const [dismissedAssistedKeys, setDismissedAssistedKeys] = usePersistedState<string[]>(
-    STORAGE_KEYS.reviewAssistedDismissed(workspaceId),
-    [],
-    { listener: true }
-  );
-  const dismissedAssistedKeySet = useMemo(
-    () => new Set(dismissedAssistedKeys),
-    [dismissedAssistedKeys]
-  );
-
-  // Effective assisted set after applying user dismissals. Memoized so all
-  // downstream maps depend on a stable reference when nothing changes.
-  const assistedHunks = useMemo(() => {
-    if (dismissedAssistedKeySet.size === 0) return rawAssistedHunks;
-    return rawAssistedHunks.filter(
-      (entry) => !dismissedAssistedKeySet.has(formatAssistedFilter(entry))
-    );
-  }, [rawAssistedHunks, dismissedAssistedKeySet]);
-
-  // The self-healing prune of stale dismissed keys lives in
-  // `ReviewAssistedStatsReporter` (always mounted) so it runs even when the
-  // user is on another tab — see the note next to its prune effect.
-
-  const handleDismissAssistedPin = useCallback(
-    (key: string) => {
-      setDismissedAssistedKeys((prev) => (prev.includes(key) ? prev : [...prev, key]));
-    },
-    [setDismissedAssistedKeys]
-  );
-
-  const handleRestoreDismissedAssisted = useCallback(() => {
-    setDismissedAssistedKeys([]);
-  }, [setDismissedAssistedKeys]);
-
   const hasAssistedHunks = assistedHunks.length > 0;
-  const hasDismissedAssistedHunks = dismissedAssistedKeys.length > 0;
 
   // Auto-focus the Review pane on the agent's flagged hunks the first time
   // they appear in a session: flip `assistedOnly` to true so the user lands
@@ -1777,31 +1673,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     return result;
   }, [assistedMatchByHunkId]);
 
-  // Stable formatted key per matched hunk so HunkViewer can request a
-  // user-side dismissal without leaking the structured AssistedReviewHunk.
-  const assistedKeyByHunkId = useMemo(() => {
-    if (assistedMatchByHunkId.size === 0) return new Map<string, string>();
-    const result = new Map<string, string>();
-    for (const [hunkId, match] of assistedMatchByHunkId) {
-      result.set(hunkId, formatAssistedFilter(match.entry));
-    }
-    return result;
-  }, [assistedMatchByHunkId]);
-
-  // Source-message lookup so each hunk can render a "jump to source turn"
-  // affordance. Empty when no pins carry a sourceMessageId yet (replayed
-  // from history without context, etc.).
-  const assistedSourceMessageIdByHunkId = useMemo(() => {
-    if (assistedMatchByHunkId.size === 0) return new Map<string, string>();
-    const result = new Map<string, string>();
-    for (const [hunkId, match] of assistedMatchByHunkId) {
-      if (match.entry.sourceMessageId) {
-        result.set(hunkId, match.entry.sourceMessageId);
-      }
-    }
-    return result;
-  }, [assistedMatchByHunkId]);
-
   // Set of hunkIds whose pin was added recently enough to qualify for the
   // transient "new" badge.
   //
@@ -1874,17 +1745,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     }
     return count;
   }, [assistedMatchByHunkId, isRead]);
-
-  // Jump-to-source: scrolls the chat transcript so the originating agent
-  // turn is in view. The transcript already tags each message boundary with
-  // `data-message-id` (see MessageRenderer); we use that as the lookup key
-  // rather than threading another callback through the workspace store.
-  const handleJumpToAssistedSource = useCallback((messageId: string) => {
-    if (!messageId || typeof document === "undefined") return;
-    const element = document.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
-    if (!element) return;
-    element.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, []);
 
   // Apply frontend filters (read state, search term) and sorting
   // Note: selectedFilePath is a git-level filter, applied when fetching hunks
@@ -2174,15 +2034,10 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       // actually fires.
       if (matchesKeybind(e, KEYBINDS.TOGGLE_ASSISTED_REVIEW)) {
         // Skip the keystroke only when nothing assisted is reachable: no
-        // live pins, no currently-active worklist mode, AND no dismissed
-        // pins waiting to be restored. The last condition lets users
-        // re-enter Assisted via the keyboard to discover the restore
-        // button in the empty state, instead of getting stuck.
-        if (
-          assistedHunks.length === 0 &&
-          !filters.assistedOnly &&
-          dismissedAssistedKeys.length === 0
-        ) {
+        // live pins and no currently-active worklist mode. Otherwise we
+        // toggle so the user can leave Assisted even when its set just
+        // emptied.
+        if (assistedHunks.length === 0 && !filters.assistedOnly) {
           return;
         }
         e.preventDefault();
@@ -2246,7 +2101,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     handleMarkAsUnread,
     assistedHunks.length,
     filters.assistedOnly,
-    dismissedAssistedKeys.length,
     setFilters,
     handleMarkFileAsRead,
     isImmersive,
@@ -2314,8 +2168,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
         lastRefreshFailure={lastRefreshFailure}
         assistedCount={assistedHunks.length}
         assistedUnreadCount={unreadAssistedInDiff}
-        assistedDismissedCount={dismissedAssistedKeys.length}
-        onRestoreDismissedAssisted={handleRestoreDismissedAssisted}
       />
 
       {diffState.status === "error" ? (
@@ -2509,15 +2361,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                           Show read pins
                         </button>
                       )}
-                      {hasDismissedAssistedHunks && (
-                        <button
-                          type="button"
-                          onClick={handleRestoreDismissedAssisted}
-                          className="hover:text-foreground cursor-pointer border-none bg-transparent p-0 underline-offset-2 transition-colors hover:underline"
-                        >
-                          Restore {dismissedAssistedKeys.length} dismissed
-                        </button>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -2613,16 +2456,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                           Show read pins
                         </button>
                       )}
-                      {hasDismissedAssistedHunks && (
-                        <button
-                          type="button"
-                          onClick={handleRestoreDismissedAssisted}
-                          className="border-border-light hover:bg-hover hover:text-foreground rounded border bg-transparent px-2 py-0.5 transition-colors"
-                          data-testid="review-assisted-empty-restore-dismissed"
-                        >
-                          Restore {dismissedAssistedKeys.length} dismissed
-                        </button>
-                      )}
                     </div>
                   )}
                 </div>
@@ -2656,10 +2489,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                       assistedComment={assistedCommentByHunkId.get(hunk.id)}
                       isAssisted={assistedMatchByHunkId.has(hunk.id)}
                       isAssistedNew={assistedNewByHunkId.has(hunk.id)}
-                      assistedKey={assistedKeyByHunkId.get(hunk.id)}
-                      assistedSourceMessageId={assistedSourceMessageIdByHunkId.get(hunk.id)}
-                      onDismissAssisted={handleDismissAssistedPin}
-                      onJumpToAssistedSource={handleJumpToAssistedSource}
                       visibleNewLineRange={assistedRangeByHunkId.get(hunk.id)}
                     />
                   );

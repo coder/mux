@@ -7,7 +7,6 @@ import {
   countUnreadAssistedHunks,
   getEffectiveReviewFrontendFilters,
   getEffectiveReviewIncludeUncommitted,
-  getNextDismissedAssistedKeys,
 } from "./ReviewPanel";
 
 function hunk(overrides: Partial<DiffHunk>): DiffHunk {
@@ -137,40 +136,6 @@ describe("buildReviewDiffPathFilterSpecs", () => {
         selectedFilePath: "project-b/src/user-selected.ts",
       },
     ]);
-  });
-});
-
-describe("getNextDismissedAssistedKeys", () => {
-  test("keeps dismissed keys while an empty assisted set may still be hydrating", () => {
-    const dismissedKeys = ["src/agent.ts:3-5"];
-
-    expect(
-      getNextDismissedAssistedKeys({
-        dismissedKeys,
-        rawAssistedHunks: [],
-        isTranscriptHydrated: false,
-      })
-    ).toBe(dismissedKeys);
-  });
-
-  test("clears dismissed keys once an empty assisted set is authoritative", () => {
-    expect(
-      getNextDismissedAssistedKeys({
-        dismissedKeys: ["src/agent.ts:3-5"],
-        rawAssistedHunks: [],
-        isTranscriptHydrated: true,
-      })
-    ).toEqual([]);
-  });
-
-  test("prunes dismissed keys that no longer exist in the live assisted set", () => {
-    expect(
-      getNextDismissedAssistedKeys({
-        dismissedKeys: ["src/agent.ts:3-5", "src/stale.ts"],
-        rawAssistedHunks: [{ path: "src/agent.ts", range: { start: 3, end: 5 } }],
-        isTranscriptHydrated: true,
-      })
-    ).toEqual(["src/agent.ts:3-5"]);
   });
 });
 

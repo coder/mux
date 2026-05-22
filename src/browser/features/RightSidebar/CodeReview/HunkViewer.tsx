@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo } from "react";
-import { Check, Circle, MessageCircle, Sparkles, X } from "lucide-react";
+import { Check, Circle, Sparkles } from "lucide-react";
 import type { DiffHunk, Review, ReviewNoteData } from "@/common/types/review";
 import { SelectableDiffRenderer } from "../../Shared/DiffRenderer";
 import type { ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
@@ -70,25 +70,6 @@ interface HunkViewerProps {
    * happened to be replayed from chat).
    */
   isAssistedNew?: boolean;
-  /**
-   * Stable formatted key for the matched assisted entry (path[:range]).
-   * Required when `onDismissAssisted` is provided so the parent can record
-   * a user-side dismissal without re-deriving the key from the hunk.
-   */
-  assistedKey?: string;
-  /**
-   * Optional source message id (assistant turn that flagged this hunk).
-   * When present together with `onJumpToAssistedSource`, the assisted strip
-   * renders a "↗ source" link that scrolls the transcript to that turn.
-   */
-  assistedSourceMessageId?: string;
-  /**
-   * Local-only "quiet" dismissal — drops the pin from the user's view
-   * without touching the agent's state. Called with `assistedKey`.
-   */
-  onDismissAssisted?: (assistedKey: string) => void;
-  /** Scroll the chat transcript to the assistant turn referenced by `assistedSourceMessageId`. */
-  onJumpToAssistedSource?: (messageId: string) => void;
   /**
    * When set, the hunk body is trimmed to just these new-side line numbers
    * (inclusive) by default. Lines before/after the range hide behind a
@@ -178,10 +159,6 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     assistedComment,
     isAssisted = false,
     isAssistedNew = false,
-    assistedKey,
-    assistedSourceMessageId,
-    onDismissAssisted,
-    onJumpToAssistedSource,
     visibleNewLineRange,
   }) => {
     // Ref for the hunk container to track visibility
@@ -406,54 +383,6 @@ export const HunkViewer = React.memo<HunkViewerProps>(
                   </span>
                 )}
               </div>
-              {(assistedSourceMessageId !== undefined || onDismissAssisted) && (
-                <div className="flex items-center gap-3 text-[10px]">
-                  {assistedSourceMessageId !== undefined && onJumpToAssistedSource && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onJumpToAssistedSource(assistedSourceMessageId);
-                          }}
-                          className="text-muted hover:text-foreground inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 transition-colors"
-                          aria-label="Jump to the agent turn that flagged this hunk"
-                          data-testid="hunk-assisted-jump-source"
-                        >
-                          <MessageCircle aria-hidden="true" className="h-3 w-3" />
-                          <span>jump to source</span>
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" align="start">
-                        Scroll to the agent turn that flagged this hunk.
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
-                  {onDismissAssisted && assistedKey !== undefined && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDismissAssisted(assistedKey);
-                          }}
-                          className="text-muted hover:text-foreground inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 transition-colors"
-                          aria-label="Dismiss this agent pin (local-only)"
-                          data-testid="hunk-assisted-dismiss"
-                        >
-                          <X aria-hidden="true" className="h-3 w-3" />
-                          <span>dismiss</span>
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" align="start">
-                        Hide this pin from your view. The agent&apos;s state is not changed.
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         )}

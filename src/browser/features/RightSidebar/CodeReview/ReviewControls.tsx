@@ -56,15 +56,6 @@ interface ReviewControlsProps {
    * matching the Review tab badge.
    */
   assistedUnreadCount?: number;
-  /**
-   * When > 0, render a "show dismissed" hint that lets the user restore
-   * locally-dismissed pins. Distinct from `assistedCount` because dismissed
-   * pins are still part of the agent's set — they just don't appear in the
-   * panel until the user opts back in.
-   */
-  assistedDismissedCount?: number;
-  /** Restore all user-dismissed assisted pins for this workspace. */
-  onRestoreDismissedAssisted?: () => void;
 }
 
 export const ReviewControls: React.FC<ReviewControlsProps> = ({
@@ -82,8 +73,6 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
   onToggleImmersive,
   assistedCount = 0,
   assistedUnreadCount = 0,
-  assistedDismissedCount = 0,
-  onRestoreDismissedAssisted,
 }) => {
   // Per-project default base (used for new workspaces in this project)
   const [defaultBase, setDefaultBase] = usePersistedState<string>(
@@ -287,36 +276,6 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
                 ({assistedUnreadCount}/{assistedCount})
               </span>
             </label>
-          </TooltipIfPresent>
-        </>
-      )}
-
-      {/* Restore-dismissed control rendered OUTSIDE the Assisted group so the
-          user always has a path back to dismissed pins. Without this, a user
-          who dismisses every pin and exits Assisted gets stuck (the Assisted
-          toggle is hidden once `assistedCount === 0` and Assisted is off, and
-          the Shift+P keybind also no-ops in that state). */}
-      {assistedDismissedCount > 0 && onRestoreDismissedAssisted && (
-        <>
-          {/* Avoid a stranded divider when the Assisted group above already
-              rendered one. The cheap check is just whether that group was
-              also visible. */}
-          {assistedCount === 0 && !filters.assistedOnly && (
-            <div className="bg-border-light h-3 w-px" />
-          )}
-          <TooltipIfPresent
-            tooltip={`${assistedDismissedCount} agent pin${assistedDismissedCount === 1 ? "" : "s"} dismissed locally — click to restore`}
-            side="bottom"
-          >
-            <button
-              type="button"
-              onClick={onRestoreDismissedAssisted}
-              className="text-dim hover:text-foreground inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-[10px] whitespace-nowrap transition-colors"
-              data-testid="review-restore-dismissed"
-            >
-              <Sparkles aria-hidden="true" className="text-review-accent/60 h-3 w-3 shrink-0" />
-              <span>+{assistedDismissedCount} dismissed</span>
-            </button>
           </TooltipIfPresent>
         </>
       )}

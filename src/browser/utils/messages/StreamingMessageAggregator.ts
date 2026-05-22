@@ -505,11 +505,10 @@ export class StreamingMessageAggregator {
   // Reconstructed from chat history on reload via processToolResult so the
   // pinned set survives restarts; not persisted to disk.
   //
-  // Each entry carries optional `sourceMessageId` + `addedAt` metadata so the
-  // UI can render "jump to source turn" and "new since last update" cues. These
-  // fields are populated when the surrounding message context is known (i.e.
-  // when processing tool results); they are intentionally optional so callers
-  // without message context (legacy paths, tests) don't have to fabricate them.
+  // Each entry carries optional `addedAt` metadata so the UI can render a
+  // "new since last update" badge. The timestamp is populated only during
+  // live tool-call processing (not history replay); legacy paths and tests
+  // can omit it.
   private assistedReviewHunks: AssistedReviewHunk[] = [];
 
   // Loaded skills (updated when agent_skill_read succeeds)
@@ -1166,13 +1165,10 @@ export class StreamingMessageAggregator {
           let assistantUpdatedTodos = false;
           for (const part of message.parts) {
             if (isDynamicToolPart(part) && part.state === "output-available") {
-              // Pass messageId so derived state like assisted-review pins can
-              // remember which turn introduced them. We intentionally skip the
-              // timestamp on replay so historical pins don't all light up as
-              // "new" on initial load; only live updates get a fresh addedAt.
-              this.processToolResult(part.toolName, part.input, part.output, {
-                messageId: message.id,
-              });
+              // Replay deliberately omits the timestamp so historical
+              // assisted-review pins don't all light up as "new" on initial
+              // load; only live updates get a fresh addedAt.
+              this.processToolResult(part.toolName, part.input, part.output);
               if (
                 part.toolName === "todo_write" &&
                 hasSuccessResult(part.output) &&
@@ -2493,15 +2489,15 @@ export class StreamingMessageAggregator {
    * @param input - Tool input arguments
    * @param output - Tool output result
    * @param messageContext - Optional metadata about the assistant message that
-   *   owns this tool call. Used by `review_pane_update` to remember which turn
-   *   introduced each agent-flagged hunk so the UI can offer a "jump to source
-   *   message" affordance and a "new since last update" badge.
+   *   owns this tool call. Used by `review_pane_update` to stamp each
+   *   agent-flagged hunk with the originating turn's timestamp so the UI
+   *   can render a "new since last update" badge for freshly-added pins.
    */
   private processToolResult(
     toolName: string,
     input: unknown,
     output: unknown,
-    messageContext?: { messageId?: string; timestamp?: number }
+    messageContext?: { timestamp?: number }
   ): void {
     // Update TODO state if this was a successful todo_write.
     // We still reconstruct from history so interrupted/incomplete plans survive reloads;
@@ -2521,19 +2517,18 @@ export class StreamingMessageAggregator {
     // structured AssistedReviewHunk form. Re-running this across the entire
     // history naturally reconstructs the final state on reload.
     //
-    // We additionally carry `sourceMessageId` + `addedAt` per pin so the UI
-    // can show a "jump to source turn" affordance and a transient "new" badge.
+    // We additionally carry `addedAt` per pin so the UI can render a
+    // transient "new" badge for freshly-added pins.
     //
     // Carryover semantics:
     //   - `operation: "add"` — the agent is appending to or refining the
     //     existing set, so a previously-seen key keeps its original
-    //     metadata. This prevents an `add` that just tweaks a comment
+    //     `addedAt`. This prevents an `add` that just tweaks a comment
     //     from re-arming the "new" badge.
     //   - `operation: "replace"` — the agent is republishing a fresh
     //     snapshot. Treat every entry as new for metadata purposes (the
     //     same key reappearing is an explicit re-flag, not a refinement),
-    //     so the UI can highlight the snapshot and link to the latest
-    //     source turn.
+    //     so the UI can re-highlight the snapshot.
     if (toolName === "review_pane_update") {
       const parsed = ReviewPaneUpdateSuccessResultSchema.safeParse(output);
       if (parsed.success) {
@@ -2556,21 +2551,17 @@ export class StreamingMessageAggregator {
           const key = formatAssistedFilter(candidate);
           const previous = previousByKey.get(key);
           if (isAdd && previous) {
-            // Carry forward sourceMessageId/addedAt for `add` ops only so
-            // a refined comment doesn't reset the "new" badge.
-            candidate.sourceMessageId = previous.sourceMessageId;
+            // Carry forward addedAt for `add` ops only so a refined
+            // comment doesn't reset the "new" badge.
             candidate.addedAt = previous.addedAt;
-          } else {
+          } else if (messageContext?.timestamp !== undefined) {
             // `replace` op (or first time we've seen this key under any op):
-            // stamp with the current message's metadata. `replace` is an
-            // explicit republish, so reuse of an old key should still be
-            // surfaced with fresh "source turn" + "new" cues. Replay
-            // deliberately omits the timestamp so historical pins don't
-            // all light up as "new" on initial load.
-            candidate.sourceMessageId = messageContext?.messageId;
-            if (messageContext?.timestamp !== undefined) {
-              candidate.addedAt = messageContext.timestamp;
-            }
+            // stamp with the current message's timestamp. `replace` is an
+            // explicit republish, so reuse of an old key should still
+            // re-arm the "new" badge. Replay deliberately omits the
+            // timestamp so historical pins don't all light up as "new"
+            // on initial load.
+            candidate.addedAt = messageContext.timestamp;
           }
           next.push(candidate);
         }
@@ -2708,7 +2699,6 @@ export class StreamingMessageAggregator {
         // badge can highlight just-introduced pins (the replay path
         // intentionally omits this so historical pins don't flash on load).
         this.processToolResult(data.toolName, toolPart.input, data.result, {
-          messageId: data.messageId,
           timestamp: Date.now(),
         });
 

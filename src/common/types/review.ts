@@ -122,16 +122,6 @@ export interface AssistedReviewHunk {
   /** Optional agent comment explaining why this area needs review. */
   comment?: string;
   /**
-   * Frontend-only: id of the assistant message whose `review_pane_update`
-   * tool call produced this pin. Tracked during history replay so the UI
-   * can offer a "jump to source turn" affordance for each pin. Carried
-   * forward across subsequent `operation: "add"` calls so a refined comment
-   * doesn't make the pin look like it was just introduced.
-   *
-   * Not persisted to disk; recomputed from the transcript on every load.
-   */
-  sourceMessageId?: string;
-  /**
    * Frontend-only: timestamp (ms since epoch) when this pin was first
    * observed during this client's lifetime — i.e., when `review_pane_update`
    * introduced the path:range key. Used to render a transient "new" badge

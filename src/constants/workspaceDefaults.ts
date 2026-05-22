@@ -6,15 +6,6 @@ export const STORAGE_KEYS = {
   reviewDefaultBase: (projectPath: string) => `review-default-base:${projectPath}`,
   /** Per-workspace diff base override. Pass workspaceId. */
   reviewDiffBase: (workspaceId: string) => `review-diff-base:${workspaceId}`,
-  /**
-   * Per-workspace set of assisted-review pins the user has explicitly
-   * dismissed. Stored as a JSON array of formatted path[:range] keys
-   * (matching `formatAssistedFilter`). Dismissed pins are treated as
-   * non-assisted for filtering and pin-first sorting, letting users
-   * quiet a noisy agent without waiting for it to clear/replace the
-   * set. Pass workspaceId.
-   */
-  reviewAssistedDismissed: (workspaceId: string) => `review-assisted-dismissed:${workspaceId}`,
 } as const;
 
 Object.freeze(STORAGE_KEYS);
