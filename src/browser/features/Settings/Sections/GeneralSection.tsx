@@ -9,7 +9,8 @@ import {
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { Input } from "@/browser/components/Input/Input";
 import { Switch } from "@/browser/components/Switch/Switch";
-import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { persistChatTranscriptFullWidth } from "@/browser/hooks/useChatTranscriptFullWidth";
 import { useAPI } from "@/browser/contexts/API";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
@@ -20,7 +21,6 @@ import {
   LAUNCH_BEHAVIOR_KEY,
   BASH_COLLAPSED_SUMMARY_MODE_KEY,
   BASH_COLLAPSED_SUMMARY_MODES,
-  CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
   DEFAULT_BASH_COLLAPSED_SUMMARY_MODE,
   normalizeBashCollapsedSummaryMode,
   type BashCollapsedSummaryMode,
@@ -283,10 +283,7 @@ export function GeneralSection() {
         if (chatTranscriptFullWidthNonce === chatTranscriptFullWidthLoadNonceRef.current) {
           const enabled = cfg.chatTranscriptFullWidth === true;
           setChatTranscriptFullWidth(enabled);
-          updatePersistedState<boolean | undefined>(
-            CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
-            enabled ? true : undefined
-          );
+          persistChatTranscriptFullWidth(enabled);
         }
 
         if (llmDebugLogsNonce === llmDebugLogsLoadNonceRef.current) {
@@ -379,10 +376,7 @@ export function GeneralSection() {
     // Invalidate any in-flight config load so it does not overwrite the user's selection.
     chatTranscriptFullWidthLoadNonceRef.current++;
     setChatTranscriptFullWidth(checked);
-    updatePersistedState<boolean | undefined>(
-      CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
-      checked ? true : undefined
-    );
+    persistChatTranscriptFullWidth(checked);
 
     if (!api?.config?.updateChatTranscriptFullWidth) {
       return;

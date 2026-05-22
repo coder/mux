@@ -4,6 +4,19 @@ import { useAPI } from "@/browser/contexts/API";
 import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { CHAT_TRANSCRIPT_FULL_WIDTH_KEY } from "@/common/constants/storage";
 
+/**
+ * Mirror the chat-transcript full-width preference into local persisted state so
+ * other consumers (ChatPane mount, settings load) recover the last known value
+ * without waiting on the backend. Stores `true` when enabled, clears the slot
+ * otherwise to match the on-disk config shape.
+ */
+export function persistChatTranscriptFullWidth(enabled: boolean): void {
+  updatePersistedState<boolean | undefined>(
+    CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
+    enabled ? true : undefined
+  );
+}
+
 /** Seeded from local cache to avoid a layout flash before the backend responds. */
 export function useChatTranscriptFullWidth(): boolean {
   const { api } = useAPI();
@@ -49,10 +62,7 @@ export function useChatTranscriptFullWidth(): boolean {
 
       chatTranscriptFullWidthRef.current = enabled;
       backendPersistedValueRef.current = enabled;
-      updatePersistedState<boolean | undefined>(
-        CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
-        enabled ? true : undefined
-      );
+      persistChatTranscriptFullWidth(enabled);
     };
 
     const refresh = () => {
