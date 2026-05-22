@@ -108,3 +108,22 @@ export function formatAssistedFilter(hunk: AssistedReviewHunk): string {
   const { start, end } = hunk.range;
   return start === end ? `${hunk.path}:${start}` : `${hunk.path}:${start}-${end}`;
 }
+
+/**
+ * Filter the agent's raw assisted set against a user-side dismissed list
+ * keyed by {@link formatAssistedFilter}. Returns the input array reference
+ * unchanged when `dismissedKeys` is empty so memoized consumers retain a
+ * stable identity (no spurious downstream re-derivations).
+ *
+ * The dismissed list is "quiet" / user-only — we never mutate the agent's
+ * pins, so dismissed entries naturally fall off once the agent clears or
+ * replaces its set.
+ */
+export function filterDismissedAssistedHunks(
+  rawAssistedHunks: readonly AssistedReviewHunk[],
+  dismissedKeys: readonly string[]
+): readonly AssistedReviewHunk[] {
+  if (dismissedKeys.length === 0) return rawAssistedHunks;
+  const dismissed = new Set(dismissedKeys);
+  return rawAssistedHunks.filter((entry) => !dismissed.has(formatAssistedFilter(entry)));
+}

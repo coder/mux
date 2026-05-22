@@ -32,7 +32,11 @@ import React, {
   useRef,
   useSyncExternalStore,
 } from "react";
-import { findAssistedMatch, formatAssistedFilter } from "@/common/utils/review/assistedReview";
+import {
+  filterDismissedAssistedHunks,
+  findAssistedMatch,
+  formatAssistedFilter,
+} from "@/common/utils/review/assistedReview";
 import { createPortal } from "react-dom";
 import { HunkViewer } from "./HunkViewer";
 import { InlineReviewNote, type ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
@@ -622,11 +626,10 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     [],
     { listener: true }
   );
-  const assistedHunks = useMemo(() => {
-    if (dismissedAssistedKeys.length === 0) return rawAssistedHunks;
-    const dismissed = new Set(dismissedAssistedKeys);
-    return rawAssistedHunks.filter((entry) => !dismissed.has(formatAssistedFilter(entry)));
-  }, [rawAssistedHunks, dismissedAssistedKeys]);
+  const assistedHunks = useMemo(
+    () => filterDismissedAssistedHunks(rawAssistedHunks, dismissedAssistedKeys),
+    [rawAssistedHunks, dismissedAssistedKeys]
+  );
 
   // Self-heal the dismissed-pin list whenever the agent's set changes:
   // drop any dismissed key that is no longer present in the agent's pins
@@ -1074,19 +1077,12 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     [],
     { listener: true }
   );
-  const dismissedAssistedKeySet = useMemo(
-    () => new Set(dismissedAssistedKeys),
-    [dismissedAssistedKeys]
-  );
-
   // Effective assisted set after applying user dismissals. Memoized so all
   // downstream maps depend on a stable reference when nothing changes.
-  const assistedHunks = useMemo(() => {
-    if (dismissedAssistedKeySet.size === 0) return rawAssistedHunks;
-    return rawAssistedHunks.filter(
-      (entry) => !dismissedAssistedKeySet.has(formatAssistedFilter(entry))
-    );
-  }, [rawAssistedHunks, dismissedAssistedKeySet]);
+  const assistedHunks = useMemo(
+    () => filterDismissedAssistedHunks(rawAssistedHunks, dismissedAssistedKeys),
+    [rawAssistedHunks, dismissedAssistedKeys]
+  );
 
   // The self-healing prune of stale dismissed keys lives in
   // `ReviewAssistedStatsReporter` (always mounted) so it runs even when the

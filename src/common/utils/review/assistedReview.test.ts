@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { DiffHunk } from "@/common/types/review";
 import {
+  filterDismissedAssistedHunks,
   findAssistedMatch,
   formatAssistedFilter,
   hunkMatchesAssisted,
@@ -112,5 +113,30 @@ describe("formatAssistedFilter", () => {
 
   it("formats multi-line ranges", () => {
     expect(formatAssistedFilter({ path: "a", range: { start: 5, end: 9 } })).toBe("a:5-9");
+  });
+});
+
+describe("filterDismissedAssistedHunks", () => {
+  it("returns the input array reference unchanged when no keys are dismissed", () => {
+    // Identity preservation is important: downstream useMemo consumers
+    // depend on a stable reference when nothing has changed.
+    const raw = [{ path: "src/foo.ts" }, { path: "src/bar.ts", range: { start: 1, end: 2 } }];
+    expect(filterDismissedAssistedHunks(raw, [])).toBe(raw);
+  });
+
+  it("drops entries whose formatted key matches the dismissed list", () => {
+    const raw = [
+      { path: "src/foo.ts" },
+      { path: "src/bar.ts", range: { start: 1, end: 2 } },
+      { path: "src/baz.ts", range: { start: 5, end: 5 } },
+    ];
+    expect(filterDismissedAssistedHunks(raw, ["src/bar.ts:1-2", "src/baz.ts:5"])).toEqual([
+      { path: "src/foo.ts" },
+    ]);
+  });
+
+  it("ignores dismissed keys that don't match any current entry", () => {
+    const raw = [{ path: "src/foo.ts" }];
+    expect(filterDismissedAssistedHunks(raw, ["src/gone.ts:10"])).toEqual(raw);
   });
 });
