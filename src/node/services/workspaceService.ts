@@ -583,6 +583,46 @@ async function resetForkedSessionUsage(
   );
 }
 
+async function materializeForkedPartialSnapshot(params: {
+  historyService: HistoryService;
+  partialSnapshot: MuxMessage | null;
+  sourceWorkspaceId: string;
+  targetWorkspaceId: string;
+}): Promise<void> {
+  if (!params.partialSnapshot) {
+    return;
+  }
+
+  // Forking must be read-only with respect to the source workspace. During tool calls
+  // such as task_await, deleting or committing the source partial can make the live
+  // parent turn look interrupted. Instead, copy the partial into the fork and finalize
+  // only that snapshot so the child has no inherited live-stream state. The snapshot
+  // is captured before fork checkout/copy I/O so a parent stream that finishes mid-fork
+  // cannot make the child miss the latest visible assistant state.
+  const writeResult = await params.historyService.writePartial(
+    params.targetWorkspaceId,
+    params.partialSnapshot
+  );
+  if (!writeResult.success) {
+    log.warn("Failed to snapshot source partial into fork", {
+      sourceWorkspaceId: params.sourceWorkspaceId,
+      targetWorkspaceId: params.targetWorkspaceId,
+      error: writeResult.error,
+    });
+    return;
+  }
+
+  const commitResult = await params.historyService.commitPartial(params.targetWorkspaceId);
+  if (!commitResult.success) {
+    log.warn("Failed to finalize forked partial snapshot", {
+      sourceWorkspaceId: params.sourceWorkspaceId,
+      targetWorkspaceId: params.targetWorkspaceId,
+      error: commitResult.error,
+    });
+    await params.historyService.deletePartial(params.targetWorkspaceId);
+  }
+}
+
 function getOldestSequencedMessage(
   messages: readonly MuxMessage[]
 ): { message: MuxMessage; historySequence: number } | null {
@@ -5366,15 +5406,13 @@ export class WorkspaceService extends EventEmitter {
     pendingAutoTitle?: boolean
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
     try {
-      if (this.aiService.isStreaming(sourceWorkspaceId)) {
-        await this.historyService.commitPartial(sourceWorkspaceId);
-      }
-
       const sourceMetadataResult = await this.aiService.getWorkspaceMetadata(sourceWorkspaceId);
       if (!sourceMetadataResult.success) {
         return Err(`Failed to get source workspace metadata: ${sourceMetadataResult.error}`);
       }
       const sourceMetadata = sourceMetadataResult.data;
+      const partialSnapshot =
+        sourceMessageId == null ? await this.historyService.readPartial(sourceWorkspaceId) : null;
       const foundProjectPath = sourceMetadata.projectPath;
       const projectName = sourceMetadata.projectName;
       const sourceRuntimeConfig = sourceMetadata.runtimeConfig;
@@ -5567,7 +5605,6 @@ export class WorkspaceService extends EventEmitter {
 
         const sessionFiles = [
           "chat.jsonl",
-          "partial.json",
           "session-timing.json",
           ADDITIONAL_SYSTEM_CONTEXT_FILENAME,
           // Preserve the enabled/disabled toggle when forking so the fork
@@ -5602,6 +5639,13 @@ export class WorkspaceService extends EventEmitter {
             await fsPromises.rm(path.join(newSessionDir, "session-timing.json"), { force: true });
           }
         }
+
+        await materializeForkedPartialSnapshot({
+          historyService: this.historyService,
+          partialSnapshot,
+          sourceWorkspaceId,
+          targetWorkspaceId: newWorkspaceId,
+        });
 
         // Forks inherit chat history, but their cost ledger must start fresh.
         // Persist an explicit empty usage file so later reads do not rebuild
