@@ -70,7 +70,6 @@ import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 globalThis.AI_SDK_LOG_WARNINGS = false;
 
 export type StreamTextOnChunk = NonNullable<Parameters<typeof streamText>[0]["onChunk"]>;
-export type StreamTextOnChunkEvent = Parameters<StreamTextOnChunk>[0];
 
 const EMPTY_STREAM_OUTPUT_ERROR_MESSAGE =
   "The model ended the stream before producing any assistant-visible output. This usually means the upstream stream was dropped rather than completed normally. Mux will retry automatically when possible, and if retries keep failing you should try again or switch models.";

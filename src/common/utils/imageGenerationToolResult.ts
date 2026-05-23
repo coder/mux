@@ -103,5 +103,3 @@ export function stripImageToolOutputForModel(output: unknown): unknown {
   }
   return stripped;
 }
-
-export const stripImageToolThumbnails = stripImageToolOutputForModel;

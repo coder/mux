@@ -5,7 +5,6 @@ import {
   LEFT_SIDEBAR_COLLAPSED_KEY,
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   getInputKey,
-  getModelKey,
 } from "@/common/constants/storage";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -33,11 +32,6 @@ export function clearWorkspaceSelection(): void {
 /** Set input text for a workspace */
 export function setWorkspaceInput(workspaceId: string, text: string): void {
   localStorage.setItem(getInputKey(workspaceId), JSON.stringify(text));
-}
-
-/** Set model for a workspace */
-export function setWorkspaceModel(workspaceId: string, model: string): void {
-  localStorage.setItem(getModelKey(workspaceId), model);
 }
 
 /** Expand projects in the sidebar */

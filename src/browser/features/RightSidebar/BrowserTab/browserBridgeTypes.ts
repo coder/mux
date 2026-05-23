@@ -25,8 +25,6 @@ export interface BrowserSessionAttachOptions {
   allowOtherWorkspaceSession?: boolean;
 }
 
-export type PageStateSource = "bootstrap" | "command" | "poll";
-
 export interface BrowserSession {
   id: string;
   workspaceId: string;

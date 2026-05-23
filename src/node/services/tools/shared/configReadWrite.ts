@@ -65,17 +65,6 @@ async function readParsedConfigDocument(
     : parseJsonDocument(raw, filePath);
 }
 
-export async function readConfigDocument<TKey extends ConfigFileKey>(
-  muxHomeDir: string,
-  fileKey: TKey
-): Promise<ConfigDocumentFor<TKey>> {
-  const entry = CONFIG_FILE_REGISTRY[fileKey];
-  const filePath = getConfigDocumentPath(muxHomeDir, fileKey);
-  const parsed = await readParsedConfigDocument(muxHomeDir, fileKey);
-
-  return parseAndValidateDocument(fileKey, entry.schema, parsed, filePath);
-}
-
 // Parse-only read for mutation workflows: schema validation is deferred
 // until after mutations are applied, allowing writes to repair invalid configs.
 export async function readConfigDocumentUnvalidated(
