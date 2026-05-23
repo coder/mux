@@ -128,6 +128,12 @@ export interface WorkspaceState {
   goal?: GoalSnapshot | null;
 }
 
+export interface WorkspaceShellStatus {
+  loading: boolean;
+  isHydratingTranscript: boolean;
+  isStreamStarting: boolean;
+}
+
 /**
  * Live streaming stats snapshot for the active stream of a workspace.
  *
@@ -565,6 +571,9 @@ function repriceSessionUsage(
 export class WorkspaceStore {
   // Per-workspace state (lazy computed on get)
   private states = new MapStore<string, WorkspaceState>();
+
+  // Stable subset for WorkspaceShell so message deltas do not re-render shell chrome.
+  private workspaceShellStatusCache = new Map<string, WorkspaceShellStatus>();
 
   // Derived aggregate state (computed from multiple workspaces)
   private derived = new MapStore<string, DerivedState>();
@@ -1879,6 +1888,69 @@ export class WorkspaceStore {
         goal,
       };
     });
+  }
+
+  getWorkspaceShellStatus(workspaceId: string): WorkspaceShellStatus {
+    const aggregator = this.assertGet(workspaceId);
+    const transient = this.assertChatTransientState(workspaceId);
+    const hasMessages = aggregator.hasMessages();
+    const isActiveWorkspace = this.activeOnChatWorkspaceId === workspaceId;
+
+    // Keep this selector lighter than getWorkspaceState(): the shell only needs enough
+    // state to decide placeholder vs mounted chat. Avoid rebuilding the full displayed
+    // transcript on every streaming delta unless init/hydration placeholder behavior needs it.
+    const hasRunningInitMessage =
+      !hasMessages || (isActiveWorkspace && transient.isHydratingTranscript && !transient.caughtUp)
+        ? aggregator
+            .getDisplayedMessages()
+            .some((message) => message.type === "workspace-init" && message.status === "running")
+        : false;
+
+    const activity = this.workspaceActivity.get(workspaceId);
+    const hasInterruptibleActiveStream = aggregator.hasInterruptibleActiveStream();
+    const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
+    const streamLifecycle = aggregator.getStreamLifecycle();
+    const bufferedActiveStreamStart =
+      isActiveWorkspace && !transient.caughtUp
+        ? getBufferedActiveStreamStart(
+            transient.pendingStreamEvents,
+            transient.historicalMessages,
+            (messageId) => aggregator.isSideQuestionAnswerMessage(messageId)
+          )
+        : null;
+    const useAggregatorState = isActiveWorkspace && transient.caughtUp;
+    const canInterrupt = useAggregatorState
+      ? hasInterruptibleActiveStream
+      : bufferedActiveStreamStart !== null
+        ? true
+        : (activity?.streaming ?? hasInterruptibleActiveStream);
+    const hasAuthoritativeStreamLifecycle =
+      streamLifecycle !== null && streamLifecycle.phase !== "idle";
+    const activePendingStreamStartTime = isActiveWorkspace ? pendingStreamStartTime : null;
+    const isStreamStarting =
+      isActiveWorkspace &&
+      !canInterrupt &&
+      (streamLifecycle?.phase === "preparing" ||
+        (!hasAuthoritativeStreamLifecycle && activePendingStreamStartTime !== null));
+    const isHydratingTranscript =
+      isActiveWorkspace &&
+      transient.isHydratingTranscript &&
+      !transient.caughtUp &&
+      !hasRunningInitMessage;
+    const loading = !hasMessages && !hasRunningInitMessage && !transient.caughtUp;
+
+    const cached = this.workspaceShellStatusCache.get(workspaceId);
+    if (
+      cached?.loading === loading &&
+      cached.isHydratingTranscript === isHydratingTranscript &&
+      cached.isStreamStarting === isStreamStarting
+    ) {
+      return cached;
+    }
+
+    const next = { loading, isHydratingTranscript, isStreamStarting };
+    this.workspaceShellStatusCache.set(workspaceId, next);
+    return next;
   }
 
   // Cache sidebar state objects to return stable references
@@ -3579,6 +3651,7 @@ export class WorkspaceStore {
     this.workspaceTerminalActivity.delete(workspaceId);
     this.activityStreamingStartRecency.delete(workspaceId);
     this.recencyCache.delete(workspaceId);
+    this.workspaceShellStatusCache.delete(workspaceId);
     this.sidebarStateCache.delete(workspaceId);
     this.sidebarStateSourceState.delete(workspaceId);
     this.workspaceCreatedAt.delete(workspaceId);
@@ -4231,6 +4304,21 @@ export function useWorkspaceState(workspaceId: string): WorkspaceState {
   return useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getWorkspaceState(workspaceId)
+  );
+}
+
+/**
+ * Hook to get the shell-only workspace status.
+ *
+ * WorkspaceShell only needs placeholder/hydration gates; subscribing to the full
+ * WorkspaceState would cascade every transcript delta through the shell and sidebars.
+ */
+export function useWorkspaceShellStatus(workspaceId: string): WorkspaceShellStatus {
+  const store = getStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => store.subscribeKey(workspaceId, listener),
+    () => store.getWorkspaceShellStatus(workspaceId)
   );
 }
 

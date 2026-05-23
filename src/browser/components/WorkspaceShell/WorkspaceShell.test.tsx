@@ -35,14 +35,12 @@ function installTestDoubles() {
 
   void mock.module("@/browser/stores/WorkspaceStore", () => ({
     ...actualWorkspaceStore,
-    useWorkspaceState: () =>
-      workspaceState
-        ? {
-            messages: [],
-            queuedMessage: null,
-            ...workspaceState,
-          }
-        : workspaceState,
+    useWorkspaceShellStatus: () => ({
+      loading: false,
+      isHydratingTranscript: false,
+      isStreamStarting: false,
+      ...workspaceState,
+    }),
   }));
 }
 
