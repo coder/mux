@@ -59,11 +59,11 @@ make benchmark-terminal TB_ENV=daytona TB_CONCURRENCY=48 TB_TASK_NAMES="chess-be
 - `TB_TASK_NAMES`: Space-separated task names to run (default: all tasks)
 - `TB_ARGS`: Additional arguments passed to harbor
 - `MUX_RUN_ARGS`: CLI flags passed directly to `mux run` inside the container (e.g., `--thinking high --use-1m --budget 5.00`). This is the primary mechanism for all `mux run` flags — avoids per-flag plumbing.
-- `MUX_RUN_AS_GOAL`: When set to `1`, runs each task instruction as a strict `mux run --goal` objective while still piping the instruction to stdin. Use `MUX_RUN_ARGS` for goal limits such as `--goal-turns` and `--goal-budget`.
+- `MUX_RUN_AS_GOAL`: When set to `1`, runs each task instruction as a strict `mux run --goal` objective while still piping the instruction to stdin. Use `MUX_RUN_ARGS` for goal limits such as `--goal-turns` and `--goal-budget`. Incomplete strict-goal exits are left scoreable so Harbor can verify the workspace.
 
 ### Timeout Handling
 
-The benchmark uses a **global timeout** applied to all tasks. The default is **30 minutes (1800 seconds)**, which provides sufficient time for most tasks while catching genuinely stuck agents.
+The benchmark uses Harbor's **global timeout** applied to all tasks. The default is **30 minutes (1800 seconds)**, which provides sufficient time for most tasks while catching genuinely stuck agents. The mux runner does not wrap the command in GNU `timeout`; Harbor must classify task timeouts as `AgentTimeoutError` so the workflow can distinguish timeout/infra cases from mux process failures.
 
 **Design Rationale:**
 

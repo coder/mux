@@ -84,7 +84,7 @@ else
 	@echo "Checking flake.nix formatting..."
 	@tmp_dir=$$(mktemp -d "$${TMPDIR:-/tmp}/fmt-nix-check.XXXXXX"); \
 	trap "rm -rf $$tmp_dir" EXIT; \
-	cp flake.nix "$$tmp_dir/flake.nix"; \
+	cp flake.nix flake.lock package.json bun.lock "$$tmp_dir/"; \
 	(cd "$$tmp_dir" && nix fmt -- flake.nix >/dev/null 2>&1); \
 	if ! cmp -s flake.nix "$$tmp_dir/flake.nix"; then \
 		echo "flake.nix is not formatted correctly. Run 'make fmt-nix' to fix."; \

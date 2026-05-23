@@ -93,8 +93,6 @@ fi
 if [[ "${mux_run_as_goal_enabled}" == "1" ]]; then
   log "strict mux goal mode enabled"
   cmd+=(--goal "${instruction}")
-else
-  log "strict mux goal mode disabled"
 fi
 
 mux_run_args=()
@@ -114,24 +112,23 @@ if [[ -n "${MUX_RUN_ARGS:-}" ]]; then
 fi
 
 # NOTE: Harbor only automatically collects /logs/agent on timeouts.
-# Persist stdout/stderr there so we can inspect partial agent output even when
-# the trial hits AgentTimeoutError and the exec call is cancelled.
-MUX_LOG_DIR="/logs/agent/command-0"
+# Persist stdout/stderr there so partial agent output survives cancellation.
+MUX_LOG_DIR="${MUX_LOG_DIR:-/logs/agent/command-0}"
 mkdir -p "${MUX_LOG_DIR}"
 MUX_OUTPUT_FILE="${MUX_LOG_DIR}/stdout.txt"
 MUX_STDERR_FILE="${MUX_LOG_DIR}/stderr.txt"
-MUX_TOKEN_FILE="/tmp/mux-tokens.json"
+MUX_TOKEN_FILE="${MUX_TOKEN_FILE:-/tmp/mux-tokens.json}"
 
-# Wrap command with timeout if MUX_TIMEOUT_MS is set (converts ms to seconds)
+# Let Harbor classify task timeouts; GNU timeout would surface as exit 124.
 if [[ -n "${MUX_TIMEOUT_MS}" ]]; then
-  timeout_sec=$((MUX_TIMEOUT_MS / 1000))
-  cmd=(timeout "${timeout_sec}s" "${cmd[@]}")
+  if [[ ! "${MUX_TIMEOUT_MS}" =~ ^[0-9]+$ ]]; then
+    fatal "MUX_TIMEOUT_MS must be an integer"
+  fi
+  log "MUX_TIMEOUT_MS=${MUX_TIMEOUT_MS} forwarded; Harbor remains timeout authority"
 fi
 
 # Capture output to file while streaming to terminal for token extraction.
-# Keep stderr separate so the stdout log stays valid JSONL. Temporarily disable
-# errexit so token extraction still runs after mux returns a meaningful nonzero
-# code such as strict goal-mode exit 3.
+# Keep stderr separate so the stdout log stays valid JSONL.
 set +e
 printf '%s' "${instruction}" \
   | "${cmd[@]}" \
@@ -192,6 +189,11 @@ result["input"] += subagent_input
 result["output"] += subagent_output
 print(json.dumps(result))
 ' "${MUX_OUTPUT_FILE}" >"${MUX_TOKEN_FILE}" 2>/dev/null || true
+
+if [[ "${mux_status}" -eq 3 && "${mux_run_as_goal_enabled}" == "1" ]]; then
+  printf '[mux-run] WARNING: mux goal run stopped incomplete (exit 3); leaving workspace for verifier scoring\n' >&2
+  mux_status=0
+fi
 
 if [[ "${mux_status}" -ne 0 ]]; then
   printf '[mux-run] ERROR: mux agent session failed (exit %s)\n' "${mux_status}" >&2
