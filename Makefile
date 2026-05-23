@@ -30,6 +30,12 @@
 #   It is automatically disabled in CI, test environments, and automation contexts.
 #   To manually disable telemetry, set MUX_DISABLE_TELEMETRY=1.
 
+# React profiling in development:
+# Default desktop dev launches opt into Mux's lightweight component render sampler so
+# already-running dev instances can be inspected without a restart. Override with
+# `make start MUX_PROFILE_REACT=0` when measuring an uninstrumented baseline.
+MUX_PROFILE_REACT ?= 1
+
 # Use PATH-resolved bash for portability across different systems.
 # - Windows: /usr/bin/bash doesn't exist in Chocolatey's make environment or GitHub Actions
 # - NixOS: /bin/bash doesn't exist, bash is in /nix/store/...
@@ -203,7 +209,7 @@ dev-server-sandbox: ## Start an isolated dev-server instance (fresh MUX_ROOT + f
 	@bun scripts/dev-server-sandbox.ts $(DEV_SERVER_SANDBOX_ARGS)
 
 start: node_modules/.installed build-main build-preload build-static ## Build and start Electron app
-	@NODE_ENV=development bunx electron --remote-debugging-port=9222 .
+	@NODE_ENV=development MUX_PROFILE_REACT=$(MUX_PROFILE_REACT) bunx electron --remote-debugging-port=9222 .
 
 ## Build targets (can run in parallel)
 build: node_modules/.installed src/version.ts build-renderer build-main build-preload build-icons build-static ## Build all targets

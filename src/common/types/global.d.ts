@@ -18,7 +18,7 @@ declare global {
     enableTelemetryInDev?: boolean;
     // E2E test mode flag - used to adjust UI behavior (e.g., longer toast durations)
     isE2E?: boolean;
-    // Enables in-app React.Profiler capture for automated perf tests.
+    // Enables in-app React render capture for dev profiling and automated perf tests.
     enableReactPerfProfile?: boolean;
     // Sandbox launchers default tutorials off unless explicitly re-enabled by env.
     enableTutorialsInSandbox?: boolean;
