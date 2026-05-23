@@ -128,6 +128,22 @@ describe("router config.saveConfig", () => {
     expect(config.loadConfigOrDefault().chatTranscriptFullWidth).toBeUndefined();
   });
 
+  test("persists the auto-hide sidebar config flag", async () => {
+    const client = createRouterClient(router(), { context: createContext() });
+
+    expect((await client.config.getConfig()).autoHideSidebar).toBe(false);
+
+    await client.config.updateAutoHideSidebar({ enabled: true });
+
+    expect((await client.config.getConfig()).autoHideSidebar).toBe(true);
+    expect(config.loadConfigOrDefault().autoHideSidebar).toBe(true);
+
+    await client.config.updateAutoHideSidebar({ enabled: false });
+
+    expect((await client.config.getConfig()).autoHideSidebar).toBe(false);
+    expect(config.loadConfigOrDefault().autoHideSidebar).toBeUndefined();
+  });
+
   test("preserves optional task settings when a save omits them", async () => {
     await config.editConfig((current) => ({
       ...current,

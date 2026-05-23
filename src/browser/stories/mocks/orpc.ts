@@ -134,6 +134,8 @@ export interface MockORPCClientOptions {
   worktreeArchiveBehavior?: WorktreeArchiveBehavior;
   /** Initial full-width transcript toggle for config.getConfig */
   chatTranscriptFullWidth?: boolean;
+  /** Initial auto-hide sidebar toggle for config.getConfig */
+  autoHideSidebar?: boolean;
   /** Initial runtime enablement for config.getConfig */
   runtimeEnablement?: Record<string, boolean>;
   /** Initial default runtime for config.getConfig (global) */
@@ -372,6 +374,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     coderWorkspaceArchiveBehavior: initialCoderWorkspaceArchiveBehavior = "stop",
     worktreeArchiveBehavior: initialWorktreeArchiveBehavior = "keep",
     chatTranscriptFullWidth: initialChatTranscriptFullWidth = false,
+    autoHideSidebar: initialAutoHideSidebar = false,
     runtimeEnablement: initialRuntimeEnablement,
     defaultRuntime: initialDefaultRuntime,
     onePasswordAccountName: initialOnePasswordAccountName = null,
@@ -505,6 +508,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let coderWorkspaceArchiveBehavior = initialCoderWorkspaceArchiveBehavior;
   let worktreeArchiveBehavior = initialWorktreeArchiveBehavior;
   let chatTranscriptFullWidth = initialChatTranscriptFullWidth;
+  let autoHideSidebar = initialAutoHideSidebar;
   let runtimeEnablement: Record<string, boolean> = initialRuntimeEnablement ?? {
     local: true,
     worktree: true,
@@ -715,6 +719,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           imageGeneration,
           goalDefaults,
           chatTranscriptFullWidth,
+          autoHideSidebar,
           muxGovernorEnrolled,
           llmDebugLogs: false,
         }),
@@ -788,6 +793,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       updateChatTranscriptFullWidth: (input: { enabled: boolean }) => {
         chatTranscriptFullWidth = input.enabled;
+        notifyConfigChanged();
+        return Promise.resolve(undefined);
+      },
+      updateAutoHideSidebar: (input: { enabled: boolean }) => {
+        autoHideSidebar = input.enabled;
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },

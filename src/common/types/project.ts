@@ -83,6 +83,8 @@ export interface ProjectsConfig {
   layoutPresets?: LayoutPresetsConfig;
   /** Let chat transcripts use the full chat pane width instead of the default readable column. */
   chatTranscriptFullWidth?: boolean;
+  /** Auto-collapse the left sidebar; expand on hover. */
+  autoHideSidebar?: boolean;
   /**
    * Mux Gateway routing preferences (shared via ~/.mux/config.json).
    * Mirrors browser localStorage so switching server ports doesn't reset the UI.

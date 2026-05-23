@@ -22,6 +22,11 @@ describe("AppConfigOnDiskSchema", () => {
     );
   });
 
+  it("validates the auto-hide sidebar flag", () => {
+    expect(AppConfigOnDiskSchema.safeParse({ autoHideSidebar: true }).success).toBe(true);
+    expect(AppConfigOnDiskSchema.safeParse({ autoHideSidebar: "true" }).success).toBe(false);
+  });
+
   it("validates taskSettings with limits", () => {
     const valid = {
       taskSettings: {

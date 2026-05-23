@@ -88,6 +88,11 @@ export type LaunchBehavior = "dashboard" | "new-chat" | "last-workspace";
 export const CHAT_TRANSCRIPT_FULL_WIDTH_KEY = "chatTranscriptFullWidth";
 
 /**
+ * Synchronous mirror for the backend auto-hide sidebar preference.
+ */
+export const AUTO_HIDE_SIDEBAR_KEY = "autoHideSidebar";
+
+/**
  * Get the localStorage key for expanded projects in sidebar (global)
  * Format: "expandedProjects"
  */
