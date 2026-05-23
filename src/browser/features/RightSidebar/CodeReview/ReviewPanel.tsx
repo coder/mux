@@ -34,6 +34,7 @@ import React, {
 } from "react";
 import {
   buildAssistedReviewPathCandidates,
+  deriveProjectRelativePath,
   findAssistedCandidateMatch,
   normalizeAssistedReviewHunks,
   resolveAssistedReviewPathCandidatesForHunks,
@@ -473,6 +474,37 @@ function toPathFilter(pathspecs: readonly string[]): string {
     : "";
 }
 
+function normalizeReviewPath(pathValue: string | null | undefined): string {
+  return pathValue?.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "").trim() ?? "";
+}
+
+function reviewPathMatchesPathspec(pathValue: string, pathspec: string): boolean {
+  const normalizedPath = normalizeReviewPath(pathValue);
+  const normalizedPathspec = normalizeReviewPath(pathspec);
+  return (
+    normalizedPath === normalizedPathspec || normalizedPath.startsWith(`${normalizedPathspec}/`)
+  );
+}
+
+export function getReviewSubProjectPathspec(params: {
+  workspaceMetadata:
+    | Pick<FrontendWorkspaceMetadata, "projectPath" | "subProjectPath">
+    | null
+    | undefined;
+  projectPath: string;
+}): string | null {
+  const projectPath = params.workspaceMetadata?.projectPath ?? params.projectPath;
+  const subProjectPath = params.workspaceMetadata?.subProjectPath;
+  const relativePath = deriveProjectRelativePath(projectPath, subProjectPath);
+  return relativePath && normalizeReviewPath(relativePath).length > 0
+    ? normalizeReviewPath(relativePath)
+    : null;
+}
+
+export function getReviewSubProjectPathFilter(subProjectPathspec: string | null): string {
+  return subProjectPathspec ? toPathFilter([subProjectPathspec]) : "";
+}
+
 export function buildReviewDiffPathFilterSpecs(params: {
   isImmersive: boolean;
   assistedOnly: boolean;
@@ -482,21 +514,25 @@ export function buildReviewDiffPathFilterSpecs(params: {
   selectedRepoRootProjectPath?: string | null;
   workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined;
   projectPath: string;
+  subProjectPathspec?: string | null;
   pathContext?: ProjectRelativePathContext;
 }): ReviewDiffPathFilterSpec[] {
   if (!params.assistedOnly) {
+    const selectedFileActive =
+      params.selectedFilePath &&
+      !params.isImmersive &&
+      (params.subProjectPathspec == null ||
+        reviewPathMatchesPathspec(params.selectedDiffPath, params.subProjectPathspec));
+    const subProjectPathFilter = getReviewSubProjectPathFilter(params.subProjectPathspec ?? null);
     return [
       {
-        repoRootProjectPath:
-          params.selectedFilePath && !params.isImmersive
-            ? (params.selectedRepoRootProjectPath ?? params.projectPath)
-            : params.projectPath,
-        pathFilter:
-          params.selectedFilePath && !params.isImmersive
-            ? toPathFilter([params.selectedDiffPath])
-            : "",
-        selectedFilePath:
-          params.selectedFilePath && !params.isImmersive ? params.selectedFilePath : null,
+        repoRootProjectPath: selectedFileActive
+          ? (params.selectedRepoRootProjectPath ?? params.projectPath)
+          : params.projectPath,
+        pathFilter: selectedFileActive
+          ? toPathFilter([params.selectedDiffPath])
+          : subProjectPathFilter,
+        selectedFilePath: selectedFileActive ? params.selectedFilePath : null,
       },
     ];
   }
@@ -549,6 +585,7 @@ export function buildReviewDiffPathFilter(params: {
   selectedDiffPath: string;
   workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined;
   repoRootProjectPath: string | null | undefined;
+  subProjectPathspec?: string | null;
   pathContext?: ProjectRelativePathContext;
 }): string {
   return (
@@ -783,6 +820,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const originFetchRef = useRef<OriginFetchState | null>(null);
   const { api } = useAPI();
   const { workspaceMetadata } = useWorkspaceMetadata();
+  const workspaceReviewMetadata = workspaceMetadata.get(workspaceId);
+  const subProjectPathspec = getReviewSubProjectPathspec({
+    workspaceMetadata: workspaceReviewMetadata,
+    projectPath,
+  });
+  const subProjectPathFilter = getReviewSubProjectPathFilter(subProjectPathspec);
+
   const panelRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -834,15 +878,27 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   );
 
   const selectedRepoRootProjectPath = resolveRepoRootProjectPath(
-    workspaceMetadata.get(workspaceId),
+    workspaceReviewMetadata,
     selectedFilePath
   );
 
   const selectedDiffPath = normalizeRepoRootFilePath(
-    workspaceMetadata.get(workspaceId),
+    workspaceReviewMetadata,
     selectedFilePath ? extractNewPath(selectedFilePath) : null,
     selectedRepoRootProjectPath
   );
+
+  useEffect(() => {
+    if (!subProjectPathspec || selectedFilePath === null) {
+      return;
+    }
+
+    if (!reviewPathMatchesPathspec(selectedDiffPath, subProjectPathspec)) {
+      // Sub-project review should not show a stale parent selection; Assisted
+      // mode remains the explicit escape hatch for agent-pinned hunks outside this scope.
+      setSelectedFilePath(null);
+    }
+  }, [selectedDiffPath, selectedFilePath, setSelectedFilePath, subProjectPathspec]);
 
   const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
   const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
@@ -1068,7 +1124,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     rawWorkspaceStore.getAssistedReviewHunks(workspaceId)
   );
 
-  const workspaceReviewMetadata = workspaceMetadata.get(workspaceId);
   const reviewPathContext = useMemo(
     () => getReviewPanelPathContext({ workspaceMetadata: workspaceReviewMetadata, projectPath }),
     [projectPath, workspaceReviewMetadata]
@@ -1306,14 +1361,14 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const numstatCommand = buildGitDiffCommand(
       filters.diffBase,
       filters.includeUncommitted,
-      "", // No path filter for file tree
+      subProjectPathFilter,
       "numstat"
     );
 
     const nameStatusCommand = buildGitDiffCommand(
       filters.diffBase,
       filters.includeUncommitted,
-      "", // No path filter for file tree
+      subProjectPathFilter,
       "name-status"
     );
 
@@ -1446,6 +1501,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     workspacePath,
     projectPath,
     workspaceMetadata,
+    subProjectPathFilter,
     filters.diffBase,
     filters.includeUncommitted,
     refreshTrigger,
@@ -1474,8 +1530,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       selectedFilePath,
       selectedDiffPath,
       selectedRepoRootProjectPath,
-      workspaceMetadata: workspaceMetadata.get(workspaceId),
+      workspaceMetadata: workspaceReviewMetadata,
       projectPath,
+      subProjectPathspec,
       pathContext: reviewPathContext,
     }).map((spec) => {
       const diffCommand = buildGitDiffCommand(
@@ -1626,6 +1683,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     workspacePath,
     projectPath,
     workspaceMetadata,
+    workspaceReviewMetadata,
+    subProjectPathspec,
     filters.diffBase,
     filters.includeUncommitted,
     filters.assistedOnly,
@@ -2349,6 +2408,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               workspaceId={workspaceId}
               workspacePath={workspacePath}
               refreshTrigger={refreshTrigger}
+              repoRootProjectPath={projectPath}
+              pathFilter={subProjectPathFilter}
               onRefresh={handleRefresh}
             />
 
@@ -2438,9 +2499,19 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
                 <div className="text-muted flex flex-col items-center justify-start gap-3 px-6 pt-12 pb-6 text-center">
                   <div className="text-foreground text-base font-medium">No changes found</div>
                   <div className="text-[13px] leading-[1.5]">
-                    No changes found for the selected diff base.
-                    <br />
-                    Try selecting a different base or make some changes.
+                    {subProjectPathspec ? (
+                      <>
+                        No changes found in this sub-project for the selected diff base.
+                        <br />
+                        Assisted pins outside this scope still appear in Assisted mode.
+                      </>
+                    ) : (
+                      <>
+                        No changes found for the selected diff base.
+                        <br />
+                        Try selecting a different base or make some changes.
+                      </>
+                    )}
                   </div>
                   {diagnosticInfo && (
                     <details className="bg-modal-bg border-border-light [&_summary]:text-muted mt-4 w-full max-w-96 cursor-pointer rounded border p-3 [&_summary]:flex [&_summary]:list-none [&_summary]:items-center [&_summary]:gap-1.5 [&_summary]:text-xs [&_summary]:font-medium [&_summary]:select-none [&_summary::-webkit-details-marker]:hidden [&_summary::before]:text-[10px] [&_summary::before]:transition-transform [&_summary::before]:duration-200 [&_summary::before]:content-['▶'] [&[open]_summary::before]:rotate-90">
