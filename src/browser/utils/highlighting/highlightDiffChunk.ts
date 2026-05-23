@@ -45,18 +45,11 @@ export async function highlightDiffChunk(
   language: string,
   themeMode: ThemeMode = "dark"
 ): Promise<HighlightedChunk> {
-  // Fast path: no highlighting for text files
+  // Fast path: no highlighting for text files. `usedFallback: false` because
+  // plain-text rendering is the intentional choice for these languages, not a
+  // recovery path from a failed highlight attempt.
   if (language === "text" || language === "plaintext") {
-    return {
-      type: chunk.type,
-      lines: chunk.lines.map((line, i) => ({
-        html: escapeHtml(line),
-        oldLineNumber: chunk.oldLineNumbers[i],
-        newLineNumber: chunk.newLineNumbers[i],
-        originalIndex: chunk.startIndex + i,
-      })),
-      usedFallback: false,
-    };
+    return createPlainTextChunk(chunk, false);
   }
 
   // Enforce size limit for performance
@@ -64,7 +57,7 @@ export async function highlightDiffChunk(
   const sizeBytes =
     chunk.lines.reduce((total, line) => total + line.length, 0) + chunk.lines.length - 1;
   if (sizeBytes > MAX_DIFF_SIZE_BYTES) {
-    return createFallbackChunk(chunk);
+    return createPlainTextChunk(chunk, true);
   }
 
   const code = chunk.lines.join("\n");
@@ -80,7 +73,7 @@ export async function highlightDiffChunk(
     // Validate output (detect broken highlighting)
     if (lines.length !== chunk.lines.length) {
       // Mismatch - highlighting broke the structure
-      return createFallbackChunk(chunk);
+      return createPlainTextChunk(chunk, true);
     }
 
     // Check if any non-empty line became empty after extraction (indicates malformed HTML)
@@ -89,7 +82,7 @@ export async function highlightDiffChunk(
       (extractedHtml, i) => extractedHtml.length === 0 && chunk.lines[i].length > 0
     );
     if (hasEmptyExtraction) {
-      return createFallbackChunk(chunk);
+      return createPlainTextChunk(chunk, true);
     }
 
     return {
@@ -104,14 +97,19 @@ export async function highlightDiffChunk(
     };
   } catch (error) {
     console.warn(`Syntax highlighting failed for language ${language}:`, error);
-    return createFallbackChunk(chunk);
+    return createPlainTextChunk(chunk, true);
   }
 }
 
 /**
- * Create plain text fallback for a chunk
+ * Build a plain-text `HighlightedChunk` for `chunk`. Used both by the
+ * text/plaintext fast path (`usedFallback: false`) and as the recovery path
+ * when highlighting fails or the diff exceeds the size budget
+ * (`usedFallback: true`). The line mapping is identical in either case; the
+ * boolean is preserved verbatim so consumers can distinguish "intentional
+ * plain text" from "highlighting fell back".
  */
-function createFallbackChunk(chunk: DiffChunk): HighlightedChunk {
+function createPlainTextChunk(chunk: DiffChunk, usedFallback: boolean): HighlightedChunk {
   return {
     type: chunk.type,
     lines: chunk.lines.map((line, i) => ({
@@ -120,7 +118,7 @@ function createFallbackChunk(chunk: DiffChunk): HighlightedChunk {
       newLineNumber: chunk.newLineNumbers[i],
       originalIndex: chunk.startIndex + i,
     })),
-    usedFallback: true,
+    usedFallback,
   };
 }
 
