@@ -217,7 +217,7 @@
     /* Status */
     --color-interrupted: hsl(0 0% 53%);
     --color-backgrounded: hsl(200 70% 55%); /* cyan-ish blue for backgrounded processes */
-    --color-review-accent: hsl(48 70% 50%);
+    --color-review-accent: hsl(210 100% 65%); /* sky blue — distinct from amber/yellow warning states */
     --color-git-dirty: hsl(38 92% 50%);
     --color-error: hsl(0 70% 50%);
     --color-error-bg: hsl(0 32% 18%);
@@ -489,7 +489,7 @@
 
   --color-interrupted: hsl(0 0% 50%);
   --color-backgrounded: hsl(200 70% 50%);
-  --color-review-accent: hsl(48 70% 52%);
+  --color-review-accent: hsl(212 85% 48%); /* saturated blue — distinct from amber/yellow warning states */
   --color-git-dirty: hsl(38 92% 50%);
   --color-error: hsl(0 68% 46%);
   --color-error-bg: hsl(0 82% 94%);
@@ -728,7 +728,7 @@
 
   --color-interrupted: #6f6e69;
   --color-backgrounded: #24837b; /* Flexoki cyan-600 */
-  --color-review-accent: #ad8301;
+  --color-review-accent: #4385be; /* Flexoki blue-400 — distinct from amber/yellow warning states */
   --color-git-dirty: #bc5215;
   --color-error: #af3029; /* Flexoki red-600 */
   --color-error-bg: hsl(from var(--color-error) h s l / 0.12);
@@ -954,7 +954,7 @@
 
   --color-interrupted: #878580;
   --color-backgrounded: #3aa99f; /* Flexoki cyan-400 */
-  --color-review-accent: #d0a215;
+  --color-review-accent: #92bfdb; /* Flexoki blue-300 — distinct from amber/yellow warning states */
   --color-git-dirty: #da702c;
   --color-error: #d14d41; /* Flexoki red-400 */
   --color-error-bg: hsl(from var(--color-error) h s l / 0.15);
