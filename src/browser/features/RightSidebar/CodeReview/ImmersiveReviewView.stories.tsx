@@ -285,6 +285,10 @@ interface ImmersiveReviewStoryProps {
   fixture: ImmersiveStoryFixture;
   reviewActions?: ComponentProps<typeof ImmersiveReviewView>["reviewActions"];
   initialReadHunkIds?: string[];
+  /** Hunk IDs flagged by the agent (via `review_pane_update`). */
+  assistedHunkIds?: ReadonlySet<string>;
+  /** Per-hunk agent comments — drives the immersive assisted-review banner. */
+  assistedCommentByHunkId?: Map<string, string>;
 }
 
 function ImmersiveReviewStory(props: ImmersiveReviewStoryProps) {
@@ -334,6 +338,8 @@ function ImmersiveReviewStory(props: ImmersiveReviewStoryProps) {
         reviewActions={props.reviewActions}
         reviewsByFilePath={props.fixture.reviewsByFilePath}
         firstSeenMap={props.fixture.firstSeenMap}
+        assistedHunkIds={props.assistedHunkIds}
+        assistedCommentByHunkId={props.assistedCommentByHunkId}
       />
     </ImmersiveStoryShell>
   );
@@ -492,6 +498,48 @@ export const ImmersiveWithMinimap: Story = {
       () => {
         canvas.getByTestId("immersive-review-view");
         canvas.getByRole("button", { name: /exit immersive review/i });
+      },
+      { timeout: 10_000 }
+    );
+  },
+};
+
+const IMMERSIVE_ASSISTED_WORKSPACE_ID = "ws-review-immersive-assisted";
+const IMMERSIVE_ASSISTED_FIXTURE = LINE_HEIGHT_FIXTURE;
+const IMMERSIVE_ASSISTED_FIRST_HUNK_ID = IMMERSIVE_ASSISTED_FIXTURE.hunks[0]?.id ?? "";
+const IMMERSIVE_ASSISTED_HUNK_IDS: ReadonlySet<string> = new Set([
+  IMMERSIVE_ASSISTED_FIRST_HUNK_ID,
+]);
+// Map literal lookup matches production — ImmersiveReviewView reads the comment
+// for the *selected* hunk and renders the assisted banner above the diff.
+const IMMERSIVE_ASSISTED_COMMENT_BY_HUNK_ID = new Map<string, string>([
+  [
+    IMMERSIVE_ASSISTED_FIRST_HUNK_ID,
+    "Hoist the formatter out of formatPrice — recreating it on every call defeats the Intl.NumberFormat cache.",
+  ],
+]);
+
+/**
+ * Immersive review with an active assisted-review pin. Locks in the
+ * `--color-review-accent` blue accent for the immersive banner (Sparkles +
+ * border + background tint) in both light + dark themes.
+ */
+export const ImmersiveWithAssistedBanner: Story = {
+  render: () => (
+    <ImmersiveReviewStory
+      workspaceId={IMMERSIVE_ASSISTED_WORKSPACE_ID}
+      fixture={IMMERSIVE_ASSISTED_FIXTURE}
+      assistedHunkIds={IMMERSIVE_ASSISTED_HUNK_IDS}
+      assistedCommentByHunkId={IMMERSIVE_ASSISTED_COMMENT_BY_HUNK_ID}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await waitFor(
+      () => {
+        canvas.getByTestId("immersive-review-view");
+        canvas.getByTestId("immersive-assisted-banner");
       },
       { timeout: 10_000 }
     );
