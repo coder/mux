@@ -34,10 +34,6 @@ export function setSshPromptService(svc: SshPromptService | undefined): void {
   sshPromptService = svc;
 }
 
-export function getSshPromptService(): SshPromptService | undefined {
-  return sshPromptService;
-}
-
 export function setOpenSSHHostKeyPolicyMode(mode: OpenSSHHostKeyPolicyMode): void {
   hostKeyPolicyMode = mode;
 }

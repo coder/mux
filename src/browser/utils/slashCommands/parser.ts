@@ -8,8 +8,6 @@ import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 import { parseThinkingInput, type ParsedThinkingInput } from "@/common/types/thinking";
 
-export { SLASH_COMMAND_DEFINITIONS } from "./registry";
-
 /**
  * Parse a raw command string into a structured command
  * @param input The raw command string (e.g., "/model sonnet" or "/compact -t 5000")

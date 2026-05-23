@@ -1,11 +1,6 @@
 import type { z } from "zod";
 import type * as schemas from "./schemas";
-import type {
-  OnChatCursorSchema,
-  OnChatHistoryCursorSchema,
-  OnChatModeSchema,
-  OnChatStreamCursorSchema,
-} from "./schemas/stream";
+import type { OnChatCursorSchema, OnChatModeSchema } from "./schemas/stream";
 
 import type {
   StreamStartEvent,
@@ -41,8 +36,6 @@ export type AddCustomOpenAICompatibleProviderInput = z.infer<
 export type FilePart = z.infer<typeof schemas.FilePartSchema>;
 export type WorkspaceChatMessage = z.infer<typeof schemas.WorkspaceChatMessageSchema>;
 export type CaughtUpMessage = z.infer<typeof schemas.CaughtUpMessageSchema>;
-export type OnChatHistoryCursor = z.infer<typeof OnChatHistoryCursorSchema>;
-export type OnChatStreamCursor = z.infer<typeof OnChatStreamCursorSchema>;
 export type OnChatCursor = z.infer<typeof OnChatCursorSchema>;
 export type OnChatMode = z.infer<typeof OnChatModeSchema>;
 export type StreamErrorMessage = z.infer<typeof schemas.StreamErrorMessageSchema>;

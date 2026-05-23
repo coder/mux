@@ -182,8 +182,6 @@ if ($null -ne $result) {
 }
 `;
 
-export type AgentBrowserDiscoveredSessionStatus = "attachable" | "missing_stream";
-
 interface AgentBrowserDiscoveredSessionBase {
   sessionName: string;
   pid: number;

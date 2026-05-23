@@ -75,16 +75,3 @@ export const ConcurrentLocalWarningView: React.FC<{ streamingWorkspaceName: stri
     </div>
   );
 };
-
-/**
- * Subtle indicator shown when a local project-dir workspace has another workspace
- * for the same project that is currently streaming.
- */
-export const ConcurrentLocalWarning: React.FC<ConcurrentLocalWarningProps> = (props) => {
-  const streamingWorkspaceName = useConcurrentLocalStreamingWorkspaceName(props);
-  if (!streamingWorkspaceName) {
-    return null;
-  }
-
-  return <ConcurrentLocalWarningView streamingWorkspaceName={streamingWorkspaceName} />;
-};

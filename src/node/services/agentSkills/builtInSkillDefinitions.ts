@@ -120,8 +120,3 @@ export function readBuiltInSkillFile(
 
   return { resolvedPath, content };
 }
-
-/** Exposed for testing - clears cached parsed packages */
-export function clearBuiltInSkillCache(): void {
-  cachedPackages = null;
-}
