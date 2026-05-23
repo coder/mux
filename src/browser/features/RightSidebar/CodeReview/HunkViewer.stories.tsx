@@ -5,6 +5,10 @@ import { useRef, useState, type ComponentType, type FC, type ReactNode } from "r
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import {
+  WorkspaceContext,
+  type WorkspaceContext as WorkspaceContextValue,
+} from "@/browser/contexts/WorkspaceContext";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { CHROMATIC_SMOKE_MODES } from "@/browser/stories/meta";
 import type { DiffHunk } from "@/common/types/review";
@@ -62,11 +66,54 @@ function createHunkViewerStoryClient(): APIClient {
   });
 }
 
+// HunkViewer → useReadMore → useWorkspaceMetadata. The hook only needs the
+// metadata map to resolve a repo-root project path (gracefully returns undefined
+// for missing entries), so the empty map + no-op actions stub is enough to let
+// HunkViewer mount without spinning up the full WorkspaceProvider stack.
+function createStubWorkspaceContextValue(): WorkspaceContextValue {
+  return {
+    workspaceMetadata: new Map(),
+    loading: false,
+    workspaceDraftPromotionsByProject: {},
+    promoteWorkspaceDraft: () => undefined,
+    createWorkspace: () =>
+      Promise.resolve({
+        projectPath: "/tmp/project",
+        projectName: "project",
+        namedWorkspacePath: "/tmp/project/main",
+        workspaceId: "created-workspace",
+      }),
+    removeWorkspace: () => Promise.resolve({ success: true }),
+    updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+    preflightArchiveWorkspace: () => Promise.resolve({ success: true }),
+    archiveWorkspace: () => Promise.resolve({ success: true }),
+    unarchiveWorkspace: () => Promise.resolve({ success: true }),
+    refreshWorkspaceMetadata: () => Promise.resolve(),
+    setWorkspaceMetadata: () => undefined,
+    selectedWorkspace: null,
+    setSelectedWorkspace: () => undefined,
+    pendingNewWorkspaceProject: null,
+    pendingNewWorkspaceSubProjectPath: null,
+    pendingNewWorkspaceDraftId: null,
+    beginWorkspaceCreation: () => undefined,
+    workspaceDraftsByProject: {},
+    createWorkspaceDraft: () => undefined,
+    updateWorkspaceDraftSubProject: () => undefined,
+    openWorkspaceDraft: () => undefined,
+    deleteWorkspaceDraft: () => undefined,
+    getWorkspaceInfo: () => Promise.resolve(null),
+  };
+}
+
 const HunkViewerStoryShell: FC<{ client: APIClient; children: ReactNode }> = (props) => {
   return (
     <ThemeProvider>
       <TooltipProvider>
-        <APIProvider client={props.client}>{props.children}</APIProvider>
+        <APIProvider client={props.client}>
+          <WorkspaceContext.Provider value={createStubWorkspaceContextValue()}>
+            {props.children}
+          </WorkspaceContext.Provider>
+        </APIProvider>
       </TooltipProvider>
     </ThemeProvider>
   );
