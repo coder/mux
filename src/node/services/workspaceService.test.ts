@@ -2813,6 +2813,9 @@ describe("WorkspaceService executeBash workspace path resolution", () => {
     createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
       ensureReady: mock(() => Promise.resolve({ ready: true })),
       getWorkspacePath: mock(() => "/runtime/workspace-root"),
+      normalizePath: mock((targetPath: string, basePath: string) =>
+        targetPath ? `${basePath}/${targetPath}` : basePath
+      ),
     } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
 
     createBashToolSpy = spyOn(bashToolModule, "createBashTool").mockReturnValue({
@@ -2841,6 +2844,39 @@ describe("WorkspaceService executeBash workspace path resolution", () => {
     expect(createBashToolSpy).toHaveBeenCalledTimes(1);
     expect(createBashToolSpy.mock.calls[0]?.[0]?.cwd).toBe("/persisted/workspace-root");
     expect(waitForInitMock).toHaveBeenCalledWith("ws-path");
+  });
+
+  test("keeps default sub-project execution in the sub-project but runs repo-root mode at checkout root", async () => {
+    getWorkspaceMetadataMock.mockReturnValue(
+      Promise.resolve(
+        Ok({
+          id: "ws-path",
+          name: "ws",
+          projectName: "proj",
+          projectPath: "/tmp/proj",
+          subProjectPath: "/tmp/proj/packages/api",
+          runtimeConfig: { type: "worktree", srcBaseDir: "/tmp/runtime-src" },
+        } satisfies WorkspaceMetadata)
+      )
+    );
+
+    const defaultResult = await workspaceService.executeBash("ws-path", "pwd");
+    const repoRootResult = await workspaceService.executeBash("ws-path", "git diff", {
+      cwdMode: "repo-root",
+    });
+    const gitCommandResult = await workspaceService.executeBash("ws-path", "", undefined, "git", [
+      "status",
+    ]);
+
+    expect(defaultResult.success).toBe(true);
+    expect(repoRootResult.success).toBe(true);
+    expect(gitCommandResult.success).toBe(true);
+    expect(createBashToolSpy).toHaveBeenCalledTimes(3);
+    expect(createBashToolSpy.mock.calls[0]?.[0]?.cwd).toBe(
+      "/persisted/workspace-root/packages/api"
+    );
+    expect(createBashToolSpy.mock.calls[1]?.[0]?.cwd).toBe("/persisted/workspace-root");
+    expect(createBashToolSpy.mock.calls[2]?.[0]?.cwd).toBe("/persisted/workspace-root");
   });
 
   test("keeps docker executeBash rooted in the translated runtime path", async () => {

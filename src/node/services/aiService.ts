@@ -1596,6 +1596,8 @@ export class AIService extends EventEmitter {
             }
             this.emit(event.type, event as never);
           },
+          workspaceProjectPath: metadata.projectPath,
+          workspaceExecutionRootPath: metadata.subProjectPath ?? metadata.projectPath,
           workspaceSessionDir: this.config.getSessionDir(workspaceId),
           planFilePath,
           ancestorPlanFilePaths,

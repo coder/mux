@@ -125,6 +125,10 @@ export interface ToolConfiguration {
    * Used for streaming bash stdout/stderr to the UI without sending it to the model.
    */
   emitChatEvent?: (event: WorkspaceChatMessage) => void;
+  /** Primary project path for workspace-scoped tools that need project-relative coordinates. */
+  workspaceProjectPath?: string;
+  /** Absolute cwd for workspace-scoped tools that accept execution-relative paths. */
+  workspaceExecutionRootPath?: string;
   /** Workspace session directory (e.g. ~/.mux/sessions/<workspaceId>) for persistent tool state */
   workspaceSessionDir?: string;
   /** Workspace ID for tracking background processes and plan storage */

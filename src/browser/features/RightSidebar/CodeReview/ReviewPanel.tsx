@@ -32,7 +32,13 @@ import React, {
   useRef,
   useSyncExternalStore,
 } from "react";
-import { findAssistedMatch } from "@/common/utils/review/assistedReview";
+import {
+  buildAssistedReviewPathCandidates,
+  findAssistedCandidateMatch,
+  normalizeAssistedReviewHunks,
+  resolveAssistedReviewPathCandidatesForHunks,
+  type ProjectRelativePathContext,
+} from "@/common/utils/review/assistedReview";
 import { createPortal } from "react-dom";
 import { HunkViewer } from "./HunkViewer";
 import { InlineReviewNote, type ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
@@ -439,12 +445,14 @@ function mergeReviewDiffCacheValues(
 export function countUnreadAssistedHunks(
   hunks: readonly DiffHunk[],
   assistedHunks: readonly AssistedReviewHunk[],
-  isRead: (hunkId: string) => boolean
+  isRead: (hunkId: string) => boolean,
+  pathContext?: ProjectRelativePathContext
 ): number {
   if (assistedHunks.length === 0) return 0;
+  const candidates = resolveAssistedReviewPathCandidatesForHunks(assistedHunks, hunks, pathContext);
   let count = 0;
   for (const hunk of hunks) {
-    if (findAssistedMatch(hunk, assistedHunks) && !isRead(hunk.id)) {
+    if (findAssistedCandidateMatch(hunk, candidates) && !isRead(hunk.id)) {
       count += 1;
     }
   }
@@ -474,6 +482,7 @@ export function buildReviewDiffPathFilterSpecs(params: {
   selectedRepoRootProjectPath?: string | null;
   workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined;
   projectPath: string;
+  pathContext?: ProjectRelativePathContext;
 }): ReviewDiffPathFilterSpec[] {
   if (!params.assistedOnly) {
     return [
@@ -497,17 +506,20 @@ export function buildReviewDiffPathFilterSpecs(params: {
     { repoRootProjectPath: string | null | undefined; pathspecs: string[] }
   >();
 
-  for (const hunk of params.assistedHunks) {
+  for (const candidate of buildAssistedReviewPathCandidates(
+    params.assistedHunks,
+    params.pathContext
+  )) {
     // In multi-project workspaces, assisted pins use workspace-relative paths
     // like `project-b/src/file.ts`. Fetch each repo-root group from the owning
     // checkout so an accepted pin cannot disappear just because the Review pane
     // was currently rooted to another project.
     const repoRootProjectPath =
-      resolveRepoRootProjectPath(params.workspaceMetadata, hunk.path) ?? params.projectPath;
+      resolveRepoRootProjectPath(params.workspaceMetadata, candidate.path) ?? params.projectPath;
     const key = repoRootProjectPath ?? "";
     const pathspec = normalizeRepoRootFilePath(
       params.workspaceMetadata,
-      hunk.path,
+      candidate.path,
       repoRootProjectPath
     );
     const existing = pathspecsByRepoRoot.get(key);
@@ -537,6 +549,7 @@ export function buildReviewDiffPathFilter(params: {
   selectedDiffPath: string;
   workspaceMetadata: Pick<FrontendWorkspaceMetadata, "projects"> | null | undefined;
   repoRootProjectPath: string | null | undefined;
+  pathContext?: ProjectRelativePathContext;
 }): string {
   return (
     buildReviewDiffPathFilterSpecs({
@@ -580,6 +593,31 @@ export function getEffectiveReviewFrontendFilters(params: {
   return { showReadHunks: effectiveShowRead, searchTerm: params.searchTerm };
 }
 
+function getReviewPanelPathContext(params: {
+  workspaceMetadata:
+    | Pick<FrontendWorkspaceMetadata, "projectPath" | "subProjectPath">
+    | null
+    | undefined;
+  projectPath: string;
+}): ProjectRelativePathContext {
+  const projectPath = params.workspaceMetadata?.projectPath ?? params.projectPath;
+  return {
+    projectPath,
+    executionRootPath: params.workspaceMetadata?.subProjectPath ?? projectPath,
+  };
+}
+
+export function normalizeReviewPanelAssistedHunks(params: {
+  assistedHunks: readonly AssistedReviewHunk[];
+  workspaceMetadata:
+    | Pick<FrontendWorkspaceMetadata, "projectPath" | "subProjectPath">
+    | null
+    | undefined;
+  projectPath: string;
+}): AssistedReviewHunk[] {
+  return normalizeAssistedReviewHunks(params.assistedHunks, getReviewPanelPathContext(params));
+}
+
 interface ReviewAssistedStatsReporterProps {
   workspaceId: string;
   workspacePath: string;
@@ -608,6 +646,15 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
   const assistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
     rawWorkspaceStore.getAssistedReviewHunks(workspaceId)
   );
+  const workspaceReviewMetadata = workspaceMetadata.get(workspaceId);
+  const reviewPathContext = useMemo(
+    () => getReviewPanelPathContext({ workspaceMetadata: workspaceReviewMetadata, projectPath }),
+    [projectPath, workspaceReviewMetadata]
+  );
+  const normalizedAssistedHunks = useMemo(
+    () => normalizeAssistedReviewHunks(assistedHunks, reviewPathContext),
+    [assistedHunks, reviewPathContext]
+  );
 
   const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
   const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
@@ -622,7 +669,7 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
   });
 
   useEffect(() => {
-    if (assistedHunks.length === 0) {
+    if (normalizedAssistedHunks.length === 0) {
       onUnreadAssistedChange(0);
       return;
     }
@@ -636,11 +683,12 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     const diffRequests = buildReviewDiffPathFilterSpecs({
       isImmersive: false,
       assistedOnly: true,
-      assistedHunks,
+      assistedHunks: normalizedAssistedHunks,
       selectedFilePath: null,
       selectedDiffPath: "",
       workspaceMetadata: workspaceMetadata.get(workspaceId),
       projectPath,
+      pathContext: reviewPathContext,
     }).map((spec) => ({
       ...spec,
       diffCommand: buildGitDiffCommand(
@@ -690,7 +738,9 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
         );
         if (cancelled) return;
         const data = mergeReviewDiffCacheValues(values.filter((value) => value !== null));
-        onUnreadAssistedChange(countUnreadAssistedHunks(data.hunks, assistedHunks, isRead));
+        onUnreadAssistedChange(
+          countUnreadAssistedHunks(data.hunks, normalizedAssistedHunks, isRead, reviewPathContext)
+        );
       } catch {
         if (!cancelled) onUnreadAssistedChange(0);
       }
@@ -709,7 +759,8 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     workspaceMetadata,
     diffBase,
     includeUncommitted,
-    assistedHunks,
+    normalizedAssistedHunks,
+    reviewPathContext,
     isRead,
     isCreating,
     onUnreadAssistedChange,
@@ -1015,6 +1066,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   );
   const assistedHunks = useSyncExternalStore(subscribeAssistedHunks, () =>
     rawWorkspaceStore.getAssistedReviewHunks(workspaceId)
+  );
+
+  const workspaceReviewMetadata = workspaceMetadata.get(workspaceId);
+  const reviewPathContext = useMemo(
+    () => getReviewPanelPathContext({ workspaceMetadata: workspaceReviewMetadata, projectPath }),
+    [projectPath, workspaceReviewMetadata]
+  );
+  const normalizedAssistedHunks = useMemo(
+    () => normalizeAssistedReviewHunks(assistedHunks, reviewPathContext),
+    [assistedHunks, reviewPathContext]
   );
 
   const hasAssistedHunks = assistedHunks.length > 0;
@@ -1409,12 +1470,13 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const diffRequests = buildReviewDiffPathFilterSpecs({
       isImmersive,
       assistedOnly: filters.assistedOnly,
-      assistedHunks,
+      assistedHunks: normalizedAssistedHunks,
       selectedFilePath,
       selectedDiffPath,
       selectedRepoRootProjectPath,
       workspaceMetadata: workspaceMetadata.get(workspaceId),
       projectPath,
+      pathContext: reviewPathContext,
     }).map((spec) => {
       const diffCommand = buildGitDiffCommand(
         filters.diffBase,
@@ -1567,7 +1629,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     filters.diffBase,
     filters.includeUncommitted,
     filters.assistedOnly,
-    assistedHunks,
+    normalizedAssistedHunks,
+    reviewPathContext,
     selectedFilePath,
     selectedRepoRootProjectPath,
     selectedDiffPath,
@@ -1642,15 +1705,20 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // filter AND pin matching hunks to the top (in agent-declared order).
   // Comments are looked up off this same map by HunkViewer.
   const assistedMatchByHunkId = useMemo(() => {
-    if (assistedHunks.length === 0)
-      return new Map<string, { entry: (typeof assistedHunks)[number]; index: number }>();
-    const map = new Map<string, { entry: (typeof assistedHunks)[number]; index: number }>();
+    if (normalizedAssistedHunks.length === 0)
+      return new Map<string, { entry: AssistedReviewHunk; index: number }>();
+    const candidates = resolveAssistedReviewPathCandidatesForHunks(
+      normalizedAssistedHunks,
+      hunks,
+      reviewPathContext
+    );
+    const map = new Map<string, { entry: AssistedReviewHunk; index: number }>();
     for (const h of hunks) {
-      const match = findAssistedMatch(h, assistedHunks);
+      const match = findAssistedCandidateMatch(h, candidates);
       if (match) map.set(h.id, match);
     }
     return map;
-  }, [hunks, assistedHunks]);
+  }, [hunks, normalizedAssistedHunks, reviewPathContext]);
 
   const assistedCommentByHunkId = useMemo(() => {
     if (assistedMatchByHunkId.size === 0) return new Map<string, string>();
@@ -1685,7 +1753,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // This is cheaper than a periodic interval and keeps idle workspaces
   // completely quiet once every pin has expired.
   //
-  // We schedule against the FULL `assistedHunks` list rather than just the
+  // We schedule against the FULL normalized assisted list rather than just the
   // currently-matched subset: a pin that's added while it doesn't match the
   // diff (e.g., wrong base) still needs its 60s clock to tick down, so that
   // if/when it becomes matched later (refresh, rebase) the badge has already
@@ -1693,10 +1761,10 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const newAssistedPinThresholdMs = 60_000;
   const [newPinTick, setNewPinTick] = useState(() => Date.now());
   useEffect(() => {
-    if (assistedHunks.length === 0) return;
+    if (normalizedAssistedHunks.length === 0) return;
     const now = Date.now();
     let nextExpiry = Infinity;
-    for (const entry of assistedHunks) {
+    for (const entry of normalizedAssistedHunks) {
       const addedAt = entry.addedAt;
       if (!addedAt) continue;
       const expiry = addedAt + newAssistedPinThresholdMs;
@@ -1711,7 +1779,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     const delay = nextExpiry - now + 50;
     const id = window.setTimeout(() => setNewPinTick(Date.now()), delay);
     return () => window.clearTimeout(id);
-  }, [assistedHunks, newPinTick, newAssistedPinThresholdMs]);
+  }, [normalizedAssistedHunks, newPinTick, newAssistedPinThresholdMs]);
 
   const assistedNewByHunkId = useMemo(() => {
     if (assistedMatchByHunkId.size === 0) return new Set<string>();
@@ -1977,8 +2045,8 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // badge source when this panel is not selected. Both use the same helper so
   // assisted filters that don't intersect the current diff aren't counted.
   const unreadAssistedCount = useMemo(
-    () => countUnreadAssistedHunks(hunks, assistedHunks, isRead),
-    [hunks, assistedHunks, isRead]
+    () => countUnreadAssistedHunks(hunks, normalizedAssistedHunks, isRead, reviewPathContext),
+    [hunks, normalizedAssistedHunks, isRead, reviewPathContext]
   );
 
   // Calculate stats from the same precomputed read summaries so read toggles do one pass.

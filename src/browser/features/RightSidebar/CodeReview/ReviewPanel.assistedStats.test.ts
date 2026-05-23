@@ -7,6 +7,7 @@ import {
   countUnreadAssistedHunks,
   getEffectiveReviewFrontendFilters,
   getEffectiveReviewIncludeUncommitted,
+  normalizeReviewPanelAssistedHunks,
 } from "./ReviewPanel";
 
 function hunk(overrides: Partial<DiffHunk>): DiffHunk {
@@ -47,6 +48,39 @@ describe("countUnreadAssistedHunks", () => {
     const assisted: AssistedReviewHunk[] = [{ path: "src/a.ts", range: { start: 10, end: 12 } }];
 
     expect(countUnreadAssistedHunks(hunks, assisted, () => false)).toBe(1);
+  });
+});
+
+describe("normalizeReviewPanelAssistedHunks", () => {
+  test("keeps primary project-relative pins while matching cwd-relative fallbacks", () => {
+    const pathContext = {
+      projectPath: "/repo/app",
+      executionRootPath: "/repo/app/packages/api",
+    };
+    const assisted = normalizeReviewPanelAssistedHunks({
+      assistedHunks: [
+        { path: "src/agent.ts", range: { start: 2, end: 4 }, comment: "ambiguous" },
+        { path: "packages/api/src/already-rooted.ts", comment: "project-relative" },
+      ],
+      workspaceMetadata: {
+        projectPath: "/repo/app",
+        subProjectPath: "/repo/app/packages/api",
+      },
+      projectPath: "/repo/app",
+    });
+
+    expect(assisted).toEqual([
+      { path: "src/agent.ts", range: { start: 2, end: 4 }, comment: "ambiguous" },
+      { path: "packages/api/src/already-rooted.ts", comment: "project-relative" },
+    ]);
+    expect(
+      countUnreadAssistedHunks(
+        [hunk({ id: "match", filePath: "packages/api/src/agent.ts", newStart: 3 })],
+        assisted,
+        () => false,
+        pathContext
+      )
+    ).toBe(1);
   });
 });
 
@@ -113,6 +147,30 @@ describe("buildReviewDiffPathFilterSpecs", () => {
         repoRootProjectPath: "/repo/project-a",
         pathFilter: " -- 'src/main.ts'",
         selectedFilePath: "src/main.ts",
+      },
+    ]);
+  });
+
+  test("assisted mode fetches primary paths plus execution-root fallbacks", () => {
+    const specs = buildReviewDiffPathFilterSpecs({
+      isImmersive: false,
+      assistedOnly: true,
+      assistedHunks: [{ path: "src/agent.ts" }, { path: "README.md" }],
+      selectedFilePath: null,
+      selectedDiffPath: "",
+      workspaceMetadata: null,
+      projectPath: "/repo/app",
+      pathContext: {
+        projectPath: "/repo/app",
+        executionRootPath: "/repo/app/packages/api",
+      },
+    });
+
+    expect(specs).toEqual([
+      {
+        repoRootProjectPath: "/repo/app",
+        pathFilter: " -- 'src/agent.ts' 'packages/api/src/agent.ts' 'README.md'",
+        selectedFilePath: "src/agent.ts",
       },
     ]);
   });

@@ -40,6 +40,7 @@ import {
   createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
   resolveWorkspaceExecutionPath,
+  resolveWorkspaceRootPath,
 } from "@/node/runtime/runtimeHelpers";
 import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
@@ -7222,15 +7223,16 @@ export class WorkspaceService extends EventEmitter {
         return Err(readyResult.error ?? "Runtime not ready");
       }
 
+      const singleProjectMetadataWithPath = {
+        ...metadata,
+        namedWorkspacePath: workspace.workspacePath,
+      };
+      const workspaceRootPath = multiProjectRuntimes
+        ? undefined
+        : resolveWorkspaceRootPath(singleProjectMetadataWithPath, runtime);
       const workspacePath = multiProjectRuntimes
         ? undefined
-        : resolveWorkspaceExecutionPath(
-            {
-              ...metadata,
-              namedWorkspacePath: workspace.workspacePath,
-            },
-            runtime
-          );
+        : resolveWorkspaceExecutionPath(singleProjectMetadataWithPath, runtime);
       const multiProjectContainerPath = multiProjectRuntimes
         ? runtime.getWorkspacePath(metadata.projectPath, metadata.name)
         : undefined;
@@ -7268,6 +7270,13 @@ export class WorkspaceService extends EventEmitter {
       const requestedRepoRootProjectPath = normalizeRepoRootProjectPath(
         options?.repoRootProjectPath
       );
+      if (!multiProjectRuntimes && requiresRepoRootCwd) {
+        // Sub-project workspaces normally execute tools from their scoped cwd, but repo-context
+        // commands (Review, Git status, bare git command mode) need the checkout root so git
+        // pathspecs and diff output share the same repo-root coordinate system.
+        cwdForExecution = workspaceRootPath;
+        assert(cwdForExecution?.length, "Single-project repo-root execution requires a repo cwd");
+      }
       if (multiProjectRuntimes && requiresRepoRootCwd) {
         const repoRootRuntime = requestedRepoRootProjectPath
           ? multiProjectRuntimes.find(

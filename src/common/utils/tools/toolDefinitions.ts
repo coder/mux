@@ -1579,9 +1579,11 @@ export const TOOL_DEFINITIONS = {
     description:
       "Flag specific code regions in the Review pane for the user to review next. " +
       "Use this to draw the user's attention to critical changes you want reviewed first. " +
-      "Each hunk references a workspace-relative file path with an optional inclusive line " +
+      "Each hunk references a project-relative file path with an optional inclusive line " +
       'range using familiar syntax: "src/foo.ts" (whole file), "src/foo.ts:42" (single line), ' +
-      'or "src/foo.ts:42-58" (range, new-file line numbers). Attach a short comment to each ' +
+      'or "src/foo.ts:42-58" (range, new-file line numbers). Project-relative paths are ' +
+      "preferred; use './' or '../' for paths that must resolve from the current tool cwd. " +
+      "Attach a short comment to each " +
       "hunk explaining what to look at and why.\n\n" +
       "operation:\n" +
       "  - 'replace' (default): overwrite the current assisted set\n" +
@@ -1603,7 +1605,7 @@ export const TOOL_DEFINITIONS = {
                   .min(1)
                   .describe(
                     'Filter in `path[:range]` form, e.g. "src/foo.ts" or "src/foo.ts:42-58". ' +
-                      "Path is workspace-relative; range uses new-file line numbers (inclusive)."
+                      "Path is project-relative; use './' or '../' when the path must resolve from the current tool working directory. Range uses new-file line numbers (inclusive)."
                   ),
                 comment: z
                   .string()

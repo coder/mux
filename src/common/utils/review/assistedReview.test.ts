@@ -1,10 +1,16 @@
 import { describe, expect, it } from "bun:test";
 import type { DiffHunk } from "@/common/types/review";
 import {
+  deriveProjectRelativePath,
+  findAssistedCandidateMatch,
   findAssistedMatch,
   formatAssistedFilter,
+  getToolPathProjectRelativeCandidates,
   hunkMatchesAssisted,
+  normalizeAssistedReviewHunk,
+  normalizeToolPathToProjectRelative,
   parseAssistedFilter,
+  resolveAssistedReviewPathCandidatesForHunks,
 } from "./assistedReview";
 
 const baseHunk = (overrides: Partial<DiffHunk> = {}): DiffHunk => ({
@@ -17,6 +23,89 @@ const baseHunk = (overrides: Partial<DiffHunk> = {}): DiffHunk => ({
   content: "",
   header: "@@",
   ...overrides,
+});
+
+describe("project-relative path normalization", () => {
+  const context = {
+    projectPath: "/repo/app",
+    executionRootPath: "/repo/app/packages/api",
+  };
+
+  it("derives normalized project-relative paths", () => {
+    expect(deriveProjectRelativePath("C:\\repo\\app", "C:\\repo\\app\\packages\\api")).toBe(
+      "packages/api"
+    );
+    expect(deriveProjectRelativePath("/repo/app", "/other/packages/api")).toBeNull();
+  });
+
+  it("keeps ambiguous plain paths primary but adds an execution-root fallback", () => {
+    const candidates = getToolPathProjectRelativeCandidates("src/foo.ts", context);
+    expect(candidates.primaryPath).toBe("src/foo.ts");
+    expect(candidates.candidatePaths).toEqual(["src/foo.ts", "packages/api/src/foo.ts"]);
+  });
+
+  it("leaves project-relative assisted paths unchanged", () => {
+    expect(normalizeToolPathToProjectRelative("packages/api/src/foo.ts", context)).toBe(
+      "packages/api/src/foo.ts"
+    );
+    expect(getToolPathProjectRelativeCandidates("README.md", context).candidatePaths).toEqual([
+      "README.md",
+    ]);
+    expect(
+      getToolPathProjectRelativeCandidates("packages/shared.ts", context).candidatePaths
+    ).toEqual(["packages/shared.ts"]);
+  });
+
+  it("resolves explicit cwd-relative paths from the execution root", () => {
+    expect(normalizeToolPathToProjectRelative("./src/foo.ts", context)).toBe(
+      "packages/api/src/foo.ts"
+    );
+    expect(normalizeToolPathToProjectRelative("../shared.ts", context)).toBe("packages/shared.ts");
+    expect(normalizeToolPathToProjectRelative("../../README.md", context)).toBe("README.md");
+  });
+
+  it("preserves hunk metadata while normalizing explicit cwd-relative paths", () => {
+    expect(
+      normalizeAssistedReviewHunk(
+        { path: "./src/foo.ts", range: { start: 3, end: 5 }, comment: "check this", addedAt: 12 },
+        context
+      )
+    ).toEqual({
+      path: "packages/api/src/foo.ts",
+      range: { start: 3, end: 5 },
+      comment: "check this",
+      addedAt: 12,
+    });
+  });
+
+  it("resolves ambiguous candidates by preferring a matching primary path", () => {
+    const assisted = [{ path: "src/foo.ts" }];
+    const hunks = [
+      baseHunk({ id: "root", filePath: "src/foo.ts" }),
+      baseHunk({ id: "scoped", filePath: "packages/api/src/foo.ts" }),
+    ];
+
+    const candidates = resolveAssistedReviewPathCandidatesForHunks(assisted, hunks, context);
+
+    expect(candidates.map((candidate) => candidate.path)).toEqual(["src/foo.ts"]);
+    expect(findAssistedCandidateMatch(hunks[0], candidates)?.entry.path).toBe("src/foo.ts");
+    expect(findAssistedCandidateMatch(hunks[1], candidates)).toBeNull();
+  });
+
+  it("falls back to execution-root candidates when the primary path has no matching hunk", () => {
+    const assisted = [{ path: "src/foo.ts" }];
+    const hunks = [baseHunk({ id: "scoped", filePath: "packages/api/src/foo.ts" })];
+
+    const candidates = resolveAssistedReviewPathCandidatesForHunks(assisted, hunks, context);
+
+    expect(candidates.map((candidate) => candidate.path)).toEqual([
+      "src/foo.ts",
+      "packages/api/src/foo.ts",
+    ]);
+    expect(findAssistedCandidateMatch(hunks[0], candidates)?.entry.path).toBe(
+      "packages/api/src/foo.ts"
+    );
+  });
 });
 
 describe("parseAssistedFilter", () => {
