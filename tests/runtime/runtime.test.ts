@@ -1946,6 +1946,80 @@ describeIntegration("Runtime integration tests", () => {
       }
     }, 120000);
 
+    test("initWorkspace repairs a reusable snapshot whose base repo is missing objects", async () => {
+      const runtime = createSSHRuntime();
+
+      const projectName = `sync-heal-missing-objects-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const tmpDir = await import("os").then((os) => os.tmpdir());
+      const localProjectPath = `${tmpDir}/${projectName}`;
+      const layout = buildRemoteProjectLayout(srcBaseDir, localProjectPath);
+      const firstWorkspacePath = getRemoteWorkspacePath(layout, "missing-objects-a");
+      const secondWorkspacePath = getRemoteWorkspacePath(layout, "missing-objects-b");
+      const baseRepoPath = layout.baseRepoPath;
+      const repairSteps: string[] = [];
+      const repairLogger = {
+        ...noopInitLogger,
+        logStep(step: string) {
+          repairSteps.push(step);
+        },
+      };
+
+      const { execSync } = await import("child_process");
+      try {
+        execSync(
+          [
+            `mkdir -p "${localProjectPath}"`,
+            `cd "${localProjectPath}"`,
+            `git init -b main`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "content" > file.txt`,
+            `git add file.txt`,
+            `git commit -m "initial"`,
+          ].join(" && "),
+          { stdio: "pipe" }
+        );
+
+        const firstInit = await runtime.initWorkspace({
+          projectPath: localProjectPath,
+          branchName: "missing-objects-a",
+          trunkBranch: "main",
+          workspacePath: firstWorkspacePath,
+          initLogger: noopInitLogger,
+        });
+        if (!firstInit.success) {
+          throw new Error(`first initWorkspace failed: ${firstInit.error}`);
+        }
+
+        // Simulate a stale/corrupt managed cache left behind by older SSH path
+        // layouts or partial-clone state: refs and the snapshot marker still say
+        // the remote snapshot is reusable, but the object database cannot
+        // materialize a worktree. Init must repair additively rather than
+        // deleting the base repo, because sibling worktrees share this gitdir.
+        await execSSH(runtime, `find "${baseRepoPath}/objects" -type f -delete`);
+
+        const secondInit = await runtime.initWorkspace({
+          projectPath: localProjectPath,
+          branchName: "missing-objects-b",
+          trunkBranch: "main",
+          workspacePath: secondWorkspacePath,
+          initLogger: repairLogger,
+        });
+        if (!secondInit.success) {
+          throw new Error(`second initWorkspace failed: ${secondInit.error}`);
+        }
+
+        expect(repairSteps).toContain(
+          "Remote snapshot is missing objects; repairing shared base repository..."
+        );
+        const fileCheck = await execSSH(runtime, `cat "${secondWorkspacePath}/file.txt"`);
+        expect(fileCheck.stdout.trim()).toBe("content");
+      } finally {
+        execSync(`rm -rf "${localProjectPath}"`);
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
+      }
+    }, 120000);
+
     test("initWorkspace reimports when the snapshot marker outlives the base repo", async () => {
       const runtime = createSSHRuntime();
 

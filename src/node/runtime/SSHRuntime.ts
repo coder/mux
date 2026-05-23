@@ -69,6 +69,8 @@ const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 /** Small backoff for concurrent writers healing the same shared base repo config. */
 const BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS = [50, 100, 200];
 const BASE_REPO_HEALTH_PROBE_TIMEOUT_SECONDS = 10;
+const BASE_REPO_CONNECTIVITY_CHECK_TIMEOUT_SECONDS = 120;
+const BASE_REPO_MISSING_OBJECT_REPAIR_TIMEOUT_MS = 300_000;
 const BASE_REPO_PROMISOR_CLEANUP_TIMEOUT_SECONDS = 10;
 /**
  * Timeout for *spawning* remote detached gc, not for gc itself. The remote
@@ -129,6 +131,12 @@ const UNRESOLVED_DELTA_PUSH_PATTERNS = [
 
 function isUnresolvedDeltaPushFailure(errorMsg: string): boolean {
   return UNRESOLVED_DELTA_PUSH_PATTERNS.some((pattern) => errorMsg.includes(pattern));
+}
+
+function isMissingObjectCheckoutFailure(message: string): boolean {
+  return /unable to read sha1 file|Could not reset index file|missing (blob|tree|commit)|bad object|unable to read tree|object file .* is empty|loose object .* is corrupt/i.test(
+    message
+  );
 }
 
 const sharedProjectSyncTails = new Map<string, Promise<void>>();
@@ -263,8 +271,17 @@ function createAbortController(
   };
 }
 async function waitForProcessExit(proc: ChildProcess): Promise<number> {
+  // Callers often consume stdout before awaiting the process. Tiny git helpers
+  // can close in that window, so make the helper safe even when subscribed late.
+  if (proc.exitCode !== null) {
+    return proc.exitCode;
+  }
+  if (proc.signalCode !== null) {
+    return 1;
+  }
+
   return new Promise((resolve, reject) => {
-    proc.on("close", (code) => resolve(code ?? 0));
+    proc.on("close", (code) => resolve(code ?? 1));
     proc.on("error", (err) => reject(err));
   });
 }
@@ -804,6 +821,203 @@ export class SSHRuntime extends RemoteRuntime {
         throw healthError instanceof Error ? healthError : new Error(healthErrorMsg);
       }
       log.warn(`Shared base repository maintenance preflight failed: ${healthErrorMsg}`);
+    }
+  }
+
+  private async checkBaseRepoBundleConnectivity(
+    baseRepoPathArg: string,
+    abortSignal?: AbortSignal
+  ): Promise<{ healthy: true } | { healthy: false; detail: string }> {
+    const result = await execBuffered(
+      this,
+      [
+        `set -- $(git -C ${baseRepoPathArg} for-each-ref --format='%(refname)' ${shescape.quote(BUNDLE_REF_PREFIX)})`,
+        'if [ "$#" -eq 0 ]; then echo "no synced bundle refs found" >&2; exit 1; fi',
+        `git -C ${baseRepoPathArg} fsck --connectivity-only --no-dangling "$@"`,
+      ].join("\n"),
+      {
+        cwd: "/tmp",
+        timeout: BASE_REPO_CONNECTIVITY_CHECK_TIMEOUT_SECONDS,
+        abortSignal,
+      }
+    );
+
+    if (result.exitCode === 0) {
+      return { healthy: true };
+    }
+
+    return {
+      healthy: false,
+      detail: (result.stderr || result.stdout).trim() || `exit ${result.exitCode}`,
+    };
+  }
+
+  private async checkBaseRepoRevisionConnectivity(
+    baseRepoPathArg: string,
+    revision: string,
+    abortSignal?: AbortSignal
+  ): Promise<{ healthy: true } | { healthy: false; detail: string }> {
+    const result = await execBuffered(
+      this,
+      `git -C ${baseRepoPathArg} fsck --connectivity-only --no-dangling ${shescape.quote(revision)}`,
+      {
+        cwd: "/tmp",
+        timeout: BASE_REPO_CONNECTIVITY_CHECK_TIMEOUT_SECONDS,
+        abortSignal,
+      }
+    );
+
+    if (result.exitCode === 0) {
+      return { healthy: true };
+    }
+
+    return {
+      healthy: false,
+      detail: (result.stderr || result.stdout).trim() || `exit ${result.exitCode}`,
+    };
+  }
+
+  private async repairBaseRepoMissingObjectsFromLocal(
+    projectPath: string,
+    baseRepoPathArg: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+
+    await this.transport.acquireConnection({
+      abortSignal,
+      onWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+    });
+
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+
+    initLogger.logStep("Repairing shared base repository object cache...");
+    const remoteAbortController = createAbortController(
+      BASE_REPO_MISSING_OBJECT_REPAIR_TIMEOUT_MS,
+      abortSignal
+    );
+
+    try {
+      const remoteStream = await this.exec(`git -C ${baseRepoPathArg} unpack-objects -r`, {
+        cwd: "/tmp",
+        abortSignal: remoteAbortController.signal,
+      });
+      const remoteStdoutPromise = streamToString(remoteStream.stdout);
+      const remoteStderrPromise = streamToString(remoteStream.stderr);
+
+      // A normal fetch/push can be a no-op when the remote already has the
+      // commit object but is missing blobs from the same tree. Stream a complete
+      // non-thin local pack and let `unpack-objects -r` add only the missing
+      // objects without deleting or recreating the shared gitdir used by siblings.
+      const gitProc = spawn("git", ["-C", projectPath, "pack-objects", "--all", "--stdout"], {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+
+      let packStderr = "";
+      gitProc.stderr?.on("data", (data: Buffer) => {
+        const chunk = data.toString();
+        packStderr += chunk;
+        for (const line of chunk.split("\n").filter(Boolean)) {
+          initLogger.logStderr(line);
+        }
+      });
+      const gitExitCodePromise = waitForProcessExit(gitProc);
+
+      try {
+        await pipeReadableToWebWritable(gitProc.stdout, remoteStream.stdin, abortSignal);
+      } catch (error) {
+        gitProc.kill();
+        throw error;
+      }
+
+      const [gitExitCode, remoteExitCode, remoteStdout, remoteStderr] = await Promise.all([
+        gitExitCodePromise,
+        remoteStream.exitCode,
+        remoteStdoutPromise,
+        remoteStderrPromise,
+      ]);
+
+      if (remoteAbortController.didTimeout()) {
+        throw new Error(
+          `SSH command timed out after ${BASE_REPO_MISSING_OBJECT_REPAIR_TIMEOUT_MS}ms: git -C ${baseRepoPathArg} unpack-objects -r`
+        );
+      }
+
+      if (abortSignal?.aborted) {
+        throw new Error("Operation aborted");
+      }
+
+      if (gitExitCode !== 0) {
+        throw new Error(
+          `Failed to create repair pack: ${packStderr.trim() || `exit ${gitExitCode}`}`
+        );
+      }
+
+      if (remoteExitCode !== 0) {
+        const detail = (remoteStderr || remoteStdout).trim() || `exit ${remoteExitCode}`;
+        throw new Error(`Failed to unpack repair pack into shared base repository: ${detail}`);
+      }
+    } finally {
+      remoteAbortController.dispose();
+    }
+
+    initLogger.logStep("Shared base repository object cache repaired");
+  }
+
+  private async ensureBaseRepoSnapshotConnectivity(
+    projectPath: string,
+    baseRepoPathArg: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    const initialCheck = await this.checkBaseRepoBundleConnectivity(baseRepoPathArg, abortSignal);
+    if (initialCheck.healthy) {
+      return;
+    }
+
+    initLogger.logStep("Remote snapshot is missing objects; repairing shared base repository...");
+    log.warn("Remote snapshot failed connectivity check before reuse", {
+      detail: initialCheck.detail,
+    });
+
+    await this.repairBaseRepoMissingObjectsFromLocal(
+      projectPath,
+      baseRepoPathArg,
+      initLogger,
+      abortSignal
+    );
+
+    const repairedCheck = await this.checkBaseRepoBundleConnectivity(baseRepoPathArg, abortSignal);
+    if (!repairedCheck.healthy) {
+      throw new Error(
+        `Shared base repository is still missing objects after repair: ${repairedCheck.detail}`
+      );
+    }
+  }
+
+  private async cleanupFailedNewWorktreeCheckout(
+    baseRepoPathArg: string,
+    workspacePathArg: string,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    const result = await execBuffered(
+      this,
+      `git -C ${baseRepoPathArg} worktree remove --force ${workspacePathArg} >/dev/null 2>&1 || rm -rf ${workspacePathArg}`,
+      {
+        cwd: "/tmp",
+        timeout: 30,
+        abortSignal,
+      }
+    );
+    if (result.exitCode !== 0) {
+      const detail = (result.stderr || result.stdout).trim() || `exit ${result.exitCode}`;
+      log.warn(`Failed to clean up partial SSH worktree checkout: ${detail}`);
     }
   }
 
@@ -2067,6 +2281,12 @@ export class SSHRuntime extends RemoteRuntime {
           : await this.resolveRemoteSyncRefManifest(baseRepoPathArg, abortSignal);
       if (localRefManifest != null && remoteRefManifest === localRefManifest) {
         await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
+        await this.ensureBaseRepoSnapshotConnectivity(
+          projectPath,
+          baseRepoPathArg,
+          initLogger,
+          abortSignal
+        );
         initLogger.logStep("Reusing existing remote project snapshot");
         return;
       }
@@ -2360,9 +2580,23 @@ export class SSHRuntime extends RemoteRuntime {
       `  git -C ${baseRepoPathArg} rev-parse --verify "$r" >/dev/null 2>&1 || r=$(git -C ${baseRepoPathArg} for-each-ref --count=1 --format='%(refname)' ${bundleRefFallbackPrefix})`,
       `  [ -n "$r" ] || { echo WARM_MISS:no-bundle-ref; exit 0; }`,
       "fi",
-      // Materialize.
+      // Materialize. Capture checkout failures so a missing-object cache can
+      // fall through to the repairing slow path instead of becoming an opaque
+      // `worktree-add-failed` miss. The path was proven absent above, so removing
+      // a partial checkout here cannot wipe a pre-existing workspace.
       `mkdir -p ${workspaceParentArg}`,
-      `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${branchArg} "$r" >/dev/null 2>&1 || { echo WARM_MISS:worktree-add-failed; exit 0; }`,
+      `wt_output=$(${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${branchArg} "$r" 2>&1 >/dev/null)`,
+      "wt_status=$?",
+      'if [ "$wt_status" -ne 0 ]; then',
+      '  case "$wt_output" in',
+      '    *"unable to read sha1 file"*|*"Could not reset index file"*|*"missing blob"*|*"missing tree"*|*"missing commit"*|*"bad object"*|*"unable to read tree"*) wt_reason=missing-objects ;;',
+      "    *) wt_reason=worktree-add-failed ;;",
+      "  esac",
+      `  git -C ${baseRepoPathArg} worktree remove --force ${workspacePathArg} >/dev/null 2>&1 || rm -rf ${workspacePathArg}`,
+      '  [ -z "$wt_output" ] || printf "%s\\n" "$wt_output" >&2',
+      '  echo "WARM_MISS:$wt_reason"',
+      "  exit 0",
+      "fi",
       // .gitmodules probe folded inline to skip a post-warm SSH RTT.
       `test -f ${workspacePathArg}/.gitmodules && echo GITMODULES=present || echo GITMODULES=missing`,
       "echo WARM_OK",
@@ -2437,6 +2671,7 @@ export class SSHRuntime extends RemoteRuntime {
     // another SSH workspace via worktree add or legacy cp), skip the expensive sync step.
     const workspacePathArg = expandTildeForSSH(workspacePath);
     let needsWorktreeCheckout = true;
+    let workspacePathExistedBeforeCheckout = false;
 
     try {
       const dirCheck = await execBuffered(this, `test -d ${workspacePathArg}`, {
@@ -2445,6 +2680,7 @@ export class SSHRuntime extends RemoteRuntime {
         abortSignal,
       });
       if (dirCheck.exitCode === 0) {
+        workspacePathExistedBeforeCheckout = true;
         const gitCheck = await execBuffered(
           this,
           `git -C ${workspacePathArg} rev-parse --is-inside-work-tree`,
@@ -2457,8 +2693,10 @@ export class SSHRuntime extends RemoteRuntime {
         needsWorktreeCheckout = gitCheck.exitCode !== 0;
       }
     } catch {
-      // Default to materializing the workspace on unexpected errors.
+      // Default to materializing the workspace on unexpected errors, but do not
+      // later delete the path because we failed to prove it was absent first.
       needsWorktreeCheckout = true;
+      workspacePathExistedBeforeCheckout = true;
     }
 
     if (needsWorktreeCheckout) {
@@ -2507,13 +2745,70 @@ export class SSHRuntime extends RemoteRuntime {
       // (e.g. orphaned from a previously deleted workspace). Git still prevents
       // checking out a branch that's active in another worktree.
       initLogger.logStep(`Creating worktree for branch: ${branchName}`);
-      const worktreeCmd = `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(newBranchBase)}`;
+      const runWorktreeAdd = (baseRef: string) =>
+        execBuffered(
+          this,
+          `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(baseRef)}`,
+          {
+            cwd: "/tmp",
+            timeout: 300,
+            abortSignal,
+          }
+        );
 
-      const worktreeResult = await execBuffered(this, worktreeCmd, {
-        cwd: "/tmp",
-        timeout: 300,
-        abortSignal,
-      });
+      let worktreeBase = newBranchBase;
+      let worktreeResult = await runWorktreeAdd(worktreeBase);
+
+      if (
+        worktreeResult.exitCode !== 0 &&
+        isMissingObjectCheckoutFailure(worktreeResult.stderr || worktreeResult.stdout)
+      ) {
+        initLogger.logStep("Shared base repository is missing checkout objects; repairing...");
+        if (!workspacePathExistedBeforeCheckout) {
+          await this.cleanupFailedNewWorktreeCheckout(
+            baseRepoPathArg,
+            workspacePathArg,
+            abortSignal
+          );
+        }
+
+        await this.repairBaseRepoMissingObjectsFromLocal(
+          projectPath,
+          baseRepoPathArg,
+          initLogger,
+          abortSignal
+        );
+
+        const repairedBaseCheck = await this.checkBaseRepoRevisionConnectivity(
+          baseRepoPathArg,
+          worktreeBase,
+          abortSignal
+        );
+        if (!repairedBaseCheck.healthy) {
+          if (worktreeBase === `origin/${trunkBranch}` && bundleTrunkRef != null) {
+            initLogger.logStderr(
+              `Note: origin/${trunkBranch} is still missing objects after repair; using local snapshot ${bundleTrunkRef}`
+            );
+            worktreeBase = bundleTrunkRef;
+            const fallbackCheck = await this.checkBaseRepoRevisionConnectivity(
+              baseRepoPathArg,
+              worktreeBase,
+              abortSignal
+            );
+            if (!fallbackCheck.healthy) {
+              throw new Error(
+                `Shared base repository is still missing objects after repair: ${fallbackCheck.detail}`
+              );
+            }
+          } else {
+            throw new Error(
+              `Shared base repository is still missing objects after repair: ${repairedBaseCheck.detail}`
+            );
+          }
+        }
+
+        worktreeResult = await runWorktreeAdd(worktreeBase);
+      }
 
       if (worktreeResult.exitCode !== 0) {
         throw new Error(
