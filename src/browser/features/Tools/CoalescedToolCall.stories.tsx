@@ -1,22 +1,34 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import type { ReactNode } from "react";
 import { useState } from "react";
 
 import { CoalescedToolCall } from "@/browser/features/Tools/CoalescedToolCall";
-import { lightweightMeta } from "@/browser/stories/meta.js";
+import { CHROMATIC_DISABLED, lightweightMeta } from "@/browser/stories/meta.js";
 
+/**
+ * Layout shell rendered inside each story so the meta-level decorator
+ * stack (which provides `TooltipProvider` via `StoryUiShell`) is not
+ * shadowed by a story-local `decorators` override.
+ */
+function StoryLayout(props: { children: ReactNode }) {
+  return (
+    <div className="bg-background p-6">
+      <div className="w-full max-w-3xl">{props.children}</div>
+    </div>
+  );
+}
+
+// These stories are visual references for the coalesce row; they don't add
+// regression-meaningful coverage beyond the unit/test files in this folder,
+// so opt out of Chromatic snapshots to stay under the global snapshot budget.
 const meta = {
   ...lightweightMeta,
   title: "App/Chat/Tools/CoalescedToolCall",
   component: CoalescedToolCall,
-  decorators: [
-    (Story) => (
-      <div className="bg-background p-6">
-        <div className="w-full max-w-3xl">
-          <Story />
-        </div>
-      </div>
-    ),
-  ],
+  parameters: {
+    ...lightweightMeta.parameters,
+    chromatic: CHROMATIC_DISABLED,
+  },
 } satisfies Meta<typeof CoalescedToolCall>;
 
 export default meta;
@@ -28,16 +40,20 @@ function InteractiveCoalesced(
 ) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <CoalescedToolCall {...args} expanded={expanded} onToggle={() => setExpanded((e) => !e)} />
+    <StoryLayout>
+      <CoalescedToolCall {...args} expanded={expanded} onToggle={() => setExpanded((e) => !e)} />
+    </StoryLayout>
   );
 }
+
+const NOOP = () => undefined;
 
 export const TwoReads: Story = {
   args: {
     kind: "file_read",
     filePaths: ["src/App.tsx", "src/main.ts"],
     expanded: false,
-    onToggle: () => undefined,
+    onToggle: NOOP,
   },
   render: (args) => <InteractiveCoalesced {...args} />,
 };
@@ -53,7 +69,7 @@ export const ManyReads: Story = {
       "src/browser/features/Tools/CoalescedToolCall.tsx",
     ],
     expanded: false,
-    onToggle: () => undefined,
+    onToggle: NOOP,
   },
   render: (args) => <InteractiveCoalesced {...args} />,
 };
@@ -63,7 +79,7 @@ export const TwoEdits: Story = {
     kind: "file_edit",
     filePaths: ["src/App.tsx", "src/main.ts"],
     expanded: false,
-    onToggle: () => undefined,
+    onToggle: NOOP,
   },
   render: (args) => <InteractiveCoalesced {...args} />,
 };
@@ -73,6 +89,11 @@ export const ExpandedReads: Story = {
     kind: "file_read",
     filePaths: ["src/App.tsx", "src/main.ts", "src/preload.ts"],
     expanded: true,
-    onToggle: () => undefined,
+    onToggle: NOOP,
   },
+  render: (args) => (
+    <StoryLayout>
+      <CoalescedToolCall {...args} />
+    </StoryLayout>
+  ),
 };
