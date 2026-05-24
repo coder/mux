@@ -57,14 +57,29 @@ export const CoalescedToolCall: React.FC<CoalescedToolCallProps> = ({
   onToggle,
 }) => {
   const { verb, iconToolName } = KIND_COPY[kind];
+  // Display dedupe: the same file is often read/edited several times in a
+  // burst (e.g. multi-hunk edits to one file). Showing "a.ts, a.ts, b.ts"
+  // adds noise without information. Preserve chronological order by keeping
+  // the first occurrence of each path.
+  const uniquePaths = React.useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const path of filePaths) {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      out.push(path);
+    }
+    return out;
+  }, [filePaths]);
+
   // The summary is only rendered for groups of >= 2, but guard against zero
   // for type safety and to keep the copy sensible.
-  const fileCount = filePaths.length;
+  const fileCount = uniquePaths.length;
   const noun = fileCount === 1 ? "file" : "files";
   // Use the first path to drive the small file-type icon — gives the row a
   // visual anchor that matches the single-call layout.
-  const leadingPath = filePaths[0] ?? "";
-  const joinedPaths = filePaths.join(", ");
+  const leadingPath = uniquePaths[0] ?? "";
+  const joinedPaths = uniquePaths.join(", ");
 
   return (
     <ToolContainer expanded={false} className="@container">

@@ -102,4 +102,22 @@ describe("CoalescedToolCall", () => {
 
     expect(view.getByText(/Read file\b/)).toBeTruthy();
   });
+
+  test("deduplicates repeated file paths while preserving first-occurrence order", () => {
+    const view = render(
+      <TooltipProvider>
+        <CoalescedToolCall
+          kind="file_edit"
+          filePaths={["a.ts", "b.ts", "a.ts", "c.ts", "b.ts"]}
+          expanded={false}
+          onToggle={noop}
+        />
+      </TooltipProvider>
+    );
+
+    // Order kept by first occurrence; duplicates removed from the rendered list.
+    expect(view.getByText("a.ts, b.ts, c.ts")).toBeTruthy();
+    // Plural noun reflects the unique count (3), not the raw tool-call count (5).
+    expect(view.getByText(/Wrote files/)).toBeTruthy();
+  });
 });
