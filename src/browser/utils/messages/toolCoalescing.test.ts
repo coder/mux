@@ -214,14 +214,38 @@ describe("computeToolCoalesceInfos", () => {
     expect(infoAt(messages, 2)).toBeUndefined();
   });
 
-  it("still coalesces a group when no member is partial", () => {
+  it("does not coalesce a group with a failed member (preserves error visibility)", () => {
+    const failed = fileReadMessage("2", "/b.ts", 2);
+    failed.status = "failed";
+    const messages: DisplayedMessage[] = [
+      fileReadMessage("1", "/a.ts", 1),
+      failed,
+      fileReadMessage("3", "/c.ts", 3),
+    ];
+
+    expect(infoAt(messages, 0)).toBeUndefined();
+    expect(infoAt(messages, 1)).toBeUndefined();
+    expect(infoAt(messages, 2)).toBeUndefined();
+  });
+
+  it("does not coalesce a group with a still-running member", () => {
+    // Mid-stream a fresh tool call is `executing`; the summary row hides
+    // that status until the user expands, so refuse to coalesce.
+    const running = fileReadMessage("2", "/b.ts", 2);
+    running.status = "executing";
+    const messages: DisplayedMessage[] = [fileReadMessage("1", "/a.ts", 1), running];
+
+    expect(infoAt(messages, 0)).toBeUndefined();
+    expect(infoAt(messages, 1)).toBeUndefined();
+  });
+
+  it("still coalesces a group when every member is completed", () => {
     const messages = [
       fileReadMessage("1", "/a.ts", 1),
       fileReadMessage("2", "/b.ts", 2),
       fileReadMessage("3", "/c.ts", 3),
     ];
 
-    // All messages have isPartial=false from the helper, so coalescing applies.
     expect(infoAt(messages, 0)?.position).toBe("head");
   });
 

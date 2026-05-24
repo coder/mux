@@ -77,14 +77,17 @@ function getCoalesceKind(msg: DisplayedMessage | undefined): ToolCoalesceKind | 
 }
 
 /**
- * A tool row carries an interruption signal that the transcript must keep
- * visible (the rendered InterruptedBarrier). Coalescing a partial member
- * would hide that signal, so we skip the entire group whenever any member
- * is partial. In practice this only matters when the stream stopped
- * mid-burst, so the uncoalesced row count is small.
+ * A coalesceable member is a tool call whose row carries no actionable
+ * signal the user would lose if hidden. Individual tool rows surface
+ * status (pending/executing/failed/interrupted/redacted) and inline
+ * errors, and partial rows render an InterruptedBarrier. The summary
+ * row deliberately renders none of those, so any non-completed or
+ * partial member forces the whole group back to normal rendering.
  */
-function isPartialToolMessage(msg: DisplayedMessage | undefined): boolean {
-  return msg?.type === "tool" && msg.isPartial === true;
+function isCoalesceableToolMember(msg: DisplayedMessage | undefined): boolean {
+  if (msg?.type !== "tool") return false;
+  if (msg.isPartial) return false;
+  return msg.status === "completed";
 }
 
 /**
@@ -118,18 +121,20 @@ export function computeToolCoalesceInfos(
 
     const groupSize = groupEnd - index + 1;
 
-    // Skip coalescing if any member is interrupted — hiding a partial row
-    // would eat its InterruptedBarrier and leave the user with no visual
-    // signal that the burst stopped mid-tool.
-    let hasPartialMember = false;
+    // Skip coalescing if any member is not safely coalesceable (still
+    // running, failed, interrupted, redacted, or partial). Those rows
+    // carry status/error UI or an InterruptedBarrier that the summary
+    // row deliberately does not render, so hiding them would eat the
+    // signal until the user manually expands the group.
+    let allMembersCoalesceable = true;
     for (let j = index; j <= groupEnd; j++) {
-      if (isPartialToolMessage(messages[j])) {
-        hasPartialMember = true;
+      if (!isCoalesceableToolMember(messages[j])) {
+        allMembersCoalesceable = false;
         break;
       }
     }
 
-    if (groupSize >= MIN_COALESCE_GROUP_SIZE && !hasPartialMember) {
+    if (groupSize >= MIN_COALESCE_GROUP_SIZE && allMembersCoalesceable) {
       const filePaths: string[] = [];
       for (let j = index; j <= groupEnd; j++) {
         const candidate = messages[j];
