@@ -32,8 +32,10 @@ import {
   shouldBypassDeferredMessages,
 } from "@/browser/utils/messages/messageUtils";
 import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
+import { computeToolCoalesceInfos } from "@/browser/utils/messages/toolCoalescing";
 import { BashCollapsedSummaryModeProvider } from "@/browser/features/Tools/BashCollapsedSummaryModeContext";
 import { BashOutputCollapsedIndicator } from "@/browser/features/Tools/BashOutputCollapsedIndicator";
+import { CoalescedToolCall } from "@/browser/features/Tools/CoalescedToolCall";
 import {
   getInterruptionContext,
   getLastMainRetryCandidateMessage,
@@ -338,6 +340,13 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   // Track which bash_output groups are expanded (keyed by first message ID)
   const [expandedBashGroups, setExpandedBashGroups] = useState<Set<string>>(new Set());
 
+  // Track which tool-coalesce groups (file_read / file_edit bursts) the user
+  // has expanded. Keyed by the head message ID so the entry survives later
+  // additions to the same group without changing identity.
+  const [expandedToolCoalesceGroups, setExpandedToolCoalesceGroups] = useState<Set<string>>(
+    new Set()
+  );
+
   // Extract state from workspace state
 
   // Keep a ref to the latest workspace state so event handlers (passed to memoized children)
@@ -426,6 +435,12 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   // Precompute bash_output grouping once per message snapshot so row rendering stays O(n).
   const bashOutputGroupInfos = useMemo(
     () => computeBashOutputGroupInfos(deferredMessages),
+    [deferredMessages]
+  );
+
+  // Precompute tool-coalesce metadata (file_read / file_edit bursts) once per snapshot.
+  const toolCoalesceInfos = useMemo(
+    () => computeToolCoalesceInfos(deferredMessages),
     [deferredMessages]
   );
 
@@ -681,6 +696,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   useEffect(() => {
     setEditingState({ workspaceId, message: undefined });
     setExpandedBashGroups(new Set());
+    setExpandedToolCoalesceGroups(new Set());
   }, [workspaceId]);
 
   const handleChatInputReady = useCallback((api: ChatInputAPI) => {
@@ -1132,6 +1148,21 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                         return null;
                       }
 
+                      // Tool-coalesce groups (file_read / file_edit bursts). The head
+                      // call is replaced by a summary row when collapsed; members are
+                      // hidden entirely until the user expands the group.
+                      const toolCoalesceGroup = toolCoalesceInfos[index];
+                      const coalesceHeadId = toolCoalesceGroup
+                        ? deferredMessages[toolCoalesceGroup.headIndex]?.id
+                        : undefined;
+                      const isToolCoalesceExpanded = coalesceHeadId
+                        ? expandedToolCoalesceGroups.has(coalesceHeadId)
+                        : false;
+
+                      if (toolCoalesceGroup?.position === "member" && !isToolCoalesceExpanded) {
+                        return null;
+                      }
+
                       const isAtCutoff =
                         editCutoffHistoryId !== undefined &&
                         msg.type !== "history-hidden" &&
@@ -1145,27 +1176,61 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                           ? taskReportLinking
                           : undefined;
 
+                      // Render order at the head of a coalesced group:
+                      //   - collapsed: summary row replaces the head's MessageRenderer.
+                      //   - expanded:  summary row sits at the top (acts as the
+                      //                collapse toggle) and the head's normal
+                      //                MessageRenderer renders directly below, with
+                      //                the rest of the group's members following on
+                      //                subsequent iterations.
+                      const renderCoalesceSummary =
+                        toolCoalesceGroup?.position === "head" && coalesceHeadId;
+                      const renderNormalMessage = !renderCoalesceSummary || isToolCoalesceExpanded;
+                      const toggleCoalesceGroup =
+                        coalesceHeadId !== undefined
+                          ? () =>
+                              setExpandedToolCoalesceGroups((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(coalesceHeadId)) {
+                                  next.delete(coalesceHeadId);
+                                } else {
+                                  next.add(coalesceHeadId);
+                                }
+                                return next;
+                              })
+                          : undefined;
+
                       return (
                         <React.Fragment key={`${workspaceId}:${msg.id}`}>
-                          <MessageRenderer
-                            message={msg}
-                            onEditUserMessage={transcriptOnly ? undefined : handleEditUserMessage}
-                            workspaceId={workspaceId}
-                            isCompacting={isCompacting}
-                            onReviewNote={handleReviewNote}
-                            isLatestProposePlan={
-                              msg.type === "tool" &&
-                              msg.toolName === "propose_plan" &&
-                              msg.id === latestProposePlanId
-                            }
-                            bashOutputGroup={bashOutputGroup}
-                            taskReportLinking={taskReportLinkingForMessage}
-                            userMessageNavigation={
-                              msg.type === "user"
-                                ? userMessageNavigationByHistoryId?.get(msg.historyId)
-                                : undefined
-                            }
-                          />
+                          {renderCoalesceSummary && toolCoalesceGroup && toggleCoalesceGroup && (
+                            <CoalescedToolCall
+                              kind={toolCoalesceGroup.kind}
+                              filePaths={toolCoalesceGroup.filePaths}
+                              expanded={isToolCoalesceExpanded}
+                              onToggle={toggleCoalesceGroup}
+                            />
+                          )}
+                          {renderNormalMessage && (
+                            <MessageRenderer
+                              message={msg}
+                              onEditUserMessage={transcriptOnly ? undefined : handleEditUserMessage}
+                              workspaceId={workspaceId}
+                              isCompacting={isCompacting}
+                              onReviewNote={handleReviewNote}
+                              isLatestProposePlan={
+                                msg.type === "tool" &&
+                                msg.toolName === "propose_plan" &&
+                                msg.id === latestProposePlanId
+                              }
+                              bashOutputGroup={bashOutputGroup}
+                              taskReportLinking={taskReportLinkingForMessage}
+                              userMessageNavigation={
+                                msg.type === "user"
+                                  ? userMessageNavigationByHistoryId?.get(msg.historyId)
+                                  : undefined
+                              }
+                            />
+                          )}
                           {/* Show collapsed indicator after the first item in a bash_output group */}
                           {bashOutputGroup?.position === "first" && groupKey && (
                             <BashOutputCollapsedIndicator
