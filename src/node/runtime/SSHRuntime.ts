@@ -2050,6 +2050,10 @@ export class SSHRuntime extends RemoteRuntime {
     // so it depends on the local `ssh` CLI being available. On OpenSSH runtimes,
     // the transport already depends on that binary and shares the same ControlPath.
     const runPush = async (pushArgs: string[]): Promise<void> => {
+      if (abortSignal?.aborted) {
+        throw new Error("Git push aborted");
+      }
+
       using pushProc = execFileAsync("git", pushArgs, {
         env: { GIT_SSH_COMMAND: gitSshCommand },
         onStderrData: (chunk) => {
@@ -2064,6 +2068,9 @@ export class SSHRuntime extends RemoteRuntime {
       const pushTimeout = setTimeout(() => pushProc[Symbol.dispose](), 300_000);
       const onAbort = () => pushProc[Symbol.dispose]();
       abortSignal?.addEventListener("abort", onAbort, { once: true });
+      if (abortSignal?.aborted) {
+        onAbort();
+      }
       try {
         await pushProc.result;
       } finally {

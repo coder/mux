@@ -372,6 +372,35 @@ describe("SSHConnectionPool", () => {
       expect(path1).toBe(getControlPath(config));
     });
 
+    test("does not record backoff when a probe is aborted", async () => {
+      const pool = new SSHConnectionPool();
+      const config: SSHRuntimeConfig = {
+        host: "abort.example.com",
+        srcBaseDir: "/work",
+      };
+      const abortController = new AbortController();
+
+      const spy = spyOn(
+        pool as unknown as { probeConnection: () => Promise<void> },
+        "probeConnection"
+      ).mockImplementationOnce(() => {
+        abortController.abort();
+        return Promise.reject(new Error("Operation aborted"));
+      });
+
+      // eslint-disable-next-line @typescript-eslint/await-thenable
+      await expect(
+        pool.acquireConnection(config, {
+          timeoutMs: 1000,
+          maxWaitMs: 0,
+          abortSignal: abortController.signal,
+        })
+      ).rejects.toThrow("Operation aborted");
+
+      expect(pool.getConnectionHealth(config)).toBeUndefined();
+      spy.mockRestore();
+    });
+
     test("records backoff when probe rejects without recording it (safety net)", async () => {
       const pool = new SSHConnectionPool();
       const config: SSHRuntimeConfig = {

@@ -66,6 +66,25 @@ describe("LocalRuntime", () => {
     });
   });
 
+  describe("exec", () => {
+    it("rejects before command execution when abort signal is already aborted", async () => {
+      const runtime = new LocalRuntime(testDir);
+      const abortController = new AbortController();
+      abortController.abort();
+
+      try {
+        await runtime.exec("echo should-not-run", {
+          cwd: path.join(testDir, "does-not-exist"),
+          abortSignal: abortController.signal,
+        });
+        throw new Error("Expected exec to reject");
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain("Operation aborted before execution");
+      }
+    });
+  });
+
   describe("createWorkspace", () => {
     it("succeeds when directory exists", async () => {
       const runtime = new LocalRuntime(testDir);
@@ -159,6 +178,29 @@ describe("LocalRuntime", () => {
         () => false
       );
       expect(skippedMarkerExists).toBe(false);
+    });
+
+    it("runs init hooks from project paths containing shell metacharacters", async () => {
+      const projectDir = path.join(testDir, "project-$quoted");
+      await fs.rm(projectDir, { recursive: true, force: true });
+      await fs.mkdir(path.join(projectDir, ".mux"), { recursive: true });
+
+      const hookPath = path.join(projectDir, ".mux", "init");
+      await fs.writeFile(hookPath, "#!/usr/bin/env bash\n\necho ran > .init-marker\n");
+      await fs.chmod(hookPath, 0o755);
+
+      const runtime = new LocalRuntime(projectDir);
+      const result = await runtime.initWorkspace({
+        projectPath: projectDir,
+        branchName: "main",
+        trunkBranch: "main",
+        workspacePath: projectDir,
+        initLogger: createMockLogger(),
+        trusted: true,
+      });
+
+      expect(result.success).toBe(true);
+      await fs.access(path.join(projectDir, ".init-marker"));
     });
 
     it("skips init hook when project is untrusted", async () => {

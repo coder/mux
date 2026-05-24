@@ -245,6 +245,11 @@ export async function devcontainerUp(
     initLogger.logStep(`Running: devcontainer ${logArgs.join(" ")}`);
 
     return new Promise((resolve, reject) => {
+      if (abortSignal?.aborted) {
+        reject(new Error("devcontainer up aborted"));
+        return;
+      }
+
       const proc = spawn("devcontainer", args, {
         stdio: ["ignore", "pipe", "pipe"],
         timeout: timeoutMs,
@@ -320,7 +325,10 @@ export async function devcontainerUp(
           settleError(new Error(`devcontainer up timed out after ${timeoutMs}ms`));
         }, timeoutMs);
       }
-      abortSignal?.addEventListener("abort", abortHandler);
+      abortSignal?.addEventListener("abort", abortHandler, { once: true });
+      if (abortSignal?.aborted) {
+        abortHandler();
+      }
 
       const finalizeError = async (message: string, result?: DevcontainerUpResultLine | null) => {
         if (result && shouldCleanupDevcontainer(result)) {
@@ -410,16 +418,31 @@ export type DevcontainerStopResult =
   | { kind: "absent" }
   | { kind: "error"; message: string };
 
-export async function probeDevcontainerStatus(
-  workspacePath: string,
+export async function probeDevcontainerStatuses(
+  workspacePaths: string[],
   timeoutMs = 10_000
-): Promise<DevcontainerProbeResult> {
-  const labelValue = workspacePath;
+): Promise<Record<string, DevcontainerProbeResult>> {
+  const results: Record<string, DevcontainerProbeResult> = {};
+  for (const workspacePath of workspacePaths) {
+    results[workspacePath] = { kind: "absent" };
+  }
 
-  return new Promise((resolve) => {
+  if (workspacePaths.length === 0) {
+    return results;
+  }
+
+  const requestedPaths = new Set(workspacePaths);
+
+  return await new Promise((resolve) => {
     const proc = spawn(
       "docker",
-      ["ps", "-q", "--filter", `label=devcontainer.local_folder=${labelValue}`],
+      [
+        "ps",
+        "--filter",
+        "label=devcontainer.local_folder",
+        "--format",
+        '{{.ID}}\t{{.Label "devcontainer.local_folder"}}',
+      ],
       {
         stdio: ["ignore", "pipe", "pipe"],
         timeout: timeoutMs,
@@ -435,31 +458,46 @@ export async function probeDevcontainerStatus(
       stderr += data.toString();
     });
 
+    const resolveAllError = (message: string) => {
+      for (const workspacePath of workspacePaths) {
+        results[workspacePath] = { kind: "error", message };
+      }
+      resolve(results);
+    };
+
     proc.on("error", (error) => {
-      resolve({ kind: "error", message: getErrorMessage(error) });
+      resolveAllError(getErrorMessage(error));
     });
 
     proc.on("close", (code, signal) => {
-      const containerId = stdout.trim().split("\n")[0];
-      if (code === 0 && containerId) {
-        resolve({ kind: "found", containerId });
-        return;
-      }
-      if (code === 0) {
-        resolve({ kind: "absent" });
+      if (code !== 0) {
+        const stderrMessage = stderr.trim();
+        const exitMessage = signal
+          ? `docker ps exited with signal ${signal}`
+          : `docker ps exited with code ${code ?? "null"}`;
+        resolveAllError(stderrMessage ? `${exitMessage}: ${stderrMessage}` : exitMessage);
         return;
       }
 
-      const stderrMessage = stderr.trim();
-      const exitMessage = signal
-        ? `docker ps exited with signal ${signal}`
-        : `docker ps exited with code ${code ?? "null"}`;
-      resolve({
-        kind: "error",
-        message: stderrMessage ? `${exitMessage}: ${stderrMessage}` : exitMessage,
-      });
+      for (const line of stdout.split("\n")) {
+        const [containerId, workspacePath] = line.split("\t");
+        if (!containerId || !workspacePath || !requestedPaths.has(workspacePath)) {
+          continue;
+        }
+        results[workspacePath] = { kind: "found", containerId };
+      }
+
+      resolve(results);
     });
   });
+}
+
+export async function probeDevcontainerStatus(
+  workspacePath: string,
+  timeoutMs = 10_000
+): Promise<DevcontainerProbeResult> {
+  const results = await probeDevcontainerStatuses([workspacePath], timeoutMs);
+  return results[workspacePath] ?? { kind: "absent" };
 }
 /**
  * Get the container name for a devcontainer workspace.

@@ -1,4 +1,5 @@
 import { shellQuote } from "@/common/utils/shell";
+import { buildShellExport } from "./shellEnv";
 export { shellQuote };
 
 /** Exit code for process killed by SIGKILL (128 + 9) */
@@ -67,7 +68,7 @@ export function buildWrapperScript(options: WrapperScriptOptions): string {
   // Add environment variable exports
   if (options.env) {
     for (const [key, value] of Object.entries(options.env)) {
-      parts.push(`export ${key}=${shellQuote(value)}`);
+      parts.push(buildShellExport(key, value));
     }
   }
 

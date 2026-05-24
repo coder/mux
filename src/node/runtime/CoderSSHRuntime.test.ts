@@ -457,6 +457,23 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     expect(deleteWorkspaceEventually).not.toHaveBeenCalled();
   });
 
+  it("passes abort signal to the Coder status check during delete", async () => {
+    const getWorkspaceStatus = mock(() => Promise.resolve({ kind: "not_found" as const }));
+    const coderService = createMockCoderService({ getWorkspaceStatus });
+    const runtime = createRuntime(
+      { existingWorkspace: false, workspaceName: "my-ws" },
+      coderService
+    );
+    const abortController = new AbortController();
+
+    await runtime.deleteWorkspace("/project", "ws", false, abortController.signal);
+
+    expect(getWorkspaceStatus).toHaveBeenCalledWith(
+      "my-ws",
+      expect.objectContaining({ signal: abortController.signal })
+    );
+  });
+
   it("proceeds with SSH cleanup when status check fails with API error", async () => {
     // API error (auth, network) - should NOT treat as "already deleted"
     const getWorkspaceStatus = mock(() =>

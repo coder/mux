@@ -11,7 +11,7 @@
  * Extends RemoteRuntime for shared exec/file operations.
  */
 
-import { spawn, exec } from "child_process";
+import { spawn } from "child_process";
 import { createHash } from "crypto";
 import * as path from "path";
 import * as fs from "fs/promises";
@@ -64,29 +64,53 @@ function sanitizeContainerUserId(rawValue: string): string {
   return /^\d+$/.test(trimmedValue) ? trimmedValue : "0";
 }
 
+interface ContainerUserInfo {
+  uid: string;
+  gid: string;
+  home: string;
+}
+
 /** Result of checking if a container already exists and is valid for reuse */
 type ContainerCheckResult =
   | { action: "skip" } // Valid forked container, skip setup
   | { action: "cleanup"; reason: string } // Exists but invalid, needs removal
   | { action: "create" }; // Doesn't exist, proceed to create
 
-/**
- * Run a Docker CLI command and return result.
- * Unlike execAsync, this always resolves (never rejects) and returns exit code.
- */
-function runDockerCommand(command: string, timeoutMs = 30000): Promise<DockerCommandResult> {
+function runCommand(
+  command: string,
+  args: string[],
+  options: { timeoutMs?: number; shell?: boolean; abortSignal?: AbortSignal } = {}
+): Promise<DockerCommandResult> {
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
-    let timedOut = false;
+    let settled = false;
 
-    const child = exec(command);
+    if (options.abortSignal?.aborted) {
+      resolve({ exitCode: -1, stdout, stderr: "Command aborted" });
+      return;
+    }
+
+    const child = spawn(command, args, { shell: options.shell === true });
+
+    const finish = (result: DockerCommandResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      options.abortSignal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
 
     const timer = setTimeout(() => {
-      timedOut = true;
       child.kill();
-      resolve({ exitCode: -1, stdout, stderr: "Command timed out" });
-    }, timeoutMs);
+      finish({ exitCode: -1, stdout, stderr: "Command timed out" });
+    }, options.timeoutMs ?? 30000);
+
+    const onAbort = () => {
+      child.kill();
+      finish({ exitCode: -1, stdout, stderr: "Command aborted" });
+    };
+    options.abortSignal?.addEventListener("abort", onAbort, { once: true });
 
     child.stdout?.on("data", (data: Buffer) => {
       stdout += data.toString();
@@ -97,61 +121,35 @@ function runDockerCommand(command: string, timeoutMs = 30000): Promise<DockerCom
     });
 
     child.on("close", (code) => {
-      clearTimeout(timer);
-      if (timedOut) return;
-      resolve({ exitCode: code ?? -1, stdout, stderr });
+      finish({ exitCode: code ?? -1, stdout, stderr });
     });
 
     child.on("error", (err) => {
-      clearTimeout(timer);
-      if (timedOut) return;
-      resolve({ exitCode: -1, stdout, stderr: err.message });
+      finish({ exitCode: -1, stdout, stderr: err.message });
     });
   });
 }
 
 /**
- * Run a command with array args (no shell interpolation).
- * Similar to runDockerCommand but safer for paths with special characters.
+ * Run a Docker CLI command and return result.
+ * Unlike execAsync, this always resolves (never rejects) and returns exit code.
  */
+function runDockerCommand(
+  command: string,
+  timeoutMs = 30000,
+  abortSignal?: AbortSignal
+): Promise<DockerCommandResult> {
+  return runCommand(command, [], { timeoutMs, shell: true, abortSignal });
+}
+
+/** Run a command with array args to avoid shell interpolation for host/container paths. */
 function runSpawnCommand(
   command: string,
   args: string[],
-  timeoutMs = 30000
+  timeoutMs = 30000,
+  abortSignal?: AbortSignal
 ): Promise<DockerCommandResult> {
-  return new Promise((resolve) => {
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-
-    const child = spawn(command, args);
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-      resolve({ exitCode: -1, stdout, stderr: "Command timed out" });
-    }, timeoutMs);
-
-    child.stdout?.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    child.stderr?.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (timedOut) return;
-      resolve({ exitCode: code ?? -1, stdout, stderr });
-    });
-
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      if (timedOut) return;
-      resolve({ exitCode: -1, stdout, stderr: err.message });
-    });
-  });
+  return runCommand(command, args, { timeoutMs, abortSignal });
 }
 
 /**
@@ -302,9 +300,7 @@ export class DockerRuntime extends RemoteRuntime {
   private readonly config: DockerRuntimeConfig;
   /** Container name - set during construction (for existing) or createWorkspace (for new) */
   private containerName?: string;
-  /** Container user info - detected after container creation/start */
-  private containerUid?: string;
-  private containerGid?: string;
+  /** Container home - detected after container creation/start */
   private containerHome?: string;
 
   constructor(config: DockerRuntimeConfig) {
@@ -598,6 +594,39 @@ export class DockerRuntime extends RemoteRuntime {
     return { action: "skip" };
   }
 
+  private async detectContainerUser(
+    containerName: string,
+    abortSignal?: AbortSignal
+  ): Promise<ContainerUserInfo> {
+    const [uidResult, gidResult, homeResult] = await Promise.all([
+      runDockerCommand(`docker exec ${containerName} id -u`, 5000, abortSignal),
+      runDockerCommand(`docker exec ${containerName} id -g`, 5000, abortSignal),
+      runDockerCommand(`docker exec ${containerName} sh -c 'echo $HOME'`, 5000, abortSignal),
+    ]);
+
+    return {
+      uid: sanitizeContainerUserId(uidResult.stdout),
+      gid: sanitizeContainerUserId(gidResult.stdout),
+      home: homeResult.stdout.trim() || "/root",
+    };
+  }
+
+  private storeContainerUserInfo(userInfo: ContainerUserInfo): void {
+    this.containerHome = userInfo.home;
+  }
+
+  private prepareWorkspaceDirectories(
+    containerName: string,
+    userInfo: ContainerUserInfo,
+    abortSignal?: AbortSignal
+  ): Promise<DockerCommandResult> {
+    return runDockerCommand(
+      `docker exec --user root ${containerName} sh -c 'mkdir -p ${CONTAINER_SRC_DIR} /var/mux/plans && chown ${userInfo.uid}:${userInfo.gid} ${CONTAINER_SRC_DIR} /var/mux /var/mux/plans'`,
+      10000,
+      abortSignal
+    );
+  }
+
   /**
    * Copy gitconfig and configure gh CLI credential helper in container.
    * Called for both new containers and reused forked containers.
@@ -608,10 +637,12 @@ export class DockerRuntime extends RemoteRuntime {
   ): Promise<void> {
     if (!this.config.shareCredentials) return;
 
-    // Copy host gitconfig into container (not mounted, so gh can modify it)
+    // Copy host gitconfig into container (not mounted, so gh can modify it).
+    // Use argv-based Docker calls so credential paths/tokens never go through a host shell.
     if (hasHostGitconfig()) {
-      await runDockerCommand(
-        `docker cp ${getHostGitconfigPath()} ${containerName}:/root/.gitconfig`,
+      await runSpawnCommand(
+        "docker",
+        ["cp", getHostGitconfigPath(), `${containerName}:/root/.gitconfig`],
         10000
       );
     }
@@ -620,8 +651,17 @@ export class DockerRuntime extends RemoteRuntime {
     // GH_TOKEN can come from project secrets (env) or host environment (buildCredentialArgs)
     const ghToken = resolveGhToken(env);
     if (ghToken) {
-      await runDockerCommand(
-        `docker exec -e GH_TOKEN=${shescape.quote(ghToken)} ${containerName} sh -c 'command -v gh >/dev/null && gh auth setup-git || true'`,
+      await runSpawnCommand(
+        "docker",
+        [
+          "exec",
+          "-e",
+          `GH_TOKEN=${ghToken}`,
+          containerName,
+          "sh",
+          "-c",
+          "command -v gh >/dev/null && gh auth setup-git || true",
+        ],
         10000
       );
     }
@@ -672,23 +712,17 @@ export class DockerRuntime extends RemoteRuntime {
     }
 
     // Detect container's default user (may be non-root, e.g., codercom/enterprise-base runs as "coder")
-    const [uidResult, gidResult, homeResult] = await Promise.all([
-      runDockerCommand(`docker exec ${containerName} id -u`, 5000),
-      runDockerCommand(`docker exec ${containerName} id -g`, 5000),
-      runDockerCommand(`docker exec ${containerName} sh -c 'echo $HOME'`, 5000),
-    ]);
-    this.containerUid = sanitizeContainerUserId(uidResult.stdout);
-    this.containerGid = sanitizeContainerUserId(gidResult.stdout);
-    this.containerHome = homeResult.stdout.trim() || "/root";
+    const containerUser = await this.detectContainerUser(containerName, abortSignal);
+    this.storeContainerUserInfo(containerUser);
 
-    // Create /src directory and /var/mux/plans in container
-    // Use --user root to create directories, then chown to container's default user
+    // Create /src directory and /var/mux/plans in container.
     // /var/mux is used instead of ~/.mux because /root has 700 permissions,
-    // which makes it inaccessible to VS Code Dev Containers (non-root user)
+    // which makes it inaccessible to VS Code Dev Containers (non-root user).
     initLogger.logStep("Preparing workspace directory...");
-    const mkdirResult = await runDockerCommand(
-      `docker exec --user root ${containerName} sh -c 'mkdir -p ${CONTAINER_SRC_DIR} /var/mux/plans && chown ${this.containerUid}:${this.containerGid} ${CONTAINER_SRC_DIR} /var/mux /var/mux/plans'`,
-      10000
+    const mkdirResult = await this.prepareWorkspaceDirectories(
+      containerName,
+      containerUser,
+      abortSignal
     );
     if (mkdirResult.exitCode !== 0) {
       await runDockerCommand(`docker rm -f ${containerName}`, 10000);
@@ -976,7 +1010,12 @@ export class DockerRuntime extends RemoteRuntime {
   }
 
   async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
-    const { projectPath, sourceWorkspaceName, newWorkspaceName, initLogger } = params;
+    const { projectPath, sourceWorkspaceName, newWorkspaceName, initLogger, abortSignal } = params;
+    const throwIfAborted = () => {
+      if (abortSignal?.aborted) {
+        throw new Error("Docker workspace fork aborted");
+      }
+    };
 
     const srcContainerName = getContainerName(projectPath, sourceWorkspaceName);
     const destContainerName = getContainerName(projectPath, newWorkspaceName);
@@ -986,8 +1025,14 @@ export class DockerRuntime extends RemoteRuntime {
     let forkSucceeded = false;
 
     try {
+      throwIfAborted();
+
       // 1. Verify source container exists
-      const srcCheck = await runDockerCommand(`docker inspect ${srcContainerName}`, 10000);
+      const srcCheck = await runDockerCommand(
+        `docker inspect ${srcContainerName}`,
+        10000,
+        abortSignal
+      );
       if (srcCheck.exitCode !== 0) {
         return {
           success: false,
@@ -997,9 +1042,11 @@ export class DockerRuntime extends RemoteRuntime {
 
       // 2. Get current branch from source
       initLogger.logStep("Detecting source workspace branch...");
+      throwIfAborted();
       const branchResult = await runDockerCommand(
         `docker exec ${srcContainerName} git -C ${CONTAINER_SRC_DIR} branch --show-current`,
-        30000
+        30000,
+        abortSignal
       );
       const sourceBranch = branchResult.stdout.trim();
       if (branchResult.exitCode !== 0 || sourceBranch.length === 0) {
@@ -1011,9 +1058,11 @@ export class DockerRuntime extends RemoteRuntime {
 
       // 3. Create git bundle inside source container
       initLogger.logStep("Creating git bundle from source...");
+      throwIfAborted();
       const bundleResult = await runDockerCommand(
         `docker exec ${srcContainerName} git -C ${CONTAINER_SRC_DIR} bundle create ${containerBundlePath} --all`,
-        300000
+        300000,
+        abortSignal
       );
       if (bundleResult.exitCode !== 0) {
         return { success: false, error: `Failed to create git bundle: ${bundleResult.stderr}` };
@@ -1021,9 +1070,12 @@ export class DockerRuntime extends RemoteRuntime {
 
       // 4. Transfer bundle to host
       initLogger.logStep("Copying bundle from source container...");
-      const cpOutResult = await runDockerCommand(
-        `docker cp ${srcContainerName}:${containerBundlePath} ${shescape.quote(hostTempPath)}`,
-        300000
+      throwIfAborted();
+      const cpOutResult = await runSpawnCommand(
+        "docker",
+        ["cp", `${srcContainerName}:${containerBundlePath}`, hostTempPath],
+        300000,
+        abortSignal
       );
       if (cpOutResult.exitCode !== 0) {
         return {
@@ -1039,7 +1091,8 @@ export class DockerRuntime extends RemoteRuntime {
         dockerArgs.push(...buildCredentialArgs());
       }
       dockerArgs.push(this.config.image, "sleep", "infinity");
-      const runResult = await runSpawnCommand("docker", dockerArgs, 60000);
+      throwIfAborted();
+      const runResult = await runSpawnCommand("docker", dockerArgs, 60000, abortSignal);
       if (runResult.exitCode !== 0) {
         // Handle TOCTOU race - container may have been created between check and run
         if (runResult.stderr.includes("already in use")) {
@@ -1053,19 +1106,12 @@ export class DockerRuntime extends RemoteRuntime {
       destContainerCreated = true;
 
       // 5b. Detect container user and prepare directories (may be non-root)
-      const [uidResult, gidResult, homeResult] = await Promise.all([
-        runDockerCommand(`docker exec ${destContainerName} id -u`, 5000),
-        runDockerCommand(`docker exec ${destContainerName} id -g`, 5000),
-        runDockerCommand(`docker exec ${destContainerName} sh -c 'echo $HOME'`, 5000),
-      ]);
-      const destUid = sanitizeContainerUserId(uidResult.stdout);
-      const destGid = sanitizeContainerUserId(gidResult.stdout);
-      const destHome = homeResult.stdout.trim() || "/root";
-
-      // Create /src and /var/mux/plans as root, then chown to container user
-      const mkdirResult = await runDockerCommand(
-        `docker exec --user root ${destContainerName} sh -c 'mkdir -p ${CONTAINER_SRC_DIR} /var/mux/plans && chown ${destUid}:${destGid} ${CONTAINER_SRC_DIR} /var/mux /var/mux/plans'`,
-        10000
+      throwIfAborted();
+      const destUser = await this.detectContainerUser(destContainerName, abortSignal);
+      const mkdirResult = await this.prepareWorkspaceDirectories(
+        destContainerName,
+        destUser,
+        abortSignal
       );
       if (mkdirResult.exitCode !== 0) {
         return {
@@ -1076,9 +1122,12 @@ export class DockerRuntime extends RemoteRuntime {
 
       // 6. Copy bundle into destination and clone
       initLogger.logStep("Copying bundle to destination container...");
-      const cpInResult = await runDockerCommand(
-        `docker cp ${shescape.quote(hostTempPath)} ${destContainerName}:${containerBundlePath}`,
-        300000
+      throwIfAborted();
+      const cpInResult = await runSpawnCommand(
+        "docker",
+        ["cp", hostTempPath, `${destContainerName}:${containerBundlePath}`],
+        300000,
+        abortSignal
       );
       if (cpInResult.exitCode !== 0) {
         return {
@@ -1096,24 +1145,31 @@ export class DockerRuntime extends RemoteRuntime {
             .map(([k, v]) => `${k}=${v}`)
             .join(" ") +
           " ";
+      throwIfAborted();
       const cloneResult = await runDockerCommand(
         `docker exec ${destContainerName} ${noHooksEnvCmd}git clone ${containerBundlePath} ${CONTAINER_SRC_DIR}`,
-        300000
+        300000,
+        abortSignal
       );
       if (cloneResult.exitCode !== 0) {
         return { success: false, error: `Failed to clone from bundle: ${cloneResult.stderr}` };
       }
 
       // Ensure /src is owned by the container user (git clone may create as current user)
-      await runDockerCommand(
-        `docker exec --user root ${destContainerName} chown -R ${destUid}:${destGid} ${CONTAINER_SRC_DIR}`,
-        30000
+      const chownResult = await runDockerCommand(
+        `docker exec --user root ${destContainerName} chown -R ${destUser.uid}:${destUser.gid} ${CONTAINER_SRC_DIR}`,
+        30000,
+        abortSignal
       );
+      if (chownResult.exitCode !== 0) {
+        return {
+          success: false,
+          error: `Failed to fix workspace ownership: ${chownResult.stderr}`,
+        };
+      }
 
       // Store user info for this runtime instance
-      this.containerUid = destUid;
-      this.containerGid = destGid;
-      this.containerHome = destHome;
+      this.storeContainerUserInfo(destUser);
 
       // 7. Create local tracking branches (best-effort)
       initLogger.logStep("Creating local tracking branches...");
@@ -1169,9 +1225,11 @@ export class DockerRuntime extends RemoteRuntime {
       const checkoutCmd =
         `${forkNhp}git checkout ${shescape.quote(newWorkspaceName)} 2>/dev/null || ` +
         `${forkNhp}git checkout -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
+      throwIfAborted();
       const checkoutResult = await runDockerCommand(
         `docker exec ${destContainerName} bash -c ${shescape.quote(`cd ${CONTAINER_SRC_DIR} && ${checkoutCmd}`)}`,
-        120000
+        120000,
+        abortSignal
       );
       if (checkoutResult.exitCode !== 0) {
         return {
@@ -1247,14 +1305,7 @@ export class DockerRuntime extends RemoteRuntime {
 
     // Detect container user info if not already set (e.g., runtime recreated for existing workspace)
     if (!this.containerHome) {
-      const [uidResult, gidResult, homeResult] = await Promise.all([
-        runDockerCommand(`docker exec ${this.containerName} id -u`, 5000),
-        runDockerCommand(`docker exec ${this.containerName} id -g`, 5000),
-        runDockerCommand(`docker exec ${this.containerName} sh -c 'echo $HOME'`, 5000),
-      ]);
-      this.containerUid = sanitizeContainerUserId(uidResult.stdout);
-      this.containerGid = sanitizeContainerUserId(gidResult.stdout);
-      this.containerHome = homeResult.stdout.trim() || "/root";
+      this.storeContainerUserInfo(await this.detectContainerUser(this.containerName));
     }
 
     return { ready: true };

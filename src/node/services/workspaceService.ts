@@ -80,7 +80,7 @@ import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import {
   getDevcontainerContainerName,
-  probeDevcontainerStatus,
+  probeDevcontainerStatuses,
   stopDevcontainer,
 } from "@/node/runtime/devcontainerCli";
 import { isWorktreeRuntime } from "@/node/runtime/worktreeLifecycleHooks";
@@ -4831,47 +4831,45 @@ export class WorkspaceService extends EventEmitter {
     }
 
     const metadataById = new Map(allMetadata.map((metadata) => [metadata.id, metadata]));
-    const probes = workspaceIds.map(async (workspaceId) => {
+    const devcontainerWorkspaces: Array<{ workspaceId: string; hostWorkspacePath: string }> = [];
+
+    for (const workspaceId of workspaceIds) {
       const metadata = metadataById.get(workspaceId);
       if (!metadata) {
-        return { workspaceId, status: "unknown" as const };
-      }
-
-      if (metadata.runtimeConfig.type !== "devcontainer") {
-        return { workspaceId, status: "unsupported" as const };
-      }
-
-      // Passive status probes must not call ensureReady(); Docker labels are enough to tell
-      // whether the devcontainer is already running.
-      const probeResult = await probeDevcontainerStatus(
-        await this.getDevcontainerHostWorkspacePath(workspaceId)
-      );
-      // A clean miss means the container is stopped; probe failures should surface as unknown.
-      const status =
-        probeResult.kind === "found"
-          ? ("running" as const)
-          : probeResult.kind === "absent"
-            ? ("stopped" as const)
-            : ("unknown" as const);
-      return {
-        workspaceId,
-        status,
-      };
-    });
-
-    const probeResults = await Promise.allSettled(probes);
-    for (let i = 0; i < probeResults.length; i++) {
-      const probeResult = probeResults[i];
-      const workspaceId = workspaceIds[i];
-      if (probeResult.status === "fulfilled") {
-        statuses[probeResult.value.workspaceId] = probeResult.value.status;
         continue;
       }
 
-      log.debug("Failed to determine workspace runtime status", {
-        workspaceId,
-        error: getErrorMessage(probeResult.reason),
-      });
+      if (metadata.runtimeConfig.type !== "devcontainer") {
+        statuses[workspaceId] = "unsupported";
+        continue;
+      }
+
+      try {
+        devcontainerWorkspaces.push({
+          workspaceId,
+          hostWorkspacePath: await this.getDevcontainerHostWorkspacePath(workspaceId),
+        });
+      } catch (error) {
+        log.debug("Failed to resolve devcontainer workspace path for runtime status", {
+          workspaceId,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
+    // Passive status probes must not call ensureReady(); Docker labels are enough to tell
+    // whether devcontainers are already running. Probe all requested paths with one docker ps.
+    const probeResults = await probeDevcontainerStatuses(
+      devcontainerWorkspaces.map((workspace) => workspace.hostWorkspacePath)
+    );
+    for (const workspace of devcontainerWorkspaces) {
+      const probeResult = probeResults[workspace.hostWorkspacePath] ?? { kind: "absent" as const };
+      statuses[workspace.workspaceId] =
+        probeResult.kind === "found"
+          ? "running"
+          : probeResult.kind === "absent"
+            ? "stopped"
+            : "unknown";
     }
 
     return statuses;

@@ -1,9 +1,45 @@
 import { describe, expect, it } from "bun:test";
 import {
+  devcontainerUp,
   formatDevcontainerUpError,
   parseDevcontainerStdoutLine,
   shouldCleanupDevcontainer,
 } from "./devcontainerCli";
+import type { InitLogger } from "./Runtime";
+
+const noopInitLogger: InitLogger = {
+  logStep: () => {
+    // no-op
+  },
+  logStdout: () => {
+    // no-op
+  },
+  logStderr: () => {
+    // no-op
+  },
+  logComplete: () => {
+    // no-op
+  },
+};
+
+describe("devcontainerUp", () => {
+  it("rejects before spawning when already aborted", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+
+    try {
+      await devcontainerUp({
+        workspaceFolder: "/tmp/does-not-need-to-exist",
+        initLogger: noopInitLogger,
+        abortSignal: abortController.signal,
+      });
+      throw new Error("Expected devcontainerUp to reject");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("devcontainer up aborted");
+    }
+  });
+});
 
 describe("parseDevcontainerStdoutLine", () => {
   it("parses JSON log lines with text", () => {

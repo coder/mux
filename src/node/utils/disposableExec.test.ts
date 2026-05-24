@@ -5,8 +5,11 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 
 import type { ChildProcess } from "child_process";
+import * as fs from "fs/promises";
+import * as os from "os";
+import * as path from "path";
 import { describe, expect, test, beforeEach, afterEach } from "@jest/globals";
-import { execAsync } from "./disposableExec";
+import { execAsync, execFileAsync } from "./disposableExec";
 
 /**
  * Tests for DisposableExec - verifies no process leaks under any scenario
@@ -32,6 +35,19 @@ describe("disposableExec", () => {
       }
     }
     activeProcesses.clear();
+  });
+
+  test("pre-aborted execFileAsync rejects without starting the command", async () => {
+    const markerPath = path.join(os.tmpdir(), `mux-execfile-abort-${Date.now()}`);
+    const abortController = new AbortController();
+    abortController.abort();
+
+    using proc = execFileAsync("bash", ["-c", `touch ${JSON.stringify(markerPath)}`], {
+      signal: abortController.signal,
+    });
+
+    await expect(proc.result).rejects.toThrow("Command aborted before execution");
+    await expect(fs.access(markerPath)).rejects.toThrow();
   });
 
   test("successful command completes and cleans up automatically", async () => {

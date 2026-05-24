@@ -223,14 +223,22 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     return filePath === "~" || filePath.startsWith("~/");
   }
 
-  private async setupCredentials(env?: Record<string, string>): Promise<void> {
+  private async setupCredentials(
+    env?: Record<string, string>,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
     if (!this.shareCredentials) return;
+
+    if (abortSignal?.aborted) {
+      throw new RuntimeError("Operation aborted before credential setup", "exec");
+    }
 
     const gitconfigContents = await readHostGitconfig();
     if (gitconfigContents) {
       const stream = await this.exec('cat > "$HOME/.gitconfig"', {
         cwd: this.getContainerBasePath(),
         timeout: 30,
+        abortSignal,
       });
       const writer = stream.stdin.getWriter();
       try {
@@ -252,18 +260,21 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
         cwd: this.getContainerBasePath(),
         timeout: 30,
         env: { GH_TOKEN: ghToken },
+        abortSignal,
       });
       await stream.stdin.close();
       await stream.exitCode;
     }
   }
 
-  private async fetchRemoteHome(): Promise<void> {
+  private async fetchRemoteHome(abortSignal?: AbortSignal): Promise<void> {
     if (!this.currentWorkspacePath) return;
+    if (abortSignal?.aborted) return;
     try {
       const stream = await this.exec('printf "%s" "$HOME"', {
         cwd: this.remoteWorkspaceFolder ?? "/",
         timeout: 10,
+        abortSignal,
       });
       await stream.stdin.close();
       const stdout = await streamToString(stream.stdout);
@@ -329,12 +340,22 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     const writeCommand = `mkdir -p $(dirname ${quotedPath}) && cat > ${quotedTempPath} && mv ${quotedTempPath} ${quotedPath}`;
 
     let execPromise: Promise<ExecStream> | null = null;
+    const writeAbortController = new AbortController();
+    const abortWrite = () => writeAbortController.abort();
+    if (abortSignal?.aborted) {
+      writeAbortController.abort();
+    } else {
+      abortSignal?.addEventListener("abort", abortWrite, { once: true });
+    }
+    const cleanupAbortForwarder = () => {
+      abortSignal?.removeEventListener("abort", abortWrite);
+    };
 
     const getExecStream = () => {
       execPromise ??= this.exec(writeCommand, {
         cwd: this.getContainerBasePath(),
         timeout: 300,
-        abortSignal,
+        abortSignal: writeAbortController.signal,
       });
       return execPromise;
     };
@@ -350,27 +371,42 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
         }
       },
       close: async () => {
-        const stream = await getExecStream();
-        await stream.stdin.close();
-        const exitCode = await stream.exitCode;
+        try {
+          const stream = await getExecStream();
+          await stream.stdin.close();
+          const exitCode = await stream.exitCode;
 
-        if (exitCode !== 0) {
-          const stderr = await streamToString(stream.stderr);
-          throw new RuntimeError(`Failed to write file ${filePath}: ${stderr}`, "file_io");
+          if (exitCode !== 0) {
+            const stderr = await streamToString(stream.stderr);
+            throw new RuntimeError(`Failed to write file ${filePath}: ${stderr}`, "file_io");
+          }
+        } finally {
+          cleanupAbortForwarder();
         }
       },
       abort: async (reason?: unknown) => {
-        const stream = await getExecStream();
-        await stream.stdin.abort();
+        writeAbortController.abort();
+        if (execPromise) {
+          try {
+            const stream = await execPromise;
+            await stream.stdin.abort(reason).catch(() => undefined);
+            await stream.exitCode.catch(() => undefined);
+          } finally {
+            cleanupAbortForwarder();
+          }
+        } else {
+          cleanupAbortForwarder();
+        }
         throw new RuntimeError(`Failed to write file ${filePath}: ${String(reason)}`, "file_io");
       },
     });
   }
 
-  private async ensureDirViaExec(dirPath: string): Promise<void> {
+  private async ensureDirViaExec(dirPath: string, abortSignal?: AbortSignal): Promise<void> {
     const stream = await this.exec(`mkdir -p ${this.quoteForContainer(dirPath)}`, {
       cwd: "/",
       timeout: 10,
+      abortSignal,
     });
 
     await stream.stdin.close();
@@ -512,9 +548,9 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
       this.remoteWorkspaceFolder = result.remoteWorkspaceFolder;
       this.remoteUser = result.remoteUser;
       this.currentWorkspacePath = workspacePath;
-      await this.fetchRemoteHome();
+      await this.fetchRemoteHome(abortSignal);
 
-      await this.setupCredentials(env);
+      await this.setupCredentials(env, abortSignal);
 
       initLogger.logStep("Devcontainer ready");
     } catch (error) {
@@ -580,7 +616,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     // Map host workspace path to container path; fall back to container workspace if unmappable
     const mappedCwd = options.cwd ? this.mapHostPathToContainer(options.cwd) : null;
     const cwd = mappedCwd ?? this.resolveContainerCwd(options.cwd, workspaceFolder);
-    const fullCommand = `cd ${JSON.stringify(cwd)} && ${command}`;
+    const fullCommand = `cd ${shescape.quote(cwd)} && ${command}`;
     args.push("--", "bash", "-c", fullCommand);
 
     const childProcess = spawn("devcontainer", args, {
@@ -645,9 +681,11 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
         disposable[Symbol.dispose]();
       }, options.timeout * 1000);
 
-      void exitCode.finally(() => {
-        if (timeoutId) clearTimeout(timeoutId);
-      });
+      void exitCode
+        .catch(() => undefined)
+        .finally(() => {
+          if (timeoutId) clearTimeout(timeoutId);
+        });
     }
 
     // Handle abort signal
@@ -655,10 +693,15 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
       aborted = true;
       disposable[Symbol.dispose]();
     };
-    options.abortSignal?.addEventListener("abort", abortHandler);
-    void exitCode.finally(() => {
-      options.abortSignal?.removeEventListener("abort", abortHandler);
-    });
+    options.abortSignal?.addEventListener("abort", abortHandler, { once: true });
+    if (options.abortSignal?.aborted) {
+      abortHandler();
+    }
+    void exitCode
+      .catch(() => undefined)
+      .finally(() => {
+        options.abortSignal?.removeEventListener("abort", abortHandler);
+      });
 
     return Promise.resolve({
       stdout,
@@ -685,20 +728,20 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     return this.writeFileViaExec(filePath, abortSignal);
   }
 
-  override async stat(filePath: string): Promise<FileStat> {
+  override async stat(filePath: string, abortSignal?: AbortSignal): Promise<FileStat> {
     const hostPath = this.resolveHostPathForMounted(filePath);
     if (hostPath) {
-      return super.stat(hostPath);
+      return super.stat(hostPath, abortSignal);
     }
-    return this.statViaExec(filePath);
+    return this.statViaExec(filePath, abortSignal);
   }
 
-  override async ensureDir(dirPath: string): Promise<void> {
+  override async ensureDir(dirPath: string, abortSignal?: AbortSignal): Promise<void> {
     const hostPath = this.resolveHostPathForMounted(dirPath);
     if (hostPath) {
-      return super.ensureDir(hostPath);
+      return super.ensureDir(hostPath, abortSignal);
     }
-    return this.ensureDirViaExec(dirPath);
+    return this.ensureDirViaExec(dirPath, abortSignal);
   }
 
   override async resolvePath(filePath: string): Promise<string> {
@@ -807,9 +850,9 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
       // Update cached info (container may have been rebuilt)
       this.remoteWorkspaceFolder = result.remoteWorkspaceFolder;
       this.remoteUser = result.remoteUser;
-      await this.fetchRemoteHome();
+      await this.fetchRemoteHome(options?.signal);
 
-      await this.setupCredentials(this.lastCredentialEnv);
+      await this.setupCredentials(this.lastCredentialEnv, options?.signal);
 
       statusSink?.({ phase: "ready", runtimeType: "devcontainer" });
       return { ready: true };

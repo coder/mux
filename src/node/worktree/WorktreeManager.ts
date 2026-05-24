@@ -19,7 +19,11 @@ import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 import { syncLocalGitSubmodules } from "@/node/runtime/submoduleSync";
 import { syncMuxignoreFiles } from "./muxignore";
 
-type GitExecOptions = { env: Record<string, string> } | undefined;
+type GitExecOptions = { env?: Record<string, string>; signal?: AbortSignal } | undefined;
+
+function isAbortError(_error: unknown, signal?: AbortSignal): boolean {
+  return signal?.aborted ?? false;
+}
 
 const PROTECTED_BRANCH_NAMES = ["main", "master", "trunk", "develop", "default"];
 const MISSING_WORKTREE_ERROR_PATTERNS = ["not a working tree", "does not exist", "no such file"];
@@ -37,8 +41,9 @@ export class WorktreeManager {
     return path.join(this.srcBaseDir, projectName, workspaceName);
   }
 
-  private getGitExecOptions(trusted?: boolean): GitExecOptions {
-    return trusted ? undefined : { env: GIT_NO_HOOKS_ENV };
+  private getGitExecOptions(trusted?: boolean, signal?: AbortSignal): GitExecOptions {
+    const env = trusted ? undefined : GIT_NO_HOOKS_ENV;
+    return env || signal ? { ...(env ? { env } : {}), ...(signal ? { signal } : {}) } : undefined;
   }
 
   private async pruneWorktreesBestEffort(
@@ -76,7 +81,7 @@ export class WorktreeManager {
   }): Promise<WorkspaceCreationResult> {
     const { projectPath, branchName, trunkBranch, initLogger } = params;
     // Disable git hooks for untrusted projects (prevents post-checkout execution)
-    const noHooksEnv = this.getGitExecOptions(params.trusted);
+    const noHooksEnv = this.getGitExecOptions(params.trusted, params.abortSignal);
     const workspaceName = params.directoryName ?? branchName;
     const workspacePath =
       params.workspacePathOverride ?? this.getWorkspacePath(projectPath, workspaceName);
@@ -127,7 +132,12 @@ export class WorktreeManager {
       const shouldUseOrigin =
         !skipRemoteSync &&
         fetchedOrigin &&
-        (await this.canFastForwardToOrigin(projectPath, trunkBranch, initLogger));
+        (await this.canFastForwardToOrigin(
+          projectPath,
+          trunkBranch,
+          initLogger,
+          params.abortSignal
+        ));
 
       // Create worktree (git worktree is typically fast)
       if (branchExists) {
@@ -257,7 +267,7 @@ export class WorktreeManager {
     projectPath: string,
     trunkBranch: string,
     initLogger: InitLogger,
-    noHooksEnv?: { env: Record<string, string> }
+    noHooksEnv: GitExecOptions
   ): Promise<boolean> {
     try {
       initLogger.logStep(`Fetching latest from origin/${trunkBranch}...`);
@@ -272,6 +282,9 @@ export class WorktreeManager {
       initLogger.logStep("Fetched latest from origin");
       return true;
     } catch (error) {
+      if (isAbortError(error, noHooksEnv?.signal)) {
+        throw error;
+      }
       const errorMsg = getErrorMessage(error);
       // Branch doesn't exist on origin (common for subagent local-only branches)
       if (errorMsg.includes("couldn't find remote ref")) {
@@ -293,22 +306,23 @@ export class WorktreeManager {
   private async canFastForwardToOrigin(
     projectPath: string,
     trunkBranch: string,
-    initLogger: InitLogger
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
   ): Promise<boolean> {
     try {
       // Check if local trunk is an ancestor of origin/trunk
       // Exit code 0 = local is ancestor (can fast-forward), non-zero = cannot
-      using proc = execFileAsync("git", [
-        "-C",
-        projectPath,
-        "merge-base",
-        "--is-ancestor",
-        trunkBranch,
-        `origin/${trunkBranch}`,
-      ]);
+      using proc = execFileAsync(
+        "git",
+        ["-C", projectPath, "merge-base", "--is-ancestor", trunkBranch, `origin/${trunkBranch}`],
+        abortSignal ? { signal: abortSignal } : undefined
+      );
       await proc.result;
       return true; // Local is behind or equal to origin
-    } catch {
+    } catch (error) {
+      if (isAbortError(error, abortSignal)) {
+        throw error;
+      }
       // Local is ahead or diverged - preserve local state
       initLogger.logStderr(
         `Note: Local ${trunkBranch} is ahead of or diverged from origin, using local state`
@@ -325,7 +339,7 @@ export class WorktreeManager {
     workspacePath: string,
     trunkBranch: string,
     initLogger: InitLogger,
-    noHooksEnv?: { env: Record<string, string> }
+    noHooksEnv: GitExecOptions
   ): Promise<void> {
     try {
       initLogger.logStep("Fast-forward merging...");
@@ -338,6 +352,9 @@ export class WorktreeManager {
       await mergeProc.result;
       initLogger.logStep("Fast-forwarded to latest origin successfully");
     } catch (mergeError) {
+      if (isAbortError(mergeError, noHooksEnv?.signal)) {
+        throw mergeError;
+      }
       // Fast-forward not possible (diverged branches) - just warn
       const errorMsg = getErrorMessage(mergeError);
       initLogger.logStderr(`Note: Fast-forward failed (${errorMsg}), using local branch state`);
@@ -876,7 +893,11 @@ export class WorktreeManager {
 
     // Get current branch from source workspace
     try {
-      using proc = execFileAsync("git", ["-C", sourceWorkspacePath, "branch", "--show-current"]);
+      using proc = execFileAsync(
+        "git",
+        ["-C", sourceWorkspacePath, "branch", "--show-current"],
+        params.abortSignal ? { signal: params.abortSignal } : undefined
+      );
       const { stdout } = await proc.result;
       const sourceBranch = stdout.trim();
 

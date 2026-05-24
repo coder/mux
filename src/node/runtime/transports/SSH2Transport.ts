@@ -11,6 +11,7 @@ import { ssh2ConnectionPool } from "../SSH2ConnectionPool";
 import type { SpawnResult } from "../RemoteRuntime";
 import type {
   SSHTransport,
+  SSHTransportAcquireOptions,
   SSHTransportConfig,
   SpawnOptions,
   PtyHandle,
@@ -235,12 +236,7 @@ export class SSH2Transport implements SSHTransport {
     return this.config;
   }
 
-  async acquireConnection(options?: {
-    abortSignal?: AbortSignal;
-    timeoutMs?: number;
-    maxWaitMs?: number;
-    onWait?: (waitMs: number) => void;
-  }): Promise<void> {
+  async acquireConnection(options?: SSHTransportAcquireOptions): Promise<void> {
     await ssh2ConnectionPool.acquireConnection(this.config, {
       abortSignal: options?.abortSignal,
       timeoutMs: options?.timeoutMs,
@@ -269,16 +265,61 @@ export class SSH2Transport implements SSHTransport {
 
     try {
       const channel = await new Promise<ClientChannel>((resolve, reject) => {
+        let settled = false;
+        let streamFromLateCallback: ClientChannel | undefined;
+
+        const remainingDeadlineMs =
+          options.deadlineMs != null ? Math.max(0, options.deadlineMs - Date.now()) : undefined;
+        const timeoutMs =
+          remainingDeadlineMs ??
+          (options.timeout != null ? Math.max(0, options.timeout * 1000) : undefined);
+        const timeoutHandle =
+          timeoutMs != null
+            ? setTimeout(() => {
+                streamFromLateCallback?.close();
+                finish(() => reject(new Error("SSH2 exec channel timed out")));
+              }, timeoutMs)
+            : undefined;
+        timeoutHandle?.unref?.();
+
+        const cleanup = () => {
+          options.abortSignal?.removeEventListener("abort", onAbort);
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+        };
+
+        const finish = (handler: () => void) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          handler();
+        };
+
+        const onAbort = () => {
+          streamFromLateCallback?.close();
+          finish(() => reject(new Error("Operation aborted")));
+        };
+
+        options.abortSignal?.addEventListener("abort", onAbort, { once: true });
+        if (options.abortSignal?.aborted) {
+          onAbort();
+          return;
+        }
+
         const onExec = (err?: Error, stream?: ClientChannel) => {
+          if (settled) {
+            stream?.close();
+            return;
+          }
+          streamFromLateCallback = stream;
           if (err) {
-            reject(err);
+            finish(() => reject(err));
             return;
           }
           if (!stream) {
-            reject(new Error("SSH2 exec did not return a stream"));
+            finish(() => reject(new Error("SSH2 exec did not return a stream")));
             return;
           }
-          resolve(stream);
+          finish(() => resolve(stream));
         };
 
         if (options.forcePTY) {
@@ -299,9 +340,14 @@ export class SSH2Transport implements SSHTransport {
         },
       };
     } catch (error) {
-      ssh2ConnectionPool.reportFailure(this.config, getErrorMessage(error));
+      const errorMessage = getErrorMessage(error);
+      const wasAborted =
+        (options.abortSignal?.aborted ?? false) || errorMessage === "Operation aborted";
+      if (!wasAborted) {
+        ssh2ConnectionPool.reportFailure(this.config, errorMessage);
+      }
       throw new RuntimeErrorClass(
-        `SSH2 command failed: ${getErrorMessage(error)}`,
+        `SSH2 command failed: ${errorMessage}`,
         "network",
         error instanceof Error ? error : undefined
       );
