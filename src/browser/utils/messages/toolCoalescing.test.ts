@@ -3,7 +3,11 @@ import { describe, it, expect } from "@jest/globals";
 import { computeToolCoalesceInfos, type ToolCoalesceInfo } from "./toolCoalescing";
 import type { DisplayedMessage } from "@/common/types/message";
 
-function fileReadMessage(id: string, path: string, historySequence: number): DisplayedMessage {
+function fileReadMessage(
+  id: string,
+  path: string,
+  historySequence: number
+): Extract<DisplayedMessage, { type: "tool" }> {
   return {
     type: "tool",
     id,
@@ -192,6 +196,33 @@ describe("computeToolCoalesceInfos", () => {
     ];
 
     expect(infoAt(messages, 0)?.filePaths).toEqual(["(unknown)", "/b.ts"]);
+  });
+
+  it("does not coalesce a group that contains an interrupted (partial) member", () => {
+    // The transcript renders an InterruptedBarrier for interrupted tool rows;
+    // hiding such a row would eat the user-visible interruption signal.
+    const partial = fileReadMessage("2", "/b.ts", 2);
+    partial.isPartial = true;
+    const messages: DisplayedMessage[] = [
+      fileReadMessage("1", "/a.ts", 1),
+      partial,
+      fileReadMessage("3", "/c.ts", 3),
+    ];
+
+    expect(infoAt(messages, 0)).toBeUndefined();
+    expect(infoAt(messages, 1)).toBeUndefined();
+    expect(infoAt(messages, 2)).toBeUndefined();
+  });
+
+  it("still coalesces a group when no member is partial", () => {
+    const messages = [
+      fileReadMessage("1", "/a.ts", 1),
+      fileReadMessage("2", "/b.ts", 2),
+      fileReadMessage("3", "/c.ts", 3),
+    ];
+
+    // All messages have isPartial=false from the helper, so coalescing applies.
+    expect(infoAt(messages, 0)?.position).toBe("head");
   });
 
   it("returns an array sized to match the input", () => {

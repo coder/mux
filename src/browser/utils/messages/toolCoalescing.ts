@@ -77,6 +77,17 @@ function getCoalesceKind(msg: DisplayedMessage | undefined): ToolCoalesceKind | 
 }
 
 /**
+ * A tool row carries an interruption signal that the transcript must keep
+ * visible (the rendered InterruptedBarrier). Coalescing a partial member
+ * would hide that signal, so we skip the entire group whenever any member
+ * is partial. In practice this only matters when the stream stopped
+ * mid-burst, so the uncoalesced row count is small.
+ */
+function isPartialToolMessage(msg: DisplayedMessage | undefined): boolean {
+  return msg?.type === "tool" && msg.isPartial === true;
+}
+
+/**
  * Compute coalesce metadata for every message in one linear pass.
  *
  * Returns an array aligned with `messages` where each entry is either a
@@ -106,7 +117,19 @@ export function computeToolCoalesceInfos(
     }
 
     const groupSize = groupEnd - index + 1;
-    if (groupSize >= MIN_COALESCE_GROUP_SIZE) {
+
+    // Skip coalescing if any member is interrupted — hiding a partial row
+    // would eat its InterruptedBarrier and leave the user with no visual
+    // signal that the burst stopped mid-tool.
+    let hasPartialMember = false;
+    for (let j = index; j <= groupEnd; j++) {
+      if (isPartialToolMessage(messages[j])) {
+        hasPartialMember = true;
+        break;
+      }
+    }
+
+    if (groupSize >= MIN_COALESCE_GROUP_SIZE && !hasPartialMember) {
       const filePaths: string[] = [];
       for (let j = index; j <= groupEnd; j++) {
         const candidate = messages[j];
