@@ -15,10 +15,27 @@ const subscribersByWorkspace = new Map<string, Set<() => void>>();
 const focusListenersByWorkspace = new Map<string, Set<() => void>>();
 
 function getSubscribers(workspaceId: string): Set<() => void> {
-  const existing = subscribersByWorkspace.get(workspaceId);
+  return getOrCreateListenerSet(subscribersByWorkspace, workspaceId);
+}
+
+function getFocusListeners(workspaceId: string): Set<() => void> {
+  return getOrCreateListenerSet(focusListenersByWorkspace, workspaceId);
+}
+
+// Shared lazy-init for the per-workspace listener Maps used by the
+// subscriber and focus channels. Returns the existing Set when present, or
+// inserts a fresh Set keyed by workspaceId so callers can unconditionally
+// `.add()` without re-checking Map presence (which also avoids the
+// TypeScript narrowing dance `subscribeAdditionalSystemContextFocus`
+// previously needed to satisfy the closure capture).
+function getOrCreateListenerSet(
+  map: Map<string, Set<() => void>>,
+  workspaceId: string
+): Set<() => void> {
+  const existing = map.get(workspaceId);
   if (existing) return existing;
   const created = new Set<() => void>();
-  subscribersByWorkspace.set(workspaceId, created);
+  map.set(workspaceId, created);
   return created;
 }
 
@@ -181,16 +198,11 @@ export function subscribeAdditionalSystemContextFocus(
   workspaceId: string,
   callback: () => void
 ): () => void {
-  let listeners = focusListenersByWorkspace.get(workspaceId);
-  if (!listeners) {
-    listeners = new Set();
-    focusListenersByWorkspace.set(workspaceId, listeners);
-  }
-  const target = listeners;
-  target.add(callback);
+  const listeners = getFocusListeners(workspaceId);
+  listeners.add(callback);
   return () => {
-    target.delete(callback);
-    if (target.size === 0) {
+    listeners.delete(callback);
+    if (listeners.size === 0) {
       focusListenersByWorkspace.delete(workspaceId);
     }
   };
