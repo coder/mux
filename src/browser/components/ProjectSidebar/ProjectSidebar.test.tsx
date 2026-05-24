@@ -149,8 +149,16 @@ let archiveWorkspaceActionMock = mock(
     _options?: { acknowledgedUntrackedPaths?: string[] }
   ): Promise<ArchiveWorkspaceActionResult> => resolveArchiveResult()
 );
+let removeWorkspaceActionMock = mock(
+  (
+    _workspaceId: string,
+    _options?: { force?: boolean }
+  ): Promise<{ success: boolean; error?: string }> => Promise.resolve({ success: true })
+);
 let settingsOpenMock = mock(() => undefined);
-let confirmDialogMock = mock(() => Promise.resolve(true));
+let confirmDialogMock = mock((_options: ConfirmDialogContextModule.ConfirmDialogOptions) =>
+  Promise.resolve(true)
+);
 let archivePopoverShowErrorMock = mock(
   (_workspaceId: string, _error: string, _anchor?: { top: number; left: number }) => undefined
 );
@@ -272,7 +280,15 @@ function installProjectSidebarTestDoubles() {
       _options?: { acknowledgedUntrackedPaths?: string[] }
     ): Promise<ArchiveWorkspaceActionResult> => resolveArchiveResult()
   );
-  confirmDialogMock = mock(() => Promise.resolve(true));
+  removeWorkspaceActionMock = mock(
+    (
+      _workspaceId: string,
+      _options?: { force?: boolean }
+    ): Promise<{ success: boolean; error?: string }> => Promise.resolve({ success: true })
+  );
+  confirmDialogMock = mock((_options: ConfirmDialogContextModule.ConfirmDialogOptions) =>
+    Promise.resolve(true)
+  );
   latestArchiveWorkspaceHandler = null;
   latestArchiveConfirmationModalProps = null;
   void mock.module("@/browser/assets/logos/mux-logo-dark.svg?react", () => ({
@@ -485,7 +501,7 @@ function installProjectSidebarTestDoubles() {
         setSelectedWorkspace: () => undefined,
         preflightArchiveWorkspace: preflightArchiveWorkspaceMock,
         archiveWorkspace: archiveWorkspaceActionMock,
-        removeWorkspace: () => Promise.resolve({ success: true }),
+        removeWorkspace: removeWorkspaceActionMock,
         updateWorkspaceTitle: () => Promise.resolve({ success: true }),
         refreshWorkspaceMetadata: () => Promise.resolve(),
         pendingNewWorkspaceProject: null,
@@ -657,6 +673,62 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     cleanupDom = null;
     mock.restore();
   });
+
+  function renderVariantGroupSidebar() {
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const parentWorkspace = {
+      ...createWorkspace("parent", { title: "Parent workspace" }),
+      projects: singleProjectRefs,
+    };
+    const taskGroup = {
+      groupId: "variants-demo",
+      index: 0,
+      total: 2,
+      kind: "variants",
+      label: "frontend",
+    } as const;
+    const childOne = {
+      ...createWorkspace("child-1", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        title: "Split review",
+        bestOf: taskGroup,
+      }),
+      projects: singleProjectRefs,
+    };
+    const childTwo = {
+      ...createWorkspace("child-2", {
+        parentWorkspaceId: "parent",
+        taskStatus: "queued",
+        title: "Split review",
+        bestOf: { ...taskGroup, index: 1, label: "backend" },
+      }),
+      projects: singleProjectRefs,
+    };
+
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    });
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={
+          new Map([["/projects/demo-project", [parentWorkspace, childOne, childTwo]]])
+        }
+        workspaceRecency={{ parent: Date.now(), "child-1": Date.now(), "child-2": Date.now() }}
+      />
+    );
+
+    return { view, childOne, childTwo };
+  }
 
   test("filters multi-project rows out entirely when the experiment is disabled", () => {
     spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(() => false);
@@ -912,93 +984,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
   });
 
   test("renders variants groups with a shared row and labeled members when expanded", async () => {
-    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
-
-    const singleProjectRefs = [
-      { projectPath: "/projects/demo-project", projectName: "demo-project" },
-    ];
-    const parentWorkspace = {
-      ...createWorkspace("parent", { title: "Parent workspace" }),
-      projects: singleProjectRefs,
-    };
-    const taskGroup = {
-      groupId: "variants-demo",
-      index: 0,
-      total: 2,
-      kind: "variants",
-      label: "frontend",
-    } as const;
-    const childOne = {
-      ...createWorkspace("child-1", {
-        parentWorkspaceId: "parent",
-        taskStatus: "running",
-        title: "Split review",
-        bestOf: taskGroup,
-      }),
-      projects: singleProjectRefs,
-    };
-    const childTwo = {
-      ...createWorkspace("child-2", {
-        parentWorkspaceId: "parent",
-        taskStatus: "queued",
-        title: "Split review",
-        bestOf: { ...taskGroup, index: 1, label: "backend" },
-      }),
-      projects: singleProjectRefs,
-    };
-
-    const sortedWorkspacesByProject = new Map([
-      ["/projects/demo-project", [parentWorkspace, childOne, childTwo]],
-    ]);
-
-    const projectConfig = { workspaces: [] };
-    spyOn(ProjectContextModule, "useProjectContext").mockImplementation(() => ({
-      userProjects: new Map([["/projects/demo-project", projectConfig]]),
-      systemProjectPath: null,
-      resolveProjectPath: () => null,
-      getProjectConfig: () => projectConfig,
-      loading: false,
-      refreshProjects: () => Promise.resolve(),
-      addProject: () => undefined,
-      removeProject: () => Promise.resolve({ success: true }),
-      isProjectCreateModalOpen: false,
-      openProjectCreateModal: () => undefined,
-      closeProjectCreateModal: () => undefined,
-      workspaceModalState: {
-        isOpen: false,
-        projectPath: null,
-        projectName: "",
-        branches: [],
-        defaultTrunkBranch: undefined,
-        loadErrorMessage: null,
-        isLoading: false,
-      },
-      openWorkspaceModal: () => Promise.resolve(),
-      closeWorkspaceModal: () => undefined,
-      getBranchesForProject: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
-      getSecrets: () => Promise.resolve([]),
-      updateSecrets: () => Promise.resolve(),
-      updateDisplayName: () => resolveVoidResult(),
-      updateColor: () => resolveVoidResult(),
-      assignWorkspaceToSubProject: () => resolveVoidResult(),
-      hasAnyProject: true,
-      resolveNewChatProjectPath: () => "/projects/demo-project",
-    }));
-
-    const workspaceRecency = {
-      parent: Date.now(),
-      "child-1": Date.now(),
-      "child-2": Date.now(),
-    };
-
-    const view = render(
-      <ProjectSidebar
-        collapsed={false}
-        onToggleCollapsed={() => undefined}
-        sortedWorkspacesByProject={sortedWorkspacesByProject}
-        workspaceRecency={workspaceRecency}
-      />
-    );
+    const { view } = renderVariantGroupSidebar();
 
     const groupRow = view.getByTestId("task-group-variants-demo");
     expect(groupRow.textContent).toContain("Variants · Split review");
@@ -1018,6 +1004,35 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(childOneRow.dataset.connectorLayout).toBe("task-group-member");
     expect(childTwoRow.dataset.depth).toBe("2.5");
     expect(childTwoRow.dataset.connectorLayout).toBe("task-group-member");
+  });
+
+  test("deletes every variant from the group action menu", async () => {
+    const { view, childOne, childTwo } = renderVariantGroupSidebar();
+
+    fireEvent.click(view.getByTestId("task-group-actions-variants-demo"));
+    fireEvent.click(view.getByRole("button", { name: "Delete all variants" }));
+
+    await waitFor(() => {
+      expect(removeWorkspaceActionMock).toHaveBeenCalledTimes(2);
+    });
+
+    expect(confirmDialogMock.mock.calls[0]?.[0].confirmVariant).toBe("destructive");
+    expect(removeWorkspaceActionMock.mock.calls.map((call) => call[0])).toEqual([
+      childOne.id,
+      childTwo.id,
+    ]);
+    expect(removeWorkspaceActionMock.mock.calls.map((call) => call[1])).toEqual([
+      { force: true },
+      { force: true },
+    ]);
+  });
+
+  test("opens the variant group action menu on right-click", () => {
+    const { view } = renderVariantGroupSidebar();
+
+    fireEvent.contextMenu(view.getByTestId("task-group-variants-demo"));
+
+    expect(view.getByRole("button", { name: "Delete all variants" })).toBeTruthy();
   });
 
   test("does not coalesce a best-of group when one candidate still has hidden child tasks", () => {
