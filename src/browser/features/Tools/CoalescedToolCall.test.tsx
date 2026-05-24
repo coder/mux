@@ -6,6 +6,8 @@ import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 
 import { CoalescedToolCall } from "./CoalescedToolCall";
 
+const noop = (): void => undefined;
+
 let windowInstance: GlobalWindow | null = null;
 
 beforeEach(() => {
@@ -30,7 +32,7 @@ describe("CoalescedToolCall", () => {
           kind="file_read"
           filePaths={["src/App.tsx", "src/main.ts"]}
           expanded={false}
-          onToggle={() => {}}
+          onToggle={noop}
         />
       </TooltipProvider>
     );
@@ -46,7 +48,7 @@ describe("CoalescedToolCall", () => {
           kind="file_edit"
           filePaths={["a.ts", "b.ts", "c.ts"]}
           expanded={false}
-          onToggle={() => {}}
+          onToggle={noop}
         />
       </TooltipProvider>
     );
@@ -55,7 +57,7 @@ describe("CoalescedToolCall", () => {
   });
 
   test("clicking the header fires onToggle and reflects aria-expanded state", () => {
-    const onToggle = mock(() => {});
+    const onToggle = mock(noop);
     const view = render(
       <TooltipProvider>
         <CoalescedToolCall
@@ -93,7 +95,7 @@ describe("CoalescedToolCall", () => {
           kind="file_read"
           filePaths={["only.ts"]}
           expanded={false}
-          onToggle={() => {}}
+          onToggle={noop}
         />
       </TooltipProvider>
     );
