@@ -5,7 +5,8 @@ import { join } from "node:path";
 const STORY_DIR = "src/browser/stories";
 const COLOCATED_STORY_DIRS = ["src/browser/components", "src/browser/features"];
 const MAX_SNAPSHOT_ENABLED_FILES = 70;
-const MAX_ESTIMATED_SNAPSHOTS = 300;
+// Includes the plan ToC wide-viewport story, which intentionally protects gutter-only UI.
+const MAX_ESTIMATED_SNAPSHOTS = 303;
 const STORY_EXPORT_PATTERN = /^export const \w+/gm;
 const SMOKE_MODE_PATTERN = /modes:\s*CHROMATIC_SMOKE_MODES/g;
 const INLINE_MODE_OBJECT_PATTERN = /modes:\s*{/g;

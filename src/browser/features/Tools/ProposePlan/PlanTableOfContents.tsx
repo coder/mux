@@ -95,7 +95,7 @@ export const PlanTableOfContents: React.FC<PlanTableOfContentsProps> = (props) =
       <div className="plan-toc-compact-hint" aria-hidden="true">
         Expand to see ToC
       </div>
-      <nav className="plan-toc">
+      <nav className="plan-toc" data-testid="plan-toc-nav">
         {titleHeadingEntry ? (
           <TooltipIfPresent tooltip={headingText} side="right" align="start">
             <button
