@@ -235,6 +235,23 @@ describe("extractPlanHeadings", () => {
     ]);
   });
 
+  test("counts implicitly closed raw HTML headings to preserve DOM index alignment", () => {
+    const md = `<h2>Implicit close\n\n## Outside`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "Implicit close" },
+      { renderIndex: 1, level: 2, text: "Outside" },
+    ]);
+  });
+
+  test("stops implicitly closed raw HTML headings before the next heading tag", () => {
+    const md = `<h2>Intro<h3>Nested close\n\n## Outside`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "Intro" },
+      { renderIndex: 1, level: 3, text: "Nested close" },
+      { renderIndex: 2, level: 2, text: "Outside" },
+    ]);
+  });
+
   test("counts raw HTML headings inside pre blocks to preserve DOM index alignment", () => {
     const md = `<pre><h2>Rendered from raw HTML</h2></pre>\n\n## Outside`;
     expect(extractPlanHeadings(md)).toEqual([

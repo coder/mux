@@ -24,9 +24,12 @@ interface HtmlHeading {
 }
 
 const markdownParser = new MarkdownIt({ html: true, linkify: false, typographer: false });
-const HTML_HEADING_PATTERN = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1\s*>/gi;
+const HTML_HEADING_OPEN_PATTERN = /<h([1-6])\b[^>]*>/gi;
 const NON_RENDERED_HTML_BLOCK_PATTERN =
   /<!--([\s\S]*?)(?:-->|$)|<\?(?:[\s\S]*?)(?:\?>|$)|<!\[CDATA\[(?:[\s\S]*?)(?:\]\]>|$)|<![A-Z][\s\S]*?(?:>|$)|<(?:script|style)(?=[\s>]|$)[\s\S]*?(?:<\/(?:script|style)\s*>|$)/gi;
+
+const IMPLICIT_HEADING_BOUNDARY_PATTERN =
+  /<h[1-6]\b[^>]*>|<\/?(?:address|article|aside|blockquote|details|dialog|div|dl|dt|dd|fieldset|figcaption|figure|footer|form|header|hr|li|main|nav|ol|p|pre|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>/i;
 
 /**
  * Extract heading entries from a plan's markdown source.
@@ -147,18 +150,47 @@ function extractHtmlHeadings(html: string): HtmlHeading[] {
 
   const renderedHtml = html.replace(NON_RENDERED_HTML_BLOCK_PATTERN, "");
   const headings: HtmlHeading[] = [];
-  HTML_HEADING_PATTERN.lastIndex = 0;
+  HTML_HEADING_OPEN_PATTERN.lastIndex = 0;
 
-  let match = HTML_HEADING_PATTERN.exec(renderedHtml);
+  let match = HTML_HEADING_OPEN_PATTERN.exec(renderedHtml);
   while (match) {
+    const level = parseInt(match[1], 10);
+    const contentStart = match.index + match[0].length;
+    const contentEnd = findHtmlHeadingContentEnd(renderedHtml, contentStart, level);
+
     headings.push({
-      level: parseInt(match[1], 10),
-      text: stripMarkdownFormatting(match[2].replace(/<[^>]+>/g, "")),
+      level,
+      text: stripMarkdownFormatting(
+        renderedHtml.slice(contentStart, contentEnd).replace(/<[^>]+>/g, "")
+      ),
     });
-    match = HTML_HEADING_PATTERN.exec(renderedHtml);
+
+    HTML_HEADING_OPEN_PATTERN.lastIndex = Math.max(contentEnd, contentStart);
+    match = HTML_HEADING_OPEN_PATTERN.exec(renderedHtml);
   }
 
   return headings;
+}
+
+function findHtmlHeadingContentEnd(html: string, contentStart: number, level: number): number {
+  const remaining = html.slice(contentStart);
+  const explicitClose = new RegExp(`</h${level}\\s*>`, "i").exec(remaining);
+  const implicitBoundary = IMPLICIT_HEADING_BOUNDARY_PATTERN.exec(remaining);
+  const explicitCloseIndex = explicitClose?.index;
+  const implicitBoundaryIndex = implicitBoundary?.index;
+
+  if (
+    implicitBoundaryIndex != null &&
+    (explicitCloseIndex == null || implicitBoundaryIndex < explicitCloseIndex)
+  ) {
+    return contentStart + implicitBoundaryIndex;
+  }
+
+  if (explicitCloseIndex != null) {
+    return contentStart + explicitCloseIndex;
+  }
+
+  return html.length;
 }
 
 /**
