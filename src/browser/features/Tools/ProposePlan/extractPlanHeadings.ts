@@ -26,7 +26,7 @@ interface HtmlHeading {
 const markdownParser = new MarkdownIt({ html: true, linkify: false, typographer: false });
 const HTML_HEADING_PATTERN = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1\s*>/gi;
 const NON_RENDERED_HTML_BLOCK_PATTERN =
-  /<!--([\s\S]*?)(?:-->|$)|<\?(?:[\s\S]*?)(?:\?>|$)|<!\[CDATA\[(?:[\s\S]*?)(?:\]\]>|$)|<![A-Z][\s\S]*?(?:>|$)|<(?:script|pre|style)(?=[\s>]|$)[\s\S]*?(?:<\/(?:script|pre|style)\s*>|$)/gi;
+  /<!--([\s\S]*?)(?:-->|$)|<\?(?:[\s\S]*?)(?:\?>|$)|<!\[CDATA\[(?:[\s\S]*?)(?:\]\]>|$)|<![A-Z][\s\S]*?(?:>|$)|<(?:script|style)(?=[\s>]|$)[\s\S]*?(?:<\/(?:script|style)\s*>|$)/gi;
 
 /**
  * Extract heading entries from a plan's markdown source.

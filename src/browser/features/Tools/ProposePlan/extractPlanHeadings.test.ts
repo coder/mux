@@ -235,6 +235,14 @@ describe("extractPlanHeadings", () => {
     ]);
   });
 
+  test("counts raw HTML headings inside pre blocks to preserve DOM index alignment", () => {
+    const md = `<pre><h2>Rendered from raw HTML</h2></pre>\n\n## Outside`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "Rendered from raw HTML" },
+      { renderIndex: 1, level: 2, text: "Outside" },
+    ]);
+  });
+
   test("does not count escaped raw HTML headings inside inline code", () => {
     const md = `Intro \`<h2>Code</h2>\` <h2>Real</h2>\n\n## Next`;
     expect(extractPlanHeadings(md)).toEqual([
