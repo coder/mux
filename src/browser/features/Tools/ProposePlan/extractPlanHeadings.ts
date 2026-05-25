@@ -44,9 +44,6 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
     const line = lines[i];
     const structuralLine = stripAtxContainerPrefixes(line);
     const structuralTrimmed = structuralLine.trim();
-    const blockquoteLine = stripBlockquotePrefixes(line);
-    const blockquoteTrimmed = blockquoteLine.trim();
-
     // Track fenced code blocks. CommonMark allows up to three leading spaces
     // before a fence; four spaces are indented code, not a fence. We also strip
     // container markers so quoted/list-contained fences suppress headings inside
@@ -151,34 +148,17 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       continue;
     }
 
-    // Setext heading: text line followed by === (h1) or --- (h2). Skip blank
-    // text lines and list/fence/thematic-break starters so we don't invent a
-    // heading where markdown renders a list item or horizontal rule instead.
-    // Preserve underline indentation: a 4-space-indented underline is code, not
-    // a heading marker, so trimming it would create phantom headings.
-    if (
-      i + 1 < lines.length &&
-      /^ {0,3}\S/.test(blockquoteLine) &&
-      isSetextTextCandidate(blockquoteTrimmed)
-    ) {
-      const nextSetextLine = stripBlockquotePrefixes(lines[i + 1]);
-      if (/^ {0,3}=+[ \t]*$/.test(nextSetextLine)) {
-        const text = stripMarkdownFormatting(blockquoteTrimmed);
-        if (text) {
-          headings.push({ renderIndex, level: 1, text });
-          renderIndex += 1;
-          i += 1; // consume the underline
-          continue;
-        }
-      }
-      if (/^ {0,3}-{2,}[ \t]*$/.test(nextSetextLine)) {
-        const text = stripMarkdownFormatting(blockquoteTrimmed);
-        if (text) {
-          headings.push({ renderIndex, level: 2, text });
-          renderIndex += 1;
-          i += 1; // consume the underline
-          continue;
-        }
+    // Setext heading: one or more paragraph lines followed by === (h1) or ---
+    // (h2). Preserve underline indentation: a 4-space-indented underline is
+    // code, not a heading marker, so trimming it would create phantom headings.
+    const setextHeading = getSetextHeadingAt(lines, i);
+    if (setextHeading) {
+      const text = stripMarkdownFormatting(setextHeading.text);
+      if (text) {
+        headings.push({ renderIndex, level: setextHeading.level, text });
+        renderIndex += 1;
+        i = setextHeading.underlineIndex;
+        continue;
       }
     }
   }
@@ -202,8 +182,41 @@ function isSetextTextCandidate(text: string): boolean {
     !/^[-+*][ \t]/.test(text) &&
     !/^\d{1,9}[.)][ \t]/.test(text) &&
     !/^(`{3,}|~{3,})/.test(text) &&
-    !/^<[^>]+>/.test(text)
+    !isSetextHtmlBlockLine(text)
   );
+}
+
+interface SetextHeadingMatch {
+  level: 1 | 2;
+  text: string;
+  underlineIndex: number;
+}
+
+function getSetextHeadingAt(lines: string[], startIndex: number): SetextHeadingMatch | null {
+  const textParts: string[] = [];
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = stripBlockquotePrefixes(lines[i]);
+    const trimmed = line.trim();
+
+    if (textParts.length > 0) {
+      if (/^ {0,3}=+[ \t]*$/.test(line)) {
+        return { level: 1, text: textParts.join(" "), underlineIndex: i };
+      }
+      if (/^ {0,3}-{2,}[ \t]*$/.test(line)) {
+        return { level: 2, text: textParts.join(" "), underlineIndex: i };
+      }
+    }
+
+    if (!/^ {0,3}\S/.test(line) || !isSetextTextCandidate(trimmed)) {
+      return null;
+    }
+    textParts.push(trimmed);
+  }
+  return null;
+}
+
+function isSetextHtmlBlockLine(text: string): boolean {
+  return getHtmlBlockStart(text) != null;
 }
 
 interface CompleteHtmlHeading {
@@ -258,13 +271,6 @@ function getHtmlBlockStart(trimmedLine: string): HtmlBlockState | null {
   }
 
   if (HTML_BLOCK_TAG_PATTERN.test(trimmedLine)) {
-    return { terminatesOnBlank: true, countsNestedHeadings: true };
-  }
-
-  // CommonMark also treats a complete open/closing HTML tag on its own line as
-  // an HTML block. Raw h1-h6 lines are handled above so they still count toward
-  // renderIndex.
-  if (/^<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*)?>\s*$/.test(trimmedLine)) {
     return { terminatesOnBlank: true, countsNestedHeadings: true };
   }
 

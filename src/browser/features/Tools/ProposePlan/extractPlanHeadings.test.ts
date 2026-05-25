@@ -105,6 +105,22 @@ describe("extractPlanHeadings", () => {
     ]);
   });
 
+  test("combines multi-line setext heading text", () => {
+    const md = `Foo\nBar\n---\n\n## After`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "Foo Bar" },
+      { renderIndex: 1, level: 2, text: "After" },
+    ]);
+  });
+
+  test("allows inline HTML paragraph text as a setext heading", () => {
+    const md = `<em>Roadmap</em>\n---\n\n## After`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "Roadmap" },
+      { renderIndex: 1, level: 2, text: "After" },
+    ]);
+  });
+
   test("recognizes setext headings inside blockquotes", () => {
     const md = `> Quoted title\n> ===\n\n## After`;
     expect(extractPlanHeadings(md)).toEqual([
