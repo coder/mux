@@ -72,6 +72,13 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       continue;
     }
 
+    if (htmlBlockState && !htmlBlockState.countsNestedHeadings) {
+      if (htmlBlockTerminates(htmlBlockState, structuralTrimmed)) {
+        htmlBlockState = null;
+      }
+      continue;
+    }
+
     // Raw HTML heading on its own line (`<h2>Hello</h2>`). Streamdown emits these
     // through rehype-raw, so we count them too to keep `renderIndex` aligned.
     // Check this even while inside another raw HTML block (`<div>...</div>`),
@@ -161,6 +168,7 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
 interface HtmlBlockState {
   closingPattern?: RegExp;
   terminatesOnBlank: boolean;
+  countsNestedHeadings: boolean;
 }
 
 const HTML_BLOCK_TAGS =
@@ -170,31 +178,35 @@ const HTML_BLOCK_TAG_PATTERN = new RegExp(`^</?(?:${HTML_BLOCK_TAGS})(?=[\\s>/])
 function getHtmlBlockStart(trimmedLine: string): HtmlBlockState | null {
   const pairedTagMatch = /^<(script|pre|style)(?=[\s>])/i.exec(trimmedLine);
   if (pairedTagMatch) {
-    return { closingPattern: new RegExp(`</${pairedTagMatch[1]}>`, "i"), terminatesOnBlank: false };
+    return {
+      closingPattern: new RegExp(`</${pairedTagMatch[1]}>`, "i"),
+      terminatesOnBlank: false,
+      countsNestedHeadings: false,
+    };
   }
 
   if (trimmedLine.startsWith("<!--")) {
-    return { closingPattern: /-->/, terminatesOnBlank: false };
+    return { closingPattern: /-->/, terminatesOnBlank: false, countsNestedHeadings: false };
   }
   if (trimmedLine.startsWith("<?")) {
-    return { closingPattern: /\?>/, terminatesOnBlank: false };
+    return { closingPattern: /\?>/, terminatesOnBlank: false, countsNestedHeadings: false };
   }
   if (/^<![A-Z]/.test(trimmedLine)) {
-    return { closingPattern: />/, terminatesOnBlank: false };
+    return { closingPattern: />/, terminatesOnBlank: false, countsNestedHeadings: false };
   }
   if (trimmedLine.startsWith("<![CDATA[")) {
-    return { closingPattern: /\]\]>/, terminatesOnBlank: false };
+    return { closingPattern: /\]\]>/, terminatesOnBlank: false, countsNestedHeadings: false };
   }
 
   if (HTML_BLOCK_TAG_PATTERN.test(trimmedLine)) {
-    return { terminatesOnBlank: true };
+    return { terminatesOnBlank: true, countsNestedHeadings: true };
   }
 
   // CommonMark also treats a complete open/closing HTML tag on its own line as
   // an HTML block. Raw h1-h6 lines are handled above so they still count toward
   // renderIndex.
   if (/^<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*)?>\s*$/.test(trimmedLine)) {
-    return { terminatesOnBlank: true };
+    return { terminatesOnBlank: true, countsNestedHeadings: true };
   }
 
   return null;
