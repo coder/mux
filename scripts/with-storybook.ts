@@ -7,13 +7,17 @@
  * reuse a warm Storybook process instead of repeatedly paying the cold-start
  * cost and hand-writing cleanup logic around ad-hoc Playwright scripts.
  */
-import { spawn } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
+
+const childSpawnErrors = new WeakMap<ChildProcess, Error>();
 
 interface Options {
   port: number;
   timeoutMs: number;
   command: string[];
 }
+
+const STORYBOOK_PROBE_TIMEOUT_MS = 2_000;
 
 const DEFAULT_PORT = 6006;
 const DEFAULT_TIMEOUT_MS = 90_000;
@@ -55,22 +59,21 @@ function parseArgs(argv: string[]): Options {
     process.exit(0);
   }
 
-  const delimiterIndex = argv.indexOf("--");
-  if (delimiterIndex === -1) {
-    throw new Error("Missing `-- <command>` delimiter. Run with --help for usage.");
-  }
-
-  const optionArgs = argv.slice(0, delimiterIndex);
-  const command = argv.slice(delimiterIndex + 1);
-  if (command.length === 0) {
-    throw new Error("Missing command after `--`. Run with --help for usage.");
-  }
-
   let port = parsePort(process.env.STORYBOOK_PORT ?? String(DEFAULT_PORT));
   let timeoutMs = parsePositiveInteger(
     process.env.STORYBOOK_TIMEOUT_MS ?? String(DEFAULT_TIMEOUT_MS),
     "--timeout-ms"
   );
+
+  const delimiterIndex = argv.indexOf("--");
+  const optionArgs = delimiterIndex === -1 ? [] : argv.slice(0, delimiterIndex);
+  const command = delimiterIndex === -1 ? argv : argv.slice(delimiterIndex + 1);
+  if (delimiterIndex === -1 && argv[0]?.startsWith("-")) {
+    throw new Error("Missing `-- <command>` delimiter. Run with --help for usage.");
+  }
+  if (command.length === 0) {
+    throw new Error("Missing command after `--`. Run with --help for usage.");
+  }
 
   for (let index = 0; index < optionArgs.length; index += 1) {
     const arg = optionArgs[index];
@@ -100,7 +103,12 @@ async function isStorybookReady(url: string): Promise<boolean> {
   try {
     // `/index.json` is Storybook-specific. Checking it prevents us from
     // accidentally reusing an unrelated process that merely occupies the port.
-    const response = await fetch(`${url}/index.json`, { cache: "no-store" });
+    // Keep each probe bounded so a half-open local server cannot outlive the
+    // overall Storybook startup timeout.
+    const response = await fetch(`${url}/index.json`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(STORYBOOK_PROBE_TIMEOUT_MS),
+    });
     if (!response.ok) return false;
     const indexJson = await response.json();
     return typeof indexJson === "object" && indexJson != null && "entries" in indexJson;
@@ -119,12 +127,18 @@ async function waitForStorybook(
     if (await isStorybookReady(url)) {
       return;
     }
-    if (serverProcess && (serverProcess.exitCode != null || serverProcess.signalCode != null)) {
-      throw new Error(
-        `Storybook exited before becoming ready (code=${serverProcess.exitCode ?? "null"}, signal=${
-          serverProcess.signalCode ?? "null"
-        })`
-      );
+    if (serverProcess) {
+      const spawnError = childSpawnErrors.get(serverProcess);
+      if (spawnError) {
+        throw new Error(`Storybook failed to start: ${spawnError.message}`);
+      }
+      if (serverProcess.exitCode != null || serverProcess.signalCode != null) {
+        throw new Error(
+          `Storybook exited before becoming ready (code=${serverProcess.exitCode ?? "null"}, signal=${
+            serverProcess.signalCode ?? "null"
+          })`
+        );
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -136,14 +150,23 @@ function spawnInherited(command: string[], env: NodeJS.ProcessEnv = process.env)
   if (!executable) {
     throw new Error("Cannot spawn an empty command");
   }
-  return spawn(executable, args, {
+  const child = spawn(executable, args, {
     env,
     stdio: "inherit",
     shell: false,
   });
+  child.once("error", (error) => {
+    childSpawnErrors.set(child, error);
+  });
+  return child;
 }
 
 async function waitForExit(child: ReturnType<typeof spawnInherited>): Promise<number> {
+  const existingError = childSpawnErrors.get(child);
+  if (existingError) {
+    console.error(`Failed to start process: ${existingError.message}`);
+    return 1;
+  }
   if (typeof child.exitCode === "number") {
     return child.exitCode;
   }
@@ -153,12 +176,23 @@ async function waitForExit(child: ReturnType<typeof spawnInherited>): Promise<nu
   }
 
   return await new Promise((resolve) => {
+    let settled = false;
+    const finish = (exitCode: number): void => {
+      if (settled) return;
+      settled = true;
+      resolve(exitCode);
+    };
+
+    child.once("error", (error) => {
+      console.error(`Failed to start process: ${error.message}`);
+      finish(1);
+    });
     child.once("exit", (code, signal) => {
       if (typeof code === "number") {
-        resolve(code);
+        finish(code);
       } else {
         console.error(`Process exited from signal ${signal ?? "unknown"}`);
-        resolve(1);
+        finish(1);
       }
     });
   });
@@ -168,16 +202,21 @@ async function waitForExitWithTimeout(
   child: ReturnType<typeof spawnInherited>,
   timeoutMs: number
 ): Promise<boolean> {
-  if (child.exitCode != null || child.signalCode != null) {
+  if (childSpawnErrors.has(child) || child.exitCode != null || child.signalCode != null) {
     return true;
   }
 
   return await new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(false), timeoutMs);
-    child.once("exit", () => {
+    let settled = false;
+    const finish = (exited: boolean): void => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve(true);
-    });
+      resolve(exited);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    child.once("error", () => finish(true));
+    child.once("exit", () => finish(true));
   });
 }
 
