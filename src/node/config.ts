@@ -1895,16 +1895,42 @@ export class Config {
     const filename = path.basename(this.providersFile);
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // persistent: false so the watcher doesn't prevent the process (or Jest)
-    // from exiting when nothing else is keeping the event loop alive.
-    const watcher = fs.watch(this.rootDir, { persistent: false }, (_eventType, changedFilename) => {
-      if (changedFilename !== filename) return;
+    const fire = (): void => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
         callback();
       }, 300);
-    });
+    };
+
+    // fs.watch can throw for reasons beyond ENOENT — network filesystems
+    // (NFS/SMB) and watch-limit exhaustion (ENOSPC on Linux) are the common
+    // ones. Degrade gracefully: log once, return a no-op cleanup, and let
+    // the rest of provider config keep working. The UI just won't auto-
+    // refresh on manual edits in that environment (same as before this PR).
+    let watcher: fs.FSWatcher;
+    try {
+      // persistent: false so the watcher doesn't prevent the process (or
+      // Jest) from exiting when nothing else is keeping the event loop alive.
+      watcher = fs.watch(this.rootDir, { persistent: false }, (_eventType, changedFilename) => {
+        // changedFilename can be null on some platforms/kernels (notably
+        // older macOS FSEvents). When we can't tell which file changed,
+        // assume providers.jsonc might have and let the consumer re-fetch
+        // — better an extra refresh than a missed one, since this is the
+        // exact scenario the feature is meant to fix.
+        if (changedFilename != null && changedFilename !== filename) return;
+        fire();
+      });
+    } catch (error) {
+      log.warn(
+        `Could not watch providers.jsonc for external edits (${this.rootDir}); manual edits will require a restart to take effect:`,
+        error
+      );
+      const noop = (): void => {
+        // Nothing to clean up — fs.watch never started.
+      };
+      return noop;
+    }
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
