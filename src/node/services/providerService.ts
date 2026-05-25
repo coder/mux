@@ -132,6 +132,7 @@ export class ProviderService {
   private readonly policyService: PolicyService | null;
   private readonly emitter = new EventEmitter();
   private lastWarnedShadowedCustomProviderIds: Set<string> | null = null;
+  private readonly stopWatchingProvidersFile: () => void;
 
   constructor(
     private readonly config: Config,
@@ -142,7 +143,18 @@ export class ProviderService {
     // Avoid noisy MaxListenersExceededWarning for normal usage.
     this.emitter.setMaxListeners(50);
     // Notify subscribers when providers.jsonc is edited externally (e.g. manual edits).
-    this.config.watchProvidersFile(() => this.notifyConfigChanged());
+    this.stopWatchingProvidersFile = this.config.watchProvidersFile(() =>
+      this.notifyConfigChanged()
+    );
+  }
+
+  /**
+   * Release long-lived OS handles (e.g. the providers.jsonc file watcher).
+   * Called by ServiceContainer.dispose() during shutdown and by tests.
+   */
+  dispose(): void {
+    this.stopWatchingProvidersFile();
+    this.emitter.removeAllListeners();
   }
 
   /**

@@ -543,6 +543,7 @@ export class ServiceContainer {
 
     this.copilotOauthService.dispose();
     this.serverAuthService.dispose();
+    this.providerService.dispose();
     await this.backgroundProcessManager.terminateAll();
   }
 }
