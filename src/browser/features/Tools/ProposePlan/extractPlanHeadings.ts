@@ -228,9 +228,9 @@ function getHtmlCandidateLine(line: string): string | null {
 }
 
 function getHtmlBlockStart(trimmedLine: string): HtmlBlockState | null {
-  if (/^<(?:script|pre|style)(?=[\s>])/i.test(trimmedLine)) {
+  if (/^<(?:script|pre|style)(?=[\s>]|$)/i.test(trimmedLine)) {
     return {
-      closingPattern: /<\/(?:script|pre|style)>/i,
+      closingPattern: /<\/(?:script|pre|style)\s*>/i,
       terminatesOnBlank: false,
       countsNestedHeadings: false,
     };

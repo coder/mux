@@ -144,7 +144,7 @@ describe("extractPlanHeadings", () => {
   });
 
   test("ends script/pre/style HTML blocks on any type-1 closing tag", () => {
-    const md = `<script>\n<h2>Hidden script heading</h2>\n</style>\n\n## Outside`;
+    const md = `<script\n<h2>Hidden script heading</h2>\n</style   >\n\n## Outside`;
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "Outside" }]);
   });
 
