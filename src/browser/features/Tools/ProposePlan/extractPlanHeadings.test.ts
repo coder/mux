@@ -151,6 +151,16 @@ describe("extractPlanHeadings", () => {
     ]);
   });
 
+  test("counts raw HTML heading tags with surrounding inline content", () => {
+    const md = `<h2>Intro</h2> trailing text\n<h2>A</h2><h3>B</h3>\n\n## Outside`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "Intro" },
+      { renderIndex: 1, level: 2, text: "A" },
+      { renderIndex: 2, level: 3, text: "B" },
+      { renderIndex: 3, level: 2, text: "Outside" },
+    ]);
+  });
+
   test("counts multiline raw HTML headings so later renderIndex values stay aligned", () => {
     const md = `<h2>\nMultiline HTML heading\n</h2>\n\n## Outside`;
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 1, level: 2, text: "Outside" }]);

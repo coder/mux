@@ -79,12 +79,12 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       continue;
     }
 
-    // Raw HTML heading on its own line (`<h2>Hello</h2>`). Streamdown emits these
-    // through rehype-raw, so we count them too to keep `renderIndex` aligned.
-    // Check this even while inside another raw HTML block (`<div>...</div>`),
-    // because nested h1-h6 tags still render into the same heading NodeList.
-    const htmlMatch = /^<h([1-6])\b[^>]*>(.*?)<\/h\1>\s*$/i.exec(structuralTrimmed);
-    if (htmlMatch) {
+    // Raw HTML h1-h6 tags render into the same heading NodeList even when they
+    // are nested in another HTML block or share a line with other HTML/text.
+    const htmlHeadingMatches = Array.from(
+      structuralTrimmed.matchAll(/<h([1-6])\b[^>]*>(.*?)<\/h\1>/gi)
+    );
+    for (const htmlMatch of htmlHeadingMatches) {
       const level = parseInt(htmlMatch[1], 10);
       const text = stripMarkdownFormatting(htmlMatch[2].replace(/<[^>]+>/g, ""));
       if (text) {
@@ -93,10 +93,9 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       // Empty raw HTML headings still render as hN elements, so they consume
       // an index even when they do not produce a useful TOC entry.
       renderIndex += 1;
-      continue;
     }
 
-    const multilineHtmlHeadingMatch = /^<h([1-6])\b[^>]*>(?!.*<\/h\1>)/i.exec(structuralTrimmed);
+    const multilineHtmlHeadingMatch = /<h([1-6])\b[^>]*>(?!.*<\/h\1>)/i.exec(structuralTrimmed);
     if (multilineHtmlHeadingMatch) {
       const level = multilineHtmlHeadingMatch[1];
       // Multiline raw HTML headings render as hN elements, but collecting their
