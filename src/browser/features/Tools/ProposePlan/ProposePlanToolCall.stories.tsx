@@ -269,7 +269,7 @@ Blue/green cutover with automatic rollback on auth-error spikes.
       description: {
         story:
           "Wide-viewport rendering of a multi-section plan. The sticky " +
-          '"Contents" navigation appears in the right gutter beside the plan ' +
+          '"Contents" navigation appears in the left gutter beside the plan ' +
           "card, anchored to the plan's vertical bounds via `position: sticky` " +
           "inside an absolutely-positioned `<aside>`. " +
           "Visibility is purely CSS-driven (container query + visibility class) " +
