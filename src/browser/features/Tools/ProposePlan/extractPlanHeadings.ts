@@ -83,6 +83,16 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       ? structuralTrimmed
       : getHtmlCandidateLine(structuralLine);
 
+    const htmlBlockStart: HtmlBlockState | null = htmlCandidateLine
+      ? getHtmlBlockStart(htmlCandidateLine)
+      : null;
+    if (htmlBlockStart && !htmlBlockStart.countsNestedHeadings) {
+      if (!htmlBlockTerminates(htmlBlockStart, structuralTrimmed)) {
+        htmlBlockState = htmlBlockStart;
+      }
+      continue;
+    }
+
     if (htmlCandidateLine != null) {
       // Raw HTML h1-h6 tags render into the same heading NodeList even when they
       // are nested in another HTML block or share a line with other HTML/text.
@@ -117,9 +127,6 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       continue;
     }
 
-    const htmlBlockStart: HtmlBlockState | null = htmlCandidateLine
-      ? getHtmlBlockStart(htmlCandidateLine)
-      : null;
     if (htmlBlockStart) {
       if (!htmlBlockTerminates(htmlBlockStart, structuralTrimmed)) {
         htmlBlockState = htmlBlockStart;

@@ -138,6 +138,11 @@ describe("extractPlanHeadings", () => {
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "Actual heading" }]);
   });
 
+  test("does not count heading markup inside single-line non-rendered HTML contexts", () => {
+    const md = `<!-- <h2>Comment heading</h2> -->\n<script><h2>Script heading</h2></script>\n<style><h2>Style heading</h2></style>\n\n## Outside`;
+    expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "Outside" }]);
+  });
+
   test("does not count HTML-looking headings inside script or style blocks", () => {
     const md = `<script>\n<h2>Hidden script heading</h2>\n</script>\n\n<style>\n<h3>Hidden style heading</h3>\n</style>\n\n## Outside`;
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "Outside" }]);
