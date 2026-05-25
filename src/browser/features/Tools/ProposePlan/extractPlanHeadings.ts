@@ -79,35 +79,35 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       continue;
     }
 
-    // Raw HTML h1-h6 tags render into the same heading NodeList even when they
-    // are nested in another HTML block or share a line with other HTML/text.
-    const htmlHeadingMatches = Array.from(
-      structuralTrimmed.matchAll(/<h([1-6])\b[^>]*>(.*?)<\/h\1>/gi)
-    );
-    for (const htmlMatch of htmlHeadingMatches) {
-      const level = parseInt(htmlMatch[1], 10);
-      const text = stripMarkdownFormatting(htmlMatch[2].replace(/<[^>]+>/g, ""));
-      if (text) {
-        headings.push({ renderIndex, level, text });
-      }
-      // Empty raw HTML headings still render as hN elements, so they consume
-      // an index even when they do not produce a useful TOC entry.
-      renderIndex += 1;
-    }
+    const htmlCandidateLine: string | null = htmlBlockState
+      ? structuralTrimmed
+      : getHtmlCandidateLine(structuralLine);
 
-    const multilineHtmlHeadingMatch = /<h([1-6])\b[^>]*>(?!.*<\/h\1>)/i.exec(structuralTrimmed);
-    if (multilineHtmlHeadingMatch) {
-      const level = multilineHtmlHeadingMatch[1];
-      // Multiline raw HTML headings render as hN elements, but collecting their
-      // display text would require a full HTML parse. Count the DOM node so
-      // later markdown headings keep correct renderIndex alignment.
-      renderIndex += 1;
-      htmlBlockState ??= {
-        closingPattern: new RegExp(`</h${level}>`, "i"),
-        terminatesOnBlank: false,
-        countsNestedHeadings: false,
-      };
-      continue;
+    if (htmlCandidateLine != null) {
+      // Raw HTML h1-h6 tags render into the same heading NodeList even when they
+      // are nested in another HTML block or share a line with other HTML/text.
+      for (const htmlHeading of extractCompleteHtmlHeadings(htmlCandidateLine)) {
+        if (htmlHeading.text) {
+          headings.push({ renderIndex, level: htmlHeading.level, text: htmlHeading.text });
+        }
+        // Empty raw HTML headings still render as hN elements, so they consume
+        // an index even when they do not produce a useful TOC entry.
+        renderIndex += 1;
+      }
+
+      const multilineHtmlHeadingLevel = getMultilineHtmlHeadingLevel(htmlCandidateLine);
+      if (multilineHtmlHeadingLevel != null) {
+        // Multiline raw HTML headings render as hN elements, but collecting their
+        // display text would require a full HTML parse. Count the DOM node so
+        // later markdown headings keep correct renderIndex alignment.
+        renderIndex += 1;
+        htmlBlockState ??= {
+          closingPattern: new RegExp(`</h${multilineHtmlHeadingLevel}>`, "i"),
+          terminatesOnBlank: false,
+          countsNestedHeadings: false,
+        };
+        continue;
+      }
     }
 
     if (htmlBlockState) {
@@ -117,7 +117,9 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       continue;
     }
 
-    const htmlBlockStart = getHtmlBlockStart(structuralTrimmed);
+    const htmlBlockStart: HtmlBlockState | null = htmlCandidateLine
+      ? getHtmlBlockStart(htmlCandidateLine)
+      : null;
     if (htmlBlockStart) {
       if (!htmlBlockTerminates(htmlBlockStart, structuralTrimmed)) {
         htmlBlockState = htmlBlockStart;
@@ -188,6 +190,35 @@ interface HtmlBlockState {
 const HTML_BLOCK_TAGS =
   "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
 const HTML_BLOCK_TAG_PATTERN = new RegExp(`^</?(?:${HTML_BLOCK_TAGS})(?=[\\s>/])`, "i");
+
+interface CompleteHtmlHeading {
+  level: number;
+  text: string;
+}
+
+function extractCompleteHtmlHeadings(line: string): CompleteHtmlHeading[] {
+  const headings: CompleteHtmlHeading[] = [];
+  const headingPattern = /<h([1-6])\b[^>]*>(.*?)<\/h\1>/gi;
+  let match = headingPattern.exec(line);
+  while (match) {
+    headings.push({
+      level: parseInt(match[1], 10),
+      text: stripMarkdownFormatting(match[2].replace(/<[^>]+>/g, "")),
+    });
+    match = headingPattern.exec(line);
+  }
+  return headings;
+}
+
+function getMultilineHtmlHeadingLevel(line: string): string | null {
+  const match = /<h([1-6])\b[^>]*>(?!.*<\/h\1>)/i.exec(line);
+  return match ? match[1] : null;
+}
+
+function getHtmlCandidateLine(line: string): string | null {
+  const match = /^ {0,3}(?! )(.*)$/.exec(line);
+  return match ? match[1].trim() : null;
+}
 
 function getHtmlBlockStart(trimmedLine: string): HtmlBlockState | null {
   const pairedTagMatch = /^<(script|pre|style)(?=[\s>])/i.exec(trimmedLine);

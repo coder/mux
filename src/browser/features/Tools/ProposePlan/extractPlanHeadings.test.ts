@@ -151,6 +151,19 @@ describe("extractPlanHeadings", () => {
     ]);
   });
 
+  test("does not count four-space-indented raw HTML headings outside HTML blocks", () => {
+    const md = `    <h2>Code sample heading</h2>\n\n## Outside`;
+    expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "Outside" }]);
+  });
+
+  test("counts indented raw HTML headings inside raw HTML blocks", () => {
+    const md = `<div>\n    <h2>Inner HTML heading</h2>\n</div>\n\n## Outside`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "Inner HTML heading" },
+      { renderIndex: 1, level: 2, text: "Outside" },
+    ]);
+  });
+
   test("counts raw HTML heading tags with surrounding inline content", () => {
     const md = `<h2>Intro</h2> trailing text\n<h2>A</h2><h3>B</h3>\n\n## Outside`;
     expect(extractPlanHeadings(md)).toEqual([
