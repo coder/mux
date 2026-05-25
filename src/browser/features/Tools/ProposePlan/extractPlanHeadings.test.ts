@@ -113,6 +113,11 @@ describe("extractPlanHeadings", () => {
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "After" }]);
   });
 
+  test("does not treat raw HTML blocks followed by rules as setext headings", () => {
+    const md = `<div>Intro</div>\n---\n\n## After`;
+    expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "After" }]);
+  });
+
   test("does not confuse thematic breaks with setext underlines", () => {
     const md = `Some intro paragraph.\n\n---\n\n# Heading`;
     // The `---` here is preceded by a blank line, so it's a thematic break, not
@@ -131,6 +136,13 @@ describe("extractPlanHeadings", () => {
       { renderIndex: 0, level: 1, text: "Markdown one" },
       { renderIndex: 1, level: 2, text: "Inline HTML two" },
       { renderIndex: 2, level: 3, text: "Markdown three" },
+    ]);
+  });
+
+  test("counts empty raw HTML headings so later renderIndex values stay aligned", () => {
+    const md = `<h2></h2>\n\n## After empty HTML heading`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 1, level: 2, text: "After empty HTML heading" },
     ]);
   });
 

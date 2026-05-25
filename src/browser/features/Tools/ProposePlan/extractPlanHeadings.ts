@@ -97,7 +97,7 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       i + 1 < lines.length &&
       /^ {0,3}\S/.test(blockquoteLine) &&
       blockquoteTrimmed.length > 0 &&
-      !/^[#>\-*+`~]/.test(blockquoteTrimmed) &&
+      !/^[#>\-*+`~<]/.test(blockquoteTrimmed) &&
       !/^\d{1,9}[.)][ \t]/.test(blockquoteTrimmed)
     ) {
       const nextSetextLine = stripBlockquotePrefixes(lines[i + 1]);
@@ -129,8 +129,10 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       const text = stripMarkdownFormatting(htmlMatch[2].replace(/<[^>]+>/g, ""));
       if (text) {
         headings.push({ renderIndex, level, text });
-        renderIndex += 1;
       }
+      // Empty raw HTML headings still render as hN elements, so they consume
+      // an index even when they do not produce a useful TOC entry.
+      renderIndex += 1;
       continue;
     }
   }
