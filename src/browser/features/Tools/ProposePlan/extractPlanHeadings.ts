@@ -61,6 +61,20 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       continue;
     }
 
+    if (token.type === "inline" && tokens[i - 1]?.type !== "heading_open") {
+      const children = token.children ?? [];
+      if (children.some((child) => child.type === "html_inline")) {
+        const inlineHtml = children.map((child) => child.content).join("");
+        for (const htmlHeading of extractHtmlHeadings(inlineHtml)) {
+          if (htmlHeading.text) {
+            headings.push({ renderIndex, level: htmlHeading.level, text: htmlHeading.text });
+          }
+          renderIndex += 1;
+        }
+      }
+      continue;
+    }
+
     if (token.type === "html_block" || token.type === "html_inline") {
       for (const htmlHeading of extractHtmlHeadings(token.content)) {
         if (htmlHeading.text) {

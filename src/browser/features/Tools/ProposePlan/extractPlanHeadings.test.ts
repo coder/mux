@@ -227,6 +227,14 @@ describe("extractPlanHeadings", () => {
     ]);
   });
 
+  test("counts raw HTML headings inside inline paragraph tokens", () => {
+    const md = `Intro <h2>Inline Section</h2>\n\n## Next`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "Inline Section" },
+      { renderIndex: 1, level: 2, text: "Next" },
+    ]);
+  });
+
   test("counts raw HTML headings so renderIndex stays aligned", () => {
     const md = `# Markdown one\n\n<h2>Inline HTML two</h2>\n\n### Markdown three`;
     expect(extractPlanHeadings(md)).toEqual([
