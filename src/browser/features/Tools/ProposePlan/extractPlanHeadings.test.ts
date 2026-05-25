@@ -108,6 +108,11 @@ describe("extractPlanHeadings", () => {
     ]);
   });
 
+  test("does not trim four-space-indented setext underlines into headings", () => {
+    const md = `Title\n    ---\n\n> Quoted title\n>     ===\n\n## After`;
+    expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "After" }]);
+  });
+
   test("does not confuse thematic breaks with setext underlines", () => {
     const md = `Some intro paragraph.\n\n---\n\n# Heading`;
     // The `---` here is preceded by a blank line, so it's a thematic break, not

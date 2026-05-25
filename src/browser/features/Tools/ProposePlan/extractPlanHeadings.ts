@@ -91,14 +91,17 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
     // Setext heading: text line followed by === (h1) or --- (h2). Skip blank
     // text lines and list/fence/thematic-break starters so we don't invent a
     // heading where markdown renders a list item or horizontal rule instead.
+    // Preserve underline indentation: a 4-space-indented underline is code, not
+    // a heading marker, so trimming it would create phantom headings.
     if (
       i + 1 < lines.length &&
+      /^ {0,3}\S/.test(blockquoteLine) &&
       blockquoteTrimmed.length > 0 &&
       !/^[#>\-*+`~]/.test(blockquoteTrimmed) &&
       !/^\d{1,9}[.)][ \t]/.test(blockquoteTrimmed)
     ) {
-      const nextTrimmed = stripBlockquotePrefixes(lines[i + 1]).trim();
-      if (/^=+$/.test(nextTrimmed)) {
+      const nextSetextLine = stripBlockquotePrefixes(lines[i + 1]);
+      if (/^ {0,3}=+[ \t]*$/.test(nextSetextLine)) {
         const text = stripMarkdownFormatting(blockquoteTrimmed);
         if (text) {
           headings.push({ renderIndex, level: 1, text });
@@ -107,7 +110,7 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
           continue;
         }
       }
-      if (/^-{2,}$/.test(nextTrimmed)) {
+      if (/^ {0,3}-{2,}[ \t]*$/.test(nextSetextLine)) {
         const text = stripMarkdownFormatting(blockquoteTrimmed);
         if (text) {
           headings.push({ renderIndex, level: 2, text });
