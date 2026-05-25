@@ -200,31 +200,16 @@ function normalizeFileLines(content: string): string[] {
 }
 
 function isWithinFullFileContextLineBudget(content: string): boolean {
-  let lineCount = content.length > 0 ? 1 : 0;
-  for (let index = 0; index < content.length; index += 1) {
-    if (content.charCodeAt(index) === 10) {
-      lineCount += 1;
-      if (lineCount > MAX_FULL_FILE_CONTEXT_LINES) {
-        return false;
-      }
-    }
-  }
-  return true;
+  return normalizeFileLines(content).length <= MAX_FULL_FILE_CONTEXT_LINES;
 }
 
-function shouldAttemptFullFileContext(sortedHunks: readonly DiffHunk[]): boolean {
-  if (sortedHunks.length === 0) {
+function shouldAttemptFullFileContext(selectedHunk: DiffHunk | null): boolean {
+  if (!selectedHunk) {
     return false;
   }
 
-  for (const hunk of sortedHunks) {
-    const lastDisplayLine = hunk.newStart + Math.max(hunk.newLines, 1) - 1;
-    if (lastDisplayLine > MAX_FULL_FILE_CONTEXT_LINES) {
-      return false;
-    }
-  }
-
-  return true;
+  const lastDisplayLine = selectedHunk.newStart + Math.max(selectedHunk.newLines, 1) - 1;
+  return lastDisplayLine <= MAX_FULL_FILE_CONTEXT_LINES;
 }
 
 function buildFileContentCacheKey(
@@ -583,8 +568,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   });
   const fileContentCacheRef = useRef<Map<string, string | null>>(new Map());
   const shouldLoadFullFileContext = useMemo(
-    () => shouldAttemptFullFileContext(currentFileHunks),
-    [currentFileHunks]
+    () => shouldAttemptFullFileContext(selectedHunk),
+    [selectedHunk]
   );
   const activeFileContentCacheKey = useMemo(
     () =>

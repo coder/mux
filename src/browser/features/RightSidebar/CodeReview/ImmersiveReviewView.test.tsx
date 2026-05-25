@@ -83,6 +83,10 @@ function createFileTreeForPaths(filePaths: string[]): FileTreeNode {
   return root;
 }
 
+function encodeFileReadOutput(content: string): string {
+  return `${Buffer.byteLength(content, "utf8")}\n${Buffer.from(content, "utf8").toString("base64")}`;
+}
+
 function renderImmersiveReview(
   overrides: Partial<ComponentProps<typeof ImmersiveReviewView>> = {}
 ) {
@@ -207,6 +211,57 @@ describe("ImmersiveReviewView", () => {
 
     expect(view.container.textContent ?? "").toContain("new far line");
     expect(mockApi.workspace.executeBash).not.toHaveBeenCalled();
+  });
+
+  test("loads full-file context for an in-budget selected hunk even when another hunk is far away", async () => {
+    const nearHunk = createHunk({
+      id: "hunk-near",
+      newStart: 40,
+      newLines: 1,
+      header: "@@ -40 +40 @@",
+      content: "-old near line\n+new near line",
+    });
+    const farHunk = createHunk({
+      id: "hunk-far",
+      newStart: 5000,
+      newLines: 1,
+      header: "@@ -5000 +5000 @@",
+      content: "-old far line\n+new far line",
+    });
+
+    renderImmersiveReview({
+      fileTree: createFileTree(nearHunk.filePath),
+      hunks: [nearHunk, farHunk],
+      allHunks: [nearHunk, farHunk],
+      selectedHunkId: nearHunk.id,
+    });
+
+    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalledTimes(1));
+  });
+
+  test("accepts full-file context at the line budget when the file ends with a newline", async () => {
+    const lineBudget = 1500;
+    const fileContent = `${[
+      "new line",
+      "context after selected hunk",
+      ...Array.from({ length: lineBudget - 2 }, (_, index) => `filler ${index}`),
+    ].join("\n")}\n`;
+    mockApi.workspace.executeBash = mock(() =>
+      Promise.resolve({
+        success: true as const,
+        data: {
+          success: true,
+          output: encodeFileReadOutput(fileContent),
+          exitCode: 0,
+        },
+      })
+    );
+
+    const view = renderImmersiveReview();
+
+    await waitFor(() =>
+      expect(view.container.textContent ?? "").toContain("context after selected hunk")
+    );
   });
 
   test("weights completion by changed lines instead of hunk count", () => {
