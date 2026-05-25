@@ -43,9 +43,10 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
     const line = lines[i];
     const trimmed = line.trim();
 
-    // Track fenced code blocks. The closing fence must use the same char and
-    // be at least as long as the opening fence (CommonMark rule).
-    const fenceMatch = /^(`{3,}|~{3,})/.exec(trimmed);
+    // Track fenced code blocks. CommonMark allows up to three leading spaces
+    // before a fence; four spaces are indented code, not a fence. The closing
+    // fence must use the same char and be at least as long as the opening fence.
+    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line);
     if (fenceMatch) {
       const marker = fenceMatch[1];
       const ch = marker[0] as "`" | "~";
@@ -66,15 +67,20 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       continue;
     }
 
-    // ATX heading: leading 1-6 `#`s followed by whitespace and the heading text.
-    const atxMatch = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    // ATX heading: up to three leading spaces, then 1-6 `#`s. Four leading
+    // spaces are indented code, so matching them would drift from markdown's
+    // rendered h1..h6 order.
+    const atxMatch = /^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*)$/.exec(line);
     if (atxMatch) {
       const level = atxMatch[1].length;
-      const text = stripMarkdownFormatting(atxMatch[2]);
+      const rawText = (atxMatch[2] ?? "").replace(/[ \t]+#+[ \t]*$/, "");
+      const text = stripMarkdownFormatting(rawText);
       if (text) {
         headings.push({ renderIndex, level, text });
-        renderIndex += 1;
       }
+      // Empty headings still render as hN elements, so they must consume a
+      // renderIndex even though they are not useful TOC entries.
+      renderIndex += 1;
       continue;
     }
 

@@ -23,6 +23,23 @@ describe("extractPlanHeadings", () => {
     ]);
   });
 
+  test("accepts ATX headings indented by up to three spaces", () => {
+    const md = ` ## One space\n  ### Two spaces\n   #### Three spaces\n    ##### Four-space code\n## After`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "One space" },
+      { renderIndex: 1, level: 3, text: "Two spaces" },
+      { renderIndex: 2, level: 4, text: "Three spaces" },
+      { renderIndex: 3, level: 2, text: "After" },
+    ]);
+  });
+
+  test("counts empty ATX headings so later renderIndex values stay aligned", () => {
+    const md = `#\n\n## Visible after blank heading`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 1, level: 2, text: "Visible after blank heading" },
+    ]);
+  });
+
   test("strips inline formatting in heading text", () => {
     const md = `# **Bold** and _italic_\n## With \`code\` inline\n### [Linked](https://example.com) heading\n#### ~~strike~~ through`;
     expect(extractPlanHeadings(md)).toEqual([

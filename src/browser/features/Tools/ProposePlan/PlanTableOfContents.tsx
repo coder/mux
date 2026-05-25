@@ -7,13 +7,12 @@ import type { PlanHeading } from "./extractPlanHeadings";
  * Sticky table of contents rendered alongside a plan in the chat transcript.
  *
  * Layout:
- * - The outer `<aside>` is absolutely positioned to the right of the plan via
- *   `left: 100%` (see `.plan-toc-aside` in globals.css). It is hidden by default
- *   and only revealed by a container query when the chat transcript has enough
- *   horizontal room beside the centered `max-w-4xl` plan.
- * - The inner `<nav>` uses `position: sticky` so it floats with the user while
- *   the plan is on screen, then naturally scrolls away once the plan exits the
- *   viewport (sticky is constrained to the parent's vertical bounds).
+ * - At intermediate widths the left gutter shows only sideways hint text so
+ *   users can discover that widening the transcript reveals the TOC.
+ * - When the transcript container is wide enough, CSS reveals the same sticky
+ *   left-gutter nav (see `.plan-toc-aside` in globals.css). The sticky container
+ *   follows the user while the plan is on screen, then naturally scrolls away
+ *   once the plan exits the viewport.
  *
  * Heading navigation is index-based: each entry stores its position among ALL
  * h1..h6 elements the plan renders, so clicking a TOC item does
@@ -87,11 +86,15 @@ export const PlanTableOfContents: React.FC<PlanTableOfContentsProps> = (props) =
     <aside
       className={cn("plan-toc-aside", props.className)}
       aria-label="Plan contents"
-      // The aside itself receives no pointer events; only the inner nav does.
-      // This keeps the aside from interfering with text selection in margins
-      // when the TOC happens to render above other transcript chrome.
+      // At intermediate widths CSS shows only the sideways hint; at wide widths
+      // it hides the hint and reveals the sticky nav in the same left gutter.
+      // The aside itself stays pointer-events:none so margin clicks fall through
+      // to transcript chrome; only the inner nav becomes interactive.
       data-testid="plan-toc"
     >
+      <div className="plan-toc-compact-hint" aria-hidden="true">
+        Expand to see ToC
+      </div>
       <nav className="plan-toc">
         {titleHeadingEntry ? (
           <TooltipIfPresent tooltip={headingText} side="right" align="start">

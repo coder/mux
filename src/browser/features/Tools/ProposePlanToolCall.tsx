@@ -915,11 +915,10 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     </div>
   );
 
-  // Layout container that positions the sticky TOC alongside the plan. The
-  // `plan-toc-layout` class establishes `position: relative` so the TOC's
-  // absolutely-positioned aside (`left: 100%`) can break out of the centered
-  // `max-w-4xl` transcript column into the unused right gutter. CSS container
-  // queries on the transcript scrollport keep it hidden until there's room.
+  // Layout container that positions the TOC affordances alongside the plan. The
+  // `plan-toc-layout` class establishes `position: relative` so CSS can place a
+  // compact hint or sticky TOC in the left gutter when the transcript container
+  // has enough horizontal room.
   const planLayout = (
     <div className="plan-toc-layout">
       {planUI}
