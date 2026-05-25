@@ -228,10 +228,9 @@ function getHtmlCandidateLine(line: string): string | null {
 }
 
 function getHtmlBlockStart(trimmedLine: string): HtmlBlockState | null {
-  const pairedTagMatch = /^<(script|pre|style)(?=[\s>])/i.exec(trimmedLine);
-  if (pairedTagMatch) {
+  if (/^<(?:script|pre|style)(?=[\s>])/i.test(trimmedLine)) {
     return {
-      closingPattern: new RegExp(`</${pairedTagMatch[1]}>`, "i"),
+      closingPattern: /<\/(?:script|pre|style)>/i,
       terminatesOnBlank: false,
       countsNestedHeadings: false,
     };
