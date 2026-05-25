@@ -2,12 +2,19 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 
-import { LayoutStackLane } from "./LayoutStackLane";
-import type { LayoutStackItem } from "./layoutStack";
+import { ChatInputDecorationStackLane, TranscriptTailStackLane } from "./LayoutStackLane";
+import {
+  createChatInputDecorationStackItem,
+  createTranscriptTailStackItem,
+  type ChatInputDecorationStackItem,
+  type TranscriptTailStackItem,
+} from "./layoutStack";
 
 let cleanupDom: (() => void) | null = null;
 let originalResizeObserver: typeof ResizeObserver | undefined;
 const resizeCallbacks = new Map<Element, ResizeObserverCallback[]>();
+const COMPOSER_STACK_COMPONENT = "ChatInputDecorationStack";
+const TRANSCRIPT_TAIL_STACK_COMPONENT = "TranscriptTailStack";
 
 class ResizeObserverMock implements ResizeObserver {
   public readonly callback: ResizeObserverCallback;
@@ -99,12 +106,16 @@ async function waitForResizeObservation(target: Element): Promise<void> {
   });
 }
 
-function createTextItem(key: string, text: string): LayoutStackItem {
-  return { key, node: <div>{text}</div> };
+function createTextItem(key: string, text: string): ChatInputDecorationStackItem {
+  return createChatInputDecorationStackItem({ key, node: <div>{text}</div> });
 }
 
-function createHiddenItem(key = "idle-decoration"): LayoutStackItem {
-  return { key, node: <span hidden /> };
+function createHiddenItem(key = "idle-decoration"): ChatInputDecorationStackItem {
+  return createChatInputDecorationStackItem({ key, node: <span hidden /> });
+}
+
+function createTranscriptTextItem(key: string, text: string): TranscriptTailStackItem {
+  return createTranscriptTailStackItem({ key, node: <div>{text}</div> });
 }
 
 describe("LayoutStackLane", () => {
@@ -134,239 +145,202 @@ describe("LayoutStackLane", () => {
 
   it("holds the last measured height while switching to a hydrating workspace", async () => {
     const view = render(
-      <LayoutStackLane
+      <ChatInputDecorationStackLane
         workspaceId="workspace-a"
         isHydrating={false}
-        align="end"
-        dataComponent="stable-stack"
         items={[createTextItem("workspace-a", "workspace A")]}
       />
     );
 
-    const content = getStackContent(view.container, "stable-stack");
+    const content = getStackContent(view.container, COMPOSER_STACK_COMPONENT);
     await waitForResizeObservation(content);
     emitResize(content, 184);
 
     view.rerender(
-      <LayoutStackLane
-        workspaceId="workspace-b"
-        isHydrating={true}
-        align="end"
-        dataComponent="stable-stack"
-        items={[]}
-      />
+      <ChatInputDecorationStackLane workspaceId="workspace-b" isHydrating={true} items={[]} />
     );
 
     await waitFor(() => {
-      expect(getRenderedStack(view.container, "stable-stack").style.minHeight).toBe("184px");
+      expect(getRenderedStack(view.container, COMPOSER_STACK_COMPONENT).style.minHeight).toBe(
+        "184px"
+      );
     });
 
     view.rerender(
-      <LayoutStackLane
+      <ChatInputDecorationStackLane
         workspaceId="workspace-b"
         isHydrating={false}
-        align="end"
-        dataComponent="stable-stack"
         items={[createTextItem("workspace-b", "workspace B")]}
       />
     );
 
     await waitFor(() => {
-      expect(getRenderedStack(view.container, "stable-stack").style.minHeight).toBe("");
+      expect(getRenderedStack(view.container, COMPOSER_STACK_COMPONENT).style.minHeight).toBe("");
     });
   });
 
   it("ignores zero-height observations from non-rendering items during hydration", async () => {
     const view = render(
-      <LayoutStackLane
+      <ChatInputDecorationStackLane
         workspaceId="workspace-a"
         isHydrating={false}
-        align="end"
-        dataComponent="stable-stack"
         items={[createTextItem("workspace-a", "workspace A")]}
       />
     );
 
-    const initialContent = getStackContent(view.container, "stable-stack");
+    const initialContent = getStackContent(view.container, COMPOSER_STACK_COMPONENT);
     await waitForResizeObservation(initialContent);
     emitResize(initialContent, 184);
 
     view.rerender(
-      <LayoutStackLane
+      <ChatInputDecorationStackLane
         workspaceId="workspace-b"
         isHydrating={true}
-        align="end"
-        dataComponent="stable-stack"
         items={[createHiddenItem()]}
       />
     );
 
-    const hydratingContent = getStackContent(view.container, "stable-stack");
+    const hydratingContent = getStackContent(view.container, COMPOSER_STACK_COMPONENT);
     await waitForResizeObservation(hydratingContent);
     emitResize(hydratingContent, 0);
 
     await waitFor(() => {
-      expect(getRenderedStack(view.container, "stable-stack").style.minHeight).toBe("184px");
+      expect(getRenderedStack(view.container, COMPOSER_STACK_COMPONENT).style.minHeight).toBe(
+        "184px"
+      );
     });
 
     view.rerender(
-      <LayoutStackLane
+      <ChatInputDecorationStackLane
         workspaceId="workspace-b"
         isHydrating={false}
-        align="end"
-        dataComponent="stable-stack"
         items={[createHiddenItem()]}
       />
     );
 
     await waitFor(() => {
-      expect(getRenderedStack(view.container, "stable-stack").style.minHeight).toBe("");
+      expect(getRenderedStack(view.container, COMPOSER_STACK_COMPONENT).style.minHeight).toBe("");
     });
 
     view.rerender(
-      <LayoutStackLane
+      <ChatInputDecorationStackLane
         workspaceId="workspace-c"
         isHydrating={true}
-        align="end"
-        dataComponent="stable-stack"
         items={[createHiddenItem()]}
       />
     );
 
     await waitFor(() => {
-      expect(getRenderedStack(view.container, "stable-stack").style.minHeight).toBe("");
+      expect(getRenderedStack(view.container, COMPOSER_STACK_COMPONENT).style.minHeight).toBe("");
     });
   });
 
   it("attaches ResizeObserver when items mount after an empty null lane", async () => {
     const view = render(
-      <LayoutStackLane
-        workspaceId="workspace-a"
-        isHydrating={false}
-        align="end"
-        dataComponent="stable-stack"
-        items={[]}
-      />
+      <ChatInputDecorationStackLane workspaceId="workspace-a" isHydrating={false} items={[]} />
     );
 
-    expect(view.container.querySelector('[data-component="stable-stack"]')).toBeNull();
+    expect(
+      view.container.querySelector(`[data-component="${COMPOSER_STACK_COMPONENT}"]`)
+    ).toBeNull();
 
     view.rerender(
-      <LayoutStackLane
+      <ChatInputDecorationStackLane
         workspaceId="workspace-a"
         isHydrating={false}
-        align="end"
-        dataComponent="stable-stack"
         items={[createTextItem("workspace-a", "workspace A")]}
       />
     );
 
-    const mountedContent = getStackContent(view.container, "stable-stack");
+    const mountedContent = getStackContent(view.container, COMPOSER_STACK_COMPONENT);
     await waitForResizeObservation(mountedContent);
     emitResize(mountedContent, 123);
 
     view.rerender(
-      <LayoutStackLane
-        workspaceId="workspace-b"
-        isHydrating={true}
-        align="end"
-        dataComponent="stable-stack"
-        items={[]}
-      />
+      <ChatInputDecorationStackLane workspaceId="workspace-b" isHydrating={true} items={[]} />
     );
 
     await waitFor(() => {
-      expect(getRenderedStack(view.container, "stable-stack").style.minHeight).toBe("123px");
+      expect(getRenderedStack(view.container, COMPOSER_STACK_COMPONENT).style.minHeight).toBe(
+        "123px"
+      );
     });
   });
 
   it("clears settled empty-lane measurements from both the workspace cache and fallback", async () => {
     const view = render(
-      <LayoutStackLane
+      <ChatInputDecorationStackLane
         workspaceId="workspace-a"
         isHydrating={false}
-        align="end"
-        dataComponent="stable-stack"
         items={[createTextItem("workspace-a", "workspace A")]}
       />
     );
 
-    const initialContent = getStackContent(view.container, "stable-stack");
+    const initialContent = getStackContent(view.container, COMPOSER_STACK_COMPONENT);
     await waitForResizeObservation(initialContent);
     emitResize(initialContent, 184);
 
     view.rerender(
-      <LayoutStackLane
+      <ChatInputDecorationStackLane
         workspaceId="workspace-a"
         isHydrating={false}
-        align="end"
-        dataComponent="stable-stack"
         items={[createHiddenItem()]}
       />
     );
 
-    const settledEmptyContent = getStackContent(view.container, "stable-stack");
+    const settledEmptyContent = getStackContent(view.container, COMPOSER_STACK_COMPONENT);
     await waitForResizeObservation(settledEmptyContent);
     emitResize(settledEmptyContent, 0);
 
     view.rerender(
-      <LayoutStackLane
+      <ChatInputDecorationStackLane
         workspaceId="workspace-a"
         isHydrating={true}
-        align="end"
-        dataComponent="stable-stack"
         items={[createHiddenItem()]}
       />
     );
 
     await waitFor(() => {
-      expect(getRenderedStack(view.container, "stable-stack").style.minHeight).toBe("");
+      expect(getRenderedStack(view.container, COMPOSER_STACK_COMPONENT).style.minHeight).toBe("");
     });
 
     view.rerender(
-      <LayoutStackLane
+      <ChatInputDecorationStackLane
         workspaceId="workspace-b"
         isHydrating={true}
-        align="end"
-        dataComponent="stable-stack"
         items={[createHiddenItem()]}
       />
     );
 
     await waitFor(() => {
-      expect(getRenderedStack(view.container, "stable-stack").style.minHeight).toBe("");
+      expect(getRenderedStack(view.container, COMPOSER_STACK_COMPONENT).style.minHeight).toBe("");
     });
   });
 
-  it("renders alignment and overflow-anchor modifiers correctly", () => {
+  it("renders semantic lane policies correctly", () => {
     const view = render(
       <div>
-        <LayoutStackLane
+        <ChatInputDecorationStackLane
           workspaceId="workspace-a"
           isHydrating={false}
-          align="end"
-          dataComponent="decoration-lane"
           items={[createTextItem("workspace-a", "workspace A")]}
         />
         <div data-component="ChatInputSection">Input</div>
       </div>
     );
 
-    const decoration = getRenderedStack(view.container, "decoration-lane");
+    const decoration = getRenderedStack(view.container, COMPOSER_STACK_COMPONENT);
     expect(decoration.className).toContain("justify-end");
     expect(decoration.style.overflowAnchor).toBe("");
 
     const tail = render(
-      <LayoutStackLane
+      <TranscriptTailStackLane
         workspaceId="workspace-a"
         isHydrating={false}
-        align="start"
-        overflowAnchor="none"
-        dataComponent="tail-lane"
-        items={[createTextItem("workspace-a", "workspace A")]}
+        items={[createTranscriptTextItem("workspace-a", "workspace A")]}
       />
     );
-    const tailStack = getRenderedStack(tail.container, "tail-lane");
+    const tailStack = getRenderedStack(tail.container, TRANSCRIPT_TAIL_STACK_COMPONENT);
     expect(tailStack.className).toContain("justify-start");
     expect(tailStack.style.overflowAnchor).toBe("none");
   });

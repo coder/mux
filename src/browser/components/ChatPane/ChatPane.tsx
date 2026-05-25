@@ -20,8 +20,13 @@ import { EditCutoffBarrier } from "@/browser/features/Messages/ChatBarrier/EditC
 import { StreamingBarrier } from "@/browser/features/Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "@/browser/features/Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "../PinnedTodoList/PinnedTodoList";
-import { LayoutStackLane } from "./LayoutStackLane";
-import type { LayoutStackItem } from "./layoutStack";
+import { ChatInputDecorationStackLane, TranscriptTailStackLane } from "./LayoutStackLane";
+import {
+  createChatInputDecorationStackItem,
+  createTranscriptTailStackItem,
+  type ChatInputDecorationStackItem,
+  type TranscriptTailStackItem,
+} from "./layoutStack";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { ChatInput, type ChatInputAPI } from "@/browser/features/ChatInput/index";
 import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
@@ -912,42 +917,48 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
       interruptedBarrierMessageIds.add(message.id);
     }
   }
-  const transcriptTailItems: LayoutStackItem[] = [];
+  const transcriptTailItems: TranscriptTailStackItem[] = [];
   if (shouldMountRetryBarrier) {
-    transcriptTailItems.push({
-      key: "retry-barrier",
-      node: <RetryBarrier workspaceId={workspaceId} visible={showRetryBarrierUI} />,
-    });
+    transcriptTailItems.push(
+      createTranscriptTailStackItem({
+        key: "retry-barrier",
+        node: <RetryBarrier workspaceId={workspaceId} visible={showRetryBarrierUI} />,
+      })
+    );
   }
   if (shouldShowStreamingBarrier) {
-    transcriptTailItems.push({
-      key: "streaming-barrier",
-      node: (
-        <StreamingBarrier
-          workspaceId={workspaceId}
-          vimEnabled={vimEnabled}
-          onCancelCompaction={handleCancelCompactionFromBarrier}
-        />
-      ),
-    });
+    transcriptTailItems.push(
+      createTranscriptTailStackItem({
+        key: "streaming-barrier",
+        node: (
+          <StreamingBarrier
+            workspaceId={workspaceId}
+            vimEnabled={vimEnabled}
+            onCancelCompaction={handleCancelCompactionFromBarrier}
+          />
+        ),
+      })
+    );
   }
   if (shouldShowQueuedAgentTaskPrompt) {
-    transcriptTailItems.push({
-      key: "queued-agent-prompt",
-      node: (
-        <div className="mt-4 mb-1 ml-auto w-fit max-w-full">
-          <div className="rounded-lg border border-[var(--color-user-border)] bg-[var(--color-user-surface)] px-3 py-2 text-sm">
-            <div className="text-muted mb-1 text-[11px] font-medium">Queued</div>
-            <MarkdownRenderer
-              content={queuedAgentTaskPrompt ?? ""}
-              className="user-message-markdown text-foreground"
-              preserveLineBreaks
-              style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
-            />
+    transcriptTailItems.push(
+      createTranscriptTailStackItem({
+        key: "queued-agent-prompt",
+        node: (
+          <div className="mt-4 mb-1 ml-auto w-fit max-w-full">
+            <div className="rounded-lg border border-[var(--color-user-border)] bg-[var(--color-user-surface)] px-3 py-2 text-sm">
+              <div className="text-muted mb-1 text-[11px] font-medium">Queued</div>
+              <MarkdownRenderer
+                content={queuedAgentTaskPrompt ?? ""}
+                className="user-message-markdown text-foreground"
+                preserveLineBreaks
+                style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
+              />
+            </div>
           </div>
-        </div>
-      ),
-    });
+        ),
+      })
+    );
   }
   const handleLoadOlderHistory = useCallback(() => {
     if (!shouldRenderLoadOlderMessagesButton || loadingOlderHistory) {
@@ -1190,12 +1201,9 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                   </MessageListProvider>
                 </BashCollapsedSummaryModeProvider>
               )}
-              <LayoutStackLane
+              <TranscriptTailStackLane
                 workspaceId={workspaceId}
                 isHydrating={isHydratingTranscript}
-                align="start"
-                overflowAnchor="none"
-                dataComponent="TranscriptTailStack"
                 items={transcriptTailItems}
               />
             </div>
@@ -1314,9 +1322,13 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   // Keep optional banners/warnings on one shared lane so the seam right above the textarea is
   // owned by a single component boundary. That lets hydration reserve only the volatile
   // workspace-specific decoration stack instead of the whole composer pane.
-  const decorationEntries: LayoutStackItem[] = [];
+  const decorationEntries: ChatInputDecorationStackItem[] = [];
+  const addDecorationEntry = (entry: { key: string; node: React.ReactNode }) => {
+    decorationEntries.push(createChatInputDecorationStackItem(entry));
+  };
+
   if (props.shouldShowCompactionWarning) {
-    decorationEntries.push({
+    addDecorationEntry({
       key: "compaction-warning",
       node: (
         <CompactionWarning
@@ -1328,7 +1340,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
     });
   }
   if (props.contextSwitchWarning) {
-    decorationEntries.push({
+    addDecorationEntry({
       key: "context-switch-warning",
       node: (
         <ContextSwitchWarningBanner
@@ -1344,7 +1356,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   // visibly flashed while another local agent was active. Pin it with composer decorations
   // instead; new transcript rows no longer move the warning.
   if (props.concurrentLocalStreamingWorkspaceName) {
-    decorationEntries.push({
+    addDecorationEntry({
       key: "concurrent-local-warning",
       node: (
         <ConcurrentLocalWarningDecoration
@@ -1355,30 +1367,30 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   }
 
   if (props.shouldShowPinnedTodoList) {
-    decorationEntries.push({
+    addDecorationEntry({
       key: "pinned-todo-list",
       node: <PinnedTodoList workspaceId={props.workspaceId} />,
     });
   }
-  decorationEntries.push({
+  addDecorationEntry({
     key: "background-processes",
     node: <BackgroundProcessesBanner workspaceId={props.workspaceId} />,
   });
   // The Chat Instructions decoration is intentionally self-gating: it renders
   // nothing when the scratchpad is empty or disabled, so it can always be in
   // the decoration lane without affecting layout for users who don't use it.
-  decorationEntries.push({
+  addDecorationEntry({
     key: "chat-instructions",
     node: <ChatInstructionsChatDecoration workspaceId={props.workspaceId} />,
   });
   if (props.shouldShowReviewsBanner) {
-    decorationEntries.push({
+    addDecorationEntry({
       key: "reviews-banner",
       node: <ReviewsBanner workspaceId={props.workspaceId} />,
     });
   }
   if (props.queuedMessage) {
-    decorationEntries.push({
+    addDecorationEntry({
       key: "queued-message",
       node: (
         <QueuedMessage
@@ -1390,7 +1402,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
     });
   }
   if (props.isQueuedAgentTask) {
-    decorationEntries.push({
+    addDecorationEntry({
       key: "queued-agent-task",
       node: (
         <div className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs">
@@ -1404,11 +1416,9 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
 
   return (
     <>
-      <LayoutStackLane
+      <ChatInputDecorationStackLane
         workspaceId={props.workspaceId}
         isHydrating={props.isHydratingTranscript}
-        align="end"
-        dataComponent="ChatInputDecorationStack"
         items={decorationEntries}
       />
       <ChatInput
