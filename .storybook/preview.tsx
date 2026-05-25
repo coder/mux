@@ -199,6 +199,13 @@ const preview: Preview = {
           styles: { width: "1280px", height: "800px" },
           type: "mobile",
         },
+        wide: {
+          // Wide enough to trigger the @container query that reveals the
+          // sticky plan TOC next to a centered max-w-4xl transcript.
+          name: "Desktop wide",
+          styles: { width: "1600px", height: "900px" },
+          type: "desktop",
+        },
       },
     },
     chromatic: {

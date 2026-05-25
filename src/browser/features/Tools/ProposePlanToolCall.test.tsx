@@ -569,4 +569,59 @@ describe("ProposePlanToolCall", () => {
     expect(summaryMessage.parts?.[0]?.text).toContain("*Plan file preserved at:*");
     expect(summaryMessage.parts?.[0]?.text).toContain(PLAN_PATH);
   });
+
+  test("renders a plan table of contents derived from the plan's markdown headings", () => {
+    // Note: we deliberately don't assert against rendered <h1>/<h2> elements here
+    // because some sibling test files mock MarkdownCore at file scope (file-scope
+    // module mocks persist across files in this runner). The TOC's source of truth
+    // is the markdown TEXT, not the rendered DOM, so this assertion stays robust.
+    const planContent = [
+      "# Title",
+      "",
+      "intro paragraph",
+      "",
+      "## Section A",
+      "",
+      "body",
+      "",
+      "## Section B",
+      "",
+      "more",
+    ].join("\n");
+
+    const view = renderCompletedPlan({
+      result: { success: true, planPath: PLAN_PATH, planContent },
+    });
+
+    const toc = view.getByTestId("plan-toc");
+    expect(toc.textContent).toContain("Title");
+    expect(toc.textContent).toContain("Section A");
+    expect(toc.textContent).toContain("Section B");
+
+    // Each entry is a real <button>, so the user can drive navigation with the
+    // keyboard. The dedicated PlanTableOfContents.test.tsx verifies the
+    // scrollIntoView wiring directly.
+    expect(view.getByRole("button", { name: "Section A" })).toBeDefined();
+    expect(view.getByRole("button", { name: "Section B" })).toBeDefined();
+  });
+
+  test("does not render a plan TOC for plans with fewer than two visible headings", () => {
+    // PLAN_CONTENT only has one heading ("# My Plan"), so the TOC should not appear.
+    const view = renderCompletedPlan();
+    expect(view.queryByTestId("plan-toc")).toBeNull();
+  });
+
+  test("does not render a plan TOC while annotate mode is active", () => {
+    const planContent = "# A\n\nbody\n\n## B\n\nmore";
+    const view = renderCompletedPlan({
+      result: { success: true, planPath: PLAN_PATH, planContent },
+    });
+
+    // Sanity: TOC is visible before annotate mode.
+    expect(view.queryByTestId("plan-toc")).not.toBeNull();
+
+    fireEvent.click(view.getByRole("button", { name: "Annotate" }));
+
+    expect(view.queryByTestId("plan-toc")).toBeNull();
+  });
 });

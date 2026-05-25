@@ -1065,11 +1065,19 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
             // In manual reading mode, anchoring should preserve the user's viewport
             // when async highlights/diagrams above the fold settle.
             style={autoScroll ? AUTO_SCROLL_TRANSCRIPT_STYLE : undefined}
-            className="h-full overflow-x-hidden overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
+            // The named `transcript` container is what the sticky plan TOC queries
+            // for visibility — using a container query rather than a viewport media
+            // query means sidebars opening/closing correctly hide the TOC even when
+            // the viewport width is unchanged. See `.plan-toc-aside` in globals.css.
+            className="@container/transcript h-full overflow-x-hidden overflow-y-auto p-[15px] leading-[1.5] break-words whitespace-pre-wrap"
           >
             <div
               className={cn(
-                chatTranscriptFullWidth ? "w-full" : "max-w-4xl mx-auto",
+                // `plan-toc-aware` opts only the centered max-w transcript into the
+                // sticky plan TOC layout. In `chatTranscriptFullWidth` mode the plan
+                // already fills the available width, so the TOC would either
+                // overlap content or get clipped by `overflow-x-hidden`.
+                chatTranscriptFullWidth ? "w-full" : "plan-toc-aware max-w-4xl mx-auto",
                 (showTranscriptHydrationPlaceholder || showEmptyTranscriptPlaceholder) && "h-full"
               )}
             >

@@ -181,6 +181,105 @@ export const ProposePlanMobile: AppStory = {
 };
 
 /**
+ * Wide-viewport story that exercises the sticky plan TOC.
+ *
+ * The TOC lives in an absolutely-positioned `<aside>` outside the centered
+ * `max-w-4xl` transcript column, and is gated by a container query on the
+ * transcript scrollport. At desktop (1280px) viewport the gate stays closed;
+ * the `wide` viewport (1600px) gives the scrollport enough room to reveal
+ * the TOC alongside the plan.
+ */
+export const ProposePlanWithTableOfContents: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-plan-toc",
+          messages: [
+            createUserMessage("msg-1", "Plan a multi-section refactor with deep structure.", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage("msg-2", "Here is the plan with a navigable outline:", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 290000,
+              toolCalls: [
+                createProposePlanTool(
+                  "call-plan-toc",
+                  `# Authentication Module Refactor
+
+## Overview
+
+Refactor the auth system to improve security, maintainability, and observability.
+
+## Tasks
+
+### Extract JWT utilities
+
+Move token generation and validation to a dedicated module.
+
+### Add refresh token support
+
+Implement secure refresh token rotation.
+
+### Improve password hashing
+
+Upgrade to Argon2id with proper salt rounds.
+
+### Add rate limiting
+
+Implement per-IP and per-user rate limits.
+
+## Implementation Order
+
+\`\`\`mermaid
+graph TD
+    A[Extract JWT utils] --> B[Add refresh tokens]
+    B --> C[Improve hashing]
+    C --> D[Add rate limiting]
+\`\`\`
+
+## Rollout
+
+### Staging soak
+
+Two-week staging soak with synthetic traffic.
+
+### Production cutover
+
+Blue/green cutover with automatic rollback on auth-error spikes.
+
+## Success Criteria
+
+- All existing tests pass
+- New tests for refresh token flow
+- Security audit passes
+- Performance benchmarks maintained`
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  parameters: {
+    viewport: { defaultViewport: "wide" },
+    docs: {
+      description: {
+        story:
+          "Wide-viewport rendering of a multi-section plan. The sticky " +
+          '"Contents" navigation appears in the right gutter beside the plan ' +
+          "card, anchored to the plan's vertical bounds via `position: sticky` " +
+          "inside an absolutely-positioned `<aside>`. " +
+          "Visibility is purely CSS-driven (container query + visibility class) " +
+          "so toggling the plan tool expanded/collapsed produces no layout jank.",
+      },
+    },
+  },
+};
+
+/**
  * Story showing a propose_plan with a code block containing long horizontal content.
  * Tests that code blocks wrap correctly instead of overflowing the container.
  */

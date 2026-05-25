@@ -1,0 +1,141 @@
+/**
+ * A heading entry extracted from a plan's markdown source.
+ *
+ * `renderIndex` is the position of this heading among ALL h1..h6 elements
+ * Streamdown will render for the same content. We use it to look up the matching
+ * DOM node via `container.querySelectorAll("h1,h2,h3,h4,h5,h6")[renderIndex]`.
+ * Keeping the index aligned to the rendered DOM (rather than slug IDs) avoids
+ * mutating the shared markdown rehype pipeline just for plan TOC scrolling.
+ */
+export interface PlanHeading {
+  renderIndex: number;
+  /** 1-6, matching the rendered hN tag. */
+  level: number;
+  /** Plain text (markdown formatting stripped) shown in the TOC. */
+  text: string;
+}
+
+/**
+ * Extract heading entries from a plan's markdown source.
+ *
+ * Supports ATX headings (`# Heading`, with optional trailing `#` markers), setext
+ * headings (a text line followed by `===` or `---`), and raw HTML headings on
+ * their own line (`<h2>...</h2>`). Skips lines inside fenced code blocks
+ * (``` or ~~~) so example markdown inside code samples never shows up in the TOC.
+ *
+ * The output indices line up with what Streamdown / remark-gfm will render so
+ * `renderIndex` can be used to locate the matching DOM element by order.
+ */
+export function extractPlanHeadings(markdown: string): PlanHeading[] {
+  if (!markdown) {
+    return [];
+  }
+
+  const lines = markdown.split("\n");
+  const headings: PlanHeading[] = [];
+
+  let inFence = false;
+  let fenceChar: "`" | "~" | null = null;
+  let fenceLength = 0;
+  let renderIndex = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Track fenced code blocks. The closing fence must use the same char and
+    // be at least as long as the opening fence (CommonMark rule).
+    const fenceMatch = /^(`{3,}|~{3,})/.exec(trimmed);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      const ch = marker[0] as "`" | "~";
+      const len = marker.length;
+      if (!inFence) {
+        inFence = true;
+        fenceChar = ch;
+        fenceLength = len;
+      } else if (ch === fenceChar && len >= fenceLength && /^[`~]+\s*$/.test(trimmed)) {
+        inFence = false;
+        fenceChar = null;
+        fenceLength = 0;
+      }
+      continue;
+    }
+
+    if (inFence) {
+      continue;
+    }
+
+    // ATX heading: leading 1-6 `#`s followed by whitespace and the heading text.
+    const atxMatch = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (atxMatch) {
+      const level = atxMatch[1].length;
+      const text = stripMarkdownFormatting(atxMatch[2]);
+      if (text) {
+        headings.push({ renderIndex, level, text });
+        renderIndex += 1;
+      }
+      continue;
+    }
+
+    // Setext heading: text line followed by === (h1) or --- (h2). Skip blank
+    // text lines so we don't mistake a thematic break for a setext underline.
+    if (i + 1 < lines.length && trimmed.length > 0 && !/^[#>\-*+`~]/.test(trimmed)) {
+      const nextTrimmed = lines[i + 1].trim();
+      if (/^=+$/.test(nextTrimmed)) {
+        const text = stripMarkdownFormatting(trimmed);
+        if (text) {
+          headings.push({ renderIndex, level: 1, text });
+          renderIndex += 1;
+          i += 1; // consume the underline
+          continue;
+        }
+      }
+      if (/^-{2,}$/.test(nextTrimmed)) {
+        const text = stripMarkdownFormatting(trimmed);
+        if (text) {
+          headings.push({ renderIndex, level: 2, text });
+          renderIndex += 1;
+          i += 1; // consume the underline
+          continue;
+        }
+      }
+    }
+
+    // Raw HTML heading on its own line (`<h2>Hello</h2>`). Streamdown emits these
+    // through rehype-raw, so we count them too to keep `renderIndex` aligned.
+    const htmlMatch = /^<h([1-6])\b[^>]*>(.*?)<\/h\1>\s*$/i.exec(trimmed);
+    if (htmlMatch) {
+      const level = parseInt(htmlMatch[1], 10);
+      const text = stripMarkdownFormatting(htmlMatch[2].replace(/<[^>]+>/g, ""));
+      if (text) {
+        headings.push({ renderIndex, level, text });
+        renderIndex += 1;
+      }
+      continue;
+    }
+  }
+
+  return headings;
+}
+
+/**
+ * Lightweight inline-formatting stripper used only for TOC display text. Not a
+ * full markdown parser — we trade exhaustive correctness for predictable output
+ * on the small subset of inline syntax that shows up in heading lines.
+ */
+function stripMarkdownFormatting(text: string): string {
+  return text
+    .replace(/\\([\\`*_{}[\]()#+\-.!|~])/g, "$1") // unescape \*  \[ etc.
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1") // ![alt](src)
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // [label](href)
+    .replace(/`([^`]+)`/g, "$1") // `code`
+    .replace(/\*\*([^*]+)\*\*/g, "$1") // **bold**
+    .replace(/__([^_]+)__/g, "$1") // __bold__
+    .replace(/\*([^*]+)\*/g, "$1") // *italic*
+    .replace(/(?<!\w)_([^_]+)_(?!\w)/g, "$1") // _italic_ (avoid mid-word matches)
+    .replace(/~~([^~]+)~~/g, "$1") // ~~strike~~
+    .replace(/<[^>]+>/g, "") // stray inline HTML tags
+    .replace(/\s+/g, " ")
+    .trim();
+}

@@ -1519,6 +1519,174 @@ code {
   border-radius: 0 4px 4px 0;
 }
 
+/* -----------------------------------------------------------------------------
+ * Plan Table of Contents
+ *
+ * `.plan-toc-layout` wraps the plan card so an absolutely-positioned `aside`
+ * (`.plan-toc-aside`) can break out to the right of the centered `max-w-4xl`
+ * transcript column. The aside is `display: none` by default; a container
+ * query on the `transcript` scrollport in ChatPane reveals it only when:
+ *
+ *   1. the chat is in centered (not full-width) mode — opted in by the
+ *      `.plan-toc-aware` class on the transcript's inner column, and
+ *   2. the transcript scrollport is wide enough to hold the centered plan
+ *      plus a TOC gutter on both sides (we need symmetric margins so the
+ *      centered plan doesn't visually drift to the left).
+ *
+ * Using a container query (rather than viewport `min-width`) is what makes
+ * the TOC behave correctly when sidebars open/close without the viewport
+ * changing — and using CSS-only visibility (no JS resize listener) is what
+ * prevents flashing/tearing when the plan toggles expanded.
+ * --------------------------------------------------------------------------- */
+
+.plan-toc-layout {
+  position: relative;
+}
+
+.plan-toc-aside {
+  display: none;
+  /* The toc lives outside the plan card's bounding box, so we anchor it to
+     the plan's right edge and let it occupy a fixed-width strip in the
+     transcript's right gutter.
+     Width + padding-left are tuned so the visibility threshold below matches:
+       max-w-4xl (56rem) + 2 × (width 10rem + gap 1.25rem) ≈ 78.5rem
+     Keeping it compact lets the toc show on common desktop widths (1440px+
+     viewports with standard mux sidebars) instead of only on ultra-wide
+     monitors. */
+  position: absolute;
+  inset: 0 auto 0 100%;
+  width: 10rem;
+  padding-left: 1.25rem;
+  /* Margin clicks should fall through to the underlying transcript chrome;
+     only the inner <nav> is interactive. */
+  pointer-events: none;
+}
+
+.plan-toc-aside > * {
+  pointer-events: auto;
+}
+
+.plan-toc {
+  /* Sticky inside the aside keeps the toc anchored while the plan is on
+     screen. Once the user scrolls past the plan, the sticky bottoms out at
+     the aside's lower edge (which matches the plan's lower edge), so the
+     toc naturally scrolls away with the plan instead of trailing forever. */
+  position: sticky;
+  top: 1rem;
+  /* Bound the toc to the visible viewport so even very tall plans never push
+     it off-screen, and let it scroll internally for huge plans. */
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  font-family: var(--font-primary);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-muted-foreground);
+  border-left: 1px solid var(--surface-plan-divider);
+  padding: 4px 0 4px 12px;
+}
+
+.plan-toc-heading {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--color-plan-mode) 70%, var(--color-foreground) 30%);
+  margin-bottom: 6px;
+}
+
+.plan-toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.plan-toc-item {
+  /* Per-level indentation. The component normalizes `data-level` so the
+     shallowest visible heading sits at 1, regardless of whether the plan
+     starts with h1 or h2. */
+  --plan-toc-indent: 0;
+}
+
+.plan-toc-item[data-level="1"] {
+  --plan-toc-indent: 0;
+}
+.plan-toc-item[data-level="2"] {
+  --plan-toc-indent: 10px;
+}
+.plan-toc-item[data-level="3"] {
+  --plan-toc-indent: 20px;
+}
+.plan-toc-item[data-level="4"] {
+  --plan-toc-indent: 30px;
+}
+
+.plan-toc-link {
+  /* Render as a flush text link rather than a chunky button. */
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+  padding: 2px 4px 2px calc(4px + var(--plan-toc-indent));
+  border-radius: 3px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease;
+}
+
+.plan-toc-item[data-level="1"] .plan-toc-link {
+  font-weight: 600;
+  color: color-mix(in srgb, var(--color-foreground) 80%, var(--color-plan-mode) 20%);
+}
+
+.plan-toc-link:hover {
+  color: var(--color-foreground);
+  background: color-mix(in srgb, var(--color-plan-mode), transparent 90%);
+}
+
+.plan-toc-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-plan-mode), transparent 40%);
+  outline-offset: 1px;
+}
+
+/* Give plan headings breathing room so scrollIntoView({block:"start"}) lands
+   them just below the transcript's top padding rather than flush against the
+   scrollport edge. Applies to the markdown render inside `.plan-content`. */
+.plan-content h1,
+.plan-content h2,
+.plan-content h3,
+.plan-content h4,
+.plan-content h5,
+.plan-content h6 {
+  scroll-margin-top: 1rem;
+}
+
+/*
+ * Visibility gate. The transcript container is queried at its CONTENT box
+ * inline-size (padding excluded). We need:
+ *   max-w-4xl (56rem) + 2 × (toc width 10rem + gap 1.25rem) = 78.5rem
+ * of content-box width before there's enough room for the toc gutter on both
+ * sides while keeping the plan visually centered. This works out to roughly
+ * a 1440px viewport with standard mux sidebars open; narrower laptops keep
+ * the toc hidden so the plan card never overlaps the right gutter or gets
+ * clipped by the transcript's overflow-x-hidden.
+ */
+@container transcript (min-width: 78.5rem) {
+  .plan-toc-aware .plan-toc-aside {
+    display: block;
+  }
+}
+
 [title]:hover::before {
   content: "";
   position: absolute;
