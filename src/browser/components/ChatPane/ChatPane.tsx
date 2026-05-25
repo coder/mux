@@ -59,7 +59,7 @@ import { QueuedMessage } from "@/browser/features/Messages/QueuedMessage";
 import { CompactionWarning } from "../CompactionWarning/CompactionWarning";
 import { ContextSwitchWarning as ContextSwitchWarningBanner } from "../ContextSwitchWarning/ContextSwitchWarning";
 import {
-  ConcurrentLocalWarningView,
+  ConcurrentLocalWarningDecoration,
   useConcurrentLocalStreamingWorkspaceName,
 } from "../ConcurrentLocalWarning/ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "../BackgroundProcessesBanner/BackgroundProcessesBanner";
@@ -949,17 +949,6 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
       ),
     });
   }
-  if (concurrentLocalStreamingWorkspaceName) {
-    transcriptTailItems.push({
-      key: "concurrent-local-warning",
-      node: (
-        <ConcurrentLocalWarningView
-          streamingWorkspaceName={concurrentLocalStreamingWorkspaceName}
-        />
-      ),
-    });
-  }
-
   const handleLoadOlderHistory = useCallback(() => {
     if (!shouldRenderLoadOlderMessagesButton || loadingOlderHistory) {
       return;
@@ -1243,6 +1232,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
             isCompacting={isCompacting}
             shouldShowPinnedTodoList={shouldShowPinnedTodoList}
             shouldShowReviewsBanner={shouldShowReviewsBanner}
+            concurrentLocalStreamingWorkspaceName={concurrentLocalStreamingWorkspaceName}
             canInterrupt={canInterrupt}
             autoCompactionResult={autoCompactionResult}
             shouldShowCompactionWarning={shouldShowCompactionWarning}
@@ -1295,6 +1285,7 @@ interface ChatInputPaneProps {
   isHydratingTranscript: boolean;
   shouldShowPinnedTodoList: boolean;
   shouldShowReviewsBanner: boolean;
+  concurrentLocalStreamingWorkspaceName: string | null;
   canInterrupt: boolean;
   autoCompactionResult: ReturnType<typeof checkAutoCompaction>;
   shouldShowCompactionWarning: boolean;
@@ -1348,6 +1339,21 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
       ),
     });
   }
+  // User rationale: keeping this warning inside the transcript tail made every appended
+  // message insert above a live tail row, so bottom-lock had to correct after layout and
+  // visibly flashed while another local agent was active. Pin it with composer decorations
+  // instead; new transcript rows no longer move the warning.
+  if (props.concurrentLocalStreamingWorkspaceName) {
+    decorationEntries.push({
+      key: "concurrent-local-warning",
+      node: (
+        <ConcurrentLocalWarningDecoration
+          streamingWorkspaceName={props.concurrentLocalStreamingWorkspaceName}
+        />
+      ),
+    });
+  }
+
   if (props.shouldShowPinnedTodoList) {
     decorationEntries.push({
       key: "pinned-todo-list",

@@ -2,6 +2,7 @@ import React, { useMemo, useSyncExternalStore } from "react";
 import { AlertTriangle } from "lucide-react";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { cn } from "@/common/lib/utils";
 import { isLocalProjectRuntime } from "@/common/types/runtime";
 import type { RuntimeConfig } from "@/common/types/runtime";
 
@@ -66,12 +67,30 @@ export function useConcurrentLocalStreamingWorkspaceName(
   );
 }
 
-export const ConcurrentLocalWarningView: React.FC<{ streamingWorkspaceName: string }> = (props) => {
+interface ConcurrentLocalWarningViewProps {
+  streamingWorkspaceName: string;
+  className?: string;
+}
+
+export const ConcurrentLocalWarningView: React.FC<ConcurrentLocalWarningViewProps> = (props) => {
   return (
-    <div className="text-center text-xs text-yellow-600/80">
+    <div className={cn("text-center text-xs text-yellow-600/80", props.className)}>
       <AlertTriangle aria-hidden="true" className="mr-1 inline-block h-3 w-3 align-[-2px]" />
       <span className="text-yellow-500">{props.streamingWorkspaceName}</span> is also running in
       this project directory — agents may interfere
+    </div>
+  );
+};
+
+export const ConcurrentLocalWarningDecoration: React.FC<ConcurrentLocalWarningViewProps> = (
+  props
+) => {
+  return (
+    <div className="border-border bg-surface-primary border-t px-4 py-1.5">
+      <ConcurrentLocalWarningView
+        streamingWorkspaceName={props.streamingWorkspaceName}
+        className={cn("mx-auto max-w-4xl", props.className)}
+      />
     </div>
   );
 };
