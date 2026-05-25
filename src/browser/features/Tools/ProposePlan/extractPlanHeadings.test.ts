@@ -178,6 +178,11 @@ describe("extractPlanHeadings", () => {
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "Outside" }]);
   });
 
+  test("ignores headings inside unsupported raw HTML blocks", () => {
+    const md = `<custom><h2>Unsupported</h2></custom>\n\n## Outside`;
+    expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "Outside" }]);
+  });
+
   test("counts raw HTML headings nested inside raw HTML blocks", () => {
     const md = `<div>\n<h2>Inner HTML heading</h2>\n</div>\n\n## Outside`;
     expect(extractPlanHeadings(md)).toEqual([

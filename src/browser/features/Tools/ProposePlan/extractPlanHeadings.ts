@@ -1,3 +1,4 @@
+import { rawHtmlUsesOnlyAllowedTags } from "@/browser/features/Messages/MarkdownCore";
 import MarkdownIt from "markdown-it";
 
 /**
@@ -81,6 +82,10 @@ function parseHeadingLevel(tag: string): number {
 }
 
 function extractHtmlHeadings(html: string): HtmlHeading[] {
+  if (!rawHtmlUsesOnlyAllowedTags(html)) {
+    return [];
+  }
+
   const renderedHtml = html.replace(NON_RENDERED_HTML_BLOCK_PATTERN, "");
   const headings: HtmlHeading[] = [];
   HTML_HEADING_PATTERN.lastIndex = 0;
