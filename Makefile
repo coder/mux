@@ -73,7 +73,7 @@ include fmt.mk
 .PHONY: dist dist-mac dist-win dist-linux install-mac-arm64 check-appimage-icons check-mac-attach-file-runtime
 .PHONY: vscode-ext vscode-ext-install
 .PHONY: docs-server check-docs-links
-.PHONY: storybook storybook-build test-storybook chromatic
+.PHONY: storybook storybook-run storybook-build test-storybook chromatic
 .PHONY: benchmark-terminal
 .PHONY: ensure-deps rebuild-native mux
 .PHONY: check-eager-imports check-bundle-size check-startup
@@ -552,6 +552,10 @@ check-code-docs-links: ## Validate code references to docs paths
 storybook: node_modules/.installed src/version.ts ## Start Storybook development server
 	$(check_node_version)
 	@bun x storybook dev -p 6006 $(STORYBOOK_OPEN_FLAG)
+
+storybook-run: node_modules/.installed src/version.ts ## Run CMD with a ready Storybook dev server (reuses STORYBOOK_PORT, default 6006)
+	$(check_node_version)
+	@bun scripts/with-storybook.ts --port $(or $(STORYBOOK_PORT),6006) -- $(CMD)
 
 storybook-build: node_modules/.installed src/version.ts ## Build static Storybook
 	$(check_node_version)
