@@ -923,7 +923,9 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const planLayout = (
     <div className="plan-toc-layout">
       {planUI}
-      {showToc && <PlanTableOfContents entries={tocEntries} contentRef={planContentRef} />}
+      {showToc && (
+        <PlanTableOfContents entries={tocEntries} contentRef={planContentRef} title={planTitle} />
+      )}
     </div>
   );
 

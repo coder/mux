@@ -1523,15 +1523,17 @@ code {
  * Plan Table of Contents
  *
  * `.plan-toc-layout` wraps the plan card so an absolutely-positioned `aside`
- * (`.plan-toc-aside`) can break out to the right of the centered `max-w-4xl`
+ * (`.plan-toc-aside`) can break out to the LEFT of the centered `max-w-4xl`
  * transcript column. The aside is `display: none` by default; a container
  * query on the `transcript` scrollport in ChatPane reveals it only when:
  *
  *   1. the chat is in centered (not full-width) mode — opted in by the
  *      `.plan-toc-aware` class on the transcript's inner column, and
  *   2. the transcript scrollport is wide enough to hold the centered plan
- *      plus a TOC gutter on both sides (we need symmetric margins so the
- *      centered plan doesn't visually drift to the left).
+ *      plus a TOC gutter on both sides. The plan is centered via `mx-auto`,
+ *      so the TOC's left edge cannot extend past the scrollport without
+ *      being clipped by `overflow-x-hidden` — both gutters must be at least
+ *      `toc width + gap` wide.
  *
  * Using a container query (rather than viewport `min-width`) is what makes
  * the TOC behave correctly when sidebars open/close without the viewport
@@ -1545,18 +1547,16 @@ code {
 
 .plan-toc-aside {
   display: none;
-  /* The toc lives outside the plan card's bounding box, so we anchor it to
-     the plan's right edge and let it occupy a fixed-width strip in the
-     transcript's right gutter.
-     Width + padding-left are tuned so the visibility threshold below matches:
-       max-w-4xl (56rem) + 2 × (width 10rem + gap 1.25rem) ≈ 78.5rem
-     Keeping it compact lets the toc show on common desktop widths (1440px+
-     viewports with standard mux sidebars) instead of only on ultra-wide
-     monitors. */
+  /* Anchor the toc's right edge to the plan card's left edge so it extends
+     leftward into the transcript's left gutter.
+     Width + padding-right are tuned to keep the visibility threshold reachable
+     on common desktop widths (1440px+ with mux sidebars) rather than only on
+     ultra-wide monitors:
+       max-w-4xl (56rem) + 2 × (width 9rem + gap 1rem) = 76rem */
   position: absolute;
-  inset: 0 auto 0 100%;
-  width: 10rem;
-  padding-left: 1.25rem;
+  inset: 0 100% 0 auto;
+  width: 9rem;
+  padding-right: 1rem;
   /* Margin clicks should fall through to the underlying transcript chrome;
      only the inner <nav> is interactive. */
   pointer-events: none;
@@ -1581,17 +1581,51 @@ code {
   font-size: 11px;
   line-height: 1.4;
   color: var(--color-muted-foreground);
-  border-left: 1px solid var(--surface-plan-divider);
-  padding: 4px 0 4px 12px;
+  padding: 4px 0;
 }
 
 .plan-toc-heading {
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: 10px;
+  /* The plan title sits at the top of the TOC, in place of a separate
+     "CONTENTS" label. We don't uppercase or letter-space it because real plan
+     titles ("Authentication Module Refactor", etc.) are sentences, not eyebrow
+     labels, and would look forced in all-caps. */
+  font-size: 12px;
   font-weight: 600;
   color: color-mix(in srgb, var(--color-plan-mode) 70%, var(--color-foreground) 30%);
-  margin-bottom: 6px;
+  margin: 0 0 6px 0;
+  padding: 2px 4px;
+  /* Ellipsis-truncate long titles so the TOC never grows horizontally; the
+     hover tooltip surfaces the full text. */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* Match the .plan-toc-link reset for the clickable variant. */
+  text-align: left;
+}
+
+.plan-toc-heading-link {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+  border-radius: 3px;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease;
+}
+
+.plan-toc-heading-link:hover {
+  color: var(--color-foreground);
+  background: color-mix(in srgb, var(--color-plan-mode), transparent 90%);
+}
+
+.plan-toc-heading-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-plan-mode), transparent 40%);
+  outline-offset: 1px;
 }
 
 .plan-toc-list {
@@ -1605,8 +1639,11 @@ code {
 
 .plan-toc-item {
   /* Per-level indentation. The component normalizes `data-level` so the
-     shallowest visible heading sits at 1, regardless of whether the plan
-     starts with h1 or h2. */
+     shallowest visible heading sits at 1.
+     With the plan title acting as the TOC heading (h1), h2 entries align flush
+     with the title (data-level=1 → 0 indent) and deeper headings get a small
+     step per level. We deliberately keep steps tight (6px) so the TOC stays
+     useful in the narrow left-gutter column. */
   --plan-toc-indent: 0;
 }
 
@@ -1614,13 +1651,13 @@ code {
   --plan-toc-indent: 0;
 }
 .plan-toc-item[data-level="2"] {
-  --plan-toc-indent: 10px;
+  --plan-toc-indent: 6px;
 }
 .plan-toc-item[data-level="3"] {
-  --plan-toc-indent: 20px;
+  --plan-toc-indent: 12px;
 }
 .plan-toc-item[data-level="4"] {
-  --plan-toc-indent: 30px;
+  --plan-toc-indent: 18px;
 }
 
 .plan-toc-link {
@@ -1673,15 +1710,15 @@ code {
 
 /*
  * Visibility gate. The transcript container is queried at its CONTENT box
- * inline-size (padding excluded). We need:
- *   max-w-4xl (56rem) + 2 × (toc width 10rem + gap 1.25rem) = 78.5rem
- * of content-box width before there's enough room for the toc gutter on both
- * sides while keeping the plan visually centered. This works out to roughly
- * a 1440px viewport with standard mux sidebars open; narrower laptops keep
- * the toc hidden so the plan card never overlaps the right gutter or gets
- * clipped by the transcript's overflow-x-hidden.
+ * inline-size (padding excluded). The plan is centered via `mx-auto`, so the
+ * left gutter holding the TOC and the right gutter mirror each other:
+ *   max-w-4xl (56rem) + 2 × (toc width 9rem + gap 1rem) = 76rem
+ * of content-box width before there's enough room for the toc in the left
+ * gutter without the right side of the plan getting visually crowded. This
+ * works out to roughly a 1376px viewport with both mux sidebars open, so the
+ * TOC shows on common laptop+ widths; narrower configurations keep it hidden.
  */
-@container transcript (min-width: 78.5rem) {
+@container transcript (min-width: 76rem) {
   .plan-toc-aware .plan-toc-aside {
     display: block;
   }

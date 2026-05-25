@@ -612,7 +612,9 @@ describe("ProposePlanToolCall", () => {
   });
 
   test("does not render a plan TOC while annotate mode is active", () => {
-    const planContent = "# A\n\nbody\n\n## B\n\nmore";
+    // Need at least two h2+ entries; h1 is reserved for the TOC's heading
+    // (the plan title) and never shows up as a list item.
+    const planContent = "# A\n\nbody\n\n## B\n\nmore\n\n## C\n\nmore";
     const view = renderCompletedPlan({
       result: { success: true, planPath: PLAN_PATH, planContent },
     });
