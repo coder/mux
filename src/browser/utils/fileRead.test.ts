@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { buildReadFileScript, EXIT_CODE_TOO_LARGE, processFileContents } from "./fileRead";
+import {
+  buildReadFileScript,
+  EXIT_CODE_TOO_LARGE,
+  EXIT_CODE_TOO_MANY_LINES,
+  processFileContents,
+} from "./fileRead";
 
 describe("buildReadFileScript", () => {
   test("generates script with size check", () => {
@@ -17,6 +22,13 @@ describe("buildReadFileScript", () => {
     const script = buildReadFileScript("file'with'quotes.txt");
     expect(script).toContain("'file'\"'\"'with'\"'\"'quotes.txt'");
   });
+
+  test("supports smaller caller-specific size and line budgets", () => {
+    const script = buildReadFileScript("test.txt", { maxSizeBytes: 1234, maxLineCount: 99 });
+
+    expect(script).toContain('[ "$size" -gt 1234 ] && exit 42');
+    expect(script).toContain("awk 'NR > 99 { exit 43 }' 'test.txt' || exit 43");
+  });
 });
 
 describe("processFileContents", () => {
@@ -25,6 +37,14 @@ describe("processFileContents", () => {
     expect(result).toEqual({
       type: "error",
       message: "File is too large to display. Maximum: 10 MB.",
+    });
+  });
+
+  test("returns error for too many lines", () => {
+    const result = processFileContents("", EXIT_CODE_TOO_MANY_LINES);
+    expect(result).toEqual({
+      type: "error",
+      message: "File has too many lines to display.",
     });
   });
 

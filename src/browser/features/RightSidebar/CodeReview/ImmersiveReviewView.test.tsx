@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import { useEffect, useState, type ComponentProps } from "react";
 
@@ -161,6 +161,52 @@ describe("ImmersiveReviewView", () => {
     globalThis.navigator = originalNavigator;
     globalThis.requestAnimationFrame = originalRequestAnimationFrame;
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+  });
+
+  test("renders the hunk overlay while full-file context is still pending", async () => {
+    type ExecuteBashValue = Awaited<ReturnType<MockApiClient["workspace"]["executeBash"]>>;
+    let resolveRead: ((value: ExecuteBashValue) => void) | undefined;
+    const pendingRead = new Promise<ExecuteBashValue>((resolve) => {
+      resolveRead = resolve;
+    });
+    mockApi.workspace.executeBash = mock(() => pendingRead);
+
+    const view = renderImmersiveReview();
+
+    expect(view.container.textContent ?? "").toContain("new line");
+    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalledTimes(1));
+
+    if (!resolveRead) {
+      throw new Error("Read promise resolver was not captured");
+    }
+    resolveRead({
+      success: true,
+      data: {
+        success: true,
+        output: "0",
+        exitCode: 0,
+      },
+    });
+  });
+
+  test("skips full-file reads when the selected hunk starts beyond the render budget", () => {
+    const farHunk = createHunk({
+      id: "hunk-far",
+      oldStart: 5000,
+      newStart: 5000,
+      header: "@@ -5000 +5000 @@",
+      content: "-old far line\n+new far line",
+    });
+
+    const view = renderImmersiveReview({
+      fileTree: createFileTree(farHunk.filePath),
+      hunks: [farHunk],
+      allHunks: [farHunk],
+      selectedHunkId: farHunk.id,
+    });
+
+    expect(view.container.textContent ?? "").toContain("new far line");
+    expect(mockApi.workspace.executeBash).not.toHaveBeenCalled();
   });
 
   test("weights completion by changed lines instead of hunk count", () => {
