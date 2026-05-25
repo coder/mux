@@ -1886,10 +1886,18 @@ export class Config {
    * creates (first-time manual edit) are also detected on all platforms.
    */
   watchProvidersFile(callback: () => void): () => void {
+    // The mux home directory may not exist on a fresh install. Create it so
+    // fs.watch doesn't throw ENOENT; the directory being empty is fine.
+    if (!fs.existsSync(this.rootDir)) {
+      ensurePrivateDirSync(this.rootDir);
+    }
+
     const filename = path.basename(this.providersFile);
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const watcher = fs.watch(this.rootDir, (_eventType, changedFilename) => {
+    // persistent: false so the watcher doesn't prevent the process (or Jest)
+    // from exiting when nothing else is keeping the event loop alive.
+    const watcher = fs.watch(this.rootDir, { persistent: false }, (_eventType, changedFilename) => {
       if (changedFilename !== filename) return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
