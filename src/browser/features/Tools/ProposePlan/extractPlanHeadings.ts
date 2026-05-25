@@ -72,15 +72,10 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       continue;
     }
 
-    if (htmlBlockState) {
-      if (htmlBlockTerminates(htmlBlockState, structuralTrimmed)) {
-        htmlBlockState = null;
-      }
-      continue;
-    }
-
     // Raw HTML heading on its own line (`<h2>Hello</h2>`). Streamdown emits these
     // through rehype-raw, so we count them too to keep `renderIndex` aligned.
+    // Check this even while inside another raw HTML block (`<div>...</div>`),
+    // because nested h1-h6 tags still render into the same heading NodeList.
     const htmlMatch = /^<h([1-6])\b[^>]*>(.*?)<\/h\1>\s*$/i.exec(structuralTrimmed);
     if (htmlMatch) {
       const level = parseInt(htmlMatch[1], 10);
@@ -91,6 +86,13 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       // Empty raw HTML headings still render as hN elements, so they consume
       // an index even when they do not produce a useful TOC entry.
       renderIndex += 1;
+      continue;
+    }
+
+    if (htmlBlockState) {
+      if (htmlBlockTerminates(htmlBlockState, structuralTrimmed)) {
+        htmlBlockState = null;
+      }
       continue;
     }
 

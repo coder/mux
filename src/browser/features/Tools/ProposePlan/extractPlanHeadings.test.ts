@@ -138,6 +138,14 @@ describe("extractPlanHeadings", () => {
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "Actual heading" }]);
   });
 
+  test("counts raw HTML headings nested inside raw HTML blocks", () => {
+    const md = `<div>\n<h2>Inner HTML heading</h2>\n</div>\n\n## Outside`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "Inner HTML heading" },
+      { renderIndex: 1, level: 2, text: "Outside" },
+    ]);
+  });
+
   test("counts raw HTML headings so renderIndex stays aligned", () => {
     const md = `# Markdown one\n\n<h2>Inline HTML two</h2>\n\n### Markdown three`;
     expect(extractPlanHeadings(md)).toEqual([
