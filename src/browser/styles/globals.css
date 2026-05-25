@@ -1533,15 +1533,16 @@ code {
  *   3. the full sticky TOC once the gutter can fit it.
  *
  * The full TOC stays entirely in the existing left gutter; it must not shift
- * the plan card away from the transcript's centered column. The width is derived
- * from the transcript container so wider gutters give the TOC more room instead
- * of leaving unused space while headings wrap/truncate too early.
+ * the plan card away from the transcript's centered column. The aside spans the
+ * current gutter and centers the nav inside it so wider gutters give the TOC
+ * more room instead of leaving unused space while headings wrap too early.
  * --------------------------------------------------------------------------- */
 
 .plan-toc-layout {
   position: relative;
-  --plan-toc-compact-column: 1.75rem;
-  --plan-toc-wide-column: 12rem;
+  --plan-toc-plan-column: 54.5rem;
+  --plan-toc-compact-column: 0.875rem;
+  --plan-toc-wide-column: 11rem;
 }
 
 .plan-toc-aside {
@@ -1552,8 +1553,13 @@ code {
      full navigation column. */
   position: absolute;
   inset: 0 100% 0 auto;
-  width: var(--plan-toc-compact-column);
-  padding-right: 0.375rem;
+  box-sizing: border-box;
+  width: clamp(
+    var(--plan-toc-compact-column),
+    calc((100cqw - var(--plan-toc-plan-column)) / 2),
+    4rem
+  );
+  padding-inline: 0.125rem;
   /* Margin clicks should fall through to the underlying transcript chrome;
      only the inner <nav> is interactive when the full TOC is visible. */
   pointer-events: none;
@@ -1569,14 +1575,15 @@ code {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 8.5rem;
-  width: 1.375rem;
-  padding: 0.5rem 0.25rem;
+  min-height: 7.5rem;
+  width: 0.75rem;
+  margin-inline: auto;
+  padding: 0.4rem 0.0625rem;
   border: 1px solid var(--surface-plan-border-subtle);
   border-radius: 999px;
   background: color-mix(in srgb, var(--color-surface-secondary) 90%, transparent);
   color: var(--color-muted-foreground);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 500;
   letter-spacing: 0.03em;
   line-height: 1;
@@ -1587,6 +1594,8 @@ code {
 
 .plan-toc {
   display: none;
+  width: min(100%, var(--plan-toc-wide-column));
+  margin-inline: auto;
   /* Sticky inside the aside keeps the toc anchored while the plan is on
      screen. Once the user scrolls past the plan, the sticky bottoms out at
      the aside's lower edge (which matches the plan's lower edge), so the
@@ -1727,13 +1736,10 @@ code {
 
 /*
  * Hint visibility. The transcript container is queried at its CONTENT box
- * inline-size (padding excluded). The compact hint needs only a tiny mirrored
- * gutter around the centered max-w-4xl plan:
- *   max-w-4xl (56rem) + a little scrollport padding for the compact rail.
- * We intentionally start at 58rem so the hint appears in constrained desktop
- * layouts where the full 76rem TOC would still be hidden.
+ * inline-size (padding excluded). The compact rail is intentionally thin so it
+ * can appear as soon as a small mirrored gutter exists.
  */
-@container transcript (min-width: 58rem) {
+@container transcript (min-width: 56.25rem) {
   .plan-toc-aware .plan-toc-aside {
     display: block;
   }
@@ -1741,14 +1747,15 @@ code {
 
 /*
  * Full TOC visibility. The plan stays centered in the transcript; the TOC uses
- * the left gutter beside that centered column. A 12rem column fills most of the
- * practical gutter at this breakpoint without stealing space from the plan.
+ * the left gutter beside that centered column. `100cqw` is the transcript
+ * content-box width; `--plan-toc-plan-column` mirrors the rendered plan card
+ * width so the aside spans the actual gutter instead of shifting the plan to
+ * manufacture room.
  */
 @container transcript (min-width: 78.5rem) {
   .plan-toc-aware .plan-toc-aside {
-    box-sizing: border-box;
-    width: var(--plan-toc-wide-column);
-    padding-right: 0.75rem;
+    width: clamp(12rem, calc((100cqw - var(--plan-toc-plan-column)) / 2), 18rem);
+    padding-inline: 0.375rem;
   }
 
   .plan-toc-aware .plan-toc-compact-hint {

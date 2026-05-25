@@ -41,12 +41,16 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const trimmed = line.trim();
+    const structuralLine = stripAtxContainerPrefixes(line);
+    const structuralTrimmed = structuralLine.trim();
+    const blockquoteLine = stripBlockquotePrefixes(line);
+    const blockquoteTrimmed = blockquoteLine.trim();
 
     // Track fenced code blocks. CommonMark allows up to three leading spaces
-    // before a fence; four spaces are indented code, not a fence. The closing
-    // fence must use the same char and be at least as long as the opening fence.
-    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    // before a fence; four spaces are indented code, not a fence. We also strip
+    // container markers so quoted/list-contained fences suppress headings inside
+    // them the same way the markdown renderer does.
+    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(structuralLine);
     if (fenceMatch) {
       const marker = fenceMatch[1];
       const ch = marker[0] as "`" | "~";
@@ -55,7 +59,7 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
         inFence = true;
         fenceChar = ch;
         fenceLength = len;
-      } else if (ch === fenceChar && len >= fenceLength && /^[`~]+\s*$/.test(trimmed)) {
+      } else if (ch === fenceChar && len >= fenceLength && /^[`~]+\s*$/.test(structuralTrimmed)) {
         inFence = false;
         fenceChar = null;
         fenceLength = 0;
@@ -70,7 +74,7 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
     // ATX heading: up to three leading spaces, then 1-6 `#`s. Four leading
     // spaces are indented code, so matching them would drift from markdown's
     // rendered h1..h6 order.
-    const atxMatch = /^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*)$/.exec(line);
+    const atxMatch = /^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*)$/.exec(structuralLine);
     if (atxMatch) {
       const level = atxMatch[1].length;
       const rawText = (atxMatch[2] ?? "").replace(/[ \t]+#+[ \t]*$/, "");
@@ -89,13 +93,13 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
     // heading where markdown renders a list item or horizontal rule instead.
     if (
       i + 1 < lines.length &&
-      trimmed.length > 0 &&
-      !/^[#>\-*+`~]/.test(trimmed) &&
-      !/^\d{1,9}[.)][ \t]/.test(trimmed)
+      blockquoteTrimmed.length > 0 &&
+      !/^[#>\-*+`~]/.test(blockquoteTrimmed) &&
+      !/^\d{1,9}[.)][ \t]/.test(blockquoteTrimmed)
     ) {
-      const nextTrimmed = lines[i + 1].trim();
+      const nextTrimmed = stripBlockquotePrefixes(lines[i + 1]).trim();
       if (/^=+$/.test(nextTrimmed)) {
-        const text = stripMarkdownFormatting(trimmed);
+        const text = stripMarkdownFormatting(blockquoteTrimmed);
         if (text) {
           headings.push({ renderIndex, level: 1, text });
           renderIndex += 1;
@@ -104,7 +108,7 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
         }
       }
       if (/^-{2,}$/.test(nextTrimmed)) {
-        const text = stripMarkdownFormatting(trimmed);
+        const text = stripMarkdownFormatting(blockquoteTrimmed);
         if (text) {
           headings.push({ renderIndex, level: 2, text });
           renderIndex += 1;
@@ -116,7 +120,7 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
 
     // Raw HTML heading on its own line (`<h2>Hello</h2>`). Streamdown emits these
     // through rehype-raw, so we count them too to keep `renderIndex` aligned.
-    const htmlMatch = /^<h([1-6])\b[^>]*>(.*?)<\/h\1>\s*$/i.exec(trimmed);
+    const htmlMatch = /^<h([1-6])\b[^>]*>(.*?)<\/h\1>\s*$/i.exec(structuralTrimmed);
     if (htmlMatch) {
       const level = parseInt(htmlMatch[1], 10);
       const text = stripMarkdownFormatting(htmlMatch[2].replace(/<[^>]+>/g, ""));
@@ -129,6 +133,46 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
   }
 
   return headings;
+}
+
+function stripAtxContainerPrefixes(line: string): string {
+  let remaining = line;
+  let changed = true;
+  while (changed) {
+    changed = false;
+
+    const blockquoteMatch = /^ {0,3}>[ \t]?/.exec(remaining);
+    if (blockquoteMatch) {
+      remaining = remaining.slice(blockquoteMatch[0].length);
+      changed = true;
+      continue;
+    }
+
+    const unorderedListMatch = /^ {0,3}[-+*][ \t]+/.exec(remaining);
+    if (unorderedListMatch) {
+      remaining = remaining.slice(unorderedListMatch[0].length);
+      changed = true;
+      continue;
+    }
+
+    const orderedListMatch = /^ {0,3}\d{1,9}[.)][ \t]+/.exec(remaining);
+    if (orderedListMatch) {
+      remaining = remaining.slice(orderedListMatch[0].length);
+      changed = true;
+    }
+  }
+  return remaining;
+}
+
+function stripBlockquotePrefixes(line: string): string {
+  let remaining = line;
+  while (true) {
+    const blockquoteMatch = /^ {0,3}>[ \t]?/.exec(remaining);
+    if (!blockquoteMatch) {
+      return remaining;
+    }
+    remaining = remaining.slice(blockquoteMatch[0].length);
+  }
 }
 
 /**

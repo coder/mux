@@ -77,11 +77,34 @@ describe("extractPlanHeadings", () => {
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 1, text: "Visible" }]);
   });
 
+  test("counts headings inside blockquote and list containers", () => {
+    const md = `> # Quoted\n\n- ## Listed\n\n## Real\n\n## Next`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 1, text: "Quoted" },
+      { renderIndex: 1, level: 2, text: "Listed" },
+      { renderIndex: 2, level: 2, text: "Real" },
+      { renderIndex: 3, level: 2, text: "Next" },
+    ]);
+  });
+
+  test("skips headings inside container-prefixed fenced code blocks", () => {
+    const md = `> \`\`\`markdown\n> # Hidden quoted heading\n> \`\`\`\n\n- \`\`\`markdown\n  ## Hidden list heading\n  \`\`\`\n\n## Visible`;
+    expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "Visible" }]);
+  });
+
   test("recognizes setext h1 and h2 underlines", () => {
     const md = `Title One\n=========\n\nbody\n\nTitle Two\n---------\n\nmore`;
     expect(extractPlanHeadings(md)).toEqual([
       { renderIndex: 0, level: 1, text: "Title One" },
       { renderIndex: 1, level: 2, text: "Title Two" },
+    ]);
+  });
+
+  test("recognizes setext headings inside blockquotes", () => {
+    const md = `> Quoted title\n> ===\n\n## After`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 1, text: "Quoted title" },
+      { renderIndex: 1, level: 2, text: "After" },
     ]);
   });
 
