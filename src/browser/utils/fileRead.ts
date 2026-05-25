@@ -117,7 +117,9 @@ export function buildReadFileScript(
     maxLineCount == null
       ? ""
       : `
-awk 'NR > ${maxLineCount} { exit ${EXIT_CODE_TOO_MANY_LINES} }' ${file} || exit ${EXIT_CODE_TOO_MANY_LINES}`;
+awk 'NR > ${maxLineCount} { exit ${EXIT_CODE_TOO_MANY_LINES} }' ${file}
+awk_status=$?
+[ "$awk_status" -ne 0 ] && exit "$awk_status"`;
 
   return `size=$(stat -c %s ${file} 2>/dev/null || stat -f %z ${file})
 [ "$size" -gt ${maxSizeBytes} ] && exit ${EXIT_CODE_TOO_LARGE}${lineLimitScript}
