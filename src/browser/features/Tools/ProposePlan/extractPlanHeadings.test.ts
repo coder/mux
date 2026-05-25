@@ -113,6 +113,14 @@ describe("extractPlanHeadings", () => {
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "After" }]);
   });
 
+  test("ignores markdown-looking headings inside raw HTML blocks", () => {
+    const md = `<div>\n# Hidden ATX\n\nAfter html\n---\n\n<section>\nTitle inside section\n---\n</section>\n\n## Visible`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "After html" },
+      { renderIndex: 1, level: 2, text: "Visible" },
+    ]);
+  });
+
   test("does not treat raw HTML blocks followed by rules as setext headings", () => {
     const md = `<div>Intro</div>\n---\n\n## After`;
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "After" }]);

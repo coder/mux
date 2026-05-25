@@ -37,6 +37,7 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
   let inFence = false;
   let fenceChar: "`" | "~" | null = null;
   let fenceLength = 0;
+  let htmlBlockState: HtmlBlockState | null = null;
   let renderIndex = 0;
 
   for (let i = 0; i < lines.length; i++) {
@@ -68,6 +69,36 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
     }
 
     if (inFence) {
+      continue;
+    }
+
+    if (htmlBlockState) {
+      if (htmlBlockTerminates(htmlBlockState, structuralTrimmed)) {
+        htmlBlockState = null;
+      }
+      continue;
+    }
+
+    // Raw HTML heading on its own line (`<h2>Hello</h2>`). Streamdown emits these
+    // through rehype-raw, so we count them too to keep `renderIndex` aligned.
+    const htmlMatch = /^<h([1-6])\b[^>]*>(.*?)<\/h\1>\s*$/i.exec(structuralTrimmed);
+    if (htmlMatch) {
+      const level = parseInt(htmlMatch[1], 10);
+      const text = stripMarkdownFormatting(htmlMatch[2].replace(/<[^>]+>/g, ""));
+      if (text) {
+        headings.push({ renderIndex, level, text });
+      }
+      // Empty raw HTML headings still render as hN elements, so they consume
+      // an index even when they do not produce a useful TOC entry.
+      renderIndex += 1;
+      continue;
+    }
+
+    const htmlBlockStart = getHtmlBlockStart(structuralTrimmed);
+    if (htmlBlockStart) {
+      if (!htmlBlockTerminates(htmlBlockStart, structuralTrimmed)) {
+        htmlBlockState = htmlBlockStart;
+      }
       continue;
     }
 
@@ -120,24 +151,58 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
         }
       }
     }
-
-    // Raw HTML heading on its own line (`<h2>Hello</h2>`). Streamdown emits these
-    // through rehype-raw, so we count them too to keep `renderIndex` aligned.
-    const htmlMatch = /^<h([1-6])\b[^>]*>(.*?)<\/h\1>\s*$/i.exec(structuralTrimmed);
-    if (htmlMatch) {
-      const level = parseInt(htmlMatch[1], 10);
-      const text = stripMarkdownFormatting(htmlMatch[2].replace(/<[^>]+>/g, ""));
-      if (text) {
-        headings.push({ renderIndex, level, text });
-      }
-      // Empty raw HTML headings still render as hN elements, so they consume
-      // an index even when they do not produce a useful TOC entry.
-      renderIndex += 1;
-      continue;
-    }
   }
 
   return headings;
+}
+
+interface HtmlBlockState {
+  closingPattern?: RegExp;
+  terminatesOnBlank: boolean;
+}
+
+const HTML_BLOCK_TAGS =
+  "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
+const HTML_BLOCK_TAG_PATTERN = new RegExp(`^</?(?:${HTML_BLOCK_TAGS})(?=[\\s>/])`, "i");
+
+function getHtmlBlockStart(trimmedLine: string): HtmlBlockState | null {
+  const pairedTagMatch = /^<(script|pre|style)(?=[\s>])/i.exec(trimmedLine);
+  if (pairedTagMatch) {
+    return { closingPattern: new RegExp(`</${pairedTagMatch[1]}>`, "i"), terminatesOnBlank: false };
+  }
+
+  if (trimmedLine.startsWith("<!--")) {
+    return { closingPattern: /-->/, terminatesOnBlank: false };
+  }
+  if (trimmedLine.startsWith("<?")) {
+    return { closingPattern: /\?>/, terminatesOnBlank: false };
+  }
+  if (/^<![A-Z]/.test(trimmedLine)) {
+    return { closingPattern: />/, terminatesOnBlank: false };
+  }
+  if (trimmedLine.startsWith("<![CDATA[")) {
+    return { closingPattern: /\]\]>/, terminatesOnBlank: false };
+  }
+
+  if (HTML_BLOCK_TAG_PATTERN.test(trimmedLine)) {
+    return { terminatesOnBlank: true };
+  }
+
+  // CommonMark also treats a complete open/closing HTML tag on its own line as
+  // an HTML block. Raw h1-h6 lines are handled above so they still count toward
+  // renderIndex.
+  if (/^<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*)?>\s*$/.test(trimmedLine)) {
+    return { terminatesOnBlank: true };
+  }
+
+  return null;
+}
+
+function htmlBlockTerminates(state: HtmlBlockState, trimmedLine: string): boolean {
+  if (state.closingPattern) {
+    return state.closingPattern.test(trimmedLine);
+  }
+  return state.terminatesOnBlank && trimmedLine.length === 0;
 }
 
 function stripAtxContainerPrefixes(line: string): string {
