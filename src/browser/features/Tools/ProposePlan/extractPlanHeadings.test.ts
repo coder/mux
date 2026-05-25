@@ -151,6 +151,11 @@ describe("extractPlanHeadings", () => {
     ]);
   });
 
+  test("counts multiline raw HTML headings so later renderIndex values stay aligned", () => {
+    const md = `<h2>\nMultiline HTML heading\n</h2>\n\n## Outside`;
+    expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 1, level: 2, text: "Outside" }]);
+  });
+
   test("counts raw HTML headings so renderIndex stays aligned", () => {
     const md = `# Markdown one\n\n<h2>Inline HTML two</h2>\n\n### Markdown three`;
     expect(extractPlanHeadings(md)).toEqual([

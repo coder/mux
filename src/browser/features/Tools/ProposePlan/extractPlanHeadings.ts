@@ -96,6 +96,21 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
       continue;
     }
 
+    const multilineHtmlHeadingMatch = /^<h([1-6])\b[^>]*>(?!.*<\/h\1>)/i.exec(structuralTrimmed);
+    if (multilineHtmlHeadingMatch) {
+      const level = multilineHtmlHeadingMatch[1];
+      // Multiline raw HTML headings render as hN elements, but collecting their
+      // display text would require a full HTML parse. Count the DOM node so
+      // later markdown headings keep correct renderIndex alignment.
+      renderIndex += 1;
+      htmlBlockState ??= {
+        closingPattern: new RegExp(`</h${level}>`, "i"),
+        terminatesOnBlank: false,
+        countsNestedHeadings: false,
+      };
+      continue;
+    }
+
     if (htmlBlockState) {
       if (htmlBlockTerminates(htmlBlockState, structuralTrimmed)) {
         htmlBlockState = null;
