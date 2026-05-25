@@ -87,6 +87,11 @@ describe("extractPlanHeadings", () => {
     ]);
   });
 
+  test("does not count list-contained indented code as headings", () => {
+    const md = `-     # Not a heading\n1.     ## Not a heading either\n\n## Visible`;
+    expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "Visible" }]);
+  });
+
   test("skips headings inside container-prefixed fenced code blocks", () => {
     const md = `> \`\`\`markdown\n> # Hidden quoted heading\n> \`\`\`\n\n- \`\`\`markdown\n  ## Hidden list heading\n  \`\`\`\n\n## Visible`;
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "Visible" }]);

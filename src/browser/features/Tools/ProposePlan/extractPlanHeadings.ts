@@ -283,20 +283,30 @@ function stripAtxContainerPrefixes(line: string): string {
       continue;
     }
 
-    const unorderedListMatch = /^ {0,3}[-+*][ \t]+/.exec(remaining);
+    const unorderedListMatch = /^( {0,3}[-+*])([ \t]+)/.exec(remaining);
     if (unorderedListMatch) {
+      if (isIndentedListCodePrefix(unorderedListMatch[2])) {
+        return remaining;
+      }
       remaining = remaining.slice(unorderedListMatch[0].length);
       changed = true;
       continue;
     }
 
-    const orderedListMatch = /^ {0,3}\d{1,9}[.)][ \t]+/.exec(remaining);
+    const orderedListMatch = /^( {0,3}\d{1,9}[.)])([ \t]+)/.exec(remaining);
     if (orderedListMatch) {
+      if (isIndentedListCodePrefix(orderedListMatch[2])) {
+        return remaining;
+      }
       remaining = remaining.slice(orderedListMatch[0].length);
       changed = true;
     }
   }
   return remaining;
+}
+
+function isIndentedListCodePrefix(spacesAfterMarker: string): boolean {
+  return spacesAfterMarker.includes("\t") || spacesAfterMarker.length > 4;
 }
 
 function stripBlockquotePrefixes(line: string): string {
