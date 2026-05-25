@@ -223,7 +223,7 @@ function getMultilineHtmlHeadingLevel(line: string): string | null {
 }
 
 function getHtmlCandidateLine(line: string): string | null {
-  const match = /^ {0,3}(?! )(.*)$/.exec(line);
+  const match = /^ {0,3}(?![ \t])(.*)$/.exec(line);
   return match ? match[1].trim() : null;
 }
 
