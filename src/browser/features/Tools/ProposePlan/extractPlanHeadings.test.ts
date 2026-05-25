@@ -227,6 +227,14 @@ describe("extractPlanHeadings", () => {
     ]);
   });
 
+  test("preserves text after nested inline tags inside raw HTML headings", () => {
+    const md = `<h2><em>Auth</em> rollout</h2>\n\n## Next`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "Auth rollout" },
+      { renderIndex: 1, level: 2, text: "Next" },
+    ]);
+  });
+
   test("does not count escaped raw HTML headings inside inline code", () => {
     const md = `Intro \`<h2>Code</h2>\` <h2>Real</h2>\n\n## Next`;
     expect(extractPlanHeadings(md)).toEqual([

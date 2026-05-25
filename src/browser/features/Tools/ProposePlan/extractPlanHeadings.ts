@@ -96,25 +96,43 @@ interface InlineTokenChild {
 }
 
 function reconstructInlineHtml(children: InlineTokenChild[]): string {
+  const openTags: string[] = [];
   let html = "";
-  let insideHtml = false;
 
   for (const child of children) {
     if (child.type === "html_inline") {
       html += child.content;
-      const isClosingTag = child.content.startsWith("</");
-      const isCompleteTag =
-        /<\/[A-Za-z][^>]*>/.test(child.content) || /\/>\s*$/.test(child.content);
-      insideHtml = !isClosingTag && !isCompleteTag;
+      updateInlineHtmlStack(openTags, child.content);
       continue;
     }
 
-    if (child.type === "text" && insideHtml) {
+    if (child.type === "text" && openTags.length > 0) {
       html += child.content;
     }
   }
 
   return html;
+}
+
+function updateInlineHtmlStack(openTags: string[], rawHtml: string): void {
+  const tagPattern = /<\s*(\/)?\s*([A-Za-z][A-Za-z0-9:-]*)\b[^>]*(\/)?\s*>/g;
+  let match = tagPattern.exec(rawHtml);
+  while (match) {
+    const tagName = match[2].toLowerCase();
+    const isClosingTag = match[1] != null;
+    const isSelfClosing = match[3] != null || /<[^>]*\/\s*>$/.test(match[0]);
+
+    if (isClosingTag) {
+      const openIndex = openTags.lastIndexOf(tagName);
+      if (openIndex >= 0) {
+        openTags.splice(openIndex, 1);
+      }
+    } else if (!isSelfClosing && !/<\/\s*[A-Za-z][A-Za-z0-9:-]*\s*>/.test(match[0])) {
+      openTags.push(tagName);
+    }
+
+    match = tagPattern.exec(rawHtml);
+  }
 }
 
 function parseHeadingLevel(tag: string): number {
