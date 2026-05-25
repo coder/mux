@@ -50,6 +50,15 @@ get_default_eslint_concurrency() {
   local cpu_count
   local concurrency
 
+  # Most local `make static-check` runs are warm-cache validation after a small
+  # edit. ESLint's worker startup/merge overhead dominates that path, so keep it
+  # single-process once the cache exists; cold caches still scale up for CI-like
+  # first runs.
+  if [ -f .eslintcache ]; then
+    echo 1
+    return
+  fi
+
   cpu_count="$(get_cpu_count)"
   concurrency=$(((cpu_count + 1) / 2))
 
