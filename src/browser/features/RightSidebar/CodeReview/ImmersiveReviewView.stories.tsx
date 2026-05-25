@@ -436,18 +436,19 @@ export const ImmersiveNotesSidebarActionFooter: Story = {
     await waitFor(
       () => {
         canvas.getByTestId("immersive-review-view");
+        if (canvas.queryAllByText(/Keep the formatter instance shared/i).length === 0) {
+          throw new Error("Expected the immersive review formatter note to render.");
+        }
       },
       { timeout: 10_000 }
     );
 
-    const noteCard = Array.from(
-      canvasElement.querySelectorAll<HTMLElement>("[data-note-index]")
-    ).find((card) => card.textContent?.includes("Keep the formatter instance shared"));
+    const noteCard = canvasElement.querySelector<HTMLElement>('[data-note-index="0"]');
     if (!noteCard) {
-      throw new Error("Expected an immersive review note card with the formatter note to render.");
+      throw new Error("Expected the first immersive review note card to render.");
     }
 
-    // Focus the matching card so Storybook captures the reserved footer state that prevents
+    // Focus the first card so Storybook captures the reserved footer state that prevents
     // the note preview layout from shifting when review actions appear. Focus is more
     // deterministic than hover in the CI interaction runner while exercising the same UI.
     noteCard.focus();
