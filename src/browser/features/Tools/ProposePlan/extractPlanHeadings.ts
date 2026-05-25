@@ -1,3 +1,5 @@
+import MarkdownIt from "markdown-it";
+
 /**
  * A heading entry extracted from a plan's markdown source.
  *
@@ -15,150 +17,57 @@ export interface PlanHeading {
   text: string;
 }
 
+interface HtmlHeading {
+  level: number;
+  text: string;
+}
+
+const markdownParser = new MarkdownIt({ html: true, linkify: false, typographer: false });
+const HTML_HEADING_PATTERN = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1\s*>/gi;
+const NON_RENDERED_HTML_BLOCK_PATTERN =
+  /<!--([\s\S]*?)(?:-->|$)|<\?(?:[\s\S]*?)(?:\?>|$)|<!\[CDATA\[(?:[\s\S]*?)(?:\]\]>|$)|<![A-Z][\s\S]*?(?:>|$)|<(?:script|pre|style)(?=[\s>]|$)[\s\S]*?(?:<\/(?:script|pre|style)\s*>|$)/gi;
+
 /**
  * Extract heading entries from a plan's markdown source.
  *
- * Supports ATX headings (`# Heading`, with optional trailing `#` markers), setext
- * headings (a text line followed by `===` or `---`), and raw HTML headings on
- * their own line (`<h2>...</h2>`). Skips lines inside fenced code blocks
- * (``` or ~~~) so example markdown inside code samples never shows up in the TOC.
- *
- * The output indices line up with what Streamdown / remark-gfm will render so
- * `renderIndex` can be used to locate the matching DOM element by order.
+ * Markdown block structure is delegated to markdown-it so ATX, setext,
+ * blockquote/list containers, indented code, and fenced code stay aligned with
+ * the rendered markdown. Raw HTML h1-h6 tags are counted separately because the
+ * renderer allows raw HTML and those tags also appear in the heading NodeList.
  */
 export function extractPlanHeadings(markdown: string): PlanHeading[] {
   if (!markdown) {
     return [];
   }
 
-  const lines = markdown.split("\n");
+  const tokens = markdownParser.parse(markdown, {});
   const headings: PlanHeading[] = [];
-
-  let inFence = false;
-  let fenceChar: "`" | "~" | null = null;
-  let fenceLength = 0;
-  let htmlBlockState: HtmlBlockState | null = null;
   let renderIndex = 0;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const structuralLine = stripAtxContainerPrefixes(line);
-    const structuralTrimmed = structuralLine.trim();
-    // Track fenced code blocks. CommonMark allows up to three leading spaces
-    // before a fence; four spaces are indented code, not a fence. We also strip
-    // container markers so quoted/list-contained fences suppress headings inside
-    // them the same way the markdown renderer does.
-    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(structuralLine);
-    if (fenceMatch) {
-      const marker = fenceMatch[1];
-      const ch = marker[0] as "`" | "~";
-      const len = marker.length;
-      if (!inFence) {
-        inFence = true;
-        fenceChar = ch;
-        fenceLength = len;
-      } else if (ch === fenceChar && len >= fenceLength && /^[`~]+\s*$/.test(structuralTrimmed)) {
-        inFence = false;
-        fenceChar = null;
-        fenceLength = 0;
-      }
-      continue;
-    }
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
 
-    if (inFence) {
-      continue;
-    }
-
-    if (htmlBlockState && !htmlBlockState.countsNestedHeadings) {
-      if (htmlBlockTerminates(htmlBlockState, structuralTrimmed)) {
-        htmlBlockState = null;
-      }
-      continue;
-    }
-
-    const htmlCandidateLine: string | null = htmlBlockState
-      ? structuralTrimmed
-      : getHtmlCandidateLine(structuralLine);
-
-    const htmlBlockStart: HtmlBlockState | null = htmlCandidateLine
-      ? getHtmlBlockStart(htmlCandidateLine)
-      : null;
-    if (htmlBlockStart && !htmlBlockStart.countsNestedHeadings) {
-      if (!htmlBlockTerminates(htmlBlockStart, structuralTrimmed)) {
-        htmlBlockState = htmlBlockStart;
-      }
-      continue;
-    }
-
-    if (htmlCandidateLine != null) {
-      // Raw HTML h1-h6 tags render into the same heading NodeList even when they
-      // are nested in another HTML block or share a line with other HTML/text.
-      for (const htmlHeading of extractCompleteHtmlHeadings(htmlCandidateLine)) {
-        if (htmlHeading.text) {
-          headings.push({ renderIndex, level: htmlHeading.level, text: htmlHeading.text });
-        }
-        // Empty raw HTML headings still render as hN elements, so they consume
-        // an index even when they do not produce a useful TOC entry.
-        renderIndex += 1;
-      }
-
-      const multilineHtmlHeadingLevel = getMultilineHtmlHeadingLevel(htmlCandidateLine);
-      if (multilineHtmlHeadingLevel != null) {
-        // Multiline raw HTML headings render as hN elements, but collecting their
-        // display text would require a full HTML parse. Count the DOM node so
-        // later markdown headings keep correct renderIndex alignment.
-        renderIndex += 1;
-        htmlBlockState ??= {
-          closingPattern: new RegExp(`</h${multilineHtmlHeadingLevel}>`, "i"),
-          terminatesOnBlank: false,
-          countsNestedHeadings: false,
-        };
-        continue;
-      }
-    }
-
-    if (htmlBlockState) {
-      if (htmlBlockTerminates(htmlBlockState, structuralTrimmed)) {
-        htmlBlockState = null;
-      }
-      continue;
-    }
-
-    if (htmlBlockStart) {
-      if (!htmlBlockTerminates(htmlBlockStart, structuralTrimmed)) {
-        htmlBlockState = htmlBlockStart;
-      }
-      continue;
-    }
-
-    // ATX heading: up to three leading spaces, then 1-6 `#`s. Four leading
-    // spaces are indented code, so matching them would drift from markdown's
-    // rendered h1..h6 order.
-    const atxMatch = /^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*)$/.exec(structuralLine);
-    if (atxMatch) {
-      const level = atxMatch[1].length;
-      const rawText = (atxMatch[2] ?? "").replace(/[ \t]+#+[ \t]*$/, "");
-      const text = stripMarkdownFormatting(rawText);
+    if (token.type === "heading_open") {
+      const level = parseHeadingLevel(token.tag);
+      const inline = tokens[i + 1];
+      const text = stripMarkdownFormatting(inline?.type === "inline" ? inline.content : "");
       if (text) {
         headings.push({ renderIndex, level, text });
       }
-      // Empty headings still render as hN elements, so they must consume a
-      // renderIndex even though they are not useful TOC entries.
+      // Empty markdown headings still render hN elements, so they consume an
+      // index even when they do not produce a useful TOC entry.
       renderIndex += 1;
       continue;
     }
 
-    // Setext heading: one or more paragraph lines followed by === (h1) or ---
-    // (h2). Preserve underline indentation: a 4-space-indented underline is
-    // code, not a heading marker, so trimming it would create phantom headings.
-    const setextHeading = getSetextHeadingAt(lines, i);
-    if (setextHeading) {
-      const text = stripMarkdownFormatting(setextHeading.text);
-      if (text) {
-        headings.push({ renderIndex, level: setextHeading.level, text });
+    if (token.type === "html_block" || token.type === "html_inline") {
+      for (const htmlHeading of extractHtmlHeadings(token.content)) {
+        if (htmlHeading.text) {
+          headings.push({ renderIndex, level: htmlHeading.level, text: htmlHeading.text });
+        }
+        // Empty raw HTML headings still render hN elements, so they consume an
+        // index even when they do not produce a useful TOC entry.
         renderIndex += 1;
-        i = setextHeading.underlineIndex;
-        continue;
       }
     }
   }
@@ -166,182 +75,36 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
   return headings;
 }
 
-interface HtmlBlockState {
-  closingPattern?: RegExp;
-  terminatesOnBlank: boolean;
-  countsNestedHeadings: boolean;
+function parseHeadingLevel(tag: string): number {
+  const level = Number(tag.replace(/^h/i, ""));
+  return level >= 1 && level <= 6 ? level : 1;
 }
 
-const HTML_BLOCK_TAGS =
-  "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
-const HTML_BLOCK_TAG_PATTERN = new RegExp(`^</?(?:${HTML_BLOCK_TAGS})(?=[\\s>/])`, "i");
+function extractHtmlHeadings(html: string): HtmlHeading[] {
+  const renderedHtml = html.replace(NON_RENDERED_HTML_BLOCK_PATTERN, "");
+  const headings: HtmlHeading[] = [];
+  HTML_HEADING_PATTERN.lastIndex = 0;
 
-function isSetextTextCandidate(text: string): boolean {
-  return (
-    text.length > 0 &&
-    !/^[-+*][ \t]/.test(text) &&
-    !/^\d{1,9}[.)][ \t]/.test(text) &&
-    !/^(`{3,}|~{3,})/.test(text) &&
-    !isSetextHtmlBlockLine(text)
-  );
-}
-
-interface SetextHeadingMatch {
-  level: 1 | 2;
-  text: string;
-  underlineIndex: number;
-}
-
-function getSetextHeadingAt(lines: string[], startIndex: number): SetextHeadingMatch | null {
-  const textParts: string[] = [];
-  for (let i = startIndex; i < lines.length; i++) {
-    const line = stripBlockquotePrefixes(lines[i]);
-    const trimmed = line.trim();
-
-    if (textParts.length > 0) {
-      if (/^ {0,3}=+[ \t]*$/.test(line)) {
-        return { level: 1, text: textParts.join(" "), underlineIndex: i };
-      }
-      if (/^ {0,3}-{2,}[ \t]*$/.test(line)) {
-        return { level: 2, text: textParts.join(" "), underlineIndex: i };
-      }
-    }
-
-    if (!/^ {0,3}\S/.test(line) || !isSetextTextCandidate(trimmed)) {
-      return null;
-    }
-    textParts.push(trimmed);
-  }
-  return null;
-}
-
-function isSetextHtmlBlockLine(text: string): boolean {
-  return getHtmlBlockStart(text) != null;
-}
-
-interface CompleteHtmlHeading {
-  level: number;
-  text: string;
-}
-
-function extractCompleteHtmlHeadings(line: string): CompleteHtmlHeading[] {
-  const headings: CompleteHtmlHeading[] = [];
-  const headingPattern = /<h([1-6])\b[^>]*>(.*?)<\/h\1>/gi;
-  let match = headingPattern.exec(line);
+  let match = HTML_HEADING_PATTERN.exec(renderedHtml);
   while (match) {
     headings.push({
       level: parseInt(match[1], 10),
       text: stripMarkdownFormatting(match[2].replace(/<[^>]+>/g, "")),
     });
-    match = headingPattern.exec(line);
+    match = HTML_HEADING_PATTERN.exec(renderedHtml);
   }
+
   return headings;
-}
-
-function getMultilineHtmlHeadingLevel(line: string): string | null {
-  const match = /<h([1-6])\b[^>]*>(?!.*<\/h\1>)/i.exec(line);
-  return match ? match[1] : null;
-}
-
-function getHtmlCandidateLine(line: string): string | null {
-  const match = /^ {0,3}(?![ \t])(.*)$/.exec(line);
-  return match ? match[1].trim() : null;
-}
-
-function getHtmlBlockStart(trimmedLine: string): HtmlBlockState | null {
-  if (/^<(?:script|pre|style)(?=[\s>]|$)/i.test(trimmedLine)) {
-    return {
-      closingPattern: /<\/(?:script|pre|style)\s*>/i,
-      terminatesOnBlank: false,
-      countsNestedHeadings: false,
-    };
-  }
-
-  if (trimmedLine.startsWith("<!--")) {
-    return { closingPattern: /-->/, terminatesOnBlank: false, countsNestedHeadings: false };
-  }
-  if (trimmedLine.startsWith("<?")) {
-    return { closingPattern: /\?>/, terminatesOnBlank: false, countsNestedHeadings: false };
-  }
-  if (/^<![A-Z]/.test(trimmedLine)) {
-    return { closingPattern: />/, terminatesOnBlank: false, countsNestedHeadings: false };
-  }
-  if (trimmedLine.startsWith("<![CDATA[")) {
-    return { closingPattern: /\]\]>/, terminatesOnBlank: false, countsNestedHeadings: false };
-  }
-
-  if (HTML_BLOCK_TAG_PATTERN.test(trimmedLine)) {
-    return { terminatesOnBlank: true, countsNestedHeadings: true };
-  }
-
-  return null;
-}
-
-function htmlBlockTerminates(state: HtmlBlockState, trimmedLine: string): boolean {
-  if (state.closingPattern) {
-    return state.closingPattern.test(trimmedLine);
-  }
-  return state.terminatesOnBlank && trimmedLine.length === 0;
-}
-
-function stripAtxContainerPrefixes(line: string): string {
-  let remaining = line;
-  let changed = true;
-  while (changed) {
-    changed = false;
-
-    const blockquoteMatch = /^ {0,3}>[ \t]?/.exec(remaining);
-    if (blockquoteMatch) {
-      remaining = remaining.slice(blockquoteMatch[0].length);
-      changed = true;
-      continue;
-    }
-
-    const unorderedListMatch = /^( {0,3}[-+*])([ \t]+)/.exec(remaining);
-    if (unorderedListMatch) {
-      if (isIndentedListCodePrefix(unorderedListMatch[2])) {
-        return remaining;
-      }
-      remaining = remaining.slice(unorderedListMatch[0].length);
-      changed = true;
-      continue;
-    }
-
-    const orderedListMatch = /^( {0,3}\d{1,9}[.)])([ \t]+)/.exec(remaining);
-    if (orderedListMatch) {
-      if (isIndentedListCodePrefix(orderedListMatch[2])) {
-        return remaining;
-      }
-      remaining = remaining.slice(orderedListMatch[0].length);
-      changed = true;
-    }
-  }
-  return remaining;
-}
-
-function isIndentedListCodePrefix(spacesAfterMarker: string): boolean {
-  return spacesAfterMarker.includes("\t") || spacesAfterMarker.length > 4;
-}
-
-function stripBlockquotePrefixes(line: string): string {
-  let remaining = line;
-  while (true) {
-    const blockquoteMatch = /^ {0,3}>[ \t]?/.exec(remaining);
-    if (!blockquoteMatch) {
-      return remaining;
-    }
-    remaining = remaining.slice(blockquoteMatch[0].length);
-  }
 }
 
 /**
  * Lightweight inline-formatting stripper used only for TOC display text. Not a
- * full markdown parser — we trade exhaustive correctness for predictable output
- * on the small subset of inline syntax that shows up in heading lines.
+ * full markdown parser — markdown-it has already handled block structure; this
+ * only normalizes raw HTML heading text and a few markdown-ish inline remnants.
  */
 function stripMarkdownFormatting(text: string): string {
   return text
-    .replace(/\\([\\`*_{}[\]()#+\-.!|~])/g, "$1") // unescape \*  \[ etc.
+    .replace(/\\([\\`*_{}\x5B\]()#+\-.!|~])/g, "$1") // unescape \*  \[ etc.
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1") // ![alt](src)
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // [label](href)
     .replace(/`([^`]+)`/g, "$1") // `code`
