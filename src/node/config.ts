@@ -1886,12 +1886,6 @@ export class Config {
    * creates (first-time manual edit) are also detected on all platforms.
    */
   watchProvidersFile(callback: () => void): () => void {
-    // The mux home directory may not exist on a fresh install. Create it so
-    // fs.watch doesn't throw ENOENT; the directory being empty is fine.
-    if (!fs.existsSync(this.rootDir)) {
-      ensurePrivateDirSync(this.rootDir);
-    }
-
     const filename = path.basename(this.providersFile);
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -1903,13 +1897,22 @@ export class Config {
       }, 300);
     };
 
-    // fs.watch can throw for reasons beyond ENOENT — network filesystems
-    // (NFS/SMB) and watch-limit exhaustion (ENOSPC on Linux) are the common
-    // ones. Degrade gracefully: log once, return a no-op cleanup, and let
-    // the rest of provider config keep working. The UI just won't auto-
-    // refresh on manual edits in that environment (same as before this PR).
+    // Anything inside this block can fail in restricted environments:
+    //   - ensurePrivateDirSync: read-only filesystem, unwritable MUX_ROOT
+    //   - fs.watch: ENOENT, network filesystems (NFS/SMB), watch-limit
+    //     exhaustion (ENOSPC on Linux), unsupported virtualized mounts.
+    // We degrade gracefully in every case: log once, return a no-op
+    // cleanup, and let the rest of provider config keep working. The UI
+    // just won't auto-refresh on manual edits in that environment (same
+    // as the pre-PR behaviour).
     let watcher: fs.FSWatcher;
     try {
+      // The mux home directory may not exist on a fresh install. Create it
+      // so fs.watch doesn't throw ENOENT; the directory being empty is fine.
+      if (!fs.existsSync(this.rootDir)) {
+        ensurePrivateDirSync(this.rootDir);
+      }
+
       // persistent: false so the watcher doesn't prevent the process (or
       // Jest) from exiting when nothing else is keeping the event loop alive.
       watcher = fs.watch(this.rootDir, { persistent: false }, (_eventType, changedFilename) => {
@@ -1927,7 +1930,7 @@ export class Config {
         error
       );
       const noop = (): void => {
-        // Nothing to clean up — fs.watch never started.
+        // Nothing to clean up — watcher setup never completed.
       };
       return noop;
     }
