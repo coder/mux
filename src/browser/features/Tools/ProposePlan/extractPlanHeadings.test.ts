@@ -92,6 +92,11 @@ describe("extractPlanHeadings", () => {
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 1, text: "Heading" }]);
   });
 
+  test("does not treat ordered-list items followed by rules as setext headings", () => {
+    const md = `1. Step one\n---\n\n2) Step two\n---\n\n## Actual heading`;
+    expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "Actual heading" }]);
+  });
+
   test("counts raw HTML headings so renderIndex stays aligned", () => {
     const md = `# Markdown one\n\n<h2>Inline HTML two</h2>\n\n### Markdown three`;
     expect(extractPlanHeadings(md)).toEqual([

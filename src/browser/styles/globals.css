@@ -1532,17 +1532,16 @@ code {
  *      not enough for the full nav, and
  *   3. the full sticky TOC once the gutter can fit it.
  *
- * In the full state we shift the whole plan+toc group right by half of the TOC
- * column. That keeps the OVERALL component centered in the transcript instead
- * of keeping only the plan card centered and leaving the TOC visually heavier on
- * the left than the empty right gutter.
+ * The full TOC stays entirely in the existing left gutter; it must not shift
+ * the plan card away from the transcript's centered column. The width is derived
+ * from the transcript container so wider gutters give the TOC more room instead
+ * of leaving unused space while headings wrap/truncate too early.
  * --------------------------------------------------------------------------- */
 
 .plan-toc-layout {
   position: relative;
   --plan-toc-compact-column: 1.75rem;
-  --plan-toc-wide-column: 10rem;
-  left: 0;
+  --plan-toc-wide-column: 12rem;
 }
 
 .plan-toc-aside {
@@ -1614,11 +1613,10 @@ code {
   color: var(--color-foreground);
   margin: 0 0 6px 0;
   padding: 2px 0;
-  /* Ellipsis-truncate long titles so the TOC never grows horizontally; the
-     hover tooltip surfaces the full text. */
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  /* Let long plan titles wrap inside the gutter instead of wasting available
+     horizontal space and hiding useful context behind an ellipsis. */
+  white-space: normal;
+  overflow-wrap: anywhere;
   /* Match the .plan-toc-link reset for the clickable variant. */
   text-align: left;
 }
@@ -1693,9 +1691,8 @@ code {
   width: 100%;
   padding: 2px 0 2px var(--plan-toc-indent);
   border-radius: 3px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
   transition:
     color 120ms ease,
     background-color 120ms ease;
@@ -1743,20 +1740,15 @@ code {
 }
 
 /*
- * Full TOC visibility. The plan is centered via `mx-auto`, so the left gutter
- * holding the TOC and the right gutter mirror each other:
- *   max-w-4xl (56rem) + 2 × wide column (10rem) = 76rem
- * Once the full TOC is visible, offset the plan+toc group right by 5rem so the
- * overall component (TOC + plan card) remains centered in the transcript.
+ * Full TOC visibility. The plan stays centered in the transcript; the TOC uses
+ * the left gutter beside that centered column. A 12rem column fills most of the
+ * practical gutter at this breakpoint without stealing space from the plan.
  */
-@container transcript (min-width: 76rem) {
-  .plan-toc-aware .plan-toc-layout {
-    left: calc(var(--plan-toc-wide-column) / 2);
-  }
-
+@container transcript (min-width: 78.5rem) {
   .plan-toc-aware .plan-toc-aside {
+    box-sizing: border-box;
     width: var(--plan-toc-wide-column);
-    padding-right: 1rem;
+    padding-right: 0.75rem;
   }
 
   .plan-toc-aware .plan-toc-compact-hint {

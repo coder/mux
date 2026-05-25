@@ -34,8 +34,8 @@ export interface PlanTableOfContentsProps {
    * The plan title is the natural label for a plan TOC, so we let the host
    * surface it here — that conserves vertical space (no separate "CONTENTS"
    * label *and* an h1 list entry) and tightens the visual hierarchy: the
-   * title sits at column 0, h2 entries align with it, and h3+ are minimally
-   * indented under their parent h2.
+   * title sits at column 0, h2 entries align with it, and h3+ are indented
+   * under their parent h2.
    */
   title?: string;
   className?: string;
@@ -118,8 +118,8 @@ export const PlanTableOfContents: React.FC<PlanTableOfContentsProps> = (props) =
             >
               {/*
                * Wrap with TooltipIfPresent so users can see the full heading
-               * text when it's truncated by the toc's narrow column width
-               * (long titles get `text-overflow: ellipsis` via CSS).
+               * in one place even when the side TOC wraps long text across
+               * multiple lines in the gutter.
                *
                * `side="right"` keeps the tooltip from drifting off the left
                * edge of the transcript — the toc lives in the left gutter.

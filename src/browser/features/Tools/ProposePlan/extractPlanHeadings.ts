@@ -85,8 +85,14 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
     }
 
     // Setext heading: text line followed by === (h1) or --- (h2). Skip blank
-    // text lines so we don't mistake a thematic break for a setext underline.
-    if (i + 1 < lines.length && trimmed.length > 0 && !/^[#>\-*+`~]/.test(trimmed)) {
+    // text lines and list/fence/thematic-break starters so we don't invent a
+    // heading where markdown renders a list item or horizontal rule instead.
+    if (
+      i + 1 < lines.length &&
+      trimmed.length > 0 &&
+      !/^[#>\-*+`~]/.test(trimmed) &&
+      !/^\d{1,9}[.)][ \t]/.test(trimmed)
+    ) {
       const nextTrimmed = lines[i + 1].trim();
       if (/^=+$/.test(nextTrimmed)) {
         const text = stripMarkdownFormatting(trimmed);
