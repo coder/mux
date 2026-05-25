@@ -42,7 +42,12 @@ import {
   matchesKeybind,
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import { buildReadFileScript, processFileContents } from "@/browser/utils/fileRead";
+import {
+  buildReadFileScript,
+  EXIT_CODE_TOO_LARGE,
+  EXIT_CODE_TOO_MANY_LINES,
+  processFileContents,
+} from "@/browser/utils/fileRead";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import {
   parseReviewLineRange,
@@ -618,8 +623,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       isSettled: false,
     });
 
-    const settleLoadedContent = (content: string | null) => {
-      fileContentCacheRef.current.set(cacheKey, content);
+    const settleLoadedContent = (content: string | null, shouldCache: boolean) => {
+      if (shouldCache) {
+        fileContentCacheRef.current.set(cacheKey, content);
+      }
       if (!cancelled) {
         setActiveFileContentState({
           filePath: resolvedFilePath,
@@ -645,14 +652,17 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       }
 
       if (!fileResult.success) {
-        settleLoadedContent(null);
+        settleLoadedContent(null, false);
         return;
       }
 
       const bashResult = fileResult.data;
+      const isDeterministicBudgetMiss =
+        bashResult.exitCode === EXIT_CODE_TOO_LARGE ||
+        bashResult.exitCode === EXIT_CODE_TOO_MANY_LINES;
 
       if (!bashResult.success && !bashResult.output) {
-        settleLoadedContent(null);
+        settleLoadedContent(null, isDeterministicBudgetMiss);
         return;
       }
 
@@ -661,11 +671,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         data.type === "text" && isWithinFullFileContextLineBudget(data.content)
           ? data.content
           : null;
-      settleLoadedContent(content);
+      settleLoadedContent(content, content != null || isDeterministicBudgetMiss);
     }
 
     loadActiveFileContent().catch(() => {
-      settleLoadedContent(null);
+      settleLoadedContent(null, false);
     });
 
     return () => {

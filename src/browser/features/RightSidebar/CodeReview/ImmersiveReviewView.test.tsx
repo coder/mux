@@ -264,6 +264,53 @@ describe("ImmersiveReviewView", () => {
     );
   });
 
+  test("retries full-file context after a transient read failure", async () => {
+    const firstHunk = createHunk({ id: "hunk-first", filePath: "src/first.ts" });
+    const secondHunk = createHunk({ id: "hunk-second", filePath: "src/second.ts" });
+    const allHunks = [firstHunk, secondHunk];
+    const fileTree = createFileTreeForPaths(allHunks.map((hunk) => hunk.filePath));
+    const onSelectHunk = mock((_hunkId: string | null) => undefined);
+    mockApi.workspace.executeBash = mock(() =>
+      Promise.resolve({
+        success: true as const,
+        data: {
+          success: false,
+          output: "",
+          exitCode: 1,
+        },
+      })
+    );
+
+    const renderView = (selectedHunkId: string) => (
+      <ThemeProvider forcedTheme="dark">
+        <ImmersiveReviewView
+          workspaceId="workspace-1"
+          fileTree={fileTree}
+          hunks={allHunks}
+          allHunks={allHunks}
+          isRead={() => false}
+          onToggleRead={mock(() => undefined)}
+          onMarkFileAsRead={mock(() => undefined)}
+          selectedHunkId={selectedHunkId}
+          onSelectHunk={onSelectHunk}
+          onExit={mock(() => undefined)}
+          isTouchImmersive={true}
+          reviewsByFilePath={new Map()}
+          firstSeenMap={{}}
+        />
+      </ThemeProvider>
+    );
+
+    const view = render(renderView(firstHunk.id));
+    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalledTimes(1));
+
+    view.rerender(renderView(secondHunk.id));
+    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalledTimes(2));
+
+    view.rerender(renderView(firstHunk.id));
+    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalledTimes(3));
+  });
+
   test("weights completion by changed lines instead of hunk count", () => {
     const smallHunk = createHunk({
       id: "hunk-small",
