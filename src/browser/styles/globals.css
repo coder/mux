@@ -1540,9 +1540,9 @@ code {
 
 .plan-toc-layout {
   position: relative;
-  --plan-toc-plan-column: 54.5rem;
-  --plan-toc-compact-column: 0.875rem;
+  --plan-toc-compact-column: 2.5rem;
   --plan-toc-wide-column: 11rem;
+  --plan-toc-wide-gutter: 13rem;
 }
 
 .plan-toc-aside {
@@ -1554,12 +1554,8 @@ code {
   position: absolute;
   inset: 0 100% 0 auto;
   box-sizing: border-box;
-  width: clamp(
-    var(--plan-toc-compact-column),
-    calc((100cqw - var(--plan-toc-plan-column)) / 2),
-    4rem
-  );
-  padding-inline: 0.125rem;
+  width: var(--plan-toc-compact-column);
+  padding-inline: 0;
   /* Margin clicks should fall through to the underlying transcript chrome;
      only the inner <nav> is interactive when the full TOC is visible. */
   pointer-events: none;
@@ -1575,14 +1571,13 @@ code {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 7.5rem;
+  min-height: 7.25rem;
   width: 0.75rem;
-  margin-inline: auto;
-  padding: 0.4rem 0.0625rem;
-  border: 1px solid var(--surface-plan-border-subtle);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-surface-secondary) 90%, transparent);
-  color: var(--color-muted-foreground);
+  margin-left: calc((var(--plan-toc-compact-column) - 0.75rem) / 2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-muted-foreground) 85%, transparent);
   font-size: 9px;
   font-weight: 500;
   letter-spacing: 0.03em;
@@ -1736,8 +1731,9 @@ code {
 
 /*
  * Hint visibility. The transcript container is queried at its CONTENT box
- * inline-size (padding excluded). The compact rail is intentionally thin so it
- * can appear as soon as a small mirrored gutter exists.
+ * inline-size (padding excluded). The rail itself is a narrow text-only cue, but
+ * its invisible column is wider so the text sits in the gutter instead of
+ * touching the plan border.
  */
 @container transcript (min-width: 56.25rem) {
   .plan-toc-aware .plan-toc-aside {
@@ -1747,15 +1743,14 @@ code {
 
 /*
  * Full TOC visibility. The plan stays centered in the transcript; the TOC uses
- * the left gutter beside that centered column. `100cqw` is the transcript
- * content-box width; `--plan-toc-plan-column` mirrors the rendered plan card
- * width so the aside spans the actual gutter instead of shifting the plan to
- * manufacture room.
+ * the left gutter beside that centered column. The gutter width is fixed at the
+ * reveal breakpoint so the nav can be centered in the available lane without
+ * relying on container-relative units that resolve inconsistently here.
  */
 @container transcript (min-width: 78.5rem) {
   .plan-toc-aware .plan-toc-aside {
-    width: clamp(12rem, calc((100cqw - var(--plan-toc-plan-column)) / 2), 18rem);
-    padding-inline: 0.375rem;
+    width: var(--plan-toc-wide-gutter);
+    padding-inline: 0;
   }
 
   .plan-toc-aware .plan-toc-compact-hint {
