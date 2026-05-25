@@ -159,9 +159,7 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
     if (
       i + 1 < lines.length &&
       /^ {0,3}\S/.test(blockquoteLine) &&
-      blockquoteTrimmed.length > 0 &&
-      !/^[#>\-*+`~<]/.test(blockquoteTrimmed) &&
-      !/^\d{1,9}[.)][ \t]/.test(blockquoteTrimmed)
+      isSetextTextCandidate(blockquoteTrimmed)
     ) {
       const nextSetextLine = stripBlockquotePrefixes(lines[i + 1]);
       if (/^ {0,3}=+[ \t]*$/.test(nextSetextLine)) {
@@ -197,6 +195,16 @@ interface HtmlBlockState {
 const HTML_BLOCK_TAGS =
   "address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul";
 const HTML_BLOCK_TAG_PATTERN = new RegExp(`^</?(?:${HTML_BLOCK_TAGS})(?=[\\s>/])`, "i");
+
+function isSetextTextCandidate(text: string): boolean {
+  return (
+    text.length > 0 &&
+    !/^[-+*][ \t]/.test(text) &&
+    !/^\d{1,9}[.)][ \t]/.test(text) &&
+    !/^(`{3,}|~{3,})/.test(text) &&
+    !/^<[^>]+>/.test(text)
+  );
+}
 
 interface CompleteHtmlHeading {
   level: number;

@@ -131,6 +131,15 @@ describe("extractPlanHeadings", () => {
     expect(extractPlanHeadings(md)).toEqual([{ renderIndex: 0, level: 2, text: "After" }]);
   });
 
+  test("allows setext text that starts with list punctuation but is not a list", () => {
+    const md = `-foo\n---\n\n+bar\n===\n\n## After`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "-foo" },
+      { renderIndex: 1, level: 1, text: "+bar" },
+      { renderIndex: 2, level: 2, text: "After" },
+    ]);
+  });
+
   test("does not confuse thematic breaks with setext underlines", () => {
     const md = `Some intro paragraph.\n\n---\n\n# Heading`;
     // The `---` here is preceded by a blank line, so it's a thematic break, not
