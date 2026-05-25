@@ -227,6 +227,14 @@ describe("extractPlanHeadings", () => {
     ]);
   });
 
+  test("does not count escaped raw HTML headings inside inline code", () => {
+    const md = `Intro \`<h2>Code</h2>\` <h2>Real</h2>\n\n## Next`;
+    expect(extractPlanHeadings(md)).toEqual([
+      { renderIndex: 0, level: 2, text: "Real" },
+      { renderIndex: 1, level: 2, text: "Next" },
+    ]);
+  });
+
   test("counts raw HTML headings inside inline paragraph tokens", () => {
     const md = `Intro <h2>Inline Section</h2>\n\n## Next`;
     expect(extractPlanHeadings(md)).toEqual([

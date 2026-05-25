@@ -64,7 +64,7 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
     if (token.type === "inline" && tokens[i - 1]?.type !== "heading_open") {
       const children = token.children ?? [];
       if (children.some((child) => child.type === "html_inline")) {
-        const inlineHtml = children.map((child) => child.content).join("");
+        const inlineHtml = reconstructInlineHtml(children);
         for (const htmlHeading of extractHtmlHeadings(inlineHtml)) {
           if (htmlHeading.text) {
             headings.push({ renderIndex, level: htmlHeading.level, text: htmlHeading.text });
@@ -88,6 +88,33 @@ export function extractPlanHeadings(markdown: string): PlanHeading[] {
   }
 
   return headings;
+}
+
+interface InlineTokenChild {
+  type: string;
+  content: string;
+}
+
+function reconstructInlineHtml(children: InlineTokenChild[]): string {
+  let html = "";
+  let insideHtml = false;
+
+  for (const child of children) {
+    if (child.type === "html_inline") {
+      html += child.content;
+      const isClosingTag = child.content.startsWith("</");
+      const isCompleteTag =
+        /<\/[A-Za-z][^>]*>/.test(child.content) || /\/>\s*$/.test(child.content);
+      insideHtml = !isClosingTag && !isCompleteTag;
+      continue;
+    }
+
+    if (child.type === "text" && insideHtml) {
+      html += child.content;
+    }
+  }
+
+  return html;
 }
 
 function parseHeadingLevel(tag: string): number {
