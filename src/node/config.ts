@@ -1879,6 +1879,21 @@ export class Config {
   }
 
   /**
+   * Return the providers.jsonc mtime in ms, or null if the file doesn't
+   * exist or can't be stat'd. Used as a per-write fingerprint so callers
+   * can distinguish between watcher events triggered by their own saves
+   * versus genuine external edits without resorting to a blanket time
+   * window.
+   */
+  getProvidersFileMtimeMs(): number | null {
+    try {
+      return fs.statSync(this.providersFile).mtimeMs;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Watch providers.jsonc for external edits. Fires callback (debounced 300 ms)
    * on any create/modify/delete event. Returns a cleanup function.
    *
@@ -1923,6 +1938,29 @@ export class Config {
         // exact scenario the feature is meant to fix.
         if (changedFilename != null && changedFilename !== filename) return;
         fire();
+      });
+
+      // Without an 'error' listener, FSWatcher errors emit on the global
+      // 'uncaughtException' path and can terminate the process (e.g. if the
+      // mux home directory is removed or unmounted after startup). Handle
+      // it locally: degrade to "no live refresh" the same way we do when
+      // setup itself fails. The watcher is dead after an error, so we
+      // close it defensively and clear any pending debounce so the
+      // cleanup function returned below remains a safe no-op.
+      watcher.on("error", (error) => {
+        log.warn(
+          `providers.jsonc watcher error (${this.rootDir}); live refresh disabled until restart:`,
+          error
+        );
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
+        }
+        try {
+          watcher.close();
+        } catch {
+          // Watcher may already be torn down by the OS — nothing to do.
+        }
       });
     } catch (error) {
       log.warn(

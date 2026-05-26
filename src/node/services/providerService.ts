@@ -133,10 +133,12 @@ export class ProviderService {
   private readonly emitter = new EventEmitter();
   private lastWarnedShadowedCustomProviderIds: Set<string> | null = null;
   private readonly stopWatchingProvidersFile: () => void;
-  // Tracks when the last in-app mutation wrote to providers.jsonc and fired
-  // notifyConfigChanged(). Used to suppress the redundant watcher event that
-  // arrives ~300 ms later for that same write.
-  private lastMutationNotifyTime = 0;
+  // Fingerprint of providers.jsonc immediately after the last in-app save.
+  // The file watcher uses this to distinguish its own write (mtime matches)
+  // from an external edit (mtime differs). Time-based suppression would
+  // silently drop external edits made within the dedupe window; mtime
+  // comparison only suppresses the exact event we caused.
+  private lastSelfWriteMtimeMs: number | null = null;
 
   constructor(
     private readonly config: Config,
@@ -146,12 +148,24 @@ export class ProviderService {
     // The provider config subscription may have many concurrent listeners (e.g. multiple windows).
     // Avoid noisy MaxListenersExceededWarning for normal usage.
     this.emitter.setMaxListeners(50);
-    // Notify subscribers when providers.jsonc is edited externally (e.g. manual
-    // edits). Skip when the event was triggered by our own in-app save — the
-    // mutation already called notifyConfigChanged() directly, so the watcher
-    // firing ~300 ms later would be a duplicate refresh.
+    // Notify subscribers when providers.jsonc is edited externally (e.g.
+    // manual edits). Skip the redundant watcher event that fires ~300 ms
+    // after every in-app save — mutation paths already invoke
+    // notifyConfigChanged() directly. We identify a self-write by
+    // comparing the file's current mtime against the mtime captured by
+    // notifyFromMutation(); a genuine external edit between the in-app
+    // save and the watcher fire will always change mtime, so it still
+    // gets through.
     this.stopWatchingProvidersFile = this.config.watchProvidersFile(() => {
-      if (Date.now() - this.lastMutationNotifyTime < 1500) return;
+      const expected = this.lastSelfWriteMtimeMs;
+      const current = this.config.getProvidersFileMtimeMs();
+      if (expected !== null && current !== null && current === expected) {
+        // This watcher fire corresponds to our own write. Clear the
+        // fingerprint so the next event (whether self or external)
+        // is evaluated freshly.
+        this.lastSelfWriteMtimeMs = null;
+        return;
+      }
       this.notifyConfigChanged();
     });
   }
@@ -186,11 +200,13 @@ export class ProviderService {
 
   /**
    * Called by in-app mutation methods after writing providers.jsonc.
-   * Records the time so the file-watcher callback can suppress the
-   * redundant notification it would otherwise fire ~300 ms later.
+   * Captures the file's post-write mtime so the watcher callback can
+   * recognise — and skip — the redundant notification it would
+   * otherwise fire ~300 ms later. External edits change mtime and
+   * therefore are never accidentally suppressed.
    */
   private notifyFromMutation(): void {
-    this.lastMutationNotifyTime = Date.now();
+    this.lastSelfWriteMtimeMs = this.config.getProvidersFileMtimeMs();
     this.notifyConfigChanged();
   }
 
