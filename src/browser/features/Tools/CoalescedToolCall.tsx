@@ -1,7 +1,14 @@
 import React from "react";
 import { FileIcon } from "@/browser/components/FileIcon/FileIcon";
-import { ToolContainer, ToolHeader, ExpandIcon, ToolIcon } from "./Shared/ToolPrimitives";
-import type { ToolCoalesceKind } from "@/browser/utils/messages/toolCoalescing";
+import {
+  ToolContainer,
+  ToolHeader,
+  ExpandIcon,
+  ToolIcon,
+  StatusIndicator,
+} from "./Shared/ToolPrimitives";
+import { getStatusDisplay } from "./Shared/toolUtils";
+import type { ToolCoalesceKind, ToolCoalesceStatus } from "@/browser/utils/messages/toolCoalescing";
 
 /**
  * Summary row that takes the place of the head call in a coalesced tool group.
@@ -44,6 +51,10 @@ interface CoalescedToolCallProps {
    * that the user can see by expanding.
    */
   filePaths: string[];
+  /** Reserve the trailing action slot from the replaced head row for height parity. */
+  reserveActionSlot?: boolean;
+  /** Aggregate status for the hidden members, surfaced while collapsed. */
+  status?: ToolCoalesceStatus;
   /** Whether the group is currently expanded. */
   expanded: boolean;
   /** Toggle the group's expansion state. */
@@ -53,6 +64,8 @@ interface CoalescedToolCallProps {
 export const CoalescedToolCall: React.FC<CoalescedToolCallProps> = ({
   kind,
   filePaths,
+  reserveActionSlot = false,
+  status = "completed",
   expanded,
   onToggle,
 }) => {
@@ -80,13 +93,14 @@ export const CoalescedToolCall: React.FC<CoalescedToolCallProps> = ({
   // visual anchor that matches the single-call layout.
   const leadingPath = uniquePaths[0] ?? "";
   const joinedPaths = uniquePaths.join(", ");
+  const showStatus = kind !== "file_edit" || status !== "completed";
 
   return (
     <ToolContainer expanded={false} className="@container">
       <ToolHeader onClick={onToggle} aria-expanded={expanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon toolName={iconToolName} />
-        <div className="text-text flex min-w-0 flex-1 items-center gap-1.5">
+        <div className="text-text flex max-w-96 min-w-0 items-center gap-1.5">
           <span className="shrink-0">
             {verb} {noun}
           </span>
@@ -100,6 +114,16 @@ export const CoalescedToolCall: React.FC<CoalescedToolCallProps> = ({
         <span className="text-secondary ml-2 shrink-0 text-[10px] whitespace-nowrap">
           {fileCount}
         </span>
+        {showStatus && (
+          <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
+        )}
+        {reserveActionSlot && (
+          <div className="mr-2" aria-hidden="true">
+            <span className="font-primary text-foreground invisible flex items-center justify-center rounded-[3px] border border-white/20 px-2 py-0.5 text-[10px] whitespace-nowrap">
+              ⋮
+            </span>
+          </div>
+        )}
       </ToolHeader>
     </ToolContainer>
   );

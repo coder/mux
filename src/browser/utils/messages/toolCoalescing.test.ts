@@ -3,11 +3,14 @@ import { describe, it, expect } from "@jest/globals";
 import { computeToolCoalesceInfos, type ToolCoalesceInfo } from "./toolCoalescing";
 import type { DisplayedMessage } from "@/common/types/message";
 
+type ToolMessage = Extract<DisplayedMessage, { type: "tool" }>;
+
 function fileReadMessage(
   id: string,
   path: string,
-  historySequence: number
-): Extract<DisplayedMessage, { type: "tool" }> {
+  historySequence: number,
+  status: ToolMessage["status"] = "completed"
+): ToolMessage {
   return {
     type: "tool",
     id,
@@ -15,8 +18,11 @@ function fileReadMessage(
     toolCallId: `tc-${id}`,
     toolName: "file_read",
     args: { path },
-    result: { success: true, content: "", file_size: 0, modifiedTime: "", lines_read: 0 },
-    status: "completed",
+    result:
+      status === "completed"
+        ? { success: true, content: "", file_size: 0, modifiedTime: "", lines_read: 0 }
+        : undefined,
+    status,
     isPartial: false,
     historySequence,
   };
@@ -76,6 +82,7 @@ describe("computeToolCoalesceInfos", () => {
     expect(head).toMatchObject({
       kind: "file_read",
       position: "head",
+      status: "completed",
       totalCount: 2,
       headIndex: 0,
       filePaths: ["/a.ts", "/b.ts"],
@@ -113,6 +120,7 @@ describe("computeToolCoalesceInfos", () => {
     expect(infoAt(messages, 0)).toMatchObject({
       kind: "file_edit",
       position: "head",
+      reserveActionSlot: true,
       totalCount: 3,
       filePaths: ["/a.ts", "/b.ts", "/c.ts"],
     });
@@ -228,15 +236,48 @@ describe("computeToolCoalesceInfos", () => {
     expect(infoAt(messages, 2)).toBeUndefined();
   });
 
-  it("does not coalesce a group with a still-running member", () => {
-    // Mid-stream a fresh tool call is `executing`; the summary row hides
-    // that status until the user expands, so refuse to coalesce.
-    const running = fileReadMessage("2", "/b.ts", 2);
-    running.status = "executing";
-    const messages: DisplayedMessage[] = [fileReadMessage("1", "/a.ts", 1), running];
+  it("does not coalesce interrupted or redacted members", () => {
+    for (const status of ["interrupted", "redacted"] as const) {
+      const messages: DisplayedMessage[] = [
+        fileReadMessage("1", "/a.ts", 1),
+        fileReadMessage("2", "/b.ts", 2, status),
+      ];
 
-    expect(infoAt(messages, 0)).toBeUndefined();
-    expect(infoAt(messages, 1)).toBeUndefined();
+      expect(infoAt(messages, 0)).toBeUndefined();
+      expect(infoAt(messages, 1)).toBeUndefined();
+    }
+  });
+
+  it("coalesces a group with a still-running member and surfaces executing status", () => {
+    // Coalesce live file bursts as soon as the next call appears so the second
+    // row does not briefly insert and then disappear on completion.
+    const messages: DisplayedMessage[] = [
+      fileReadMessage("1", "/a.ts", 1),
+      fileReadMessage("2", "/b.ts", 2, "executing"),
+    ];
+
+    expect(infoAt(messages, 0)).toMatchObject({ position: "head", status: "executing" });
+    expect(infoAt(messages, 1)).toMatchObject({ position: "member", status: "executing" });
+  });
+
+  it("prioritizes executing over pending in the aggregate status", () => {
+    const messages: DisplayedMessage[] = [
+      fileReadMessage("1", "/a.ts", 1, "pending"),
+      fileReadMessage("2", "/b.ts", 2, "executing"),
+      fileReadMessage("3", "/c.ts", 3),
+    ];
+
+    expect(infoAt(messages, 0)?.status).toBe("executing");
+  });
+
+  it("coalesces a group with a pending member and surfaces pending status", () => {
+    const messages: DisplayedMessage[] = [
+      fileReadMessage("1", "/a.ts", 1),
+      fileReadMessage("2", "/b.ts", 2, "pending"),
+    ];
+
+    expect(infoAt(messages, 0)).toMatchObject({ position: "head", status: "pending" });
+    expect(infoAt(messages, 1)).toMatchObject({ position: "member", status: "pending" });
   });
 
   it("still coalesces a group when every member is completed", () => {

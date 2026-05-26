@@ -56,6 +56,22 @@ describe("CoalescedToolCall", () => {
     expect(view.getByText(/Wrote files/)).toBeTruthy();
   });
 
+  test("surfaces aggregate live status while individual members are hidden", () => {
+    const view = render(
+      <TooltipProvider>
+        <CoalescedToolCall
+          kind="file_read"
+          filePaths={["a.ts", "b.ts"]}
+          status="executing"
+          expanded={false}
+          onToggle={noop}
+        />
+      </TooltipProvider>
+    );
+
+    expect(view.getByText("executing")).toBeTruthy();
+  });
+
   test("clicking the header fires onToggle and reflects aria-expanded state", () => {
     const onToggle = mock(noop);
     const view = render(
