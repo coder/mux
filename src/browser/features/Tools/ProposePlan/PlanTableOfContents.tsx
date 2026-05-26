@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { cn } from "@/common/lib/utils";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import type { PlanHeading } from "./extractPlanHeadings";
@@ -44,12 +44,134 @@ export interface PlanTableOfContentsProps {
 const HEADING_SELECTOR = "h1, h2, h3, h4, h5, h6";
 const DEFAULT_HEADING = "Contents";
 
+/**
+ * Distance in pixels from the top of the scrollport (or viewport) at which a
+ * heading is considered "passed" by the reader. The active TOC entry is the
+ * last heading (in document order) whose top edge has crossed this line.
+ *
+ * Matches `scroll-margin-top: 1rem` on plan headings so the indicator updates
+ * exactly when scroll-into-view lands a heading at its resting position.
+ */
+const ACTIVE_TRIGGER_OFFSET_PX = 16;
+
+/**
+ * Walk up the DOM to find the nearest ancestor that establishes a scroll
+ * context. Using that ancestor as the IntersectionObserver root means our
+ * trigger line is anchored to the user's actual reading frame (the transcript
+ * scrollport) instead of the browser viewport. Falls back to the viewport
+ * (`null`) when no scrolling ancestor is found, which still yields correct
+ * relative-position events.
+ */
+function findScrollAncestor(start: HTMLElement | null): HTMLElement | null {
+  let current = start?.parentElement ?? null;
+  while (current) {
+    const style = window.getComputedStyle(current);
+    if (/(auto|scroll|overlay)/.test(style.overflowY)) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
 export const PlanTableOfContents: React.FC<PlanTableOfContentsProps> = (props) => {
   // h1 is reserved for the TOC's heading (the plan title), so it never appears
   // as a list entry — but it still consumes a renderIndex because the rendered
   // DOM still contains an <h1>. h5/h6 are also hidden as visual noise.
   const visibleEntries = props.entries.filter((entry) => entry.level >= 2 && entry.level <= 4);
-  if (visibleEntries.length < 2) {
+  // If the plan's source markdown begins with an h1, clicking the TOC heading
+  // jumps to that h1 (the natural "top of plan" target). Otherwise the heading
+  // is a static label — there's nothing meaningful to scroll to.
+  const titleHeadingEntry = props.entries.find((entry) => entry.level === 1);
+
+  // Track which heading the reader has most recently scrolled past so the TOC
+  // can highlight it. `null` means we're still above the first tracked heading.
+  const [activeRenderIndex, setActiveRenderIndex] = useState<number | null>(null);
+
+  // Reset the active indicator whenever the set of tracked headings changes
+  // (e.g. during streaming or when the user reopens a different plan). The
+  // observer effect below will recompute the correct value on its next tick.
+  const titleTrackedKey = titleHeadingEntry?.renderIndex ?? -1;
+  const trackedKey = `${titleTrackedKey}|${visibleEntries.map((entry) => entry.renderIndex).join(",")}`;
+  const hasEnoughVisibleEntries = visibleEntries.length >= 2;
+
+  useEffect(() => {
+    // Mirror the visibility gate from render so we don't observe headings the
+    // user can't navigate to. The render path bails out early in that case.
+    if (!hasEnoughVisibleEntries) return;
+    const container = props.contentRef.current;
+    if (!container) return;
+    if (typeof IntersectionObserver === "undefined") return;
+
+    // Re-query headings from the live DOM so renderIndexes line up with the
+    // index-based `querySelectorAll` lookup used for click navigation.
+    const allHeadings = Array.from(container.querySelectorAll<HTMLElement>(HEADING_SELECTOR));
+    // Track both the title heading and the list entries so the title can
+    // also light up when the reader is in its lead-in section.
+    const trackedIndexes = new Set<number>();
+    for (const entry of props.entries) {
+      if (entry.level >= 2 && entry.level <= 4) trackedIndexes.add(entry.renderIndex);
+      if (entry.level === 1) trackedIndexes.add(entry.renderIndex);
+    }
+    const tracked = allHeadings.flatMap<{ el: HTMLElement; renderIndex: number }>((el, idx) =>
+      trackedIndexes.has(idx) ? [{ el, renderIndex: idx }] : []
+    );
+    if (tracked.length === 0) return;
+
+    const root = findScrollAncestor(container);
+    // Map each tracked heading to whether its top edge has crossed the trigger
+    // line. The active entry is the LAST one (in document order) that is true.
+    const passedTrigger = new WeakMap<HTMLElement, boolean>();
+
+    const triggerTop = (): number => {
+      // When `root` is null IO uses the viewport, so the trigger is measured
+      // from the viewport's top (effectively 0 + offset). Otherwise the
+      // trigger sits at the scrollport's top + offset, in viewport-coords.
+      const rootTop = root?.getBoundingClientRect().top ?? 0;
+      return rootTop + ACTIVE_TRIGGER_OFFSET_PX;
+    };
+
+    const recompute = () => {
+      let active: number | null = null;
+      for (const { el, renderIndex } of tracked) {
+        if (passedTrigger.get(el)) active = renderIndex;
+      }
+      setActiveRenderIndex(active);
+    };
+
+    // Seed each heading's passed-trigger state synchronously so the initial
+    // render shows the correct indicator without waiting for the first IO tick.
+    const initialTrigger = triggerTop();
+    for (const { el } of tracked) {
+      passedTrigger.set(el, el.getBoundingClientRect().top <= initialTrigger);
+    }
+    recompute();
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const limit = triggerTop();
+        for (const entry of entries) {
+          // `boundingClientRect.top` is the heading's top in viewport
+          // coordinates, which `limit` is also expressed in.
+          passedTrigger.set(entry.target as HTMLElement, entry.boundingClientRect.top <= limit);
+        }
+        recompute();
+      },
+      {
+        root,
+        // Threshold 0 fires whenever the heading enters or leaves the root, so
+        // we get an update at both ends of the visibility transition.
+        threshold: 0,
+      }
+    );
+    for (const { el } of tracked) observer.observe(el);
+    return () => observer.disconnect();
+    // `trackedKey` is the stable summary of which headings to observe;
+    // recreating the observer when it changes covers streaming plan growth.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackedKey, hasEnoughVisibleEntries, props.contentRef]);
+
+  if (!hasEnoughVisibleEntries) {
     // A TOC with 0 or 1 entries adds visual chrome without navigation value.
     // (Note: this check intentionally excludes the title, since the title is
     // a single label, not a navigable destination on its own.)
@@ -70,6 +192,10 @@ export const PlanTableOfContents: React.FC<PlanTableOfContentsProps> = (props) =
     if (target && typeof target.scrollIntoView === "function") {
       target.scrollIntoView({ block: "start" });
     }
+    // Optimistically reflect the destination as active so the indicator doesn't
+    // visibly lag behind smooth scroll animations. The observer will confirm
+    // (or correct) this once the heading settles at its resting position.
+    setActiveRenderIndex(renderIndex);
   };
 
   // Use the supplied title when non-blank; fall back to "Contents" otherwise.
@@ -77,10 +203,7 @@ export const PlanTableOfContents: React.FC<PlanTableOfContentsProps> = (props) =
   // heading line and look broken.
   const trimmedTitle = props.title?.trim();
   const headingText = trimmedTitle && trimmedTitle.length > 0 ? trimmedTitle : DEFAULT_HEADING;
-  // If the plan's source markdown begins with an h1, clicking the TOC heading
-  // jumps to that h1 (the natural "top of plan" target). Otherwise the heading
-  // is a static label — there's nothing meaningful to scroll to.
-  const titleHeadingEntry = props.entries.find((entry) => entry.level === 1);
+  const isTitleActive = activeRenderIndex === titleHeadingEntry?.renderIndex;
 
   return (
     <aside
@@ -100,7 +223,14 @@ export const PlanTableOfContents: React.FC<PlanTableOfContentsProps> = (props) =
           <TooltipIfPresent tooltip={headingText} side="right" align="start">
             <button
               type="button"
-              className="plan-toc-heading plan-toc-heading-link"
+              className={cn(
+                "plan-toc-heading plan-toc-heading-link",
+                isTitleActive && "plan-toc-heading-link-active"
+              )}
+              // `aria-current="location"` signals to assistive tech that this
+              // is the section currently in view, the standard ARIA pattern
+              // for an in-page TOC indicator.
+              aria-current={isTitleActive ? "location" : undefined}
               onClick={() => handleNavigate(titleHeadingEntry.renderIndex)}
             >
               {headingText}
@@ -110,31 +240,42 @@ export const PlanTableOfContents: React.FC<PlanTableOfContentsProps> = (props) =
           <div className="plan-toc-heading">{headingText}</div>
         )}
         <ul className="plan-toc-list">
-          {visibleEntries.map((entry) => (
-            <li
-              key={entry.renderIndex}
-              className="plan-toc-item"
-              data-level={entry.level - minLevel + 1}
-            >
-              {/*
-               * Wrap with TooltipIfPresent so users can see the full heading
-               * in one place even when the side TOC wraps long text across
-               * multiple lines in the gutter.
-               *
-               * `side="right"` keeps the tooltip from drifting off the left
-               * edge of the transcript — the toc lives in the left gutter.
-               */}
-              <TooltipIfPresent tooltip={entry.text} side="right" align="start">
-                <button
-                  type="button"
-                  className="plan-toc-link"
-                  onClick={() => handleNavigate(entry.renderIndex)}
-                >
-                  {entry.text}
-                </button>
-              </TooltipIfPresent>
-            </li>
-          ))}
+          {visibleEntries.map((entry) => {
+            const isActive = activeRenderIndex === entry.renderIndex;
+            return (
+              <li
+                key={entry.renderIndex}
+                className="plan-toc-item"
+                data-level={entry.level - minLevel + 1}
+                // `data-active` lets CSS style the whole row (e.g. a left
+                // accent rail) while `aria-current` on the button announces
+                // the active section to screen readers.
+                data-active={isActive ? "true" : undefined}
+              >
+                {/*
+                 * Wrap with TooltipIfPresent so users can see the full heading
+                 * in one place even when the side TOC wraps long text across
+                 * multiple lines in the gutter.
+                 *
+                 * `side="right"` keeps the tooltip from drifting off the left
+                 * edge of the transcript — the toc lives in the left gutter.
+                 */}
+                <TooltipIfPresent tooltip={entry.text} side="right" align="start">
+                  <button
+                    type="button"
+                    className="plan-toc-link"
+                    // `aria-current="location"` signals to assistive tech that
+                    // this section is currently in view; CSS styling keys off
+                    // the parent <li>'s `data-active` attribute.
+                    aria-current={isActive ? "location" : undefined}
+                    onClick={() => handleNavigate(entry.renderIndex)}
+                  >
+                    {entry.text}
+                  </button>
+                </TooltipIfPresent>
+              </li>
+            );
+          })}
         </ul>
       </nav>
     </aside>

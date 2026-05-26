@@ -1650,6 +1650,14 @@ code {
   outline-offset: 1px;
 }
 
+/* Active heading indicator. When the reader has scrolled into the plan's
+   title-level section (before any h2), highlight the title link so the TOC
+   gives a clear "you are here" cue to match the in-list item active state. */
+.plan-toc-heading-link-active {
+  color: color-mix(in srgb, var(--color-plan-mode) 78%, var(--color-foreground) 22%);
+  background: color-mix(in srgb, var(--color-plan-mode) 10%, transparent);
+}
+
 .plan-toc-list {
   list-style: none;
   margin: 0;
@@ -1715,6 +1723,35 @@ code {
 .plan-toc-link:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
   outline-offset: 1px;
+}
+
+/* Active section indicator.
+ *
+ * The TOC needs a "you are here" cue that survives the gutter's narrow column
+ * width and stays legible against the muted default link color. We combine
+ * three signals:
+ *   1) a plan-tinted left accent rail that visually rhymes with the plan
+ *      surface so the indicator reads as part of the same component,
+ *   2) a stronger foreground color and slight weight bump for the active
+ *      entry so it pops out of the muted list without relying on color alone,
+ *   3) a faint plan-tinted background wash to match the hover affordance
+ *      while still letting hover layer cleanly on top.
+ *
+ * The accent rail uses an inset box-shadow rather than `border-left` so the
+ * link's left padding and per-level indentation continue to line up exactly
+ * with the inactive rows above and below it.
+ */
+.plan-toc-item[data-active="true"] .plan-toc-link {
+  color: var(--color-foreground);
+  font-weight: 500;
+  background: color-mix(in srgb, var(--color-plan-mode) 8%, transparent);
+  box-shadow: inset 2px 0 0 0 color-mix(in srgb, var(--color-plan-mode) 70%, transparent);
+}
+
+.plan-toc-item[data-active="true"] .plan-toc-link:hover {
+  /* Hover should still nudge brighter so users get tactile feedback even on
+     the already-highlighted active row. */
+  background: color-mix(in srgb, var(--color-plan-mode) 14%, var(--color-hover));
 }
 
 /* Give plan headings breathing room so scrollIntoView({block:"start"}) lands
