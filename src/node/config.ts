@@ -1879,15 +1879,23 @@ export class Config {
   }
 
   /**
-   * Return the providers.jsonc mtime in ms, or null if the file doesn't
-   * exist or can't be stat'd. Used as a per-write fingerprint so callers
-   * can distinguish between watcher events triggered by their own saves
-   * versus genuine external edits without resorting to a blanket time
-   * window.
+   * Return a content fingerprint (sha256) of providers.jsonc, or null if
+   * the file doesn't exist or can't be read. Used by callers to
+   * distinguish between watcher events triggered by their own saves
+   * versus genuine external edits.
+   *
+   * We hash the file contents rather than comparing mtime: filesystems
+   * with coarse timestamp granularity (FAT, some network mounts) can
+   * bucket two distinct writes into the same `mtimeMs`, which would let
+   * a real external edit be silently suppressed. If two writes happen
+   * to produce byte-identical content, suppressing the refresh is a
+   * no-op anyway, so content equality is the safest possible self-
+   * write signal.
    */
-  getProvidersFileMtimeMs(): number | null {
+  getProvidersFileFingerprint(): string | null {
     try {
-      return fs.statSync(this.providersFile).mtimeMs;
+      const contents = fs.readFileSync(this.providersFile);
+      return crypto.createHash("sha256").update(contents).digest("hex");
     } catch {
       return null;
     }

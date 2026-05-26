@@ -133,12 +133,15 @@ export class ProviderService {
   private readonly emitter = new EventEmitter();
   private lastWarnedShadowedCustomProviderIds: Set<string> | null = null;
   private readonly stopWatchingProvidersFile: () => void;
-  // Fingerprint of providers.jsonc immediately after the last in-app save.
-  // The file watcher uses this to distinguish its own write (mtime matches)
-  // from an external edit (mtime differs). Time-based suppression would
-  // silently drop external edits made within the dedupe window; mtime
-  // comparison only suppresses the exact event we caused.
-  private lastSelfWriteMtimeMs: number | null = null;
+  // Content-hash fingerprint of providers.jsonc immediately after the last
+  // in-app save. The watcher callback re-hashes the file when it fires and
+  // skips notification only when the hash still matches — i.e. nothing
+  // changed on disk relative to our last known write. Content equality is
+  // a stronger signal than mtime: filesystems with coarse timestamp
+  // granularity (FAT, some network mounts) can collide on mtimeMs across
+  // distinct writes, and an external edit that produces byte-identical
+  // contents is a no-op anyway.
+  private lastSelfWriteFingerprint: string | null = null;
 
   constructor(
     private readonly config: Config,
@@ -152,18 +155,18 @@ export class ProviderService {
     // manual edits). Skip the redundant watcher event that fires ~300 ms
     // after every in-app save — mutation paths already invoke
     // notifyConfigChanged() directly. We identify a self-write by
-    // comparing the file's current mtime against the mtime captured by
-    // notifyFromMutation(); a genuine external edit between the in-app
-    // save and the watcher fire will always change mtime, so it still
-    // gets through.
+    // comparing the file's current content fingerprint (sha256) against
+    // the fingerprint captured by notifyFromMutation(); any external
+    // edit that changes the bytes between the in-app save and the
+    // watcher fire produces a different fingerprint and is forwarded.
     this.stopWatchingProvidersFile = this.config.watchProvidersFile(() => {
-      const expected = this.lastSelfWriteMtimeMs;
-      const current = this.config.getProvidersFileMtimeMs();
+      const expected = this.lastSelfWriteFingerprint;
+      const current = this.config.getProvidersFileFingerprint();
       if (expected !== null && current !== null && current === expected) {
-        // This watcher fire corresponds to our own write. Clear the
-        // fingerprint so the next event (whether self or external)
-        // is evaluated freshly.
-        this.lastSelfWriteMtimeMs = null;
+        // This watcher fire corresponds to our own write (or a benign
+        // no-op external save with identical bytes). Clear the
+        // fingerprint so the next event is evaluated freshly.
+        this.lastSelfWriteFingerprint = null;
         return;
       }
       this.notifyConfigChanged();
@@ -200,13 +203,14 @@ export class ProviderService {
 
   /**
    * Called by in-app mutation methods after writing providers.jsonc.
-   * Captures the file's post-write mtime so the watcher callback can
-   * recognise — and skip — the redundant notification it would
-   * otherwise fire ~300 ms later. External edits change mtime and
-   * therefore are never accidentally suppressed.
+   * Captures a content-hash fingerprint of the file we just wrote so
+   * the watcher callback can recognise — and skip — the redundant
+   * notification it would otherwise fire ~300 ms later. Any external
+   * edit produces a different fingerprint and is therefore never
+   * accidentally suppressed.
    */
   private notifyFromMutation(): void {
-    this.lastSelfWriteMtimeMs = this.config.getProvidersFileMtimeMs();
+    this.lastSelfWriteFingerprint = this.config.getProvidersFileFingerprint();
     this.notifyConfigChanged();
   }
 
