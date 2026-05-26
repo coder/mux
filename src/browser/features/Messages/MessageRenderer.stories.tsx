@@ -218,6 +218,82 @@ export const SyntheticAutoResumeMessages: AppStory = {
   ),
 };
 
+/**
+ * /btw side-question Q/A pair with the dismiss-stickiness control visible.
+ *
+ * The dismiss control is rendered inline in the "Side question" header (top
+ * right of the user row's stripe) and is plumbed from `ChatPane` to clear the
+ * transcript scroll-hold for that side question for the rest of the session.
+ * The `play` test asserts the control is rendered and clicks it to exercise
+ * the wired-up dismissal callback.
+ */
+export const SideQuestionWithDismiss: AppStory = {
+  parameters: { chromatic: { modes: CHROMATIC_SMOKE_MODES } },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        collapseLeftSidebar();
+        return setupSimpleChatStory({
+          workspaceId: "ws-side-question",
+          messages: [
+            createUserMessage("msg-1", "Refactor the request retry logic", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 240000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll start by reading the current retry implementation and outlining the changes.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 230000,
+              }
+            ),
+            createUserMessage("msg-3-btw", "/btw what does exponential backoff mean?", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 200000,
+              muxMetadata: {
+                type: "side-question",
+                rawCommand: "/btw what does exponential backoff mean?",
+              },
+            }),
+            createAssistantMessage(
+              "msg-4-btw-answer",
+              "Exponential backoff doubles the wait between retries so a struggling service has time to recover instead of being hammered by a tight retry loop.",
+              {
+                historySequence: 4,
+                timestamp: STABLE_TIMESTAMP - 195000,
+                muxMetadata: {
+                  type: "side-question-answer",
+                  questionMessageId: "msg-3-btw",
+                },
+              }
+            ),
+            createAssistantMessage(
+              "msg-5",
+              "Back to the main task — I'll switch the retry helper to use exponential backoff with jitter.",
+              {
+                historySequence: 5,
+                timestamp: STABLE_TIMESTAMP - 180000,
+              }
+            ),
+          ],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const dismissButton = await canvas.findByLabelText("Dismiss side question sticky position");
+    await expect(dismissButton).toBeInTheDocument();
+    // Click to exercise the dismissal pathway end-to-end (ChatPane handler
+    // clears the active scroll-hold ref and adds the row's historyId to the
+    // dismissed set). The button stays in the DOM after click — the visual
+    // change is the scroll behavior, which Chromatic captures via the static
+    // layout snapshot.
+    await userEvent.click(dismissButton);
+  },
+};
+
 export const GoalContinuationMessages: AppStory = {
   render: () => (
     <AppWithMocks
