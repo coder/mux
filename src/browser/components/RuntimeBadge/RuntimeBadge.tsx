@@ -47,9 +47,9 @@ function TooltipRow({
   const { copied, copyToClipboard } = useCopyToClipboard();
 
   return (
-    <div className="flex items-center gap-1.5 min-w-0">
+    <div className="flex min-w-0 items-center gap-1.5">
       <span className="text-muted shrink-0 text-xs">{label}</span>
-      <span className="font-mono text-xs truncate min-w-0" title={value}>
+      <span className="min-w-0 truncate font-mono text-xs" title={value}>
         {value}
       </span>
       {copyable && (
