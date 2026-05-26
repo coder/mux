@@ -60,10 +60,20 @@ export function ModeInstructionsPanel(props: ModeInstructionsPanelProps) {
     return () => controller.abort();
   }, [api, agentId, props.workspaceId, refreshTick]);
 
+  // Guard against stale data leaking across mode switches: when the user picks
+  // a different agent the previous fetch resolves with the *old* id, and even
+  // after the new fetch starts we'd otherwise keep rendering the old body
+  // (and its token count) under the new mode's color/name until the new
+  // response arrives. Treat any pkg whose id doesn't match the current
+  // agentId as "not loaded yet" so the body section falls back to the
+  // loading/empty state instead of showing the wrong prompt.
+  const pkgMatchesAgent = pkg?.id === agentId;
+  const effectivePkg = pkgMatchesAgent ? pkg : null;
+
   const displayName = currentAgent?.name ?? formatAgentIdLabel(agentId);
-  const description = currentAgent?.description ?? pkg?.frontmatter.description;
-  const scope = currentAgent?.scope ?? pkg?.scope;
-  const body = pkg?.body ?? "";
+  const description = currentAgent?.description ?? effectivePkg?.frontmatter.description;
+  const scope = currentAgent?.scope ?? effectivePkg?.scope;
+  const body = effectivePkg?.body ?? "";
   const hasBody = body.trim().length > 0;
 
   // Approximate token count (rough heuristic: 4 chars ≈ 1 token). We don't
@@ -175,7 +185,7 @@ export function ModeInstructionsPanel(props: ModeInstructionsPanelProps) {
             backgroundColor: "var(--color-background)",
           }}
         >
-          {loading && !pkg && (
+          {loading && !effectivePkg && (
             <div className="text-muted px-3 py-4 text-center text-xs">
               Loading mode instructions…
             </div>
