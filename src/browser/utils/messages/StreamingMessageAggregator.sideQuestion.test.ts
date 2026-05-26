@@ -265,7 +265,10 @@ describe("StreamingMessageAggregator /btw rendering", () => {
     const aggregator = new StreamingMessageAggregator(WORKSPACE_CREATED_AT, "ws");
     const completions: Array<{ hasAutoFollowUp: boolean | undefined }> = [];
     aggregator.onResponseComplete = (event) => {
-      completions.push({ hasAutoFollowUp: event.completion?.hasAutoFollowUp });
+      completions.push({
+        hasAutoFollowUp:
+          event.completion?.kind === "response" ? event.completion.hasAutoFollowUp : undefined,
+      });
     };
 
     appendMainAssistant(aggregator, "main-1", 1);

@@ -1258,6 +1258,11 @@ export class WorkspaceService extends EventEmitter {
   // from waking a dedicated workspace during archive().
   private readonly archivingWorkspaces = new Set<string>();
 
+  // Tracks stream generations that are compaction turns so background stop snapshots
+  // can carry authoritative notification policy instead of forcing the frontend to
+  // infer compaction from best-effort chat replay state.
+  private readonly compactionStreamGenerations = new Map<string, number>();
+
   // Tracks workspaces undergoing idle (background) compaction so the activity snapshot
   // can tag the stream, letting the frontend suppress notifications for maintenance work.
   private readonly idleCompactingWorkspaces = new Set<string>();
@@ -1551,6 +1556,11 @@ export class WorkspaceService extends EventEmitter {
       if (isStreamStartEvent(data)) {
         const generation = (this.streamingGenerations.get(data.workspaceId) ?? 0) + 1;
         this.streamingGenerations.set(data.workspaceId, generation);
+        if (data.agentId === "compact" || data.mode === "compact") {
+          this.compactionStreamGenerations.set(data.workspaceId, generation);
+        } else {
+          this.compactionStreamGenerations.delete(data.workspaceId);
+        }
         void this.updateStreamingStatus(data.workspaceId, true, {
           model: data.model,
           thinkingLevel: data.thinkingLevel,
@@ -1690,6 +1700,7 @@ export class WorkspaceService extends EventEmitter {
     streaming: boolean,
     update: ExtensionMetadataStreamingUpdate = {}
   ): Promise<void> {
+    const streamGeneration = update.generation ?? this.streamingGenerations.get(workspaceId) ?? 0;
     try {
       let { hasTodos, todoStatus } = update;
       if (!streaming && (hasTodos === undefined || todoStatus === undefined)) {
@@ -1721,19 +1732,27 @@ export class WorkspaceService extends EventEmitter {
         ...(todoStatus !== undefined ? { todoStatus } : {}),
         ...(hasTodos !== undefined ? { hasTodos } : {}),
       });
-      // Idle compaction tagging is stop-snapshot only. Never tag streaming=true updates,
-      // otherwise fast follow-up turns can inherit stale idle metadata before cleanup runs.
+      // Compaction tagging is stop-snapshot only. Never tag streaming=true updates,
+      // otherwise fast follow-up turns can inherit stale compaction metadata before cleanup runs.
+      const shouldTagCompaction =
+        !streaming && this.compactionStreamGenerations.get(workspaceId) === streamGeneration;
       const shouldTagIdleCompaction = !streaming && this.idleCompactingWorkspaces.has(workspaceId);
-      this.emitWorkspaceActivity(
-        workspaceId,
-        shouldTagIdleCompaction ? { ...snapshot, isIdleCompaction: true } : snapshot
-      );
+      this.emitWorkspaceActivity(workspaceId, {
+        ...snapshot,
+        ...(shouldTagCompaction ? { isCompaction: true } : {}),
+        ...(shouldTagIdleCompaction ? { isIdleCompaction: true } : {}),
+      });
     } catch (error) {
       log.error("Failed to update workspace streaming status", { workspaceId, error });
     } finally {
-      // Idle compaction marker is turn-scoped. Always clear on streaming=false transitions,
-      // even when metadata writes fail, so stale state cannot leak into future user streams.
+      // Compaction markers are turn-scoped. Always clear matching streaming=false
+      // transitions, even when metadata writes fail, so stale state cannot leak into
+      // future user streams. Match by generation so an old stop cannot clear a newer
+      // compaction that started while the stop snapshot was doing async work.
       if (!streaming) {
+        if (this.compactionStreamGenerations.get(workspaceId) === streamGeneration) {
+          this.compactionStreamGenerations.delete(workspaceId);
+        }
         this.idleCompactingWorkspaces.delete(workspaceId);
       }
     }

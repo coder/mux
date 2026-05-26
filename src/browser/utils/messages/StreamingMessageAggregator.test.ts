@@ -1644,7 +1644,7 @@ describe("StreamingMessageAggregator", () => {
       expect(callbackCompletedAt).toBeGreaterThanOrEqual(beforeEnd);
     });
 
-    test("marks idle compaction completions as non-notifying", () => {
+    test("marks compaction completions as non-notifying", () => {
       const workspaceId = "test-workspace-recency-idle-compaction";
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT, workspaceId);
       let completion: Parameters<typeof shouldNotifyOnResponseComplete>[0];
@@ -1688,11 +1688,7 @@ describe("StreamingMessageAggregator", () => {
         parts: [],
       });
 
-      expect(completion).toEqual({
-        kind: "compaction",
-        hasAutoFollowUp: false,
-        isIdle: true,
-      });
+      expect(completion).toEqual({ kind: "compaction" });
       expect(shouldNotifyOnResponseComplete(completion)).toBe(false);
     });
 

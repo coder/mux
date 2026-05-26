@@ -493,7 +493,7 @@ describe("Auto-follow-up and compaction notification behavior (mock AI router)",
     }
   }, 60_000);
 
-  test("compaction without continue message should fire notification with 'Compaction complete'", async () => {
+  test("compaction without continue message should not fire a notification", async () => {
     const { app, countAfterSeed, cleanup } = await setupNotificationTest(
       "Seed for standalone compaction"
     );
@@ -501,10 +501,9 @@ describe("Auto-follow-up and compaction notification behavior (mock AI router)",
     try {
       await app.chat.send("/compact -t 500");
       await app.chat.expectTranscriptContains("Mock compaction summary:");
+      await app.chat.expectStreamComplete();
 
-      const { newCount, last } = await waitForNewNotifications(countAfterSeed);
-      expect(newCount).toBe(1);
-      expect(last.body).toBe("Compaction complete");
+      expect(notifications.length).toBe(countAfterSeed);
     } finally {
       await cleanup();
     }
