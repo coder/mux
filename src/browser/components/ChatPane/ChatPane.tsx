@@ -1213,6 +1213,8 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                           {renderCoalesceSummary && toolCoalesceGroup && toggleCoalesceGroup && (
                             <CoalescedToolCall
                               kind={toolCoalesceGroup.kind}
+                              reserveActionSlot={toolCoalesceGroup.reserveActionSlot}
+                              status={toolCoalesceGroup.status}
                               filePaths={toolCoalesceGroup.filePaths}
                               expanded={isToolCoalesceExpanded}
                               onToggle={toggleCoalesceGroup}

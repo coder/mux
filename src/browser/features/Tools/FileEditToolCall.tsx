@@ -90,6 +90,8 @@ interface FileEditToolCallProps {
   args: FileEditOperationArgs;
   result?: FileEditToolResult;
   status?: ToolStatus;
+  /** Story/test escape hatch for cases that intentionally inspect the rendered diff. */
+  initialExpanded?: boolean;
   onReviewNote?: (data: ReviewNoteData) => void;
 }
 
@@ -153,12 +155,12 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
   args,
   result,
   status = "pending",
+  initialExpanded = false,
   onReviewNote,
 }) => {
-  // Collapse failed edits by default since they're common and expected
-  const isFailed = result && !result.success;
-  const initialExpanded = !isFailed;
-
+  // File edits share the collapsed one-line baseline used by coalesced file-tool summaries.
+  // If the first edit in a burst expanded by default, the second edit would shrink it into
+  // a summary row and cause a visible transcript layout flash.
   const { expanded, toggleExpanded } = useToolExpansion(initialExpanded);
   const [showRaw, setShowRaw] = React.useState(false);
   const [showInvocation, setShowInvocation] = React.useState(false);

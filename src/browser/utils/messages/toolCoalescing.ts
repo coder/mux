@@ -41,6 +41,9 @@ const FILE_EDIT_TOOL_NAMES = new Set<string>([
 /** Minimum group size before we coalesce. Below this we just render normally. */
 const MIN_COALESCE_GROUP_SIZE = 2;
 
+/** Statuses whose tool row can be summarized without hiding errors/interruption UI. */
+export type ToolCoalesceStatus = "pending" | "executing" | "completed";
+
 /**
  * Information about a tool message's position within a coalesced group.
  * Aligned with the messages array passed to {@link computeToolCoalesceInfos}.
@@ -57,6 +60,10 @@ export interface ToolCoalesceInfo {
    * normally when expanded.
    */
   position: "head" | "member";
+  /** Aggregate status surfaced by the summary while live members are hidden. */
+  status: ToolCoalesceStatus;
+  /** Reserve the head row's trailing action area so summary swaps keep the same height. */
+  reserveActionSlot: boolean;
   /** Total number of tool calls coalesced into this group (>= 2). */
   totalCount: number;
   /** Index of the head message; used as the expansion-state key. */
@@ -77,17 +84,46 @@ function getCoalesceKind(msg: DisplayedMessage | undefined): ToolCoalesceKind | 
 }
 
 /**
- * A coalesceable member is a tool call whose row carries no actionable
- * signal the user would lose if hidden. Individual tool rows surface
- * status (pending/executing/failed/interrupted/redacted) and inline
- * errors, and partial rows render an InterruptedBarrier. The summary
- * row deliberately renders none of those, so any non-completed or
- * partial member forces the whole group back to normal rendering.
+ * A coalesceable member is a tool call whose status can be faithfully surfaced
+ * by the summary row. Live pending/executing calls should coalesce immediately
+ * so a fresh file_read does not briefly insert its own row and then disappear
+ * on completion. Errors, interruptions, redaction, and partial rows still force
+ * normal rendering because they carry row-local UI (error details/barriers) that
+ * must stay visible without requiring the user to expand the group first.
  */
-function isCoalesceableToolMember(msg: DisplayedMessage | undefined): boolean {
-  if (msg?.type !== "tool") return false;
-  if (msg.isPartial) return false;
-  return msg.status === "completed";
+function getCoalesceableStatus(msg: DisplayedMessage | undefined): ToolCoalesceStatus | undefined {
+  if (msg?.type !== "tool") return undefined;
+  if (msg.isPartial) return undefined;
+  if (msg.status === "pending" || msg.status === "executing" || msg.status === "completed") {
+    return msg.status;
+  }
+  return undefined;
+}
+
+function shouldReserveActionSlot(
+  messages: DisplayedMessage[],
+  headIndex: number,
+  kind: ToolCoalesceKind
+): boolean {
+  const head = messages[headIndex];
+  // Completed file edits expose a kebab menu in their normal collapsed row. The
+  // summary row has no equivalent actions, but reserving the same trailing slot
+  // prevents the head row from shrinking when it is replaced by the summary.
+  return kind === "file_edit" && head?.type === "tool" && head.result != null;
+}
+
+function getGroupStatus(
+  messages: DisplayedMessage[],
+  start: number,
+  end: number
+): ToolCoalesceStatus {
+  let sawPending = false;
+  for (let j = start; j <= end; j++) {
+    const status = getCoalesceableStatus(messages[j]);
+    if (status === "executing") return "executing";
+    if (status === "pending") sawPending = true;
+  }
+  return sawPending ? "pending" : "completed";
 }
 
 /**
@@ -121,20 +157,21 @@ export function computeToolCoalesceInfos(
 
     const groupSize = groupEnd - index + 1;
 
-    // Skip coalescing if any member is not safely coalesceable (still
-    // running, failed, interrupted, redacted, or partial). Those rows
-    // carry status/error UI or an InterruptedBarrier that the summary
-    // row deliberately does not render, so hiding them would eat the
-    // signal until the user manually expands the group.
+    // Skip coalescing if any member is not safely coalesceable. Live
+    // pending/executing statuses are represented on the summary row; failures,
+    // interruptions, redactions, and partial rows remain normal rows so their
+    // actionable UI is never hidden behind expansion.
     let allMembersCoalesceable = true;
     for (let j = index; j <= groupEnd; j++) {
-      if (!isCoalesceableToolMember(messages[j])) {
+      if (!getCoalesceableStatus(messages[j])) {
         allMembersCoalesceable = false;
         break;
       }
     }
 
     if (groupSize >= MIN_COALESCE_GROUP_SIZE && allMembersCoalesceable) {
+      const reserveActionSlot = shouldReserveActionSlot(messages, index, kind);
+      const status = getGroupStatus(messages, index, groupEnd);
       const filePaths: string[] = [];
       for (let j = index; j <= groupEnd; j++) {
         const candidate = messages[j];
@@ -147,6 +184,8 @@ export function computeToolCoalesceInfos(
         infos[j] = {
           kind,
           position: j === index ? "head" : "member",
+          reserveActionSlot,
+          status,
           totalCount: groupSize,
           headIndex: index,
           filePaths,
