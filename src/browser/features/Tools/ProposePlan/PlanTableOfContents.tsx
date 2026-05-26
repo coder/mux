@@ -101,7 +101,6 @@ export const PlanTableOfContents: React.FC<PlanTableOfContentsProps> = (props) =
     if (!hasEnoughVisibleEntries) return;
     const container = props.contentRef.current;
     if (!container) return;
-    if (typeof IntersectionObserver === "undefined") return;
 
     // Re-query headings from the live DOM so renderIndexes line up with the
     // index-based `querySelectorAll` lookup used for click navigation.
@@ -110,8 +109,9 @@ export const PlanTableOfContents: React.FC<PlanTableOfContentsProps> = (props) =
     // also light up when the reader is in its lead-in section.
     const trackedIndexes = new Set<number>();
     for (const entry of props.entries) {
-      if (entry.level >= 2 && entry.level <= 4) trackedIndexes.add(entry.renderIndex);
-      if (entry.level === 1) trackedIndexes.add(entry.renderIndex);
+      if (entry.level === 1 || (entry.level >= 2 && entry.level <= 4)) {
+        trackedIndexes.add(entry.renderIndex);
+      }
     }
     const tracked = allHeadings.flatMap<{ el: HTMLElement; renderIndex: number }>((el, idx) =>
       trackedIndexes.has(idx) ? [{ el, renderIndex: idx }] : []
@@ -119,55 +119,59 @@ export const PlanTableOfContents: React.FC<PlanTableOfContentsProps> = (props) =
     if (tracked.length === 0) return;
 
     const root = findScrollAncestor(container);
-    // Map each tracked heading to whether its top edge has crossed the trigger
-    // line. The active entry is the LAST one (in document order) that is true.
-    const passedTrigger = new WeakMap<HTMLElement, boolean>();
-
-    const triggerTop = (): number => {
-      // When `root` is null IO uses the viewport, so the trigger is measured
-      // from the viewport's top (effectively 0 + offset). Otherwise the
-      // trigger sits at the scrollport's top + offset, in viewport-coords.
-      const rootTop = root?.getBoundingClientRect().top ?? 0;
-      return rootTop + ACTIVE_TRIGGER_OFFSET_PX;
-    };
+    // We use a scroll listener (rAF-throttled) rather than IntersectionObserver
+    // because the active heading needs to update continuously as the user
+    // scrolls THROUGH a section, not just at the section's entry/exit points.
+    // IO with `threshold: 0` only fires when a heading enters or leaves the
+    // root; while a heading is fully in view the IO is silent, so the active
+    // indicator would not advance when the heading's top crosses the trigger
+    // line mid-scroll. The per-frame rect read is O(N) over the tracked
+    // headings, which is cheap for typical plan sizes.
+    let rafId: number | null = null;
 
     const recompute = () => {
+      rafId = null;
+      // Compute the trigger line in viewport coordinates. `root` of `null`
+      // means the viewport itself is the scrolling frame.
+      const rootTop = root?.getBoundingClientRect().top ?? 0;
+      const trigger = rootTop + ACTIVE_TRIGGER_OFFSET_PX;
+
       let active: number | null = null;
       for (const { el, renderIndex } of tracked) {
-        if (passedTrigger.get(el)) active = renderIndex;
+        if (el.getBoundingClientRect().top <= trigger) active = renderIndex;
       }
       setActiveRenderIndex(active);
     };
 
-    // Seed each heading's passed-trigger state synchronously so the initial
-    // render shows the correct indicator without waiting for the first IO tick.
-    const initialTrigger = triggerTop();
-    for (const { el } of tracked) {
-      passedTrigger.set(el, el.getBoundingClientRect().top <= initialTrigger);
-    }
+    const schedule = () => {
+      if (rafId !== null) return;
+      // requestAnimationFrame coalesces bursts of scroll events into a single
+      // recompute per frame; tests that lack rAF fall back to a sync compute.
+      if (typeof requestAnimationFrame === "function") {
+        rafId = requestAnimationFrame(recompute);
+      } else {
+        recompute();
+      }
+    };
+
+    // Initial sync so the indicator reflects current scroll position on mount.
     recompute();
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const limit = triggerTop();
-        for (const entry of entries) {
-          // `boundingClientRect.top` is the heading's top in viewport
-          // coordinates, which `limit` is also expressed in.
-          passedTrigger.set(entry.target as HTMLElement, entry.boundingClientRect.top <= limit);
-        }
-        recompute();
-      },
-      {
-        root,
-        // Threshold 0 fires whenever the heading enters or leaves the root, so
-        // we get an update at both ends of the visibility transition.
-        threshold: 0,
+    const scrollTarget: EventTarget = root ?? window;
+    scrollTarget.addEventListener("scroll", schedule, { passive: true });
+    // Resizing the window can also change the trigger line's viewport y
+    // coordinate (when the root is offset from the viewport top), so refresh
+    // on resize too.
+    window.addEventListener("resize", schedule, { passive: true });
+    return () => {
+      if (rafId !== null && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(rafId);
       }
-    );
-    for (const { el } of tracked) observer.observe(el);
-    return () => observer.disconnect();
+      scrollTarget.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+    };
     // `trackedKey` is the stable summary of which headings to observe;
-    // recreating the observer when it changes covers streaming plan growth.
+    // recreating the listener when it changes covers streaming plan growth.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackedKey, hasEnoughVisibleEntries, props.contentRef]);
 

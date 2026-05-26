@@ -7,59 +7,14 @@ import { PlanTableOfContents } from "./PlanTableOfContents";
 import type { PlanHeading } from "./extractPlanHeadings";
 
 /**
- * Captures the live IntersectionObserver instances created by the component
- * under test so individual tests can drive observer callbacks deterministically.
- * happy-dom ships a no-op IntersectionObserver stub; replacing it with this
- * controllable harness is the only way to simulate scroll events synchronously.
+ * Stub a heading's `getBoundingClientRect` to simulate the user having
+ * scrolled to a particular position. The active-heading effect reads
+ * `boundingClientRect.top` on every recompute, so overriding this method per
+ * heading is enough to drive the trigger logic in tests without needing real
+ * layout from happy-dom.
  */
-interface ObserverHandle {
-  callback: IntersectionObserverCallback;
-  observed: Element[];
-}
-
-function installControllableIntersectionObserver(): {
-  handles: ObserverHandle[];
-  restore: () => void;
-} {
-  const handles: ObserverHandle[] = [];
-  const previous = (globalThis as unknown as { IntersectionObserver?: unknown })
-    .IntersectionObserver;
-
-  class ControllableIntersectionObserver {
-    private readonly handle: ObserverHandle;
-    constructor(cb: IntersectionObserverCallback) {
-      this.handle = { callback: cb, observed: [] };
-      handles.push(this.handle);
-    }
-    observe(target: Element): void {
-      this.handle.observed.push(target);
-    }
-    unobserve(target: Element): void {
-      const idx = this.handle.observed.indexOf(target);
-      if (idx >= 0) this.handle.observed.splice(idx, 1);
-    }
-    disconnect(): void {
-      this.handle.observed.length = 0;
-    }
-    takeRecords(): IntersectionObserverEntry[] {
-      return [];
-    }
-  }
-
-  (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver =
-    ControllableIntersectionObserver;
-
-  return {
-    handles,
-    restore: () => {
-      (globalThis as unknown as { IntersectionObserver?: unknown }).IntersectionObserver = previous;
-    },
-  };
-}
-
-/** Build a minimal IntersectionObserverEntry-shaped object for tests. */
-function makeEntry(target: HTMLElement, top: number): Partial<IntersectionObserverEntry> {
-  const boundingClientRect: DOMRect = {
+function stubHeadingTop(el: HTMLElement, top: number): void {
+  const rect: DOMRect = {
     top,
     bottom: top + 20,
     left: 0,
@@ -70,16 +25,24 @@ function makeEntry(target: HTMLElement, top: number): Partial<IntersectionObserv
     y: top,
     toJSON: () => ({}),
   };
-  const intersectionRect: DOMRectReadOnly = boundingClientRect;
-  return {
-    target,
-    boundingClientRect,
-    intersectionRatio: top < 0 ? 0 : 1,
-    intersectionRect,
-    isIntersecting: top >= 0,
-    rootBounds: null,
-    time: 0,
-  };
+  el.getBoundingClientRect = () => rect;
+}
+
+/**
+ * Disable the rAF coalescing in the active-heading effect so a synchronous
+ * scroll event triggers an immediate recompute. The effect feature-detects
+ * `requestAnimationFrame`; replacing the global with `undefined` exercises the
+ * sync fallback path.
+ */
+function withSyncAnimationFrame<T>(run: () => T): T {
+  const previous = (globalThis as unknown as { requestAnimationFrame?: unknown })
+    .requestAnimationFrame;
+  (globalThis as unknown as { requestAnimationFrame?: unknown }).requestAnimationFrame = undefined;
+  try {
+    return run();
+  } finally {
+    (globalThis as unknown as { requestAnimationFrame?: unknown }).requestAnimationFrame = previous;
+  }
 }
 
 /**
@@ -218,9 +181,8 @@ describe("PlanTableOfContents", () => {
     expect(scrollCalls[0].options.block).toBe("start");
   });
 
-  test("updates the active indicator when an IntersectionObserver tick reports a heading has scrolled past the trigger", () => {
-    const io = installControllableIntersectionObserver();
-    try {
+  test("active indicator follows the last heading that has crossed the trigger as the user scrolls", () => {
+    withSyncAnimationFrame(() => {
       const entries: PlanHeading[] = [
         { renderIndex: 0, level: 1, text: "Intro" },
         { renderIndex: 1, level: 2, text: "First section" },
@@ -228,89 +190,107 @@ describe("PlanTableOfContents", () => {
       ];
 
       const view = render(<HarnessRenderer entries={entries} title="Intro" />);
-
-      // The component should have created exactly one observer with the
-      // tracked headings observed.
-      expect(io.handles).toHaveLength(1);
-      const handle = io.handles[0];
-      expect(handle.observed.length).toBeGreaterThan(0);
-
       const headings = Array.from(
         view.container.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")
       );
 
-      // Simulate the user scrolling so the SECOND h2 ("Second section") has
-      // just crossed above the trigger. We report intersection entries for
-      // both h2s — first h2 at top=-100 (passed), second h2 at top=10
-      // (passed), third heading (the h3 outside the visible set isn't
-      // tracked).
-      const secondSection = headings[2];
-      const firstSection = headings[1];
-      const title = headings[0];
+      // Simulate the reader having scrolled so the first h2's top edge has
+      // crossed the 16px trigger (top=-100) but the second h2 is still below
+      // (top=400). The active entry must be "First section".
+      stubHeadingTop(headings[0], -200); // h1: well above trigger
+      stubHeadingTop(headings[1], -100); // first h2: above trigger
+      stubHeadingTop(headings[2], 400); // second h2: below trigger
 
       act(() => {
-        handle.callback(
-          [
-            makeEntry(title, -200),
-            makeEntry(firstSection, -100),
-            makeEntry(secondSection, 10),
-          ] as unknown as IntersectionObserverEntry[],
-          handle as unknown as IntersectionObserver
-        );
+        window.dispatchEvent(new Event("scroll"));
       });
 
-      // Active entry should be the SECOND section (the last passed in document
-      // order). Its button is the one tagged aria-current="location".
-      const activeBtn = view.container.querySelector<HTMLElement>('[aria-current="location"]');
-      expect(activeBtn).not.toBeNull();
+      let activeBtn = view.container.querySelector<HTMLElement>('[aria-current="location"]');
+      expect(activeBtn?.textContent).toBe("First section");
+
+      // Reader continues scrolling: second h2 also crosses above the trigger.
+      // Active must advance to "Second section" — this is the case Codex
+      // flagged where an IO-based implementation would miss the mid-scroll
+      // transition because both headings are still inside the root.
+      stubHeadingTop(headings[2], 10); // second h2: just above trigger now
+
+      act(() => {
+        window.dispatchEvent(new Event("scroll"));
+      });
+
+      activeBtn = view.container.querySelector<HTMLElement>('[aria-current="location"]');
       expect(activeBtn?.textContent).toBe("Second section");
 
       // The active <li> also carries data-active="true" for CSS styling.
       const activeItem = view.container.querySelector<HTMLElement>(
         '.plan-toc-item[data-active="true"]'
       );
-      expect(activeItem).not.toBeNull();
       expect(activeItem?.textContent).toContain("Second section");
+    });
+  });
 
-      // Now simulate scrolling further so the second section moves above and
-      // there are no more headings ahead — last-passed is still the second
-      // section.
+  test("active indicator clears when the reader scrolls back above all tracked headings", () => {
+    withSyncAnimationFrame(() => {
+      // Map entries to the harness DOM: renderIndex aligns with the document
+      // order of <h1>/<h2>/<h3> elements in HarnessRenderer.
+      const entries: PlanHeading[] = [
+        { renderIndex: 1, level: 2, text: "First section" },
+        { renderIndex: 2, level: 2, text: "Second section" },
+      ];
+
+      const view = render(<HarnessRenderer entries={entries} />);
+      const headings = Array.from(
+        view.container.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")
+      );
+
+      // Scroll so the first h2 is just above the trigger.
+      stubHeadingTop(headings[1], -10);
+      stubHeadingTop(headings[2], 500);
       act(() => {
-        handle.callback(
-          [makeEntry(secondSection, -50)] as unknown as IntersectionObserverEntry[],
-          handle as unknown as IntersectionObserver
-        );
+        window.dispatchEvent(new Event("scroll"));
       });
+      expect(view.container.querySelector('[aria-current="location"]')?.textContent).toBe(
+        "First section"
+      );
 
-      const stillActive = view.container.querySelector<HTMLElement>('[aria-current="location"]');
-      expect(stillActive?.textContent).toBe("Second section");
-    } finally {
-      io.restore();
-    }
+      // Scroll back so all headings are below the trigger: nothing active.
+      stubHeadingTop(headings[1], 200);
+      stubHeadingTop(headings[2], 700);
+      act(() => {
+        window.dispatchEvent(new Event("scroll"));
+      });
+      expect(view.container.querySelector('[aria-current="location"]')).toBeNull();
+    });
   });
 
   test("clicking a TOC entry marks it active immediately so the indicator does not lag scroll", () => {
-    const io = installControllableIntersectionObserver();
-    try {
+    withSyncAnimationFrame(() => {
       const entries: PlanHeading[] = [
-        { renderIndex: 0, level: 2, text: "Alpha" },
-        { renderIndex: 1, level: 2, text: "Beta" },
-        { renderIndex: 2, level: 2, text: "Gamma" },
+        { renderIndex: 1, level: 2, text: "First section" },
+        { renderIndex: 2, level: 2, text: "Second section" },
+        { renderIndex: 3, level: 3, text: "Nested" },
       ];
 
       const view = render(<HarnessRenderer entries={entries} />);
 
-      // Click the LAST entry; its active state must immediately reflect the
-      // click rather than waiting for the observer to fire post-scroll.
-      fireEvent.click(view.getByRole("button", { name: "Gamma" }));
+      // Position all headings below the trigger so nothing is active on mount.
+      const headings = Array.from(
+        view.container.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")
+      );
+      headings.forEach((el) => stubHeadingTop(el, 500));
+      act(() => {
+        window.dispatchEvent(new Event("scroll"));
+      });
+      expect(view.container.querySelector('[aria-current="location"]')).toBeNull();
 
-      // Exactly one entry should be marked active, and it must be the clicked one.
+      // Click the LAST entry; its active state must immediately reflect the
+      // click rather than waiting for the scroll handler to fire post-animation.
+      fireEvent.click(view.getByRole("button", { name: "Nested" }));
+
       const active = view.container.querySelectorAll<HTMLElement>('[aria-current="location"]');
       expect(active).toHaveLength(1);
-      expect(active[0].textContent).toBe("Gamma");
-    } finally {
-      io.restore();
-    }
+      expect(active[0].textContent).toBe("Nested");
+    });
   });
 
   test("normalizes indentation so the shallowest visible level sits at column 0", () => {
