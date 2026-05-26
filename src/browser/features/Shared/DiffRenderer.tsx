@@ -717,28 +717,6 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
   }) => {
     const { showOld, showNew } = getLineNumberModeFlags(lineNumberMode);
     const textareaRef = React.useRef<HTMLTextAreaElement>(null);
-    const resizeFrameRef = React.useRef<number | null>(null);
-
-    const resizeTextarea = React.useCallback(() => {
-      const textarea = textareaRef.current;
-      if (!textarea) {
-        return;
-      }
-
-      textarea.style.height = "auto";
-      textarea.style.height = `${textarea.scrollHeight}px`;
-    }, []);
-
-    const scheduleTextareaResize = React.useCallback(() => {
-      if (resizeFrameRef.current !== null) {
-        cancelAnimationFrame(resizeFrameRef.current);
-      }
-
-      resizeFrameRef.current = window.requestAnimationFrame(() => {
-        resizeFrameRef.current = null;
-        resizeTextarea();
-      });
-    }, [resizeTextarea]);
 
     // Keep the composer uncontrolled so typing does not trigger per-key React re-renders
     // through immersive diff overlays. Parent-initiated prefill changes are synced here.
@@ -749,21 +727,11 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
       }
 
       textarea.value = initialNoteText ?? "";
-      scheduleTextareaResize();
-    }, [initialNoteText, scheduleTextareaResize]);
+    }, [initialNoteText]);
 
     // Auto-focus on mount.
     React.useEffect(() => {
       textareaRef.current?.focus();
-      scheduleTextareaResize();
-    }, [scheduleTextareaResize]);
-
-    React.useEffect(() => {
-      return () => {
-        if (resizeFrameRef.current !== null) {
-          cancelAnimationFrame(resizeFrameRef.current);
-        }
-      };
     }, []);
 
     const handleSubmit = () => {
@@ -881,15 +849,18 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
               className="w-[3px] shrink-0"
               style={{ background: "var(--color-review-accent)" }}
             />
+            {/* Avoid JS autosize here. Reading scrollHeight on every input forces layout across
+                large immersive diffs, which can make each typed character feel delayed. */}
             <textarea
               ref={textareaRef}
-              className="text-primary placeholder:text-muted/70 min-w-0 flex-1 resize-none overflow-y-hidden bg-transparent px-2 py-1.5 text-[12px] leading-[1.5] transition-colors focus:outline-none"
+              className="text-primary placeholder:text-muted/70 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-1.5 text-[12px] leading-[1.5] transition-colors focus:outline-none"
               style={{
-                minHeight: "calc(12px * 1.5 * 2 + 12px)",
+                minHeight: "calc(12px * 1.5 * 3 + 12px)",
+                maxHeight: "12rem",
               }}
               placeholder="Add a review note… (Enter to submit, Shift+Enter for newline, Esc to cancel)"
               defaultValue={initialNoteText ?? ""}
-              onInput={scheduleTextareaResize}
+              rows={3}
               onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => {
                 stopKeyboardPropagation(e);
