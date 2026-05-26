@@ -154,6 +154,7 @@ jobs:
       env: "daytona"
       experiments: ${{ inputs.experiments }}
       mux_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && inputs.mux_run_as_goal || false }}
+      allow_transient_agent_errors: true
     secrets:
       TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

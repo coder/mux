@@ -320,6 +320,72 @@ def test_run_timeout_surfaces_agent_timeout_error(
     assert getattr(context, "cost_usd") == 0.42
 
 
+def test_run_maps_near_timeout_return_code_124_to_agent_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MUX_AGENT_REPO_ROOT", str(_repo_root()))
+    agent = MuxAgent(logs_dir=tmp_path, timeout=0.01)
+    environment = _FakeEnvironment(
+        _ExecResult(return_code=124, stdout="partial event", stderr=""),
+        delay_sec=0.01,
+    )
+    context = SimpleNamespace()
+
+    with pytest.raises(AgentTimeoutError, match="timed out after 0.01 seconds"):
+        asyncio.run(agent.run("do the task", environment, context))
+
+    command_dir = tmp_path / "command-0"
+    assert (command_dir / "return-code.txt").read_text() == "124"
+    assert (command_dir / MuxAgent._COMMAND_STDOUT_NAME).read_text() == "partial event"
+
+
+def test_run_keeps_fast_return_code_124_strict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MUX_AGENT_REPO_ROOT", str(_repo_root()))
+    agent = MuxAgent(logs_dir=tmp_path, timeout=10)
+    environment = _FakeEnvironment(_ExecResult(return_code=124))
+    context = SimpleNamespace()
+
+    with pytest.raises(RuntimeError, match="exit 124"):
+        asyncio.run(agent.run("do the task", environment, context))
+
+
+@pytest.mark.parametrize("return_code", [1, 137])
+def test_run_keeps_non_timeout_agent_exits_strict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, return_code: int
+) -> None:
+    monkeypatch.setenv("MUX_AGENT_REPO_ROOT", str(_repo_root()))
+    agent = MuxAgent(logs_dir=tmp_path, timeout=0.01)
+    environment = _FakeEnvironment(
+        _ExecResult(return_code=return_code, stdout="partial event", stderr=""),
+        delay_sec=0.01,
+    )
+    context = SimpleNamespace()
+
+    with pytest.raises(RuntimeError, match=f"exit {return_code}"):
+        asyncio.run(agent.run("do the task", environment, context))
+
+
+def test_run_keeps_explicit_return_code_124_failure_strict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("MUX_AGENT_REPO_ROOT", str(_repo_root()))
+    agent = MuxAgent(logs_dir=tmp_path, timeout=0.01)
+    environment = _FakeEnvironment(
+        _ExecResult(
+            return_code=124,
+            stdout="partial event",
+            stderr="[mux-run] ERROR: mux agent session failed (exit 124)",
+        ),
+        delay_sec=0.01,
+    )
+    context = SimpleNamespace()
+
+    with pytest.raises(RuntimeError, match="exit 124"):
+        asyncio.run(agent.run("do the task", environment, context))
+
+
 def test_run_preseeds_command_logs_before_sandbox_exec(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

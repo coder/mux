@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import shlex
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +15,11 @@ from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.agent.context import AgentContext
 from harbor.trial.trial import AgentTimeoutError
 
+from .mux_run_contract import (
+    MUX_RUN_TIMEOUT_FAILURE_MARKER,
+    RUN_COMPLETE_MARKER,
+    TIMEOUT_RETURN_CODE,
+)
 from .mux_payload import build_app_archive
 
 
@@ -352,6 +358,29 @@ class MuxAgent(BaseInstalledAgent):
             f"Agent execution timed out after {timeout_sec:g} seconds"
         )
 
+    @staticmethod
+    def _is_exec_timeout_return(
+        result: ExecResult,
+        timeout_sec: float | None,
+        elapsed_sec: float,
+    ) -> bool:
+        if timeout_sec is None or result.return_code != TIMEOUT_RETURN_CODE:
+            return False
+
+        assert timeout_sec > 0, "timeout_sec is validated when MuxAgent is constructed"
+        timeout_threshold = max(timeout_sec * 0.95, timeout_sec - 10)
+        if elapsed_sec < timeout_threshold:
+            return False
+
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        if RUN_COMPLETE_MARKER in stdout:
+            return False
+        if MUX_RUN_TIMEOUT_FAILURE_MARKER in stderr:
+            return False
+
+        return True
+
     async def run(
         self,
         instruction: str,
@@ -374,17 +403,25 @@ class MuxAgent(BaseInstalledAgent):
             for output_path in (stdout_path, stderr_path):
                 output_path.write_text("")
 
+            started_at = time.monotonic()
             try:
                 result = await self._exec_agent_command(environment, exec_input)
             except AgentTimeoutError as exc:
                 timeout_error = exc
                 break
+            elapsed_sec = time.monotonic() - started_at
 
             (command_dir / "return-code.txt").write_text(str(result.return_code))
             if result.stdout:
                 stdout_path.write_text(result.stdout)
             if result.stderr:
                 stderr_path.write_text(result.stderr)
+            if self._is_exec_timeout_return(
+                result, exec_input.timeout_sec, elapsed_sec
+            ):
+                assert exec_input.timeout_sec is not None
+                timeout_error = self._agent_timeout_error(exec_input.timeout_sec)
+                break
             if result.return_code != 0:
                 failed_command = (i, result.return_code)
                 break
