@@ -1607,6 +1607,11 @@ code {
   line-height: 1.4;
   color: color-mix(in srgb, var(--color-muted-foreground) 88%, var(--color-foreground) 12%);
   padding: 4px 0;
+  /* Reserved gutter on every row's left edge so the active-state accent rail
+     has somewhere to live without overlapping the link text. The 2px rail
+     plus a ~6px gap before the text lands all heading text at column 8 and
+     keeps the heading and level-1 items vertically aligned by construction. */
+  --plan-toc-rail-gutter: 8px;
 }
 
 .plan-toc-heading {
@@ -1617,7 +1622,9 @@ code {
   font-weight: 600;
   color: color-mix(in srgb, var(--color-plan-mode) 58%, var(--color-foreground) 42%);
   margin: 0 0 6px 0;
-  padding: 2px 0;
+  /* Match the rail gutter so the heading text aligns with level-1 list items,
+     and so the active-state rail (if added) lives in the same column. */
+  padding: 2px 0 2px var(--plan-toc-rail-gutter);
   /* Let long plan titles wrap inside the gutter instead of wasting available
      horizontal space and hiding useful context behind an ellipsis. */
   white-space: normal;
@@ -1690,8 +1697,10 @@ code {
 }
 
 .plan-toc-link {
-  /* Render as a flush text link rather than a chunky button. Using the same
-     zero left padding as the title is what keeps h1 and h2 visually aligned. */
+  /* Render as a flush text link rather than a chunky button. The link's left
+     padding is `rail-gutter + per-level-indent` so all rows reserve the same
+     gutter for the active-state accent rail while still stepping deeper
+     headings under their parent. */
   appearance: none;
   background: transparent;
   border: 0;
@@ -1701,7 +1710,7 @@ code {
   cursor: pointer;
   display: block;
   width: 100%;
-  padding: 2px 0 2px var(--plan-toc-indent);
+  padding: 2px 0 2px calc(var(--plan-toc-rail-gutter) + var(--plan-toc-indent));
   border-radius: 3px;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -1739,7 +1748,10 @@ code {
  *
  * The accent rail uses an inset box-shadow rather than `border-left` so the
  * link's left padding and per-level indentation continue to line up exactly
- * with the inactive rows above and below it.
+ * with the inactive rows above and below it. The 2px rail lives inside the
+ * dedicated `--plan-toc-rail-gutter` on the link's left edge, so it never
+ * overlaps the link text — even for level-1 items where the per-level indent
+ * is 0.
  */
 .plan-toc-item[data-active="true"] .plan-toc-link {
   color: var(--color-foreground);
