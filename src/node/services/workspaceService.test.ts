@@ -2610,6 +2610,56 @@ describe("WorkspaceService streaming generation guard", () => {
     expect(setStreaming).toHaveBeenCalledTimes(1);
     expect(setStreaming).toHaveBeenCalledWith(workspaceId, true, { model: "openai:gpt-4o-mini" });
   });
+  test("tags matching compaction stop snapshots and clears the generation marker", async () => {
+    const workspaceId = "ws-compaction-stream-stop";
+    const setStreaming = mock(
+      (_workspaceId: string, streaming: boolean, update: ExtensionMetadataStreamingUpdate = {}) =>
+        Promise.resolve({
+          recency: Date.now(),
+          streaming,
+          lastModel: update.model ?? null,
+          lastThinkingLevel: update.thinkingLevel ?? null,
+          hasTodos: update.hasTodos,
+          agentStatus: null,
+        })
+    );
+    const emitWorkspaceActivity = mock(
+      (_workspaceId: string, _snapshot: WorkspaceActivitySnapshot | null) => undefined
+    );
+
+    readTodosSpy = spyOn(todoStorageModule, "readTodosForSessionDir").mockResolvedValue([]);
+
+    const internals = workspaceService as unknown as {
+      extensionMetadata: ExtensionMetadataService;
+      streamingGenerations: Map<string, number>;
+      compactionStreamGenerations: Map<string, number>;
+      emitWorkspaceActivity: (
+        workspaceId: string,
+        snapshot: WorkspaceActivitySnapshot | null
+      ) => void;
+      updateStreamingStatus: (
+        workspaceId: string,
+        streaming: boolean,
+        options?: ExtensionMetadataStreamingUpdate
+      ) => Promise<void>;
+    };
+
+    internals.extensionMetadata = {
+      setStreaming,
+    } as unknown as ExtensionMetadataService;
+    internals.emitWorkspaceActivity = emitWorkspaceActivity;
+    internals.streamingGenerations.set(workspaceId, 3);
+    internals.compactionStreamGenerations.set(workspaceId, 3);
+
+    await internals.updateStreamingStatus(workspaceId, false, { generation: 3 });
+
+    expect(emitWorkspaceActivity).toHaveBeenCalledWith(
+      workspaceId,
+      expect.objectContaining({ streaming: false, isCompaction: true })
+    );
+    expect(internals.compactionStreamGenerations.has(workspaceId)).toBe(false);
+  });
+
   test("handleStreamCompletion skips recency updates for idle compaction", async () => {
     const workspaceId = "ws-idle-stream-completion";
     const setStreaming = mock(

@@ -249,6 +249,10 @@ export const WorkspaceActivitySnapshotSchema = z.object({
   hasTodos: z.boolean().optional().meta({
     description: "Whether the workspace still had todos when streaming last stopped",
   }),
+  isCompaction: z.boolean().optional().meta({
+    description:
+      "Whether the current streaming activity is a compaction turn (transient UI classification)",
+  }),
   isIdleCompaction: z.boolean().optional().meta({
     description: "Whether the current streaming activity is an idle (background) compaction",
   }),

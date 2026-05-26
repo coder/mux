@@ -216,10 +216,6 @@ interface StreamingContext {
 
   isComplete: boolean;
   isCompacting: boolean;
-  // Idle compaction is background maintenance, not a user-visible completion, so
-  // completion notifications must stay suppressed even for the currently selected workspace.
-  isIdleCompaction: boolean;
-  hasCompactionContinue: boolean;
   // Track the last known queued-follow-up state on the active stream itself so
   // background activity completion can still suppress intermediate notifications
   // after the workspace loses its live queued-message subscription.
@@ -1453,24 +1449,15 @@ export class StreamingMessageAggregator {
     return this.pendingCompactionRequest ?? this.getLatestHistoricalCompactionRequest();
   }
 
-  private resolveStreamStartCompaction(data: StreamStartEvent): {
-    isCompacting: boolean;
-    isIdleCompaction: boolean;
-    hasCompactionContinue: boolean;
-  } {
+  private resolveStreamStartCompaction(data: StreamStartEvent): boolean {
     // Keep stream classification separate from stream context construction so
     // continue turns after /compact do not inherit stale UI state from history.
     const streamSignalsCompaction = data.agentId === "compact" || data.mode === "compact";
     if (!streamSignalsCompaction && data.agentId != null) {
-      return { isCompacting: false, isIdleCompaction: false, hasCompactionContinue: false };
+      return false;
     }
 
-    const compactionRequest = this.getLatestUnresolvedCompactionRequest();
-    return {
-      isCompacting: streamSignalsCompaction || compactionRequest !== null,
-      isIdleCompaction: compactionRequest?.source === "idle-compaction",
-      hasCompactionContinue: Boolean(compactionRequest?.parsed.followUpContent),
-    };
+    return streamSignalsCompaction || this.getLatestUnresolvedCompactionRequest() !== null;
   }
 
   private isDefaultPostCompactionContinueTurn(): boolean {
@@ -1949,8 +1936,7 @@ export class StreamingMessageAggregator {
 
   // Unified event handlers that encapsulate all complex logic
   handleStreamStart(data: StreamStartEvent): void {
-    const { isCompacting, isIdleCompaction, hasCompactionContinue } =
-      this.resolveStreamStartCompaction(data);
+    const isCompacting = this.resolveStreamStartCompaction(data);
     const isSideQuestionAnswerStream = this.isSideQuestionAnswerStreamEvent(data);
 
     // Clear pending "starting..." UI once a main-agent turn is live. /btw
@@ -1987,8 +1973,6 @@ export class StreamingMessageAggregator {
       lastServerTimestamp: data.startTime,
       isComplete: false,
       isCompacting,
-      isIdleCompaction,
-      hasCompactionContinue,
       hasQueuedFollowUp: false,
       suppressNotification,
       isReplay: data.replay === true,

@@ -23,7 +23,7 @@ import {
   type SkillLoadError,
 } from "@/browser/utils/messages/StreamingMessageAggregator";
 import {
-  createIdleCompactionCompletion,
+  createCompactionCompletion,
   type ResponseCompleteEvent,
   type ResponseCompleteHandler,
 } from "@/browser/utils/messages/responseCompletionMetadata";
@@ -2729,12 +2729,16 @@ export class WorkspaceStore {
     const backgroundCompletion = isBackgroundStreamingStop
       ? this.aggregators.get(workspaceId)?.getActiveResponseCompleteMetadata()
       : undefined;
-    // The backend tags the streaming=false (stop) snapshot with isIdleCompaction.
-    // The idle marker is added after sendMessage returns (to avoid races with
-    // concurrent user streams), so only the stop snapshot carries the flag.
-    // Check both previous and current as defense-in-depth.
-    const wasIdleCompaction =
-      previous?.isIdleCompaction === true || snapshot?.isIdleCompaction === true;
+    // The backend tags compaction stop snapshots with an authoritative stream
+    // classification. Compaction is context-management rather than a response,
+    // so background notification policy must not fall back to "normal" if the
+    // frontend missed live compaction/follow-up events while unsubscribed.
+    // Check both previous and current as defense-in-depth against update ordering.
+    const wasCompaction =
+      previous?.isCompaction === true ||
+      snapshot?.isCompaction === true ||
+      previous?.isIdleCompaction === true ||
+      snapshot?.isIdleCompaction === true;
 
     // Trigger response completion notifications for background workspaces only when
     // activity indicates a true completion (streaming true -> false WITH recency advance).
@@ -2744,9 +2748,7 @@ export class WorkspaceStore {
       // Activity snapshots don't include message/content metadata. Reuse any
       // still-active stream context captured before this workspace was backgrounded
       // so queued follow-up handoffs remain suppressible in App notifications.
-      const completion = wasIdleCompaction
-        ? createIdleCompactionCompletion(backgroundCompletion?.hasAutoFollowUp ?? false)
-        : backgroundCompletion;
+      const completion = wasCompaction ? createCompactionCompletion() : backgroundCompletion;
       this.emitResponseComplete({
         workspaceId,
         isFinal: true,

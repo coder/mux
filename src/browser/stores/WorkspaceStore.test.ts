@@ -3144,6 +3144,39 @@ describe("WorkspaceStore", () => {
       });
     });
 
+    it("marks background compaction stops from activity snapshots as non-notifying completions", async () => {
+      const activeWorkspaceId = "active-workspace-compaction-snapshot";
+      const backgroundWorkspaceId = "background-workspace-compaction-snapshot";
+      const initialRecency = new Date("2024-01-05T12:00:00.000Z").getTime();
+      const initialSnapshot = createActivitySnapshot(initialRecency);
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [
+          {
+            ...initialSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+            isCompaction: true,
+          },
+        ]
+      );
+      const onResponseComplete = createResponseCompleteSpy();
+
+      recreateStore(onResponseComplete);
+      createAndAddWorkspace(store, activeWorkspaceId);
+      createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
+      releaseBackgroundCompletion();
+      await tick(0);
+
+      expectResponseComplete(onResponseComplete, {
+        workspaceId: backgroundWorkspaceId,
+        isFinal: true,
+        completion: { kind: "compaction" },
+        completedAt: initialRecency + 1,
+      });
+    });
+
     it("preserves internal resume metadata across background handoffs", async () => {
       const activeWorkspaceId = "active-workspace-internal-resume-background";
       const backgroundWorkspaceId = "background-workspace-internal-resume-background";
@@ -3187,7 +3220,7 @@ describe("WorkspaceStore", () => {
       expectResponseComplete(onResponseComplete, {
         workspaceId: backgroundWorkspaceId,
         isFinal: true,
-        completion: { kind: "compaction", hasAutoFollowUp: true, suppressNotification: true },
+        completion: { kind: "compaction", suppressNotification: true },
         completedAt: initialRecency + 1,
       });
     });
@@ -3307,7 +3340,7 @@ describe("WorkspaceStore", () => {
       expectResponseComplete(onResponseComplete, {
         workspaceId: backgroundWorkspaceId,
         isFinal: true,
-        completion: { kind: "compaction", hasAutoFollowUp: true },
+        completion: { kind: "compaction" },
         completedAt: initialRecency + 1,
       });
     });
@@ -3374,7 +3407,7 @@ describe("WorkspaceStore", () => {
         messageId: "compaction-stream",
         isFinal: true,
         finalText: "",
-        completion: { kind: "compaction", hasAutoFollowUp: true },
+        completion: { kind: "compaction" },
         completedAt: expect.any(Number),
       });
     });
@@ -3418,7 +3451,7 @@ describe("WorkspaceStore", () => {
       expectResponseComplete(onResponseComplete, {
         workspaceId: backgroundWorkspaceId,
         isFinal: true,
-        completion: { kind: "compaction", hasAutoFollowUp: true },
+        completion: { kind: "compaction" },
         completedAt: initialRecency + 1,
       });
     });
