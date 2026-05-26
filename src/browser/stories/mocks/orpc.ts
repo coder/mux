@@ -126,6 +126,12 @@ export interface MockORPCClientOptions {
   agentAiDefaults?: AgentAiDefaults;
   /** Agent definitions to expose via agents.list */
   agentDefinitions?: AgentDefinitionDescriptor[];
+  /**
+   * Per-agent system-prompt body returned from `agents.get`. Stories that
+   * exercise the Instructions tab's mode panel can populate this so the
+   * markdown renderer has real content to show. Keys are agent IDs.
+   */
+  agentBodies?: Record<string, string>;
   /** Initial per-subagent AI defaults for config.getConfig (e.g., Settings → Tasks section) */
   subagentAiDefaults?: SubagentAiDefaults;
   /** Coder lifecycle preferences for config.getConfig (e.g., Settings → Coder section) */
@@ -383,6 +389,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     routePriority: initialRoutePriority = ["direct"],
     routeOverrides: initialRouteOverrides = {},
     agentDefinitions: initialAgentDefinitions,
+    agentBodies: initialAgentBodies,
     listBranches: customListBranches,
     gitInit: customGitInit,
     runtimeAvailability: customRuntimeAvailability,
@@ -936,7 +943,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
             ai: descriptor.aiDefaults,
             tools: descriptor.tools,
           },
-          body: "",
+          body: initialAgentBodies?.[descriptor.id] ?? "",
         } satisfies AgentDefinitionPackage;
 
         return Promise.resolve(agentPackage);
