@@ -8,7 +8,12 @@ import {
 
 function userMessage(
   historyId: string,
-  opts: { isSideQuestion?: boolean } = {}
+  opts: {
+    isSideQuestion?: boolean;
+    placement?: "interrupted" | "standalone";
+    branchId?: string;
+    interruptedMessageId?: string;
+  } = {}
 ): Extract<DisplayedMessage, { type: "user" }> {
   return {
     type: "user",
@@ -17,12 +22,25 @@ function userMessage(
     content: historyId,
     historySequence: 1,
     isSideQuestion: opts.isSideQuestion,
+    sideQuestionBranch: opts.isSideQuestion
+      ? {
+          branchId: opts.branchId ?? historyId,
+          placement: opts.placement ?? "interrupted",
+          interruptedMessageId: opts.interruptedMessageId ?? "main-1",
+        }
+      : undefined,
   };
 }
 
 function assistantMessage(
   historyId: string,
-  opts: { isSideAnswer?: boolean; isStreaming?: boolean } = {}
+  opts: {
+    isSideAnswer?: boolean;
+    isStreaming?: boolean;
+    placement?: "interrupted" | "standalone";
+    branchId?: string;
+    interruptedMessageId?: string;
+  } = {}
 ): Extract<DisplayedMessage, { type: "assistant" }> {
   return {
     type: "assistant",
@@ -35,6 +53,13 @@ function assistantMessage(
     isCompacted: false,
     isIdleCompacted: false,
     isSideAnswer: opts.isSideAnswer,
+    sideQuestionBranch: opts.isSideAnswer
+      ? {
+          branchId: opts.branchId ?? "btw-q",
+          placement: opts.placement ?? "interrupted",
+          interruptedMessageId: opts.interruptedMessageId ?? "main-1",
+        }
+      : undefined,
   };
 }
 
@@ -86,14 +111,58 @@ describe("findSideQuestionScrollHoldTarget", () => {
   test("does not target a standalone side question when only its answer is below it", () => {
     const messages: DisplayedMessage[] = [
       assistantMessage("main-1"),
-      userMessage("btw-q", { isSideQuestion: true }),
-      assistantMessage("btw-a", { isSideAnswer: true, isStreaming: true }),
+      userMessage("btw-q", { isSideQuestion: true, placement: "standalone" }),
+      assistantMessage("btw-a", {
+        isSideAnswer: true,
+        isStreaming: true,
+        placement: "standalone",
+      }),
     ];
 
     const result = findSideQuestionScrollHoldTarget(messages, state());
 
     expect(result.targetHistoryId).toBeUndefined();
-    expect([...result.nextState.heldSideQuestionIds]).toEqual([]);
+    expect([...result.nextState.heldSideQuestionIds]).toEqual(["btw-q"]);
+  });
+
+  test("does not target a standalone side question when later transcript rows appear below it", () => {
+    const messages: DisplayedMessage[] = [
+      assistantMessage("main-1"),
+      userMessage("btw-q", { isSideQuestion: true, placement: "standalone" }),
+      assistantMessage("btw-a", { isSideAnswer: true, placement: "standalone" }),
+      assistantMessage("main-2"),
+    ];
+
+    const result = findSideQuestionScrollHoldTarget(messages, state());
+
+    expect(result.targetHistoryId).toBeUndefined();
+    expect([...result.nextState.heldSideQuestionIds]).toEqual(["btw-q"]);
+  });
+
+  test("does not target a side question that becomes interrupted after first rendering standalone", () => {
+    const first = findSideQuestionScrollHoldTarget(
+      [
+        assistantMessage("main-1"),
+        userMessage("btw-q", { isSideQuestion: true, placement: "standalone" }),
+        assistantMessage("btw-a", { isSideAnswer: true, placement: "standalone" }),
+      ],
+      state()
+    );
+    expect(first.targetHistoryId).toBeUndefined();
+    expect([...first.nextState.heldSideQuestionIds]).toEqual(["btw-q"]);
+
+    const second = findSideQuestionScrollHoldTarget(
+      [
+        assistantMessage("main-1"),
+        userMessage("btw-q", { isSideQuestion: true }),
+        assistantMessage("btw-a", { isSideAnswer: true }),
+        assistantMessage("main-1-post"),
+      ],
+      first.nextState
+    );
+
+    expect(second.targetHistoryId).toBeUndefined();
+    expect([...second.nextState.heldSideQuestionIds]).toEqual(["btw-q"]);
   });
 
   test("targets the side question when a streaming side answer has transcript rows below it", () => {
@@ -234,6 +303,20 @@ describe("findSideQuestionScrollHoldTarget", () => {
     expect(settledAnswer).toEqual({ targetHistoryId: "btw-q", keepActive: false });
   });
 
+  test("keeps an active side-question hold while the interrupted main message streams", () => {
+    const activeMain = findActiveSideQuestionScrollHoldTarget(
+      [
+        assistantMessage("main-1"),
+        userMessage("btw-q", { isSideQuestion: true }),
+        assistantMessage("btw-a", { isSideAnswer: true, isStreaming: false }),
+        assistantMessage("main-1", { isStreaming: true }),
+      ],
+      "btw-q"
+    );
+
+    expect(activeMain).toEqual({ targetHistoryId: "btw-q", keepActive: true });
+  });
+
   test("keeps an active fallback answer-row hold while the side answer streams", () => {
     const streamingAnswer = findActiveSideQuestionScrollHoldTarget(
       [
@@ -254,6 +337,23 @@ describe("findSideQuestionScrollHoldTarget", () => {
       "btw-a"
     );
     expect(settledAnswer).toEqual({ targetHistoryId: "btw-a", keepActive: false });
+  });
+
+  test("does not keep an active fallback answer-row hold for standalone answers", () => {
+    const result = findActiveSideQuestionScrollHoldTarget(
+      [
+        assistantMessage("main-1"),
+        assistantMessage("btw-a", {
+          isSideAnswer: true,
+          isStreaming: true,
+          placement: "standalone",
+        }),
+        assistantMessage("main-1-post"),
+      ],
+      "btw-a"
+    );
+
+    expect(result).toEqual({ keepActive: false });
   });
 
   test("detects a side-question alignment that is still clamped to transcript bottom", () => {

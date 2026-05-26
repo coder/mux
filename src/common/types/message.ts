@@ -621,6 +621,13 @@ export type MuxMessage = Omit<UIMessage<MuxMetadata, never, never>, "parts"> & {
   parts: Array<MuxTextPart | MuxReasoningPart | MuxFilePart | MuxToolPart>;
 };
 
+export interface SideQuestionDisplayBranch {
+  branchId: string;
+  placement: "interrupted" | "standalone";
+  interruptedMessageId?: string;
+  interruptedHistorySequence?: number;
+}
+
 // DisplayedMessage represents a single UI message block
 // This is what the UI components consume, splitting complex messages into separate visual blocks
 export type DisplayedMessage =
@@ -668,6 +675,8 @@ export type DisplayedMessage =
       };
       /** Structured review data for rich UI display (from muxMetadata) */
       reviews?: ReviewNoteDataForDisplay[];
+      /** Display-only placement for /btw scroll/projection logic. */
+      sideQuestionBranch?: SideQuestionDisplayBranch;
       /** True when this user message is a /btw side question. */
       isSideQuestion?: boolean;
     }
@@ -685,6 +694,8 @@ export type DisplayedMessage =
       isIdleCompacted: boolean; // Whether this compaction was auto-triggered due to inactivity
       /** True when this assistant row predates the latest Context Boundary. */
       isBeforeLatestContextBoundary?: boolean;
+      /** Display-only placement for /btw scroll/projection logic. */
+      sideQuestionBranch?: SideQuestionDisplayBranch;
       /** True when this assistant row is the answer to a /btw side question. */
       isSideAnswer?: boolean;
       model?: string;

@@ -1,4 +1,4 @@
-import type { DisplayedMessage } from "@/common/types/message";
+import type { DisplayedMessage, SideQuestionDisplayBranch } from "@/common/types/message";
 
 export interface SideQuestionScrollHoldState {
   initialized: boolean;
@@ -34,6 +34,59 @@ interface ScrollHoldBottomClampOptions {
 
 const BOTTOM_CLAMP_EPSILON_PX = 1;
 const TARGET_START_ALIGNMENT_EPSILON_PX = 2;
+
+function getInterruptedSideQuestionBranch(
+  message: DisplayedMessage
+): SideQuestionDisplayBranch | undefined {
+  if (message.type !== "user" && message.type !== "assistant") {
+    return undefined;
+  }
+
+  return message.sideQuestionBranch?.placement === "interrupted"
+    ? message.sideQuestionBranch
+    : undefined;
+}
+
+function isInterruptedSideQuestionUser(
+  message: DisplayedMessage
+): message is Extract<DisplayedMessage, { type: "user" }> {
+  return (
+    message.type === "user" &&
+    message.isSideQuestion === true &&
+    getInterruptedSideQuestionBranch(message) !== undefined
+  );
+}
+
+function isInterruptedSideQuestionAnswer(
+  message: DisplayedMessage
+): message is Extract<DisplayedMessage, { type: "assistant" }> {
+  return (
+    message.type === "assistant" &&
+    message.isSideAnswer === true &&
+    getInterruptedSideQuestionBranch(message) !== undefined
+  );
+}
+
+function isStreamingHistoryRow(message: DisplayedMessage, historyId: string): boolean {
+  return (
+    "historyId" in message &&
+    message.historyId === historyId &&
+    "isStreaming" in message &&
+    message.isStreaming === true
+  );
+}
+
+function isInterruptedBranchStreaming(
+  messages: readonly DisplayedMessage[],
+  branch: SideQuestionDisplayBranch | undefined
+): boolean {
+  const interruptedMessageId = branch?.interruptedMessageId;
+  if (branch?.placement !== "interrupted" || !interruptedMessageId) {
+    return false;
+  }
+
+  return messages.some((message) => isStreamingHistoryRow(message, interruptedMessageId));
+}
 
 function readCssPixelValue(value: string): number {
   const parsed = Number.parseFloat(value);
@@ -80,13 +133,10 @@ export function isSideQuestionScrollHoldBottomClamped(
 }
 
 /**
- * Continue aligning a side-question branch after the first hand-off from
- * bottom-lock. The first scroll can happen before there is enough content below
- * the branch for the browser to place it in a readable position, so active side
- * holds keep re-aligning on subsequent stream updates until the side answer has
- * produced one final settled render. If no answer row is currently rendered
- * (model setup lag, retry, or failure), the ChatPane keeps that target alive
- * only while DOM geometry says the attempted alignment is still bottom-clamped.
+ * Continue aligning an interrupted side-question branch after the first hand-off
+ * from bottom-lock. A /btw hold is a finite lease: it may stay active while the
+ * side answer or interrupted main message is still streaming, but settled
+ * branches must release even if browser start-alignment was bottom-clamped.
  */
 export function findActiveSideQuestionScrollHoldTarget(
   messages: readonly DisplayedMessage[],
@@ -98,16 +148,12 @@ export function findActiveSideQuestionScrollHoldTarget(
 
   const sideQuestionIndex = messages.findIndex(
     (message) =>
-      message.type === "user" &&
-      message.isSideQuestion === true &&
-      message.historyId === activeTargetHistoryId
+      isInterruptedSideQuestionUser(message) && message.historyId === activeTargetHistoryId
   );
   if (sideQuestionIndex === -1) {
     const sideAnswer = messages.find(
       (message): message is Extract<DisplayedMessage, { type: "assistant" }> =>
-        message.type === "assistant" &&
-        message.isSideAnswer === true &&
-        message.historyId === activeTargetHistoryId
+        isInterruptedSideQuestionAnswer(message) && message.historyId === activeTargetHistoryId
     );
     if (!sideAnswer) {
       return { keepActive: false };
@@ -115,19 +161,35 @@ export function findActiveSideQuestionScrollHoldTarget(
 
     return {
       targetHistoryId: activeTargetHistoryId,
-      keepActive: sideAnswer.isStreaming === true,
+      keepActive:
+        sideAnswer.isStreaming === true ||
+        isInterruptedBranchStreaming(messages, sideAnswer.sideQuestionBranch),
     };
   }
 
+  const sideQuestion = messages[sideQuestionIndex];
+  const sideQuestionBranch = getInterruptedSideQuestionBranch(sideQuestion);
+  if (!sideQuestionBranch) {
+    return { keepActive: false };
+  }
   const nextMessage = messages[sideQuestionIndex + 1];
-  if (nextMessage?.type === "assistant" && nextMessage.isSideAnswer === true) {
+  if (
+    nextMessage !== undefined &&
+    isInterruptedSideQuestionAnswer(nextMessage) &&
+    nextMessage.sideQuestionBranch?.branchId === sideQuestionBranch?.branchId
+  ) {
     return {
       targetHistoryId: activeTargetHistoryId,
-      keepActive: nextMessage.isStreaming === true,
+      keepActive:
+        nextMessage.isStreaming === true ||
+        isInterruptedBranchStreaming(messages, sideQuestionBranch),
     };
   }
 
-  return { targetHistoryId: activeTargetHistoryId, keepActive: false };
+  return {
+    targetHistoryId: activeTargetHistoryId,
+    keepActive: isInterruptedBranchStreaming(messages, sideQuestionBranch),
+  };
 }
 
 /**
@@ -149,23 +211,36 @@ export function findSideQuestionScrollHoldTarget(
     const message = messages[index];
 
     if (message.type === "user" && message.isSideQuestion === true) {
-      const wasHeld = state.heldSideQuestionIds.has(message.historyId);
+      const sideQuestionHistoryId = message.historyId;
+      if (!isInterruptedSideQuestionUser(message)) {
+        // Track standalone/stale side-question rows as already seen. If their
+        // anchor arrives later and the display projection flips them to
+        // interrupted, that historical row must not acquire a fresh scroll lease.
+        nextHeldSideQuestionIds.add(sideQuestionHistoryId);
+        continue;
+      }
+
+      const wasHeld = state.heldSideQuestionIds.has(sideQuestionHistoryId);
       const nextMessage = messages[index + 1];
       const branchEndIndex =
-        nextMessage?.type === "assistant" && nextMessage.isSideAnswer === true ? index + 1 : index;
+        nextMessage !== undefined &&
+        isInterruptedSideQuestionAnswer(nextMessage) &&
+        nextMessage.sideQuestionBranch?.branchId === message.sideQuestionBranch?.branchId
+          ? index + 1
+          : index;
       const hasTranscriptRowsBelow = branchEndIndex < messages.length - 1;
       if (!state.initialized || wasHeld) {
-        nextHeldSideQuestionIds.add(message.historyId);
+        nextHeldSideQuestionIds.add(sideQuestionHistoryId);
         continue;
       }
       if (hasTranscriptRowsBelow) {
-        nextHeldSideQuestionIds.add(message.historyId);
-        targetHistoryId = message.historyId;
+        nextHeldSideQuestionIds.add(sideQuestionHistoryId);
+        targetHistoryId = sideQuestionHistoryId;
       }
       continue;
     }
 
-    if (message.type !== "assistant" || message.isSideAnswer !== true) {
+    if (!isInterruptedSideQuestionAnswer(message)) {
       continue;
     }
 
@@ -194,7 +269,9 @@ export function findSideQuestionScrollHoldTarget(
 
     const sideQuestion = messages[index - 1];
     targetHistoryId =
-      sideQuestion?.type === "user" && sideQuestion.isSideQuestion === true
+      sideQuestion !== undefined &&
+      isInterruptedSideQuestionUser(sideQuestion) &&
+      sideQuestion.sideQuestionBranch?.branchId === message.sideQuestionBranch?.branchId
         ? sideQuestion.historyId
         : message.historyId;
   }

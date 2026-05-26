@@ -5,6 +5,7 @@ import type {
   CompactionRequestData,
   InlineSkillSnapshotMap,
   AgentSkillReference,
+  SideQuestionDisplayBranch,
 } from "@/common/types/message";
 import { createMuxMessage, isCompactionSummaryMetadata } from "@/common/types/message";
 
@@ -432,6 +433,11 @@ function deriveInlineSkillSnapshotDisplayState(
 interface MessagePartSplitCut {
   textLength: number;
   partIndex?: number;
+}
+
+interface SideQuestionDisplayPlan {
+  interruptionsByInterruptedId: Map<string, SideQuestionInterrupt[]>;
+  inlineSideQuestionMessageIds: Set<string>;
 }
 
 interface SideQuestionInterrupt {
@@ -3021,6 +3027,154 @@ export class StreamingMessageAggregator {
     });
   }
 
+  private isRenderableSideQuestionAnswer(answer: MuxMessage): boolean {
+    return this.activeStreams.has(answer.id) || answer.parts.length > 0;
+  }
+
+  private compareSideQuestionInterrupts(
+    left: SideQuestionInterrupt,
+    right: SideQuestionInterrupt
+  ): number {
+    const leftHistorySequence = left.sideQuestionUserMsg.metadata?.historySequence ?? Infinity;
+    const rightHistorySequence = right.sideQuestionUserMsg.metadata?.historySequence ?? Infinity;
+    return (
+      left.atTextLength - right.atTextLength ||
+      (left.atPartIndex ?? Infinity) - (right.atPartIndex ?? Infinity) ||
+      leftHistorySequence - rightHistorySequence ||
+      left.sideQuestionUserMsg.id.localeCompare(right.sideQuestionUserMsg.id)
+    );
+  }
+
+  private buildSideQuestionDisplayPlan(
+    allMessages: readonly MuxMessage[],
+    shouldHideMessageFromTranscript: (message: MuxMessage) => boolean
+  ): SideQuestionDisplayPlan {
+    const messagesById = new Map<string, MuxMessage>();
+    const linkedSideAnswerByQuestionId = new Map<string, MuxMessage>();
+    for (const message of allMessages) {
+      messagesById.set(message.id, message);
+      if (!isSideQuestionAnswerMuxMessage(message)) {
+        continue;
+      }
+
+      const questionMessageId = message.metadata.muxMetadata.questionMessageId;
+      if (typeof questionMessageId === "string") {
+        linkedSideAnswerByQuestionId.set(questionMessageId, message);
+      }
+    }
+
+    const interruptionsByInterruptedId = new Map<string, SideQuestionInterrupt[]>();
+    const inlineSideQuestionMessageIds = new Set<string>();
+
+    for (let i = 0; i < allMessages.length; i++) {
+      const msg = allMessages[i];
+      if (!isSideQuestionUserMuxMessage(msg)) {
+        continue;
+      }
+
+      const muxMeta = msg.metadata.muxMetadata;
+      if (
+        typeof muxMeta.interruptedMessageId !== "string" ||
+        typeof muxMeta.interruptedTextLength !== "number" ||
+        !Number.isFinite(muxMeta.interruptedTextLength)
+      ) {
+        continue;
+      }
+
+      const interruptedMessage = messagesById.get(muxMeta.interruptedMessageId);
+      if (
+        interruptedMessage?.role !== "assistant" ||
+        isSideQuestionAnswerMuxMessage(interruptedMessage) ||
+        shouldHideMessageFromTranscript(interruptedMessage)
+      ) {
+        continue;
+      }
+
+      // Use the persisted sequence as part of the anchor identity so a stale
+      // /btw snapshot cannot split an unrelated assistant message that happens
+      // to reuse the same id after history repair or compaction-edge replay.
+      if (
+        typeof muxMeta.interruptedHistorySequence === "number" &&
+        interruptedMessage.metadata?.historySequence !== muxMeta.interruptedHistorySequence
+      ) {
+        continue;
+      }
+
+      const linkedAnswer = linkedSideAnswerByQuestionId.get(msg.id);
+      const next = allMessages[i + 1];
+      const adjacentAnswer =
+        next !== undefined && isSideQuestionAnswerMuxMessage(next) ? next : undefined;
+      const adjacentAnswerQuestionId = adjacentAnswer?.metadata.muxMetadata.questionMessageId;
+      const legacyAdjacentAnswer =
+        adjacentAnswer !== undefined && adjacentAnswerQuestionId === undefined
+          ? adjacentAnswer
+          : undefined;
+      const answer = linkedAnswer ?? legacyAdjacentAnswer;
+      const answerIsRenderable =
+        answer !== undefined && this.isRenderableSideQuestionAnswer(answer);
+      const entry: SideQuestionInterrupt = {
+        atTextLength: Math.max(0, muxMeta.interruptedTextLength),
+        atPartIndex:
+          typeof muxMeta.interruptedPartIndex === "number"
+            ? muxMeta.interruptedPartIndex
+            : undefined,
+        sideQuestionUserMsg: msg,
+        sideQuestionAnswerMsg: answerIsRenderable ? answer : undefined,
+      };
+      const existing = interruptionsByInterruptedId.get(muxMeta.interruptedMessageId);
+      if (existing) {
+        existing.push(entry);
+      } else {
+        interruptionsByInterruptedId.set(muxMeta.interruptedMessageId, [entry]);
+      }
+
+      // Decide split ownership before the display walk starts. This keeps
+      // anchored /btw rows from ever rendering once at their chronological tail
+      // and again inside the interrupted assistant split.
+      inlineSideQuestionMessageIds.add(msg.id);
+      if (answerIsRenderable && answer) {
+        inlineSideQuestionMessageIds.add(answer.id);
+      }
+    }
+
+    for (const interruptions of interruptionsByInterruptedId.values()) {
+      interruptions.sort((left, right) => this.compareSideQuestionInterrupts(left, right));
+    }
+
+    return { interruptionsByInterruptedId, inlineSideQuestionMessageIds };
+  }
+
+  private getInterruptedSideQuestionBranch(
+    interruptedMessage: MuxMessage,
+    interrupt: SideQuestionInterrupt
+  ): SideQuestionDisplayBranch {
+    return {
+      branchId: interrupt.sideQuestionUserMsg.id,
+      placement: "interrupted",
+      interruptedMessageId: interruptedMessage.id,
+      interruptedHistorySequence: interruptedMessage.metadata?.historySequence,
+    };
+  }
+
+  private applySideQuestionBranch(
+    rows: DisplayedMessage[],
+    branch: SideQuestionDisplayBranch
+  ): DisplayedMessage[] {
+    let didChange = false;
+    const markedRows = rows.map((row) => {
+      if (row.type === "user" && row.isSideQuestion === true) {
+        didChange = true;
+        return { ...row, sideQuestionBranch: branch };
+      }
+      if (row.type === "assistant" && row.isSideAnswer === true) {
+        didChange = true;
+        return { ...row, sideQuestionBranch: branch };
+      }
+      return row;
+    });
+    return didChange ? markedRows : rows;
+  }
+
   /**
    * Split a list of message parts at one or more cumulative-text-length
    * boundaries.
@@ -3144,7 +3298,9 @@ export class StreamingMessageAggregator {
     agentSkillSnapshot?: { frontmatterYaml?: string; body?: string },
     inlineSkillSnapshots?: InlineSkillSnapshotMap
   ): DisplayedMessage[] {
-    const sorted = [...interrupts].sort((a, b) => a.atTextLength - b.atTextLength);
+    const sorted = [...interrupts].sort((left, right) =>
+      this.compareSideQuestionInterrupts(left, right)
+    );
     const segments = this.splitMessagePartsAtTextLengths(
       message.parts,
       sorted.map((interrupt) => ({
@@ -3196,9 +3352,20 @@ export class StreamingMessageAggregator {
 
       if (i < sorted.length) {
         const interrupt = sorted[i];
-        result.push(...this.buildDisplayedMessagesForMessage(interrupt.sideQuestionUserMsg));
+        const branch = this.getInterruptedSideQuestionBranch(message, interrupt);
+        result.push(
+          ...this.applySideQuestionBranch(
+            this.buildDisplayedMessagesForMessage(interrupt.sideQuestionUserMsg),
+            branch
+          )
+        );
         if (interrupt.sideQuestionAnswerMsg) {
-          result.push(...this.buildDisplayedMessagesForMessage(interrupt.sideQuestionAnswerMsg));
+          result.push(
+            ...this.applySideQuestionBranch(
+              this.buildDisplayedMessagesForMessage(interrupt.sideQuestionAnswerMsg),
+              branch
+            )
+          );
         }
       }
     }
@@ -3249,6 +3416,11 @@ export class StreamingMessageAggregator {
       const showSyntheticMessages =
         typeof window !== "undefined" && window.api?.debugLlmRequest === true;
 
+      const shouldHideMessageFromTranscript = (message: MuxMessage): boolean =>
+        message.metadata?.synthetic === true &&
+        !showSyntheticMessages &&
+        message.metadata?.uiVisible !== true;
+
       // Synthetic agent-skill snapshot messages are hidden from the transcript unless
       // debugLlmRequest is enabled. We still want to surface their content in the UI by
       // attaching the resolved snapshot (frontmatterYaml + body) to subsequent user
@@ -3268,82 +3440,21 @@ export class StreamingMessageAggregator {
       // (lower historySequence => higher in the transcript), defeating
       // the "main chat continues after the aside" UX.
       //
-      // We pre-walk allMessages to build:
-      //   - interruptionsByInterruptedId: which main-agent messages get
-      //     split, and at which text offsets.
-      //   - emittedAsSplitChildren: side-question user + answer rows
-      //     that the split path will emit inline. The main walk must
-      //     SKIP these to avoid double-rendering.
+      // Build a placement plan before rendering any rows. Anchored /btw rows
+      // are owned by the interrupted assistant's split output; stale or
+      // standalone /btw rows render chronologically and cannot become split
+      // children later in the same pass.
       // ---------------------------------------------------------------
-      const interruptionsByInterruptedId = new Map<string, SideQuestionInterrupt[]>();
-      const emittedAsSplitChildren = new Set<string>();
-
-      const isRenderableSideQuestionAnswer = (answer: MuxMessage): boolean =>
-        this.activeStreams.has(answer.id) || answer.parts.length > 0;
-      const linkedSideAnswerByQuestionId = new Map<string, MuxMessage>();
-      for (const message of allMessages) {
-        if (!isSideQuestionAnswerMuxMessage(message)) {
-          continue;
-        }
-        const questionMessageId = message.metadata.muxMetadata.questionMessageId;
-        if (typeof questionMessageId === "string") {
-          linkedSideAnswerByQuestionId.set(questionMessageId, message);
-        }
-      }
-
-      // A /btw answer (side-question-answer) normally follows its user
-      // /btw row in history, but model setup can lag behind the user row.
-      // Pair by the stable questionMessageId when present, falling back to
-      // adjacency only for legacy history rows that predate that link.
-      for (let i = 0; i < allMessages.length; i++) {
-        const msg = allMessages[i];
-        if (!isSideQuestionUserMuxMessage(msg)) {
-          continue;
-        }
-        const muxMeta = msg.metadata.muxMetadata;
-        if (
-          typeof muxMeta.interruptedMessageId !== "string" ||
-          typeof muxMeta.interruptedTextLength !== "number"
-        ) {
-          continue;
-        }
-
-        const linkedAnswer = linkedSideAnswerByQuestionId.get(msg.id);
-        const next = allMessages[i + 1];
-        const adjacentAnswer =
-          next !== undefined && isSideQuestionAnswerMuxMessage(next) ? next : undefined;
-        const adjacentAnswerQuestionId = adjacentAnswer?.metadata.muxMetadata.questionMessageId;
-        const legacyAdjacentAnswer =
-          adjacentAnswer !== undefined && adjacentAnswerQuestionId === undefined
-            ? adjacentAnswer
-            : undefined;
-        const answer = linkedAnswer ?? legacyAdjacentAnswer;
-        const answerIsRenderable = answer !== undefined && isRenderableSideQuestionAnswer(answer);
-        const existing = interruptionsByInterruptedId.get(muxMeta.interruptedMessageId);
-        const entry = {
-          atTextLength: muxMeta.interruptedTextLength,
-          atPartIndex:
-            typeof muxMeta.interruptedPartIndex === "number"
-              ? muxMeta.interruptedPartIndex
-              : undefined,
-          sideQuestionUserMsg: msg,
-          sideQuestionAnswerMsg: answerIsRenderable ? answer : undefined,
-        };
-        if (existing) {
-          existing.push(entry);
-        } else {
-          interruptionsByInterruptedId.set(muxMeta.interruptedMessageId, [entry]);
-        }
-      }
+      const sideQuestionDisplayPlan = this.buildSideQuestionDisplayPlan(
+        allMessages,
+        shouldHideMessageFromTranscript
+      );
 
       for (const message of allMessages) {
         maybeCollectAgentSkillSnapshot(message, latestAgentSkillSnapshotByKey);
-        const isSynthetic = message.metadata?.synthetic === true;
-        const isUiVisibleSynthetic = message.metadata?.uiVisible === true;
-
         // Synthetic messages are typically for model context only.
         // Show them only in debug mode, or when explicitly marked as UI-visible.
-        if (isSynthetic && !showSyntheticMessages && !isUiVisibleSynthetic) {
+        if (shouldHideMessageFromTranscript(message)) {
           continue;
         }
 
@@ -3379,11 +3490,11 @@ export class StreamingMessageAggregator {
         // guard the side-question pair would render twice — once between
         // the split halves and once at its natural sequence position
         // (below the interrupted message).
-        if (emittedAsSplitChildren.has(message.id)) {
+        if (sideQuestionDisplayPlan.inlineSideQuestionMessageIds.has(message.id)) {
           continue;
         }
 
-        const interrupts = interruptionsByInterruptedId.get(message.id);
+        const interrupts = sideQuestionDisplayPlan.interruptionsByInterruptedId.get(message.id);
         if (interrupts && message.role === "assistant") {
           // Interrupted main-agent message: build its display rows with
           // the /btw pair(s) interleaved in the middle. We bypass the
@@ -3396,12 +3507,6 @@ export class StreamingMessageAggregator {
             agentSkillSnapshotForDisplay,
             inlineSkillSnapshotState?.snapshots
           );
-          for (const interrupt of interrupts) {
-            emittedAsSplitChildren.add(interrupt.sideQuestionUserMsg.id);
-            if (interrupt.sideQuestionAnswerMsg) {
-              emittedAsSplitChildren.add(interrupt.sideQuestionAnswerMsg.id);
-            }
-          }
           if (splitRows.length > 0) {
             displayedMessages.push(...splitRows);
           }

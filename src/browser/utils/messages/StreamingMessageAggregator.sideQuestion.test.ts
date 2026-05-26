@@ -92,6 +92,14 @@ function appendSideAnswer(
   aggregator.handleMessage(envelope);
 }
 
+function readSideQuestionPlacement(
+  row: ReturnType<StreamingMessageAggregator["getDisplayedMessages"]>[number]
+): "interrupted" | "standalone" | undefined {
+  return row.type === "user" || row.type === "assistant"
+    ? row.sideQuestionBranch?.placement
+    : undefined;
+}
+
 describe("StreamingMessageAggregator /btw rendering", () => {
   it("marks side-question-answer rows with isSideAnswer in displayed messages", () => {
     // Regression: the renderer derives `isSideAnswer` from the
@@ -476,7 +484,7 @@ describe("StreamingMessageAggregator /btw rendering", () => {
       interruptedTextLength: 5,
       interruptedHistorySequence: 1,
     });
-    appendSideAnswer(aggregator, "btw-a", 3, "four");
+    appendSideAnswer(aggregator, "btw-a", 3, "four", "btw-q");
 
     const rows = aggregator.getDisplayedMessages();
     const visibleHistoryIds = rows
@@ -485,6 +493,24 @@ describe("StreamingMessageAggregator /btw rendering", () => {
 
     // Pre-aside main row, side question, side answer, post-aside main row.
     expect(visibleHistoryIds).toEqual(["main-1", "btw-q", "btw-a", "main-1"]);
+
+    const sideRows = rows.filter(
+      (r) =>
+        (r.type === "user" || r.type === "assistant") &&
+        (r.historyId === "btw-q" || r.historyId === "btw-a")
+    );
+    expect(sideRows).toHaveLength(2);
+    for (const row of sideRows) {
+      if (row.type !== "user" && row.type !== "assistant") {
+        throw new Error("expected /btw display rows to be user or assistant rows");
+      }
+      expect(row.sideQuestionBranch).toEqual({
+        branchId: "btw-q",
+        placement: "interrupted",
+        interruptedMessageId: "main-1",
+        interruptedHistorySequence: 1,
+      });
+    }
 
     // The pre and post halves carry the split text content.
     const mainRows = rows.filter(
@@ -529,6 +555,84 @@ describe("StreamingMessageAggregator /btw rendering", () => {
       "btw-a2",
       "main-1",
     ]);
+  });
+
+  it("does not duplicate anchored /btw rows when side rows sort before the interrupted assistant", () => {
+    // The split owner must be decided before the display walk starts. Otherwise
+    // out-of-order replay can render the side rows chronologically and then
+    // render them again inside the interrupted assistant split.
+    const aggregator = new StreamingMessageAggregator(WORKSPACE_CREATED_AT);
+
+    appendSideUser(aggregator, "btw-q", 2, "what's 2+2", {
+      interruptedMessageId: "main-1",
+      interruptedTextLength: 5,
+      interruptedHistorySequence: 10,
+    });
+    appendSideAnswer(aggregator, "btw-a", 3, "four", "btw-q");
+    appendMainAssistant(aggregator, "main-1", 10, "hello world");
+
+    const visibleHistoryIds = aggregator
+      .getDisplayedMessages()
+      .filter((r) => r.type === "assistant" || r.type === "user")
+      .map((r) => r.historyId);
+
+    expect(visibleHistoryIds).toEqual(["main-1", "btw-q", "btw-a", "main-1"]);
+    expect(visibleHistoryIds.filter((id) => id === "btw-q")).toHaveLength(1);
+    expect(visibleHistoryIds.filter((id) => id === "btw-a")).toHaveLength(1);
+  });
+
+  it("treats interruptedHistorySequence mismatches as standalone /btw rows", () => {
+    const aggregator = new StreamingMessageAggregator(WORKSPACE_CREATED_AT);
+
+    appendMainAssistant(aggregator, "main-1", 1, "hello world");
+    appendSideUser(aggregator, "btw-q", 2, "stale anchor", {
+      interruptedMessageId: "main-1",
+      interruptedTextLength: 5,
+      interruptedHistorySequence: 999,
+    });
+    appendSideAnswer(aggregator, "btw-a", 3, "answer", "btw-q");
+
+    const rows = aggregator.getDisplayedMessages();
+    const visibleHistoryIds = rows
+      .filter((r) => r.type === "assistant" || r.type === "user")
+      .map((r) => r.historyId);
+
+    expect(visibleHistoryIds).toEqual(["main-1", "btw-q", "btw-a"]);
+    const sideRows = rows.filter(
+      (r) =>
+        (r.type === "user" || r.type === "assistant") &&
+        (r.historyId === "btw-q" || r.historyId === "btw-a")
+    );
+    expect(sideRows.map(readSideQuestionPlacement)).toEqual(["standalone", "standalone"]);
+  });
+
+  it("keeps /btw rows chronological when the interrupted assistant owner is hidden", () => {
+    // Synthetic assistant messages are hidden from the transcript. If a stale
+    // /btw anchor points at one, the side rows must remain visible instead of
+    // being reserved for a split owner that will never render.
+    const aggregator = new StreamingMessageAggregator(WORKSPACE_CREATED_AT);
+
+    aggregator.handleMessage({
+      type: "message",
+      id: "main-hidden",
+      role: "assistant",
+      parts: [{ type: "text", text: "hidden main output" }],
+      metadata: { historySequence: 1, timestamp: 1, synthetic: true },
+    });
+    appendSideUser(aggregator, "btw-q", 2, "why hidden?", {
+      interruptedMessageId: "main-hidden",
+      interruptedTextLength: 6,
+      interruptedHistorySequence: 1,
+    });
+    appendSideAnswer(aggregator, "btw-a", 3, "because synthetic", "btw-q");
+
+    const rows = aggregator.getDisplayedMessages();
+    const visibleHistoryIds = rows
+      .filter((r) => r.type === "assistant" || r.type === "user")
+      .map((r) => r.historyId);
+
+    expect(visibleHistoryIds).toEqual(["btw-q", "btw-a"]);
+    expect(rows.map(readSideQuestionPlacement)).toEqual(["standalone", "standalone"]);
   });
 
   it("keeps pre-existing non-text parts before the side branch at the same text offset", () => {
@@ -687,5 +791,12 @@ describe("StreamingMessageAggregator /btw rendering", () => {
       .map((r) => r.historyId);
 
     expect(visibleHistoryIds).toEqual(["main-1", "btw-q", "btw-a"]);
+
+    const sideRows = rows.filter(
+      (r) =>
+        (r.type === "user" || r.type === "assistant") &&
+        (r.historyId === "btw-q" || r.historyId === "btw-a")
+    );
+    expect(sideRows.map(readSideQuestionPlacement)).toEqual(["standalone", "standalone"]);
   });
 });

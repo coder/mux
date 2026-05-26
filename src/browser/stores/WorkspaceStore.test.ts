@@ -5215,7 +5215,7 @@ describe("WorkspaceStore", () => {
           historySequence: 3,
           timestamp: 1_300,
           model: "claude-haiku-3.5",
-          muxMetadata: { type: "side-question-answer" },
+          muxMetadata: { type: "side-question-answer", questionMessageId: "btw-user-1" },
         },
       });
       rawStore.handleChatMessage(workspaceId, {
@@ -5265,6 +5265,20 @@ describe("WorkspaceStore", () => {
           .filter((m) => m.type === "assistant" || m.type === "user")
           .map((m) => m.historyId);
       expect(readVisibleHistoryIds()).toEqual(["main-1", "btw-user-1", "btw-ans-1", "main-1"]);
+
+      const sideRows = aggregator
+        .getDisplayedMessages()
+        .filter(
+          (m) =>
+            (m.type === "assistant" || m.type === "user") &&
+            (m.historyId === "btw-user-1" || m.historyId === "btw-ans-1")
+        );
+      expect(sideRows).toHaveLength(2);
+      expect(
+        sideRows.map((m) =>
+          m.type === "assistant" || m.type === "user" ? m.sideQuestionBranch?.placement : undefined
+        )
+      ).toEqual(["interrupted", "interrupted"]);
 
       // After /btw settles, the underlying main message still has the full
       // text and the displayed rows keep the same split order.
@@ -5356,6 +5370,21 @@ describe("WorkspaceStore", () => {
           .find((message) => message.id === "btw-answer-standalone")
           ?.parts.some((part) => part.type === "text" && part.text === "side answer")
       ).toBe(true);
+      const displayedSideRows = aggregator
+        ?.getDisplayedMessages()
+        .filter(
+          (message) =>
+            (message.type === "assistant" || message.type === "user") &&
+            (message.historyId === "btw-user-standalone" ||
+              message.historyId === "btw-answer-standalone")
+        );
+      expect(
+        displayedSideRows?.map((message) =>
+          message.type === "assistant" || message.type === "user"
+            ? message.sideQuestionBranch?.placement
+            : undefined
+        )
+      ).toEqual(["standalone", "standalone"]);
     });
     it("keeps replayed /btw answer streams out of workspace interrupt state", async () => {
       const workspaceId = "btw-replay-side-only-not-busy";
