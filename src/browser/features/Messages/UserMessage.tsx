@@ -7,6 +7,7 @@ import { UserMessageContent } from "./UserMessageContent";
 import { GoalSyntheticMessageContent } from "./GoalSyntheticMessageContent";
 import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import {
@@ -23,6 +24,7 @@ import {
   ClipboardCheck,
   MessageCircleQuestion,
   Pencil,
+  PinOff,
   Target,
 } from "lucide-react";
 import {
@@ -49,6 +51,14 @@ interface UserMessageProps {
   clipboardWriteText?: (data: string) => Promise<void>;
   /** Navigation info for backward/forward between user messages */
   navigation?: UserMessageNavigation;
+  /**
+   * For /btw side-question rows only: callback invoked when the user clicks the
+   * dismiss-stickiness control in the side-question header. The ChatPane uses
+   * this to permanently exempt this side question from the transcript
+   * scroll-hold for the rest of the workspace session. When omitted, no
+   * dismiss control is rendered.
+   */
+  onDismissSticky?: (historyId: string) => void;
 }
 
 export const UserMessage: React.FC<UserMessageProps> = ({
@@ -58,6 +68,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   isCompacting,
   clipboardWriteText = copyToClipboard,
   navigation,
+  onDismissSticky,
 }) => {
   const isSynthetic = message.isSynthetic === true;
   const isGoalContinuation = message.isGoalContinuation === true;
@@ -236,7 +247,26 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       >
         <div className={SIDE_QUESTION_HEADER_CLASS}>
           <MessageCircleQuestion aria-hidden="true" className="h-3 w-3" />
-          Side question
+          <span>Side question</span>
+          {onDismissSticky && (
+            // Explicit per-instance escape hatch from the transcript
+            // scroll-hold ("stickiness") this row triggers. The various
+            // heuristic release paths (wheel / mousedown / key / touch /
+            // jump-to-bottom) have been fragile, so give the user a
+            // deterministic dismiss that also prevents the hold from
+            // re-arming for this row on subsequent stream updates.
+            <TooltipIfPresent tooltip="Dismiss sticky position">
+              <button
+                type="button"
+                aria-label="Dismiss side question sticky position"
+                data-side-question-dismiss
+                onClick={() => onDismissSticky(message.historyId)}
+                className="text-muted hover:text-foreground ml-auto inline-flex h-4 w-4 items-center justify-center rounded-sm transition-colors"
+              >
+                <PinOff aria-hidden="true" className="h-3 w-3" />
+              </button>
+            </TooltipIfPresent>
+          )}
         </div>
         {messageWindow}
       </div>

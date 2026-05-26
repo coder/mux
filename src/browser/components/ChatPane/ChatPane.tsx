@@ -494,7 +494,22 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 
   const activeSideQuestionScrollHoldTargetRef = useRef<string | null>(null);
 
+  // User-dismissed side question stickiness: any historyId in this set is
+  // permanently exempt from the scroll-hold for the lifetime of the workspace
+  // session. This is the deterministic escape hatch from the various heuristic
+  // hold-release paths (wheel / mousedown / key / touch / jump-to-bottom), which
+  // have been the source of recurring bugs. The set is keyed by the side
+  // question user-message historyId, but is also consulted when the associated
+  // side-answer is the active target (the hold logic aligns to the question
+  // row in both cases).
+  const dismissedSideQuestionStickyIdsRef = useRef<Set<string>>(new Set());
+
   const clearActiveSideQuestionScrollHold = useCallback(() => {
+    activeSideQuestionScrollHoldTargetRef.current = null;
+  }, []);
+
+  const handleDismissSideQuestionSticky = useCallback((historyId: string) => {
+    dismissedSideQuestionStickyIdsRef.current.add(historyId);
     activeSideQuestionScrollHoldTargetRef.current = null;
   }, []);
 
@@ -506,6 +521,11 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
       heldSideAnswerIds: new Set<string>(),
     };
     activeSideQuestionScrollHoldTargetRef.current = null;
+    // A workspace switch unloads the side-question rows that were dismissed,
+    // so the dismissal set is no longer meaningful. Reset to avoid leaking
+    // historyIds across workspaces (and to allow a fresh first-time hold if
+    // the same workspace is later reopened with new branches).
+    dismissedSideQuestionStickyIdsRef.current = new Set();
   }, [workspaceId]);
 
   useLayoutEffect(() => {
@@ -517,6 +537,48 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
       findSideQuestionScrollHoldTarget(deferredMessages, sideQuestionScrollHoldRef.current);
     sideQuestionScrollHoldRef.current = nextState;
 
+    const dismissedIds = dismissedSideQuestionStickyIdsRef.current;
+    // The dismiss set tracks the side-question row's historyId. Some active
+    // holds use the side-answer's historyId as the target when the question
+    // row is not yet present in the displayed slice; resolve both directions
+    // by checking if the active target's neighbour pair has been dismissed.
+    const isTargetDismissed = (historyId: string | null | undefined): boolean => {
+      if (!historyId) return false;
+      if (dismissedIds.has(historyId)) return true;
+      const index = deferredMessages.findIndex(
+        (message) =>
+          (message.type === "user" || message.type === "assistant") &&
+          message.historyId === historyId
+      );
+      if (index === -1) return false;
+      const message = deferredMessages[index];
+      if (message.type === "assistant" && message.isSideAnswer === true) {
+        const previous = deferredMessages[index - 1];
+        if (
+          previous?.type === "user" &&
+          previous.isSideQuestion === true &&
+          dismissedIds.has(previous.historyId)
+        ) {
+          return true;
+        }
+      }
+      if (message.type === "user" && message.isSideQuestion === true) {
+        const next = deferredMessages[index + 1];
+        if (
+          next?.type === "assistant" &&
+          next.isSideAnswer === true &&
+          dismissedIds.has(next.historyId)
+        ) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    if (isTargetDismissed(activeSideQuestionScrollHoldTargetRef.current)) {
+      activeSideQuestionScrollHoldTargetRef.current = null;
+    }
+
     const activeTargetHistoryId = activeSideQuestionScrollHoldTargetRef.current;
     const activeHold = findActiveSideQuestionScrollHoldTarget(
       deferredMessages,
@@ -524,7 +586,10 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     );
     const continuingTargetHistoryId =
       activeHold.targetHistoryId === activeTargetHistoryId ? activeHold.targetHistoryId : undefined;
-    const shouldStartHold = detectedTargetHistoryId !== undefined && autoScroll;
+    const shouldStartHold =
+      detectedTargetHistoryId !== undefined &&
+      autoScroll &&
+      !isTargetDismissed(detectedTargetHistoryId);
     const targetHistoryId = shouldStartHold ? detectedTargetHistoryId : continuingTargetHistoryId;
 
     if (!targetHistoryId) {
@@ -1235,6 +1300,11 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                               userMessageNavigation={
                                 msg.type === "user"
                                   ? userMessageNavigationByHistoryId?.get(msg.historyId)
+                                  : undefined
+                              }
+                              onDismissSideQuestionSticky={
+                                msg.type === "user" && msg.isSideQuestion === true
+                                  ? handleDismissSideQuestionSticky
                                   : undefined
                               }
                             />
