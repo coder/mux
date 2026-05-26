@@ -16,15 +16,20 @@ export function computeRecencyTimestamp(
   createdAt?: string,
   unarchivedAt?: string
 ): number | null {
-  let createdTimestamp: number | undefined;
-  if (createdAt) {
-    const parsed = new Date(createdAt).getTime();
-    createdTimestamp = !isNaN(parsed) ? parsed : undefined;
-  }
-  let unarchivedTimestamp: number | undefined;
-  if (unarchivedAt) {
-    const parsed = new Date(unarchivedAt).getTime();
-    unarchivedTimestamp = !isNaN(parsed) ? parsed : undefined;
-  }
-  return computeRecencyFromMessages(messages, createdTimestamp, unarchivedTimestamp);
+  return computeRecencyFromMessages(
+    messages,
+    parseOptionalIsoTimestamp(createdAt),
+    parseOptionalIsoTimestamp(unarchivedAt)
+  );
+}
+
+// Both `createdAt` and `unarchivedAt` arrive as optional ISO strings and feed
+// the same numeric-timestamp slot in `computeRecencyFromMessages`. Centralizing
+// the parse keeps the invalid-date guard (NaN → undefined) consistent across
+// inputs; an unparseable string is treated the same as a missing one so it
+// can't poison the max() in the underlying recency calculation.
+function parseOptionalIsoTimestamp(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = new Date(value).getTime();
+  return !isNaN(parsed) ? parsed : undefined;
 }
