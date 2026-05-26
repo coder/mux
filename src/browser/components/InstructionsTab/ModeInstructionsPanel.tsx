@@ -29,6 +29,11 @@ interface ModeInstructionsPanelProps {
 export function ModeInstructionsPanel(props: ModeInstructionsPanelProps) {
   const { api } = useAPI();
   const { agentId, currentAgent, loaded } = useAgent();
+  // Cache the (agentId, workspaceId) the loaded `pkg` belongs to so we can
+  // invalidate it on either dimension. An `exec.md` in workspace A and an
+  // `exec.md` in workspace B can have completely different bodies, so a bare
+  // `pkg.id === agentId` check is not enough.
+  const [pkgKey, setPkgKey] = useState<{ agentId: string; workspaceId: string } | null>(null);
   const [pkg, setPkg] = useState<AgentDefinitionPackage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,11 +50,17 @@ export function ModeInstructionsPanel(props: ModeInstructionsPanelProps) {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
+    const requestWorkspaceId = props.workspaceId;
+    const requestAgentId = agentId;
     api.agents
-      .get({ workspaceId: props.workspaceId, agentId }, { signal: controller.signal })
+      .get(
+        { workspaceId: requestWorkspaceId, agentId: requestAgentId },
+        { signal: controller.signal }
+      )
       .then((result) => {
         if (controller.signal.aborted) return;
         setPkg(result);
+        setPkgKey({ agentId: requestAgentId, workspaceId: requestWorkspaceId });
         setLoading(false);
       })
       .catch((err) => {
@@ -60,15 +71,16 @@ export function ModeInstructionsPanel(props: ModeInstructionsPanelProps) {
     return () => controller.abort();
   }, [api, agentId, props.workspaceId, refreshTick]);
 
-  // Guard against stale data leaking across mode switches: when the user picks
-  // a different agent the previous fetch resolves with the *old* id, and even
-  // after the new fetch starts we'd otherwise keep rendering the old body
-  // (and its token count) under the new mode's color/name until the new
-  // response arrives. Treat any pkg whose id doesn't match the current
-  // agentId as "not loaded yet" so the body section falls back to the
+  // Guard against stale data leaking across mode *and* workspace switches:
+  // when either dimension changes, the previous fetch could still resolve
+  // and we'd otherwise keep rendering the wrong body (and its token count)
+  // under the new mode's color/name until the new response arrives. Treat
+  // any pkg whose (agentId, workspaceId) doesn't match the current
+  // selection as "not loaded yet" so the body section falls back to the
   // loading/empty state instead of showing the wrong prompt.
-  const pkgMatchesAgent = pkg?.id === agentId;
-  const effectivePkg = pkgMatchesAgent ? pkg : null;
+  const pkgMatchesContext =
+    pkgKey?.agentId === agentId && pkgKey?.workspaceId === props.workspaceId;
+  const effectivePkg = pkgMatchesContext ? pkg : null;
 
   const displayName = currentAgent?.name ?? formatAgentIdLabel(agentId);
   const description = currentAgent?.description ?? effectivePkg?.frontmatter.description;
