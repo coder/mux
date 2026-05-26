@@ -1607,11 +1607,18 @@ code {
   line-height: 1.4;
   color: color-mix(in srgb, var(--color-muted-foreground) 88%, var(--color-foreground) 12%);
   padding: 4px 0;
-  /* Reserved gutter on every row's left edge so the active-state accent rail
-     has somewhere to live without overlapping the link text. The 2px rail
-     plus a ~6px gap before the text lands all heading text at column 8 and
-     keeps the heading and level-1 items vertically aligned by construction. */
-  --plan-toc-rail-gutter: 8px;
+  /*
+   * Geometry tokens used by both the heading and the list rows so they align
+   * by construction:
+   *   --plan-toc-rail-width  : width of the always-on guide rail (lives on
+   *                            the .plan-toc-list's border-left).
+   *   --plan-toc-rail-gap    : visual gap between that rail and the text.
+   * The heading reserves an equivalent (rail-width + rail-gap) left padding
+   * so its text starts in the same column as level-1 list rows below it,
+   * even though the heading itself sits outside the rail.
+   */
+  --plan-toc-rail-width: 2px;
+  --plan-toc-rail-gap: 8px;
 }
 
 .plan-toc-heading {
@@ -1622,9 +1629,11 @@ code {
   font-weight: 600;
   color: color-mix(in srgb, var(--color-plan-mode) 58%, var(--color-foreground) 42%);
   margin: 0 0 6px 0;
-  /* Match the rail gutter so the heading text aligns with level-1 list items,
-     and so the active-state rail (if added) lives in the same column. */
-  padding: 2px 0 2px var(--plan-toc-rail-gutter);
+  /* Align the title text with the list rows below: reserve the same left
+     column the list's rail + rail-gap occupies. The title itself sits above
+     the rail (no rail glyph at this row), but its TEXT lines up with level-1
+     list rows so the TOC reads as a coherent column. */
+  padding: 2px 0 2px calc(var(--plan-toc-rail-width) + var(--plan-toc-rail-gap));
   /* Let long plan titles wrap inside the gutter instead of wasting available
      horizontal space and hiding useful context behind an ellipsis. */
   white-space: normal;
@@ -1642,14 +1651,11 @@ code {
   display: block;
   width: 100%;
   border-radius: 3px;
-  transition:
-    color 120ms ease,
-    background-color 120ms ease;
+  transition: color 120ms ease;
 }
 
 .plan-toc-heading-link:hover {
-  color: color-mix(in srgb, var(--color-plan-mode) 70%, var(--color-foreground) 30%);
-  background: var(--color-hover);
+  color: color-mix(in srgb, var(--color-plan-mode) 78%, var(--color-foreground) 22%);
 }
 
 .plan-toc-heading-link:focus-visible {
@@ -1658,11 +1664,12 @@ code {
 }
 
 /* Active heading indicator. When the reader has scrolled into the plan's
-   title-level section (before any h2), highlight the title link so the TOC
-   gives a clear "you are here" cue to match the in-list item active state. */
+   title-level section (before any h2), the title gets a stronger plan tint
+   to signal "you are here". Color-only — no background, no weight change —
+   so the title's text occupies the exact same horizontal extents in both
+   states and never shifts vs the list rows below. */
 .plan-toc-heading-link-active {
-  color: color-mix(in srgb, var(--color-plan-mode) 78%, var(--color-foreground) 22%);
-  background: color-mix(in srgb, var(--color-plan-mode) 10%, transparent);
+  color: color-mix(in srgb, var(--color-plan-mode) 88%, var(--color-foreground) 12%);
 }
 
 .plan-toc-list {
@@ -1671,7 +1678,17 @@ code {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  /*
+   * Always-on guide rail spanning the entire list of nav rows. The rail
+   * provides the structural anchor every row shares; the active row's
+   * segment just brightens to indicate position. Putting the rail on the
+   * ul (rather than each li's border-left) keeps it a continuous line even
+   * if siblings ever gain a `gap`.
+   *
+   * Using `--surface-plan-divider` ties the rail's neutral state back to the
+   * plan card's own dividers, so the TOC reads as part of the plan surface.
+   */
+  border-left: var(--plan-toc-rail-width) solid var(--surface-plan-divider);
 }
 
 .plan-toc-item {
@@ -1681,6 +1698,9 @@ code {
      with the title (data-level=1 → 0 indent) and deeper headings get a small
      step per level. */
   --plan-toc-indent: 0;
+  /* Needed so the active-state rail overlay can be absolutely positioned on
+     top of the ul's border-left. */
+  position: relative;
 }
 
 .plan-toc-item[data-level="1"] {
@@ -1697,10 +1717,9 @@ code {
 }
 
 .plan-toc-link {
-  /* Render as a flush text link rather than a chunky button. The link's left
-     padding is `rail-gutter + per-level-indent` so all rows reserve the same
-     gutter for the active-state accent rail while still stepping deeper
-     headings under their parent. */
+  /* Render as a flush text link rather than a chunky button. The rail's
+     width is absorbed by the ul's border-left, so the link only needs to
+     pad by the rail-text gap plus the per-level indent. */
   appearance: none;
   background: transparent;
   border: 0;
@@ -1710,23 +1729,27 @@ code {
   cursor: pointer;
   display: block;
   width: 100%;
-  padding: 2px 0 2px calc(var(--plan-toc-rail-gutter) + var(--plan-toc-indent));
-  border-radius: 3px;
+  padding: 3px 0 3px calc(var(--plan-toc-rail-gap) + var(--plan-toc-indent));
+  border-radius: 0;
   white-space: normal;
   overflow-wrap: anywhere;
-  transition:
-    color 120ms ease,
-    background-color 120ms ease;
+  transition: color 120ms ease;
 }
 
 .plan-toc-item[data-level="1"] .plan-toc-link {
-  font-weight: 500;
+  /* Top-level items are the structural anchors of the plan; render them at
+     the full foreground color with a slight weight bump even when inactive
+     so the outline is legible at a glance. Nested levels remain at the
+     muted list color until hover or active.
+     This weight bump is keyed off level — NOT off the active state — so it
+     does not change between a row's inactive and active renders and cannot
+     cause horizontal text shift the way an active-only weight bump would. */
   color: var(--color-foreground);
+  font-weight: 500;
 }
 
 .plan-toc-link:hover {
   color: var(--color-foreground);
-  background: var(--color-hover);
 }
 
 .plan-toc-link:focus-visible {
@@ -1736,34 +1759,35 @@ code {
 
 /* Active section indicator.
  *
- * The TOC needs a "you are here" cue that survives the gutter's narrow column
- * width and stays legible against the muted default link color. We combine
- * three signals:
- *   1) a plan-tinted left accent rail that visually rhymes with the plan
- *      surface so the indicator reads as part of the same component,
- *   2) a stronger foreground color and slight weight bump for the active
- *      entry so it pops out of the muted list without relying on color alone,
- *   3) a faint plan-tinted background wash to match the hover affordance
- *      while still letting hover layer cleanly on top.
+ * The active row brightens two things WITHOUT changing any layout-affecting
+ * property:
+ *   1) its segment of the shared left rail (via an absolutely-positioned
+ *      overlay that sits flush on top of the ul's border-left), and
+ *   2) its text color.
  *
- * The accent rail uses an inset box-shadow rather than `border-left` so the
- * link's left padding and per-level indentation continue to line up exactly
- * with the inactive rows above and below it. The 2px rail lives inside the
- * dedicated `--plan-toc-rail-gutter` on the link's left edge, so it never
- * overlaps the link text — even for level-1 items where the per-level indent
- * is 0.
+ * Crucially we do NOT bump font-weight, add a background pill, or apply a
+ * box-shadow to the link. The font-weight bump previously caused the text to
+ * gain horizontal width and shift the column rightward — which read as a
+ * misalignment between active and inactive rows. With this design every row
+ * occupies the exact same horizontal extents in every state, and the visual
+ * "you are here" cue comes purely from color brightening of structure that
+ * already exists.
  */
-.plan-toc-item[data-active="true"] .plan-toc-link {
-  color: var(--color-foreground);
-  font-weight: 500;
-  background: color-mix(in srgb, var(--color-plan-mode) 8%, transparent);
-  box-shadow: inset 2px 0 0 0 color-mix(in srgb, var(--color-plan-mode) 70%, transparent);
+.plan-toc-item[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  /* The li's content box starts AFTER the ul's border-left, so the li's
+     own left:0 sits one rail-width to the right of the rail. We offset
+     leftward by the rail's width to land the overlay flush on top of it. */
+  left: calc(var(--plan-toc-rail-width) * -1);
+  top: 0;
+  bottom: 0;
+  width: var(--plan-toc-rail-width);
+  background: var(--color-plan-mode);
 }
 
-.plan-toc-item[data-active="true"] .plan-toc-link:hover {
-  /* Hover should still nudge brighter so users get tactile feedback even on
-     the already-highlighted active row. */
-  background: color-mix(in srgb, var(--color-plan-mode) 14%, var(--color-hover));
+.plan-toc-item[data-active="true"] .plan-toc-link {
+  color: var(--color-foreground);
 }
 
 /* Give plan headings breathing room so scrollIntoView({block:"start"}) lands
