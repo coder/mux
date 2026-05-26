@@ -133,6 +133,10 @@ export class ProviderService {
   private readonly emitter = new EventEmitter();
   private lastWarnedShadowedCustomProviderIds: Set<string> | null = null;
   private readonly stopWatchingProvidersFile: () => void;
+  // Tracks when the last in-app mutation wrote to providers.jsonc and fired
+  // notifyConfigChanged(). Used to suppress the redundant watcher event that
+  // arrives ~300 ms later for that same write.
+  private lastMutationNotifyTime = 0;
 
   constructor(
     private readonly config: Config,
@@ -142,10 +146,14 @@ export class ProviderService {
     // The provider config subscription may have many concurrent listeners (e.g. multiple windows).
     // Avoid noisy MaxListenersExceededWarning for normal usage.
     this.emitter.setMaxListeners(50);
-    // Notify subscribers when providers.jsonc is edited externally (e.g. manual edits).
-    this.stopWatchingProvidersFile = this.config.watchProvidersFile(() =>
-      this.notifyConfigChanged()
-    );
+    // Notify subscribers when providers.jsonc is edited externally (e.g. manual
+    // edits). Skip when the event was triggered by our own in-app save — the
+    // mutation already called notifyConfigChanged() directly, so the watcher
+    // firing ~300 ms later would be a duplicate refresh.
+    this.stopWatchingProvidersFile = this.config.watchProvidersFile(() => {
+      if (Date.now() - this.lastMutationNotifyTime < 1500) return;
+      this.notifyConfigChanged();
+    });
   }
 
   /**
@@ -174,6 +182,16 @@ export class ProviderService {
   notifyConfigChanged(): void {
     this.lastWarnedShadowedCustomProviderIds = null;
     this.emitter.emit("configChanged");
+  }
+
+  /**
+   * Called by in-app mutation methods after writing providers.jsonc.
+   * Records the time so the file-watcher callback can suppress the
+   * redundant notification it would otherwise fire ~300 ms later.
+   */
+  private notifyFromMutation(): void {
+    this.lastMutationNotifyTime = Date.now();
+    this.notifyConfigChanged();
   }
 
   private listBuiltInProviders(): ProviderName[] {
@@ -570,7 +588,7 @@ export class ProviderService {
         };
       }
 
-      this.notifyConfigChanged();
+      this.notifyFromMutation();
       return { success: true, data: providerInfo };
     } catch (error) {
       return {
@@ -667,7 +685,7 @@ export class ProviderService {
     } catch (error) {
       // The provider is already deleted from providers.jsonc. Notify subscribers so they
       // re-sync even when durable model reference cleanup needs another attempt.
-      this.notifyConfigChanged();
+      this.notifyFromMutation();
       return {
         success: false,
         error: addErrorReason(
@@ -680,7 +698,7 @@ export class ProviderService {
       };
     }
 
-    this.notifyConfigChanged();
+    this.notifyFromMutation();
     return { success: true, data: undefined };
   }
 
@@ -800,7 +818,7 @@ export class ProviderService {
 
       providersConfig[provider].models = normalizedModels;
       this.config.saveProvidersConfig(providersConfig);
-      this.notifyConfigChanged();
+      this.notifyFromMutation();
 
       return { success: true, data: undefined };
     } catch (error) {
@@ -930,7 +948,7 @@ export class ProviderService {
 
       // Save updated config
       this.config.saveProvidersConfig(providersConfig);
-      this.notifyConfigChanged();
+      this.notifyFromMutation();
       await this.syncGatewayLifecycle(provider);
 
       return { success: true, data: undefined };
@@ -1040,7 +1058,7 @@ export class ProviderService {
 
       // Save updated config
       this.config.saveProvidersConfig(providersConfig);
-      this.notifyConfigChanged();
+      this.notifyFromMutation();
       await this.syncGatewayLifecycle(provider);
 
       return { success: true, data: undefined };
