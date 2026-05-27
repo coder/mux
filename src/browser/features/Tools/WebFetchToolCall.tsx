@@ -36,6 +36,18 @@ interface NormalizedResult {
 }
 
 /**
+ * Only allow http/https URLs as clickable hrefs to prevent javascript: XSS.
+ */
+function isSafeHref(url: string): boolean {
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Extract domain from URL for compact display
  */
 function getDomain(url: string): string {
@@ -144,14 +156,18 @@ export const WebFetchToolCall: React.FC<WebFetchToolCallProps> = ({
             <div className="bg-code-bg flex flex-wrap gap-4 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
               <div className="flex min-w-0 gap-1.5">
                 <span className="text-secondary font-medium">URL:</span>
-                <a
-                  href={args.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-link font-monospace truncate hover:underline"
-                >
-                  {args.url}
-                </a>
+                {isSafeHref(args.url) ? (
+                  <a
+                    href={args.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-link font-monospace truncate hover:underline"
+                  >
+                    {args.url}
+                  </a>
+                ) : (
+                  <span className="font-monospace truncate">{args.url}</span>
+                )}
               </div>
               {normalized?.success && normalized.title && (
                 <div className="flex min-w-0 gap-1.5">
