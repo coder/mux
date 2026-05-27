@@ -2,7 +2,6 @@
  * SSH config parsing utilities (ssh-config wrapper).
  */
 
-import { spawnSync } from "child_process";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -28,13 +27,6 @@ export interface ResolvedSSHConfig {
 
 function getHomeDir(): string {
   return process.env.USERPROFILE ?? os.homedir();
-}
-function getDefaultUsername(): string {
-  try {
-    return os.userInfo().username;
-  } catch {
-    return process.env.USER ?? process.env.USERNAME ?? "";
-  }
 }
 
 function expandHomePath(value: string, homeDir: string): string {
@@ -152,32 +144,15 @@ function criteriaToStringArray(value: MatchCriteriaValue | undefined): string[] 
   return [];
 }
 
-function expandMatchExecTokens(command: string, hostName: string, user?: string): string {
-  return command.replace(/%(%|h|r)/g, (_match, token) => {
-    switch (token) {
-      case "%":
-        return "%";
-      case "h":
-        return hostName;
-      case "r":
-        return user ?? "";
-      default:
-        return _match;
-    }
-  });
-}
-
 /**
  * Handle `Match host ... !exec ...` blocks that ssh-config doesn't evaluate.
  *
- * Limitation: Only applies ProxyCommand from matching Match blocks. Other directives
- * like User, Port, IdentityFile in the same block are ignored. This is sufficient for
- * Coder configs which only set ProxyCommand in Match blocks.
+ * Security: do not execute `!exec` commands from SSH config. These directives can
+ * contain arbitrary shell and must not be evaluated inside the app process.
  */
 function applyNegatedExecMatch(
   config: SSHConfig,
   hostName: string,
-  user: string | undefined,
   computed: Record<string, ComputedConfigValue>
 ): void {
   if (getConfigValue(computed, "ProxyCommand")) {
@@ -206,27 +181,16 @@ function applyNegatedExecMatch(
       continue;
     }
 
-    const execCommand = criteriaToString(negatedExec);
+    const execCommand = criteriaToString(negatedExec)?.trim();
     if (!execCommand) {
       continue;
     }
 
-    const expandedCommand = expandMatchExecTokens(execCommand, hostName, user);
-    const execResult = spawnSync(expandedCommand, { shell: true });
-
-    if (execResult.status === 0) {
-      continue;
-    }
-
-    const proxyLine = line.config.find(
-      (subline) =>
-        subline.type === SSHConfig.DIRECTIVE && subline.param.toLowerCase() === "proxycommand"
-    );
-
-    if (proxyLine?.type === SSHConfig.DIRECTIVE) {
-      computed.ProxyCommand = proxyLine.value as ComputedConfigValue;
-      return;
-    }
+    log.debug("Ignoring SSH Match !exec directive for security", {
+      hostName,
+      matchHostPatterns: hostPatterns,
+    });
+    continue;
   }
 }
 
@@ -282,9 +246,7 @@ export async function resolveSSHConfig(host: string): Promise<ResolvedSSHConfig>
   const userFromConfig = toStringValue(getConfigValue(computed, "User"));
 
   if (config) {
-    // Default to local username for %r expansion if no User is specified
-    const matchExecUser = userOverride ?? userFromConfig ?? getDefaultUsername();
-    applyNegatedExecMatch(config, hostName, matchExecUser, computed);
+    applyNegatedExecMatch(config, hostName, computed);
   }
 
   const portValue = toStringValue(getConfigValue(computed, "Port"));

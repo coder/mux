@@ -4,7 +4,7 @@ import * as path from "path";
 import { resolveSSHConfig } from "./sshConfigParser";
 
 describe("resolveSSHConfig", () => {
-  test("applies Host + Match host proxy rules", async () => {
+  test("does not execute Match !exec proxy rules", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-ssh-config-"));
     const previousUserProfile = process.env.USERPROFILE;
 
@@ -29,7 +29,7 @@ describe("resolveSSHConfig", () => {
 
       expect(resolved.user).toBe("coder-user");
       expect(resolved.hostName).toBe("pog2.mux--coder");
-      expect(resolved.proxyCommand).toBe("/usr/local/bin/coder --stdio %h");
+      expect(resolved.proxyCommand).toBeUndefined();
     } finally {
       if (previousUserProfile === undefined) {
         delete process.env.USERPROFILE;
@@ -41,7 +41,7 @@ describe("resolveSSHConfig", () => {
     }
   });
 
-  test("defaults %r to local username when no User is specified", async () => {
+  test("ignores Match !exec even when %r token is present", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-ssh-config-"));
     const previousUserProfile = process.env.USERPROFILE;
 
@@ -50,16 +50,10 @@ describe("resolveSSHConfig", () => {
     try {
       await fs.mkdir(path.join(tempDir, ".ssh"), { recursive: true });
 
-      // Config with no User directive - %r should default to local username
-      // The !exec command checks if %r is non-empty; if it were empty, exit 0
-      // would cause the Match to NOT apply (since !exec means "apply if command fails")
       const config = [
         "Host test-host",
         "  HostName 10.0.0.1",
         "",
-        // !exec "test -n %r" fails when %r is non-empty (test -n returns 0 for non-empty)
-        // So we use "test -z %r" which returns 0 when %r IS empty, 1 when non-empty
-        // With %r defaulting to local username, test -z will fail, Match applies
         'Match host 10.0.0.1 !exec "test -z %r"',
         "  ProxyCommand /usr/bin/proxy --user %r",
         "",
@@ -69,8 +63,7 @@ describe("resolveSSHConfig", () => {
 
       const resolved = await resolveSSHConfig("test-host");
 
-      // Should apply ProxyCommand because %r is non-empty (local username)
-      expect(resolved.proxyCommand).toBe("/usr/bin/proxy --user %r");
+      expect(resolved.proxyCommand).toBeUndefined();
       // user should be undefined since no User directive
       expect(resolved.user).toBeUndefined();
     } finally {
