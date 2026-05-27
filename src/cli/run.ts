@@ -55,6 +55,7 @@ import {
   buildProvidersFromEnv,
   hasAnyConfiguredProvider,
 } from "../node/utils/providerRequirements";
+import { installCopilotOnlyEgressPolicy } from "@/node/utils/networkEgressPolicy";
 
 import {
   DEFAULT_THINKING_LEVEL,
@@ -94,6 +95,8 @@ import type { GoalRecordV1 } from "@/common/types/goal";
 const THINKING_LABELS_LIST = [...new Set(Object.values(THINKING_DISPLAY_LABELS))].join(", ");
 
 type CLIMode = "plan" | "exec";
+
+installCopilotOnlyEgressPolicy();
 
 function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): RuntimeConfig {
   if (!value) {

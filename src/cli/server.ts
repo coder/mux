@@ -21,6 +21,7 @@ import { getParseOptions } from "./argv";
 import { resolveServerAuthToken } from "./serverAuthToken";
 import { appendServerCrashLogSync } from "./serverCrashLogging";
 import { shouldExposeLaunchProject } from "./launchProject";
+import { installCopilotOnlyEgressPolicy } from "@/node/utils/networkEgressPolicy";
 
 // Server-mode crashes can terminate the process before the async logger flushes,
 // so these top-level hooks mirror fatal details into mux.log synchronously.
@@ -46,6 +47,8 @@ process.on("beforeExit", (code) => {
     context: { code },
   });
 });
+
+installCopilotOnlyEgressPolicy();
 
 // Track the launch project path for initial navigation
 let launchProjectPath: string | null = null;

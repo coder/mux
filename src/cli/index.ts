@@ -25,6 +25,7 @@ process.umask(0o077);
  */
 import { Command } from "commander";
 import { VERSION } from "../version";
+import { installCopilotOnlyEgressPolicy } from "@/node/utils/networkEgressPolicy";
 import {
   CLI_GLOBAL_FLAGS,
   detectCliEnvironment,
@@ -36,6 +37,7 @@ import {
 
 const env = detectCliEnvironment();
 const subcommand = getSubcommand(process.argv, env);
+installCopilotOnlyEgressPolicy();
 
 function launchDesktop(): void {
   // eslint-disable-next-line @typescript-eslint/no-require-imports

@@ -13,6 +13,7 @@ import {
   getMuxHome,
   migrateLegacyMuxHome,
 } from "@/common/constants/paths";
+import { installCopilotOnlyEgressPolicy } from "@/node/utils/networkEgressPolicy";
 
 // Fix PATH on macOS when launched from Finder (not terminal).
 // GUI apps inherit minimal PATH from launchd, missing Homebrew tools like git-lfs.
@@ -29,6 +30,7 @@ if (process.platform === "darwin") {
 
 // Migrate ~/.cmux and clean obsolete mux-managed bin artifacts before startup uses mux home paths.
 try {
+  installCopilotOnlyEgressPolicy();
   migrateLegacyMuxHome();
   cleanupObsoleteMuxBinArtifacts();
 } catch (error) {
