@@ -9,6 +9,7 @@ import { z, type ZodSchema } from "zod";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 import { AnalyticsQueryToolCall } from "../analyticsQuery/AnalyticsQueryToolCall";
+import { AttachFileToolCall } from "../AttachFileToolCall";
 import { AdvisorToolCall } from "../AdvisorToolCall";
 import { GenericToolCall } from "../GenericToolCall";
 import { BashToolCall } from "../BashToolCall";
@@ -26,6 +27,8 @@ import { TodoToolCall } from "../TodoToolCall";
 import { StatusSetToolCall } from "../StatusSetToolCall";
 import { SwitchAgentToolCall } from "../SwitchAgentToolCall";
 import { NotifyToolCall } from "../NotifyToolCall";
+import { ReviewPaneUpdateToolCall } from "../ReviewPaneUpdateToolCall";
+import { ReviewPaneGetToolCall } from "../ReviewPaneGetToolCall";
 import { BashBackgroundListToolCall } from "../BashBackgroundListToolCall";
 import { BashBackgroundTerminateToolCall } from "../BashBackgroundTerminateToolCall";
 import { BashOutputToolCall } from "../BashOutputToolCall";
@@ -38,6 +41,8 @@ import {
   TaskTerminateToolCall,
 } from "../TaskToolCall";
 import { TaskApplyGitPatchToolCall } from "../TaskApplyGitPatchToolCall";
+import { GetGoalToolCall } from "../GetGoalToolCall";
+import { CompleteGoalToolCall } from "../CompleteGoalToolCall";
 
 /**
  * Component type that accepts any props. We use this because:
@@ -71,7 +76,7 @@ const legacyStatusSetSchema = z.object({
 const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   bash: { component: BashToolCall, schema: TOOL_DEFINITIONS.bash.schema },
   file_read: { component: FileReadToolCall, schema: TOOL_DEFINITIONS.file_read.schema },
-  attach_file: { component: GenericToolCall, schema: TOOL_DEFINITIONS.attach_file.schema },
+  attach_file: { component: AttachFileToolCall, schema: TOOL_DEFINITIONS.attach_file.schema },
   desktop_screenshot: {
     component: DesktopScreenshotToolCall,
     schema: TOOL_DEFINITIONS.desktop_screenshot.schema,
@@ -167,6 +172,19 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   agent_report: {
     component: AgentReportToolCall,
     schema: TOOL_DEFINITIONS.agent_report.schema,
+  },
+  get_goal: { component: GetGoalToolCall, schema: TOOL_DEFINITIONS.get_goal.schema },
+  complete_goal: {
+    component: CompleteGoalToolCall,
+    schema: TOOL_DEFINITIONS.complete_goal.schema,
+  },
+  review_pane_update: {
+    component: ReviewPaneUpdateToolCall,
+    schema: TOOL_DEFINITIONS.review_pane_update.schema,
+  },
+  review_pane_get: {
+    component: ReviewPaneGetToolCall,
+    schema: TOOL_DEFINITIONS.review_pane_get.schema,
   },
   // Provider-defined tool (Anthropic/OpenAI) - no TOOL_DEFINITIONS entry
   // Anthropic: args.query, OpenAI: args={}, query in result.action.query

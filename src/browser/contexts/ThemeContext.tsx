@@ -10,6 +10,7 @@ import React, {
 } from "react";
 import { readPersistedString, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { UI_THEME_KEY } from "@/common/constants/storage";
+import { isLightThemeMode } from "@/browser/utils/highlighting/shiki-shared";
 
 export type ThemeMode = "light" | "dark" | "flexoki-light" | "flexoki-dark";
 export type ThemePreference = ThemeMode | "auto";
@@ -74,7 +75,8 @@ const FAVICON_BY_SCHEME: Record<"light" | "dark", string> = {
 
 /** Map theme mode to CSS color-scheme value */
 function getColorScheme(theme: ThemeMode): "light" | "dark" {
-  return theme === "light" || theme === "flexoki-light" ? "light" : "dark";
+  // Reuse the shared `-light` suffix convention so we have one source of truth for the light/dark mapping.
+  return isLightThemeMode(theme) ? "light" : "dark";
 }
 
 function applyThemeFavicon(theme: ThemeMode) {

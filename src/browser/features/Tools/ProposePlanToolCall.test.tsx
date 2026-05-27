@@ -1,5 +1,6 @@
+import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { GlobalWindow } from "happy-dom";
+import { installDom } from "../../../../tests/ui/dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 import type { SendMessageOptions } from "@/common/orpc/types";
@@ -155,31 +156,36 @@ void mock.module("@/common/types/review", () => ({
   },
 }));
 
-const TEST_AGENTS: AgentDefinitionDescriptor[] = [
-  {
-    id: "exec",
+const WORKSPACE_ID = "ws-123";
+const PLAN_PATH = "~/.mux/plans/demo/ws-123.md";
+const PLAN_CONTENT = "# My Plan\n\nDo the thing.";
+
+const DEFAULT_CONFIG: GetConfigResult = {
+  taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+  agentAiDefaults: {},
+  subagentAiDefaults: {},
+};
+
+function createTestAgent(
+  id: string,
+  name: string,
+  model: string,
+  thinkingLevel: NonNullable<AgentDefinitionDescriptor["aiDefaults"]>["thinkingLevel"]
+): AgentDefinitionDescriptor {
+  return {
+    id,
+    name,
     scope: "built-in",
-    name: "Exec",
     uiSelectable: true,
     uiRoutable: true,
     subagentRunnable: true,
-    aiDefaults: {
-      model: "openai:gpt-5.2",
-      thinkingLevel: "low",
-    },
-  },
-  {
-    id: "plan",
-    scope: "built-in",
-    name: "Plan",
-    uiSelectable: true,
-    uiRoutable: true,
-    subagentRunnable: true,
-    aiDefaults: {
-      model: "anthropic:claude-sonnet-4-5",
-      thinkingLevel: "high",
-    },
-  },
+    aiDefaults: { model, thinkingLevel },
+  };
+}
+
+const TEST_AGENTS = [
+  createTestAgent("exec", "Exec", "openai:gpt-5.2", "low"),
+  createTestAgent("plan", "Plan", "anthropic:claude-sonnet-4-5", "high"),
 ];
 
 const noop = () => {
@@ -207,44 +213,92 @@ function renderToolCall(content: JSX.Element, agentId = "plan") {
   );
 }
 
+type ProposePlanProps = ComponentProps<typeof ProposePlanToolCall>;
+
+function createMockApi(
+  overrides: {
+    config?: GetConfigResult;
+    getPlanContent?: MockApi["workspace"]["getPlanContent"];
+    replaceChatHistory?: MockApi["workspace"]["replaceChatHistory"];
+    sendMessage?: MockApi["workspace"]["sendMessage"];
+  } = {}
+): MockApi {
+  return {
+    config: { getConfig: () => Promise.resolve(overrides.config ?? DEFAULT_CONFIG) },
+    workspace: {
+      getPlanContent:
+        overrides.getPlanContent ??
+        (() =>
+          Promise.resolve({
+            success: true,
+            data: { content: PLAN_CONTENT, path: PLAN_PATH },
+          })),
+      replaceChatHistory:
+        overrides.replaceChatHistory ?? (() => Promise.resolve({ success: true, data: undefined })),
+      sendMessage:
+        overrides.sendMessage ?? (() => Promise.resolve({ success: true, data: undefined })),
+    },
+  };
+}
+
+function renderPlanToolCall(props: Partial<ProposePlanProps> = {}, agentId?: string) {
+  return renderToolCall(
+    <ProposePlanToolCall args={{}} workspaceId={WORKSPACE_ID} isLatest={false} {...props} />,
+    agentId
+  );
+}
+
+function renderCompletedPlan(props: Partial<ProposePlanProps> = {}) {
+  return renderPlanToolCall({
+    status: "completed",
+    result: { success: true, planPath: PLAN_PATH, planContent: PLAN_CONTENT },
+    isLatest: true,
+    ...props,
+  });
+}
+
+function startInPlanMode(workspaceId = WORKSPACE_ID, model?: string, thinkingLevel?: string) {
+  window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("plan"));
+  if (model) updatePersistedState(getModelKey(workspaceId), model);
+  if (thinkingLevel) updatePersistedState(getThinkingLevelKey(workspaceId), thinkingLevel);
+}
+
+function recordSendMessage(calls: SendMessageArgs[]): MockApi["workspace"]["sendMessage"] {
+  return (args) => {
+    calls.push(args);
+    return Promise.resolve({ success: true, data: undefined });
+  };
+}
+
+function expectSingleQuoteRoot(view: { container: HTMLElement }, text: string) {
+  const quoteRoots = Array.from(
+    view.container.querySelectorAll<HTMLElement>("[data-transcript-quote-root]")
+  );
+  expect(quoteRoots).toHaveLength(1);
+  expect(
+    quoteRoots.find((element) => element.getAttribute("data-transcript-quote-text") === text)
+  ).toBeDefined();
+}
+
 describe("ProposePlanToolCall", () => {
-  let originalWindow: typeof globalThis.window;
-  let originalDocument: typeof globalThis.document;
+  let cleanupDom: (() => void) | null = null;
 
   beforeEach(() => {
     startHereCalls = [];
     selectableDiffRendererCalls = [];
     mockApi = null;
-    // Save original globals
-    originalWindow = globalThis.window;
-    originalDocument = globalThis.document;
-    // Set up test globals
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
+    cleanupDom = installDom();
   });
 
   afterEach(() => {
     cleanup();
     mock.restore();
-    // Restore original globals instead of setting to undefined
-    globalThis.window = originalWindow;
-    globalThis.document = originalDocument;
+    cleanupDom?.();
+    cleanupDom = null;
   });
 
   test("does not claim plan is in chat when Start Here content is a placeholder", () => {
-    const planPath = "~/.mux/plans/demo/ws-123.md";
-
-    renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        result={{
-          success: true,
-          planPath,
-        }}
-        workspaceId="ws-123"
-        isLatest={false}
-      />
-    );
+    renderPlanToolCall({ result: { success: true, planPath: PLAN_PATH } });
 
     expect(startHereCalls.length).toBe(1);
     expect(startHereCalls[0]?.content).toContain("*Plan saved to");
@@ -254,22 +308,11 @@ describe("ProposePlanToolCall", () => {
     expect(startHereCalls[0]?.content).toContain("Read the plan file below");
   });
   test("keeps plan file on disk and includes plan path note in Start Here content", () => {
-    const planPath = "~/.mux/plans/demo/ws-123.md";
-
-    renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        result={{
-          success: true,
-          planPath,
-          // Old-format chat history may include planContent; this is the easiest path to
-          // ensure the rendered Start Here message includes the full plan + the path note.
-          planContent: "# My Plan\n\nDo the thing.",
-        }}
-        workspaceId="ws-123"
-        isLatest={false}
-      />
-    );
+    renderPlanToolCall({
+      // Old-format chat history may include planContent; this is the easiest path to
+      // ensure the rendered Start Here message includes the full plan + the path note.
+      result: { success: true, planPath: PLAN_PATH, planContent: PLAN_CONTENT },
+    });
 
     expect(startHereCalls.length).toBe(1);
     expect(startHereCalls[0]?.options).toEqual({ sourceAgentId: "plan" });
@@ -278,100 +321,41 @@ describe("ProposePlanToolCall", () => {
     // The Start Here message should explicitly tell the user the plan file remains on disk.
     expect(startHereCalls[0]?.content).toContain("*Plan file preserved at:*");
     expect(startHereCalls[0]?.content).toContain("Note: This chat already contains the full plan");
-    expect(startHereCalls[0]?.content).toContain(planPath);
+    expect(startHereCalls[0]?.content).toContain(PLAN_PATH);
   });
 
-  test("shows Annotate button for latest completed plan with workspaceId", () => {
-    const planPath = "~/.mux/plans/demo/ws-123.md";
+  test.each([
+    ["shows", true],
+    ["hides", false],
+  ])("%s Annotate button based on latest completed plan state", (verb, isLatest) => {
+    const view = renderCompletedPlan({ isLatest });
+    const button = view.queryByRole("button", { name: "Annotate" });
 
-    const view = renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        status="completed"
-        result={{
-          success: true,
-          planPath,
-          planContent: "# My Plan\n\nDo the thing.",
-        }}
-        workspaceId="ws-123"
-        isLatest={true}
-      />
-    );
-
-    expect(view.getByRole("button", { name: "Annotate" })).toBeDefined();
-  });
-
-  test("hides Annotate button for non-latest plans", () => {
-    const planPath = "~/.mux/plans/demo/ws-123.md";
-
-    const view = renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        status="completed"
-        result={{
-          success: true,
-          planPath,
-          planContent: "# My Plan\n\nDo the thing.",
-        }}
-        workspaceId="ws-123"
-        isLatest={false}
-      />
-    );
-
-    expect(view.queryByRole("button", { name: "Annotate" })).toBeNull();
+    if (verb === "shows") expect(button).not.toBeNull();
+    else expect(button).toBeNull();
   });
 
   test("hides Annotate button while latest plan call is still executing", async () => {
-    const workspaceId = "ws-123";
-    const planPath = "~/.mux/plans/demo/ws-123.md";
     let getPlanContentCalls = 0;
 
-    mockApi = {
-      config: {
-        getConfig: () =>
-          Promise.resolve({
-            taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-            agentAiDefaults: {},
-            subagentAiDefaults: {},
-          }),
+    mockApi = createMockApi({
+      getPlanContent: () => {
+        getPlanContentCalls += 1;
+        return Promise.resolve({
+          success: true,
+          data: { content: PLAN_CONTENT, path: PLAN_PATH },
+        });
       },
-      workspace: {
-        getPlanContent: () => {
-          getPlanContentCalls += 1;
-          return Promise.resolve({
-            success: true,
-            data: { content: "# My Plan\n\nDo the thing.", path: planPath },
-          });
-        },
-        replaceChatHistory: (_args) => Promise.resolve({ success: true, data: undefined }),
-        sendMessage: (_args) => Promise.resolve({ success: true, data: undefined }),
-      },
-    };
+    });
 
-    const view = renderToolCall(
-      <ProposePlanToolCall args={{}} status="executing" workspaceId={workspaceId} isLatest={true} />
-    );
+    const view = renderPlanToolCall({ status: "executing", isLatest: true });
 
     await waitFor(() => expect(getPlanContentCalls).toBe(1));
     expect(view.queryByRole("button", { name: "Annotate" })).toBeNull();
   });
 
   test("passes normalized plan path to annotation view", () => {
-    const rawPlanPath = "~/.mux/plans/demo/ws-123.md";
-
-    const view = renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        status="completed"
-        result={{
-          success: true,
-          planPath: rawPlanPath,
-          planContent: "# My Plan\n\nDo the thing.",
-        }}
-        workspaceId="ws-123"
-        isLatest={true}
-      />
-    );
+    const view = renderCompletedPlan();
 
     fireEvent.click(view.getByRole("button", { name: "Annotate" }));
 
@@ -383,43 +367,22 @@ describe("ProposePlanToolCall", () => {
   });
 
   test("hides Annotate button when completed propose_plan result is an error", () => {
-    const workspaceId = "ws-123";
-    const planPath = "~/.mux/plans/demo/ws-123.md";
-
-    updatePersistedState(getPlanContentKey(workspaceId), {
+    updatePersistedState(getPlanContentKey(WORKSPACE_ID), {
       content: "# Cached Plan\n\nDo the thing.",
-      path: planPath,
+      path: PLAN_PATH,
     });
 
-    const view = renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        status="completed"
-        result={{ success: false, error: "failed to generate plan" }}
-        workspaceId={workspaceId}
-        isLatest={true}
-      />
-    );
+    const view = renderPlanToolCall({
+      status: "completed",
+      result: { success: false, error: "failed to generate plan" },
+      isLatest: true,
+    });
 
     expect(view.queryByRole("button", { name: "Annotate" })).toBeNull();
   });
 
   test("annotate mode and raw mode are mutually exclusive", () => {
-    const planPath = "~/.mux/plans/demo/ws-123.md";
-
-    const view = renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        status="completed"
-        result={{
-          success: true,
-          planPath,
-          planContent: "# My Plan\n\nDo the thing.",
-        }}
-        workspaceId="ws-123"
-        isLatest={true}
-      />
-    );
+    const view = renderCompletedPlan();
 
     fireEvent.click(view.getByRole("button", { name: "Annotate" }));
     expect(view.getByRole("button", { name: "Exit Annotate" })).toBeDefined();
@@ -436,29 +399,7 @@ describe("ProposePlanToolCall", () => {
   });
 
   test("exposes the plan body as an explicit transcript quote root", () => {
-    const planContent = "# My Plan\n\nDo the thing.";
-    const view = renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        status="completed"
-        result={{
-          success: true,
-          planPath: "~/.mux/plans/demo/ws-123.md",
-          planContent,
-        }}
-        workspaceId="ws-123"
-        isLatest={true}
-      />
-    );
-
-    const quoteRoots = Array.from(
-      view.container.querySelectorAll<HTMLElement>("[data-transcript-quote-root]")
-    );
-    expect(quoteRoots).toHaveLength(1);
-    const quoteRoot = quoteRoots.find(
-      (element) => element.getAttribute("data-transcript-quote-text") === planContent
-    );
-    expect(quoteRoot).toBeDefined();
+    expectSingleQuoteRoot(renderCompletedPlan(), PLAN_CONTENT);
   });
 
   test("keeps the plan transcript quote root in ephemeral previews", () => {
@@ -468,41 +409,32 @@ describe("ProposePlanToolCall", () => {
         args={{}}
         status="completed"
         content={planContent}
-        path="~/.mux/plans/demo/ws-123.md"
-        workspaceId="ws-123"
+        path={PLAN_PATH}
+        workspaceId={WORKSPACE_ID}
         isEphemeralPreview={true}
       />
     );
 
-    const quoteRoots = Array.from(
-      view.container.querySelectorAll<HTMLElement>("[data-transcript-quote-root]")
-    );
-    expect(quoteRoots).toHaveLength(1);
-    const quoteRoot = quoteRoots.find(
-      (element) => element.getAttribute("data-transcript-quote-text") === planContent
-    );
-    expect(quoteRoot).toBeDefined();
+    expectSingleQuoteRoot(view, planContent);
   });
 
   test("does not toggle annotate mode with Shift+A in ephemeral previews", () => {
-    const planPath = "~/.mux/plans/demo/ws-123.md";
-
     const view = renderToolCall(
       <>
         <ProposePlanToolCall
           args={{}}
           status="completed"
           content="# My Plan\n\nDo the thing."
-          path={planPath}
-          workspaceId="ws-123"
+          path={PLAN_PATH}
+          workspaceId={WORKSPACE_ID}
           isEphemeralPreview={true}
         />
         <ProposePlanToolCall
           args={{}}
           status="completed"
           content="# Another Plan\n\nDo the other thing."
-          path={planPath}
-          workspaceId="ws-123"
+          path={PLAN_PATH}
+          workspaceId={WORKSPACE_ID}
           isEphemeralPreview={true}
         />
       </>
@@ -517,59 +449,18 @@ describe("ProposePlanToolCall", () => {
   });
 
   test("switches to exec and sends a message when clicking Implement", async () => {
-    const workspaceId = "ws-123";
-    const planPath = "~/.mux/plans/demo/ws-123.md";
-    const planModel = "anthropic:claude-sonnet-4-5";
-    const planThinking = "high";
     const execModel = "openai:gpt-5.2";
     const execThinking = "low";
 
-    // Start in plan mode.
-    window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("plan"));
-    updatePersistedState(getModelKey(workspaceId), planModel);
-    updatePersistedState(getThinkingLevelKey(workspaceId), planThinking);
+    startInPlanMode(WORKSPACE_ID, "anthropic:claude-sonnet-4-5", "high");
     updatePersistedState(AGENT_AI_DEFAULTS_KEY, {
       exec: { modelString: execModel, thinkingLevel: execThinking },
     });
 
     const sendMessageCalls: SendMessageArgs[] = [];
+    mockApi = createMockApi({ sendMessage: recordSendMessage(sendMessageCalls) });
 
-    mockApi = {
-      config: {
-        getConfig: () =>
-          Promise.resolve({
-            taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-            agentAiDefaults: {},
-            subagentAiDefaults: {},
-          }),
-      },
-      workspace: {
-        getPlanContent: () =>
-          Promise.resolve({
-            success: true,
-            data: { content: "# My Plan\n\nDo the thing.", path: planPath },
-          }),
-        replaceChatHistory: (_args) => Promise.resolve({ success: true, data: undefined }),
-        sendMessage: (args: SendMessageArgs) => {
-          sendMessageCalls.push(args);
-          return Promise.resolve({ success: true, data: undefined });
-        },
-      },
-    };
-
-    const view = renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        status="completed"
-        result={{
-          success: true,
-          planPath,
-          planContent: "# My Plan\n\nDo the thing.",
-        }}
-        workspaceId={workspaceId}
-        isLatest={true}
-      />
-    );
+    const view = renderCompletedPlan();
 
     fireEvent.click(view.getByRole("button", { name: "Implement" }));
 
@@ -583,9 +474,9 @@ describe("ProposePlanToolCall", () => {
     //
     // Note: some tests in this repo mock the `usePersistedState` module globally. In that case,
     // `updatePersistedState` won't actually write to localStorage here, so we assert the call.
-    const agentKey = getAgentIdKey(workspaceId);
-    const modelKey = getModelKey(workspaceId);
-    const thinkingKey = getThinkingLevelKey(workspaceId);
+    const agentKey = getAgentIdKey(WORKSPACE_ID);
+    const modelKey = getModelKey(WORKSPACE_ID);
+    const thinkingKey = getThinkingLevelKey(WORKSPACE_ID);
     const updatePersistedStateMaybeMock = updatePersistedState as unknown as {
       mock?: { calls: unknown[][] };
     };
@@ -601,59 +492,19 @@ describe("ProposePlanToolCall", () => {
   });
 
   test("uses workspace-by-agent override for Implement when exec defaults inherit", async () => {
-    const workspaceId = "ws-123";
-    const planPath = "~/.mux/plans/demo/ws-123.md";
-    const planModel = "anthropic:claude-sonnet-4-5";
-    const planThinking = "high";
     const execWorkspaceModel = "openai:gpt-5.2-pro";
     const execWorkspaceThinking = "medium";
 
-    window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("plan"));
-    updatePersistedState(getModelKey(workspaceId), planModel);
-    updatePersistedState(getThinkingLevelKey(workspaceId), planThinking);
+    startInPlanMode(WORKSPACE_ID, "anthropic:claude-sonnet-4-5", "high");
     updatePersistedState(AGENT_AI_DEFAULTS_KEY, {});
-    updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
+    updatePersistedState(getWorkspaceAISettingsByAgentKey(WORKSPACE_ID), {
       exec: { model: execWorkspaceModel, thinkingLevel: execWorkspaceThinking },
     });
 
     const sendMessageCalls: SendMessageArgs[] = [];
+    mockApi = createMockApi({ sendMessage: recordSendMessage(sendMessageCalls) });
 
-    mockApi = {
-      config: {
-        getConfig: () =>
-          Promise.resolve({
-            taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-            agentAiDefaults: {},
-            subagentAiDefaults: {},
-          }),
-      },
-      workspace: {
-        getPlanContent: () =>
-          Promise.resolve({
-            success: true,
-            data: { content: "# My Plan\n\nDo the thing.", path: planPath },
-          }),
-        replaceChatHistory: (_args) => Promise.resolve({ success: true, data: undefined }),
-        sendMessage: (args: SendMessageArgs) => {
-          sendMessageCalls.push(args);
-          return Promise.resolve({ success: true, data: undefined });
-        },
-      },
-    };
-
-    const view = renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        status="completed"
-        result={{
-          success: true,
-          planPath,
-          planContent: "# My Plan\n\nDo the thing.",
-        }}
-        workspaceId={workspaceId}
-        isLatest={true}
-      />
-    );
+    const view = renderCompletedPlan();
 
     fireEvent.click(view.getByRole("button", { name: "Implement" }));
 
@@ -664,66 +515,35 @@ describe("ProposePlanToolCall", () => {
   });
 
   test("replaces chat history before implementing when setting enabled", async () => {
-    const workspaceId = "ws-123";
-    const planPath = "~/.mux/plans/demo/ws-123.md";
-
-    // Start in plan mode.
-    window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("plan"));
+    startInPlanMode();
 
     const calls: Array<"replaceChatHistory" | "sendMessage"> = [];
-    const replaceChatHistoryCalls: Array<{
-      workspaceId: string;
-      summaryMessage: unknown;
-      mode?: "destructive" | "append-compaction-boundary" | null;
-      deletePlanFile?: boolean;
-    }> = [];
+    const replaceChatHistoryCalls: Array<
+      Parameters<MockApi["workspace"]["replaceChatHistory"]>[0]
+    > = [];
     const sendMessageCalls: SendMessageArgs[] = [];
 
-    mockApi = {
+    mockApi = createMockApi({
       config: {
-        getConfig: () =>
-          Promise.resolve({
-            taskSettings: {
-              maxParallelAgentTasks: 3,
-              maxTaskNestingDepth: 3,
-              proposePlanImplementReplacesChatHistory: true,
-            },
-            agentAiDefaults: {},
-            subagentAiDefaults: {},
-          }),
-      },
-      workspace: {
-        getPlanContent: () =>
-          Promise.resolve({
-            success: true,
-            data: { content: "# My Plan\n\nDo the thing.", path: planPath },
-          }),
-        replaceChatHistory: (args) => {
-          calls.push("replaceChatHistory");
-          replaceChatHistoryCalls.push(args);
-          return Promise.resolve({ success: true, data: undefined });
-        },
-        sendMessage: (args: SendMessageArgs) => {
-          calls.push("sendMessage");
-          sendMessageCalls.push(args);
-          return Promise.resolve({ success: true, data: undefined });
+        ...DEFAULT_CONFIG,
+        taskSettings: {
+          ...DEFAULT_CONFIG.taskSettings,
+          proposePlanImplementReplacesChatHistory: true,
         },
       },
-    };
+      replaceChatHistory: (args) => {
+        calls.push("replaceChatHistory");
+        replaceChatHistoryCalls.push(args);
+        return Promise.resolve({ success: true, data: undefined });
+      },
+      sendMessage: (args) => {
+        calls.push("sendMessage");
+        sendMessageCalls.push(args);
+        return Promise.resolve({ success: true, data: undefined });
+      },
+    });
 
-    const view = renderToolCall(
-      <ProposePlanToolCall
-        args={{}}
-        status="completed"
-        result={{
-          success: true,
-          planPath,
-          planContent: "# My Plan\n\nDo the thing.",
-        }}
-        workspaceId={workspaceId}
-        isLatest={true}
-      />
-    );
+    const view = renderCompletedPlan();
 
     fireEvent.click(view.getByRole("button", { name: "Implement" }));
 
@@ -747,6 +567,63 @@ describe("ProposePlanToolCall", () => {
     );
     expect(summaryMessage.metadata?.agentId).toBe("plan");
     expect(summaryMessage.parts?.[0]?.text).toContain("*Plan file preserved at:*");
-    expect(summaryMessage.parts?.[0]?.text).toContain(planPath);
+    expect(summaryMessage.parts?.[0]?.text).toContain(PLAN_PATH);
+  });
+
+  test("renders a plan table of contents derived from the plan's markdown headings", () => {
+    // Note: we deliberately don't assert against rendered <h1>/<h2> elements here
+    // because some sibling test files mock MarkdownCore at file scope (file-scope
+    // module mocks persist across files in this runner). The TOC's source of truth
+    // is the markdown TEXT, not the rendered DOM, so this assertion stays robust.
+    const planContent = [
+      "# Title",
+      "",
+      "intro paragraph",
+      "",
+      "## Section A",
+      "",
+      "body",
+      "",
+      "## Section B",
+      "",
+      "more",
+    ].join("\n");
+
+    const view = renderCompletedPlan({
+      result: { success: true, planPath: PLAN_PATH, planContent },
+    });
+
+    const toc = view.getByTestId("plan-toc");
+    expect(toc.textContent).toContain("Title");
+    expect(toc.textContent).toContain("Section A");
+    expect(toc.textContent).toContain("Section B");
+
+    // Each entry is a real <button>, so the user can drive navigation with the
+    // keyboard. The dedicated PlanTableOfContents.test.tsx verifies the
+    // scrollIntoView wiring directly.
+    expect(view.getByRole("button", { name: "Section A" })).toBeDefined();
+    expect(view.getByRole("button", { name: "Section B" })).toBeDefined();
+  });
+
+  test("does not render a plan TOC for plans with fewer than two visible headings", () => {
+    // PLAN_CONTENT only has one heading ("# My Plan"), so the TOC should not appear.
+    const view = renderCompletedPlan();
+    expect(view.queryByTestId("plan-toc")).toBeNull();
+  });
+
+  test("does not render a plan TOC while annotate mode is active", () => {
+    // Need at least two h2+ entries; h1 is reserved for the TOC's heading
+    // (the plan title) and never shows up as a list item.
+    const planContent = "# A\n\nbody\n\n## B\n\nmore\n\n## C\n\nmore";
+    const view = renderCompletedPlan({
+      result: { success: true, planPath: PLAN_PATH, planContent },
+    });
+
+    // Sanity: TOC is visible before annotate mode.
+    expect(view.queryByTestId("plan-toc")).not.toBeNull();
+
+    fireEvent.click(view.getByRole("button", { name: "Annotate" }));
+
+    expect(view.queryByTestId("plan-toc")).toBeNull();
   });
 });

@@ -43,7 +43,12 @@ function notifySubscribers(key: string, origin?: string) {
 let storageListenerInstalled = false;
 function ensureStorageListenerInstalled() {
   if (storageListenerInstalled) return;
+  // Guard against test environments that stub `globalThis.window` with a
+  // partial object lacking `addEventListener`. Treating that as a no-op
+  // mirrors the SSR-safe fallback above and prevents unrelated tests from
+  // crashing when they run after a polluting test.
   if (typeof window === "undefined") return;
+  if (typeof window.addEventListener !== "function") return;
 
   window.addEventListener("storage", (e: StorageEvent) => {
     if (!e.key) return;

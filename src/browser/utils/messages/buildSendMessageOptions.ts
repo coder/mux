@@ -8,6 +8,7 @@ export interface ExperimentValues {
   programmaticToolCallingExclusive: boolean | undefined;
   advisorTool: boolean | undefined;
   execSubagentHardRestart: boolean | undefined;
+  imageGenerationTool: boolean | undefined;
 }
 
 export interface SendMessageOptionsInput {

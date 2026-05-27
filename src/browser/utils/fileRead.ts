@@ -8,6 +8,14 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024;
 /** Exit code for "file too large". */
 export const EXIT_CODE_TOO_LARGE = 42;
 
+/** Exit code for "file has too many lines for the current UI budget". */
+export const EXIT_CODE_TOO_MANY_LINES = 43;
+
+interface ReadFileScriptOptions {
+  maxSizeBytes?: number;
+  maxLineCount?: number;
+}
+
 /** Magic bytes for image type detection. */
 const IMAGE_MAGIC_BYTES: Array<{ bytes: number[]; mime: string }> = [
   { bytes: [0x89, 0x50, 0x4e, 0x47], mime: "image/png" },
@@ -94,13 +102,27 @@ function detectBinary(buffer: Uint8Array): boolean {
 }
 
 /**
- * Generate bash script to read file contents with size check.
+ * Generate bash script to read file contents with size and optional line-count checks.
  * Uses base64 encoding for all files to handle binary safely.
  */
-export function buildReadFileScript(relativePath: string): string {
+export function buildReadFileScript(
+  relativePath: string,
+  options: ReadFileScriptOptions = {}
+): string {
   const file = shellEscape(relativePath);
+  const maxSizeBytes = Math.max(0, Math.trunc(options.maxSizeBytes ?? MAX_FILE_SIZE));
+  const maxLineCount =
+    options.maxLineCount == null ? null : Math.max(0, Math.trunc(options.maxLineCount));
+  const lineLimitScript =
+    maxLineCount == null
+      ? ""
+      : `
+awk 'NR > ${maxLineCount} { exit ${EXIT_CODE_TOO_MANY_LINES} }' ${file}
+awk_status=$?
+[ "$awk_status" -ne 0 ] && exit "$awk_status"`;
+
   return `size=$(stat -c %s ${file} 2>/dev/null || stat -f %z ${file})
-[ "$size" -gt ${MAX_FILE_SIZE} ] && exit ${EXIT_CODE_TOO_LARGE}
+[ "$size" -gt ${maxSizeBytes} ] && exit ${EXIT_CODE_TOO_LARGE}${lineLimitScript}
 echo "$size"
 base64 < ${file}`;
 }
@@ -135,6 +157,10 @@ export type FileContentsResult =
 export function processFileContents(output: string, exitCode: number): FileContentsResult {
   if (exitCode === EXIT_CODE_TOO_LARGE) {
     return { type: "error", message: "File is too large to display. Maximum: 10 MB." };
+  }
+
+  if (exitCode === EXIT_CODE_TOO_MANY_LINES) {
+    return { type: "error", message: "File has too many lines to display." };
   }
 
   const { size, base64 } = parseReadFileOutput(output);

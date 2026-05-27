@@ -27,7 +27,7 @@ on:
         required: false
         type: string
       extra_args:
-        description: "Additional arguments to pass to harbor"
+        description: "Additional arguments to pass to harbor (e.g., --n-tasks 5 for quick dispatch runs)"
         required: false
         type: string
       experiments:
@@ -50,10 +50,20 @@ on:
         type: string
         default: ""
       mux_run_args:
-        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m --budget 5.00)"
+        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m --budget 5.00; with goal mode, add --goal-turns/--goal-budget)"
         required: false
         type: string
         default: ""
+      mux_run_as_goal:
+        description: "Run each task instruction as a mux CLI Goal Run"
+        required: false
+        type: boolean
+        default: false
+      allow_transient_agent_errors:
+        description: "Allow explicitly classified transient agent failures (full nightly only)"
+        required: false
+        type: boolean
+        default: false
     secrets:
       # Keep the runtime env name stable while routing benchmark spend to its own key.
       TERMINAL_BENCH_ANTHROPIC_API_KEY:
@@ -92,11 +102,16 @@ on:
         required: false
         type: string
       mux_run_args:
-        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m)"
+        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m; with goal mode, add --goal-turns/--goal-budget)"
         required: false
         type: string
+      mux_run_as_goal:
+        description: "Run each task instruction as a mux CLI Goal Run"
+        required: false
+        default: false
+        type: boolean
       extra_args:
-        description: "Additional arguments to pass to harbor"
+        description: "Additional arguments to pass to harbor (e.g., --n-tasks 5 for quick dispatch runs)"
         required: false
         type: string
       experiments:
@@ -105,10 +120,6 @@ on:
         type: string
       timeout:
         description: "Agent timeout in seconds (default: 1800 = 30 min)"
-        required: false
-        type: string
-      max_tasks:
-        description: "Maximum number of tasks to run (for faster iteration)"
         required: false
         type: string
 
@@ -166,25 +177,7 @@ jobs:
             exit 0
           fi
           pip install --quiet daytona
-          python3 <<'PY' > /tmp/daytona-pre-existing.txt
-          from daytona import Daytona
-
-          def list_all_sandboxes(daytona):
-              # Daytona returns paginated results. Snapshot every page so cleanup
-              # can distinguish old sandboxes from ones this run created.
-              page = 1
-              while True:
-                  result = daytona.list(page=page)
-                  yield from result.items
-                  total_pages = result.total_pages or 1
-                  if page >= total_pages:
-                      break
-                  page += 1
-
-          d = Daytona()
-          ids = [sb.id for sb in list_all_sandboxes(d)]
-          print('\n'.join(ids))
-          PY
+          python3 scripts/daytona_sandbox_cleanup.py snapshot > /tmp/daytona-pre-existing.txt
           echo "Snapshot $(wc -l < /tmp/daytona-pre-existing.txt) pre-existing sandbox(es)"
 
       - name: Run Terminal-Bench
@@ -206,6 +199,7 @@ jobs:
             ${{ inputs.extra_args || '' }}
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
           MUX_RUN_ARGS: ${{ inputs.mux_run_args }}
+          MUX_RUN_AS_GOAL: ${{ inputs.mux_run_as_goal && '1' || '' }}
           ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
@@ -231,44 +225,7 @@ jobs:
             exit 0
           fi
           pip install --quiet daytona
-          python3 <<'PY'
-          from daytona import Daytona
-
-          def list_all_sandboxes(daytona):
-              # Daytona returns paginated results. Cleanup must inspect every
-              # page so stopped sandboxes from high-concurrency runs do not leak.
-              page = 1
-              while True:
-                  result = daytona.list(page=page)
-                  yield from result.items
-                  total_pages = result.total_pages or 1
-                  if page >= total_pages:
-                      break
-                  page += 1
-
-          with open('/tmp/daytona-pre-existing.txt') as f:
-              pre_existing = {line.strip() for line in f if line.strip()}
-          d = Daytona()
-          # Only consider sandboxes created after our snapshot (not pre-existing)
-          # and only delete ones that are no longer running (safe for parallel jobs).
-          ACTIVE_STATES = {'started', 'creating', 'starting'}
-          candidates = [sb for sb in list_all_sandboxes(d) if sb.id not in pre_existing]
-          to_delete = [sb for sb in candidates if str(sb.state).lower() not in ACTIVE_STATES]
-          skipped = len(candidates) - len(to_delete)
-          if skipped:
-              print(f'Skipping {skipped} still-active sandbox(es)')
-          if not to_delete:
-              print('No stopped sandboxes to clean up')
-          else:
-              print(f'Cleaning up {len(to_delete)} stopped sandbox(es) from this run...')
-              for sb in to_delete:
-                  try:
-                      print(f'  Deleting {sb.id} (state={sb.state})...')
-                      d.delete(sb)
-                      print(f'  Deleted {sb.id}')
-                  except Exception as e:
-                      print(f'  Failed to delete {sb.id}: {e}')
-          PY
+          python3 scripts/daytona_sandbox_cleanup.py cleanup --pre-existing-file /tmp/daytona-pre-existing.txt
 
       - name: Print results summary
         if: always()
@@ -284,45 +241,14 @@ jobs:
           fi
 
       - name: Verify agent ran successfully
+        env:
+          ALLOW_TRANSIENT_AGENT_ERRORS: ${{ inputs.allow_transient_agent_errors && '1' || '' }}
         run: |
-          # Harbor writes to jobs/<timestamp>/result.json
-          RESULTS_FILE=$(find jobs -maxdepth 2 -name 'result.json' 2>/dev/null | head -1)
-          if [ -z "$RESULTS_FILE" ]; then
-            echo "❌ No result.json found - benchmark failed to produce results"
-            exit 1
+          args=(--jobs-dir jobs)
+          if [ "$ALLOW_TRANSIENT_AGENT_ERRORS" = "1" ]; then
+            args+=(--allow-transient-agent-errors)
           fi
-          # Harbor format: n_total_trials, stats.n_trials, stats.n_errors, stats.evals.<key>.metrics[0].mean
-          N_TRIALS=$(jq -r '.n_total_trials // .stats.n_trials // 0' "$RESULTS_FILE")
-          N_ERRORS=$(jq -r '.stats.n_errors // 0' "$RESULTS_FILE")
-          # Get mean score from first eval entry (pass rate 0-1)
-          MEAN_SCORE=$(jq -r '[.stats.evals | to_entries[].value.metrics[0].mean] | add // 0' "$RESULTS_FILE")
-          echo "Trials: $N_TRIALS, Errors: $N_ERRORS, Mean score: $MEAN_SCORE"
-          if [ "$N_TRIALS" -eq 0 ]; then
-            echo "❌ No trials ran - benchmark configuration may be wrong"
-            exit 1
-          fi
-          # Count infrastructure/timeout errors separately from other errors
-          # These error types are expected and should not fail the workflow:
-          # - AgentTimeoutError: Agent exceeded task time limit (hard tasks)
-          # - VerifierTimeoutError: Verification timed out
-          # - AgentSetupTimeoutError: Agent install.sh timed out (slow network/packages)
-          # - EnvironmentStartTimeoutError: Daytona environment slow to start
-          # - DaytonaError: Daytona infrastructure issues (sandbox not started, no IP, etc.)
-          INFRA_PATTERN="(AgentTimeoutError|VerifierTimeoutError|AgentSetupTimeoutError|EnvironmentStartTimeoutError|DaytonaError)"
-          INFRA_ERRORS=$(find jobs -name 'exception.txt' -exec grep -lE "$INFRA_PATTERN" {} \; 2>/dev/null | wc -l | tr -d ' ')
-          OTHER_ERRORS=$((N_ERRORS - INFRA_ERRORS))
-          # Clamp to 0 in case exception.txt files exceed n_errors (defensive)
-          if [ "$OTHER_ERRORS" -lt 0 ]; then OTHER_ERRORS=0; fi
-          if [ "$OTHER_ERRORS" -gt 0 ]; then
-            echo "❌ $OTHER_ERRORS task(s) had non-infrastructure errors - agent execution failed"
-            echo "--- Exception details (excluding infra errors) ---"
-            find jobs -name 'exception.txt' -exec sh -c 'grep -qE "'"$INFRA_PATTERN"'" "$1" || { echo "=== $1 ===" && cat "$1"; }' _ {} \; 2>/dev/null || true
-            exit 1
-          fi
-          if [ "$INFRA_ERRORS" -gt 0 ]; then
-            echo "⏱️ $INFRA_ERRORS task(s) had infrastructure/timeout errors (expected for hard tasks or transient infra issues)"
-          fi
-          echo "✅ Agent ran $N_TRIALS trial(s) successfully (mean score: $MEAN_SCORE)"
+          python3 scripts/check_tbench_results.py "${args[@]}"
 
       - name: Set artifact name
         if: always()
@@ -358,6 +284,7 @@ jobs:
           GCP_PROJECT_ID: mux-benchmarks
           BQ_DATASET: benchmarks
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
+          MUX_RUN_AS_GOAL: ${{ inputs.mux_run_as_goal && '1' || '' }}
         run: |
           if [ -z "$GCP_SA_KEY" ]; then
             echo "GCP_SA_KEY not set, skipping BigQuery upload"
@@ -376,6 +303,7 @@ jobs:
           GCP_PROJECT_ID: mux-benchmarks
           BQ_DATASET: benchmarks
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
+          MUX_RUN_AS_GOAL: ${{ inputs.mux_run_as_goal && '1' || '' }}
         run: |
           if [ -z "$GCP_SA_KEY" ]; then
             echo "GCP_SA_KEY not set, skipping BigQuery upload"

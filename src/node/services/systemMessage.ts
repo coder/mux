@@ -6,6 +6,12 @@ import type { RuntimeMode } from "@/common/types/runtime";
 import { RUNTIME_MODE } from "@/common/types/runtime";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import {
+  INSTRUCTION_SCOPE,
+  joinInstructionSets,
+  type InstructionSet,
+  type InstructionSources,
+} from "@/common/types/instructions";
+import {
   readInstructionSet,
   readInstructionSetFromRuntime,
 } from "@/node/utils/main/instructionFiles";
@@ -15,6 +21,7 @@ import {
   stripScopedInstructionSections,
 } from "@/node/utils/main/markdown";
 import type { Runtime } from "@/node/runtime/Runtime";
+import { resolveWorkspaceRootPath } from "@/node/runtime/runtimeHelpers";
 import { getMuxHome } from "@/common/constants/paths";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
@@ -52,7 +59,7 @@ Always verify repo facts before making correctness claims; trusted tool output a
   
 <markdown>
 Your Assistant messages display in Markdown with extensions for mermaidjs and katex.
-For math expressions, prefer \`$$...$$\` delimiters for the most reliable rendering.
+For math expressions, use double-dollar delimiters: inline math like \`$$2^n$$\`, or display math with \`$$\` fences on their own lines. Do not use single-dollar \`$...$\` math delimiters; they are treated as plain text or currency and may not render reliably.
 
 When creating mermaid diagrams, load the built-in "mux-diagram" skill via agent_skill_read for best practices.
 
@@ -244,7 +251,7 @@ export function extractToolInstructions(
   const availableTools = getAvailableTools(modelString, options);
   const toolInstructions: Record<string, string> = {};
   const sources = {
-    agent: options?.agentInstructions,
+    agent: options?.agentInstructions ?? null,
     context: contextInstructions,
     global: globalInstructions,
   };
@@ -263,7 +270,7 @@ export function extractToolInstructions(
 
 /**
  * Read instruction sources and extract tool-specific instructions.
- * Convenience wrapper that combines readInstructionSources and extractToolInstructions.
+ * Convenience wrapper that combines loadInstructionSources and extractToolInstructions.
  *
  * @param metadata - Workspace metadata (contains projectPath)
  * @param runtime - Runtime for reading workspace files (supports SSH)
@@ -279,11 +286,13 @@ export async function readToolInstructions(
   modelString: string,
   agentInstructions?: string
 ): Promise<Record<string, string>> {
-  const [globalInstructions, contextInstructions] = await readInstructionSources(
-    metadata,
-    runtime,
-    workspacePath
-  );
+  // Tool instructions read the same `AGENTS.md` files as the system prompt;
+  // anchor at the workspace root so sub-project workspaces still see parent
+  // project tool sections (see `loadInstructionSources` doc).
+  const workspaceRootPath = subProjectAwareWorkspaceRoot(metadata, runtime, workspacePath);
+  const sources = await loadInstructionSources(metadata, runtime, workspaceRootPath);
+  const globalInstructions = sources.global?.combinedContent ?? null;
+  const contextInstructions = joinInstructionSets(sources.context) || null;
 
   return extractToolInstructions(globalInstructions, contextInstructions, modelString, {
     ...getToolAvailabilityOptions({
@@ -294,15 +303,36 @@ export async function readToolInstructions(
   });
 }
 
-async function readMultiProjectContextInstructions(
+/**
+ * For sub-project workspaces, callers typically pass the execution path
+ * (`<root>/<subProjectRelativePath>`) as `workspacePath`. Instruction loading
+ * needs the workspace root instead — without it, the parent project's
+ * AGENTS.md is missed entirely. For non-sub-project workspaces the execution
+ * path *is* the root, so we keep the caller's value to preserve test fixtures
+ * that build a workspace path independent of `runtime.getWorkspacePath()`.
+ */
+function subProjectAwareWorkspaceRoot(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
   workspacePath: string
-): Promise<string | null> {
-  const contextSegments: string[] = [];
-  const workspaceInstructions = await readInstructionSetFromRuntime(runtime, workspacePath);
+): string {
+  if (!metadata.subProjectPath?.trim()) return workspacePath;
+  return resolveWorkspaceRootPath(metadata, runtime);
+}
+
+async function readMultiProjectContextInstructions(
+  metadata: WorkspaceMetadata,
+  runtime: Runtime,
+  workspaceRootPath: string
+): Promise<InstructionSet[]> {
+  const sets: InstructionSet[] = [];
+  const workspaceInstructions = await readInstructionSetFromRuntime(
+    runtime,
+    workspaceRootPath,
+    INSTRUCTION_SCOPE.WORKSPACE
+  );
   if (workspaceInstructions) {
-    contextSegments.push(workspaceInstructions);
+    sets.push(workspaceInstructions);
   }
 
   const seenProjectNames = new Set<string>();
@@ -317,23 +347,32 @@ async function readMultiProjectContextInstructions(
     );
     seenProjectNames.add(project.projectName);
 
-    const workspaceProjectPath = path.join(workspacePath, project.projectName);
+    const workspaceProjectPath = path.join(workspaceRootPath, project.projectName);
     const projectInstructions =
-      (await readInstructionSetFromRuntime(runtime, workspaceProjectPath)) ??
-      (await readInstructionSet(project.projectPath));
+      (await readInstructionSetFromRuntime(
+        runtime,
+        workspaceProjectPath,
+        INSTRUCTION_SCOPE.PROJECT,
+        project.projectName
+      )) ??
+      (await readInstructionSet(
+        project.projectPath,
+        INSTRUCTION_SCOPE.PROJECT,
+        project.projectName
+      ));
     if (projectInstructions) {
-      contextSegments.push(projectInstructions);
+      sets.push(projectInstructions);
     }
   }
 
-  return contextSegments.length > 0 ? contextSegments.join("\n\n") : null;
+  return sets;
 }
 
 async function readSingleProjectContextInstructions(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
-  workspacePath: string
-): Promise<string | null> {
+  workspaceRootPath: string
+): Promise<InstructionSet[]> {
   // Read parent + sub-project AGENTS.md from the workspace's *own* checkout
   // (via the runtime). For worktree/SSH/Docker flows the parent project's host
   // path is a different checkout than the workspace branch — mixing the two
@@ -341,6 +380,10 @@ async function readSingleProjectContextInstructions(
   // edits from overriding parent guidance. The workspace root is by
   // construction the parent project's checkout, and any registered
   // sub-project's relative path is stable across checkouts of the same repo.
+  //
+  // `workspaceRootPath` is the parent project's checkout root — *without* the
+  // sub-project segment appended (see `resolveWorkspaceRootPath`). The
+  // sub-project's AGENTS.md is read at `<root>/<subProjectRelativePath>`.
   const subProjectRelativePath = metadata.subProjectPath
     ? deriveSubProjectRelativePath(metadata.projectPath, metadata.subProjectPath)
     : null;
@@ -349,20 +392,23 @@ async function readSingleProjectContextInstructions(
   // but SSH/Docker/devcontainer runtimes read files via POSIX paths. Normalize to
   // forward slashes and let the runtime joiner produce a runtime-correct path.
   const subProjectInstructionsDir = subProjectRelativePath
-    ? runtime.normalizePath(subProjectRelativePath.replace(/\\/g, "/"), workspacePath)
+    ? runtime.normalizePath(subProjectRelativePath.replace(/\\/g, "/"), workspaceRootPath)
     : null;
 
   const [parentInstructions, subProjectInstructions] = await Promise.all([
-    readInstructionSetFromRuntime(runtime, workspacePath),
+    readInstructionSetFromRuntime(runtime, workspaceRootPath, INSTRUCTION_SCOPE.WORKSPACE),
     subProjectInstructionsDir
-      ? readInstructionSetFromRuntime(runtime, subProjectInstructionsDir)
+      ? readInstructionSetFromRuntime(
+          runtime,
+          subProjectInstructionsDir,
+          INSTRUCTION_SCOPE.SUBPROJECT
+        )
       : Promise.resolve(null),
   ]);
 
-  const contextSegments = [parentInstructions, subProjectInstructions].filter(
-    (segment): segment is string => segment != null && segment.trim().length > 0
+  return [parentInstructions, subProjectInstructions].filter(
+    (set): set is InstructionSet => set != null && set.combinedContent.trim().length > 0
   );
-  return contextSegments.length > 0 ? contextSegments.join("\n\n") : null;
 }
 
 /**
@@ -381,29 +427,36 @@ function deriveSubProjectRelativePath(projectPath: string, subProjectPath: strin
 }
 
 /**
- * Read instruction sets from global and context sources.
- * Internal helper for buildSystemMessage and extractToolInstructions.
+ * Read instruction sets from global and context sources as a structured tree.
  *
- * Single-project workspaces keep the historical lookup order of workspace root → project root.
+ * Single-project workspaces keep the historical lookup order of workspace root → sub-project.
  * Multi-project workspaces layer the shared container instructions with every per-project repo
  * mounted under <workspace>/<projectName> so secondary repos can contribute scoped instructions.
+ *
+ * Exported so the IPC layer can hand the structured payload to the right-sidebar
+ * Instructions tab — keeping the panel and the prompt builder in lockstep via shared types.
  *
  * @param metadata - Workspace metadata (contains projectPath)
  * @param runtime - Runtime for reading workspace files (supports SSH)
  * @param workspacePath - Workspace directory path
- * @returns Tuple of [globalInstructions, contextInstructions]
+ * @returns Structured instruction sources (global + ordered context entries)
  */
-async function readInstructionSources(
+export async function loadInstructionSources(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
-  workspacePath: string
-): Promise<[string | null, string | null]> {
-  const globalInstructions = await readInstructionSet(getSystemDirectory());
-  const contextInstructions = isMultiProject(metadata)
-    ? await readMultiProjectContextInstructions(metadata, runtime, workspacePath)
-    : await readSingleProjectContextInstructions(metadata, runtime, workspacePath);
+  workspaceRootPath: string
+): Promise<InstructionSources> {
+  // `workspaceRootPath` is the parent project's checkout root — *without* the
+  // optional sub-project segment. Callers that hand us the execution path
+  // (root + subProject) for a sub-project workspace would silently lose the
+  // parent project's AGENTS.md, so we require root explicitly. See
+  // `resolveWorkspaceRootPath` in `@/node/runtime/runtimeHelpers`.
+  const global = await readInstructionSet(getSystemDirectory(), INSTRUCTION_SCOPE.GLOBAL);
+  const context = isMultiProject(metadata)
+    ? await readMultiProjectContextInstructions(metadata, runtime, workspaceRootPath)
+    : await readSingleProjectContextInstructions(metadata, runtime, workspaceRootPath);
 
-  return [globalInstructions, contextInstructions];
+  return { global, context };
 }
 
 /**
@@ -461,11 +514,16 @@ export async function buildSystemMessage(
   // best practices. See tools.ts ToolConfiguration.availableSkills/availableSubagents.
 
   // Read instruction sets
-  const [globalInstructions, contextInstructions] = await readInstructionSources(
-    metadata,
-    runtime,
-    workspacePath
-  );
+  // Sub-project workspaces pass the execution path (root + subProject); fall
+  // back to the resolved root so the parent project's AGENTS.md is still read.
+  // For non-sub-project workspaces this is a no-op (root === execution path).
+  const workspaceRootPath = subProjectAwareWorkspaceRoot(metadata, runtime, workspacePath);
+  const instructionSources = await loadInstructionSources(metadata, runtime, workspaceRootPath);
+  const globalInstructions = instructionSources.global?.combinedContent ?? null;
+  // Concatenated context content for downstream string-based helpers
+  // (`stripScopedInstructionSections`, `extractModelSection`, …). The structured
+  // form lives in `instructionSources` for consumers that need per-file metadata.
+  const contextInstructions = joinInstructionSets(instructionSources.context) || null;
 
   const agentPrompt = options?.agentSystemPrompt?.trim() ?? null;
 

@@ -675,6 +675,9 @@ function generateToolHookEnvVarsBlock(): string {
   const tools = Object.entries(TOOL_DEFINITIONS).sort(([a], [b]) => a.localeCompare(b));
 
   for (const [toolName, def] of tools) {
+    // Skip internal/bespoke tools (e.g. propose_name, propose_status) — users
+    // can't write hooks for them, so listing their env vars is misleading.
+    if ((def as { internal?: boolean }).internal) continue;
     const vars = collectToolHookEnvVarsFromZodSchema(def.schema);
     if (vars.length === 0) continue;
 

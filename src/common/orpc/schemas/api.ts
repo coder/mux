@@ -4,14 +4,35 @@ import { z } from "zod";
 import { CODER_ARCHIVE_BEHAVIORS } from "@/common/config/coderArchiveBehavior";
 import { WORKTREE_ARCHIVE_BEHAVIORS } from "@/common/config/worktreeArchiveBehavior";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
+import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import {
+  MAX_IMAGE_GENERATION_MAX_IMAGES,
+  MIN_IMAGE_GENERATION_MAX_IMAGES,
+} from "@/common/types/imageGeneration";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
+import { AdditionalSystemContextSchema, WorkspaceInstructionsSchema } from "./instructions";
 import {
   NameGenerationErrorSchema,
   ProjectRemoveErrorSchema,
   SendMessageErrorSchema,
 } from "./errors";
 import { BranchListResultSchema, FilePartSchema, MuxMessageSchema } from "./message";
+import {
+  GoalClearInputSchema,
+  GoalBoardAddUpcomingInputSchema,
+  GoalBoardArchiveInputSchema,
+  GoalBoardGetInputSchema,
+  GoalBoardPromoteInputSchema,
+  GoalBoardReorderInputSchema,
+  GoalBoardReviveInputSchema,
+  GoalBoardUpdateUpcomingInputSchema,
+  GoalBoardSnapshotSchema,
+  GoalGetInputSchema,
+  GoalRecordV1Schema,
+  GoalSetErrorSchema,
+  GoalSetInputSchema,
+} from "./goal";
 import { ProjectConfigSchema } from "./project";
 import { ResultSchema } from "./result";
 import { SshPromptEventSchema, SshPromptResponseInputSchema } from "./ssh";
@@ -44,6 +65,7 @@ import {
   GitStatusSchema,
   ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
+  WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
 } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
@@ -205,6 +227,7 @@ export const ProviderConfigInfoSchema = z.object({
   serviceTier: ServiceTierSchema.optional(),
   wireFormat: z.enum(["responses", "chatCompletions"]).optional(),
   store: z.boolean().optional(),
+  webSocketTransportEnabled: z.boolean().optional(),
   /** Anthropic-specific fields */
   cacheTtl: CacheTtlSchema.optional(),
   disableBetaFeatures: z.boolean().optional(),
@@ -1027,11 +1050,29 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
+  goalDefaults: {
+    // Per-workspace override of the global `goalDefaults` block. `get`
+    // returns `null` when no override is set (i.e., this workspace uses
+    // the global default). `set` accepts a sparse override; passing
+    // `null` for any field clears that override; passing all-null clears
+    // the whole record.
+    get: {
+      input: z.object({ workspaceId: z.string() }),
+      output: WorkspaceGoalDefaultsOverrideSchema.nullable(),
+    },
+    set: {
+      input: WorkspaceGoalDefaultsOverrideSchema.extend({
+        workspaceId: z.string(),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
   updateAgentAISettings: {
     input: z.object({
       workspaceId: z.string(),
       agentId: AgentIdSchema,
       aiSettings: WorkspaceAISettingsSchema,
+      persistSelectedAgentId: z.boolean().nullish(),
     }),
     output: ResultSchema(z.void(), z.string()),
   },
@@ -1119,6 +1160,28 @@ export const workspace = {
     }),
     output: ResultSchema(z.object({}), SendMessageErrorSchema),
   },
+  sideQuestion: {
+    // `/btw` — forked, single-turn, read-only side question over the
+    // current conversation. Tools are denied client-side and prompt-side.
+    //
+    // The actual question + answer flow to the frontend through the normal
+    // `onChat` stream events (so they animate with TypewriterMarkdown and
+    // persist to chat.jsonl). This RPC only returns success/error so the
+    // caller can surface a toast on failure.
+    input: z
+      .object({
+        workspaceId: z.string(),
+        question: z.string().min(1),
+      })
+      .strict(),
+    output: z.discriminatedUnion("success", [
+      z.object({
+        success: z.literal(true),
+        modelUsed: z.string(),
+      }),
+      z.object({ success: z.literal(false), error: z.string() }),
+    ]),
+  },
   answerAskUserQuestion: {
     input: z
       .object({
@@ -1200,6 +1263,10 @@ export const workspace = {
       percentage: z.number().optional(),
     }),
     output: ResultSchema(z.void(), z.string()),
+  },
+  resetContext: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(z.enum(["reset", "noop"]), z.string()),
   },
   replaceChatHistory: {
     input: z.object({
@@ -1447,6 +1514,55 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
+  getGoal: {
+    input: GoalGetInputSchema,
+    output: z.object({ goal: GoalRecordV1Schema.nullable() }),
+  },
+  setGoal: {
+    input: GoalSetInputSchema,
+    output: ResultSchema(GoalRecordV1Schema, GoalSetErrorSchema),
+  },
+  clearGoal: {
+    input: GoalClearInputSchema,
+    output: z.object({ cleared: z.boolean() }),
+  },
+  /**
+   * Goal board (multi-goal queue) endpoints. The board is the renderer-
+   * facing view of a workspace's goals across the four sections (active,
+   * upcoming, complete, archived). Backed by `goal.json` (active),
+   * `goal-board.json` (upcoming + archived), and `goal-history.jsonl`
+   * (complete). See `src/common/orpc/schemas/goal.ts` for the schema
+   * rationale and the deliberate decision to keep the agent's
+   * `get_goal` tool reading only the active goal.
+   */
+  getGoalBoard: {
+    input: GoalBoardGetInputSchema,
+    output: GoalBoardSnapshotSchema,
+  },
+  addUpcomingGoal: {
+    input: GoalBoardAddUpcomingInputSchema,
+    output: GoalRecordV1Schema,
+  },
+  archiveGoal: {
+    input: GoalBoardArchiveInputSchema,
+    output: z.void(),
+  },
+  reviveArchivedGoal: {
+    input: GoalBoardReviveInputSchema,
+    output: z.void(),
+  },
+  reorderUpcomingGoals: {
+    input: GoalBoardReorderInputSchema,
+    output: z.void(),
+  },
+  promoteUpcomingGoal: {
+    input: GoalBoardPromoteInputSchema,
+    output: GoalRecordV1Schema.nullable(),
+  },
+  updateUpcomingGoal: {
+    input: GoalBoardUpdateUpcomingInputSchema,
+    output: GoalRecordV1Schema.nullable(),
+  },
   getSessionUsage: {
     input: z.object({ workspaceId: z.string() }),
     output: SessionUsageFileSchema.optional(),
@@ -1455,6 +1571,32 @@ export const workspace = {
   getSessionUsageBatch: {
     input: z.object({ workspaceIds: z.array(z.string()) }),
     output: z.record(z.string(), SessionUsageFileSchema.optional()),
+  },
+  /**
+   * Resolve the instruction context (AGENTS.md, CLAUDE.md, AGENTS.local.md, …)
+   * loaded into the system prompt for this workspace. Used by the right-sidebar
+   * Instructions tab; the same structured payload backs the prompt builder so
+   * the panel can never drift from what the agent actually sees.
+   */
+  getInstructions: {
+    input: z.object({
+      workspaceId: z.string(),
+      /** Optional canonical "provider:model" used for token counting. */
+      model: z.string().nullish(),
+    }),
+    output: WorkspaceInstructionsSchema,
+  },
+  getAdditionalSystemContext: {
+    input: z.object({ workspaceId: z.string() }),
+    output: AdditionalSystemContextSchema,
+  },
+  setAdditionalSystemContext: {
+    input: z.object({
+      workspaceId: z.string(),
+      content: z.string(),
+      enabled: z.boolean(),
+    }),
+    output: AdditionalSystemContextSchema,
   },
   /** Per-workspace MCP configuration (overrides project-level mcp.jsonc) */
   mcp: {
@@ -1800,6 +1942,41 @@ const AdvisorModelStringSchema = z.string().nullable();
 const AdvisorThinkingLevelSchema = ThinkingLevelSchema.nullable();
 const AdvisorMaxUsesPerTurnSchema = z.number().int().positive().nullable();
 const AdvisorMaxOutputTokensSchema = z.number().int().positive().nullable();
+const ImageGenerationConfigSchema = z.object({
+  modelString: z.string(),
+  maxImagesPerCall: z
+    .number()
+    .int()
+    .min(MIN_IMAGE_GENERATION_MAX_IMAGES)
+    .max(MAX_IMAGE_GENERATION_MAX_IMAGES),
+  allowImageUploadsForEditing: z.boolean(),
+});
+
+const GoalDefaultsConfigSchema = z.object({
+  defaultBudgetCents: z
+    .number()
+    .int()
+    .nonnegative()
+    .default(DEFAULT_GOAL_DEFAULTS.defaultBudgetCents),
+  defaultTurnCap: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .default(DEFAULT_GOAL_DEFAULTS.defaultTurnCap),
+  alwaysRequireExplicitBudget: z
+    .boolean()
+    .default(DEFAULT_GOAL_DEFAULTS.alwaysRequireExplicitBudget),
+});
+
+const booleanToggleRoute = {
+  input: z
+    .object({
+      enabled: z.boolean(),
+    })
+    .strict(),
+  output: z.void(),
+};
 
 export const config = {
   getConfig: {
@@ -1815,6 +1992,7 @@ export const config = {
       advisorThinkingLevel: AdvisorThinkingLevelSchema,
       advisorMaxUsesPerTurn: AdvisorMaxUsesPerTurnSchema.optional(),
       advisorMaxOutputTokens: AdvisorMaxOutputTokensSchema.optional(),
+      imageGeneration: ImageGenerationConfigSchema,
       hiddenModels: z.array(z.string()).optional(),
       coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS),
       worktreeArchiveBehavior: z.enum(WORKTREE_ARCHIVE_BEHAVIORS),
@@ -1826,9 +2004,11 @@ export const config = {
       // Mux Governor enrollment status (safe fields only - token never exposed)
       muxGovernorUrl: z.string().nullable(),
       muxGovernorEnrolled: z.boolean(),
+      chatTranscriptFullWidth: z.boolean(),
       llmDebugLogs: z.boolean(),
       heartbeatDefaultPrompt: z.string().optional(),
       heartbeatDefaultIntervalMs: z.number().optional(),
+      goalDefaults: GoalDefaultsConfigSchema,
       onePasswordAccountName: z.string().nullish(),
     }),
   },
@@ -1869,6 +2049,12 @@ export const config = {
     }),
     output: z.void(),
   },
+  updateImageGenerationConfig: {
+    input: z.object({
+      imageGeneration: ImageGenerationConfigSchema,
+    }),
+    output: z.void(),
+  },
   updateModelPreferences: {
     input: z.object({
       defaultModel: z.string().optional(),
@@ -1904,14 +2090,8 @@ export const config = {
       .strict(),
     output: z.void(),
   },
-  updateLlmDebugLogs: {
-    input: z
-      .object({
-        enabled: z.boolean(),
-      })
-      .strict(),
-    output: z.void(),
-  },
+  updateChatTranscriptFullWidth: booleanToggleRoute,
+  updateLlmDebugLogs: booleanToggleRoute,
   updateHeartbeatDefaultPrompt: {
     input: z
       .object({
@@ -1929,6 +2109,14 @@ export const config = {
           .min(HEARTBEAT_MIN_INTERVAL_MS)
           .max(HEARTBEAT_MAX_INTERVAL_MS)
           .nullish(),
+      })
+      .strict(),
+    output: z.void(),
+  },
+  updateGoalDefaults: {
+    input: z
+      .object({
+        goalDefaults: GoalDefaultsConfigSchema,
       })
       .strict(),
     output: z.void(),
@@ -2085,6 +2273,10 @@ const BrowserDiscoveredSessionSchema = z.object({
   status: z.enum(["attachable", "missing_stream"]),
 });
 
+const BrowserDiscoveredOtherSessionSchema = BrowserDiscoveredSessionSchema.extend({
+  cwd: z.string(),
+});
+
 const BrowserControlActionSchema = z.enum(["open", "back", "forward", "reload"]);
 
 export const browser = {
@@ -2096,6 +2288,7 @@ export const browser = {
       .strict(),
     output: z.object({
       sessions: z.array(BrowserDiscoveredSessionSchema),
+      otherSessions: z.array(BrowserDiscoveredOtherSessionSchema),
     }),
   },
   getBootstrap: {
@@ -2103,6 +2296,7 @@ export const browser = {
       .object({
         workspaceId: z.string(),
         sessionName: z.string(),
+        allowOtherWorkspaceSession: z.boolean().nullish(),
       })
       .strict(),
     output: z.object({
@@ -2118,6 +2312,7 @@ export const browser = {
         sessionName: z.string(),
         action: BrowserControlActionSchema,
         url: z.string().nullish(),
+        allowOtherWorkspaceSession: z.boolean().nullish(),
       })
       .strict(),
     output: z.object({
@@ -2130,6 +2325,7 @@ export const browser = {
       .object({
         workspaceId: z.string(),
         sessionName: z.string(),
+        allowOtherWorkspaceSession: z.boolean().nullish(),
       })
       .strict(),
     output: z.object({

@@ -37,6 +37,7 @@ import { DisposableProcess } from "@/node/utils/disposableExec";
 import { streamToString, shescape } from "./streamUtils";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getAtomicWriteTempPath } from "./atomicWriteTempPath";
+import { buildShellExport } from "./shellEnv";
 
 /**
  * Result from spawning a remote process.
@@ -113,7 +114,7 @@ export abstract class RemoteRuntime implements Runtime {
     // Add environment variable exports (user env first, then non-interactive overrides)
     const envVars = { ...options.env, ...NON_INTERACTIVE_ENV_VARS };
     for (const [key, value] of Object.entries(envVars)) {
-      parts.push(`export ${key}=${shescape.quote(value)}`);
+      parts.push(buildShellExport(key, value, (envValue) => shescape.quote(envValue)));
     }
 
     // Add the actual command
@@ -220,9 +221,14 @@ export abstract class RemoteRuntime implements Runtime {
       };
 
       abortSignal.addEventListener("abort", onAbort, { once: true });
+      if (abortSignal.aborted) {
+        onAbort();
+      }
 
       // Avoid retaining closures on long-lived abort signals once the process exits.
-      void exitCode.finally(() => abortSignal.removeEventListener("abort", onAbort));
+      void exitCode
+        .catch(() => undefined)
+        .finally(() => abortSignal.removeEventListener("abort", onAbort));
     }
 
     // Handle timeout. Include connection acquisition time in the local deadline so
@@ -248,7 +254,7 @@ export abstract class RemoteRuntime implements Runtime {
         hardKillHandle.unref();
       }, remainingTimeoutMs);
 
-      void exitCode.finally(() => clearTimeout(timeoutHandle));
+      void exitCode.catch(() => undefined).finally(() => clearTimeout(timeoutHandle));
     }
 
     // Convert Node.js streams to Web Streams
@@ -391,12 +397,22 @@ export abstract class RemoteRuntime implements Runtime {
     const writeCommand = this.buildWriteCommand(quotedPath, quotedTempPath);
 
     let execPromise: Promise<ExecStream> | null = null;
+    const writeAbortController = new AbortController();
+    const abortWrite = () => writeAbortController.abort();
+    if (abortSignal?.aborted) {
+      writeAbortController.abort();
+    } else {
+      abortSignal?.addEventListener("abort", abortWrite, { once: true });
+    }
+    const cleanupAbortForwarder = () => {
+      abortSignal?.removeEventListener("abort", abortWrite);
+    };
 
     const getExecStream = () => {
       execPromise ??= this.exec(writeCommand, {
         cwd: this.getBasePath(),
         timeout: 300,
-        abortSignal,
+        abortSignal: writeAbortController.signal,
       });
       return execPromise;
     };
@@ -412,18 +428,32 @@ export abstract class RemoteRuntime implements Runtime {
         }
       },
       close: async () => {
-        const stream = await getExecStream();
-        await stream.stdin.close();
-        const exitCode = await stream.exitCode;
+        try {
+          const stream = await getExecStream();
+          await stream.stdin.close();
+          const exitCode = await stream.exitCode;
 
-        if (exitCode !== 0) {
-          const stderr = await streamToString(stream.stderr);
-          throw new RuntimeError(`Failed to write file ${filePath}: ${stderr}`, "file_io");
+          if (exitCode !== 0) {
+            const stderr = await streamToString(stream.stderr);
+            throw new RuntimeError(`Failed to write file ${filePath}: ${stderr}`, "file_io");
+          }
+        } finally {
+          cleanupAbortForwarder();
         }
       },
       abort: async (reason?: unknown) => {
-        const stream = await getExecStream();
-        await stream.stdin.abort();
+        writeAbortController.abort();
+        if (execPromise) {
+          try {
+            const stream = await execPromise;
+            await stream.stdin.abort(reason).catch(() => undefined);
+            await stream.exitCode.catch(() => undefined);
+          } finally {
+            cleanupAbortForwarder();
+          }
+        } else {
+          cleanupAbortForwarder();
+        }
         throw new RuntimeError(`Failed to write file ${filePath}: ${String(reason)}`, "file_io");
       },
     });
@@ -440,10 +470,11 @@ export abstract class RemoteRuntime implements Runtime {
   /**
    * Ensure a directory exists (mkdir -p semantics).
    */
-  async ensureDir(dirPath: string): Promise<void> {
+  async ensureDir(dirPath: string, abortSignal?: AbortSignal): Promise<void> {
     const stream = await this.exec(`mkdir -p ${this.quoteForRemote(dirPath)}`, {
       cwd: "/",
       timeout: 10,
+      abortSignal,
     });
 
     await stream.stdin.close();

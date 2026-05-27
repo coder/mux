@@ -432,93 +432,165 @@ async function waitForCondition(condition: () => boolean, timeoutMs = 1_000): Pr
     if (Date.now() - startedAt > timeoutMs) {
       throw new Error("waitForCondition: timed out");
     }
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await sleep(10);
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getLastMuxMetadata(harness: Harness): Record<string, unknown> {
+  const lastSend = harness.sendMessageCalls.at(-1);
+  if (lastSend == null) {
+    throw new Error("Expected prompt send call before reading muxMetadata");
+  }
+
+  const muxMetadata = lastSend.options["muxMetadata"];
+  if (!isRecord(muxMetadata)) {
+    throw new Error("Expected prompt send options to include muxMetadata record");
+  }
+
+  return muxMetadata;
+}
+
+function getPromptCorrelationId(harness: Harness): string {
+  const promptCorrelationId = getLastMuxMetadata(harness)["acpPromptId"];
+  if (typeof promptCorrelationId !== "string") {
+    throw new Error("Expected prompt send options to include acpPromptId");
+  }
+
+  return promptCorrelationId;
+}
+
+async function initializeDefaultAgent(harness: Harness): Promise<void> {
+  await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+}
+
+async function createDefaultSession(harness: Harness, cwd = "/repo/acp-go-sdk") {
+  return await harness.agent.newSession({
+    cwd,
+    mcpServers: [],
+    _meta: { trunkBranch: "main" },
+  });
+}
+
+async function startPromptTurn(
+  harness: Harness,
+  sessionId: string,
+  text = "hello"
+): Promise<{
+  promptPromise: ReturnType<MuxAgent["prompt"]>;
+  promptCorrelationId: string;
+}> {
+  const promptPromise = harness.agent.prompt({
+    sessionId,
+    prompt: [{ type: "text", text }],
+  });
+
+  await waitForCondition(() => harness.sendMessageCalls.length > 0);
+  return { promptPromise, promptCorrelationId: getPromptCorrelationId(harness) };
+}
+
+async function createDefaultPromptTurn(
+  harness: Harness,
+  cwd = "/repo/acp-go-sdk"
+): Promise<{
+  newSessionResponse: Awaited<ReturnType<MuxAgent["newSession"]>>;
+  promptPromise: ReturnType<MuxAgent["prompt"]>;
+  promptCorrelationId: string;
+}> {
+  await initializeDefaultAgent(harness);
+  const newSessionResponse = await createDefaultSession(harness, cwd);
+  const turn = await startPromptTurn(harness, newSessionResponse.sessionId);
+  return { newSessionResponse, ...turn };
+}
+
+function trackSettled<T>(promise: Promise<T>): () => boolean {
+  let settled = false;
+  promise.then(
+    () => {
+      settled = true;
+    },
+    () => {
+      settled = true;
+    }
+  );
+  return () => settled;
+}
+
+const DEFAULT_MODEL = "anthropic:claude-sonnet-4-5";
+const EDITOR_DELEGATION_CAPABILITIES = {
+  fs: { readTextFile: true, writeTextFile: true },
+  terminal: true,
+};
+
+async function initializeEditorDelegationAgent(harness: Harness): Promise<void> {
+  await harness.agent.initialize({
+    protocolVersion: PROTOCOL_VERSION,
+    clientCapabilities: EDITOR_DELEGATION_CAPABILITIES,
+  });
+}
+
+function streamStart(
+  workspaceId: string,
+  messageId: string,
+  overrides: Record<string, unknown> = {}
+): WorkspaceChatMessage {
+  return {
+    type: "stream-start",
+    workspaceId,
+    messageId,
+    model: DEFAULT_MODEL,
+    historySequence: 3,
+    startTime: Date.now(),
+    ...overrides,
+  } as WorkspaceChatMessage;
+}
+
+function streamEnd(
+  workspaceId: string,
+  messageId: string,
+  overrides: Record<string, unknown> = {}
+): WorkspaceChatMessage {
+  return {
+    type: "stream-end",
+    workspaceId,
+    messageId,
+    metadata: { model: DEFAULT_MODEL },
+    parts: [],
+    ...overrides,
+  } as WorkspaceChatMessage;
 }
 
 describe("ACP prompt stream correlation", () => {
   it("ignores unrelated stream-start/end pairs while waiting for this prompt turn", async () => {
     const harness = createHarness();
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    const { newSessionResponse, promptPromise, promptCorrelationId } =
+      await createDefaultPromptTurn(harness);
 
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
+    const isPromptSettled = trackSettled(promptPromise);
 
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    let promptSettled = false;
-    void promptPromise.then(
-      () => {
-        promptSettled = true;
-      },
-      () => {
-        promptSettled = true;
-      }
+    harness.pushChatEvent(
+      streamStart(newSessionResponse.sessionId, "assistant-other", {
+        historySequence: 2,
+        acpPromptId: "unrelated-prompt-id",
+      })
     );
 
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-other",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 2,
-      startTime: Date.now(),
-      acpPromptId: "unrelated-prompt-id",
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(streamEnd(newSessionResponse.sessionId, "assistant-other"));
 
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-other",
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    await sleep(25);
+    expect(isPromptSettled()).toBe(false);
 
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(promptSettled).toBe(false);
+    harness.pushChatEvent(
+      streamStart(newSessionResponse.sessionId, "assistant-target", {
+        historySequence: 3,
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 3,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-    } as WorkspaceChatMessage);
-
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(streamEnd(newSessionResponse.sessionId, "assistant-target"));
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -531,68 +603,25 @@ describe("ACP prompt stream correlation", () => {
 
   it("completes prompt turns from correlated stream-end when stream-start is missing", async () => {
     const harness = createHarness();
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    const { newSessionResponse, promptPromise, promptCorrelationId } =
+      await createDefaultPromptTurn(harness);
 
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
+    const isPromptSettled = trackSettled(promptPromise);
 
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    let promptSettled = false;
-    void promptPromise.then(
-      () => {
-        promptSettled = true;
-      },
-      () => {
-        promptSettled = true;
-      }
+    harness.pushChatEvent(
+      streamEnd(newSessionResponse.sessionId, "assistant-other", {
+        acpPromptId: "unrelated-prompt-id",
+      })
     );
 
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-other",
-      acpPromptId: "unrelated-prompt-id",
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    await sleep(25);
+    expect(isPromptSettled()).toBe(false);
 
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(promptSettled).toBe(false);
-
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      acpPromptId: promptCorrelationId,
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(
+      streamEnd(newSessionResponse.sessionId, "assistant-target", {
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -609,22 +638,7 @@ describe("ACP prompt stream correlation", () => {
         turnCorrelationTimeoutMs: 50,
       },
     });
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
-
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
-
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+    const { promptPromise } = await createDefaultPromptTurn(harness);
 
     const timeoutGuard = new Promise<never>((_, reject) => {
       setTimeout(
@@ -647,48 +661,20 @@ describe("ACP prompt stream correlation", () => {
         turnCorrelationTimeoutMs: 100,
       },
     });
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    const { newSessionResponse, promptPromise, promptCorrelationId } =
+      await createDefaultPromptTurn(harness);
 
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
-
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 3,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(
+      streamStart(newSessionResponse.sessionId, "assistant-target", {
+        historySequence: 3,
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
     // Keep the stream active for longer than turnCorrelationTimeoutMs to prove
     // timeout is inactivity-based (not a fixed wall-clock timer).
     for (let i = 0; i < 4; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await sleep(40);
       harness.pushChatEvent({
         type: "stream-delta",
         workspaceId: newSessionResponse.sessionId,
@@ -699,16 +685,11 @@ describe("ACP prompt stream correlation", () => {
       } as WorkspaceChatMessage);
     }
 
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      acpPromptId: promptCorrelationId,
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(
+      streamEnd(newSessionResponse.sessionId, "assistant-target", {
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -725,68 +706,27 @@ describe("ACP prompt stream correlation", () => {
         turnCorrelationTimeoutMs: 100,
       },
     });
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    const { newSessionResponse, promptPromise, promptCorrelationId } =
+      await createDefaultPromptTurn(harness);
 
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
+    const isPromptSettled = trackSettled(promptPromise);
 
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    let promptSettled = false;
-    void promptPromise.then(
-      () => {
-        promptSettled = true;
-      },
-      () => {
-        promptSettled = true;
-      }
+    harness.pushChatEvent(
+      streamStart(newSessionResponse.sessionId, "assistant-target", {
+        historySequence: 3,
+        acpPromptId: promptCorrelationId,
+      })
     );
 
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 3,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-    } as WorkspaceChatMessage);
-
     // Wait longer than turnCorrelationTimeoutMs with no correlated deltas.
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(promptSettled).toBe(false);
+    await sleep(150);
+    expect(isPromptSettled()).toBe(false);
 
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      acpPromptId: promptCorrelationId,
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(
+      streamEnd(newSessionResponse.sessionId, "assistant-target", {
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -799,54 +739,17 @@ describe("ACP prompt stream correlation", () => {
 
   it("completes prompt turns when stream-start omits acpPromptId but terminal event is correlated", async () => {
     const harness = createHarness();
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    const { newSessionResponse, promptPromise, promptCorrelationId } =
+      await createDefaultPromptTurn(harness);
 
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
+    // Simulate runtimes that omit correlation metadata on live stream-start.
+    harness.pushChatEvent(streamStart(newSessionResponse.sessionId, "assistant-target"));
 
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 3,
-      startTime: Date.now(),
-      // Simulate runtimes that omit correlation metadata on live stream-start.
-    } as WorkspaceChatMessage);
-
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      acpPromptId: promptCorrelationId,
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(
+      streamEnd(newSessionResponse.sessionId, "assistant-target", {
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -863,37 +766,15 @@ describe("ACP prompt stream correlation", () => {
         turnCorrelationTimeoutMs: 100,
       },
     });
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    const { newSessionResponse, promptPromise } = await createDefaultPromptTurn(harness);
 
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
-
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 3,
-      startTime: Date.now(),
-      // Simulate runtimes that omit correlation metadata on live stream events.
-    } as WorkspaceChatMessage);
+    // Simulate runtimes that omit correlation metadata on live stream events.
+    harness.pushChatEvent(streamStart(newSessionResponse.sessionId, "assistant-target"));
 
     // Keep the stream active longer than turnCorrelationTimeoutMs to prove the
     // fallback stream-start binding refreshes inactivity while acpPromptId is missing.
     for (let i = 0; i < 4; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 40));
+      await sleep(40);
       harness.pushChatEvent({
         type: "stream-delta",
         workspaceId: newSessionResponse.sessionId,
@@ -904,16 +785,8 @@ describe("ACP prompt stream correlation", () => {
       } as WorkspaceChatMessage);
     }
 
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-      // Terminal event may also omit acpPromptId in older runtimes.
-    } as WorkspaceChatMessage);
+    // Terminal event may also omit acpPromptId in older runtimes.
+    harness.pushChatEvent(streamEnd(newSessionResponse.sessionId, "assistant-target"));
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -926,87 +799,36 @@ describe("ACP prompt stream correlation", () => {
 
   it("ignores stale uncorrelated stream-start events older than the active prompt", async () => {
     const harness = createHarness();
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    const { newSessionResponse, promptPromise, promptCorrelationId } =
+      await createDefaultPromptTurn(harness);
 
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
+    const isPromptSettled = trackSettled(promptPromise);
 
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    let promptSettled = false;
-    void promptPromise.then(
-      () => {
-        promptSettled = true;
-      },
-      () => {
-        promptSettled = true;
-      }
+    // Simulate a stale stream-start from before this prompt began.
+    harness.pushChatEvent(
+      streamStart(newSessionResponse.sessionId, "assistant-stale", {
+        historySequence: 1,
+        startTime: 1,
+      })
     );
 
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-stale",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 1,
-      // Simulate a stale stream-start from before this prompt began.
-      startTime: 1,
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(streamEnd(newSessionResponse.sessionId, "assistant-stale"));
 
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-stale",
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    await sleep(25);
+    expect(isPromptSettled()).toBe(false);
 
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(promptSettled).toBe(false);
+    harness.pushChatEvent(
+      streamStart(newSessionResponse.sessionId, "assistant-target", {
+        historySequence: 3,
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 3,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-    } as WorkspaceChatMessage);
-
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      acpPromptId: promptCorrelationId,
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(
+      streamEnd(newSessionResponse.sessionId, "assistant-target", {
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -1019,57 +841,23 @@ describe("ACP prompt stream correlation", () => {
 
   it("completes prompt turns from replay-flagged correlated stream events", async () => {
     const harness = createHarness();
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    const { newSessionResponse, promptPromise, promptCorrelationId } =
+      await createDefaultPromptTurn(harness);
 
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
+    // Simulate pre-caught-up replay classification from full-mode subscriptions.
+    harness.pushChatEvent(
+      streamStart(newSessionResponse.sessionId, "assistant-target", {
+        acpPromptId: promptCorrelationId,
+        replay: true,
+      })
+    );
 
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 3,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-      // Simulate pre-caught-up replay classification from full-mode subscriptions.
-      replay: true,
-    } as WorkspaceChatMessage);
-
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-      // Deliberately omit acpPromptId to ensure message-id matching still completes.
-      replay: true,
-    } as WorkspaceChatMessage);
+    // Deliberately omit acpPromptId to ensure message-id matching still completes.
+    harness.pushChatEvent(
+      streamEnd(newSessionResponse.sessionId, "assistant-target", {
+        replay: true,
+      })
+    );
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -1082,22 +870,7 @@ describe("ACP prompt stream correlation", () => {
 
   it("resolves pending prompts as cancelled when cancel succeeds without terminal stream events", async () => {
     const harness = createHarness();
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
-
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
-
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+    const { newSessionResponse, promptPromise } = await createDefaultPromptTurn(harness);
 
     await harness.agent.cancel({
       sessionId: newSessionResponse.sessionId,
@@ -1120,43 +893,15 @@ describe("ACP prompt stream correlation", () => {
 
   it("accepts correlated terminal events even when messageId is empty", async () => {
     const harness = createHarness();
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    const { newSessionResponse, promptPromise, promptCorrelationId } =
+      await createDefaultPromptTurn(harness);
 
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
-
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 3,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(
+      streamStart(newSessionResponse.sessionId, "assistant-target", {
+        historySequence: 3,
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
     harness.pushChatEvent({
       type: "stream-abort",
@@ -1180,34 +925,14 @@ describe("ACP prompt stream correlation", () => {
 
   it("attaches delegated tool metadata when local runtime and editor capabilities allow delegation", async () => {
     const harness = createHarness();
-    await harness.agent.initialize({
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
-        terminal: true,
-      },
-    });
+    await initializeEditorDelegationAgent(harness);
+    const newSessionResponse = await createDefaultSession(harness);
+    const { promptPromise, promptCorrelationId } = await startPromptTurn(
+      harness,
+      newSessionResponse.sessionId
+    );
 
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
-
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
+    const muxMetadata = getLastMuxMetadata(harness);
 
     expect(muxMetadata["acpDelegatedTools"]).toEqual([
       "file_read",
@@ -1217,30 +942,14 @@ describe("ACP prompt stream correlation", () => {
       "bash",
     ]);
 
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
+    harness.pushChatEvent(
+      streamStart(newSessionResponse.sessionId, "assistant-target", {
+        historySequence: 3,
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 3,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-    } as WorkspaceChatMessage);
-
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(streamEnd(newSessionResponse.sessionId, "assistant-target"));
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -1253,21 +962,8 @@ describe("ACP prompt stream correlation", () => {
 
   it("answers delegated tool calls back to the server for the active prompt turn", async () => {
     const harness = createHarness();
-    await harness.agent.initialize({
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
-        terminal: true,
-      },
-    });
-
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
+    await initializeEditorDelegationAgent(harness);
+    const newSessionResponse = await createDefaultSession(harness);
 
     const toolRouter = (
       harness.agent as unknown as {
@@ -1287,33 +983,17 @@ describe("ACP prompt stream correlation", () => {
       terminalId: "term-1",
     });
 
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
+    const { promptPromise, promptCorrelationId } = await startPromptTurn(
+      harness,
+      newSessionResponse.sessionId
+    );
 
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 4,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(
+      streamStart(newSessionResponse.sessionId, "assistant-target", {
+        historySequence: 4,
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
     harness.pushChatEvent({
       type: "tool-call-start",
@@ -1333,15 +1013,7 @@ describe("ACP prompt stream correlation", () => {
       result: { terminalId: "term-1" },
     });
 
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(streamEnd(newSessionResponse.sessionId, "assistant-target"));
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -1354,28 +1026,9 @@ describe("ACP prompt stream correlation", () => {
 
   it("interrupts active turns on ACP disconnect to unblock delegated tool waits", async () => {
     const harness = createHarness();
-    await harness.agent.initialize({
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
-        terminal: true,
-      },
-    });
-
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
-
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
+    await initializeEditorDelegationAgent(harness);
+    const newSessionResponse = await createDefaultSession(harness);
+    const { promptPromise } = await startPromptTurn(harness, newSessionResponse.sessionId);
 
     harness.closeConnection();
 
@@ -1603,41 +1256,24 @@ describe("ACP prompt stream correlation", () => {
 
     await waitForCondition(() => harness.sendMessageCalls.length === 1);
 
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
+    const promptCorrelationId = getPromptCorrelationId(harness);
 
     staleSubscription.releaseTeardown();
     await staleSubscription.returnCompleted;
     await Promise.resolve();
 
-    replacementSubscription.push({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 3,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-    } as WorkspaceChatMessage);
+    replacementSubscription.push(
+      streamStart(newSessionResponse.sessionId, "assistant-target", {
+        historySequence: 3,
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
-    replacementSubscription.push({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      acpPromptId: promptCorrelationId,
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    replacementSubscription.push(
+      streamEnd(newSessionResponse.sessionId, "assistant-target", {
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -1694,26 +1330,9 @@ describe("ACP prompt stream correlation", () => {
 
     await waitForCondition(() => harness.sendMessageCalls.length === 1);
 
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
+    const promptCorrelationId = getPromptCorrelationId(harness);
 
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    let promptSettled = false;
-    void promptPromise.then(
-      () => {
-        promptSettled = true;
-      },
-      () => {
-        promptSettled = true;
-      }
-    );
+    const isPromptSettled = trackSettled(promptPromise);
 
     // These stale events would previously correlate via stream-start fallback
     // and incorrectly resolve the active turn after mode-switch replacement.
@@ -1726,39 +1345,23 @@ describe("ACP prompt stream correlation", () => {
       startTime: Date.now(),
     } as WorkspaceChatMessage);
 
-    staleSubscription.push({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-stale",
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    staleSubscription.push(streamEnd(newSessionResponse.sessionId, "assistant-stale"));
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(promptSettled).toBe(false);
+    await sleep(50);
+    expect(isPromptSettled()).toBe(false);
 
-    replacementSubscription.push({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 4,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-    } as WorkspaceChatMessage);
+    replacementSubscription.push(
+      streamStart(newSessionResponse.sessionId, "assistant-target", {
+        historySequence: 4,
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
-    replacementSubscription.push({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      acpPromptId: promptCorrelationId,
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    replacementSubscription.push(
+      streamEnd(newSessionResponse.sessionId, "assistant-target", {
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -1774,43 +1377,15 @@ describe("ACP prompt stream correlation", () => {
 
   it("ignores usage deltas from unrelated streams when completing the active prompt", async () => {
     const harness = createHarness();
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    const { newSessionResponse, promptPromise, promptCorrelationId } =
+      await createDefaultPromptTurn(harness);
 
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
-
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-other",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 2,
-      startTime: Date.now(),
-      acpPromptId: "unrelated-prompt-id",
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(
+      streamStart(newSessionResponse.sessionId, "assistant-other", {
+        historySequence: 2,
+        acpPromptId: "unrelated-prompt-id",
+      })
+    );
 
     harness.pushChatEvent({
       type: "usage-delta",
@@ -1828,25 +1403,14 @@ describe("ACP prompt stream correlation", () => {
       },
     } as WorkspaceChatMessage);
 
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 3,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(
+      streamStart(newSessionResponse.sessionId, "assistant-target", {
+        historySequence: 3,
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
-    harness.pushChatEvent({
-      type: "stream-end",
-      workspaceId: newSessionResponse.sessionId,
-      messageId: "assistant-target",
-      metadata: {
-        model: "anthropic:claude-sonnet-4-5",
-      },
-      parts: [],
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(streamEnd(newSessionResponse.sessionId, "assistant-target"));
 
     await expect(promptPromise).resolves.toEqual({
       stopReason: "end_turn",
@@ -1859,43 +1423,10 @@ describe("ACP prompt stream correlation", () => {
 
   it("treats runtime error events as terminal failures for the matching prompt", async () => {
     const harness = createHarness();
-    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    const { newSessionResponse, promptPromise, promptCorrelationId } =
+      await createDefaultPromptTurn(harness);
 
-    const newSessionResponse = await harness.agent.newSession({
-      cwd: "/repo/acp-go-sdk",
-      mcpServers: [],
-      _meta: {
-        trunkBranch: "main",
-      },
-    });
-
-    const promptPromise = harness.agent.prompt({
-      sessionId: newSessionResponse.sessionId,
-      prompt: [{ type: "text", text: "hello" }],
-    });
-
-    await waitForCondition(() => harness.sendMessageCalls.length === 1);
-
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    let promptSettled = false;
-    void promptPromise.then(
-      () => {
-        promptSettled = true;
-      },
-      () => {
-        promptSettled = true;
-      }
-    );
+    const isPromptSettled = trackSettled(promptPromise);
 
     harness.pushChatEvent({
       type: "error",
@@ -1905,8 +1436,8 @@ describe("ACP prompt stream correlation", () => {
       errorType: "runtime_not_ready",
     } as WorkspaceChatMessage);
 
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(promptSettled).toBe(false);
+    await sleep(25);
+    expect(isPromptSettled()).toBe(false);
 
     harness.pushChatEvent({
       type: "error",
@@ -1933,7 +1464,7 @@ describe("ACP prompt stream correlation", () => {
         writeCount++;
         // 50ms per write — 20 events × 50ms = ~1s of backpressure, but
         // prompt() should resolve as soon as stream-end is observed.
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await sleep(50);
       },
     });
 
@@ -1953,27 +1484,15 @@ describe("ACP prompt stream correlation", () => {
 
     await waitForCondition(() => harness.sendMessageCalls.length === 1);
 
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
-
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
+    const promptCorrelationId = getPromptCorrelationId(harness);
 
     // Emit stream-start to bind the turn to a message
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: session.sessionId,
-      messageId: "assistant-bp",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 2,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(
+      streamStart(session.sessionId, "assistant-bp", {
+        historySequence: 2,
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
     // Flood 20 stream-delta events. Each translates to a sessionUpdate write
     // that takes ~50ms, creating substantial backpressure.
@@ -2056,26 +1575,14 @@ describe("ACP prompt stream correlation", () => {
 
     await waitForCondition(() => harness.sendMessageCalls.length === 1);
 
-    const firstSend = harness.sendMessageCalls[0];
-    const muxMetadata = firstSend.options["muxMetadata"];
-    if (!isRecord(muxMetadata)) {
-      throw new Error("Expected prompt send options to include muxMetadata record");
-    }
+    const promptCorrelationId = getPromptCorrelationId(harness);
 
-    const promptCorrelationId = muxMetadata["acpPromptId"];
-    if (typeof promptCorrelationId !== "string") {
-      throw new Error("Expected prompt send options to include acpPromptId");
-    }
-
-    harness.pushChatEvent({
-      type: "stream-start",
-      workspaceId: session.sessionId,
-      messageId: "assistant-saturated",
-      model: "anthropic:claude-sonnet-4-5",
-      historySequence: 2,
-      startTime: Date.now(),
-      acpPromptId: promptCorrelationId,
-    } as WorkspaceChatMessage);
+    harness.pushChatEvent(
+      streamStart(session.sessionId, "assistant-saturated", {
+        historySequence: 2,
+        acpPromptId: promptCorrelationId,
+      })
+    );
 
     // Emit far more events than MAX_BUFFERED_CHAT_EVENTS. The drain loop must
     // still read through to stream-end (resolving prompt()) even while

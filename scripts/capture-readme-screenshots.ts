@@ -93,22 +93,24 @@ const STORIES: StoryDef[] = [
     // Include both the workspace list and centered divergence dialog in frame.
     clip: { x: 220, y: 20, width: 1360, height: 930 },
     playInteraction: async (page: Page) => {
-      // Wait for git status to render in the ws-diverged row.
-      const row = page.locator('[data-workspace-id="ws-diverged"]');
-      const plusText = row.getByText("+12.3k");
-      await plusText.waitFor({ timeout: 30_000 });
+      // Git indicators render outside the workspace row, so target the accessible
+      // summary button instead of scoping to the row text.
+      const gitButton = page
+        .getByRole("button", { name: "View git divergence details" })
+        .filter({ hasText: "+12.3k" });
+      await gitButton.waitFor({ timeout: 30_000 });
 
-      // Git divergence now opens in a dialog via click.
-      await plusText.click();
+      // Git divergence opens in a dialog via click.
+      await gitButton.click();
 
       // Wait for the dialog (portaled to body) and switch to commit mode.
       const dialog = page.getByRole("dialog", { name: "Git divergence details" });
       await dialog.waitFor({ timeout: 10_000 });
       await dialog.getByRole("radio", { name: "Show commit divergence" }).click();
 
-      // Wait for divergence indicators to appear.
-      await row.getByText("↑3").waitFor({ timeout: 5_000 });
-      await row.getByText("↓2").waitFor({ timeout: 5_000 });
+      // Wait for divergence indicators to appear after mode switching.
+      await page.getByText("↑3").waitFor({ timeout: 5_000 });
+      await page.getByText("↓2").waitFor({ timeout: 5_000 });
     },
   },
   {

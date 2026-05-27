@@ -25,11 +25,15 @@ import {
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import type { ApiServerStatus, DesktopPrereqStatus } from "@/common/orpc/types";
 import { Input } from "@/browser/components/Input/Input";
-import { useAPI } from "@/browser/contexts/API";
+import { useAPI, type APIClient } from "@/browser/contexts/API";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
+import { ImageGenerationExperimentConfig } from "./ImageGenerationExperimentConfig";
 import { AdvisorToolExperimentConfig } from "./AdvisorToolExperimentConfig";
+import { HeartbeatDefaultsControls } from "./HeartbeatSection";
 
 const PORTABLE_DESKTOP_INSTALL_URL = "https://github.com/coder/portabledesktop";
+
+type SettingsConfig = Awaited<ReturnType<APIClient["config"]["getConfig"]>>;
 
 interface ExperimentRowProps {
   experimentId: ExperimentId;
@@ -648,10 +652,55 @@ function ConfigurableBindUrlControls() {
   );
 }
 
+interface ExperimentSettingsPanelProps {
+  children: React.ReactNode;
+}
+
+function ExperimentSettingsPanel(props: ExperimentSettingsPanelProps) {
+  return <div className="bg-background-secondary px-4 py-3">{props.children}</div>;
+}
+
 export function ExperimentsSection() {
   const allExperiments = getExperimentList();
   const { api } = useAPI();
   const advisorToolEnabled = useExperimentValue(EXPERIMENT_IDS.ADVISOR_TOOL);
+  const imageGenerationToolEnabled = useExperimentValue(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL);
+  const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
+  const settingsConfigRequestRef = useRef<{
+    api: APIClient;
+    request: Promise<SettingsConfig>;
+  } | null>(null);
+
+  useEffect(() => {
+    settingsConfigRequestRef.current = null;
+  }, [api]);
+
+  const loadExperimentSettingsConfig = useCallback(() => {
+    if (!api) {
+      return Promise.reject(new Error("Cannot load settings config before API connection."));
+    }
+
+    const cachedRequest = settingsConfigRequestRef.current;
+    if (cachedRequest?.api === api) {
+      return cachedRequest.request;
+    }
+
+    const request = api.config.getConfig();
+    settingsConfigRequestRef.current = { api, request };
+    request.then(
+      () => {
+        if (settingsConfigRequestRef.current?.request === request) {
+          settingsConfigRequestRef.current = null;
+        }
+      },
+      () => {
+        if (settingsConfigRequestRef.current?.request === request) {
+          settingsConfigRequestRef.current = null;
+        }
+      }
+    );
+    return request;
+  }, [api]);
 
   // Only show user-overridable experiments (non-overridable ones are hidden since users can't change them)
   const experiments = useMemo(
@@ -703,6 +752,16 @@ export function ExperimentsSection() {
               />
               {exp.id === EXPERIMENT_IDS.ADVISOR_TOOL && advisorToolEnabled && (
                 <AdvisorToolExperimentConfig />
+              )}
+              {exp.id === EXPERIMENT_IDS.IMAGE_GENERATION_TOOL && imageGenerationToolEnabled && (
+                <ImageGenerationExperimentConfig enabled={imageGenerationToolEnabled} />
+              )}
+              {exp.id === EXPERIMENT_IDS.WORKSPACE_HEARTBEATS && workspaceHeartbeatsEnabled && (
+                <ExperimentSettingsPanel>
+                  <HeartbeatDefaultsControls
+                    loadConfig={api ? loadExperimentSettingsConfig : undefined}
+                  />
+                </ExperimentSettingsPanel>
               )}
               {exp.id === EXPERIMENT_IDS.PORTABLE_DESKTOP && <PortableDesktopExperimentWarning />}
               {exp.id === EXPERIMENT_IDS.CONFIGURABLE_BIND_URL && <ConfigurableBindUrlControls />}

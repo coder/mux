@@ -6,7 +6,7 @@ import { formatTimestamp } from "@/browser/utils/ui/dateTime";
 import { Surface } from "../components/Surface";
 import { ThemedText } from "../components/ThemedText";
 import { useTheme } from "../theme";
-import { assert } from "../utils/assert";
+import { assert } from "@/common/utils/assert";
 
 export interface MessageBubbleButtonConfig {
   label: string;

@@ -28,6 +28,7 @@ import { expandTilde } from "./tildeExpansion";
 import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getAtomicWriteTempPath } from "./atomicWriteTempPath";
+import { buildShellExport } from "./shellEnv";
 import { sanitizeMuxChildEnv } from "./childProcessEnv";
 
 /**
@@ -53,6 +54,10 @@ export abstract class LocalBaseRuntime implements Runtime {
   async exec(command: string, options: ExecOptions): Promise<ExecStream> {
     const startTime = performance.now();
 
+    if (options.abortSignal?.aborted) {
+      throw new RuntimeErrorClass("Operation aborted before execution", "exec");
+    }
+
     // Use the specified working directory (must be a specific workspace path)
     const cwd = options.cwd;
 
@@ -77,7 +82,7 @@ export abstract class LocalBaseRuntime implements Runtime {
     // - On Windows, env var casing and shell startup state can be surprising.
     // - These are non-sensitive vars that we want to guarantee for git/editor safety.
     const nonInteractivePrelude = Object.entries(NON_INTERACTIVE_ENV_VARS)
-      .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
+      .map(([key, value]) => buildShellExport(key, value))
       .join("\n");
 
     const spawnArgs = ["-c", `${nonInteractivePrelude}\n${command}`];
@@ -179,12 +184,16 @@ export abstract class LocalBaseRuntime implements Runtime {
     });
 
     // Handle abort signal
-    if (options.abortSignal) {
-      options.abortSignal.addEventListener("abort", () => {
-        aborted = true;
-        disposable[Symbol.dispose](); // Kill process and run cleanup
+    const onAbort = () => {
+      aborted = true;
+      disposable[Symbol.dispose](); // Kill process and run cleanup
+    };
+    options.abortSignal?.addEventListener("abort", onAbort, { once: true });
+    void exitCode
+      .catch(() => undefined)
+      .finally(() => {
+        options.abortSignal?.removeEventListener("abort", onAbort);
       });
-    }
 
     // Handle timeout
     if (options.timeout !== undefined) {
@@ -322,7 +331,10 @@ export abstract class LocalBaseRuntime implements Runtime {
     }
   }
 
-  async ensureDir(dirPath: string): Promise<void> {
+  async ensureDir(dirPath: string, abortSignal?: AbortSignal): Promise<void> {
+    if (abortSignal?.aborted) {
+      throw new RuntimeErrorClass("Operation aborted before directory creation", "file_io");
+    }
     const expandedPath = expandTilde(dirPath);
     try {
       await fsPromises.mkdir(expandedPath, { recursive: true });
@@ -430,7 +442,7 @@ export abstract class LocalBaseRuntime implements Runtime {
 
     return new Promise<void>((resolve) => {
       const bashPath = getBashPath();
-      const proc = spawn(bashPath, ["-c", `"${hookPath}"`], {
+      const proc = spawn(bashPath, ["-c", shellQuote(hookPath)], {
         cwd: workspacePath,
         stdio: ["ignore", "pipe", "pipe"],
         env: {

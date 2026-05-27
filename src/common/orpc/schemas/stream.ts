@@ -11,6 +11,7 @@ import {
   MuxTextPartSchema,
   MuxToolPartSchema,
 } from "./message";
+import type { MuxMessageMetadata } from "../../types/message";
 import { MuxProviderOptionsSchema } from "./providerOptions";
 import { RuntimeModeSchema } from "./runtime";
 
@@ -244,6 +245,7 @@ export const StreamEndEventSchema = z.object({
       duration: z.number().optional(),
       ttftMs: z.number().optional(),
       systemMessageTokens: z.number().optional(),
+      muxMetadata: z.custom<MuxMessageMetadata>().optional(),
       historySequence: z.number().optional().meta({
         description: "Present when loading from history",
       }),
@@ -373,6 +375,20 @@ export const AdvisorPhaseEventSchema = z.object({
   toolCallId: z.string(),
   phase: z.enum(["preparing_context", "waiting_for_response", "finalizing_result"]),
   timestamp: z.number().meta({ description: "When the phase changed (Date.now())" }),
+});
+
+/**
+ * UI-only incremental output from the advisor tool.
+ *
+ * This is intentionally NOT part of the tool result returned to the model.
+ * It is streamed over workspace.onChat so users can read advice while it is generated.
+ */
+export const AdvisorOutputEventSchema = z.object({
+  type: z.literal("advisor-output"),
+  workspaceId: z.string(),
+  toolCallId: z.string(),
+  text: z.string(),
+  timestamp: z.number().meta({ description: "When output was received (Date.now())" }),
 });
 
 /**
@@ -538,6 +554,15 @@ export const ReviewNoteDataSchema = z.object({
   userNote: z.string(),
 });
 
+export const GoalBudgetLimitedEventSchema = z.object({
+  type: z.literal("goal-budget-limited"),
+  workspaceId: z.string(),
+  goalId: z.string(),
+  causedByChild: z.boolean(),
+  childWorkspaceId: z.string().optional(),
+  message: z.string(),
+});
+
 export const QueuedMessageChangedEventSchema = z.object({
   type: z.literal("queued-message-changed"),
   workspaceId: z.string(),
@@ -577,6 +602,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   ToolCallDeltaEventSchema,
   ToolCallEndEventSchema,
   BashOutputEventSchema,
+  AdvisorOutputEventSchema,
   TaskCreatedEventSchema,
   AdvisorPhaseEventSchema,
   // Reasoning events
@@ -584,6 +610,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   ReasoningEndEventSchema,
   // Error events
   ErrorEventSchema,
+  GoalBudgetLimitedEventSchema,
   // Usage and queue events
   UsageDeltaEventSchema,
   SessionUsageDeltaEventSchema,
@@ -634,13 +661,20 @@ export const ToolPolicySchema = z.array(ToolPolicyFilterSchema).meta({
     "Tool policy - array of filters applied in order. Default behavior is allow all tools.",
 });
 
-// Experiments schema for feature gating
+// Experiments schema for feature gating.
+//
+// Unknown keys (e.g. `goals` from older persisted send-options written
+// before the Goals experiment graduated to GA) are stripped by Zod's
+// default behavior, so we do not need to retain a deprecated field.
 export const ExperimentsSchema = z.object({
   programmaticToolCalling: z.boolean().optional(),
   programmaticToolCallingExclusive: z.boolean().optional(),
   advisorTool: z.boolean().optional(),
   execSubagentHardRestart: z.boolean().optional(),
+  imageGenerationTool: z.boolean().optional(),
 });
+
+export const GoalInterventionPolicySchema = z.enum(["steer", "pause"]);
 
 // SendMessage options
 export const SendMessageOptionsSchema = z.object({
@@ -649,6 +683,8 @@ export const SendMessageOptionsSchema = z.object({
   model: z.string("No model specified"),
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),
+  /** Live workspace scratchpad snapshot from the renderer; avoids racing pending disk writes. */
+  additionalSystemContext: z.string().optional(),
   maxOutputTokens: z.number().optional(),
   agentId: AgentIdSchema.meta({
     description: "Agent id for this request",
@@ -677,6 +713,7 @@ export const SendMessageOptionsSchema = z.object({
    * iterating on agent files - a broken agent in the worktree won't affect message sending.
    */
   disableWorkspaceAgents: z.boolean().optional(),
+  goalInterventionPolicy: GoalInterventionPolicySchema.nullish(),
   queueDispatchMode: z.enum(["tool-end", "turn-end"]).nullish(),
 });
 

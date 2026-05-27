@@ -30,7 +30,7 @@ export interface RouterContext {
     options?: { replace?: boolean }
   ) => void;
   navigateToHome: () => void;
-  navigateToSettings: (section?: string) => void;
+  navigateToSettings: (section?: string, options?: { replace?: boolean }) => void;
   navigateFromSettings: () => void;
   navigateToAnalytics: () => void;
   navigateFromAnalytics: () => void;
@@ -380,9 +380,11 @@ function RouterContextInner(props: { children: ReactNode }) {
     void navigateRef.current("/");
   }, []);
 
-  const navigateToSettings = useCallback((section?: string) => {
+  const navigateToSettings = useCallback((section?: string, options?: { replace?: boolean }) => {
     const nextSection = section ?? "general";
-    void navigateRef.current(`/settings/${encodeURIComponent(nextSection)}`);
+    void navigateRef.current(`/settings/${encodeURIComponent(nextSection)}`, {
+      replace: options?.replace === true,
+    });
   }, []);
 
   const navigateFromSettings = useCallback(() => {

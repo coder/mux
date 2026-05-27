@@ -3,6 +3,11 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { FilePart, MuxToolPartSchema } from "@/common/orpc/schemas";
+import type {
+  ContextBoundaryKind,
+  PersistedContextBoundaryKind,
+} from "@/common/constants/contextBoundary";
+import type { GoalSyntheticMessageKind } from "@/constants/goals";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { z } from "zod";
 import type { AgentMode } from "./mode";
@@ -83,6 +88,8 @@ export type StartupRetrySendOptions = Pick<
 > & {
   /** Internal-only Copilot billing override for startup auto-retry. */
   agentInitiated?: boolean;
+  /** Internal goal continuation classification for startup auto-retry accounting. */
+  goalKind?: GoalSyntheticMessageKind;
 };
 
 /**
@@ -91,7 +98,8 @@ export type StartupRetrySendOptions = Pick<
  */
 export function pickStartupRetrySendOptions(
   options: SendMessageOptions,
-  agentInitiated?: boolean
+  agentInitiated?: boolean,
+  goalKind?: GoalSyntheticMessageKind
 ): StartupRetrySendOptions {
   return {
     model: options.model,
@@ -104,10 +112,13 @@ export function pickStartupRetrySendOptions(
     experiments: options.experiments,
     disableWorkspaceAgents: options.disableWorkspaceAgents,
     ...(agentInitiated === true ? { agentInitiated: true } : {}),
+    ...(goalKind != null ? { goalKind } : {}),
   };
 }
 
 export interface CompactionFollowUpDispatchOptions {
+  /** Source marker for internal resume follow-ups, not user-authored prompts. */
+  source?: "internal-resume";
   /** Skip the queued follow-up instead of replaying it later if the workspace stopped being idle. */
   requireIdle?: boolean;
 }
@@ -130,81 +141,11 @@ export interface CompactionFollowUpRequest extends CompactionFollowUpInput, Pres
   model: string;
   /** Agent ID for the follow-up message (user's original agentId, not "compact") */
   agentId: string;
+  /** Internal goal continuation classification for synthetic follow-up accounting. */
+  goalKind?: GoalSyntheticMessageKind;
   /** Internal dispatch guardrails for crash-safe follow-up recovery. */
   dispatchOptions?: CompactionFollowUpDispatchOptions;
 }
-
-/**
- * Brand symbol for ContinueMessage - ensures it can only be created via factory functions.
- * This prevents bugs where code manually constructs { text: "..." } and forgets fields.
- */
-declare const ContinueMessageBrand: unique symbol;
-
-/**
- * Message to continue with after compaction.
- * Branded type - must be created via buildContinueMessage() or rebuildContinueMessage().
- */
-export type ContinueMessage = UserMessageContent & {
-  model?: string;
-  /** Agent ID for the continue message (determines tool policy via agent definitions). Defaults to 'exec'. */
-  agentId?: string;
-  /** Message metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
-  muxMetadata?: MuxMessageMetadata;
-  /** Brand marker - not present at runtime, enforces factory usage at compile time */
-  readonly [ContinueMessageBrand]: true;
-};
-
-/**
- * Input options for building a ContinueMessage.
- * All content fields optional - returns undefined if no content provided.
- */
-export interface BuildContinueMessageOptions {
-  text?: string;
-  fileParts?: FilePart[];
-  reviews?: ReviewNoteDataForDisplay[];
-  /** Optional message metadata to carry through to the queued follow-up user message */
-  muxMetadata?: MuxMessageMetadata;
-  model: string;
-  agentId: string;
-}
-
-/**
- * Build a ContinueMessage from raw inputs.
- * Centralizes the has-content check and field construction.
- *
- * @returns ContinueMessage if there's content to continue with, undefined otherwise
- */
-export function buildContinueMessage(
-  opts: BuildContinueMessageOptions
-): ContinueMessage | undefined {
-  const hasText = opts.text && opts.text.length > 0;
-  const hasFiles = opts.fileParts && opts.fileParts.length > 0;
-  const hasReviews = opts.reviews && opts.reviews.length > 0;
-  if (!hasText && !hasFiles && !hasReviews) return undefined;
-
-  // Type assertion is safe here - this is the only factory for ContinueMessage
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  const result: ContinueMessage = {
-    text: opts.text ?? "",
-    fileParts: opts.fileParts,
-    reviews: opts.reviews,
-    muxMetadata: opts.muxMetadata,
-    model: opts.model,
-    agentId: opts.agentId,
-  } as ContinueMessage;
-  return result;
-}
-
-/**
- * Persisted ContinueMessage shape - what we read from storage/history.
- * May be missing fields if saved by older code versions.
- */
-export type PersistedContinueMessage = Partial<
-  Omit<ContinueMessage, typeof ContinueMessageBrand>
-> & {
-  /** @deprecated Legacy base mode persisted in older history entries. */
-  mode?: AgentMode;
-};
 
 /**
  * True when the content is the default resume sentinel ("Continue")
@@ -216,39 +157,6 @@ export function isDefaultSourceContent(content?: Partial<UserMessageContent>): b
   const hasFiles = (content.fileParts?.length ?? 0) > 0;
   const hasReviews = (content.reviews?.length ?? 0) > 0;
   return text === "Continue" && !hasFiles && !hasReviews;
-}
-
-/**
- * Rebuild a ContinueMessage from persisted data.
- * Use this when reading from storage/history where the data may have been
- * saved by older code that didn't include all fields.
- *
- * @param persisted - Data from storage (may be partial)
- * @param defaults - Default values for model/mode if not in persisted data
- * @returns Branded ContinueMessage, or undefined if no content
- */
-export function rebuildContinueMessage(
-  persisted: PersistedContinueMessage | undefined,
-  defaults: { model: string; agentId: string }
-): ContinueMessage | undefined {
-  if (!persisted) return undefined;
-
-  const persistedAgentId =
-    typeof persisted.agentId === "string" && persisted.agentId.trim().length > 0
-      ? persisted.agentId.trim()
-      : undefined;
-
-  const legacyMode = (persisted as { mode?: unknown }).mode;
-  const legacyAgentId = legacyMode === "plan" || legacyMode === "exec" ? legacyMode : undefined;
-
-  return buildContinueMessage({
-    text: persisted.text,
-    fileParts: persisted.fileParts,
-    reviews: persisted.reviews,
-    muxMetadata: persisted.muxMetadata,
-    model: persisted.model ?? defaults.model,
-    agentId: persistedAgentId ?? legacyAgentId ?? defaults.agentId,
-  });
 }
 
 // Parsed compaction request data (shared type for consistency)
@@ -448,6 +356,9 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         path: string;
       }
     | {
+        type: "goal-cleared-summary";
+      }
+    | {
         type: "heartbeat-request";
         /** Synthetic heartbeat follow-ups use an explicit marker so future backend dispatch stays inspectable. */
         source?: "heartbeat";
@@ -458,6 +369,68 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         type: "normal"; // Regular messages
         /** Original user input for one-shot overrides (e.g., "/opus+high do something") — used as display content so the command prefix remains visible. */
         rawCommand?: string;
+      }
+    | {
+        // /btw — user-side marker for a side question.
+        //
+        // The forked, single-turn, read-only side branch is created by the
+        // side-question pipeline (see sideQuestionService). We persist the
+        // user message so /btw exchanges are durable across reloads, but tag
+        // it so the renderer can distinguish a side question from a normal
+        // turn, and so request builders can omit the aside from future
+        // main-agent provider context.
+        type: "side-question";
+        /** Original "/btw <question>" command as typed (for display). */
+        rawCommand: string;
+        /**
+         * `messageId` of the main-agent assistant message that was in the
+         * middle of streaming when this /btw fired. Used by the renderer
+         * to visually split the interrupted message so the side branch
+         * appears between the pre-aside and post-aside halves of the
+         * main agent's reply — otherwise the side branch sits below the
+         * full M1 reply (sequence ordering) and the "main chat continues
+         * after the aside" reading is lost.
+         *
+         * Absent when /btw fires with no main-agent stream in flight
+         * (e.g. between turns); in that case the side branch renders
+         * normally at the bottom of the transcript.
+         */
+        interruptedMessageId?: string;
+        /**
+         * Length (in characters) of the interrupted message's accumulated
+         * text at the moment /btw fired. The renderer splits at this
+         * offset across the merged text parts. Reasoning / tool parts
+         * before the split point fall into the pre-aside half by
+         * position in the message's `parts` array.
+         *
+         * Captured synchronously on the backend via
+         * `aiService.getStreamInfo` before the user `/btw` row is
+         * persisted, so it's stable across reloads.
+         */
+        interruptedTextLength?: number;
+        /**
+         * Number of message parts that were already visible when /btw fired.
+         * This disambiguates non-text parts (reasoning/tool/file) that share
+         * the same cumulative text offset as the split boundary.
+         */
+        interruptedPartIndex?: number;
+        /**
+         * `historySequence` of the interrupted main-agent message,
+         * captured at /btw-fire time. Stored alongside `interruptedMessageId`
+         * so the renderer can disambiguate if a future compaction epoch
+         * recycles the id; currently informational.
+         */
+        interruptedHistorySequence?: number;
+      }
+    | {
+        // /btw — assistant-side marker for the answer to a side question.
+        type: "side-question-answer";
+        /**
+         * Stable link back to the user /btw row. The answer placeholder may be
+         * appended after later side-question user rows, so renderers must not
+         * rely on adjacency to pair concurrent side-question Q/A branches.
+         */
+        questionMessageId?: string;
       }
   );
 
@@ -557,6 +530,8 @@ export interface MuxMetadata {
    * This lets downstream logic identify compaction boundaries without mutating history.
    */
   compactionBoundary?: boolean;
+  /** Durable provider-context boundary kind. Existing compaction rows are also boundaries via compactionBoundary. */
+  contextBoundaryKind?: PersistedContextBoundaryKind;
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
   disableWorkspaceAgents?: boolean; // Whether workspace-local agent files were disabled for this user turn
   /** Snapshot of send options used for this user turn (for startup retry recovery). */
@@ -564,6 +539,9 @@ export interface MuxMetadata {
   agentId?: string; // Agent id active when this message was sent (assistant messages only)
   cmuxMetadata?: MuxMessageMetadata; // Command metadata persisted for legacy message formats
   muxMetadata?: MuxMessageMetadata; // Command metadata used by both frontend and backend message flows
+  /** Persisted discriminator for synthetic user turns created by the active-goal loop. */
+  kind?: "goal_continuation" | "goal_budget_limit";
+
   /**
    * ACP-only correlation id propagated through stream events so prompt() can
    * match terminal events to the originating ACP request in shared workspaces.
@@ -660,6 +638,12 @@ export type DisplayedMessage =
       historySequence: number; // Global ordering across all messages
       isSynthetic?: boolean;
       timestamp?: number;
+      /** True for synthetic user turns created by the active-goal continuation loop. */
+      isGoalContinuation?: boolean;
+      /** True for the one-shot wrap-up turn after a goal continuation exhausts its budget. */
+      isBudgetLimitWrapup?: boolean;
+      /** True when this row is loaded above the latest Context Boundary and must not mutate active context. */
+      isBeforeLatestContextBoundary?: boolean;
       /** Present when this message invoked an agent skill via /{skill-name} */
       agentSkill?: {
         skillName: string;
@@ -684,6 +668,8 @@ export type DisplayedMessage =
       };
       /** Structured review data for rich UI display (from muxMetadata) */
       reviews?: ReviewNoteDataForDisplay[];
+      /** True when this user message is a /btw side question. */
+      isSideQuestion?: boolean;
     }
   | {
       type: "assistant";
@@ -697,6 +683,10 @@ export type DisplayedMessage =
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
       isCompacted: boolean; // Whether this is a compacted summary
       isIdleCompacted: boolean; // Whether this compaction was auto-triggered due to inactivity
+      /** True when this assistant row predates the latest Context Boundary. */
+      isBeforeLatestContextBoundary?: boolean;
+      /** True when this assistant row is the answer to a /btw side question. */
+      isSideAnswer?: boolean;
       model?: string;
       routedThroughGateway?: boolean;
       routeProvider?: string;
@@ -736,6 +726,71 @@ export type DisplayedMessage =
       }>;
     }
   | {
+      type: "generated-image";
+      id: string;
+      historyId: string;
+      toolCallId: string;
+      prompt: string;
+      model: string;
+      images: Array<{
+        path: string;
+        filename: string;
+        mediaType: string;
+        thumbnail?: {
+          data: string;
+          mediaType: string;
+          width: number;
+          height: number;
+        };
+        revisedPrompt?: string;
+      }>;
+      warnings?: string[];
+      historySequence: number;
+      streamSequence?: number;
+      isPartial: boolean;
+      isLastPartOfMessage?: boolean;
+      timestamp?: number;
+    }
+  | {
+      type: "edited-image";
+      id: string;
+      historyId: string;
+      toolCallId: string;
+      prompt: string;
+      model: string;
+      source: {
+        path: string;
+        resolvedPath: string;
+        sizeBytes: number;
+        dimensions: {
+          width: number;
+          height: number;
+        };
+      };
+      images: Array<{
+        path: string;
+        filename: string;
+        mediaType: string;
+        outputDimensions: {
+          width: number;
+          height: number;
+        };
+        thumbnail?: {
+          data: string;
+          mediaType: string;
+          width: number;
+          height: number;
+        };
+        revisedPrompt?: string;
+      }>;
+      warnings?: string[];
+      historySequence: number;
+      streamSequence?: number;
+      isPartial: boolean;
+      isLastPartOfMessage?: boolean;
+      timestamp?: number;
+    }
+  | {
       type: "reasoning";
       id: string; // Display ID for UI/React keys
       historyId: string; // Original MuxMessage ID for history operations
@@ -773,6 +828,7 @@ export type DisplayedMessage =
       type: "compaction-boundary";
       id: string; // Display ID for UI/React keys
       historySequence: number; // Sequence of the compaction summary this boundary belongs to
+      boundaryKind?: ContextBoundaryKind;
       position: "start" | "end";
       compactionEpoch?: number;
     }

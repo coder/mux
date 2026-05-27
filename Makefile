@@ -30,6 +30,12 @@
 #   It is automatically disabled in CI, test environments, and automation contexts.
 #   To manually disable telemetry, set MUX_DISABLE_TELEMETRY=1.
 
+# React profiling in development:
+# Default desktop dev launches opt into Mux's lightweight component render sampler so
+# already-running dev instances can be inspected without a restart. Override with
+# `make start MUX_PROFILE_REACT=0` when measuring an uninstrumented baseline.
+MUX_PROFILE_REACT ?= 1
+
 # Use PATH-resolved bash for portability across different systems.
 # - Windows: /usr/bin/bash doesn't exist in Chocolatey's make environment or GitHub Actions
 # - NixOS: /bin/bash doesn't exist, bash is in /nix/store/...
@@ -67,7 +73,7 @@ include fmt.mk
 .PHONY: dist dist-mac dist-win dist-linux install-mac-arm64 check-appimage-icons check-mac-attach-file-runtime
 .PHONY: vscode-ext vscode-ext-install
 .PHONY: docs-server check-docs-links
-.PHONY: storybook storybook-build test-storybook chromatic
+.PHONY: storybook storybook-run storybook-build test-storybook chromatic
 .PHONY: benchmark-terminal
 .PHONY: ensure-deps rebuild-native mux
 .PHONY: check-eager-imports check-bundle-size check-startup
@@ -203,7 +209,7 @@ dev-server-sandbox: ## Start an isolated dev-server instance (fresh MUX_ROOT + f
 	@bun scripts/dev-server-sandbox.ts $(DEV_SERVER_SANDBOX_ARGS)
 
 start: node_modules/.installed build-main build-preload build-static ## Build and start Electron app
-	@NODE_ENV=development bunx electron --remote-debugging-port=9222 .
+	@NODE_ENV=development MUX_PROFILE_REACT=$(MUX_PROFILE_REACT) bunx electron --remote-debugging-port=9222 .
 
 ## Build targets (can run in parallel)
 build: node_modules/.installed src/version.ts build-renderer build-main build-preload build-icons build-static ## Build all targets
@@ -352,13 +358,15 @@ lint-zizmor: ## Run zizmor security analysis on GitHub Actions workflows
 SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './mobile/node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name '*.sh' 2>/dev/null)
 
 lint-shellcheck: ## Run shellcheck on shell scripts
-	shellcheck --external-sources $(SHELL_SRC_FILES)
+	@echo "Running shellcheck on $(words $(SHELL_SRC_FILES)) shell scripts..."
+	@shellcheck --external-sources $(SHELL_SRC_FILES)
 
 # Dockerfiles to lint (excludes node_modules, build artifacts, .git)
 DOCKERFILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './mobile/node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name 'Dockerfile' 2>/dev/null)
 
 lint-hadolint: ## Run hadolint on Dockerfiles
-	hadolint $(DOCKERFILES)
+	@echo "Running hadolint on $(words $(DOCKERFILES)) Dockerfiles..."
+	@hadolint $(DOCKERFILES)
 
 pin-actions: ## Pin GitHub Actions to SHA hashes (requires GH_TOKEN or gh CLI)
 	./scripts/pin-actions.sh .github/workflows/*.yml .github/actions/*/action.yml
@@ -544,6 +552,10 @@ check-code-docs-links: ## Validate code references to docs paths
 storybook: node_modules/.installed src/version.ts ## Start Storybook development server
 	$(check_node_version)
 	@bun x storybook dev -p 6006 $(STORYBOOK_OPEN_FLAG)
+
+storybook-run: node_modules/.installed src/version.ts ## Run CMD with a ready Storybook dev server (reuses STORYBOOK_PORT, default 6006)
+	$(check_node_version)
+	@bun scripts/with-storybook.ts --port $(or $(STORYBOOK_PORT),6006) -- $(CMD)
 
 storybook-build: node_modules/.installed src/version.ts ## Build static Storybook
 	$(check_node_version)

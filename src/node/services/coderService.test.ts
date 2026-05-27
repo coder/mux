@@ -100,6 +100,42 @@ function mockCoderCommandResult(options: {
   setTimeout(() => events.emit("close", options.exitCode), 0);
 }
 
+type RichParameter = Parameters<CoderService["computeExtraParams"]>[0][number];
+
+interface CoderServiceTestAccess {
+  runCoderCommand: (
+    args: string[],
+    options: { timeoutMs: number; signal?: AbortSignal }
+  ) => Promise<{
+    exitCode: number | null;
+    stdout: string;
+    stderr: string;
+    error?: string;
+  }>;
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+}
+
+function richParam(name: string, overrides: Partial<RichParameter> = {}): RichParameter {
+  return {
+    name,
+    defaultValue: "val",
+    type: "string",
+    ephemeral: false,
+    required: false,
+    ...overrides,
+  };
+}
+
+function getServiceTestAccess(service: CoderService): CoderServiceTestAccess {
+  return service as unknown as CoderServiceTestAccess;
+}
+
+async function drain(iterable: AsyncIterable<unknown>): Promise<void> {
+  for await (const _line of iterable) {
+    // drain
+  }
+}
+
 describe("CoderService", () => {
   let service: CoderService;
 
@@ -684,18 +720,7 @@ describe("CoderService", () => {
 
   describe("waitForStartupScripts", () => {
     it("streams stdout/stderr lines while waiting", async () => {
-      const stdout = Readable.from([Buffer.from("Waiting for agent...\nAgent ready\n")]);
-      const stderr = Readable.from([]);
-      const events = new EventEmitter();
-
-      spawnSpy!.mockReturnValue({
-        stdout,
-        stderr,
-        kill: vi.fn(),
-        on: events.on.bind(events),
-      } as never);
-
-      setTimeout(() => events.emit("close", 0), 0);
+      mockCoderCommandResult({ exitCode: 0, stdout: "Waiting for agent...\nAgent ready\n" });
 
       const lines: string[] = [];
       for await (const line of service.waitForStartupScripts("my-ws")) {
@@ -711,18 +736,7 @@ describe("CoderService", () => {
     });
 
     it("throws when exit code is non-zero", async () => {
-      const stdout = Readable.from([]);
-      const stderr = Readable.from([Buffer.from("Connection refused\n")]);
-      const events = new EventEmitter();
-
-      spawnSpy!.mockReturnValue({
-        stdout,
-        stderr,
-        kill: vi.fn(),
-        on: events.on.bind(events),
-      } as never);
-
-      setTimeout(() => events.emit("close", 1), 0);
+      mockCoderCommandResult({ exitCode: 1, stderr: "Connection refused\n" });
 
       const lines: string[] = [];
       const run = async () => {
@@ -892,19 +906,7 @@ describe("CoderService", () => {
       mockPrefetchCalls();
       mockFetchRichParams([]);
 
-      const stdout = Readable.from([Buffer.from("out-1\nout-2\n")]);
-      const stderr = Readable.from([Buffer.from("err-1\n")]);
-      const events = new EventEmitter();
-
-      spawnSpy!.mockReturnValue({
-        stdout,
-        stderr,
-        kill: vi.fn(),
-        on: events.on.bind(events),
-      } as never);
-
-      // Emit close after handlers are attached.
-      setTimeout(() => events.emit("close", 0), 0);
+      mockCoderCommandResult({ exitCode: 0, stdout: "out-1\nout-2\n", stderr: "err-1\n" });
 
       const lines: string[] = [];
       for await (const line of service.createWorkspace("my-workspace", "my-template")) {
@@ -926,22 +928,9 @@ describe("CoderService", () => {
       mockPrefetchCalls({ presetParamNames: ["covered-param"] });
       mockFetchRichParams([{ name: "covered-param", default_value: "val" }]);
 
-      const stdout = Readable.from([]);
-      const stderr = Readable.from([]);
-      const events = new EventEmitter();
+      mockCoderCommandResult({ exitCode: 0 });
 
-      spawnSpy!.mockReturnValue({
-        stdout,
-        stderr,
-        kill: vi.fn(),
-        on: events.on.bind(events),
-      } as never);
-
-      setTimeout(() => events.emit("close", 0), 0);
-
-      for await (const _line of service.createWorkspace("ws", "tmpl", "preset")) {
-        // drain
-      }
+      await drain(service.createWorkspace("ws", "tmpl", "preset"));
 
       expect(spawnSpy).toHaveBeenCalledWith(
         "coder",
@@ -958,22 +947,9 @@ describe("CoderService", () => {
         { name: "ephemeral-param", default_value: "val3", ephemeral: true },
       ]);
 
-      const stdout = Readable.from([]);
-      const stderr = Readable.from([]);
-      const events = new EventEmitter();
+      mockCoderCommandResult({ exitCode: 0 });
 
-      spawnSpy!.mockReturnValue({
-        stdout,
-        stderr,
-        kill: vi.fn(),
-        on: events.on.bind(events),
-      } as never);
-
-      setTimeout(() => events.emit("close", 0), 0);
-
-      for await (const _line of service.createWorkspace("ws", "tmpl", "preset")) {
-        // drain
-      }
+      await drain(service.createWorkspace("ws", "tmpl", "preset"));
 
       expect(spawnSpy).toHaveBeenCalledWith(
         "coder",
@@ -996,24 +972,11 @@ describe("CoderService", () => {
       mockPrefetchCalls();
       mockFetchRichParams([]);
 
-      const stdout = Readable.from([]);
-      const stderr = Readable.from([]);
-      const events = new EventEmitter();
-
-      spawnSpy!.mockReturnValue({
-        stdout,
-        stderr,
-        kill: vi.fn(),
-        on: events.on.bind(events),
-      } as never);
-
-      setTimeout(() => events.emit("close", 42), 0);
+      mockCoderCommandResult({ exitCode: 42 });
 
       let thrown: unknown;
       try {
-        for await (const _line of service.createWorkspace("ws", "tmpl")) {
-          // drain
-        }
+        await drain(service.createWorkspace("ws", "tmpl"));
       } catch (error) {
         thrown = error;
       }
@@ -1030,14 +993,7 @@ describe("CoderService", () => {
 
       let thrown: unknown;
       try {
-        for await (const _line of service.createWorkspace(
-          "ws",
-          "tmpl",
-          undefined,
-          abortController.signal
-        )) {
-          // drain
-        }
+        await drain(service.createWorkspace("ws", "tmpl", undefined, abortController.signal));
       } catch (error) {
         thrown = error;
       }
@@ -1052,9 +1008,7 @@ describe("CoderService", () => {
 
       let thrown: unknown;
       try {
-        for await (const _line of service.createWorkspace("ws", "tmpl")) {
-          // drain
-        }
+        await drain(service.createWorkspace("ws", "tmpl"));
       } catch (error) {
         thrown = error;
       }
@@ -1074,8 +1028,8 @@ describe("computeExtraParams", () => {
 
   it("returns empty array when all params are covered by preset", () => {
     const params = [
-      { name: "param1", defaultValue: "val1", type: "string", ephemeral: false, required: false },
-      { name: "param2", defaultValue: "val2", type: "string", ephemeral: false, required: false },
+      richParam("param1", { defaultValue: "val1" }),
+      richParam("param2", { defaultValue: "val2" }),
     ];
     const covered = new Set(["param1", "param2"]);
 
@@ -1084,14 +1038,8 @@ describe("computeExtraParams", () => {
 
   it("returns uncovered non-ephemeral params with defaults", () => {
     const params = [
-      { name: "covered", defaultValue: "val1", type: "string", ephemeral: false, required: false },
-      {
-        name: "uncovered",
-        defaultValue: "val2",
-        type: "string",
-        ephemeral: false,
-        required: false,
-      },
+      richParam("covered", { defaultValue: "val1" }),
+      richParam("uncovered", { defaultValue: "val2" }),
     ];
     const covered = new Set(["covered"]);
 
@@ -1102,8 +1050,8 @@ describe("computeExtraParams", () => {
 
   it("excludes ephemeral params", () => {
     const params = [
-      { name: "normal", defaultValue: "val1", type: "string", ephemeral: false, required: false },
-      { name: "ephemeral", defaultValue: "val2", type: "string", ephemeral: true, required: false },
+      richParam("normal", { defaultValue: "val1" }),
+      richParam("ephemeral", { defaultValue: "val2", ephemeral: true }),
     ];
     const covered = new Set<string>();
 
@@ -1113,15 +1061,7 @@ describe("computeExtraParams", () => {
   });
 
   it("includes params with empty default values", () => {
-    const params = [
-      {
-        name: "empty-default",
-        defaultValue: "",
-        type: "string",
-        ephemeral: false,
-        required: false,
-      },
-    ];
+    const params = [richParam("empty-default", { defaultValue: "" })];
     const covered = new Set<string>();
 
     expect(service.computeExtraParams(params, covered)).toEqual([
@@ -1131,13 +1071,10 @@ describe("computeExtraParams", () => {
 
   it("CSV-encodes list(string) values containing quotes", () => {
     const params = [
-      {
-        name: "Select IDEs",
+      richParam("Select IDEs", {
         defaultValue: '["vscode","code-server","cursor"]',
         type: "list(string)",
-        ephemeral: false,
-        required: false,
-      },
+      }),
     ];
     const covered = new Set<string>();
 
@@ -1148,15 +1085,7 @@ describe("computeExtraParams", () => {
   });
 
   it("passes empty list(string) array without CSV encoding", () => {
-    const params = [
-      {
-        name: "empty-list",
-        defaultValue: "[]",
-        type: "list(string)",
-        ephemeral: false,
-        required: false,
-      },
-    ];
+    const params = [richParam("empty-list", { defaultValue: "[]", type: "list(string)" })];
     const covered = new Set<string>();
 
     // No quotes or commas, so no encoding needed
@@ -1174,39 +1103,21 @@ describe("validateRequiredParams", () => {
   });
 
   it("does not throw when all required params have defaults", () => {
-    const params = [
-      {
-        name: "required-with-default",
-        defaultValue: "val",
-        type: "string",
-        ephemeral: false,
-        required: true,
-      },
-    ];
+    const params = [richParam("required-with-default", { required: true })];
     const covered = new Set<string>();
 
     expect(() => service.validateRequiredParams(params, covered)).not.toThrow();
   });
 
   it("does not throw when required params are covered by preset", () => {
-    const params = [
-      {
-        name: "required-no-default",
-        defaultValue: "",
-        type: "string",
-        ephemeral: false,
-        required: true,
-      },
-    ];
+    const params = [richParam("required-no-default", { defaultValue: "", required: true })];
     const covered = new Set(["required-no-default"]);
 
     expect(() => service.validateRequiredParams(params, covered)).not.toThrow();
   });
 
   it("throws when required param has no default and is not covered", () => {
-    const params = [
-      { name: "missing-param", defaultValue: "", type: "string", ephemeral: false, required: true },
-    ];
+    const params = [richParam("missing-param", { defaultValue: "", required: true })];
     const covered = new Set<string>();
 
     expect(() => service.validateRequiredParams(params, covered)).toThrow("missing-param");
@@ -1214,13 +1125,7 @@ describe("validateRequiredParams", () => {
 
   it("ignores ephemeral required params", () => {
     const params = [
-      {
-        name: "ephemeral-required",
-        defaultValue: "",
-        type: "string",
-        ephemeral: true,
-        required: true,
-      },
+      richParam("ephemeral-required", { defaultValue: "", ephemeral: true, required: true }),
     ];
     const covered = new Set<string>();
 
@@ -1229,8 +1134,8 @@ describe("validateRequiredParams", () => {
 
   it("lists all missing required params in error", () => {
     const params = [
-      { name: "missing1", defaultValue: "", type: "string", ephemeral: false, required: true },
-      { name: "missing2", defaultValue: "", type: "string", ephemeral: false, required: true },
+      richParam("missing1", { defaultValue: "", required: true }),
+      richParam("missing2", { defaultValue: "", required: true }),
     ];
     const covered = new Set<string>();
 
@@ -1249,9 +1154,7 @@ describe("non-string parameter defaults", () => {
 
   it("validateRequiredParams passes when required param has numeric default 0", () => {
     // After parseRichParameters, numeric 0 becomes "0" (not "")
-    const params = [
-      { name: "count", defaultValue: "0", type: "number", ephemeral: false, required: true },
-    ];
+    const params = [richParam("count", { defaultValue: "0", type: "number", required: true })];
     const covered = new Set<string>();
 
     expect(() => service.validateRequiredParams(params, covered)).not.toThrow();
@@ -1259,18 +1162,14 @@ describe("non-string parameter defaults", () => {
 
   it("validateRequiredParams passes when required param has boolean default false", () => {
     // After parseRichParameters, boolean false becomes "false" (not "")
-    const params = [
-      { name: "enabled", defaultValue: "false", type: "bool", ephemeral: false, required: true },
-    ];
+    const params = [richParam("enabled", { defaultValue: "false", type: "bool", required: true })];
     const covered = new Set<string>();
 
     expect(() => service.validateRequiredParams(params, covered)).not.toThrow();
   });
 
   it("computeExtraParams emits numeric default correctly", () => {
-    const params = [
-      { name: "count", defaultValue: "42", type: "number", ephemeral: false, required: false },
-    ];
+    const params = [richParam("count", { defaultValue: "42", type: "number" })];
     const covered = new Set<string>();
 
     expect(service.computeExtraParams(params, covered)).toEqual([
@@ -1279,9 +1178,7 @@ describe("non-string parameter defaults", () => {
   });
 
   it("computeExtraParams emits boolean default correctly", () => {
-    const params = [
-      { name: "enabled", defaultValue: "true", type: "bool", ephemeral: false, required: false },
-    ];
+    const params = [richParam("enabled", { defaultValue: "true", type: "bool" })];
     const covered = new Set<string>();
 
     expect(service.computeExtraParams(params, covered)).toEqual([
@@ -1291,15 +1188,7 @@ describe("non-string parameter defaults", () => {
 
   it("computeExtraParams emits array default as JSON with CSV encoding", () => {
     // After parseRichParameters, array becomes JSON string
-    const params = [
-      {
-        name: "tags",
-        defaultValue: '["a","b"]',
-        type: "list(string)",
-        ephemeral: false,
-        required: false,
-      },
-    ];
+    const params = [richParam("tags", { defaultValue: '["a","b"]', type: "list(string)" })];
     const covered = new Set<string>();
 
     // JSON array with quotes gets CSV-encoded (quotes escaped as "")
@@ -1370,18 +1259,7 @@ describe("deleteWorkspaceEventually", () => {
       Promise.resolve(statuses.shift() ?? { kind: "ok" as const, status: "deleting" as const })
     );
 
-    const serviceHack = service as unknown as {
-      runCoderCommand: (
-        args: string[],
-        options: { timeoutMs: number; signal?: AbortSignal }
-      ) => Promise<{
-        exitCode: number | null;
-        stdout: string;
-        stderr: string;
-        error?: string;
-      }>;
-      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
-    };
+    const serviceHack = getServiceTestAccess(service);
 
     serviceHack.runCoderCommand = vi.fn(() =>
       Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
@@ -1408,18 +1286,7 @@ describe("deleteWorkspaceEventually", () => {
       kind: "not_found" as const,
     });
 
-    const serviceHack = service as unknown as {
-      runCoderCommand: (
-        args: string[],
-        options: { timeoutMs: number; signal?: AbortSignal }
-      ) => Promise<{
-        exitCode: number | null;
-        stdout: string;
-        stderr: string;
-        error?: string;
-      }>;
-      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
-    };
+    const serviceHack = getServiceTestAccess(service);
 
     serviceHack.runCoderCommand = vi.fn(() =>
       Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
@@ -1454,18 +1321,7 @@ describe("deleteWorkspaceEventually", () => {
       kind: "not_found" as const,
     });
 
-    const serviceHack = service as unknown as {
-      runCoderCommand: (
-        args: string[],
-        options: { timeoutMs: number; signal?: AbortSignal }
-      ) => Promise<{
-        exitCode: number | null;
-        stdout: string;
-        stderr: string;
-        error?: string;
-      }>;
-      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
-    };
+    const serviceHack = getServiceTestAccess(service);
 
     serviceHack.runCoderCommand = vi.fn(() =>
       Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
@@ -1502,18 +1358,7 @@ describe("deleteWorkspaceEventually", () => {
       error: "auth failed",
     });
 
-    const serviceHack = service as unknown as {
-      runCoderCommand: (
-        args: string[],
-        options: { timeoutMs: number; signal?: AbortSignal }
-      ) => Promise<{
-        exitCode: number | null;
-        stdout: string;
-        stderr: string;
-        error?: string;
-      }>;
-      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
-    };
+    const serviceHack = getServiceTestAccess(service);
 
     serviceHack.runCoderCommand = vi.fn(() =>
       Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
@@ -1538,18 +1383,7 @@ describe("deleteWorkspaceEventually", () => {
       error: "auth failed",
     });
 
-    const serviceHack = service as unknown as {
-      runCoderCommand: (
-        args: string[],
-        options: { timeoutMs: number; signal?: AbortSignal }
-      ) => Promise<{
-        exitCode: number | null;
-        stdout: string;
-        stderr: string;
-        error?: string;
-      }>;
-      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
-    };
+    const serviceHack = getServiceTestAccess(service);
 
     serviceHack.runCoderCommand = vi.fn(() =>
       Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
@@ -1640,40 +1474,30 @@ describe("CoderService.ensureMuxCoderSSHConfig", () => {
 });
 
 describe("compareVersions", () => {
-  it("returns 0 for equal versions", () => {
-    expect(compareVersions("2.28.6", "2.28.6")).toBe(0);
-  });
+  const cases: Array<[string, string, "lt" | "eq" | "gt"]> = [
+    ["2.28.6", "2.28.6", "eq"],
+    ["v2.28.6", "2.28.6", "eq"],
+    ["v2.28.6+hash", "2.28.6", "eq"],
+    ["2.25.0", "2.28.6", "lt"],
+    ["2.28.5", "2.28.6", "lt"],
+    ["1.0.0", "2.0.0", "lt"],
+    ["2.28.6", "2.25.0", "gt"],
+    ["2.28.6", "2.28.5", "gt"],
+    ["3.0.0", "2.28.6", "gt"],
+    ["v2.28.6", "2.25.0", "gt"],
+    ["v2.25.0", "v2.28.6", "lt"],
+    ["v2.28.2-devel+903c045b9", "2.25.0", "gt"],
+    ["v2.28.2-devel+903c045b9", "2.28.2", "eq"],
+    ["2.28", "2.28.0", "eq"],
+    ["2.28", "2.28.1", "lt"],
+  ];
 
-  it("returns 0 for equal versions with different formats", () => {
-    expect(compareVersions("v2.28.6", "2.28.6")).toBe(0);
-    expect(compareVersions("v2.28.6+hash", "2.28.6")).toBe(0);
-  });
-
-  it("returns negative when first version is older", () => {
-    expect(compareVersions("2.25.0", "2.28.6")).toBeLessThan(0);
-    expect(compareVersions("2.28.5", "2.28.6")).toBeLessThan(0);
-    expect(compareVersions("1.0.0", "2.0.0")).toBeLessThan(0);
-  });
-
-  it("returns positive when first version is newer", () => {
-    expect(compareVersions("2.28.6", "2.25.0")).toBeGreaterThan(0);
-    expect(compareVersions("2.28.6", "2.28.5")).toBeGreaterThan(0);
-    expect(compareVersions("3.0.0", "2.28.6")).toBeGreaterThan(0);
-  });
-
-  it("handles versions with v prefix", () => {
-    expect(compareVersions("v2.28.6", "2.25.0")).toBeGreaterThan(0);
-    expect(compareVersions("v2.25.0", "v2.28.6")).toBeLessThan(0);
-  });
-
-  it("handles dev versions correctly", () => {
-    // v2.28.2-devel+903c045b9 should be compared as 2.28.2
-    expect(compareVersions("v2.28.2-devel+903c045b9", "2.25.0")).toBeGreaterThan(0);
-    expect(compareVersions("v2.28.2-devel+903c045b9", "2.28.2")).toBe(0);
-  });
-
-  it("handles missing patch version", () => {
-    expect(compareVersions("2.28", "2.28.0")).toBe(0);
-    expect(compareVersions("2.28", "2.28.1")).toBeLessThan(0);
-  });
+  for (const [left, right, expected] of cases) {
+    it(`${left} is ${expected} ${right}`, () => {
+      const result = compareVersions(left, right);
+      if (expected === "eq") expect(result).toBe(0);
+      if (expected === "lt") expect(result).toBeLessThan(0);
+      if (expected === "gt") expect(result).toBeGreaterThan(0);
+    });
+  }
 });

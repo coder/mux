@@ -162,10 +162,14 @@ export class DisposableProcess implements Disposable {
 class DisposableExec implements Disposable {
   constructor(
     private readonly promise: Promise<{ stdout: string; stderr: string }>,
-    private readonly child: ChildProcess
+    private readonly child?: ChildProcess
   ) {}
 
   [Symbol.dispose](): void {
+    if (!this.child) {
+      return;
+    }
+
     // Only kill if process hasn't exited naturally
     // Check the child's actual exit state, not promise state (avoids async timing issues)
     const hasExited = this.child.exitCode !== null || this.child.signalCode !== null;
@@ -261,6 +265,10 @@ export interface ExecFileAsyncOptions {
   env?: Record<string, string | undefined>;
   /** Optional callback for each stderr data chunk from the process. */
   onStderrData?: (chunk: string) => void;
+  /** Optional timeout in milliseconds before the process is killed. */
+  timeoutMs?: number;
+  /** Optional signal used to cancel the process. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -279,10 +287,45 @@ export function execFileAsync(
   args: string[],
   options?: ExecFileAsyncOptions
 ): DisposableExec {
+  if (options?.signal?.aborted) {
+    const error = new Error("Command aborted before execution") as Error & {
+      code: number | null;
+      signal: string | null;
+      stdout: string;
+      stderr: string;
+    };
+    error.code = null;
+    error.signal = null;
+    error.stdout = "";
+    error.stderr = "";
+    const result = Promise.reject(error);
+    void result.catch(() => undefined);
+    return new DisposableExec(result);
+  }
+
   const child = spawn(file, args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: options?.env ? { ...process.env, ...options.env } : undefined,
   });
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const cleanup = () => {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+    options?.signal?.removeEventListener("abort", onAbort);
+  };
+  const killChild = () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill();
+    }
+  };
+  const onAbort = () => killChild();
+  if (options?.timeoutMs != null && options.timeoutMs > 0) {
+    timeoutHandle = setTimeout(killChild, options.timeoutMs);
+    timeoutHandle.unref?.();
+  }
+  options?.signal?.addEventListener("abort", onAbort, { once: true });
+  if (options?.signal?.aborted) {
+    onAbort();
+  }
   const promise = new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
     let stdout = "";
     let stderr = "";
@@ -304,6 +347,7 @@ export function execFileAsync(
     });
 
     child.on("close", () => {
+      cleanup();
       if (exitCode === 0 && exitSignal === null) {
         resolve({ stdout, stderr });
       } else {
@@ -326,7 +370,10 @@ export function execFileAsync(
       }
     });
 
-    child.on("error", reject);
+    child.on("error", (error) => {
+      cleanup();
+      reject(error);
+    });
   });
 
   return new DisposableExec(promise, child);

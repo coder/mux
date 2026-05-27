@@ -18,6 +18,7 @@ import {
   ToolContainer,
   ToolDetails,
   ToolHeader,
+  ToolIcon,
   ToolName,
 } from "@/browser/features/Tools/Shared/ToolPrimitives";
 import {
@@ -202,9 +203,10 @@ function AutoResizeTextarea(props: {
         }
       }}
       className={cn(
-        "border-input placeholder:text-muted focus-visible:ring-ring",
-        "w-full rounded-md border bg-transparent px-3 py-2 text-sm",
-        "focus-visible:ring-1 focus-visible:outline-none",
+        "border border-white/10 bg-code-bg text-foreground placeholder:text-muted",
+        "w-full rounded-md px-3 py-2 text-sm",
+        "transition-colors hover:border-white/20",
+        "focus-visible:border-accent focus-visible:ring-1 focus-visible:ring-accent/50 focus-visible:outline-none",
         "resize-none min-h-[2.5rem] max-h-[30vh] overflow-y-auto"
       )}
     />
@@ -557,26 +559,31 @@ export function AskUserQuestionToolCall(props: {
       });
   };
   const title = "ask_user_question";
+  const totalCount = props.args.questions.length;
+  const answeredCount = totalCount - unansweredCount;
 
   return (
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <div className="flex flex-1 flex-col">
+        <ToolIcon toolName="ask_user_question" />
+        <div className="flex min-w-0 flex-1 flex-col">
           <ToolName>{title}</ToolName>
-          <div className="text-muted-foreground text-xs">
-            Answer below, or type in chat to cancel.
-          </div>
+          {props.status === "executing" && (
+            <div className="text-secondary text-[10px] leading-tight">
+              Answer below, or type a message in chat to cancel.
+            </div>
+          )}
         </div>
         <StatusIndicator status={props.status}>{statusDisplay}</StatusIndicator>
       </ToolHeader>
 
       {expanded && (
         <ToolDetails>
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3">
             {props.status === "executing" && (
-              <div className="flex flex-col gap-4">
-                <div className="flex flex-wrap gap-2">
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {props.args.questions.map((q, idx) => {
                     const draft = draftAnswers[q.question];
                     const answered = draft ? isQuestionAnswered(q, draft) : false;
@@ -585,54 +592,55 @@ export function AskUserQuestionToolCall(props: {
                       <button
                         key={q.question}
                         type="button"
-                        className={
-                          "text-xs px-2 py-1 rounded border " +
-                          (isActive
-                            ? "bg-primary text-primary-foreground border-primary"
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors",
+                          isActive
+                            ? "border-accent bg-accent text-accent-foreground shadow-sm"
                             : answered
-                              ? "bg-green-900/30 text-green-400 border-green-700"
-                              : "bg-muted text-foreground border-border")
-                        }
+                              ? "border-success/40 bg-success/10 text-success hover:bg-success/20"
+                              : "border-white/10 bg-white/5 text-secondary hover:border-white/20 hover:text-foreground"
+                        )}
                         onClick={() => setActiveIndex(idx)}
                       >
                         {q.header}
-                        {answered && (
-                          <Check aria-hidden="true" className="ml-1 inline-block h-3 w-3" />
-                        )}
+                        {answered && !isActive && <Check aria-hidden="true" className="h-3 w-3" />}
                       </button>
                     );
                   })}
                   <button
                     type="button"
-                    className={
-                      "text-xs px-2 py-1 rounded border " +
-                      (isOnSummary
-                        ? "bg-primary text-primary-foreground border-primary"
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors",
+                      isOnSummary
+                        ? "border-accent bg-accent text-accent-foreground shadow-sm"
                         : isComplete
-                          ? "bg-green-900/30 text-green-400 border-green-700"
-                          : "bg-muted text-foreground border-border")
-                    }
+                          ? "border-success/40 bg-success/10 text-success hover:bg-success/20"
+                          : "border-white/10 bg-white/5 text-secondary hover:border-white/20 hover:text-foreground"
+                    )}
                     onClick={() => setActiveIndex(summaryIndex)}
                   >
                     Summary
-                    {isComplete && (
-                      <Check aria-hidden="true" className="ml-1 inline-block h-3 w-3" />
-                    )}
+                    {isComplete && !isOnSummary && <Check aria-hidden="true" className="h-3 w-3" />}
                   </button>
+                  {totalCount > 0 && (
+                    <span className="text-muted counter-nums ml-auto text-[10px]">
+                      {answeredCount}/{totalCount} answered
+                    </span>
+                  )}
                 </div>
 
                 {!isOnSummary && currentQuestion && currentDraft && (
                   <>
-                    <div>
-                      <div className="text-sm font-medium">{currentQuestion.question}</div>
-                      <div className="text-muted-foreground text-xs">
-                        {currentQuestion.multiSelect
-                          ? "Select one or more options"
-                          : "Select one option"}
+                    <div className="flex flex-col gap-0.5">
+                      <div className="text-foreground text-sm leading-snug font-medium">
+                        {currentQuestion.question}
+                      </div>
+                      <div className="text-secondary text-[10px] tracking-wide uppercase">
+                        {currentQuestion.multiSelect ? "Select one or more" : "Select one"}
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-3">
+                    <div className="-mx-2 flex flex-col gap-0.5">
                       {/* Render option checkboxes */}
                       {[
                         ...currentQuestion.options.map((opt) => ({
@@ -700,7 +708,10 @@ export function AskUserQuestionToolCall(props: {
                             key={opt.label}
                             role="button"
                             tabIndex={0}
-                            className="flex cursor-pointer items-start gap-2 select-none"
+                            className={cn(
+                              "flex cursor-pointer items-start gap-2.5 rounded px-2 py-1.5 transition-colors select-none",
+                              checked ? "bg-accent/10 hover:bg-accent/15" : "hover:bg-white/5"
+                            )}
                             onClick={toggle}
                             onKeyDown={(e) => {
                               if (e.key === "Enter" || e.key === " ") {
@@ -713,33 +724,45 @@ export function AskUserQuestionToolCall(props: {
                               checked={checked}
                               onCheckedChange={toggle}
                               onClick={(e) => e.stopPropagation()}
+                              className="mt-0.5"
                             />
-                            <div className="flex flex-col">
-                              <div className="text-sm">{opt.displayLabel}</div>
-                              <div className="text-muted-foreground text-xs">{opt.description}</div>
+                            <div className="flex min-w-0 flex-col">
+                              <div
+                                className={cn(
+                                  "text-sm leading-snug",
+                                  checked ? "text-foreground font-medium" : "text-foreground"
+                                )}
+                              >
+                                {opt.displayLabel}
+                              </div>
+                              <div className="text-muted-foreground text-[11px] leading-snug">
+                                {opt.description}
+                              </div>
                             </div>
                           </div>
                         );
                       })}
 
                       {currentDraft.selected.includes(OTHER_VALUE) && (
-                        <AutoResizeTextarea
-                          placeholder="Type your answer"
-                          value={currentDraft.otherText}
-                          onChange={(value) => {
-                            setDraftAnswers((prev) => ({
-                              ...prev,
-                              [currentQuestion.question]: {
-                                ...(prev[currentQuestion.question] ?? {
-                                  selected: [],
-                                  otherText: "",
-                                }),
-                                otherText: value,
-                              },
-                            }));
-                          }}
-                          onSubmit={() => setActiveIndex(activeIndex + 1)}
-                        />
+                        <div className="mt-1.5 px-2">
+                          <AutoResizeTextarea
+                            placeholder="Type your answer"
+                            value={currentDraft.otherText}
+                            onChange={(value) => {
+                              setDraftAnswers((prev) => ({
+                                ...prev,
+                                [currentQuestion.question]: {
+                                  ...(prev[currentQuestion.question] ?? {
+                                    selected: [],
+                                    otherText: "",
+                                  }),
+                                  otherText: value,
+                                },
+                              }));
+                            }}
+                            onSubmit={() => setActiveIndex(activeIndex + 1)}
+                          />
+                        </div>
                       )}
                     </div>
                   </>
@@ -747,16 +770,16 @@ export function AskUserQuestionToolCall(props: {
 
                 {isOnSummary && (
                   <div className="flex flex-col gap-2">
-                    <div className="text-sm font-medium">Review your answers</div>
+                    <div className="text-foreground text-sm font-medium">Review your answers</div>
                     {unansweredCount > 0 && (
-                      <div className="flex items-center gap-1 text-xs text-yellow-500">
-                        <AlertTriangle aria-hidden="true" className="h-3 w-3" />
+                      <div className="border-warning/30 bg-warning/10 text-warning flex items-center gap-1.5 rounded border px-2 py-1 text-[11px]">
+                        <AlertTriangle aria-hidden="true" className="h-3 w-3 shrink-0" />
                         <span>
                           {unansweredCount} question{unansweredCount > 1 ? "s" : ""} not answered
                         </span>
                       </div>
                     )}
-                    <div className="flex flex-col gap-2">
+                    <div className="flex flex-col gap-1">
                       {props.args.questions.map((q, idx) => {
                         const draft = draftAnswers[q.question];
                         const answered = draft ? isQuestionAnswered(q, draft) : false;
@@ -769,7 +792,7 @@ export function AskUserQuestionToolCall(props: {
                             key={q.question}
                             role="button"
                             tabIndex={0}
-                            className="hover:bg-muted/50 -ml-2 cursor-pointer rounded px-2 py-1"
+                            className="bg-code-bg flex cursor-pointer items-start gap-2 rounded border border-white/5 px-2.5 py-1.5 transition-colors hover:border-white/15 hover:bg-white/5"
                             onClick={() => setActiveIndex(idx)}
                             onKeyDown={(e) => {
                               if (e.key === "Enter" || e.key === " ") {
@@ -778,32 +801,33 @@ export function AskUserQuestionToolCall(props: {
                               }
                             }}
                           >
-                            <div className="flex items-start gap-1">
-                              {answered ? (
-                                <Check aria-hidden="true" className="h-3 w-3 text-green-400" />
-                              ) : (
-                                <AlertTriangle
-                                  aria-hidden="true"
-                                  className="h-3 w-3 text-yellow-500"
-                                />
-                              )}{" "}
-                              <div className="flex flex-col">
-                                <div>
-                                  <span className="font-medium">{q.header}:</span>{" "}
-                                  {answered ? (
-                                    <span className="text-muted-foreground">{answerText}</span>
-                                  ) : (
-                                    <span className="text-muted-foreground italic">
-                                      Not answered
-                                    </span>
-                                  )}
-                                </div>
-                                {descriptions.length > 0 && (
-                                  <div className="text-muted-foreground ml-1 text-xs italic">
-                                    {descriptions.join("; ")}
-                                  </div>
+                            {answered ? (
+                              <Check
+                                aria-hidden="true"
+                                className="text-success mt-0.5 h-3 w-3 shrink-0"
+                              />
+                            ) : (
+                              <AlertTriangle
+                                aria-hidden="true"
+                                className="text-warning mt-0.5 h-3 w-3 shrink-0"
+                              />
+                            )}
+                            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                              <div className="text-secondary text-[10px] tracking-wide uppercase">
+                                {q.header}
+                              </div>
+                              <div className="text-sm leading-snug">
+                                {answered ? (
+                                  <span className="text-foreground">{answerText}</span>
+                                ) : (
+                                  <span className="text-muted italic">Not answered</span>
                                 )}
                               </div>
+                              {descriptions.length > 0 && (
+                                <div className="text-muted-foreground text-[11px] italic">
+                                  {descriptions.join("; ")}
+                                </div>
+                              )}
                             </div>
                           </div>
                         );
@@ -812,11 +836,6 @@ export function AskUserQuestionToolCall(props: {
                   </div>
                 )}
 
-                <div className="text-muted-foreground text-xs">
-                  Tip: you can also just type a message to respond in chat (this will cancel these
-                  questions).
-                </div>
-
                 {submitError && <ErrorBox>{submitError}</ErrorBox>}
               </div>
             )}
@@ -824,8 +843,10 @@ export function AskUserQuestionToolCall(props: {
             {props.status !== "executing" && (
               <div className="flex flex-col gap-2">
                 {successResult && (
-                  <div className="text-muted-foreground flex flex-col gap-2 text-sm">
-                    <div>User answered:</div>
+                  <div className="flex flex-col gap-1.5">
+                    <div className="text-secondary text-[10px] tracking-wide uppercase">
+                      User answered
+                    </div>
                     {Object.entries(successResult.answers).map(([question, answer]) => {
                       const questionDef = successResult.questions.find(
                         (q) => q.question === question
@@ -835,14 +856,19 @@ export function AskUserQuestionToolCall(props: {
                       const descriptions = questionDef
                         ? getDescriptionsForLabels(questionDef, answerLabels)
                         : [];
+                      const header = questionDef?.header ?? question;
 
                       return (
-                        <div key={question} className="ml-4 flex flex-col">
-                          <div>
-                            • <span className="font-medium">{question}:</span> {answer}
+                        <div
+                          key={question}
+                          className="bg-code-bg flex flex-col gap-0.5 rounded border border-white/5 px-2.5 py-1.5"
+                        >
+                          <div className="text-secondary text-[10px] tracking-wide uppercase">
+                            {header}
                           </div>
+                          <div className="text-foreground text-sm leading-snug">{answer}</div>
                           {descriptions.length > 0 && (
-                            <div className="text-muted-foreground ml-3 text-xs italic">
+                            <div className="text-muted-foreground text-[11px] italic">
                               {descriptions.join("; ")}
                             </div>
                           )}
@@ -857,13 +883,27 @@ export function AskUserQuestionToolCall(props: {
             )}
 
             {props.status === "executing" && (
-              <div className="flex justify-end">
+              <div className="flex items-center justify-between gap-3 border-t border-white/5 pt-2">
+                <div className="text-muted min-w-0 flex-1 text-[10px] italic">
+                  Tip: type a message in chat to cancel these questions.
+                </div>
                 {isOnSummary ? (
-                  <Button ref={submitButtonRef} disabled={isSubmitting} onClick={handleSubmit}>
+                  <Button
+                    ref={submitButtonRef}
+                    disabled={isSubmitting}
+                    onClick={handleSubmit}
+                    size="sm"
+                  >
                     {isSubmitting ? "Submitting…" : "Submit answers"}
                   </Button>
                 ) : (
-                  <Button onClick={() => setActiveIndex(activeIndex + 1)}>Next</Button>
+                  <Button
+                    onClick={() => setActiveIndex(activeIndex + 1)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Next
+                  </Button>
                 )}
               </div>
             )}

@@ -71,11 +71,7 @@
               },
               {
                 "group": "Hooks",
-                "pages": [
-                  "hooks/init",
-                  "hooks/tools",
-                  "hooks/environment-variables"
-                ]
+                "pages": ["hooks/init", "hooks/tools", "hooks/environment-variables"]
               }
             ]
           },
@@ -115,10 +111,7 @@
           },
           {
             "group": "Integrations",
-            "pages": [
-              "integrations/vscode-extension",
-              "integrations/acp"
-            ]
+            "pages": ["integrations/vscode-extension", "integrations/acp"]
           },
           {
             "group": "Reference",
@@ -127,6 +120,10 @@
               "reference/telemetry",
               "reference/storybook",
               "reference/benchmarking",
+              "adr/0001-experimental-image-generation-tool",
+              "adr/0002-image-editing-visual-mockups",
+              "adr/0003-context-boundaries-for-compaction-and-reset",
+              "adr/0004-cli-goal-runs-are-not-strict-goal-aliases",
               "AGENTS"
             ]
           }

@@ -83,10 +83,21 @@ export function applyFrontendFilters(
     searchTerm: string;
     useRegex?: boolean;
     matchCase?: boolean;
+    /**
+     * Optional "Assisted only" gate. When provided AND the predicate returns
+     * false for a hunk, that hunk is filtered out. We accept a predicate
+     * rather than a flag + lookup so consumers can hide the toggle entirely
+     * when there are no assisted hunks (passing `undefined` here).
+     */
+    isAssisted?: (hunk: DiffHunk) => boolean;
   }
 ): DiffHunk[] {
   let result = hunks;
   result = filterByReadState(result, filters.isRead, filters.showReadHunks);
   result = filterBySearch(result, filters.searchTerm, filters.useRegex, filters.matchCase);
+  if (filters.isAssisted) {
+    const predicate = filters.isAssisted;
+    result = result.filter(predicate);
+  }
   return result;
 }

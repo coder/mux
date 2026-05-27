@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import * as ActualSelectPrimitiveModule from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { installDom } from "../../../../../tests/ui/dom";
+import { BASH_COLLAPSED_SUMMARY_MODE_KEY } from "@/common/constants/storage";
 import {
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
   type CoderWorkspaceArchiveBehavior,
@@ -16,6 +17,7 @@ import {
 interface MockConfig {
   coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
   worktreeArchiveBehavior: WorktreeArchiveBehavior;
+  chatTranscriptFullWidth: boolean;
   llmDebugLogs: boolean;
 }
 
@@ -26,6 +28,7 @@ interface MockAPIClient {
       coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
       worktreeArchiveBehavior: WorktreeArchiveBehavior;
     }) => Promise<void>;
+    updateChatTranscriptFullWidth: (input: { enabled: boolean }) => Promise<void>;
     updateLlmDebugLogs: (input: { enabled: boolean }) => Promise<void>;
   };
   server: {
@@ -167,6 +170,7 @@ import { GeneralSection } from "./GeneralSection";
 interface RenderGeneralSectionOptions {
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
   worktreeArchiveBehavior?: WorktreeArchiveBehavior;
+  chatTranscriptFullWidth?: boolean;
 }
 
 interface MockAPISetup {
@@ -180,12 +184,16 @@ interface MockAPISetup {
       }) => Promise<void>
     >
   >;
+  updateChatTranscriptFullWidthMock: ReturnType<
+    typeof mock<(input: { enabled: boolean }) => Promise<void>>
+  >;
 }
 
 function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup {
   const config: MockConfig = {
     coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
     worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
+    chatTranscriptFullWidth: false,
     llmDebugLogs: false,
     ...configOverrides,
   };
@@ -203,11 +211,18 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     }
   );
 
+  const updateChatTranscriptFullWidthMock = mock(({ enabled }: { enabled: boolean }) => {
+    config.chatTranscriptFullWidth = enabled;
+
+    return Promise.resolve();
+  });
+
   return {
     api: {
       config: {
         getConfig: getConfigMock,
         updateCoderPrefs: updateCoderPrefsMock,
+        updateChatTranscriptFullWidth: updateChatTranscriptFullWidthMock,
         updateLlmDebugLogs: mock(({ enabled }: { enabled: boolean }) => {
           config.llmDebugLogs = enabled;
 
@@ -225,6 +240,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     },
     getConfigMock,
     updateCoderPrefsMock,
+    updateChatTranscriptFullWidthMock,
   };
 }
 
@@ -247,7 +263,8 @@ describe("GeneralSection", () => {
   });
 
   function renderGeneralSection(options: RenderGeneralSectionOptions = {}) {
-    const { api, updateCoderPrefsMock } = createMockAPI({
+    const { api, updateCoderPrefsMock, updateChatTranscriptFullWidthMock } = createMockAPI({
+      chatTranscriptFullWidth: options.chatTranscriptFullWidth,
       coderWorkspaceArchiveBehavior: options.coderWorkspaceArchiveBehavior,
       worktreeArchiveBehavior: options.worktreeArchiveBehavior,
     });
@@ -259,7 +276,7 @@ describe("GeneralSection", () => {
       </ThemeProvider>
     );
 
-    return { updateCoderPrefsMock, view };
+    return { updateCoderPrefsMock, updateChatTranscriptFullWidthMock, view };
   }
 
   function getSelectTrigger(view: ReturnType<typeof render>, label: string): HTMLElement {
@@ -277,16 +294,64 @@ describe("GeneralSection", () => {
     return trigger;
   }
 
-  function chooseSelectOption(
+  async function chooseSelectOption(
     view: ReturnType<typeof render>,
     label: string,
     optionText: string
-  ): void {
+  ): Promise<void> {
     const trigger = getSelectTrigger(view, label);
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
     const portalRoot = view.baseElement.ownerDocument.body;
-    fireEvent.click(within(portalRoot).getByText(optionText));
+    const option = await waitFor(() => {
+      const button = within(portalRoot)
+        .getAllByText(optionText)
+        .find(
+          (element): element is HTMLButtonElement => element instanceof window.HTMLButtonElement
+        );
+      if (!button) {
+        throw new Error(`Could not find select option ${optionText}`);
+      }
+      return button;
+    });
+    fireEvent.click(option);
+    await waitFor(() => {
+      expect(trigger.textContent).toContain(optionText);
+    });
   }
+
+  test("persists the collapsed bash summaries display mode", async () => {
+    const { view } = renderGeneralSection();
+
+    await waitFor(() => {
+      expect(getSelectTrigger(view, "Collapsed bash summaries").textContent).toContain(
+        "Intent and command"
+      );
+    });
+
+    await chooseSelectOption(view, "Collapsed bash summaries", "Intent");
+
+    expect(window.localStorage.getItem(BASH_COLLAPSED_SUMMARY_MODE_KEY)).toBe(
+      JSON.stringify("intent")
+    );
+  });
+
+  test("loads and persists the full-width chat transcript toggle", async () => {
+    const { updateChatTranscriptFullWidthMock, view } = renderGeneralSection({
+      chatTranscriptFullWidth: true,
+    });
+
+    const toggle = view.getByRole("switch", { name: "Toggle full-width chat transcript" });
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+    });
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      expect(updateChatTranscriptFullWidthMock).toHaveBeenCalledWith({ enabled: false });
+    });
+  });
 
   test("renders the worktree archive behavior copy and loads the saved value", async () => {
     const { view } = renderGeneralSection({
@@ -316,7 +381,7 @@ describe("GeneralSection", () => {
       );
     });
 
-    chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
+    await chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).toHaveBeenCalledWith({
@@ -362,7 +427,7 @@ describe("GeneralSection", () => {
       );
     });
 
-    chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
+    await chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).toHaveBeenCalledTimes(1);
@@ -372,7 +437,7 @@ describe("GeneralSection", () => {
       });
     });
 
-    chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
+    await chooseSelectOption(view, "Worktree archive behavior", "Snapshot and delete");
     expect(updateCoderPrefsMock).toHaveBeenCalledTimes(1);
 
     resolveFirstUpdate?.();
@@ -420,7 +485,7 @@ describe("GeneralSection", () => {
       expect(trigger.hasAttribute("disabled")).toBe(false);
     });
 
-    chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
+    await chooseSelectOption(view, "Worktree archive behavior", "Delete checkout");
 
     await waitFor(() => {
       expect(updateCoderPrefsMock).toHaveBeenCalledWith({

@@ -4,10 +4,21 @@ import { userEvent, waitFor, within } from "@storybook/test";
 import { ProvidersSection } from "./ProvidersSection.js";
 import { SettingsSectionStory, setupSettingsStory } from "./settingsStoryUtils.js";
 
+// Chromatic snapshots are disabled here: every story below already drives a
+// `play` function that asserts the relevant behavior (empty state, configured
+// providers, env-sourced indicators, expanded provider config). The visual
+// layout of the providers settings panel has no scroll-fade/animation/state
+// nuances worth a pixel baseline, so we free this file's snapshots for use
+// elsewhere in the global Chromatic budget (see
+// `tests/ui/storybook/budget.test.ts`).
 const meta: Meta = {
   ...lightweightMeta,
   title: "Settings/Sections/ProvidersSection",
   component: ProvidersSection,
+  parameters: {
+    ...lightweightMeta.parameters,
+    chromatic: CHROMATIC_DISABLED,
+  },
 };
 
 export default meta;
@@ -82,9 +93,7 @@ export const ProvidersEnvSourced: Story = {
       <ProvidersSection />
     </SettingsSectionStory>
   ),
-  parameters: {
-    chromatic: CHROMATIC_DISABLED,
-  },
+  // (meta-level `chromatic: CHROMATIC_DISABLED` already covers this story.)
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 

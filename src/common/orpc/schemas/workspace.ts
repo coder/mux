@@ -3,6 +3,7 @@ import { ThinkingLevelSchema } from "../../types/thinking";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import { TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
+import { GoalSnapshotSchema } from "./goal";
 import {
   HEARTBEAT_CONTEXT_MODE_VALUES,
   HEARTBEAT_MAX_INTERVAL_MS,
@@ -33,6 +34,36 @@ export const BestOfGroupSchema = z.object({
   }),
   label: z.string().min(1).optional().meta({
     description: "Optional per-sibling label for grouped task variants.",
+  }),
+});
+
+/**
+ * Sparse per-workspace override of the global `goalDefaults` block.
+ *
+ * Each field is independently nullable so a workspace can override (e.g.)
+ * the default budget without also pinning the turn cap. A `null` value
+ * means "follow the global default"; an explicit value means "use this
+ * value for new goals in this workspace". A workspace with all three
+ * fields null is semantically identical to no override at all — the
+ * backend should drop the entire object in that case to keep
+ * `~/.mux/config.json` tidy.
+ *
+ * Mirrors the heartbeat pattern (per-workspace override of a global
+ * default, persisted inside `WorkspaceConfigSchema`) so the
+ * frontend-visible metadata stream picks it up automatically.
+ */
+export const WorkspaceGoalDefaultsOverrideSchema = z.object({
+  defaultBudgetCents: z.number().int().nonnegative().nullable().meta({
+    description:
+      "Per-workspace override for `goalDefaults.defaultBudgetCents`. `null` follows the global default.",
+  }),
+  defaultTurnCap: z.number().int().positive().nullable().meta({
+    description:
+      "Per-workspace override for `goalDefaults.defaultTurnCap`. `null` follows the global default (which itself may be null = no cap).",
+  }),
+  alwaysRequireExplicitBudget: z.boolean().nullable().meta({
+    description:
+      "Per-workspace override for `goalDefaults.alwaysRequireExplicitBudget`. `null` follows the global default.",
   }),
 });
 
@@ -96,6 +127,10 @@ export const WorkspaceMetadataSchema = z.object({
   }),
   heartbeat: WorkspaceHeartbeatSettingsSchema.optional().meta({
     description: "Persisted heartbeat settings for this workspace.",
+  }),
+  goalDefaults: WorkspaceGoalDefaultsOverrideSchema.optional().meta({
+    description:
+      "Per-workspace overrides for goal creation defaults (budget, turn cap, explicit-budget). Layered on top of the global `goalDefaults` from app config.",
   }),
   parentWorkspaceId: z.string().optional().meta({
     description:
@@ -209,13 +244,24 @@ export const WorkspaceActivitySnapshotSchema = z.object({
   }),
   todoStatus: WorkspaceAgentStatusSchema.nullable().optional().meta({
     description:
-      "Status derived from the current todo list (preferred background progress surface in the sidebar).",
+      "Persistent sidebar status. Set by the small-model AgentStatusService when available, with a todo-derived fallback.",
   }),
   hasTodos: z.boolean().optional().meta({
     description: "Whether the workspace still had todos when streaming last stopped",
   }),
+  isCompaction: z.boolean().optional().meta({
+    description:
+      "Whether the current streaming activity is a compaction turn (transient UI classification)",
+  }),
   isIdleCompaction: z.boolean().optional().meta({
     description: "Whether the current streaming activity is an idle (background) compaction",
+  }),
+  goal: GoalSnapshotSchema.nullable().optional().meta({
+    description: "Current workspace goal snapshot for sidebar indicators and the Goal tab",
+  }),
+  transientGoalOnly: z.boolean().optional().meta({
+    description:
+      "Internal frontend hint: merge only the goal field from this activity event; do not replace persisted activity fields.",
   }),
 });
 

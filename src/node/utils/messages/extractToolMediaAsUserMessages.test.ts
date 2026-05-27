@@ -2,6 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import sharp from "sharp";
 import { MAX_IMAGE_DIMENSION } from "@/common/constants/imageAttachments";
 import type { MuxMessage } from "@/common/types/message";
+import { expectContentOutputValue } from "./testToolOutputHelpers";
 import { extractToolMediaAsUserMessages } from "./extractToolMediaAsUserMessages";
 
 describe("extractToolMediaAsUserMessages", () => {
@@ -265,6 +266,107 @@ describe("extractToolMediaAsUserMessages", () => {
       (part) => part.type === "text" && part.text.includes("[SVG attachment converted to text")
     );
     expect(svgTextPart).toBeDefined();
+  });
+
+  it("strips display-only file bytes without creating a model attachment", async () => {
+    const base64 = Buffer.from("webm bytes").toString("base64");
+    const input: MuxMessage[] = [
+      {
+        id: "a5",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "call5",
+            toolName: "attach_file",
+            input: { path: "/tmp/clip.webm" },
+            state: "output-available",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: "[File shown to user: clip.webm]" },
+                {
+                  type: "display_file",
+                  mediaType: "video/webm",
+                  data: base64,
+                  filename: "clip.webm",
+                  providerOptions: { mux: { displayOnly: true, size: 10 } },
+                },
+              ],
+            },
+          },
+        ],
+        metadata: { timestamp: 5 },
+      },
+    ];
+
+    const rewritten = await extractToolMediaAsUserMessages(input);
+    expect(rewritten).toHaveLength(1);
+
+    const toolPart = rewritten[0].parts[0];
+    if (toolPart.type !== "dynamic-tool" || toolPart.state !== "output-available") {
+      throw new Error("Expected rewritten output-available tool part");
+    }
+
+    const outputText = JSON.stringify(toolPart.output);
+    expect(outputText).not.toContain(base64);
+    const rewrittenValue = expectContentOutputValue(toolPart.output);
+    const textParts = rewrittenValue.filter((part) => (part as { type?: unknown }).type === "text");
+    expect(textParts).toHaveLength(2);
+    expect(JSON.stringify(textParts)).toContain("clip.webm");
+    expect(
+      rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
+    ).toBe(false);
+  });
+
+  it("strips display-only file bytes even when metadata is missing", async () => {
+    const base64 = Buffer.from("webm bytes").toString("base64");
+    const input: MuxMessage[] = [
+      {
+        id: "a6",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "call6",
+            toolName: "attach_file",
+            input: { path: "/tmp/corrupt.webm" },
+            state: "output-available",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: "[File shown to user: corrupt.webm]" },
+                {
+                  type: "display_file",
+                  mediaType: "video/webm",
+                  data: base64,
+                  filename: "corrupt.webm",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ];
+
+    const rewritten = await extractToolMediaAsUserMessages(input);
+    expect(rewritten).toHaveLength(1);
+
+    const toolPart = rewritten[0].parts[0];
+    if (toolPart.type !== "dynamic-tool" || toolPart.state !== "output-available") {
+      throw new Error("Expected rewritten output-available tool part");
+    }
+
+    const rewrittenValue = expectContentOutputValue(toolPart.output);
+    const textParts = rewrittenValue.filter((part) => (part as { type?: unknown }).type === "text");
+    expect(textParts).toHaveLength(2);
+    expect(JSON.stringify(textParts)).toContain("corrupt.webm");
+    expect(
+      rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
+    ).toBe(false);
+
+    const outputText = JSON.stringify(toolPart.output);
+    expect(outputText).not.toContain(base64);
   });
 
   it("does not rewrite unrelated tool outputs", async () => {

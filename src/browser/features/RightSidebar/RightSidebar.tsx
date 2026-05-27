@@ -15,16 +15,30 @@ import {
   updatePersistedState,
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAPI } from "@/browser/contexts/API";
-import { StatsContainer } from "@/browser/features/RightSidebar/StatsContainer";
-import { ErrorBoundary } from "@/browser/components/ErrorBoundary/ErrorBoundary";
+import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
+import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
+import {
+  hasGoalBudgetLimit,
+  modelHasPricingData,
+  UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
+} from "@/common/utils/goals/budgetPricing";
+import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
+import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
+import type { GoalCreateIntent } from "@/browser/features/RightSidebar/GoalTab";
+import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
+import { getErrorMessage } from "@/common/utils/errors";
 
-import { ReviewPanel } from "@/browser/features/RightSidebar/CodeReview/ReviewPanel";
-import { OutputTab } from "@/browser/components/OutputTab/OutputTab";
-import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
-
-import { DevToolsTab } from "./DevToolsTab";
-import { BrowserTab } from "./BrowserTab";
+// Per-tab panel components are no longer imported here directly — the
+// `tabRegistry` owns label + panel rendering for static tabs (see
+// `Tabs/tabRegistry.tsx`). Adding or removing a non-terminal tab is now a
+// one-line registry change rather than a multi-file edit ledger.
+//
+// The RightSidebar itself only retains terminal-specific code paths because
+// terminal tabs are multi-instance and keep-alive (state survives hidden
+// tabsets), which doesn't fit the static "one panel per id" registry shape.
 import {
   matchesKeybind,
   KEYBINDS,
@@ -35,7 +49,9 @@ import {
 import { SidebarCollapseButton } from "@/browser/components/SidebarCollapseButton/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
 import type { ReviewNoteData } from "@/common/types/review";
+import type { GoalSetError, GoalSnapshot, GoalStatus } from "@/common/types/goal";
 import { TerminalTab } from "@/browser/features/RightSidebar/TerminalTab";
+import { useOptionalWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import {
   RIGHT_SIDEBAR_TABS,
   isTabType,
@@ -53,7 +69,6 @@ import {
   findTabset,
   getDefaultRightSidebarLayoutState,
   getFocusedActiveTab,
-  isRightSidebarLayoutState,
   moveTabToTabset,
   parseRightSidebarLayoutState,
   removeTabEverywhere,
@@ -76,15 +91,16 @@ import {
   openTerminalPopout,
   type TerminalSessionCreateOptions,
 } from "@/browser/utils/terminal";
+import { ReviewAssistedStatsReporter } from "@/browser/features/RightSidebar/CodeReview/ReviewPanel";
 import {
-  StatsTabLabel,
-  OutputTabLabel,
-  ReviewTabLabel,
+  TAB_REGISTRY,
   TerminalTabLabel,
   getTabContentClassName,
+  isBaseTabId,
+  type BaseTabType,
   type ReviewStats,
+  type TabPanelContext,
 } from "@/browser/features/RightSidebar/Tabs";
-import { BrowserTabLabel, DebugTabLabel, DesktopTabLabel } from "./Tabs/TabLabels";
 import {
   DndContext,
   DragOverlay,
@@ -182,6 +198,13 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
 export { RIGHT_SIDEBAR_TABS, isTabType };
 export type { TabType };
 
+function getGoalSetErrorMessage(error: GoalSetError): string {
+  if (error.type === "goal_conflict") {
+    return "Goal changed in another window. Please try again.";
+  }
+  return error.message;
+}
+
 interface RightSidebarProps {
   workspaceId: string;
   workspacePath: string;
@@ -268,6 +291,25 @@ interface RightSidebarTabsetNodeProps {
   tabPositions: Map<TabType, number>;
   /** Terminal session ID that should be auto-focused (cleared once focus lands) */
   autoFocusTerminalSession: string | null;
+  goal: GoalSnapshot | null;
+  goalCompleteInputRequest: number;
+  // RightSidebar / GoalTab UI requests user-facing transitions only;
+  // `budget_limited` is internal-only.
+  onGoalSetStatus: (
+    status: Exclude<GoalStatus, "budget_limited">,
+    completionSummary?: string
+  ) => Promise<void>;
+  onGoalUpdateObjective: (objective: string) => Promise<void>;
+  onGoalUpdateBudget: (budgetCents: number | null) => Promise<void>;
+  onGoalUpdateTurnCap: (turnCap: number | null) => Promise<void>;
+  onGoalClear: () => Promise<void>;
+  /**
+   * Create a brand-new goal from the GoalTab's in-tab form. Matches the
+   * slash command's `goal-set` semantics (objective + optional budget +
+   * optional turn cap) and routes through the same defaults-resolution +
+   * unpriced-model pricing gate.
+   */
+  onGoalCreate: (intent: GoalCreateIntent) => Promise<void>;
   /** Callback to request terminal focus when a tab is selected */
   onRequestTerminalFocus: (sessionId: string) => void;
   /** Callback to clear the auto-focus state after it's been consumed */
@@ -359,21 +401,14 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
     const tooltip = keybindStr;
 
-    // Build label using tab-specific label components
+    // Build label by delegating to the per-tab Label component declared in
+    // the tab registry. Terminal tabs are special-cased (multi-instance label
+    // with index + close/pop-out actions) — see `tabRegistry.tsx` for why
+    // terminals stay outside the static registry.
     let label: React.ReactNode;
-
-    if (tab === "costs") {
-      label = <StatsTabLabel workspaceId={props.workspaceId} />;
-    } else if (tab === "review") {
-      label = <ReviewTabLabel reviewStats={props.reviewStats} />;
-    } else if (tab === "desktop") {
-      label = <DesktopTabLabel />;
-    } else if (tab === "browser") {
-      label = <BrowserTabLabel />;
-    } else if (tab === "output") {
-      label = <OutputTabLabel />;
-    } else if (tab === "debug") {
-      label = <DebugTabLabel />;
+    if (isBaseTabId(tab)) {
+      const Label = TAB_REGISTRY[tab].Label;
+      label = <Label workspaceId={props.workspaceId} reviewStats={props.reviewStats} />;
     } else if (isTerminal) {
       const terminalIndex = terminalTabs.indexOf(tab);
       label = (
@@ -403,22 +438,37 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     ];
   });
 
-  const costsPanelId = `${tabsetBaseId}-panel-costs`;
-  const reviewPanelId = `${tabsetBaseId}-panel-review`;
-  const desktopPanelId = `${tabsetBaseId}-panel-desktop`;
-  const browserPanelId = `${tabsetBaseId}-panel-browser`;
-  const outputPanelId = `${tabsetBaseId}-panel-output`;
-  const debugPanelId = `${tabsetBaseId}-panel-debug`;
-
-  const costsTabId = `${tabsetBaseId}-tab-costs`;
-  const reviewTabId = `${tabsetBaseId}-tab-review`;
-  const desktopTabId = `${tabsetBaseId}-tab-desktop`;
-  const browserTabId = `${tabsetBaseId}-tab-browser`;
-  const outputTabId = `${tabsetBaseId}-tab-output`;
-  const debugTabId = `${tabsetBaseId}-tab-debug`;
-
   // Generate sortable IDs for tabs in this tabset
   const sortableIds = items.map((item) => `${props.node.id}:${item.tab}`);
+
+  // Build the panel context once per tabset render — passed verbatim to each
+  // active tab's `renderPanel` from the registry. Centralising this means a
+  // panel renderer never has to negotiate with the RightSidebar component
+  // about prop shape.
+  const panelContext: TabPanelContext = {
+    workspaceId: props.workspaceId,
+    workspacePath: props.workspacePath,
+    projectPath: props.projectPath,
+    isCreating: props.isCreating,
+    focusTrigger: props.focusTrigger,
+    tabsetId: props.node.id,
+    review: {
+      onReviewNote: props.onReviewNote,
+      onStatsChange: props.onReviewStatsChange,
+      isTouchImmersive: props.isTouchReviewImmersive,
+      onTouchImmersiveChange: props.onTouchReviewImmersiveChange,
+    },
+    goal: {
+      snapshot: props.goal,
+      openCompleteInputRequest: props.goalCompleteInputRequest,
+      onSetStatus: props.onGoalSetStatus,
+      onUpdateObjective: props.onGoalUpdateObjective,
+      onUpdateBudget: props.onGoalUpdateBudget,
+      onUpdateTurnCap: props.onGoalUpdateTurnCap,
+      onClear: props.onGoalClear,
+      onCreate: props.onGoalCreate,
+    },
+  };
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" onMouseDownCapture={setFocused}>
@@ -487,52 +537,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           )}
         />
 
-        {props.node.activeTab === "costs" && (
-          <div role="tabpanel" id={costsPanelId} aria-labelledby={costsTabId}>
-            <ErrorBoundary workspaceInfo="Stats tab">
-              <StatsContainer workspaceId={props.workspaceId} />
-            </ErrorBoundary>
-          </div>
-        )}
-
-        {props.node.activeTab === "desktop" && (
-          <div
-            role="tabpanel"
-            id={desktopPanelId}
-            aria-labelledby={desktopTabId}
-            className="h-full"
-          >
-            <ErrorBoundary workspaceInfo="Desktop tab">
-              <DesktopPanel workspaceId={props.workspaceId} />
-            </ErrorBoundary>
-          </div>
-        )}
-
-        {props.node.activeTab === "browser" && (
-          <div
-            role="tabpanel"
-            id={browserPanelId}
-            aria-labelledby={browserTabId}
-            className="h-full"
-          >
-            <ErrorBoundary workspaceInfo="Browser tab">
-              <BrowserTab workspaceId={props.workspaceId} projectPath={props.projectPath} />
-            </ErrorBoundary>
-          </div>
-        )}
-
-        {props.node.activeTab === "output" && (
-          <div role="tabpanel" id={outputPanelId} aria-labelledby={outputTabId} className="h-full">
-            <OutputTab workspaceId={props.workspaceId} />
-          </div>
-        )}
-
-        {props.node.activeTab === "debug" && (
-          <div role="tabpanel" id={debugPanelId} aria-labelledby={debugTabId}>
-            <ErrorBoundary workspaceInfo="Debug tab">
-              <DevToolsTab workspaceId={props.workspaceId} />
-            </ErrorBoundary>
-          </div>
+        {/* Static (non-terminal) tab panels — render the active one via the registry. */}
+        {isBaseTabId(props.node.activeTab) && (
+          <RegistryTabPanel
+            tabId={props.node.activeTab}
+            tabsetBaseId={tabsetBaseId}
+            context={panelContext}
+          />
         )}
 
         {/* Render all terminal tabs (keep-alive: hidden but mounted) */}
@@ -565,24 +576,36 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             </div>
           );
         })}
-
-        {props.node.activeTab === "review" && (
-          <div role="tabpanel" id={reviewPanelId} aria-labelledby={reviewTabId} className="h-full">
-            <ReviewPanel
-              key={`${props.workspaceId}:${props.node.id}`}
-              workspaceId={props.workspaceId}
-              workspacePath={props.workspacePath}
-              projectPath={props.projectPath}
-              onReviewNote={props.onReviewNote}
-              focusTrigger={props.focusTrigger}
-              isCreating={props.isCreating}
-              isTouchImmersive={props.isTouchReviewImmersive}
-              onTouchImmersiveChange={props.onTouchReviewImmersiveChange}
-              onStatsChange={props.onReviewStatsChange}
-            />
-          </div>
-        )}
       </div>
+    </div>
+  );
+};
+
+/**
+ * Render the active static (non-terminal) tab's panel by delegating to the
+ * `renderPanel` function declared in the registry. Wrapping the render in a
+ * `tabpanel` element here means each registry entry only has to describe its
+ * content — accessibility wiring stays in one place.
+ */
+const RegistryTabPanel: React.FC<{
+  tabId: BaseTabType;
+  tabsetBaseId: string;
+  context: TabPanelContext;
+}> = ({ tabId, tabsetBaseId, context }) => {
+  const reg = TAB_REGISTRY[tabId];
+  // Tabs whose content needs the full available height opt in via their
+  // `contentClassName` (`overflow-hidden p-0`); those that scroll
+  // (`overflow-y-auto …`) don't. Keep the `h-full` policy decision local to
+  // the registry rather than the wrapper.
+  const needsFullHeight = reg.contentClassName.includes("overflow-hidden") || tabId === "goal";
+  return (
+    <div
+      role="tabpanel"
+      id={`${tabsetBaseId}-panel-${tabId}`}
+      aria-labelledby={`${tabsetBaseId}-tab-${tabId}`}
+      className={needsFullHeight ? "h-full" : undefined}
+    >
+      {reg.renderPanel(context)}
     </div>
   );
 };
@@ -602,13 +625,36 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Trigger for focusing Review panel (preserves hunk selection)
   const [focusTrigger, _setFocusTrigger] = React.useState(0);
 
-  // Review stats reported by ReviewPanel
-  const [reviewStats, setReviewStats] = React.useState<ReviewStats | null>(null);
+  // Review hunk totals are reported by the Review panel when mounted, while
+  // unread-assisted is reported by an always-mounted headless component so the
+  // tab attention cue updates even when the user is on another tab.
+  const [reviewPanelStats, setReviewPanelStats] = React.useState<Pick<
+    ReviewStats,
+    "total" | "read"
+  > | null>(null);
+  const [unreadAssisted, setUnreadAssisted] = React.useState(0);
+  const reviewStats = React.useMemo<ReviewStats | null>(() => {
+    if (reviewPanelStats === null && unreadAssisted === 0) return null;
+    return {
+      total: reviewPanelStats?.total ?? 0,
+      read: reviewPanelStats?.read ?? 0,
+      unreadAssisted,
+    };
+  }, [reviewPanelStats, unreadAssisted]);
+  const handleReviewStatsChange = React.useCallback((stats: ReviewStats | null) => {
+    setReviewPanelStats(stats ? { total: stats.total, read: stats.read } : null);
+  }, []);
 
   // Terminal session ID that should be auto-focused (new terminal or explicit tab focus).
   const [autoFocusTerminalSession, setAutoFocusTerminalSession] = React.useState<string | null>(
     null
   );
+
+  // Surface backend failures from terminal creation (e.g., the markdown Run button kicking off
+  // a session against a transcript-only workspace, or a runtime that isn't connected). Without
+  // this the click silently expands the sidebar with no new tab, which users perceive as a hang
+  // or app crash.
+  const terminalCreateError = usePopoverError();
 
   // Manual collapse state (persisted globally)
   const [collapsed, setCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
@@ -627,10 +673,120 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const api = apiState.api;
   const desktopExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
   const browserExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_BROWSER);
+  // Child task workspaces can't run goal actions — backend rejects them
+  // via `WorkspaceGoalService.assertParentWorkspace`. We use this flag
+  // both to hide the Goal tab below and to gate any inline goal UX.
+  const workspaceMetadataContext = useWorkspaceMetadata();
+  const currentWorkspaceMetadata =
+    workspaceMetadataContext.workspaceMetadata.get(workspaceId) ?? null;
+  const isChildWorkspaceForGoal = currentWorkspaceMetadata?.parentWorkspaceId != null;
+  // Safe variant: storybook stories may render before addWorkspace() runs; the
+  // optional hook returns null instead of throwing assertGet on the unregistered
+  // workspace. Real workspaces always have an aggregator by the time RightSidebar
+  // mounts, so the optional path doesn't change runtime behavior.
+  const { config: providersConfig } = useProvidersConfig();
+  const sendMessageOptions = useSendMessageOptions(workspaceId);
+  const sidebarState = useOptionalWorkspaceSidebarState(workspaceId);
+  const goal = sidebarState?.goal ?? null;
+  const [goalCompleteInputRequest, setGoalCompleteInputRequest] = React.useState(0);
   const [llmDebugLogsEnabled, setLlmDebugLogsEnabled] = React.useState<boolean | null>(null);
   const [desktopAvailable, setDesktopAvailable] = React.useState<boolean | null>(null);
   const [browserAvailable, setBrowserAvailable] = React.useState<boolean | null>(null);
   const debugLogsLocalOverrideRef = React.useRef(false);
+
+  const setGoalWithSingleConflictRetry = async (intent: {
+    // RightSidebar buttons only ever request user-facing transitions;
+    // `budget_limited` is internal-only and excluded from public setGoal input.
+    status?: Exclude<GoalStatus, "budget_limited">;
+    objective?: string;
+    budgetCents?: number | null;
+    turnCap?: number | null;
+    completionSummary?: string;
+    // `editInPlace` is forwarded verbatim to `setGoal`; it tells the backend
+    // to mutate the existing goal record instead of archiving+recreating.
+    editInPlace?: boolean;
+  }) => {
+    if (!api) {
+      throw new Error("Backend is not connected.");
+    }
+    // Shared retry helper keeps sidebar, slash-command, and palette conflict
+    // handling in lockstep.
+    const result = await setGoalWithConflictRetry(api, workspaceId, intent);
+    if (!result.success) {
+      throw new Error(getGoalSetErrorMessage(result.error));
+    }
+  };
+
+  const handleGoalSetStatus = async (
+    // The downstream `setGoal` mutation excludes internal-only `budget_limited`.
+    status: Exclude<GoalStatus, "budget_limited">,
+    completionSummary?: string
+  ) => {
+    await setGoalWithSingleConflictRetry({ status, completionSummary });
+  };
+
+  const handleGoalUpdateBudget = async (budgetCents: number | null) => {
+    if (
+      hasGoalBudgetLimit(budgetCents) &&
+      !modelHasPricingData(sendMessageOptions.model, providersConfig)
+    ) {
+      throw new Error(UNPRICED_CURRENT_MODEL_GOAL_MESSAGE);
+    }
+    await setGoalWithSingleConflictRetry({ budgetCents });
+  };
+
+  const handleGoalUpdateTurnCap = async (turnCap: number | null) => {
+    await setGoalWithSingleConflictRetry({ turnCap });
+  };
+
+  const handleGoalUpdateObjective = async (objective: string) => {
+    // The inline objective editor matches the budget / turn-cap editors:
+    // mutate the current goal in place rather than archiving + recreating
+    // (which is what `/goal <new objective>` does). `editInPlace: true` is
+    // the toggle the backend reads to take the rename branch.
+    await setGoalWithSingleConflictRetry({ objective, editInPlace: true });
+  };
+
+  const handleGoalClear = async () => {
+    if (!api) {
+      throw new Error("Backend is not connected.");
+    }
+    await api.workspace.clearGoal({ workspaceId });
+  };
+
+  const handleGoalCreate = async (intent: GoalCreateIntent) => {
+    if (!api) {
+      throw new Error("Backend is not connected.");
+    }
+    // Apply shared defaults (turn cap + `alwaysRequireExplicitBudget`)
+    // so the GoalTab form, slash command, and command palette produce
+    // identical goals for identical inputs. Pass workspaceId so any
+    // per-workspace override wins over the global.
+    const defaults = await loadGoalDefaults(api, workspaceId);
+    const resolved = resolveGoalSetIntent(intent, defaults);
+    if (hasGoalBudgetLimit(resolved.budgetCents)) {
+      // Fetch provider config at submit time so quick submits before the
+      // hook populates still honor priced custom/mapped models. Slash
+      // command and palette paths also fetch here, keeping all create
+      // surfaces in lockstep.
+      let freshProvidersConfig: unknown = providersConfig;
+      try {
+        freshProvidersConfig = await api.providers.getConfig();
+      } catch {
+        // Fall back to the hook value (which may still be null). Better
+        // to surface the pricing-gate error than to leak the network
+        // failure to the user — they can retry.
+      }
+      if (!modelHasPricingData(sendMessageOptions.model, freshProvidersConfig)) {
+        throw new Error(UNPRICED_CURRENT_MODEL_GOAL_MESSAGE);
+      }
+    }
+    await setGoalWithSingleConflictRetry({
+      objective: resolved.objective,
+      budgetCents: resolved.budgetCents,
+      ...(resolved.turnCap != null ? { turnCap: resolved.turnCap } : {}),
+    });
+  };
 
   React.useEffect(() => {
     if (!api) {
@@ -806,6 +962,28 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   }, [browserAvailable, initialActiveTab, setLayoutRaw]);
 
   React.useEffect(() => {
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      const hasGoal = collectAllTabs(prev.root).includes("goal");
+      // Goal tab is always visible on top-level workspaces. Child task
+      // workspaces can't use any goal action — every backend write goes
+      // through `assertParentWorkspace()` which throws for workspaces
+      // with `parentWorkspaceId`. Showing the tab there would surface
+      // a create/queue UI whose submits fail.
+      const goalTabShouldExist = !isChildWorkspaceForGoal;
+      if (goalTabShouldExist && !hasGoal) {
+        return addTabToFocusedTabset(prev, "goal", false);
+      }
+
+      if (!goalTabShouldExist && hasGoal) {
+        return removeTabEverywhere(prev, "goal");
+      }
+
+      return prev;
+    });
+  }, [initialActiveTab, setLayoutRaw, isChildWorkspaceForGoal]);
+
+  React.useEffect(() => {
     if (!desktopExperimentEnabled) {
       setDesktopAvailable(false);
       return;
@@ -857,12 +1035,18 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     });
   }, [desktopAvailable, initialActiveTab, setLayoutRaw]);
 
-  // If we ever deserialize an invalid layout (e.g. schema changes), reset to defaults.
+  // Persist parser migrations (schema resets, removed-tab cleanup, newly-added
+  // default tabs like Instructions) back to storage. Without this, the current
+  // render can show the migrated layout while other localStorage readers — and
+  // future mounts after a hot reload — still see the stale pre-migration tabs.
   React.useEffect(() => {
-    if (!isRightSidebarLayoutState(layoutRaw)) {
+    if (layoutDraft !== null) {
+      return;
+    }
+    if (layoutRaw !== layout) {
       setLayoutRaw(layout);
     }
-  }, [layout, layoutRaw, setLayoutRaw]);
+  }, [layout, layoutDraft, layoutRaw, setLayoutRaw]);
 
   const getBaseLayout = React.useCallback(() => {
     return (
@@ -906,6 +1090,24 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     setLayout((prev) => selectOrAddTab(prev, "review"));
     _setFocusTrigger((prev) => prev + 1);
   }, [setLayout]);
+
+  React.useEffect(() => {
+    const handleOpenGoalTab = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId: string; openCompleteInput?: boolean }>)
+        .detail;
+      if (detail?.workspaceId !== workspaceId) {
+        return;
+      }
+      setCollapsed(false);
+      setLayout((prev) => selectOrAddTab(prev, "goal"));
+      if (detail.openCompleteInput) {
+        setGoalCompleteInputRequest((prev) => prev + 1);
+      }
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.OPEN_GOAL_TAB, handleOpenGoalTab);
+    return () => window.removeEventListener(CUSTOM_EVENTS.OPEN_GOAL_TAB, handleOpenGoalTab);
+  }, [setCollapsed, setLayout, workspaceId]);
 
   React.useEffect(() => {
     const handleOpenTouchReviewImmersive = (event: Event) => {
@@ -1171,21 +1373,33 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Handler to add a new terminal tab.
   // Creates the backend session first, then adds the tab with the real sessionId.
   // This ensures the tabType (and React key) never changes, preventing remounts.
+  //
+  // The promise is given a `.catch` so backend rejections (e.g., transcript-only workspaces
+  // with no projectPath, archived worktrees, or disconnected SSH/Devcontainer runtimes)
+  // surface to the user via PopoverError instead of becoming an unhandled promise rejection
+  // that leaves the sidebar half-expanded and looks like an app crash. The wrapper stays
+  // non-async (`() => void`) so the existing `addTerminalRef` / `onAddTerminal` callsites
+  // (typed as void-returning) don't trip `no-misused-promises`.
   const handleAddTerminal = React.useCallback(
-    (options?: TerminalSessionCreateOptions) => {
+    (options?: TerminalSessionCreateOptions): void => {
       if (!api) return;
 
       // Also expand sidebar if collapsed
       setCollapsed(false);
 
-      void createTerminalSession(api, workspaceId, options).then((session) => {
-        const newTab = makeTerminalTabType(session.sessionId);
-        setLayout((prev) => addTabToFocusedTabset(prev, newTab));
-        // Schedule focus for this terminal (will be consumed when the tab mounts)
-        setAutoFocusTerminalSession(session.sessionId);
-      });
+      void createTerminalSession(api, workspaceId, options)
+        .then((session) => {
+          const newTab = makeTerminalTabType(session.sessionId);
+          setLayout((prev) => addTabToFocusedTabset(prev, newTab));
+          // Schedule focus for this terminal (will be consumed when the tab mounts)
+          setAutoFocusTerminalSession(session.sessionId);
+        })
+        .catch((err: unknown) => {
+          console.error("[RightSidebar] Failed to create terminal session:", err);
+          terminalCreateError.showError("terminal-create", getErrorMessage(err));
+        });
     },
-    [api, workspaceId, setLayout, setCollapsed]
+    [api, workspaceId, setLayout, setCollapsed, terminalCreateError]
   );
 
   // Expose handleAddTerminal to parent via ref (for Cmd/Ctrl+T keybind)
@@ -1225,8 +1439,15 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       const sessionId = getTerminalSessionId(tab);
       if (!sessionId) return; // Can't pop out without a session
 
-      // Open the pop-out window (handles browser vs Electron modes)
-      openTerminalPopout(api, workspaceId, sessionId);
+      // Open the pop-out window (handles browser vs Electron modes). The promise is
+      // attached a `.catch` so an Electron terminalWindowManager rejection cannot become
+      // an unhandled promise rejection. We surface it via the same PopoverError used by
+      // handleAddTerminal — the user already paid the cost of removing the tab below, so
+      // they need to know if the pop-out itself failed.
+      void openTerminalPopout(api, workspaceId, sessionId).catch((err: unknown) => {
+        console.error("[RightSidebar] Failed to open terminal pop-out:", err);
+        terminalCreateError.showError("terminal-popout", getErrorMessage(err));
+      });
 
       // Remove the tab from the sidebar (terminal now lives in its own window)
       // Don't close the session - the pop-out window takes over
@@ -1240,7 +1461,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         return next;
       });
     },
-    [workspaceId, api, setLayout, terminalTitlesKey]
+    [workspaceId, api, setLayout, terminalTitlesKey, terminalCreateError]
   );
 
   // Configure sensors with distance threshold for click vs drag disambiguation
@@ -1382,7 +1603,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         focusTrigger={focusTrigger}
         onReviewNote={onReviewNote}
         reviewStats={reviewStats}
-        onReviewStatsChange={setReviewStats}
+        onReviewStatsChange={handleReviewStatsChange}
         isTouchReviewImmersive={isTouchReviewImmersive}
         onTouchReviewImmersiveChange={setIsTouchReviewImmersive}
         isDraggingTab={isDraggingTab}
@@ -1397,6 +1618,14 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         tabPositions={tabPositions}
         onRequestTerminalFocus={setAutoFocusTerminalSession}
         autoFocusTerminalSession={autoFocusTerminalSession}
+        goal={goal ?? null}
+        goalCompleteInputRequest={goalCompleteInputRequest}
+        onGoalSetStatus={handleGoalSetStatus}
+        onGoalUpdateObjective={handleGoalUpdateObjective}
+        onGoalUpdateBudget={handleGoalUpdateBudget}
+        onGoalUpdateTurnCap={handleGoalUpdateTurnCap}
+        onGoalClear={handleGoalClear}
+        onGoalCreate={handleGoalCreate}
         onAutoFocusConsumed={() => setAutoFocusTerminalSession(null)}
       />
     );
@@ -1404,6 +1633,13 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <ReviewAssistedStatsReporter
+        workspaceId={workspaceId}
+        workspacePath={workspacePath}
+        projectPath={projectPath}
+        isCreating={Boolean(isCreating)}
+        onUnreadAssistedChange={setUnreadAssisted}
+      />
       <SidebarContainer
         collapsed={collapsed}
         isResizing={isResizing}
@@ -1453,6 +1689,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
           </div>
         ) : null}
       </DragOverlay>
+
+      <PopoverError
+        error={terminalCreateError.error}
+        prefix="Failed to open terminal:"
+        onDismiss={terminalCreateError.clearError}
+      />
     </DndContext>
   );
 };

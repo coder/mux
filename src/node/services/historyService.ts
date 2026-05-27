@@ -17,9 +17,10 @@ import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyForCounting";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
+import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import {
   isDurableCompactedMarker,
-  isDurableCompactionBoundaryMarker,
+  isDurableContextBoundaryMarker,
 } from "@/common/utils/messages/compactionBoundary";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isNonNegativeInteger, isPositiveInteger } from "@/common/utils/numbers";
@@ -129,8 +130,11 @@ export class HistoryService {
 
   /** Size of each chunk when scanning the file in reverse (256KB covers typical post-compaction content). */
   private static readonly REVERSE_READ_CHUNK_SIZE = 256 * 1024;
-  /** String-search needle for compaction boundary lines. */
-  private static readonly BOUNDARY_NEEDLE = '"compactionBoundary":true';
+  /** String-search needles for context boundary lines. */
+  private static readonly BOUNDARY_NEEDLES = [
+    '"compactionBoundary":true',
+    `"contextBoundaryKind":"${CONTEXT_BOUNDARY_KINDS.RESET}"`,
+  ] as const;
 
   /**
    * Scan chat.jsonl in reverse to find the byte offset of a durable compaction boundary.
@@ -204,10 +208,10 @@ export class HistoryService {
           if (lineEnd <= lineStart) continue; // empty line
 
           const line = buffer.subarray(lineStart, lineEnd).toString("utf-8");
-          if (line.includes(HistoryService.BOUNDARY_NEEDLE)) {
+          if (HistoryService.BOUNDARY_NEEDLES.some((needle) => line.includes(needle))) {
             try {
               const msg = JSON.parse(line) as MuxMessage;
-              if (isDurableCompactionBoundaryMarker(msg)) {
+              if (isDurableContextBoundaryMarker(msg)) {
                 if (skipped < skip) {
                   skipped++;
                 } else {
@@ -226,10 +230,10 @@ export class HistoryService {
       // Check the very first line (accumulated in carryover)
       if (carryoverBytes.length > 0) {
         const line = carryoverBytes.toString("utf-8");
-        if (line.includes(HistoryService.BOUNDARY_NEEDLE)) {
+        if (HistoryService.BOUNDARY_NEEDLES.some((needle) => line.includes(needle))) {
           try {
             const msg = JSON.parse(line) as MuxMessage;
-            if (isDurableCompactionBoundaryMarker(msg)) {
+            if (isDurableContextBoundaryMarker(msg)) {
               if (skipped < skip) {
                 // Not enough boundaries in the file to satisfy skip
                 return null;
@@ -655,6 +659,36 @@ export class HistoryService {
     return oldest;
   }
 
+  private getNewestHistorySequence(messages: readonly MuxMessage[]): number | undefined {
+    let newest: number | undefined;
+
+    for (const message of messages) {
+      const sequence = message.metadata?.historySequence;
+      if (!isNonNegativeInteger(sequence)) {
+        continue;
+      }
+
+      if (newest === undefined || sequence > newest) {
+        newest = sequence;
+      }
+    }
+
+    return newest;
+  }
+
+  private async getMaxHistorySequence(workspaceId: string): Promise<number> {
+    let maxSequence = -1;
+
+    await this.iterateForward(workspaceId, (messages) => {
+      const newest = this.getNewestHistorySequence(messages);
+      if (newest !== undefined && newest > maxSequence) {
+        maxSequence = newest;
+      }
+    });
+
+    return maxSequence;
+  }
+
   async hasHistoryBeforeSequence(
     workspaceId: string,
     beforeHistorySequence: number
@@ -947,6 +981,8 @@ export class HistoryService {
       }
 
       const existingMessages = historyResult.data;
+      const maxExistingSequence = this.getNewestHistorySequence(existingMessages);
+
       const hasCommitWorthyParts = (partial.parts ?? []).some((part) => {
         if (part.type === "text" || part.type === "reasoning") {
           return part.text.trim().length > 0;
@@ -968,6 +1004,23 @@ export class HistoryService {
       const existingMessage = existingMessages.find(
         (message) => message.metadata?.historySequence === partialSeq
       );
+
+      if (
+        !existingMessage &&
+        maxExistingSequence !== undefined &&
+        partialSeq <= maxExistingSequence
+      ) {
+        // User rationale: stale partial.json files from older compaction epochs used to append
+        // old historySequence values at the tail. That made the next live send look like a
+        // mid-history edit and the renderer truncated the visible chat at an odd position.
+        log.warn("Deleting stale partial with non-tail historySequence", {
+          workspaceId,
+          messageId: partial.id,
+          partialSeq,
+          maxExistingSequence,
+        });
+        return this.deletePartial(workspaceId);
+      }
 
       const shouldCommit =
         (!existingMessage || (partial.parts?.length ?? 0) > (existingMessage.parts?.length ?? 0)) &&
@@ -1009,53 +1062,25 @@ export class HistoryService {
   }
 
   /**
-   * Get or initialize the next history sequence number for a workspace
+   * Get or initialize the next history sequence number for a workspace.
    */
   private async getNextHistorySequence(workspaceId: string): Promise<number> {
-    // Check if we already have it in memory
-    if (this.sequenceCounters.has(workspaceId)) {
-      return this.sequenceCounters.get(workspaceId)!;
+    // Check if we already have it in memory.
+    const cachedCounter = this.sequenceCounters.get(workspaceId);
+    if (cachedCounter !== undefined) {
+      return cachedCounter;
     }
 
-    // Initialize from history — sequence numbers are monotonically increasing,
-    // so the last message always holds the max. Use getLastMessages(1) to avoid
-    // reading the entire file.
-    const lastResult = await this.getLastMessages(workspaceId, 1);
-    if (lastResult.success && lastResult.data.length > 0) {
-      const lastMsg = lastResult.data[0];
-      const seqNum = lastMsg.metadata?.historySequence;
-      if (isNonNegativeInteger(seqNum)) {
-        const nextSeqNum = seqNum + 1;
-        this.sequenceCounters.set(workspaceId, nextSeqNum);
-        return nextSeqNum;
-      }
-      // Last message has no valid sequence — fall back to scanning backward
-      // through all messages to find the max (handles legacy data).
-      let maxSeqNum = -1;
-      const scanResult = await this.iterateFullHistory(workspaceId, "backward", (chunk) => {
-        for (const msg of chunk) {
-          const seq = msg.metadata?.historySequence;
-          if (isNonNegativeInteger(seq)) {
-            maxSeqNum = Math.max(maxSeqNum, seq);
-            // Found a valid sequence — it's the max since we're scanning backward
-            return false;
-          }
-        }
-      });
-      if (scanResult.success) {
-        const nextSeqNum = maxSeqNum + 1;
-        assert(
-          isNonNegativeInteger(nextSeqNum),
-          "next history sequence counter must be a non-negative integer"
-        );
-        this.sequenceCounters.set(workspaceId, nextSeqNum);
-        return nextSeqNum;
-      }
-    }
-
-    // No history yet, start from 0
-    this.sequenceCounters.set(workspaceId, 0);
-    return 0;
+    // User rationale: a stale partial or hand-edited chat.jsonl can leave an old
+    // historySequence at the tail. Initializing from the tail would make the next
+    // live message look like an edit/truncation to the renderer, so scan for max.
+    const nextSeqNum = (await this.getMaxHistorySequence(workspaceId)) + 1;
+    assert(
+      isNonNegativeInteger(nextSeqNum),
+      "next history sequence counter must be a non-negative integer"
+    );
+    this.sequenceCounters.set(workspaceId, nextSeqNum);
+    return nextSeqNum;
   }
 
   /**
@@ -1098,15 +1123,20 @@ export class HistoryService {
             "appendToHistory requires historySequence to be a non-negative integer when provided"
           );
 
-          // Already has history sequence, update counter if needed
-          const currentCounter = this.sequenceCounters.get(workspaceId) ?? 0;
+          // Already has a history sequence. Initialize from persisted max first so a stale
+          // recovered row cannot regress the counter and make the next live append look like
+          // a user edit/truncation in the renderer.
+          const currentCounter = await this.getNextHistorySequence(workspaceId);
           assert(
             isNonNegativeInteger(currentCounter),
             "history sequence counter must remain a non-negative integer"
           );
-          if (existingSeqNum >= currentCounter) {
-            this.sequenceCounters.set(workspaceId, existingSeqNum + 1);
+          if (existingSeqNum < currentCounter) {
+            return Err(
+              `Refusing to append stale historySequence ${existingSeqNum}; next sequence is ${currentCounter}`
+            );
           }
+          this.sequenceCounters.set(workspaceId, existingSeqNum + 1);
         } else {
           // Has metadata but no historySequence, assign one
           const nextSeqNum = await this.getNextHistorySequence(workspaceId);

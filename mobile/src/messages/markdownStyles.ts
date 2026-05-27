@@ -1,7 +1,7 @@
 import { StyleSheet } from "react-native";
 import type { MarkdownProps } from "react-native-markdown-display";
 import type { Theme } from "../theme";
-import { assert } from "../utils/assert";
+import { assert } from "@/common/utils/assert";
 
 export type MarkdownVariant = "assistant" | "reasoning" | "plan";
 export type MarkdownStyle = NonNullable<MarkdownProps["style"]>;

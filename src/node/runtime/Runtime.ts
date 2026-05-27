@@ -1,4 +1,4 @@
-import type { RuntimeConfig, RuntimeAvailabilityStatus } from "@/common/types/runtime";
+import type { RuntimeConfig } from "@/common/types/runtime";
 import type { RuntimeStatusEvent as StreamRuntimeStatusEvent } from "@/common/types/stream";
 import type { Result } from "@/common/types/result";
 
@@ -240,12 +240,6 @@ export interface WorkspaceInitResult {
 }
 
 /**
- * Runtime interface - minimal, low-level abstraction for tool execution environments.
- *
- * All methods return streaming primitives for memory efficiency.
- * Use helpers in utils/runtime/ for convenience wrappers (e.g., readFileString, execBuffered).
-
-/**
  * Parameters for forking an existing workspace
  */
 export interface WorkspaceForkParams {
@@ -408,7 +402,7 @@ export interface Runtime {
    * This intentionally lives on the Runtime abstraction so local runtimes can use
    * Node fs APIs (Windows-safe) while remote runtimes can use shell commands.
    */
-  ensureDir(path: string): Promise<void>;
+  ensureDir(path: string, abortSignal?: AbortSignal): Promise<void>;
 
   /**
    * Resolve a path to its absolute, canonical form (expanding tildes, resolving symlinks, etc.).
@@ -633,12 +627,6 @@ export interface Runtime {
    */
   getContainerEnv?(): Record<string, string>;
 }
-
-/**
- * Result of checking if a runtime type is available for a project.
- * Re-exported for backward compatibility with existing imports.
- */
-export type RuntimeAvailability = RuntimeAvailabilityStatus;
 
 /**
  * Error thrown by runtime implementations

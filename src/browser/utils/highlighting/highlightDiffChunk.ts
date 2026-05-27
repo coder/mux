@@ -15,11 +15,28 @@ import type { DiffChunk } from "./diffChunking";
  * Future optimization: Could render entire <code> blocks and use CSS to style
  * .line spans instead of extracting per-line HTML. Would simplify parsing
  * and reduce dangerouslySetInnerHTML usage.
+ *
+ * Size policy: allow human-scale files (including 10k-LoC chunks) to attempt
+ * highlighting, but skip payloads that are too large or too minified to hand to
+ * the worker without visible renderer-thread pre-processing cost. The worker
+ * client still owns the runtime budget once a payload is handed off.
  */
 
-// Maximum diff size to highlight (in bytes)
-// Diffs larger than this fall back to plain text for performance
-const MAX_DIFF_SIZE_BYTES = 32768; // 32kb
+// Synchronous safety budget before the worker boundary. These are intentionally
+// far above human-scale source files but catch generated/minified hunks where
+// joining and structured-cloning the payload would itself be the UI stall.
+const MAX_DIFF_HIGHLIGHT_SYNC_CHARS = 2_000_000;
+const MAX_DIFF_HIGHLIGHT_LINE_CHARS = 20_000;
+
+export function isWithinDiffHighlightSyncBudget(lines: string[]): boolean {
+  let totalChars = Math.max(0, lines.length - 1); // account for join("\n") separators
+  for (const line of lines) {
+    if (line.length > MAX_DIFF_HIGHLIGHT_LINE_CHARS) return false;
+    totalChars += line.length;
+    if (totalChars > MAX_DIFF_HIGHLIGHT_SYNC_CHARS) return false;
+  }
+  return true;
+}
 
 export interface HighlightedLine {
   html: string; // HTML content (already escaped and tokenized)
@@ -59,11 +76,7 @@ export async function highlightDiffChunk(
     };
   }
 
-  // Enforce size limit for performance
-  // Calculate size by summing line lengths + newlines (more performant than TextEncoder)
-  const sizeBytes =
-    chunk.lines.reduce((total, line) => total + line.length, 0) + chunk.lines.length - 1;
-  if (sizeBytes > MAX_DIFF_SIZE_BYTES) {
+  if (!isWithinDiffHighlightSyncBudget(chunk.lines)) {
     return createFallbackChunk(chunk);
   }
 

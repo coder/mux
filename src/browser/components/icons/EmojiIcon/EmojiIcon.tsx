@@ -62,6 +62,10 @@ const EMOJI_TO_ICON: Record<string, LucideIcon> = {
 
   // Tool-ish / app-ish
   "🔧": Wrench,
+  // 🛠 (hammer-and-wrench) is what small models pick most often for
+  // generic "fixing / building" sidebar status, so we map it to Wrench
+  // alongside 🔧 to avoid the Sparkles fallback.
+  "🛠": Wrench,
   "🔔": Bell,
   "🌐": Globe,
   "📖": BookOpen,

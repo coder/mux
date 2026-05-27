@@ -28,7 +28,7 @@ import { StatusSetToolCard } from "../components/StatusSetToolCard";
 import type { TodoItem } from "../components/TodoItemView";
 import { useTheme } from "../theme";
 import type { DisplayedMessage } from "../types";
-import { assert } from "../utils/assert";
+import { assert } from "@/common/utils/assert";
 import { MessageBubble, type MessageBubbleButtonConfig } from "./MessageBubble";
 import { renderSpecializedToolCard, type ToolCardViewModel } from "./tools/toolRenderers";
 import { getModelDisplayName } from "../utils/modelCatalog";

@@ -9,6 +9,7 @@ import {
   handleCompactCommand,
   processSlashCommand,
 } from "./chatCommands";
+import { parseCommand } from "./slashCommands/parser";
 import type { CommandHandlerContext, SlashCommandContext } from "./chatCommands";
 import type { ReviewNoteData } from "@/common/types/review";
 import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
@@ -53,142 +54,65 @@ beforeEach(() => {
 });
 
 describe("parseRuntimeString", () => {
-  const workspaceName = "test-workspace";
+  test.each([undefined, "worktree", "WORKTREE", " worktree "])(
+    "returns undefined for default/worktree runtime %#",
+    (runtime) => {
+      expect(parseRuntimeString(runtime)).toBeUndefined();
+    }
+  );
 
-  test("returns undefined for undefined runtime (default to worktree)", () => {
-    expect(parseRuntimeString(undefined, workspaceName)).toBeUndefined();
-  });
-
-  test("returns undefined for explicit 'worktree' runtime", () => {
-    expect(parseRuntimeString("worktree", workspaceName)).toBeUndefined();
-    expect(parseRuntimeString("WORKTREE", workspaceName)).toBeUndefined();
-    expect(parseRuntimeString(" worktree ", workspaceName)).toBeUndefined();
-  });
-
-  test("returns local config for explicit 'local' runtime", () => {
+  test.each(["local", "LOCAL", " local "])("returns local config for %p", (runtime) => {
     // "local" now returns project-dir runtime config (no srcBaseDir)
-    expect(parseRuntimeString("local", workspaceName)).toEqual({ type: "local" });
-    expect(parseRuntimeString("LOCAL", workspaceName)).toEqual({ type: "local" });
-    expect(parseRuntimeString(" local ", workspaceName)).toEqual({ type: "local" });
+    expect(parseRuntimeString(runtime)).toEqual({ type: "local" });
   });
 
-  test("parses valid SSH runtime", () => {
-    const result = parseRuntimeString("ssh user@host", workspaceName);
-    expect(result).toEqual({
-      type: "ssh",
-      host: "user@host",
-      srcBaseDir: "~/mux",
-    });
-  });
-
-  test("preserves case in SSH host", () => {
-    const result = parseRuntimeString("ssh User@Host.Example.Com", workspaceName);
-    expect(result).toEqual({
-      type: "ssh",
-      host: "User@Host.Example.Com",
-      srcBaseDir: "~/mux",
-    });
-  });
-
-  test("handles extra whitespace", () => {
-    const result = parseRuntimeString("  ssh   user@host  ", workspaceName);
-    expect(result).toEqual({
-      type: "ssh",
-      host: "user@host",
-      srcBaseDir: "~/mux",
-    });
-  });
-
-  test("throws error for SSH without host", () => {
-    expect(() => parseRuntimeString("ssh", workspaceName)).toThrow("SSH runtime requires host");
-    expect(() => parseRuntimeString("ssh ", workspaceName)).toThrow("SSH runtime requires host");
-  });
-
-  test("accepts SSH with hostname only (user will be inferred)", () => {
-    const result = parseRuntimeString("ssh hostname", workspaceName);
-    // Uses tilde path - backend will resolve it via runtime.resolvePath()
-    expect(result).toEqual({
-      type: "ssh",
-      host: "hostname",
-      srcBaseDir: "~/mux",
-    });
-  });
-
-  test("accepts SSH with hostname.domain only", () => {
-    const result = parseRuntimeString("ssh dev.example.com", workspaceName);
-    // Uses tilde path - backend will resolve it via runtime.resolvePath()
-    expect(result).toEqual({
-      type: "ssh",
-      host: "dev.example.com",
-      srcBaseDir: "~/mux",
-    });
-  });
-
-  test("uses tilde path for root user too", () => {
-    const result = parseRuntimeString("ssh root@hostname", workspaceName);
-    // Backend will resolve ~ to /root for root user
-    expect(result).toEqual({
-      type: "ssh",
-      host: "root@hostname",
-      srcBaseDir: "~/mux",
-    });
-  });
-
-  test("parses docker runtime with image", () => {
-    const result = parseRuntimeString("docker ubuntu:22.04", workspaceName);
-    expect(result).toEqual({
-      type: "docker",
-      image: "ubuntu:22.04",
-    });
-  });
-
-  test("parses devcontainer runtime with config path", () => {
-    const result = parseRuntimeString(
+  test.each([
+    ["ssh user@host", { type: "ssh", host: "user@host", srcBaseDir: "~/mux" }],
+    [
+      "ssh User@Host.Example.Com",
+      { type: "ssh", host: "User@Host.Example.Com", srcBaseDir: "~/mux" },
+    ],
+    ["  ssh   user@host  ", { type: "ssh", host: "user@host", srcBaseDir: "~/mux" }],
+    ["ssh hostname", { type: "ssh", host: "hostname", srcBaseDir: "~/mux" }],
+    ["ssh dev.example.com", { type: "ssh", host: "dev.example.com", srcBaseDir: "~/mux" }],
+    ["ssh root@hostname", { type: "ssh", host: "root@hostname", srcBaseDir: "~/mux" }],
+    ["docker ubuntu:22.04", { type: "docker", image: "ubuntu:22.04" }],
+    ["docker ghcr.io/myorg/dev:latest", { type: "docker", image: "ghcr.io/myorg/dev:latest" }],
+    [
       "devcontainer .devcontainer/devcontainer.json",
-      workspaceName
-    );
-    expect(result).toEqual({
-      type: "devcontainer",
-      configPath: ".devcontainer/devcontainer.json",
-    });
+      { type: "devcontainer", configPath: ".devcontainer/devcontainer.json" },
+    ],
+  ] as const)("parses %p", (runtime, expected) => {
+    expect(parseRuntimeString(runtime)).toEqual(expected);
   });
 
-  test("throws error for devcontainer without config path", () => {
-    expect(() => parseRuntimeString("devcontainer", workspaceName)).toThrow(
-      "Dev container runtime requires a config path"
-    );
-  });
-
-  test("parses docker with registry image", () => {
-    const result = parseRuntimeString("docker ghcr.io/myorg/dev:latest", workspaceName);
-    expect(result).toEqual({
-      type: "docker",
-      image: "ghcr.io/myorg/dev:latest",
-    });
-  });
-
-  test("throws error for docker without image", () => {
-    expect(() => parseRuntimeString("docker", workspaceName)).toThrow(
-      "Docker runtime requires image"
-    );
-    expect(() => parseRuntimeString("docker ", workspaceName)).toThrow(
-      "Docker runtime requires image"
-    );
-  });
-
-  test("throws error for unknown runtime type", () => {
-    expect(() => parseRuntimeString("remote", workspaceName)).toThrow(
-      "Unknown runtime type: 'remote'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'"
-    );
-    expect(() => parseRuntimeString("kubernetes", workspaceName)).toThrow(
-      "Unknown runtime type: 'kubernetes'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'"
-    );
+  test.each([
+    ["ssh", "SSH runtime requires host"],
+    ["ssh ", "SSH runtime requires host"],
+    ["devcontainer", "Dev container runtime requires a config path"],
+    ["docker", "Docker runtime requires image"],
+    ["docker ", "Docker runtime requires image"],
+    [
+      "remote",
+      "Unknown runtime type: 'remote'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'",
+    ],
+    [
+      "kubernetes",
+      "Unknown runtime type: 'kubernetes'. Use 'ssh <host>', 'docker <image>', 'devcontainer <config>', 'worktree', or 'local'",
+    ],
+  ])("throws for invalid runtime %p", (runtime, message) => {
+    expect(() => parseRuntimeString(runtime)).toThrow(message);
   });
 });
 
-describe("processSlashCommand - model-set", () => {
-  const createModelSetContext = (api: SlashCommandContext["api"]): SlashCommandContext => ({
-    api,
+function ensureWindowDispatchEvent(): void {
+  Object.defineProperty(window, "dispatchEvent", { value: mock(() => true), configurable: true });
+}
+
+function createSlashCommandContext(
+  overrides: Partial<SlashCommandContext> & Pick<SlashCommandContext, "api">
+): SlashCommandContext {
+  return {
     workspaceId: "test-ws",
     variant: "workspace",
     projectPath: "/tmp/project",
@@ -196,12 +120,8 @@ describe("processSlashCommand - model-set", () => {
     setVimEnabled: mock((cb: (prev: boolean) => boolean) => cb(false)),
     resetInputHeight: mock(() => undefined),
     onTruncateHistory: mock(() => Promise.resolve(undefined)),
-    onMessageSent: mock(() => undefined),
-    onCheckReviews: mock(() => undefined),
-    attachedReviewIds: [],
-    openSettings: mock(() => undefined),
     sendMessageOptions: {
-      model: "anthropic:claude-3-5-sonnet",
+      model: "anthropic:claude-sonnet-4-6",
       thinkingLevel: "off",
       toolPolicy: [],
       agentId: "exec",
@@ -210,7 +130,233 @@ describe("processSlashCommand - model-set", () => {
     setToast: mock(() => undefined),
     setAttachments: mock(() => undefined),
     setSendingState: mock(() => undefined),
+    ...overrides,
+  };
+}
+
+function createGoalCommandContext(api: SlashCommandContext["api"]): SlashCommandContext {
+  return createSlashCommandContext({
+    api,
+    workspaceId: "goal-ws",
+    onMessageSent: mock(() => undefined),
+    onCheckReviews: mock(() => undefined),
+    attachedReviewIds: [],
+    openSettings: mock(() => undefined),
   });
+}
+
+describe("processSlashCommand - side-question", () => {
+  function createSideQuestionContext(
+    sideQuestion: (input: {
+      workspaceId: string;
+      question: string;
+    }) => Promise<{ success: boolean; error?: string }>,
+    overrides: Partial<SlashCommandContext> = {}
+  ): SlashCommandContext {
+    return {
+      api: {
+        workspace: { sideQuestion },
+      } as unknown as SlashCommandContext["api"],
+      workspaceId: "side-ws",
+      variant: "workspace",
+      projectPath: "/tmp/project",
+      sendMessageOptions: {
+        model: "anthropic:claude-sonnet-4-6",
+        thinkingLevel: "off",
+        toolPolicy: [],
+        agentId: "exec",
+      },
+      setPreferredModel: mock(() => undefined),
+      setVimEnabled: mock((cb: (prev: boolean) => boolean) => cb(false)),
+      resetInputHeight: mock(() => undefined),
+      getInput: mock(() => ""),
+      onTruncateHistory: mock(() => Promise.resolve(undefined)),
+      setInput: mock(() => undefined),
+      setToast: mock(() => undefined),
+      setAttachments: mock(() => undefined),
+      onDetachAllReviews: mock(() => undefined),
+      setSendingState: mock(() => undefined),
+      ...overrides,
+    };
+  }
+
+  test("clears input and launches the side question without awaiting the stream", async () => {
+    const sideQuestion = mock(() => Promise.resolve({ success: true }));
+    const context = createSideQuestionContext(sideQuestion);
+
+    const result = await processSlashCommand(
+      { type: "side-question", question: "what changed?" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: false });
+    expect(context.setInput).toHaveBeenCalledWith("");
+    expect(context.setAttachments).toHaveBeenCalledWith([]);
+    expect(context.onDetachAllReviews).toHaveBeenCalled();
+    expect(sideQuestion).toHaveBeenCalledWith({
+      workspaceId: "side-ws",
+      question: "what changed?",
+    });
+  });
+
+  test("restores the command text when the side-question RPC fails", async () => {
+    let resolveSideQuestion: ((value: { success: false; error: string }) => void) | undefined;
+    const sideQuestion = mock(
+      () =>
+        new Promise<{ success: false; error: string }>((resolve) => {
+          resolveSideQuestion = resolve;
+        })
+    );
+    const context = createSideQuestionContext(sideQuestion);
+
+    await processSlashCommand({ type: "side-question", question: "will fail?" }, context);
+    resolveSideQuestion?.({ success: false, error: "disk full" });
+    await Promise.resolve();
+
+    expect(context.setInput).toHaveBeenCalledWith("");
+    expect(context.setInput).toHaveBeenCalledWith("/btw will fail?");
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Side question failed: disk full", type: "error" })
+    );
+  });
+
+  test("does not restore the command text over a newer draft", async () => {
+    let resolveSideQuestion: ((value: { success: false; error: string }) => void) | undefined;
+    const sideQuestion = mock(
+      () =>
+        new Promise<{ success: false; error: string }>((resolve) => {
+          resolveSideQuestion = resolve;
+        })
+    );
+    const context = createSideQuestionContext(sideQuestion, {
+      getInput: mock(() => "new draft"),
+    });
+
+    await processSlashCommand({ type: "side-question", question: "will fail?" }, context);
+    resolveSideQuestion?.({ success: false, error: "disk full" });
+    await Promise.resolve();
+
+    expect(context.setInput).toHaveBeenCalledWith("");
+    expect(context.setInput).not.toHaveBeenCalledWith("/btw will fail?");
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Side question failed: disk full", type: "error" })
+    );
+  });
+
+  test("ignores stale side-question failures", async () => {
+    let resolveSideQuestion: ((value: { success: false; error: string }) => void) | undefined;
+    const sideQuestion = mock(
+      () =>
+        new Promise<{ success: false; error: string }>((resolve) => {
+          resolveSideQuestion = resolve;
+        })
+    );
+    const context = createSideQuestionContext(sideQuestion, {
+      asyncCommandToken: 1,
+      isAsyncCommandCurrent: mock(() => false),
+    });
+
+    await processSlashCommand({ type: "side-question", question: "will fail?" }, context);
+    resolveSideQuestion?.({ success: false, error: "disk full" });
+    await Promise.resolve();
+
+    expect(context.setToast).not.toHaveBeenCalled();
+  });
+});
+
+describe("processSlashCommand - clear", () => {
+  function createClearContext(overrides: Partial<SlashCommandContext> = {}): SlashCommandContext {
+    return createSlashCommandContext({
+      api: null,
+      onDetachAllReviews: mock(() => undefined),
+      onResetContext: mock(() => Promise.resolve("reset" as const)),
+      ...overrides,
+    });
+  }
+
+  test("hard clear truncates history", async () => {
+    const context = createClearContext();
+
+    const result = await processSlashCommand({ type: "clear", mode: "hard" }, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(context.onTruncateHistory).toHaveBeenCalledWith(1.0);
+    expect(context.setAttachments).toHaveBeenCalledWith([]);
+    expect(context.onDetachAllReviews).toHaveBeenCalled();
+    expect(context.onResetContext).not.toHaveBeenCalled();
+  });
+
+  test("soft clear resets context without truncating history", async () => {
+    const context = createClearContext();
+
+    const result = await processSlashCommand({ type: "clear", mode: "soft" }, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(context.onResetContext).toHaveBeenCalled();
+    expect(context.setAttachments).toHaveBeenCalledWith([]);
+    expect(context.onDetachAllReviews).toHaveBeenCalled();
+    expect(context.onTruncateHistory).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Context reset; history preserved", type: "success" })
+    );
+  });
+
+  test("soft clear preserves attachments when reset is a no-op", async () => {
+    const context = createClearContext({
+      onResetContext: mock(() => Promise.resolve("noop" as const)),
+    });
+
+    const result = await processSlashCommand({ type: "clear", mode: "soft" }, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(context.setAttachments).not.toHaveBeenCalled();
+    expect(context.onDetachAllReviews).not.toHaveBeenCalled();
+  });
+
+  test("soft clear reports errors without clearing composer state", async () => {
+    const context = createClearContext({
+      onResetContext: mock(() => Promise.reject(new Error("reset failed"))),
+    });
+    const consoleErrorSpy = spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const result = await processSlashCommand({ type: "clear", mode: "soft" }, context);
+
+      expect(result).toEqual({ clearInput: false, toastShown: true });
+      expect(context.setInput).not.toHaveBeenCalled();
+      expect(context.setAttachments).not.toHaveBeenCalled();
+      expect(context.onDetachAllReviews).not.toHaveBeenCalled();
+      expect(context.setToast).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "reset failed", type: "error" })
+      );
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  test("soft clear reports no-op resets", async () => {
+    const context = createClearContext({
+      onResetContext: mock(() => Promise.resolve("noop" as const)),
+    });
+
+    const result = await processSlashCommand({ type: "clear", mode: "soft" }, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "No context to reset", type: "success" })
+    );
+  });
+});
+
+describe("processSlashCommand - model-set", () => {
+  const createModelSetContext = (api: SlashCommandContext["api"]): SlashCommandContext =>
+    createSlashCommandContext({
+      api,
+      onMessageSent: mock(() => undefined),
+      onCheckReviews: mock(() => undefined),
+      attachedReviewIds: [],
+      openSettings: mock(() => undefined),
+    });
 
   test("reports backend verification failure for custom providers when config loading fails", async () => {
     const getConfig = mock(() => Promise.reject(new Error("backend offline")));
@@ -240,6 +386,530 @@ describe("processSlashCommand - model-set", () => {
     } finally {
       consoleErrorSpy.mockRestore();
     }
+  });
+
+  test("refuses switching budgeted active goals to an unpriced model", async () => {
+    ensureWindowDispatchEvent();
+    const setPreferredModel = mock(() => undefined);
+    const context = createModelSetContext({
+      providers: {
+        getConfig: mock(() => Promise.resolve({})),
+        setModels: mock(() => Promise.resolve(undefined)),
+      },
+      workspace: {
+        getGoal: mock(() =>
+          Promise.resolve({
+            goal: {
+              goalId: "11111111-1111-4111-8111-111111111111",
+              status: "active",
+              budgetCents: 500,
+            },
+          })
+        ),
+      },
+    } as unknown as SlashCommandContext["api"]);
+    context.setPreferredModel = setPreferredModel;
+
+    const result = await processSlashCommand(
+      { type: "model-set", modelString: "openai:not-priced-model" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(setPreferredModel).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message: "Target model has no pricing data. Pick a priced model before switching.",
+      })
+    );
+  });
+
+  test("allows switching unbudgeted active goals to an unpriced model", async () => {
+    const setPreferredModel = mock(() => undefined);
+    const context = createModelSetContext({
+      providers: {
+        getConfig: mock(() => Promise.resolve({})),
+        setModels: mock(() => Promise.resolve(undefined)),
+      },
+      workspace: {
+        getGoal: mock(() =>
+          Promise.resolve({
+            goal: {
+              goalId: "11111111-1111-4111-8111-111111111111",
+              status: "active",
+              budgetCents: null,
+            },
+          })
+        ),
+      },
+    } as unknown as SlashCommandContext["api"]);
+    context.setPreferredModel = setPreferredModel;
+
+    const result = await processSlashCommand(
+      { type: "model-set", modelString: "openai:not-priced-model" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(setPreferredModel).toHaveBeenCalledWith("openai:not-priced-model");
+  });
+});
+
+describe("processSlashCommand - workspace command gating", () => {
+  test("shows goal parse errors during workspace creation", async () => {
+    const context = createGoalCommandContext(null);
+    context.variant = "creation";
+
+    const result = await processSlashCommand(
+      { type: "command-unknown-flag", command: "goal", flag: "--bogus" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Unknown flag for /goal: --bogus" })
+    );
+  });
+});
+
+describe("processSlashCommand - goal optimistic concurrency", () => {
+  test("retries once after a goal conflict and reapplies the slash command intent", async () => {
+    ensureWindowDispatchEvent();
+    const getGoal = mock()
+      .mockResolvedValueOnce({
+        goal: {
+          goalId: "11111111-1111-4111-8111-111111111111",
+          objective: "old objective",
+        },
+      })
+      .mockResolvedValueOnce({
+        goal: {
+          goalId: "22222222-2222-4222-8222-222222222222",
+          objective: "fresh objective",
+        },
+      });
+    const setGoal = mock()
+      .mockResolvedValueOnce({
+        success: false,
+        error: {
+          type: "goal_conflict",
+          expectedGoalId: "11111111-1111-4111-8111-111111111111",
+          actualGoalId: "22222222-2222-4222-8222-222222222222",
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          goalId: "33333333-3333-4333-8333-333333333333",
+          objective: "new objective",
+        },
+      });
+    const context = createGoalCommandContext({
+      workspace: { getGoal, setGoal, clearGoal: mock() },
+    } as unknown as SlashCommandContext["api"]);
+
+    const result = await processSlashCommand(
+      { type: "goal-set", objective: "new objective" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: false });
+    expect(getGoal).toHaveBeenCalledTimes(2);
+    expect(setGoal).toHaveBeenNthCalledWith(1, {
+      workspaceId: "goal-ws",
+      objective: "new objective",
+      budgetCents: 200,
+      turnCap: null,
+      expectedGoalId: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(setGoal).toHaveBeenNthCalledWith(2, {
+      workspaceId: "goal-ws",
+      objective: "new objective",
+      budgetCents: 200,
+      turnCap: null,
+      expectedGoalId: "22222222-2222-4222-8222-222222222222",
+    });
+    expect(context.setToast).not.toHaveBeenCalled();
+  });
+
+  test("surfaces a toast and stops after two consecutive goal conflicts", async () => {
+    ensureWindowDispatchEvent();
+    const getGoal = mock()
+      .mockResolvedValueOnce({
+        goal: {
+          goalId: "11111111-1111-4111-8111-111111111111",
+          objective: "old objective",
+        },
+      })
+      .mockResolvedValueOnce({
+        goal: {
+          goalId: "22222222-2222-4222-8222-222222222222",
+          objective: "fresh objective",
+        },
+      });
+    const setGoal = mock()
+      .mockResolvedValueOnce({
+        success: false,
+        error: {
+          type: "goal_conflict",
+          expectedGoalId: "11111111-1111-4111-8111-111111111111",
+          actualGoalId: "22222222-2222-4222-8222-222222222222",
+        },
+      })
+      .mockResolvedValueOnce({
+        success: false,
+        error: {
+          type: "goal_conflict",
+          expectedGoalId: "22222222-2222-4222-8222-222222222222",
+          actualGoalId: "33333333-3333-4333-8333-333333333333",
+        },
+      });
+    const context = createGoalCommandContext({
+      workspace: { getGoal, setGoal, clearGoal: mock() },
+    } as unknown as SlashCommandContext["api"]);
+
+    const result = await processSlashCommand(
+      { type: "goal-set", objective: "new objective" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(getGoal).toHaveBeenCalledTimes(2);
+    expect(setGoal).toHaveBeenCalledTimes(2);
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message: "Goal changed in another window. Please try again.",
+      })
+    );
+  });
+});
+
+describe("processSlashCommand - goal lifecycle commands", () => {
+  test("surfaces invalid transition messages for lifecycle commands", async () => {
+    ensureWindowDispatchEvent();
+    const context = createGoalCommandContext({
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: null })),
+        setGoal: mock(() =>
+          Promise.resolve({
+            success: false,
+            error: { type: "invalid_transition", message: "Cannot pause a missing goal." },
+          })
+        ),
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    const result = await processSlashCommand({ type: "goal-pause" }, context);
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", message: "Cannot pause a missing goal." })
+    );
+  });
+
+  test("dispatches pause, resume, and complete goal commands", async () => {
+    ensureWindowDispatchEvent();
+    const setGoal = mock(() =>
+      Promise.resolve({
+        success: true,
+        data: { goalId: "33333333-3333-4333-8333-333333333333", objective: "goal" },
+      })
+    );
+    const context = createGoalCommandContext({
+      providers: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: { status: "paused", budgetCents: null } })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    await processSlashCommand({ type: "goal-pause" }, context);
+    await processSlashCommand({ type: "goal-resume" }, context);
+    await processSlashCommand({ type: "goal-complete", summary: "Done." }, context);
+
+    expect(setGoal).toHaveBeenNthCalledWith(1, {
+      workspaceId: "goal-ws",
+      expectedGoalId: null,
+      status: "paused",
+    });
+    expect(setGoal).toHaveBeenNthCalledWith(2, {
+      workspaceId: "goal-ws",
+      status: "active",
+      expectedGoalId: null,
+    });
+    expect(setGoal).toHaveBeenNthCalledWith(3, {
+      workspaceId: "goal-ws",
+      status: "complete",
+      completionSummary: "Done.",
+      expectedGoalId: null,
+    });
+  });
+
+  test("refuses to resume a budgeted goal on an unpriced current model", async () => {
+    ensureWindowDispatchEvent();
+    const setGoal = mock(() => Promise.resolve({ success: true, data: {} }));
+    const context = createGoalCommandContext({
+      providers: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() =>
+          Promise.resolve({
+            goal: {
+              goalId: "11111111-1111-4111-8111-111111111111",
+              status: "paused",
+              budgetCents: 500,
+            },
+          })
+        ),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+    context.sendMessageOptions.model = "custom:unpriced-model";
+
+    const result = await processSlashCommand({ type: "goal-resume" }, context);
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(setGoal).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message:
+          "Current model has no pricing data. Pick a priced model, use -b 0 with a turn cap, or change goal budget defaults in Settings.",
+      })
+    );
+  });
+});
+
+describe("processSlashCommand - goal budgets", () => {
+  test("applies configured defaults when budget and turn cap are omitted", async () => {
+    ensureWindowDispatchEvent();
+    const setGoal = mock().mockResolvedValueOnce({
+      success: true,
+      data: { goalId: "33333333-3333-4333-8333-333333333333", objective: "new objective" },
+    });
+    const context = createGoalCommandContext({
+      config: {
+        getConfig: mock(() =>
+          Promise.resolve({
+            goalDefaults: {
+              defaultBudgetCents: 350,
+              defaultTurnCap: 25,
+              alwaysRequireExplicitBudget: true,
+            },
+          })
+        ),
+      },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: null })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    await processSlashCommand({ type: "goal-set", objective: "new objective" }, context);
+
+    expect(setGoal).toHaveBeenCalledWith({
+      workspaceId: "goal-ws",
+      objective: "new objective",
+      expectedGoalId: null,
+      budgetCents: 350,
+      turnCap: 25,
+    });
+  });
+
+  test("passes parsed multiline goal objectives through to setGoal", async () => {
+    ensureWindowDispatchEvent();
+    const objective = "Implement PRD\n\nRead first:\n- CONTEXT.md\n- PRD.md";
+    const setGoal = mock().mockResolvedValueOnce({
+      success: true,
+      data: { goalId: "33333333-3333-4333-8333-333333333333", objective },
+    });
+    const context = createGoalCommandContext({
+      config: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: null })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    const parsed = parseCommand("/goal Implement PRD\n\nRead first:\n- CONTEXT.md\n- PRD.md");
+    if (parsed?.type !== "goal-set") {
+      throw new Error("expected multiline /goal to parse as goal-set");
+    }
+
+    const result = await processSlashCommand(parsed, context);
+
+    expect(result).toEqual({ clearInput: true, toastShown: false });
+    expect(setGoal).toHaveBeenCalledWith({
+      workspaceId: "goal-ws",
+      objective,
+      expectedGoalId: null,
+      budgetCents: 200,
+      turnCap: null,
+    });
+    expect(context.setToast).not.toHaveBeenCalled();
+    expect(window.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "mux:openGoalTab" })
+    );
+  });
+
+  test("passes explicit no-budget and turn cap through to setGoal", async () => {
+    ensureWindowDispatchEvent();
+    const setGoal = mock().mockResolvedValueOnce({
+      success: true,
+      data: { goalId: "33333333-3333-4333-8333-333333333333", objective: "new objective" },
+    });
+    const context = createGoalCommandContext({
+      config: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: null })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    await processSlashCommand(
+      { type: "goal-set", objective: "new objective", budgetCents: null, turnCap: 10 },
+      context
+    );
+
+    expect(setGoal).toHaveBeenCalledWith({
+      workspaceId: "goal-ws",
+      objective: "new objective",
+      expectedGoalId: null,
+      budgetCents: null,
+      turnCap: 10,
+    });
+  });
+
+  test("updates an existing goal budget without applying defaults", async () => {
+    ensureWindowDispatchEvent();
+    const currentGoal = {
+      goalId: "11111111-1111-4111-8111-111111111111",
+      objective: "existing objective",
+    };
+    const setGoal = mock().mockResolvedValueOnce({
+      success: true,
+      data: { ...currentGoal, budgetCents: 500 },
+    });
+    const context = createGoalCommandContext({
+      config: {
+        getConfig: mock(() =>
+          Promise.resolve({
+            goalDefaults: {
+              defaultBudgetCents: 350,
+              defaultTurnCap: 25,
+              alwaysRequireExplicitBudget: true,
+            },
+          })
+        ),
+      },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: currentGoal })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+
+    await processSlashCommand({ type: "goal-budget", budgetCents: 500 }, context);
+
+    expect(setGoal).toHaveBeenCalledWith({
+      workspaceId: "goal-ws",
+      budgetCents: 500,
+      expectedGoalId: currentGoal.goalId,
+    });
+  });
+
+  test("passes no-budget budget updates through on unpriced current model", async () => {
+    ensureWindowDispatchEvent();
+    const currentGoal = {
+      goalId: "11111111-1111-4111-8111-111111111111",
+      objective: "existing objective",
+    };
+    const setGoal = mock().mockResolvedValueOnce({
+      success: true,
+      data: { ...currentGoal, budgetCents: null },
+    });
+    const context = createGoalCommandContext({
+      config: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: currentGoal })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+    context.sendMessageOptions.model = "custom-provider:no-price-model";
+
+    await processSlashCommand({ type: "goal-budget", budgetCents: null }, context);
+
+    expect(setGoal).toHaveBeenCalledWith({
+      workspaceId: "goal-ws",
+      budgetCents: null,
+      expectedGoalId: currentGoal.goalId,
+    });
+  });
+
+  test("passes zero-dollar budget updates through on unpriced current model", async () => {
+    ensureWindowDispatchEvent();
+    const currentGoal = {
+      goalId: "11111111-1111-4111-8111-111111111111",
+      objective: "existing objective",
+    };
+    const setGoal = mock().mockResolvedValueOnce({
+      success: true,
+      data: { ...currentGoal, budgetCents: null },
+    });
+    const context = createGoalCommandContext({
+      config: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: currentGoal })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+    context.sendMessageOptions.model = "custom-provider:no-price-model";
+
+    await processSlashCommand({ type: "goal-budget", budgetCents: 0 }, context);
+
+    expect(setGoal).toHaveBeenCalledWith({
+      workspaceId: "goal-ws",
+      budgetCents: 0,
+      expectedGoalId: currentGoal.goalId,
+    });
+  });
+
+  test("refuses budgeted goals on an unpriced current model", async () => {
+    ensureWindowDispatchEvent();
+    const setGoal = mock();
+    const context = createGoalCommandContext({
+      config: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: {
+        getGoal: mock(() => Promise.resolve({ goal: null })),
+        setGoal,
+        clearGoal: mock(),
+      },
+    } as unknown as SlashCommandContext["api"]);
+    context.sendMessageOptions.model = "custom-provider:no-price-model";
+
+    const result = await processSlashCommand(
+      { type: "goal-set", objective: "new objective", budgetCents: 500 },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(setGoal).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message:
+          "Current model has no pricing data. Pick a priced model, use -b 0 with a turn cap, or change goal budget defaults in Settings.",
+      })
+    );
   });
 });
 
@@ -273,7 +943,7 @@ describe("processSlashCommand - heartbeat-set", () => {
       attachedReviewIds: [],
       openSettings: mock(() => undefined),
       sendMessageOptions: {
-        model: "anthropic:claude-3-5-sonnet",
+        model: "anthropic:claude-sonnet-4-6",
         thinkingLevel: "off",
         toolPolicy: [],
         agentId: "exec",
@@ -529,11 +1199,23 @@ describe("processSlashCommand - heartbeat-set", () => {
 
 describe("prepareCompactionMessage", () => {
   const createBaseOptions = (): SendMessageOptions => ({
-    model: "anthropic:claude-3-5-sonnet",
+    model: "anthropic:claude-sonnet-4-6",
     thinkingLevel: "medium",
     toolPolicy: [],
     agentId: "exec",
   });
+
+  function expectCompactionMetadata(
+    metadata: ReturnType<typeof prepareCompactionMessage>["metadata"]
+  ): asserts metadata is Extract<
+    ReturnType<typeof prepareCompactionMessage>["metadata"],
+    { type: "compaction-request" }
+  > {
+    expect(metadata.type).toBe("compaction-request");
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+  }
 
   test("builds followUpContent from input", () => {
     const sendMessageOptions = createBaseOptions();
@@ -546,14 +1228,11 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    expect(metadata.type).toBe("compaction-request");
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     // followUpContent includes model/agentId from sendMessageOptions (captured for follow-up)
     expect(metadata.parsed.followUpContent?.text).toBe("Keep building");
-    expect(metadata.parsed.followUpContent?.model).toBe("anthropic:claude-3-5-sonnet");
+    expect(metadata.parsed.followUpContent?.model).toBe("anthropic:claude-sonnet-4-6");
     expect(metadata.parsed.followUpContent?.agentId).toBe("exec");
   });
 
@@ -565,10 +1244,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    expect(metadata.type).toBe("compaction-request");
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent).toBeUndefined();
   });
@@ -588,9 +1264,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     // Follow-up should use the user's original model/agentId
     expect(metadata.parsed.followUpContent?.model).toBe("openai:gpt-4o");
@@ -611,9 +1285,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent?.agentId).toBe("exec");
   });
@@ -626,9 +1298,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent).toBeDefined();
     expect(metadata.parsed.followUpContent?.text).toBe("Continue with this");
@@ -644,9 +1314,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.rawCommand).toBe(
       "/compact -t 2048 -m anthropic:claude-3-5-haiku\nLine 1\nLine 2"
@@ -663,9 +1331,7 @@ describe("prepareCompactionMessage", () => {
 
     expect(messageText).not.toContain("The user wants to continue with: Continue");
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     // Still queued for auto-send after compaction
     expect(metadata.parsed.followUpContent?.text).toBe("Continue");
@@ -693,9 +1359,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent).toBeDefined();
     expect(metadata.parsed.followUpContent?.fileParts).toHaveLength(1);
@@ -719,9 +1383,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent).toBeDefined();
     expect(metadata.parsed.followUpContent?.reviews).toHaveLength(1);
@@ -746,9 +1408,7 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent).toBeDefined();
     expect(metadata.parsed.followUpContent?.text).toBe("Also check the tests");
@@ -772,11 +1432,9 @@ describe("prepareCompactionMessage", () => {
       sendMessageOptions,
     });
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
-    // ContinueMessage should be built from sourceContent
+    // Follow-up content should be built from sourceContent.
     expect(metadata.parsed.followUpContent).toBeDefined();
     expect(metadata.parsed.followUpContent?.text).toBe("/tests run all tests");
 
@@ -811,9 +1469,7 @@ describe("prepareCompactionMessage", () => {
     // because there's actual work to continue with (the reviews)
     expect(messageText).toContain("The user wants to continue with: Continue");
 
-    if (metadata.type !== "compaction-request") {
-      throw new Error("Expected compaction metadata");
-    }
+    expectCompactionMetadata(metadata);
 
     expect(metadata.parsed.followUpContent?.reviews).toHaveLength(1);
   });
@@ -840,7 +1496,7 @@ describe("handlePlanShowCommand", () => {
       } as unknown as CommandHandlerContext["api"],
       // Required fields for CommandHandlerContext
       sendMessageOptions: {
-        model: "anthropic:claude-3-5-sonnet",
+        model: "anthropic:claude-sonnet-4-6",
         thinkingLevel: "off",
         toolPolicy: [],
         agentId: "exec",
@@ -909,7 +1565,7 @@ describe("handlePlanOpenCommand", () => {
       } as unknown as CommandHandlerContext["api"],
       // Required fields for CommandHandlerContext
       sendMessageOptions: {
-        model: "anthropic:claude-3-5-sonnet",
+        model: "anthropic:claude-sonnet-4-6",
         thinkingLevel: "off",
         toolPolicy: [],
         agentId: "exec",
@@ -990,7 +1646,7 @@ describe("handleCompactCommand", () => {
         },
       } as unknown as CommandHandlerContext["api"],
       sendMessageOptions: {
-        model: "anthropic:claude-3-5-sonnet",
+        model: "anthropic:claude-sonnet-4-6",
         thinkingLevel: "off",
         toolPolicy: [],
         agentId: "exec",

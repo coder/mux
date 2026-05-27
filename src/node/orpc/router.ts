@@ -8,10 +8,16 @@ import {
   MUX_GATEWAY_ORIGIN,
   MUX_GATEWAY_SESSION_EXPIRED_MESSAGE,
 } from "@/common/constants/muxGatewayOAuth";
+import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults } from "@/constants/goals";
 import { Err, Ok } from "@/common/types/result";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
+import { isErrnoWithCode } from "@/node/utils/fs";
 import { isPathInsideDir, stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
+import {
+  WorkspaceGoalChildWorkspaceError,
+  WorkspaceGoalTransitionError,
+} from "@/node/services/workspaceGoalService";
 import type {
   UpdateStatus,
   WorkspaceActivitySnapshot,
@@ -61,7 +67,11 @@ import {
 import {
   discoverAgentSkills,
   discoverAgentSkillsDiagnostics,
+  filterUnavailableImagegenSkills,
+  IMAGEGEN_SKILL_DISABLED_MESSAGE,
+  isBuiltInImagegenSkillPackage,
   readAgentSkill,
+  type ResolvedAgentSkill,
 } from "@/node/services/agentSkills/agentSkillsService";
 import {
   discoverAgentDefinitions,
@@ -78,6 +88,7 @@ import * as path from "node:path";
 import type { DevToolsEvent } from "@/common/types/devtools";
 import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
+import { normalizeImageGenerationConfig } from "@/common/types/imageGeneration";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { log } from "@/node/services/log";
 import { BROWSER_BRIDGE_WS_PATH, DESKTOP_WS_PATH } from "@/node/orpc/wsPaths";
@@ -147,8 +158,21 @@ async function resolveAgentDiscoveryContext(
   return { runtime, discoveryPath: input.projectPath! };
 }
 
-function isErrnoWithCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
+function isImageGenerationToolExperimentEnabled(context: ORPCContext): boolean {
+  return context.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL);
+}
+
+function assertImagegenSkillAvailable(
+  context: ORPCContext,
+  resolvedSkill: ResolvedAgentSkill
+): void {
+  if (!isBuiltInImagegenSkillPackage(resolvedSkill.package)) {
+    return;
+  }
+
+  if (!isImageGenerationToolExperimentEnabled(context)) {
+    throw new Error(IMAGEGEN_SKILL_DISABLED_MESSAGE);
+  }
 }
 
 function isTrustedProjectPath(context: ORPCContext, projectPath?: string | null): boolean {
@@ -186,6 +210,22 @@ function normalizeAdvisorMaxOutputTokens(value: number | null | undefined): numb
   assert(Number.isInteger(value), "Advisor max output tokens must be an integer");
   assert(value > 0, "Advisor max output tokens must be positive");
   return value;
+}
+
+function mergeTaskSettingsForConfigSave(current: unknown, input: unknown) {
+  const inputRecord = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const definedInput: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(inputRecord)) {
+    if (value !== undefined) {
+      definedInput[key] = value;
+    }
+  }
+
+  // saveConfig predates optional task flags. Preserve existing values when a client only sends
+  // the required numeric limits; otherwise unrelated settings saves can silently disable toggles
+  // like preserveSubagentsUntilArchive before task cleanup evaluates them.
+  return normalizeTaskSettings({ ...normalizeTaskSettings(current), ...definedInput });
 }
 
 function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
@@ -362,6 +402,33 @@ async function getCurrentServerAuthSessionId(context: ORPCContext): Promise<stri
   }
 
   return null;
+}
+
+/**
+ * Translate goal-board service errors (`WorkspaceGoalTransitionError`,
+ * `WorkspaceGoalChildWorkspaceError`) into `ORPCError("BAD_REQUEST", …)`
+ * so the original message reaches the renderer. Without this wrapper,
+ * the oRPC server normalizes thrown plain Errors to the generic
+ * `INTERNAL_SERVER_ERROR` ("Internal server error"), making the UI
+ * unable to explain why a click did nothing. Unrelated errors are
+ * rethrown untouched so the existing logging path still fires.
+ */
+async function withGoalErrorTranslation<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (
+      error instanceof WorkspaceGoalTransitionError ||
+      error instanceof WorkspaceGoalChildWorkspaceError
+    ) {
+      throw new ORPCError("BAD_REQUEST", {
+        message: error.message,
+        cause: error,
+        data: { code: error.code },
+      });
+    }
+    throw error;
+  }
 }
 
 export const router = (authToken?: string) => {
@@ -619,6 +686,7 @@ export const router = (authToken?: string) => {
             advisorThinkingLevel: config.advisorThinkingLevel ?? null,
             advisorMaxUsesPerTurn: config.advisorMaxUsesPerTurn,
             advisorMaxOutputTokens: config.advisorMaxOutputTokens,
+            imageGeneration: normalizeImageGenerationConfig(config.imageGeneration),
             hiddenModels: config.hiddenModels,
             coderWorkspaceArchiveBehavior:
               config.coderWorkspaceArchiveBehavior ?? DEFAULT_CODER_ARCHIVE_BEHAVIOR,
@@ -632,9 +700,11 @@ export const router = (authToken?: string) => {
             // Mux Governor enrollment status (safe fields only - token never exposed)
             muxGovernorUrl,
             muxGovernorEnrolled,
+            chatTranscriptFullWidth: config.chatTranscriptFullWidth === true,
             llmDebugLogs: config.llmDebugLogs === true,
             heartbeatDefaultPrompt: config.heartbeatDefaultPrompt ?? undefined,
             heartbeatDefaultIntervalMs: config.heartbeatDefaultIntervalMs ?? undefined,
+            goalDefaults: normalizeGoalDefaults(config.goalDefaults ?? DEFAULT_GOAL_DEFAULTS),
             onePasswordAccountName: config.onePasswordAccountName ?? null,
           };
         }),
@@ -761,6 +831,15 @@ export const router = (authToken?: string) => {
             ...config,
             routePriority: input.routePriority,
             routeOverrides,
+          }));
+        }),
+      updateImageGenerationConfig: t
+        .input(schemas.config.updateImageGenerationConfig.input)
+        .output(schemas.config.updateImageGenerationConfig.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => ({
+            ...config,
+            imageGeneration: normalizeImageGenerationConfig(input.imageGeneration),
           }));
         }),
       updateModelPreferences: t
@@ -929,7 +1008,10 @@ export const router = (authToken?: string) => {
         .output(schemas.config.saveConfig.output)
         .handler(async ({ context, input }) => {
           await context.config.editConfig((config) => {
-            const normalizedTaskSettings = normalizeTaskSettings(input.taskSettings);
+            const normalizedTaskSettings = mergeTaskSettingsForConfigSave(
+              config.taskSettings,
+              input.taskSettings
+            );
             const result = { ...config, taskSettings: normalizedTaskSettings };
 
             if (input.advisorModelString !== undefined) {
@@ -1030,6 +1112,19 @@ export const router = (authToken?: string) => {
           // Re-evaluate task queue in case more slots opened up
           await context.taskService.maybeStartQueuedTasks();
         }),
+      updateChatTranscriptFullWidth: t
+        .input(schemas.config.updateChatTranscriptFullWidth.input)
+        .output(schemas.config.updateChatTranscriptFullWidth.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            if (input.enabled) {
+              config.chatTranscriptFullWidth = true;
+            } else {
+              delete config.chatTranscriptFullWidth;
+            }
+            return config;
+          });
+        }),
       updateLlmDebugLogs: t
         .input(schemas.config.updateLlmDebugLogs.input)
         .output(schemas.config.updateLlmDebugLogs.output)
@@ -1063,6 +1158,15 @@ export const router = (authToken?: string) => {
             } else {
               delete config.heartbeatDefaultIntervalMs;
             }
+            return config;
+          });
+        }),
+      updateGoalDefaults: t
+        .input(schemas.config.updateGoalDefaults.input)
+        .output(schemas.config.updateGoalDefaults.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            config.goalDefaults = normalizeGoalDefaults(input.goalDefaults);
             return config;
           });
         }),
@@ -1183,13 +1287,18 @@ export const router = (authToken?: string) => {
         .input(schemas.browser.listSessions.input)
         .output(schemas.browser.listSessions.output)
         .handler(async ({ context, input }) => {
-          const sessions = await context.browserSessionDiscoveryService.listSessions(
+          const sessionGroups = await context.browserSessionDiscoveryService.listSessionGroups(
             input.workspaceId
           );
           return {
-            sessions: sessions.map((session) => ({
+            sessions: sessionGroups.sessions.map((session) => ({
               sessionName: session.sessionName,
               status: session.status,
+            })),
+            otherSessions: sessionGroups.otherSessions.map((session) => ({
+              sessionName: session.sessionName,
+              status: session.status,
+              cwd: session.cwd,
             })),
           };
         }),
@@ -1202,15 +1311,18 @@ export const router = (authToken?: string) => {
             throw new Error("Browser bridge bootstrap failed: API server unavailable");
           }
 
+          const allowOtherWorkspaceSession = input.allowOtherWorkspaceSession === true;
           const connection = await context.browserSessionDiscoveryService.ensureSessionAttachable(
             input.workspaceId,
-            input.sessionName
+            input.sessionName,
+            { allowOtherWorkspaceSession }
           );
 
           const token = context.browserBridgeTokenManager.mint(
             input.workspaceId,
             connection.sessionName,
-            connection.streamPort
+            connection.streamPort,
+            { allowOtherWorkspaceSession }
           );
 
           return {
@@ -1231,6 +1343,7 @@ export const router = (authToken?: string) => {
           try {
             const result = await context.browserControlService.executeControl(input);
             if (result.success) {
+              // executeControl already validated the selected session with the explicit scope flag.
               const urlResult = await context.browserControlService.getUrl(
                 input.workspaceId,
                 input.sessionName,
@@ -1253,6 +1366,7 @@ export const router = (authToken?: string) => {
             return result;
           } catch (error) {
             try {
+              // executeControl already validated the selected session with the explicit scope flag.
               const urlResult = await context.browserControlService.getUrl(
                 input.workspaceId,
                 input.sessionName,
@@ -1279,7 +1393,9 @@ export const router = (authToken?: string) => {
         .input(schemas.browser.getUrl.input)
         .output(schemas.browser.getUrl.output)
         .handler(async ({ context, input }) => {
-          return await context.browserControlService.getUrl(input.workspaceId, input.sessionName);
+          return await context.browserControlService.getUrl(input.workspaceId, input.sessionName, {
+            allowOtherWorkspaceSession: input.allowOtherWorkspaceSession === true,
+          });
         }),
     },
     uiLayouts: {
@@ -1457,7 +1573,11 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          return discoverAgentSkills(runtime, discoveryPath);
+          const skills = await discoverAgentSkills(runtime, discoveryPath);
+          return filterUnavailableImagegenSkills(
+            skills,
+            isImageGenerationToolExperimentEnabled(context)
+          );
         }),
       listDiagnostics: t
         .input(schemas.agentSkills.listDiagnostics.input)
@@ -1468,7 +1588,14 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          return discoverAgentSkillsDiagnostics(runtime, discoveryPath);
+          const diagnostics = await discoverAgentSkillsDiagnostics(runtime, discoveryPath);
+          return {
+            ...diagnostics,
+            skills: filterUnavailableImagegenSkills(
+              diagnostics.skills,
+              isImageGenerationToolExperimentEnabled(context)
+            ),
+          };
         }),
       get: t
         .input(schemas.agentSkills.get.input)
@@ -1480,6 +1607,7 @@ export const router = (authToken?: string) => {
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           const result = await readAgentSkill(runtime, discoveryPath, input.skillName);
+          assertImagegenSkillAvailable(context, result);
           return result.package;
         }),
     },
@@ -3149,6 +3277,28 @@ export const router = (authToken?: string) => {
             })
           ),
       },
+      goalDefaults: {
+        // Per-workspace override of the global `goalDefaults` block.
+        // `get` returns `null` when this workspace has no override.
+        // `set` accepts a sparse shape — passing `null` for every field
+        // clears the record entirely (so workspace falls back to global).
+        get: t
+          .input(schemas.workspace.goalDefaults.get.input)
+          .output(schemas.workspace.goalDefaults.get.output)
+          .handler(({ context, input }) =>
+            context.workspaceService.getWorkspaceGoalDefaults(input.workspaceId)
+          ),
+        set: t
+          .input(schemas.workspace.goalDefaults.set.input)
+          .output(schemas.workspace.goalDefaults.set.output)
+          .handler(({ context, input }) =>
+            context.workspaceService.setWorkspaceGoalDefaults(input.workspaceId, {
+              defaultBudgetCents: input.defaultBudgetCents,
+              defaultTurnCap: input.defaultTurnCap,
+              alwaysRequireExplicitBudget: input.alwaysRequireExplicitBudget,
+            })
+          ),
+      },
       updateAgentAISettings: t
         .input(schemas.workspace.updateAgentAISettings.input)
         .output(schemas.workspace.updateAgentAISettings.output)
@@ -3156,7 +3306,8 @@ export const router = (authToken?: string) => {
           return context.workspaceService.updateAgentAISettings(
             input.workspaceId,
             input.agentId,
-            input.aiSettings
+            input.aiSettings,
+            { persistSelectedAgentId: input.persistSelectedAgentId === true }
           );
         }),
       rename: t
@@ -3272,6 +3423,12 @@ export const router = (authToken?: string) => {
           }
 
           return { success: true, data: {} };
+        }),
+      sideQuestion: t
+        .input(schemas.workspace.sideQuestion.input)
+        .output(schemas.workspace.sideQuestion.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.askSideQuestion(input.workspaceId, input.question);
         }),
       answerAskUserQuestion: t
         .input(schemas.workspace.answerAskUserQuestion.input)
@@ -3394,6 +3551,16 @@ export const router = (authToken?: string) => {
             return { success: false, error: result.error };
           }
           return { success: true, data: undefined };
+        }),
+      resetContext: t
+        .input(schemas.workspace.resetContext.input)
+        .output(schemas.workspace.resetContext.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.resetContext(input.workspaceId);
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, data: result.data };
         }),
       replaceChatHistory: t
         .input(schemas.workspace.replaceChatHistory.input)
@@ -3965,6 +4132,113 @@ export const router = (authToken?: string) => {
             input.excluded
           );
         }),
+      getGoal: t
+        .input(schemas.workspace.getGoal.input)
+        .output(schemas.workspace.getGoal.output)
+        .handler(async ({ context, input }) => {
+          const workspace = await context.workspaceService.getInfo(input.workspaceId);
+          if (!workspace) {
+            return { goal: null };
+          }
+          return { goal: await context.workspaceGoalService.getGoal(input.workspaceId) };
+        }),
+      setGoal: t
+        .input(schemas.workspace.setGoal.input)
+        .output(schemas.workspace.setGoal.output)
+        .handler(async ({ context, input }) => {
+          const workspace = await context.workspaceService.getInfo(input.workspaceId);
+          if (!workspace) {
+            return {
+              success: false,
+              error: { type: "invalid_transition", message: "Workspace not found." },
+            };
+          }
+          return context.workspaceGoalService.setGoal(input);
+        }),
+      clearGoal: t
+        .input(schemas.workspace.clearGoal.input)
+        .output(schemas.workspace.clearGoal.output)
+        .handler(async ({ context, input }) => {
+          const workspace = await context.workspaceService.getInfo(input.workspaceId);
+          if (!workspace) {
+            return { cleared: false };
+          }
+          const cleared = await context.workspaceGoalService.clearGoal(input.workspaceId);
+          return { cleared: cleared !== null };
+        }),
+      // ────────────────────────────────────────────────────────────────
+      // Goal board (multi-goal queue) endpoints. Each handler forwards
+      // to `workspaceGoalService` after a missing-workspace short-circuit
+      // so the renderer can race a board fetch against workspace deletion
+      // without hitting a 500.
+      // ────────────────────────────────────────────────────────────────
+      getGoalBoard: t
+        .input(schemas.workspace.getGoalBoard.input)
+        .output(schemas.workspace.getGoalBoard.output)
+        .handler(async ({ context, input }) => {
+          const workspace = await context.workspaceService.getInfo(input.workspaceId);
+          if (!workspace) return { entries: [] };
+          return context.workspaceGoalService.getGoalBoard(input.workspaceId);
+        }),
+      addUpcomingGoal: t
+        .input(schemas.workspace.addUpcomingGoal.input)
+        .output(schemas.workspace.addUpcomingGoal.output)
+        .handler(async ({ context, input }) => {
+          return withGoalErrorTranslation(() =>
+            context.workspaceGoalService.addUpcomingGoal({
+              workspaceId: input.workspaceId,
+              objective: input.objective,
+              budgetCents: input.budgetCents,
+              turnCap: input.turnCap,
+            })
+          );
+        }),
+      archiveGoal: t
+        .input(schemas.workspace.archiveGoal.input)
+        .output(schemas.workspace.archiveGoal.output)
+        .handler(async ({ context, input }) => {
+          await withGoalErrorTranslation(() =>
+            context.workspaceGoalService.archiveGoal(input.workspaceId, input.goalId)
+          );
+        }),
+      reviveArchivedGoal: t
+        .input(schemas.workspace.reviveArchivedGoal.input)
+        .output(schemas.workspace.reviveArchivedGoal.output)
+        .handler(async ({ context, input }) => {
+          await withGoalErrorTranslation(() =>
+            context.workspaceGoalService.reviveArchivedGoal(input.workspaceId, input.goalId)
+          );
+        }),
+      reorderUpcomingGoals: t
+        .input(schemas.workspace.reorderUpcomingGoals.input)
+        .output(schemas.workspace.reorderUpcomingGoals.output)
+        .handler(async ({ context, input }) => {
+          await withGoalErrorTranslation(() =>
+            context.workspaceGoalService.reorderUpcomingGoals(input.workspaceId, input.upcomingIds)
+          );
+        }),
+      promoteUpcomingGoal: t
+        .input(schemas.workspace.promoteUpcomingGoal.input)
+        .output(schemas.workspace.promoteUpcomingGoal.output)
+        .handler(async ({ context, input }) => {
+          return withGoalErrorTranslation(() =>
+            context.workspaceGoalService.promoteUpcomingGoal(input.workspaceId, input.goalId)
+          );
+        }),
+      updateUpcomingGoal: t
+        .input(schemas.workspace.updateUpcomingGoal.input)
+        .output(schemas.workspace.updateUpcomingGoal.output)
+        .handler(async ({ context, input }) => {
+          return withGoalErrorTranslation(() =>
+            context.workspaceGoalService.updateUpcomingGoal({
+              workspaceId: input.workspaceId,
+              goalId: input.goalId,
+              objective: input.objective,
+              budgetCents: input.budgetCents,
+              turnCap: input.turnCap,
+            })
+          );
+        }),
       getSessionUsage: t
         .input(schemas.workspace.getSessionUsage.input)
         .output(schemas.workspace.getSessionUsage.output)
@@ -3976,6 +4250,31 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.getSessionUsageBatch.output)
         .handler(async ({ context, input }) => {
           return context.sessionUsageService.getSessionUsageBatch(input.workspaceIds);
+        }),
+      getInstructions: t
+        .input(schemas.workspace.getInstructions.input)
+        .output(schemas.workspace.getInstructions.output)
+        .handler(async ({ context, input }) => {
+          return context.instructionsService.getWorkspaceInstructions(
+            input.workspaceId,
+            input.model
+          );
+        }),
+      getAdditionalSystemContext: t
+        .input(schemas.workspace.getAdditionalSystemContext.input)
+        .output(schemas.workspace.getAdditionalSystemContext.output)
+        .handler(async ({ context, input }) => {
+          return context.instructionsService.getAdditionalSystemContext(input.workspaceId);
+        }),
+      setAdditionalSystemContext: t
+        .input(schemas.workspace.setAdditionalSystemContext.input)
+        .output(schemas.workspace.setAdditionalSystemContext.output)
+        .handler(async ({ context, input }) => {
+          return context.instructionsService.setAdditionalSystemContext(
+            input.workspaceId,
+            input.content,
+            input.enabled
+          );
         }),
       stats: {
         subscribe: t

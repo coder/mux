@@ -4,13 +4,21 @@ description: Create a plan before coding
 ui:
   color: var(--color-plan-mode)
 subagent:
-  runnable: true
+  # Plan must not run as a sub-agent. Plan's whole job is to produce a plan for
+  # the user to review; nothing downstream consumes a plan sub-agent's report,
+  # and the auto-handoff that used to exist was removed. Allowing it would also
+  # invite the planner to spam file_edit_* calls that the runtime would reject
+  # in validatePlanModeAccess (src/node/services/tools/fileCommon.ts) but that
+  # still burn tokens and erode the "plan never touches code" guarantee.
+  runnable: false
 tools:
   add:
     # Allow all tools by default (includes MCP tools which have dynamic names)
     # Use tools.remove in child agents to restrict specific tools
     - .*
   remove:
+    # Plan should not perform costful image artifact work.
+    - image_.*
     # Plan should not apply sub-agent patches.
     - task_apply_git_patch
     # Global config and catalog tools stay out of general-purpose agents

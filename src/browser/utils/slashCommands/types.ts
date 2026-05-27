@@ -9,6 +9,7 @@
  * for new commands.
  */
 
+import type { ExperimentId } from "@/common/constants/experiments";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { ParsedThinkingInput } from "@/common/types/thinking";
 
@@ -23,8 +24,7 @@ export type ParsedCommand =
       message: string;
     }
   | { type: "model-help" }
-  | { type: "clear" }
-  | { type: "truncate"; percentage: number }
+  | { type: "clear"; mode: "hard" | "soft" }
   | { type: "compact"; maxOutputTokens?: number; continueMessage?: string; model?: string }
   | { type: "fork"; startMessage?: string }
   | { type: "new"; startMessage?: string }
@@ -33,10 +33,19 @@ export type ParsedCommand =
   | { type: "plan-open" }
   | { type: "debug-llm-request" }
   | { type: "unknown-command"; command: string; subcommand?: string }
+  | { type: "command-unknown-flag"; command: string; flag: string; usage?: string }
   | { type: "command-missing-args"; command: string; usage: string }
   | { type: "command-invalid-args"; command: string; input: string; usage: string }
   | { type: "idle-compaction"; hours: number | null }
   | { type: "heartbeat-set"; minutes: number | null }
+  | { type: "goal-show" }
+  | { type: "goal-set"; objective: string; budgetCents?: number | null; turnCap?: number | null }
+  | { type: "goal-budget"; budgetCents: number | null }
+  | { type: "goal-pause" }
+  | { type: "goal-resume" }
+  | { type: "goal-complete"; summary?: string }
+  | { type: "goal-clear" }
+  | { type: "side-question"; question: string }
   | null;
 
 export interface SuggestionsHandlerArgs {
@@ -49,11 +58,23 @@ export interface SuggestionsHandlerArgs {
 
 export type SuggestionsHandler = (args: SuggestionsHandlerArgs) => SlashSuggestion[] | null;
 
+export interface SlashCommandVisibilityContext {
+  /** Variant determines which commands are available */
+  variant?: "workspace" | "creation";
+  /**
+   * Optional resolver for experiment state. Tests and React callers can inject
+   * hook-derived values instead of reading from localStorage directly.
+   */
+  isExperimentEnabled?: (experimentId: ExperimentId) => boolean | undefined;
+}
+
 export interface SlashCommandDefinition {
   key: string;
   description: string;
   inputHint?: string;
   appendSpace?: boolean;
+  /** Required experiment for visibility in suggestions, palette results, and ghost hints. */
+  experimentGate?: ExperimentId;
   handler?: SlashCommandHandler;
   children?: readonly SlashCommandDefinition[];
   suggestions?: SuggestionsHandler;
@@ -76,10 +97,8 @@ export interface SlashSuggestion {
   replacement: string;
 }
 
-export interface SlashSuggestionContext {
+export interface SlashSuggestionContext extends SlashCommandVisibilityContext {
   agentSkills?: AgentSkillDescriptor[];
-  /** Variant determines which commands are available */
-  variant?: "workspace" | "creation";
 }
 
 export interface SuggestionDefinition {

@@ -13,6 +13,7 @@ import type { InitStateManager } from "@/node/services/initStateManager";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
 import type {
@@ -26,6 +27,13 @@ import type {
   StreamErrorMessage,
 } from "@/common/orpc/types";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import {
+  GOAL_BUDGET_LIMIT_KIND,
+  GOAL_CONTINUATION_KIND,
+  SILENT_CONTINUATION_COMPLETION_SUMMARY_FALLBACK,
+  SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH,
+  type GoalSyntheticMessageKind,
+} from "@/constants/goals";
 import type { SendMessageError } from "@/common/types/errors";
 import { AgentIdSchema, SkillNameSchema } from "@/common/orpc/schemas";
 import { normalizeAgentId } from "@/common/utils/agentIds";
@@ -85,10 +93,14 @@ import {
   type StreamEndEvent,
   type StreamLifecycleSnapshot,
 } from "@/common/types/stream";
+import type { GoalStreamOriginKind, WorkspaceGoalService } from "./workspaceGoalService";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
+import { getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { CompactionHandler } from "./compactionHandler";
 import { RetryManager, type RetryFailureError, type RetryStatusEvent } from "./retryManager";
 import type { TelemetryService } from "./telemetryService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
+import type { ExperimentsService } from "./experimentsService";
 
 import { AttachmentService } from "./attachmentService";
 import type { TodoItem } from "@/common/types/tools";
@@ -121,7 +133,11 @@ import {
   isNonRetryableStreamError,
 } from "@/common/utils/messages/retryEligibility";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
-import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
+import {
+  IMAGEGEN_SKILL_DISABLED_MESSAGE,
+  isBuiltInImagegenSkillUnavailable,
+  readAgentSkill,
+} from "@/node/services/agentSkills/agentSkillsService";
 import {
   createLoadedSkillSnapshot,
   extractLoadedSkillSnapshotsFromMessages,
@@ -161,18 +177,46 @@ interface CompactionRequestMetadata {
   };
 }
 
+type GoalInterventionPolicy = NonNullable<SendMessageOptions["goalInterventionPolicy"]>;
+
 interface AutoRetryResumeRequest {
   // Same-session auto-retry must preserve the full normalized request because
   // ACP correlation/delegation lives in transient send options that are
   // intentionally omitted from durable startup-recovery snapshots.
   options: SendMessageOptions;
   agentInitiated?: boolean;
+  goalKind?: GoalSyntheticMessageKind;
 }
 
 interface SwitchAgentResult {
   agentId: string;
   reason?: string;
   followUp?: string;
+}
+
+function stripGoalInterventionPolicy(options: SendMessageOptions): SendMessageOptions {
+  const streamOptions: SendMessageOptions = { ...options };
+  delete streamOptions.goalInterventionPolicy;
+  return streamOptions;
+}
+
+function getGoalStreamOriginKind(input: {
+  isCompaction?: boolean;
+  goalKind?: GoalSyntheticMessageKind;
+  agentInitiated?: boolean;
+}): GoalStreamOriginKind {
+  if (input.isCompaction === true) return "other";
+  if (input.goalKind === GOAL_CONTINUATION_KIND) return "goal_continuation";
+  if (input.goalKind === GOAL_BUDGET_LIMIT_KIND) return "goal_budget_limit";
+  if (input.agentInitiated === true) return "other";
+  return "user";
+}
+
+function coerceGoalSyntheticMessageKind(value: unknown): GoalSyntheticMessageKind | undefined {
+  if (value === GOAL_CONTINUATION_KIND || value === GOAL_BUDGET_LIMIT_KIND) {
+    return value;
+  }
+  return undefined;
 }
 
 const MAX_CONSECUTIVE_AGENT_SWITCHES = 3;
@@ -292,7 +336,9 @@ interface AgentSessionOptions {
   aiService: AIService;
   initStateManager: InitStateManager;
   telemetryService?: TelemetryService;
+  experimentsService?: ExperimentsService;
   backgroundProcessManager: BackgroundProcessManager;
+  workspaceGoalService?: WorkspaceGoalService;
   /** When true, skip terminating background processes on dispose/compaction (for bench/CI) */
   keepBackgroundProcesses?: boolean;
   /** Called when compaction completes (e.g., to clear idle compaction pending state) */
@@ -317,6 +363,8 @@ export class AgentSession {
   private readonly aiService: AIService;
   private readonly initStateManager: InitStateManager;
   private readonly backgroundProcessManager: BackgroundProcessManager;
+  private readonly experimentsService?: ExperimentsService;
+  private readonly workspaceGoalService?: WorkspaceGoalService;
   private readonly keepBackgroundProcesses: boolean;
   private readonly onCompactionComplete?: () => void;
   private readonly onPostCompactionStateChange?: () => void;
@@ -403,6 +451,9 @@ export class AgentSession {
   /** Track user message ids that already hard-restarted for exec-like subagents. */
   private readonly execSubagentHardRestartAttempts = new Set<string>();
 
+  /** Backend start time for the current stream, used to avoid charging goals created mid-stream. */
+  private activeStreamStartedAtMs?: number;
+
   /** True once we see any model/tool output for the current stream (retry guard). */
   private activeStreamHadAnyDelta = false;
 
@@ -455,6 +506,7 @@ export class AgentSession {
     agentInitiated?: boolean;
     openaiTruncationModeOverride?: "auto" | "disabled";
     providersConfig: ProvidersConfigMap | null;
+    goalKind?: GoalSyntheticMessageKind;
   };
 
   private activeCompactionRequest?: {
@@ -474,6 +526,8 @@ export class AgentSession {
       initStateManager,
       telemetryService,
       backgroundProcessManager,
+      experimentsService,
+      workspaceGoalService,
       keepBackgroundProcesses,
       onCompactionComplete,
       onPostCompactionStateChange,
@@ -488,7 +542,9 @@ export class AgentSession {
     this.historyService = historyService;
     this.aiService = aiService;
     this.initStateManager = initStateManager;
+    this.experimentsService = experimentsService;
     this.backgroundProcessManager = backgroundProcessManager;
+    this.workspaceGoalService = workspaceGoalService;
     this.keepBackgroundProcesses = keepBackgroundProcesses ?? false;
     this.onCompactionComplete = onCompactionComplete;
     this.onPostCompactionStateChange = onPostCompactionStateChange;
@@ -741,7 +797,8 @@ export class AgentSession {
 
   private setAutoRetryResumeState(
     options: SendMessageOptions | undefined,
-    agentInitiated?: boolean
+    agentInitiated?: boolean,
+    goalKind?: GoalSyntheticMessageKind
   ): void {
     if (!options) {
       this.lastAutoRetryResumeRequest = undefined;
@@ -751,6 +808,7 @@ export class AgentSession {
     this.lastAutoRetryResumeRequest = {
       options,
       ...(agentInitiated === true ? { agentInitiated: true } : {}),
+      ...(goalKind != null ? { goalKind } : {}),
     };
   }
 
@@ -775,6 +833,7 @@ export class AgentSession {
 
     const result = await this.resumeStream(request.options, {
       agentInitiated: request.agentInitiated === true ? true : undefined,
+      goalKind: request.goalKind,
     });
     if (result.success) {
       if (!result.data.started) {
@@ -1080,6 +1139,81 @@ export class AgentSession {
     return undefined;
   }
 
+  private async requireGoalAcknowledgmentForCrashRecoveredPartial(): Promise<void> {
+    const goalService = this.workspaceGoalService;
+    if (!goalService) {
+      return;
+    }
+    if (this.isBusy() || this.isAiStreaming()) {
+      return;
+    }
+
+    // Crash recovery restores abandoned assistant partials without knowing whether
+    // the model's last action was safe to continue, so goal loops must wait for user acknowledgment.
+    const partial = await this.historyService.readPartial(this.workspaceId);
+    if (partial?.role === "assistant" && !this.isPendingAskUserQuestion(partial)) {
+      await goalService.requireUserAcknowledgmentForCrashRecovery(this.workspaceId);
+      return;
+    }
+
+    const historyResult = await this.historyService.getLastMessages(this.workspaceId, 20);
+    if (!historyResult.success) {
+      return;
+    }
+
+    const lastHistoryMessage = this.getLastNonSystemHistoryMessage(historyResult.data);
+    if (
+      lastHistoryMessage?.role === "assistant" &&
+      lastHistoryMessage.metadata?.partial === true &&
+      !this.isPendingAskUserQuestion(lastHistoryMessage)
+    ) {
+      await goalService.requireUserAcknowledgmentForCrashRecovery(this.workspaceId);
+    }
+  }
+
+  private async applyManualUserMessageGoalSafety(input: {
+    policy: GoalInterventionPolicy;
+  }): Promise<void> {
+    const goalService = this.workspaceGoalService;
+    if (!goalService) {
+      return;
+    }
+
+    assert(
+      input.policy === "steer" || input.policy === "pause",
+      `invalid goal intervention policy: ${input.policy}`
+    );
+
+    // Accepted manual user turns acknowledge /clear or crash-recovery gates. Steering
+    // is the default for normal sends: the agent should see the user's intervention
+    // and the active goal may continue afterward. Rejected sends use "pause" below
+    // because the model never saw the steering content.
+    goalService.clearPendingContinuationForManualUserMessage(this.workspaceId);
+    const goal = await goalService.acknowledgeUser(this.workspaceId);
+    if (goal?.status !== "active" || input.policy !== "pause") {
+      return;
+    }
+
+    try {
+      const result = await goalService.setGoal({
+        workspaceId: this.workspaceId,
+        status: "paused",
+        initiator: "auto",
+      });
+      if (!result.success) {
+        log.warn("Failed to auto-pause goal for manual user message", {
+          workspaceId: this.workspaceId,
+          error: result.error,
+        });
+      }
+    } catch (error) {
+      log.warn("Failed to auto-pause goal for manual user message", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   private async getWorkspaceMetadataForRetry(): Promise<WorkspaceMetadata | undefined> {
     const aiService = this.aiService as Partial<Pick<AIService, "getWorkspaceMetadata">>;
     if (typeof aiService.getWorkspaceMetadata !== "function") {
@@ -1138,6 +1272,9 @@ export class AgentSession {
     const workspaceMetadata = await this.getWorkspaceMetadataForRetry();
 
     const persistedRetrySendOptions = lastUserMessage?.metadata?.retrySendOptions;
+    const persistedGoalKind =
+      coerceGoalSyntheticMessageKind(persistedRetrySendOptions?.goalKind) ??
+      coerceGoalSyntheticMessageKind(lastUserMessage?.metadata?.kind);
 
     const workspaceAgentId =
       this.normalizeAgentIdForRetry(workspaceMetadata?.agentId ?? workspaceMetadata?.agentType) ??
@@ -1210,6 +1347,9 @@ export class AgentSession {
       if (persistedRetrySendOptions?.agentInitiated === true) {
         compactionRequest.agentInitiated = true;
       }
+      if (persistedGoalKind != null) {
+        compactionRequest.goalKind = persistedGoalKind;
+      }
 
       return compactionRequest;
     }
@@ -1235,6 +1375,9 @@ export class AgentSession {
     }
     if (persistedExperiments) {
       retryRequest.experiments = persistedExperiments;
+    }
+    if (persistedGoalKind != null) {
+      retryRequest.goalKind = persistedGoalKind;
     }
     if (typeof persistedDisableWorkspaceAgents === "boolean") {
       retryRequest.disableWorkspaceAgents = persistedDisableWorkspaceAgents;
@@ -1381,8 +1524,8 @@ export class AgentSession {
         return "completed";
       }
 
-      const { agentInitiated, ...resumeOptions } = retryRequest;
-      this.setAutoRetryResumeState(resumeOptions, agentInitiated);
+      const { agentInitiated, goalKind, ...resumeOptions } = retryRequest;
+      this.setAutoRetryResumeState(resumeOptions, agentInitiated, goalKind);
     }
 
     // Disk reads above may race with user actions; retry once the current work settles
@@ -1499,13 +1642,22 @@ export class AgentSession {
       // a pending follow-up that was never dispatched. If so, dispatch it now.
       // This handles the case where the app crashed after compaction completed
       // but before the follow-up was sent.
-      this.startupRecoveryPromise = this.dispatchPendingFollowUp()
+      this.startupRecoveryPromise = this.requireGoalAcknowledgmentForCrashRecoveredPartial()
+        .then(() => this.dispatchPendingFollowUp())
+        .then(() =>
+          // Re-arm pending continuation / budget-wrap-up dispatches that were
+          // lost when the in-memory dispatch state was wiped on restart
+          // (Coder-agents-review P2 DEREM-16). Do this AFTER pending compaction
+          // follow-ups so goal continuations cannot reorder ahead of a saved
+          // follow-up from crash recovery.
+          this.workspaceGoalService?.recoverPendingDispatchAfterRestart(this.workspaceId)
+        )
         .then(() => {
           this.startupRecoveryScheduled = true;
         })
         .catch((error) => {
           this.startupRecoveryScheduled = false;
-          log.warn("Failed to dispatch pending follow-up during startup recovery", {
+          log.warn("Failed to run startup recovery", {
             workspaceId: this.workspaceId,
             error: getErrorMessage(error),
           });
@@ -2018,19 +2170,76 @@ export class AgentSession {
     internal?: {
       synthetic?: boolean;
       agentInitiated?: boolean;
+      goalContinuation?: boolean;
+      goalKind?: GoalSyntheticMessageKind;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
     }
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
 
     assert(typeof message === "string", "sendMessage requires a string message");
-    if (!internal?.synthetic) {
+
+    const isManualUserMessage = internal?.synthetic !== true;
+
+    // Last-line-of-defence pricing gate: every dispatch path (initial sends,
+    // sendQueuedMessages, dispatchPendingFollowUp, dispatchAgentSwitch,
+    // post-compaction follow-ups) lands here, so a budgeted goal that became
+    // resumable while a queued unpriced-model message waited cannot bypass
+    // enforcement. The WorkspaceService-level gate already runs first for
+    // initial calls (and prevents persisting bad AI settings), but it cannot
+    // catch goal-state changes that happen between queueing and dispatch.
+    //
+    // When rejecting a manual (user-typed) send, we MUST persist the user's
+    // message and surface a stream-error chat event before returning. The
+    // queue-dispatch flow in `sendQueuedMessages()` removes the message from
+    // the queue before calling us, so a silent `Err` here would drop the
+    // user's input without any visible feedback (Codex P1
+    // PRRT_kwDOPxxmWM5_s-jo). For synthetic sends (compaction, goal
+    // continuation, etc.) the user did not type the message, so we just
+    // return Err and let the synthetic caller log/handle it.
+    if (this.workspaceGoalService) {
+      const pricingGate = await this.workspaceGoalService.assertPricedModelForBudgetedGoal(
+        this.workspaceId,
+        options?.model
+      );
+      if (!pricingGate.success) {
+        if (isManualUserMessage) {
+          const persisted = await this.preserveRejectedManualSend(
+            message,
+            options,
+            pricingGate.error
+          );
+          // The user has explicitly intervened, so the goal-safety contract
+          // for manual sends must still apply on the rejection path: clear any
+          // pending acknowledgment gate AND auto-pause an active goal so a
+          // pending post-stream-end continuation does not fire as if the user
+          // had not interrupted (Codex P1 PRRT_kwDOPxxmWM5_tOFt). Only run the
+          // hook when an actionable manual turn was actually present — empty
+          // payloads (Codex P2 PRRT_kwDOPxxmWM5_tUsx) would otherwise silently
+          // disable goal continuation after a blank submit / invalid payload.
+          if (persisted) {
+            await this.applyManualUserMessageGoalSafety({ policy: "pause" });
+          }
+        }
+        return Err(pricingGate.error);
+      }
+    }
+
+    if (isManualUserMessage) {
       this.consecutiveAgentSwitches = 0;
     }
+
+    const goalKind =
+      internal?.goalKind ??
+      (internal?.goalContinuation === true ? GOAL_CONTINUATION_KIND : undefined);
 
     const trimmedMessage = message.trim();
     const fileParts = options?.fileParts;
     const editMessageId = options?.editMessageId;
+
+    const manualGoalInterventionPolicy: GoalInterventionPolicy | undefined = isManualUserMessage
+      ? (options?.goalInterventionPolicy ?? (editMessageId ? "pause" : "steer"))
+      : undefined;
 
     // Edits are implemented as truncate+replace. If the frontend omits fileParts,
     // preserve the original message's attachments.
@@ -2062,6 +2271,71 @@ export class AgentSession {
           "Empty message not allowed. Use interruptStream() to interrupt active streams."
         )
       );
+    }
+
+    // Validate model and attachment compatibility before any edit path mutates history.
+    // User rationale: an edit send used to truncate first, then fail validation and leave
+    // the existing chat visibly cut off at the edit target.
+    if (!options?.model || options.model.trim().length === 0) {
+      return Err(
+        createUnknownSendMessageError("No model specified. Please select a model using /model.")
+      );
+    }
+
+    options = this.normalizeGatewaySendOptions(options);
+
+    // Validate model string format (must be "provider:model-id")
+    if (!isValidModelFormat(options.model)) {
+      return Err({
+        type: "invalid_model_string",
+        message: `Invalid model string format: "${options.model}". Expected "provider:model-id"`,
+      });
+    }
+
+    const effectiveFileParts =
+      preservedEditFileParts && preservedEditFileParts.length > 0
+        ? preservedEditFileParts.map((part) => ({
+            url: part.url,
+            mediaType: part.mediaType,
+            filename: part.filename,
+          }))
+        : fileParts;
+
+    // Defense-in-depth: reject PDFs for models we know don't support them.
+    // (Frontend should also block this, but it's easy to bypass via IPC / older clients.)
+    if (effectiveFileParts && effectiveFileParts.length > 0) {
+      const pdfParts = effectiveFileParts.filter(
+        (part) => normalizeMediaType(part.mediaType) === PDF_MEDIA_TYPE
+      );
+
+      if (pdfParts.length > 0) {
+        const caps = getModelCapabilitiesResolved(
+          options.model,
+          this.aiService.getProvidersConfig()
+        );
+
+        if (caps && !caps.supportsPdfInput) {
+          return Err(
+            createUnknownSendMessageError(`Model ${options.model} does not support PDF input.`)
+          );
+        }
+
+        if (caps?.maxPdfSizeMb !== undefined) {
+          const maxBytes = caps.maxPdfSizeMb * 1024 * 1024;
+          for (const part of pdfParts) {
+            const bytes = estimateBase64DataUrlBytes(part.url);
+            if (bytes !== null && bytes > maxBytes) {
+              const actualMb = (bytes / (1024 * 1024)).toFixed(1);
+              const label = part.filename ?? "PDF";
+              return Err(
+                createUnknownSendMessageError(
+                  `${label} is ${actualMb}MB, but ${options.model} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
+                )
+              );
+            }
+          }
+        }
+      }
     }
 
     if (editMessageId) {
@@ -2212,78 +2486,16 @@ export class AgentSession {
       extractAcpDelegatedTools(typedMuxMetadata);
     const isCompactionRequest = isCompactionRequestMetadata(typedMuxMetadata);
 
-    // Validate model BEFORE persisting message to prevent orphaned messages on invalid model
-    if (!options?.model || options.model.trim().length === 0) {
-      return Err(
-        createUnknownSendMessageError("No model specified. Please select a model using /model.")
-      );
-    }
-
-    options = this.normalizeGatewaySendOptions(options);
-
     // Internal callers can force Copilot billing attribution for non-user turns
     // (task orchestration, compaction, auto-resume, etc.).
     let agentInitiated = internal?.agentInitiated === true;
 
     let modelForStream = options.model;
-    let optionsForStream: SendMessageOptions = {
+    let optionsForStream: SendMessageOptions = stripGoalInterventionPolicy({
       ...options,
       ...(acpPromptId != null ? { acpPromptId } : {}),
       ...(delegatedToolNames != null ? { delegatedToolNames } : {}),
-    };
-
-    // Defense-in-depth: reject PDFs for models we know don't support them.
-    // (Frontend should also block this, but it's easy to bypass via IPC / older clients.)
-    const effectiveFileParts =
-      preservedEditFileParts && preservedEditFileParts.length > 0
-        ? preservedEditFileParts.map((part) => ({
-            url: part.url,
-            mediaType: part.mediaType,
-            filename: part.filename,
-          }))
-        : fileParts;
-
-    if (effectiveFileParts && effectiveFileParts.length > 0) {
-      const pdfParts = effectiveFileParts.filter(
-        (part) => normalizeMediaType(part.mediaType) === PDF_MEDIA_TYPE
-      );
-
-      if (pdfParts.length > 0) {
-        const caps = getModelCapabilitiesResolved(
-          options.model,
-          this.aiService.getProvidersConfig()
-        );
-
-        if (caps && !caps.supportsPdfInput) {
-          return Err(
-            createUnknownSendMessageError(`Model ${options.model} does not support PDF input.`)
-          );
-        }
-
-        if (caps?.maxPdfSizeMb !== undefined) {
-          const maxBytes = caps.maxPdfSizeMb * 1024 * 1024;
-          for (const part of pdfParts) {
-            const bytes = estimateBase64DataUrlBytes(part.url);
-            if (bytes !== null && bytes > maxBytes) {
-              const actualMb = (bytes / (1024 * 1024)).toFixed(1);
-              const label = part.filename ?? "PDF";
-              return Err(
-                createUnknownSendMessageError(
-                  `${label} is ${actualMb}MB, but ${options.model} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
-                )
-              );
-            }
-          }
-        }
-      }
-    }
-    // Validate model string format (must be "provider:model-id")
-    if (!isValidModelFormat(options.model)) {
-      return Err({
-        type: "invalid_model_string",
-        message: `Invalid model string format: "${options.model}". Expected "provider:model-id"`,
-      });
-    }
+    });
 
     const userMessage = createMuxMessage(
       messageId,
@@ -2293,9 +2505,10 @@ export class AgentSession {
         timestamp: Date.now(),
         toolPolicy: typedToolPolicy,
         disableWorkspaceAgents: options?.disableWorkspaceAgents,
-        retrySendOptions: pickStartupRetrySendOptions(optionsForStream, agentInitiated),
+        retrySendOptions: pickStartupRetrySendOptions(optionsForStream, agentInitiated, goalKind),
         muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
         ...(acpPromptId != null ? { acpPromptId } : {}),
+        ...(goalKind != null ? { kind: goalKind } : {}),
         // Auto-resume and other system-generated messages are synthetic + UI-visible
         ...(internal?.synthetic && { synthetic: true, uiVisible: true }),
       },
@@ -2311,7 +2524,8 @@ export class AgentSession {
     try {
       skillSnapshotMessages = await this.materializeAgentSkillSnapshots(
         typedMuxMetadata,
-        options?.disableWorkspaceAgents
+        options?.disableWorkspaceAgents,
+        this.isImageGenerationToolEnabled(options?.experiments)
       );
     } catch (error) {
       return Err(createUnknownSendMessageError(getErrorMessage(error)));
@@ -2363,6 +2577,7 @@ export class AgentSession {
           options: optionsForStream,
           modelForStream,
           fileParts: followUpFileParts,
+          goalKind,
           muxMetadata: typedMuxMetadata,
         });
 
@@ -2406,10 +2621,10 @@ export class AgentSession {
         });
 
         modelForStream = autoCompactionRequest.sendOptions.model;
-        optionsForStream = {
+        optionsForStream = stripGoalInterventionPolicy({
           ...autoCompactionRequest.sendOptions,
           muxMetadata: autoCompactionRequest.metadata,
-        };
+        });
         agentInitiated = autoCompactionRequest.agentInitiated;
       }
     }
@@ -2452,6 +2667,10 @@ export class AgentSession {
       }
     }
 
+    if (manualGoalInterventionPolicy != null) {
+      await this.applyManualUserMessageGoalSafety({ policy: manualGoalInterventionPolicy });
+    }
+
     // Workspace may be tearing down while we await filesystem IO.
     // If so, skip event emission + streaming to avoid races with dispose().
     if (this.disposed) {
@@ -2485,7 +2704,7 @@ export class AgentSession {
     // send has passed validation + been accepted into history.
     // Synthetic/system sends (mid-stream compaction, task recovery prompts, etc.)
     // must not silently opt users back into auto-retry after they've disabled it.
-    if (internal?.synthetic !== true) {
+    if (isManualUserMessage) {
       // A fresh accepted user send supersedes any persisted startup-abandon
       // classification from previous turns.
       await this.clearStartupAutoRetryAbandon();
@@ -2496,7 +2715,7 @@ export class AgentSession {
 
     // Same-session retry should resume the exact accepted request we just finalized
     // in history, even if runtime warmup fails before streamWithHistory() starts.
-    this.setAutoRetryResumeState(optionsForStream, agentInitiated);
+    this.setAutoRetryResumeState(optionsForStream, agentInitiated, goalKind);
     const preparedTurnAbortController = new AbortController();
     this.activePreparedTurnAbortController = preparedTurnAbortController;
     this.setTurnPhase(TurnPhase.PREPARING);
@@ -2532,7 +2751,8 @@ export class AgentSession {
           undefined,
           undefined,
           agentInitiated,
-          preparedTurnAbortController.signal
+          preparedTurnAbortController.signal,
+          goalKind
         );
       } finally {
         // Success should advance via stream events; if startup never emitted any, don't leave the
@@ -2573,7 +2793,7 @@ export class AgentSession {
 
   async resumeStream(
     options: SendMessageOptions,
-    internal?: { agentInitiated?: boolean }
+    internal?: { agentInitiated?: boolean; goalKind?: GoalSyntheticMessageKind }
   ): Promise<Result<{ started: boolean }, SendMessageError>> {
     this.assertNotDisposed("resumeStream");
 
@@ -2591,9 +2811,19 @@ export class AgentSession {
       return Ok({ started: false });
     }
 
+    if (this.workspaceGoalService) {
+      const pricingGate = await this.workspaceGoalService.assertPricedModelForBudgetedGoal(
+        this.workspaceId,
+        modelForStream
+      );
+      if (!pricingGate.success) {
+        return Err(pricingGate.error);
+      }
+    }
+
     // A resumed attempt becomes the latest live resume request as soon as we
     // accept its options, even if startup fails before the stream fully begins.
-    this.setAutoRetryResumeState(optionsForStream, internal?.agentInitiated);
+    this.setAutoRetryResumeState(optionsForStream, internal?.agentInitiated, internal?.goalKind);
     this.setTurnPhase(TurnPhase.PREPARING);
     try {
       // Must await here so the finally block runs after streaming completes,
@@ -2603,7 +2833,9 @@ export class AgentSession {
         optionsForStream,
         undefined,
         undefined,
-        internal?.agentInitiated
+        internal?.agentInitiated,
+        undefined,
+        internal?.goalKind
       );
       if (!result.success) {
         return result;
@@ -2649,7 +2881,18 @@ export class AgentSession {
 
   private getProvidersConfigForCompaction(): ProvidersConfigMap | null {
     try {
-      // Some unit tests provide a minimal Config mock without providers helpers.
+      // Prefer ProviderService's safe config view: it includes env/file API-key source
+      // metadata plus the Codex OAuth presence bit, which context-limit resolution needs
+      // to distinguish GPT-5.5 API-key requests from lower-cap OAuth-routed requests.
+      const maybeAIService = this.aiService as AIService & {
+        getProvidersConfig?: () => ProvidersConfigMap | null;
+      };
+      if (typeof maybeAIService.getProvidersConfig === "function") {
+        return maybeAIService.getProvidersConfig();
+      }
+
+      // Some unit tests provide minimal service mocks; fall back to raw config so custom
+      // provider model context overrides still work in those environments.
       const maybeConfig = this.config as Config & {
         loadProvidersConfig?: () => ProvidersConfigMap | null;
       };
@@ -2657,14 +2900,7 @@ export class AgentSession {
         return null;
       }
 
-      const providersConfig = maybeConfig.loadProvidersConfig();
-      if (!providersConfig) {
-        return null;
-      }
-
-      // Compaction limit resolution only reads provider model overrides (models[*].contextWindow*).
-      // Runtime config stores these in providers.jsonc, so the raw config shape is sufficient here.
-      return providersConfig as unknown as ProvidersConfigMap;
+      return maybeConfig.loadProvidersConfig() as unknown as ProvidersConfigMap | null;
     } catch {
       // Best-effort read: if config cannot be loaded, keep null and rely on
       // built-in model limits. This matches prior behavior without crashing.
@@ -2725,6 +2961,80 @@ export class AgentSession {
   }
 
   /**
+   * Persist a manual user message + emit a stream-error chat event when a
+   * pre-stream gate (e.g. the unpriced-model budget gate) rejects a send.
+   *
+   * Without this, queue-dispatched manual sends silently disappear: the
+   * caller (`sendQueuedMessages`) has already removed the message from the
+   * queue before invoking `sendMessage`, so a bare `Err` return drops the
+   * user's typed input with no visible feedback. Persisting + emitting both
+   * the user message and the stream error gives the user a chat-history
+   * record of what they sent and a clear explanation of why it was blocked.
+   *
+   * Best-effort: failures to persist/emit are logged and swallowed so the
+   * caller still gets the original gate error back, which preserves the
+   * existing turn-phase / IDLE bookkeeping in `sendQueuedMessages`.
+   *
+   * Returns `true` if an actionable user message was actually present (text
+   * and/or attachments) — the caller uses this to decide whether to run the
+   * goal-safety hook. An empty payload (blank submit / invalid options) is
+   * not a real intervention and must not pause an active goal (Codex P2
+   * PRRT_kwDOPxxmWM5_tUsx).
+   */
+  private async preserveRejectedManualSend(
+    message: string,
+    options: (SendMessageOptions & { fileParts?: FilePart[] }) | undefined,
+    rejection: SendMessageError
+  ): Promise<boolean> {
+    if (this.disposed) {
+      return false;
+    }
+    const trimmed = message.trim();
+    const fileParts = options?.fileParts ?? [];
+    const additionalParts = fileParts.map((part) => ({
+      type: "file" as const,
+      url: part.url,
+      mediaType: part.mediaType,
+      filename: part.filename,
+    }));
+    if (trimmed.length === 0 && additionalParts.length === 0) {
+      // Empty payload — nothing to preserve and no actionable intervention to
+      // attribute to the user. The empty-message rejection further down in
+      // sendMessage would normally catch this, but if the gate fires first we
+      // still need to stay defensive.
+      return false;
+    }
+    try {
+      const userMessage = createMuxMessage(
+        createUserMessageId(),
+        "user",
+        trimmed,
+        {},
+        additionalParts.length > 0 ? additionalParts : undefined
+      );
+      const appendResult = await this.historyService.appendToHistory(this.workspaceId, userMessage);
+      if (!appendResult.success) {
+        log.warn("Failed to persist user message after pre-stream gate rejection", {
+          workspaceId: this.workspaceId,
+          error: appendResult.error,
+        });
+      } else if (!this.disposed) {
+        this.emitChatEvent({ ...userMessage, type: "message" });
+      }
+    } catch (error) {
+      log.warn("Unexpected error persisting user message after pre-stream gate rejection", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+    if (!this.disposed) {
+      const streamError = buildStreamErrorEventData(rejection);
+      this.emitChatEvent(createStreamErrorMessage(streamError));
+    }
+    return true;
+  }
+
+  /**
    * Seed `lastUsageState` from persisted history so the compaction monitor
    * can trigger on-send compaction even when no live stream has occurred yet
    * (e.g., after an app restart). Walks the last N messages backwards to find
@@ -2777,6 +3087,7 @@ export class AgentSession {
     options: SendMessageOptions;
     modelForStream: string;
     fileParts?: FilePart[];
+    goalKind?: GoalSyntheticMessageKind;
     muxMetadata?: MuxMessageMetadata;
   }): CompactionFollowUpRequest {
     const followUp: CompactionFollowUpRequest = {
@@ -2785,6 +3096,10 @@ export class AgentSession {
       agentId: params.options.agentId,
       ...pickPreservedSendOptions(params.options),
     };
+
+    if (params.goalKind != null) {
+      followUp.goalKind = params.goalKind;
+    }
 
     if (params.fileParts && params.fileParts.length > 0) {
       followUp.fileParts = params.fileParts;
@@ -2856,7 +3171,20 @@ export class AgentSession {
       toolPolicy: [{ regex_match: ".*", action: "disable" }],
     };
 
-    const messageText = buildCompactionMessageText({ followUpContent: params.followUpContent });
+    const followUpContent: CompactionFollowUpRequest =
+      params.reason === "mid-stream"
+        ? {
+            ...params.followUpContent,
+            dispatchOptions: {
+              ...params.followUpContent.dispatchOptions,
+              // Mid-stream compaction resumes with a generated "Continue" sentinel; unlike
+              // on-send compaction, it is not the user's original prompt completing.
+              source: "internal-resume",
+            },
+          }
+        : params.followUpContent;
+
+    const messageText = buildCompactionMessageText({ followUpContent });
 
     const metadata: MuxMessageMetadata = {
       type: "compaction-request",
@@ -2864,7 +3192,7 @@ export class AgentSession {
       commandPrefix: "/compact",
       parsed: {
         model: sendOptions.model,
-        followUpContent: params.followUpContent,
+        followUpContent,
       },
       requestedModel: sendOptions.model,
       source: "auto-compaction",
@@ -2920,6 +3248,7 @@ export class AgentSession {
         // buildCompactionMessageText can hide the internal resume marker.
         messageText: "Continue",
         options: streamContext.options,
+        goalKind: streamContext.goalKind,
         modelForStream: streamContext.modelString,
       });
       const autoCompactionRequest = this.buildAutoCompactionRequest({
@@ -3023,7 +3352,8 @@ export class AgentSession {
     openaiTruncationModeOverride?: "auto" | "disabled",
     disablePostCompactionAttachments?: boolean,
     agentInitiated?: boolean,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    goalKind?: GoalSyntheticMessageKind
   ): Promise<Result<void, SendMessageError>> {
     const isStartupAbortRequested = (): boolean => abortSignal?.aborted === true;
 
@@ -3045,6 +3375,7 @@ export class AgentSession {
       options,
       agentInitiated,
       openaiTruncationModeOverride,
+      ...(goalKind != null ? { goalKind } : {}),
       providersConfig: providersConfigForCompaction,
     };
     this.activeStreamUserMessageId = undefined;
@@ -3152,6 +3483,7 @@ export class AgentSession {
       abortSignal,
       thinkingLevel: effectiveThinkingLevel,
       toolPolicy: options?.toolPolicy,
+      additionalSystemContext: options?.additionalSystemContext,
       additionalSystemInstructions: options?.additionalSystemInstructions,
       maxOutputTokens: options?.maxOutputTokens,
       muxProviderOptions: options?.providerOptions,
@@ -3163,6 +3495,7 @@ export class AgentSession {
       changedFileAttachments:
         changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
       postCompactionAttachments,
+      workspaceGoalService: this.workspaceGoalService,
       experiments: options?.experiments,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
       hasQueuedMessage: () =>
@@ -3385,13 +3718,14 @@ export class AgentSession {
 
     // Capture attribution before finalizeCompactionRetry() clears active stream state.
     const retryAgentInitiated = this.activeStreamContext?.agentInitiated;
+    const retryGoalKind = this.activeStreamContext?.goalKind;
     const retryOptionsForResume = retryOptions ?? {
       model: context.modelString,
       agentId: WORKSPACE_DEFAULTS.agentId,
     };
 
     await this.finalizeCompactionRetry(data.messageId);
-    this.setAutoRetryResumeState(retryOptionsForResume, retryAgentInitiated);
+    this.setAutoRetryResumeState(retryOptionsForResume, retryAgentInitiated, retryGoalKind);
     this.setTurnPhase(TurnPhase.PREPARING);
     let retryResult: Result<void, SendMessageError>;
     try {
@@ -3400,7 +3734,9 @@ export class AgentSession {
         retryOptions,
         isGptClass ? "auto" : undefined,
         undefined,
-        retryAgentInitiated
+        retryAgentInitiated,
+        undefined,
+        retryGoalKind
       );
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
@@ -3484,7 +3820,9 @@ export class AgentSession {
         context.options,
         context.openaiTruncationModeOverride,
         true,
-        context.agentInitiated
+        context.agentInitiated,
+        undefined,
+        context.goalKind
       );
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
@@ -3765,7 +4103,7 @@ export class AgentSession {
           },
         };
 
-    this.setAutoRetryResumeState(retryOptions, context.agentInitiated);
+    this.setAutoRetryResumeState(retryOptions, context.agentInitiated, context.goalKind);
     this.setTurnPhase(TurnPhase.PREPARING);
     let retryResult: Result<void, SendMessageError>;
     try {
@@ -3774,7 +4112,9 @@ export class AgentSession {
         retryOptions,
         context.openaiTruncationModeOverride,
         undefined,
-        context.agentInitiated
+        context.agentInitiated,
+        undefined,
+        context.goalKind
       );
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
@@ -3793,9 +4133,103 @@ export class AgentSession {
     return true;
   }
 
+  private async previewGoalAccountingFromUsage(input: {
+    model: string;
+    usage: LanguageModelV2Usage | undefined;
+    providerMetadata?: Record<string, unknown>;
+    metadataModel?: string;
+    isCompaction?: boolean;
+  }): Promise<void> {
+    if (!this.workspaceGoalService) {
+      return;
+    }
+    const displayUsage = createDisplayUsage(
+      input.usage,
+      input.model,
+      input.providerMetadata,
+      input.metadataModel
+    );
+    const costUsd = getTotalCost(displayUsage) ?? 0;
+    try {
+      await this.workspaceGoalService.previewStreamAccounting({
+        workspaceId: this.workspaceId,
+        costUsd,
+        isCompaction: input.isCompaction === true,
+        streamStartedAtMs: this.activeStreamStartedAtMs ?? null,
+      });
+    } catch (error) {
+      log.warn("Failed to preview goal stream accounting", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  private async restoreGoalAccountingSnapshot(): Promise<void> {
+    if (!this.workspaceGoalService) {
+      return;
+    }
+
+    try {
+      // Terminal stream errors do not run final goal accounting, so any
+      // live cost preview from the failed stream must be discarded before
+      // re-emitting the durable goal snapshot. Pass the stream start time so
+      // any queued usage-delta preview from the same failed stream is ignored
+      // under the goal service's workspace lock instead of repopulating stale
+      // "budget used" after this restore.
+      await this.workspaceGoalService.restoreGoalAccountingSnapshot(
+        this.workspaceId,
+        this.activeStreamStartedAtMs ?? null
+      );
+    } catch (error) {
+      log.warn("Failed to restore goal accounting snapshot", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  private async recordGoalAccountingFromUsage(input: {
+    model: string;
+    usage: StreamEndEvent["metadata"]["usage"];
+    providerMetadata?: Record<string, unknown>;
+    metadataModel?: string;
+    isCompaction?: boolean;
+    goalKind?: GoalSyntheticMessageKind;
+    agentInitiated?: boolean;
+  }): Promise<void> {
+    if (!this.workspaceGoalService) {
+      return;
+    }
+
+    const displayUsage = createDisplayUsage(
+      input.usage,
+      input.model,
+      input.providerMetadata,
+      input.metadataModel
+    );
+    const streamOriginKind = getGoalStreamOriginKind(input);
+    const costUsd = getTotalCost(displayUsage) ?? 0;
+    try {
+      await this.workspaceGoalService.recordStreamAccounting({
+        workspaceId: this.workspaceId,
+        costUsd,
+        isCompaction: input.isCompaction === true,
+        streamOriginKind,
+        streamStartedAtMs: this.activeStreamStartedAtMs ?? null,
+      });
+    } catch (error) {
+      log.warn("Failed to record goal stream accounting", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   private resetActiveStreamState(): void {
     this.activeStreamContext = undefined;
     this.activeStreamUserMessageId = undefined;
+    this.activeStreamStartedAtMs = undefined;
     this.activeStreamHadPostCompactionInjection = false;
     this.activeStreamHadAnyDelta = false;
     this.ackPendingPostCompactionStateOnStreamEnd = false;
@@ -3839,6 +4273,7 @@ export class AgentSession {
     const streamErrorMessage = createStreamErrorMessage(data);
     this.setTerminalStreamLifecycle("failed");
     this.terminalStreamError = streamErrorMessage;
+    await this.restoreGoalAccountingSnapshot();
     this.activeCompactionRequest = undefined;
     this.resetActiveStreamState();
 
@@ -3878,6 +4313,9 @@ export class AgentSession {
     };
 
     forward("stream-start", (payload) => {
+      if (payload.type === "stream-start") {
+        this.activeStreamStartedAtMs = payload.startTime;
+      }
       this.setTurnPhase(TurnPhase.STREAMING);
       this.emitChatEvent(payload);
     });
@@ -3890,6 +4328,10 @@ export class AgentSession {
       this.emitChatEvent(payload);
     });
     forward("bash-output", (payload) => {
+      this.markActiveStreamHadAnyOutput();
+      this.emitChatEvent(payload);
+    });
+    forward("advisor-output", (payload) => {
       this.markActiveStreamHadAnyOutput();
       this.emitChatEvent(payload);
     });
@@ -3943,6 +4385,17 @@ export class AgentSession {
         live: true,
       });
 
+      await this.previewGoalAccountingFromUsage({
+        model: modelForUsage,
+        usage: payload.cumulativeUsage ?? payload.usage,
+        providerMetadata: payload.cumulativeProviderMetadata ?? payload.providerMetadata,
+        metadataModel: resolveModelForMetadata(
+          modelForUsage,
+          this.activeStreamContext?.providersConfig ?? null
+        ),
+        isCompaction: this.activeCompactionRequest !== undefined,
+      });
+
       // Never recurse compaction while we're already running a compaction request.
       if (this.activeCompactionRequest || this.midStreamCompactionPending) {
         return;
@@ -3992,6 +4445,9 @@ export class AgentSession {
             hadAnyOutput: false,
           });
         }
+        if (preStreamAbortReason === "user") {
+          await this.workspaceGoalService?.recordUserStoppedStream(this.workspaceId);
+        }
         await this.updateStartupAutoRetryAbandonFromAbort(
           preStreamAbortReason,
           this.activeStreamUserMessageId
@@ -4017,6 +4473,28 @@ export class AgentSession {
       const failedUserMessageId = this.activeStreamUserMessageId;
       const hadCompactionRequest = this.activeCompactionRequest !== undefined;
       const abortReason = "abortReason" in payload ? payload.abortReason : undefined;
+      if (abortReason === "user") {
+        await this.workspaceGoalService?.recordUserStoppedStream(this.workspaceId);
+      }
+      if (activeModelForAbort) {
+        // Forward goalKind / agentInitiated from the active stream context so
+        // an interrupted continuation/wrap stream is correctly classified
+        // as `goal_continuation` / `goal_budget_limit` and counts toward
+        // the turn cap. Without this, getGoalStreamOriginKind falls back to
+        // `"user"` and the interrupted synthetic turn would not consume a
+        // turn, under-enforcing limits (Codex P2 PRRT_kwDOPxxmWM5_t9Bu).
+        await this.recordGoalAccountingFromUsage({
+          model: activeModelForAbort,
+          usage: payload.metadata?.usage,
+          providerMetadata: payload.metadata?.providerMetadata,
+          goalKind: this.activeStreamContext?.goalKind,
+          agentInitiated: this.activeStreamContext?.agentInitiated,
+          isCompaction: hadCompactionRequest,
+        });
+      }
+      if (abortReason !== "user") {
+        await this.workspaceGoalService?.applyPendingAfterStreamEnd(this.workspaceId);
+      }
       this.setTerminalStreamLifecycle("interrupted", { abortReason });
       this.activeCompactionRequest = undefined;
       this.resetActiveStreamState();
@@ -4049,8 +4527,13 @@ export class AgentSession {
       await this.clearStartupAutoRetryAbandon();
 
       const streamEndPayload = payload;
+      const activeStreamGoalKind = this.activeStreamContext?.goalKind;
       const activeStreamOptions = this.activeStreamContext?.options;
 
+      let goalContinuationRequest: {
+        sendOptions: SendMessageOptions;
+        streamEndedAtMs: number;
+      } | null = null;
       let emittedStreamEnd = false;
       let handoffFailureMessage: string | undefined;
       try {
@@ -4067,6 +4550,17 @@ export class AgentSession {
         this.clearLiveUsageState();
 
         const handled = await this.compactionHandler.handleCompletion(streamEndPayload);
+
+        await this.recordGoalAccountingFromUsage({
+          model: streamEndPayload.metadata.model,
+          usage: streamEndPayload.metadata.usage,
+          providerMetadata: streamEndPayload.metadata.providerMetadata,
+          metadataModel: streamEndPayload.metadata.metadataModel,
+          goalKind: this.activeStreamContext?.goalKind,
+          agentInitiated: this.activeStreamContext?.agentInitiated,
+          isCompaction: handled,
+        });
+        await this.workspaceGoalService?.applyPendingAfterStreamEnd(this.workspaceId);
 
         if (!handled) {
           this.emitChatEvent(payload);
@@ -4118,7 +4612,8 @@ export class AgentSession {
             const dispatchedSwitchFollowUp = await this.dispatchAgentSwitch(
               switchResult,
               activeStreamOptions,
-              streamEndPayload.metadata.model
+              streamEndPayload.metadata.model,
+              activeStreamGoalKind
             );
             if (dispatchedSwitchFollowUp) {
               return;
@@ -4131,6 +4626,7 @@ export class AgentSession {
 
         // Stream end: auto-send queued messages (for user messages typed during streaming)
         // P2: if an edit is waiting, skip the queue flush so the edit truncates first.
+        const hadQueuedMessages = this.hasQueuedMessages();
         if (this.deferQueuedFlushUntilAfterEdit) {
           // Clear the queued message flag so the next turn's tools don't early-return.
           this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
@@ -4138,6 +4634,34 @@ export class AgentSession {
           // for IDLE; truncation must run before any synthetic turn resumes.
         } else {
           this.sendQueuedMessages();
+        }
+
+        if (!handled && !this.deferQueuedFlushUntilAfterEdit && !hadQueuedMessages) {
+          const sendOptions = activeStreamOptions ?? {
+            model: streamEndPayload.metadata.model,
+            agentId: WORKSPACE_DEFAULTS.agentId,
+          };
+          if (sendOptions.agentId !== "plan" && sendOptions.agentId !== "compact") {
+            // If a `goal_continuation` turn ended without any tool calls,
+            // interpret the text-only finish as an implicit `complete_goal`.
+            // The continuation prompt asks the agent to call `complete_goal`
+            // explicitly, but real models sometimes finish with a plain
+            // "looks done" reply instead — without this fallback the
+            // continuation loop would re-fire on the same idle output until
+            // budget/cooldown gates intervene. We restrict to continuation
+            // turns (not user messages, not budget-limit wrap-ups) so a
+            // user's first manual turn answered with text is never
+            // mistaken for completion. `requestContinuationAfterStreamEnd`
+            // below safely no-ops once the goal flips to `complete`.
+            if (activeStreamGoalKind === GOAL_CONTINUATION_KIND) {
+              await this.maybeAutoCompleteGoalFromSilentContinuation(streamEndPayload);
+            }
+
+            goalContinuationRequest = {
+              sendOptions,
+              streamEndedAtMs: Date.now(),
+            };
+          }
         }
       } catch (error) {
         const streamEndCleanupError = getErrorMessage(error);
@@ -4171,6 +4695,13 @@ export class AgentSession {
         if (this.turnPhase === TurnPhase.COMPLETING) {
           this.resetActiveStreamState();
           this.setTurnPhase(TurnPhase.IDLE);
+          if (goalContinuationRequest != null) {
+            await this.workspaceGoalService?.requestContinuationAfterStreamEnd({
+              workspaceId: this.workspaceId,
+              sendOptions: goalContinuationRequest.sendOptions,
+              streamEndedAtMs: goalContinuationRequest.streamEndedAtMs,
+            });
+          }
         }
       }
     });
@@ -4385,6 +4916,71 @@ export class AgentSession {
           }
         });
     }
+  }
+
+  /**
+   * If a `goal_continuation` turn finished with no `dynamic-tool` parts,
+   * treat it as an implicit `complete_goal` call. The caller is expected
+   * to have already gated on `activeStreamGoalKind === GOAL_CONTINUATION_KIND`
+   * and on the standard plan/compact/queued-input exclusions; this helper
+   * owns the parts inspection + summary synthesis.
+   *
+   * Requires `finishReason === "stop"` so truncated turns
+   * (`"length"` / `"content-filter"` / unknown) keep the goal active and
+   * can resume on the next continuation. Matches the same conservatism
+   * `TaskService` uses for implicit task-report finalization (see
+   * `taskService.ts` comment at the `finishReason === "stop"` gate):
+   * partial assistant text must not prematurely finalize the goal.
+   */
+  private async maybeAutoCompleteGoalFromSilentContinuation(
+    payload: StreamEndEvent
+  ): Promise<void> {
+    if (!this.workspaceGoalService) {
+      return;
+    }
+    if (payload.metadata.finishReason !== "stop") {
+      return;
+    }
+    if (payload.parts.some((part) => part.type === "dynamic-tool")) {
+      return;
+    }
+    const summary = this.synthesizeSilentContinuationSummary(payload.parts);
+    try {
+      await this.workspaceGoalService.completeGoalFromSilentContinuation({
+        workspaceId: this.workspaceId,
+        completionSummary: summary,
+      });
+    } catch (error) {
+      // Best-effort: never let goal-completion bookkeeping break the
+      // stream-end cleanup path. The service already swallows typed
+      // `Result` errors; this catch is defense-in-depth for unexpected
+      // throws.
+      log.warn("Failed to auto-complete goal from silent continuation", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /** Last non-empty text part, trimmed and length-capped; falls back to a constant. */
+  private synthesizeSilentContinuationSummary(parts: StreamEndEvent["parts"]): string {
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
+      const part = parts[index];
+      if (part.type !== "text") {
+        continue;
+      }
+      const trimmed = part.text.trim();
+      if (trimmed.length === 0) {
+        continue;
+      }
+      if (trimmed.length <= SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH) {
+        return trimmed;
+      }
+      // Reserve one character for the ellipsis so the persisted summary
+      // stays under the configured cap.
+      return `${trimmed.slice(0, SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH - 1)}…`;
+    }
+    return SILENT_CONTINUATION_COMPLETION_SUMMARY_FALLBACK;
   }
 
   /** Extract a successful switch_agent tool result from stream-end parts (latest wins). */
@@ -4638,7 +5234,8 @@ export class AgentSession {
   private async dispatchAgentSwitch(
     switchResult: SwitchAgentResult,
     currentOptions: SendMessageOptions | undefined,
-    fallbackModel: string
+    fallbackModel: string,
+    goalKind?: GoalSyntheticMessageKind
   ): Promise<boolean> {
     assert(
       typeof switchResult.agentId === "string" && switchResult.agentId.trim().length > 0,
@@ -4767,6 +5364,7 @@ export class AgentSession {
 
     const sendResult = await this.sendMessage(followUpText, followUpOptions, {
       synthetic: true,
+      goalKind,
     });
 
     if (!sendResult.success) {
@@ -4943,14 +5541,18 @@ export class AgentSession {
     // The compaction summary is now the source of truth for the next live resume
     // request. Pre-arm retry state from the reconstructed follow-up so failures
     // before stream startup do not fall back to the already-completed compact turn.
-    this.setAutoRetryResumeState(options);
+    this.setAutoRetryResumeState(options, undefined, followUp.goalKind);
 
     // Await sendMessage to ensure the follow-up is persisted before returning.
     // This guarantees ordering: the follow-up message is written to history
     // before sendQueuedMessages() runs, preventing race conditions.
     // Mark as synthetic so recovery/background dispatches do not implicitly
     // re-enable auto-retry after a user explicitly opted out.
-    const sendResult = await this.sendMessage(finalText, options, { synthetic: true });
+    const sendResult = await this.sendMessage(finalText, options, {
+      synthetic: true,
+      goalKind: followUp.goalKind,
+      goalContinuation: followUp.goalKind === GOAL_CONTINUATION_KIND,
+    });
     if (!sendResult.success) {
       const message = this.extractRetryFailureMessage(sendResult.error) ?? sendResult.error.type;
       throw new Error(`Failed to dispatch pending follow-up: ${message}`);
@@ -5194,9 +5796,17 @@ export class AgentSession {
     return { snapshotMessage, materializedTokens: tokens };
   }
 
+  private isImageGenerationToolEnabled(experiments: SendMessageOptions["experiments"]): boolean {
+    return (
+      experiments?.imageGenerationTool ??
+      this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL) === true
+    );
+  }
+
   private async materializeAgentSkillSnapshots(
     muxMetadata: MuxMessageMetadata | undefined,
-    disableWorkspaceAgents: boolean | undefined
+    disableWorkspaceAgents: boolean | undefined,
+    imageGenerationToolEnabled: boolean
   ): Promise<MuxMessage[]> {
     const refs = extractAgentSkillRefs(muxMetadata);
     if (refs.length === 0) {
@@ -5256,6 +5866,13 @@ export class AgentSession {
       } catch (error) {
         if (ref.source === "slash") {
           throw error;
+        }
+        continue;
+      }
+
+      if (isBuiltInImagegenSkillUnavailable(resolved.package, imageGenerationToolEnabled)) {
+        if (ref.source === "slash") {
+          throw new Error(IMAGEGEN_SKILL_DISABLED_MESSAGE);
         }
         continue;
       }

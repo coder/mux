@@ -1,4 +1,5 @@
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
+import { getDefaultLayoutTabIds } from "@/browser/features/RightSidebar/Tabs/tabConfig";
 
 export type RightSidebarLayoutNode =
   | {
@@ -57,9 +58,11 @@ export interface RightSidebarLayoutState {
 }
 
 export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSidebarLayoutState {
-  // Default tabs exclude terminal - users add terminals via the "+" button
-  const baseTabs: TabType[] = ["costs", "review"];
-  const tabs = baseTabs.includes(activeTab) ? baseTabs : [...baseTabs, activeTab];
+  // Default tabs come from the registry's `inDefaultLayout` flag — no
+  // hardcoded list to keep in sync. Adding a tab to the default layout is a
+  // one-line metadata change in `Tabs/tabConfig.ts`.
+  const defaultTabs: TabType[] = [...getDefaultLayoutTabIds()];
+  const tabs = defaultTabs.includes(activeTab) ? defaultTabs : [...defaultTabs, activeTab];
 
   return {
     version: 1,
@@ -88,10 +91,52 @@ export function parseRightSidebarLayoutState(
   }
 
   if (isRightSidebarLayoutState(raw)) {
-    return raw;
+    // Post-validation migration: auto-add any registry-declared `inDefaultLayout`
+    // tabs that the persisted layout is missing. This means newly-introduced
+    // default tabs (e.g., the Instructions tab) appear for existing users
+    // automatically — no user action, no extra bookkeeping in this module.
+    return ensureDefaultLayoutTabs(raw);
   }
 
   return getDefaultRightSidebarLayoutState(activeTabFallback);
+}
+
+/**
+ * Ensure every `inDefaultLayout: true` tab from the registry is present in
+ * `state`. Missing tabs are appended to the first tabset (the natural
+ * upper-left landing spot) without changing the active tab. Already-present
+ * tabs are left where the user moved them.
+ */
+function ensureDefaultLayoutTabs(state: RightSidebarLayoutState): RightSidebarLayoutState {
+  const required = getDefaultLayoutTabIds();
+  if (required.length === 0) return state;
+
+  const present = new Set<TabType>(collectAllTabs(state.root));
+  const missing: TabType[] = required.filter((tab) => !present.has(tab));
+  if (missing.length === 0) return state;
+
+  const firstTabsetId = findFirstTabsetId(state.root);
+  if (!firstTabsetId) return state;
+
+  const root = appendTabsToTabset(state.root, firstTabsetId, missing);
+  return root === state.root ? state : { ...state, root };
+}
+
+/** Append tabs to the named tabset, returning a new tree (or the original if unchanged). */
+function appendTabsToTabset(
+  node: RightSidebarLayoutNode,
+  tabsetId: string,
+  tabs: TabType[]
+): RightSidebarLayoutNode {
+  if (node.type === "tabset") {
+    if (node.id !== tabsetId) return node;
+    return { ...node, tabs: [...node.tabs, ...tabs] };
+  }
+
+  const left = appendTabsToTabset(node.children[0], tabsetId, tabs);
+  const right = appendTabsToTabset(node.children[1], tabsetId, tabs);
+  if (left === node.children[0] && right === node.children[1]) return node;
+  return { ...node, children: [left, right] };
 }
 
 /**

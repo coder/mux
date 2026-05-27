@@ -1,22 +1,13 @@
 import { describe, expect, it, mock, afterEach, spyOn } from "bun:test";
-import { EventEmitter } from "events";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import type { AIService } from "@/node/services/aiService";
-import type { InitStateManager } from "@/node/services/initStateManager";
-import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
-import type { Config } from "@/node/config";
-
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
-import type { SendMessageError } from "@/common/types/errors";
-import type { Result } from "@/common/types/result";
 import { Ok } from "@/common/types/result";
 
-import { AgentSession } from "./agentSession";
-import { createTestHistoryService } from "./testHistoryService";
+import { createAgentSessionHarness } from "./agentSession.testHarness";
 
 describe("AgentSession.sendMessage (agent skill snapshots)", () => {
   async function createTestWorkspaceWithSkills(args: {
@@ -52,14 +43,26 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     return textPart.text;
   }
 
-  async function createSessionHarness(args: { workspacePath: string; workspaceId?: string }) {
+  async function createSessionHarness(args: {
+    workspacePath: string;
+    workspaceId?: string;
+    runtimeConfig?: FrontendWorkspaceMetadata["runtimeConfig"];
+  }) {
     const workspaceId = args.workspaceId ?? "ws-test";
-    const config = {
-      srcDir: "/tmp",
-      getSessionDir: (_workspaceId: string) => "/tmp",
-    } as unknown as Config;
-
-    const { historyService, cleanup } = await createTestHistoryService();
+    const workspaceMeta: FrontendWorkspaceMetadata = {
+      id: workspaceId,
+      name: "ws",
+      projectName: "proj",
+      projectPath: args.workspacePath,
+      namedWorkspacePath: args.workspacePath,
+      runtimeConfig: args.runtimeConfig ?? { type: "local" },
+    } as unknown as FrontendWorkspaceMetadata;
+    const { session, historyService, cleanup } = await createAgentSessionHarness({
+      workspaceId,
+      aiServiceOverrides: {
+        getWorkspaceMetadata: mock((_workspaceId: string) => Promise.resolve(Ok(workspaceMeta))),
+      },
+    });
     historyCleanup = cleanup;
 
     const messages: MuxMessage[] = [];
@@ -70,44 +73,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
         return realAppend(wId, message);
       }
     );
-
-    const aiEmitter = new EventEmitter();
-    const workspaceMeta: FrontendWorkspaceMetadata = {
-      id: workspaceId,
-      name: "ws",
-      projectName: "proj",
-      projectPath: args.workspacePath,
-      namedWorkspacePath: args.workspacePath,
-      runtimeConfig: { type: "local" },
-    } as unknown as FrontendWorkspaceMetadata;
-
-    const aiService = Object.assign(aiEmitter, {
-      isStreaming: mock((_workspaceId: string) => false),
-      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-      getWorkspaceMetadata: mock((_workspaceId: string) => Promise.resolve(Ok(workspaceMeta))),
-      streamMessage: mock((_messages: MuxMessage[]) =>
-        Promise.resolve(Ok(undefined))
-      ) as unknown as (
-        ...args: Parameters<AIService["streamMessage"]>
-      ) => Promise<Result<void, SendMessageError>>,
-    }) as unknown as AIService;
-
-    const initStateManager = new EventEmitter() as unknown as InitStateManager;
-    const backgroundProcessManager = {
-      cleanup: mock((_workspaceId: string) => Promise.resolve()),
-      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
-        void _queued;
-      }),
-    } as unknown as BackgroundProcessManager;
-
-    const session = new AgentSession({
-      workspaceId,
-      config,
-      historyService,
-      aiService,
-      initStateManager,
-      backgroundProcessManager,
-    });
 
     return { session, appendToHistory, messages, historyService };
   }
@@ -120,63 +85,9 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       skillBody: "Follow this skill.",
     });
 
-    const config = {
-      srcDir: "/tmp",
-      getSessionDir: (_workspaceId: string) => "/tmp",
-    } as unknown as Config;
-
-    const { historyService, cleanup } = await createTestHistoryService();
-    historyCleanup = cleanup;
-
-    const messages: MuxMessage[] = [];
-    const realAppend = historyService.appendToHistory.bind(historyService);
-    const appendToHistory = spyOn(historyService, "appendToHistory").mockImplementation(
-      async (wId: string, message: MuxMessage) => {
-        messages.push(message);
-        return realAppend(wId, message);
-      }
-    );
-
-    const aiEmitter = new EventEmitter();
-
-    const workspaceMeta: FrontendWorkspaceMetadata = {
-      id: workspaceId,
-      name: "ws",
-      projectName: "proj",
-      projectPath: workspacePath,
-      namedWorkspacePath: workspacePath,
-      runtimeConfig: { type: "local" },
-    } as unknown as FrontendWorkspaceMetadata;
-
-    const streamMessage = mock((_messages: MuxMessage[]) => {
-      return Promise.resolve(Ok(undefined));
-    });
-
-    const aiService = Object.assign(aiEmitter, {
-      isStreaming: mock((_workspaceId: string) => false),
-      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-      getWorkspaceMetadata: mock((_workspaceId: string) => Promise.resolve(Ok(workspaceMeta))),
-      streamMessage: streamMessage as unknown as (
-        ...args: Parameters<AIService["streamMessage"]>
-      ) => Promise<Result<void, SendMessageError>>,
-    }) as unknown as AIService;
-
-    const initStateManager = new EventEmitter() as unknown as InitStateManager;
-
-    const backgroundProcessManager = {
-      cleanup: mock((_workspaceId: string) => Promise.resolve()),
-      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
-        void _queued;
-      }),
-    } as unknown as BackgroundProcessManager;
-
-    const session = new AgentSession({
+    const { session, appendToHistory, messages } = await createSessionHarness({
       workspaceId,
-      config,
-      historyService,
-      aiService,
-      initStateManager,
-      backgroundProcessManager,
+      workspacePath,
     });
 
     const result = await session.sendMessage("do X", {
@@ -214,6 +125,25 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     expect(userText).toBe("do X");
   });
 
+  it("skips built-in imagegen snapshots when image generation is disabled", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkills({ skills: [] });
+    const { session, appendToHistory, messages } = await createSessionHarness({ workspacePath });
+
+    const result = await session.sendMessage("retry image generation", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      experiments: { imageGenerationTool: false },
+      muxMetadata: {
+        agentSkillRefs: [{ skillName: "imagegen", scope: "built-in", source: "inline" }],
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(1);
+    expect(messages[0]?.metadata?.agentSkillSnapshot).toBeUndefined();
+    expect(getMessageText(messages[0])).toBe("retry image generation");
+  });
+
   it("honors disableWorkspaceAgents when resolving skill snapshots", async () => {
     const workspaceId = "ws-test";
 
@@ -225,63 +155,10 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
 
     const srcBaseDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-agent-skill-src-"));
 
-    const config = {
-      srcDir: "/tmp",
-      getSessionDir: (_workspaceId: string) => "/tmp",
-    } as unknown as Config;
-
-    const { historyService, cleanup } = await createTestHistoryService();
-    historyCleanup = cleanup;
-
-    const messages: MuxMessage[] = [];
-    const realAppend = historyService.appendToHistory.bind(historyService);
-    const appendToHistory = spyOn(historyService, "appendToHistory").mockImplementation(
-      async (wId: string, message: MuxMessage) => {
-        messages.push(message);
-        return realAppend(wId, message);
-      }
-    );
-
-    const aiEmitter = new EventEmitter();
-
-    const workspaceMeta: FrontendWorkspaceMetadata = {
-      id: workspaceId,
-      name: "ws",
-      projectName: "proj",
-      projectPath,
-      namedWorkspacePath: projectPath,
-      runtimeConfig: { type: "worktree", srcBaseDir },
-    } as unknown as FrontendWorkspaceMetadata;
-
-    const streamMessage = mock((_messages: MuxMessage[]) => {
-      return Promise.resolve(Ok(undefined));
-    });
-
-    const aiService = Object.assign(aiEmitter, {
-      isStreaming: mock((_workspaceId: string) => false),
-      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-      getWorkspaceMetadata: mock((_workspaceId: string) => Promise.resolve(Ok(workspaceMeta))),
-      streamMessage: streamMessage as unknown as (
-        ...args: Parameters<AIService["streamMessage"]>
-      ) => Promise<Result<void, SendMessageError>>,
-    }) as unknown as AIService;
-
-    const initStateManager = new EventEmitter() as unknown as InitStateManager;
-
-    const backgroundProcessManager = {
-      cleanup: mock((_workspaceId: string) => Promise.resolve()),
-      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
-        void _queued;
-      }),
-    } as unknown as BackgroundProcessManager;
-
-    const session = new AgentSession({
+    const { session, appendToHistory, messages } = await createSessionHarness({
       workspaceId,
-      config,
-      historyService,
-      aiService,
-      initStateManager,
-      backgroundProcessManager,
+      workspacePath: projectPath,
+      runtimeConfig: { type: "worktree", srcBaseDir },
     });
 
     const result = await session.sendMessage("do X", {
@@ -313,63 +190,9 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       skillBody: "Follow this skill.",
     });
 
-    const config = {
-      srcDir: "/tmp",
-      getSessionDir: (_workspaceId: string) => "/tmp",
-    } as unknown as Config;
-
-    const { historyService, cleanup } = await createTestHistoryService();
-    historyCleanup = cleanup;
-
-    const messages: MuxMessage[] = [];
-    const realAppend = historyService.appendToHistory.bind(historyService);
-    const appendToHistory = spyOn(historyService, "appendToHistory").mockImplementation(
-      async (wId: string, message: MuxMessage) => {
-        messages.push(message);
-        return realAppend(wId, message);
-      }
-    );
-
-    const aiEmitter = new EventEmitter();
-
-    const workspaceMeta: FrontendWorkspaceMetadata = {
-      id: workspaceId,
-      name: "ws",
-      projectName: "proj",
-      projectPath: workspacePath,
-      namedWorkspacePath: workspacePath,
-      runtimeConfig: { type: "local" },
-    } as unknown as FrontendWorkspaceMetadata;
-
-    const streamMessage = mock((_messages: MuxMessage[]) => {
-      return Promise.resolve(Ok(undefined));
-    });
-
-    const aiService = Object.assign(aiEmitter, {
-      isStreaming: mock((_workspaceId: string) => false),
-      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-      getWorkspaceMetadata: mock((_workspaceId: string) => Promise.resolve(Ok(workspaceMeta))),
-      streamMessage: streamMessage as unknown as (
-        ...args: Parameters<AIService["streamMessage"]>
-      ) => Promise<Result<void, SendMessageError>>,
-    }) as unknown as AIService;
-
-    const initStateManager = new EventEmitter() as unknown as InitStateManager;
-
-    const backgroundProcessManager = {
-      cleanup: mock((_workspaceId: string) => Promise.resolve()),
-      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
-        void _queued;
-      }),
-    } as unknown as BackgroundProcessManager;
-
-    const session = new AgentSession({
+    const { session, appendToHistory } = await createSessionHarness({
       workspaceId,
-      config,
-      historyService,
-      aiService,
-      initStateManager,
-      backgroundProcessManager,
+      workspacePath,
     });
 
     const baseOptions = {
@@ -416,61 +239,9 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       skillBody,
     });
 
-    const config = {
-      srcDir: "/tmp",
-      getSessionDir: (_workspaceId: string) => "/tmp",
-    } as unknown as Config;
-
-    const { historyService, cleanup } = await createTestHistoryService();
-    historyCleanup = cleanup;
-
-    const messages: MuxMessage[] = [];
-    const realAppend = historyService.appendToHistory.bind(historyService);
-    const appendToHistory = spyOn(historyService, "appendToHistory").mockImplementation(
-      async (wId: string, message: MuxMessage) => {
-        messages.push(message);
-        return realAppend(wId, message);
-      }
-    );
-
-    const aiEmitter = new EventEmitter();
-
-    const workspaceMeta: FrontendWorkspaceMetadata = {
-      id: workspaceId,
-      name: "ws",
-      projectName: "proj",
-      projectPath: workspacePath,
-      namedWorkspacePath: workspacePath,
-      runtimeConfig: { type: "local" },
-    } as unknown as FrontendWorkspaceMetadata;
-
-    const aiService = Object.assign(aiEmitter, {
-      isStreaming: mock((_workspaceId: string) => false),
-      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-      getWorkspaceMetadata: mock((_workspaceId: string) => Promise.resolve(Ok(workspaceMeta))),
-      streamMessage: mock((_messages: MuxMessage[]) => {
-        return Promise.resolve(Ok(undefined));
-      }) as unknown as (
-        ...args: Parameters<AIService["streamMessage"]>
-      ) => Promise<Result<void, SendMessageError>>,
-    }) as unknown as AIService;
-
-    const initStateManager = new EventEmitter() as unknown as InitStateManager;
-
-    const backgroundProcessManager = {
-      cleanup: mock((_workspaceId: string) => Promise.resolve()),
-      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
-        void _queued;
-      }),
-    } as unknown as BackgroundProcessManager;
-
-    const session = new AgentSession({
+    const { session, appendToHistory, messages } = await createSessionHarness({
       workspaceId,
-      config,
-      historyService,
-      aiService,
-      initStateManager,
-      backgroundProcessManager,
+      workspacePath,
     });
 
     const baseOptions = {
@@ -736,11 +507,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
   it("truncates edits starting from preceding skill/file snapshots", async () => {
     const workspaceId = "ws-test";
 
-    const config = {
-      srcDir: "/tmp",
-      getSessionDir: (_workspaceId: string) => "/tmp",
-    } as unknown as Config;
-
     const fileSnapshotId = "file-snapshot-0";
     const skillSnapshotId = "agent-skill-snapshot-0";
     const userMessageId = "user-0";
@@ -771,7 +537,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       }),
     ];
 
-    const { historyService, cleanup } = await createTestHistoryService();
+    const { session, historyService, cleanup } = await createAgentSessionHarness({ workspaceId });
     historyCleanup = cleanup;
 
     // Seed history messages before setting up spies
@@ -781,35 +547,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
 
     const truncateAfterMessage = spyOn(historyService, "truncateAfterMessage");
     spyOn(historyService, "appendToHistory");
-
-    const aiEmitter = new EventEmitter();
-    const aiService = Object.assign(aiEmitter, {
-      isStreaming: mock((_workspaceId: string) => false),
-      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-      streamMessage: mock((_messages: MuxMessage[]) =>
-        Promise.resolve(Ok(undefined))
-      ) as unknown as (
-        ...args: Parameters<AIService["streamMessage"]>
-      ) => Promise<Result<void, SendMessageError>>,
-    }) as unknown as AIService;
-
-    const initStateManager = new EventEmitter() as unknown as InitStateManager;
-
-    const backgroundProcessManager = {
-      cleanup: mock((_workspaceId: string) => Promise.resolve()),
-      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
-        void _queued;
-      }),
-    } as unknown as BackgroundProcessManager;
-
-    const session = new AgentSession({
-      workspaceId,
-      config,
-      historyService,
-      aiService,
-      initStateManager,
-      backgroundProcessManager,
-    });
 
     const result = await session.sendMessage("edited", {
       model: "anthropic:claude-3-5-sonnet-latest",

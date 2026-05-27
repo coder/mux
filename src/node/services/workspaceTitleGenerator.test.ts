@@ -1,10 +1,19 @@
-import { APICallError, NoOutputGeneratedError, RetryError } from "ai";
-import { describe, expect, test } from "bun:test";
+import * as aiSdk from "ai";
+import { APICallError, NoOutputGeneratedError, RetryError, type LanguageModel } from "ai";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import {
   buildWorkspaceIdentityPrompt,
+  generateWorkspaceIdentity,
   mapModelCreationError,
   mapNameGenerationError,
 } from "./workspaceTitleGenerator";
+import { Ok } from "@/common/types/result";
+import type { AIService } from "./aiService";
+import { attachLanguageModelCleanup } from "./languageModelCleanup";
+
+afterEach(() => {
+  mock.restore();
+});
 
 describe("buildWorkspaceIdentityPrompt", () => {
   test("includes overall-scope guidance, conversation turns, and latest-user context without precedence", () => {
@@ -57,6 +66,139 @@ const createApiCallError = (
     data: overrides?.data,
     responseBody: overrides?.responseBody,
   });
+
+describe("generateWorkspaceIdentity cleanup", () => {
+  function createTitleModel(modelId = "title-model"): LanguageModel {
+    return {
+      specificationVersion: "v3",
+      provider: "test",
+      modelId,
+      supportedUrls: {},
+      doGenerate: () => Promise.reject(new Error("doGenerate is unused in cleanup tests")),
+      doStream: () => Promise.reject(new Error("doStream is unused in cleanup tests")),
+    };
+  }
+
+  function createTitleAIService(model: LanguageModel): AIService {
+    return { createModel: () => Promise.resolve(Ok(model)) } as unknown as AIService;
+  }
+
+  test("cleans up the model after a successful title stream", async () => {
+    let cleanupCalls = 0;
+    const model = createTitleModel();
+    attachLanguageModelCleanup(model, () => {
+      cleanupCalls += 1;
+    });
+    const titleAiService = createTitleAIService(model);
+
+    spyOn(aiSdk, "streamText").mockReturnValue({
+      toolResults: Promise.resolve([
+        {
+          dynamic: false,
+          toolName: "propose_name",
+          output: { name: "settings", title: "Add setting" },
+        },
+      ]),
+    } as unknown as ReturnType<typeof aiSdk.streamText>);
+
+    const result = await generateWorkspaceIdentity(
+      "Add setting",
+      ["openai:gpt-4.1-mini"],
+      titleAiService
+    );
+
+    expect(result.success).toBe(true);
+    expect(cleanupCalls).toBe(1);
+  });
+
+  test("cleans up when title stream throws before trying the next candidate", async () => {
+    let cleanupCalls = 0;
+    const failingModel = createTitleModel("title-failing-model");
+    attachLanguageModelCleanup(failingModel, () => {
+      cleanupCalls += 1;
+    });
+    const aiService = createTitleAIService(failingModel);
+
+    spyOn(aiSdk, "streamText").mockImplementation(() => {
+      throw new Error("title stream failed");
+    });
+
+    const result = await generateWorkspaceIdentity(
+      "Add setting",
+      ["openai:gpt-4.1-mini"],
+      aiService
+    );
+
+    expect(result.success).toBe(false);
+    expect(cleanupCalls).toBe(1);
+  });
+
+  test("cleans up each candidate when title generation retries", async () => {
+    let firstCleanupCalls = 0;
+    let secondCleanupCalls = 0;
+    const firstModel = createTitleModel("title-first-model");
+    const secondModel = createTitleModel("title-second-model");
+    attachLanguageModelCleanup(firstModel, () => {
+      firstCleanupCalls += 1;
+    });
+    attachLanguageModelCleanup(secondModel, () => {
+      secondCleanupCalls += 1;
+    });
+    const aiService = {
+      createModel: mock((modelString: string) =>
+        Promise.resolve(Ok(modelString.includes("first") ? firstModel : secondModel))
+      ),
+    } as unknown as AIService;
+    let streamTextCalls = 0;
+    spyOn(aiSdk, "streamText").mockImplementation((() => {
+      streamTextCalls += 1;
+      if (streamTextCalls === 1) {
+        throw new Error("first candidate failed");
+      }
+      return {
+        toolResults: Promise.resolve([
+          {
+            dynamic: false,
+            toolName: "propose_name",
+            output: { name: "settings", title: "Add setting" },
+          },
+        ]),
+      } as unknown as ReturnType<typeof aiSdk.streamText>;
+    }) as unknown as typeof aiSdk.streamText);
+
+    const result = await generateWorkspaceIdentity(
+      "Add setting",
+      ["openai:first", "openai:second"],
+      aiService
+    );
+
+    expect(result.success).toBe(true);
+    expect(firstCleanupCalls).toBe(1);
+    expect(secondCleanupCalls).toBe(1);
+  });
+
+  test("cleans up when title stream returns no propose_name result", async () => {
+    let cleanupCalls = 0;
+    const model = createTitleModel("title-no-tool-model");
+    attachLanguageModelCleanup(model, () => {
+      cleanupCalls += 1;
+    });
+    const aiService = createTitleAIService(model);
+
+    spyOn(aiSdk, "streamText").mockReturnValue({
+      toolResults: Promise.resolve([]),
+    } as unknown as ReturnType<typeof aiSdk.streamText>);
+
+    const result = await generateWorkspaceIdentity(
+      "Add setting",
+      ["openai:gpt-4.1-mini"],
+      aiService
+    );
+
+    expect(result.success).toBe(false);
+    expect(cleanupCalls).toBe(1);
+  });
+});
 
 describe("workspaceTitleGenerator error mappers", () => {
   describe("mapNameGenerationError", () => {

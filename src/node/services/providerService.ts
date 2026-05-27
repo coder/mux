@@ -132,6 +132,16 @@ export class ProviderService {
   private readonly policyService: PolicyService | null;
   private readonly emitter = new EventEmitter();
   private lastWarnedShadowedCustomProviderIds: Set<string> | null = null;
+  private readonly stopWatchingProvidersFile: () => void;
+  // Content-hash fingerprint of providers.jsonc immediately after the last
+  // in-app save. The watcher callback re-hashes the file when it fires and
+  // skips notification only when the hash still matches — i.e. nothing
+  // changed on disk relative to our last known write. Content equality is
+  // a stronger signal than mtime: filesystems with coarse timestamp
+  // granularity (FAT, some network mounts) can collide on mtimeMs across
+  // distinct writes, and an external edit that produces byte-identical
+  // contents is a no-op anyway.
+  private lastSelfWriteFingerprint: string | null = null;
 
   constructor(
     private readonly config: Config,
@@ -141,6 +151,35 @@ export class ProviderService {
     // The provider config subscription may have many concurrent listeners (e.g. multiple windows).
     // Avoid noisy MaxListenersExceededWarning for normal usage.
     this.emitter.setMaxListeners(50);
+    // Notify subscribers when providers.jsonc is edited externally (e.g.
+    // manual edits). Skip the redundant watcher event that fires ~300 ms
+    // after every in-app save — mutation paths already invoke
+    // notifyConfigChanged() directly. We identify a self-write by
+    // comparing the file's current content fingerprint (sha256) against
+    // the fingerprint captured by notifyFromMutation(); any external
+    // edit that changes the bytes between the in-app save and the
+    // watcher fire produces a different fingerprint and is forwarded.
+    this.stopWatchingProvidersFile = this.config.watchProvidersFile(() => {
+      const expected = this.lastSelfWriteFingerprint;
+      const current = this.config.getProvidersFileFingerprint();
+      if (expected !== null && current !== null && current === expected) {
+        // This watcher fire corresponds to our own write (or a benign
+        // no-op external save with identical bytes). Clear the
+        // fingerprint so the next event is evaluated freshly.
+        this.lastSelfWriteFingerprint = null;
+        return;
+      }
+      this.notifyConfigChanged();
+    });
+  }
+
+  /**
+   * Release long-lived OS handles (e.g. the providers.jsonc file watcher).
+   * Called by ServiceContainer.dispose() during shutdown and by tests.
+   */
+  dispose(): void {
+    this.stopWatchingProvidersFile();
+    this.emitter.removeAllListeners();
   }
 
   /**
@@ -160,6 +199,19 @@ export class ProviderService {
   notifyConfigChanged(): void {
     this.lastWarnedShadowedCustomProviderIds = null;
     this.emitter.emit("configChanged");
+  }
+
+  /**
+   * Called by in-app mutation methods after writing providers.jsonc.
+   * Captures a content-hash fingerprint of the file we just wrote so
+   * the watcher callback can recognise — and skip — the redundant
+   * notification it would otherwise fire ~300 ms later. Any external
+   * edit produces a different fingerprint and is therefore never
+   * accidentally suppressed.
+   */
+  private notifyFromMutation(): void {
+    this.lastSelfWriteFingerprint = this.config.getProvidersFileFingerprint();
+    this.notifyConfigChanged();
   }
 
   private listBuiltInProviders(): ProviderName[] {
@@ -255,6 +307,7 @@ export class ProviderService {
         serviceTier?: string;
         wireFormat?: string;
         store?: unknown;
+        webSocketTransportEnabled?: unknown;
         cacheTtl?: unknown;
         disableBetaFeatures?: unknown;
         /** OpenAI-only: default auth precedence for Codex-OAuth-allowed models. */
@@ -331,6 +384,10 @@ export class ProviderService {
       // OpenAI-specific: response storage setting (required for ZDR)
       if (provider === "openai" && typeof config.store === "boolean") {
         providerInfo.store = config.store;
+      }
+
+      if (provider === "openai" && typeof config.webSocketTransportEnabled === "boolean") {
+        providerInfo.webSocketTransportEnabled = config.webSocketTransportEnabled;
       }
 
       // Anthropic-specific fields
@@ -556,7 +613,7 @@ export class ProviderService {
         };
       }
 
-      this.notifyConfigChanged();
+      this.notifyFromMutation();
       return { success: true, data: providerInfo };
     } catch (error) {
       return {
@@ -653,7 +710,7 @@ export class ProviderService {
     } catch (error) {
       // The provider is already deleted from providers.jsonc. Notify subscribers so they
       // re-sync even when durable model reference cleanup needs another attempt.
-      this.notifyConfigChanged();
+      this.notifyFromMutation();
       return {
         success: false,
         error: addErrorReason(
@@ -666,7 +723,7 @@ export class ProviderService {
       };
     }
 
-    this.notifyConfigChanged();
+    this.notifyFromMutation();
     return { success: true, data: undefined };
   }
 
@@ -786,7 +843,7 @@ export class ProviderService {
 
       providersConfig[provider].models = normalizedModels;
       this.config.saveProvidersConfig(providersConfig);
-      this.notifyConfigChanged();
+      this.notifyFromMutation();
 
       return { success: true, data: undefined };
     } catch (error) {
@@ -916,7 +973,7 @@ export class ProviderService {
 
       // Save updated config
       this.config.saveProvidersConfig(providersConfig);
-      this.notifyConfigChanged();
+      this.notifyFromMutation();
       await this.syncGatewayLifecycle(provider);
 
       return { success: true, data: undefined };
@@ -1026,7 +1083,7 @@ export class ProviderService {
 
       // Save updated config
       this.config.saveProvidersConfig(providersConfig);
-      this.notifyConfigChanged();
+      this.notifyFromMutation();
       await this.syncGatewayLifecycle(provider);
 
       return { success: true, data: undefined };

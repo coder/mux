@@ -23,6 +23,7 @@ import {
   OPENAI_REASONING_EFFORT,
   OPENROUTER_REASONING_EFFORT,
 } from "@/common/types/thinking";
+import { isGeminiFlashThinkingLevelModelName } from "@/common/utils/thinking/policy";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
@@ -409,22 +410,25 @@ export function buildProviderOptions(
 
   // Build Google-specific options
   if (formatProvider === "google") {
-    const isGemini3 = capModelName.includes("gemini-3");
+    const capBareModelName = capModelName.split("/").at(-1) ?? capModelName;
+    const usesGeminiThinkingLevelConfig = capBareModelName.includes("gemini-3");
+    const isGeminiFlashThinkingModel = isGeminiFlashThinkingLevelModelName(capBareModelName);
     let thinkingConfig: GoogleGenerativeAIProviderOptions["thinkingConfig"];
 
-    if (effectiveThinking !== "off") {
+    if (isGeminiFlashThinkingModel && effectiveThinking === "off") {
+      // Gemini Flash chat models default to medium and do not support true thinking-off;
+      // send minimal explicitly so Mux's "off" setting means lowest-effort behavior.
+      thinkingConfig = { thinkingLevel: "minimal" };
+    } else if (effectiveThinking !== "off") {
       thinkingConfig = {
         includeThoughts: true,
       };
 
-      if (isGemini3) {
-        // Policy enforcement already clamped to valid levels for Flash/Pro,
-        // so effectiveThinking is guaranteed in the model's allowed set.
-        // Flash: off/low/medium/high; Pro: low/high. "xhigh" can't reach here.
-        thinkingConfig.thinkingLevel = effectiveThinking as Exclude<
-          ThinkingLevel,
-          "off" | "xhigh" | "max"
-        >;
+      if (usesGeminiThinkingLevelConfig) {
+        // Policy enforcement should clamp to valid Google levels before this adapter runs.
+        // Avoid leaking xhigh/max to Google if a caller bypasses policy.
+        thinkingConfig.thinkingLevel =
+          effectiveThinking === "xhigh" || effectiveThinking === "max" ? "high" : effectiveThinking;
       } else {
         // Gemini 2.5 uses thinkingBudget
         const budget = GEMINI_THINKING_BUDGETS[effectiveThinking];

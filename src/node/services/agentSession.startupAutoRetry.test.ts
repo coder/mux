@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "events";
 import { AgentSession } from "./agentSession";
+import { createAgentSessionHarness } from "./agentSession.testHarness";
 import { createTestHistoryService } from "./testHistoryService";
 import type { AIService } from "./aiService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
@@ -12,11 +13,13 @@ import { createMuxMessage } from "@/common/types/message";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { Ok } from "@/common/types/result";
+import { GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 interface AutoRetryResumeRequest {
   options: SendMessageOptions;
   agentInitiated?: boolean;
+  goalKind?: typeof GOAL_CONTINUATION_KIND;
 }
 
 interface SessionBundle {
@@ -31,8 +34,6 @@ interface SessionBundle {
 }
 
 async function createSessionBundle(workspaceId: string): Promise<SessionBundle> {
-  const { historyService, config, cleanup } = await createTestHistoryService();
-
   const workspaceMetadata: WorkspaceMetadata = {
     id: workspaceId,
     name: workspaceId,
@@ -47,59 +48,16 @@ async function createSessionBundle(workspaceId: string): Promise<SessionBundle> 
     },
   };
 
-  const aiService: AIService = {
-    on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
-      return this;
-    },
-    off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
-      return this;
-    },
-    stopStream: mock(() => Promise.resolve(Ok(undefined))),
-    isStreaming: mock(() => false),
-    getStreamInfo: mock(() => null),
-    streamMessage: mock(() => Promise.resolve(Ok(undefined))),
-    getWorkspaceMetadata: mock(() => Promise.resolve(Ok(workspaceMetadata))),
-  } as unknown as AIService;
-
-  const initStateManager: InitStateManager = {
-    on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
-      return this;
-    },
-    off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
-      return this;
-    },
-    replayInit: mock(() => Promise.resolve()),
-  } as unknown as InitStateManager;
-
-  const backgroundProcessManager: BackgroundProcessManager = {
-    cleanup: mock(() => Promise.resolve()),
-    setMessageQueued: mock(() => undefined),
-  } as unknown as BackgroundProcessManager;
-
-  const session = new AgentSession({
+  return createAgentSessionHarness({
     workspaceId,
-    config,
-    historyService,
-    aiService,
-    initStateManager,
-    backgroundProcessManager,
+    aiServiceOverrides: {
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(workspaceMetadata))),
+    },
+    initStateManagerOverrides: {
+      replayInit: mock(() => Promise.resolve()),
+    },
+    captureEvents: true,
   });
-
-  const events: WorkspaceChatMessage[] = [];
-  session.onChatEvent(({ message }) => {
-    events.push(message);
-  });
-
-  return {
-    session,
-    config,
-    historyService,
-    aiService,
-    initStateManager,
-    backgroundProcessManager,
-    events,
-    cleanup,
-  };
 }
 
 describe("AgentSession startup auto-retry recovery", () => {
@@ -352,33 +310,14 @@ describe("AgentSession startup auto-retry recovery", () => {
 
   test("waits for AI streaming to settle before rerunning deferred startup checks", async () => {
     const workspaceId = "startup-retry-wait-stream-settle";
-    const { historyService, config, cleanup } = await createTestHistoryService();
-    cleanups.push(cleanup);
-
     let aiStreaming = true;
-    const aiEmitter = new EventEmitter();
-    const aiService = Object.assign(aiEmitter, {
-      isStreaming: mock((_workspaceId: string) => aiStreaming),
-      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
-      streamMessage: mock(() => Promise.resolve(Ok(undefined))),
-    }) as unknown as AIService;
-
-    const initStateManager = new EventEmitter() as unknown as InitStateManager;
-    const backgroundProcessManager: BackgroundProcessManager = {
-      cleanup: mock((_workspaceId: string) => Promise.resolve()),
-      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
-        void _queued;
-      }),
-    } as unknown as BackgroundProcessManager;
-
-    const session = new AgentSession({
+    const { session, cleanup, aiEmitter } = await createAgentSessionHarness({
       workspaceId,
-      config,
-      historyService,
-      aiService,
-      initStateManager,
-      backgroundProcessManager,
+      aiServiceOverrides: {
+        isStreaming: mock((_workspaceId: string) => aiStreaming),
+      },
     });
+    cleanups.push(cleanup);
 
     const privateSession = session as unknown as {
       scheduleStartupAutoRetryIfNeeded: () => Promise<"completed" | "deferred">;
@@ -432,6 +371,7 @@ describe("AgentSession startup auto-retry recovery", () => {
       workspaceId,
       createMuxMessage("user-1", "user", "Interrupted with custom send options", {
         timestamp: Date.now(),
+        kind: GOAL_CONTINUATION_KIND,
         retrySendOptions: {
           model: "anthropic:claude-sonnet-4-5",
           agentId: "exec",
@@ -478,6 +418,8 @@ describe("AgentSession startup auto-retry recovery", () => {
     expect(retryOptions.options.maxOutputTokens).toBe(2048);
     expect(retryOptions.options.toolPolicy).toEqual([{ regex_match: "bash", action: "disable" }]);
     expect(retryOptions.options.disableWorkspaceAgents).toBe(true);
+    expect(retryOptions.goalKind).toBe(GOAL_CONTINUATION_KIND);
+
     expect(retryOptions.options.providerOptions?.anthropic?.use1MContext).toBe(true);
 
     session.dispose();
@@ -542,18 +484,14 @@ describe("AgentSession startup auto-retry recovery", () => {
     await firstSession.setAutoRetryEnabled(false);
     firstSession.dispose();
 
-    const secondSession = new AgentSession({
+    const { session: secondSession, events } = await createAgentSessionHarness({
       workspaceId,
       config,
       historyService,
       aiService,
       initStateManager,
       backgroundProcessManager,
-    });
-
-    const events: WorkspaceChatMessage[] = [];
-    secondSession.onChatEvent(({ message }) => {
-      events.push(message);
+      captureEvents: true,
     });
 
     secondSession.ensureStartupAutoRetryCheck();
@@ -631,18 +569,14 @@ describe("AgentSession startup auto-retry recovery", () => {
     await firstSession.setAutoRetryEnabled(true, { persist: false });
     firstSession.dispose();
 
-    const secondSession = new AgentSession({
+    const { session: secondSession, events } = await createAgentSessionHarness({
       workspaceId,
       config,
       historyService,
       aiService,
       initStateManager,
       backgroundProcessManager,
-    });
-
-    const events: WorkspaceChatMessage[] = [];
-    secondSession.onChatEvent(({ message }) => {
-      events.push(message);
+      captureEvents: true,
     });
 
     secondSession.ensureStartupAutoRetryCheck();
@@ -686,18 +620,14 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     firstSession.dispose();
 
-    const secondSession = new AgentSession({
+    const { session: secondSession, events } = await createAgentSessionHarness({
       workspaceId,
       config,
       historyService,
       aiService,
       initStateManager,
       backgroundProcessManager,
-    });
-
-    const events: WorkspaceChatMessage[] = [];
-    secondSession.onChatEvent(({ message }) => {
-      events.push(message);
+      captureEvents: true,
     });
 
     secondSession.ensureStartupAutoRetryCheck();

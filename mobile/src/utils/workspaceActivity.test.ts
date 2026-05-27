@@ -28,14 +28,14 @@ describe("getWorkspaceActivityPresentation", () => {
       getWorkspaceActivityPresentation(
         createActivitySnapshot({
           streaming: true,
-          lastModel: "openai/gpt-5-mini",
+          lastModel: "openai:gpt-5.4-mini",
           agentStatus: { emoji: "🧪", message: "Running tests" },
         }),
         "Just now"
       )
     ).toEqual({
       label: "Running tests",
-      detail: "GPT-5 mini",
+      detail: "GPT-5.4 Mini",
       tone: "active",
     });
   });

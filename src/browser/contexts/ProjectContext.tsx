@@ -23,6 +23,7 @@ import {
 } from "@/common/constants/storage";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
+import { getFirstTopLevelProjectPath } from "@/common/utils/subProjects";
 import {
   normalizeProjectPathForComparison,
   resolveProjectPathFromProjectQuery,
@@ -311,12 +312,6 @@ export function ProjectProvider(props: { children: ReactNode }) {
 
   const hasAnyProject = allProjectsInternal.size > 0;
 
-  // Default project selection should only target user-visible projects.
-  const resolveDefaultProjectPath = useCallback(() => {
-    const firstUser = userProjects.keys().next().value;
-    return typeof firstUser === "string" ? firstUser : null;
-  }, [userProjects]);
-
   // Canonical resolver for new-chat deep links: explicit selectors first, default fallback last.
   const resolveNewChatProjectPath = useCallback(
     (selector: NewChatProjectSelector): string | null => {
@@ -340,9 +335,11 @@ export function ProjectProvider(props: { children: ReactNode }) {
         if (byQuery) return byQuery;
       }
 
-      return resolveDefaultProjectPath();
+      // Default project selection targets parent-owned projects because sub-projects
+      // are displayed as sections under their parent rather than standalone routes.
+      return getFirstTopLevelProjectPath(userProjects);
     },
-    [resolveProjectPath, resolveDefaultProjectPath]
+    [resolveProjectPath, userProjects]
   );
 
   const getBranchesForProject = useCallback(

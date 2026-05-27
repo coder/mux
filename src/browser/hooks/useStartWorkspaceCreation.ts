@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import type { ProjectConfig } from "@/node/config";
+import type { ProjectConfig } from "@/common/types/project";
 import { CUSTOM_EVENTS, type CustomEventPayloads } from "@/common/constants/events";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
@@ -9,14 +9,13 @@ import {
   getProjectScopeId,
   getTrunkBranchKey,
 } from "@/common/constants/storage";
+import {
+  getFirstTopLevelProjectPath,
+  resolveWorkspaceCreationScope,
+} from "@/common/utils/subProjects";
 
 export type StartWorkspaceCreationDetail =
   CustomEventPayloads[typeof CUSTOM_EVENTS.START_WORKSPACE_CREATION];
-
-export function getFirstProjectPath(projects: Map<string, ProjectConfig>): string | null {
-  const iterator = projects.keys().next();
-  return iterator.done ? null : iterator.value;
-}
 
 type PersistFn = typeof updatePersistedState;
 
@@ -54,32 +53,27 @@ interface UseStartWorkspaceCreationOptions {
   beginWorkspaceCreation: (projectPath: string) => void;
 }
 
-function resolveProjectPath(
-  projects: Map<string, ProjectConfig>,
-  requestedPath: string
-): string | null {
-  if (projects.has(requestedPath)) {
-    return requestedPath;
-  }
-
-  return getFirstProjectPath(projects);
-}
-
 export function useStartWorkspaceCreation({
   projects,
   beginWorkspaceCreation,
 }: UseStartWorkspaceCreationOptions) {
   const startWorkspaceCreation = useCallback(
     (projectPath: string, detail?: StartWorkspaceCreationDetail) => {
-      const resolvedProjectPath = resolveProjectPath(projects, projectPath);
+      const resolvedProjectPath = projects.has(projectPath)
+        ? projectPath
+        : getFirstTopLevelProjectPath(projects);
 
       if (!resolvedProjectPath) {
         console.warn("No projects available for workspace creation");
         return;
       }
 
-      persistWorkspaceCreationPrefill(resolvedProjectPath, detail);
-      beginWorkspaceCreation(resolvedProjectPath);
+      const creationScope = resolveWorkspaceCreationScope(resolvedProjectPath, projects);
+      // Sub-project creation shares the parent project's worktree/settings, so
+      // persisted prefill belongs to the owning parent even when the route opens
+      // the sub-project section.
+      persistWorkspaceCreationPrefill(creationScope.projectPath, detail);
+      beginWorkspaceCreation(creationScope.subProjectPath ?? creationScope.projectPath);
     },
     [projects, beginWorkspaceCreation]
   );

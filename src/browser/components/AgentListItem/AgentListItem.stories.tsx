@@ -20,6 +20,7 @@ import {
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
+import type { WorkspaceActivitySnapshot } from "@/common/orpc/types";
 
 const meta: Meta<typeof AgentListItem> = {
   title: "Components/AgentListItem",
@@ -82,8 +83,10 @@ function StoryScaffold(props: {
   activeWorkspaceId?: string;
   workspaces?: ReadonlyArray<(typeof STORY_WORKSPACES)[number]>;
   rowContainerClassName?: string;
+  workspaceActivitySnapshots?: Record<string, WorkspaceActivitySnapshot>;
 }) {
   const api = createMockORPCClient({
+    workspaceActivitySnapshots: props.workspaceActivitySnapshots,
     onChat: (workspaceId, emit) => {
       emit({ type: "caught-up", hasOlderHistory: false });
       if (workspaceId === "ws-active") {

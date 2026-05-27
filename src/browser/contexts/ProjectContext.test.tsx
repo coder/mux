@@ -615,6 +615,21 @@ describe("ProjectContext", () => {
     expect(result).toBe("/user-proj");
   });
 
+  test("resolveNewChatProjectPath skips sub-projects for unscoped fallback", async () => {
+    createMockAPI({
+      list: () =>
+        Promise.resolve([
+          ["/repo/packages/api", { workspaces: [], parentProjectPath: "/repo" }],
+          ["/repo", { workspaces: [] }],
+        ]),
+    });
+
+    const ctx = await setup();
+    await waitFor(() => expect(ctx().userProjects.size).toBe(2));
+
+    expect(ctx().resolveNewChatProjectPath({})).toBe("/repo");
+  });
+
   test("resolveNewChatProjectPath returns null when no user projects exist", async () => {
     createMockAPI({
       list: () => Promise.resolve([["/system-only", { workspaces: [], projectKind: "system" }]]),

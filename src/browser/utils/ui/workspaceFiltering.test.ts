@@ -12,21 +12,50 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/common/types/project";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 
+interface WorkspaceFixtureOptions {
+  projectPath?: string;
+  projectName?: string;
+  isInitializing?: boolean;
+  parentWorkspaceId?: string;
+  taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
+  reportedAt?: string;
+}
+
+const createWorkspace = (
+  id: string,
+  projectPathOrOptions: string | WorkspaceFixtureOptions = {},
+  isInitializing?: boolean,
+  parentWorkspaceId?: string
+): FrontendWorkspaceMetadata => {
+  const options =
+    typeof projectPathOrOptions === "string"
+      ? { projectPath: projectPathOrOptions, isInitializing, parentWorkspaceId }
+      : projectPathOrOptions;
+  const projectPath = options.projectPath ?? "/test/project";
+
+  return {
+    id,
+    name: `workspace-${id}`,
+    projectName:
+      options.projectName ??
+      (projectPath === "/test/project"
+        ? "test-project"
+        : (projectPath.split("/").pop() ?? "unknown")),
+    projectPath,
+    namedWorkspacePath: `${projectPath}/workspace-${id}`,
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    isInitializing: options.isInitializing,
+    parentWorkspaceId: options.parentWorkspaceId,
+    taskStatus: options.taskStatus,
+    reportedAt: options.reportedAt,
+  };
+};
+
+const getAllOld = (buckets: FrontendWorkspaceMetadata[][]) => buckets.flat();
+
 describe("partitionWorkspacesByAge", () => {
   const now = Date.now();
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-
-  const createWorkspace = (id: string): FrontendWorkspaceMetadata => ({
-    id,
-    name: `workspace-${id}`,
-    projectName: "test-project",
-    projectPath: "/test/project",
-    namedWorkspacePath: `/test/project/workspace-${id}`,
-    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-  });
-
-  // Helper to get all "old" workspaces (all buckets combined)
-  const getAllOld = (buckets: FrontendWorkspaceMetadata[][]) => buckets.flat();
 
   it("should partition workspaces into recent and old based on 24-hour threshold", () => {
     const workspaces = [
@@ -182,23 +211,6 @@ describe("partitionWorkspacesByAge hierarchy grouping", () => {
   const now = Date.now();
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-  const createWorkspace = (
-    id: string,
-    opts?: {
-      parentWorkspaceId?: string;
-      taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
-    }
-  ): FrontendWorkspaceMetadata => ({
-    id,
-    name: `workspace-${id}`,
-    projectName: "test-project",
-    projectPath: "/test/project",
-    namedWorkspacePath: `/test/project/workspace-${id}`,
-    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-    parentWorkspaceId: opts?.parentWorkspaceId,
-    taskStatus: opts?.taskStatus,
-  });
-
   it("keeps sub-agents in old tiers when their parent is older than one day", () => {
     const workspaces = [
       createWorkspace("old-parent"),
@@ -266,22 +278,6 @@ describe("formatDaysThreshold", () => {
 });
 
 describe("buildSortedWorkspacesByProject", () => {
-  const createWorkspace = (
-    id: string,
-    projectPath: string,
-    isInitializing?: boolean,
-    parentWorkspaceId?: string
-  ): FrontendWorkspaceMetadata => ({
-    id,
-    name: `workspace-${id}`,
-    projectName: projectPath.split("/").pop() ?? "unknown",
-    projectPath,
-    namedWorkspacePath: `${projectPath}/workspace-${id}`,
-    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-    isInitializing,
-    parentWorkspaceId,
-  });
-
   it("should include workspaces from persisted config", () => {
     const projects = new Map<string, ProjectConfig>([
       ["/project/a", { workspaces: [{ path: "/a/ws1", id: "ws1" }] }],
@@ -622,25 +618,6 @@ describe("buildSortedWorkspacesByProject", () => {
 });
 
 describe("sub-agent row render metadata", () => {
-  const createWorkspace = (
-    id: string,
-    options?: {
-      parentWorkspaceId?: string;
-      taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
-      reportedAt?: string;
-    }
-  ): FrontendWorkspaceMetadata => ({
-    id,
-    name: `workspace-${id}`,
-    projectName: "test-project",
-    projectPath: "/test/project",
-    namedWorkspacePath: `/test/project/workspace-${id}`,
-    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-    parentWorkspaceId: options?.parentWorkspaceId,
-    taskStatus: options?.taskStatus,
-    reportedAt: options?.reportedAt,
-  });
-
   it("assigns middle/last connector positions for a parent with three active children", () => {
     const flattened = [
       createWorkspace("parent"),

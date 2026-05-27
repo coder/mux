@@ -1,0 +1,3191 @@
+import * as fs from "fs/promises";
+import * as path from "path";
+import writeFileAtomic from "write-file-atomic";
+import assert from "@/common/utils/assert";
+import {
+  toGoalSnapshot,
+  toPendingGoalSnapshot,
+  type GoalHistoryEndReason,
+  type GoalHistoryEntry,
+  type GoalRecordV1,
+  type GoalSetError,
+  type GoalSnapshot,
+  type GoalStatus,
+} from "@/common/types/goal";
+import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
+import type { Workspace } from "@/common/types/project";
+import type { Result } from "@/common/types/result";
+import { Err, Ok } from "@/common/types/result";
+import {
+  GoalBoardV1Schema,
+  GoalHistoryEntrySchema,
+  GoalRecordV1Schema,
+} from "@/common/orpc/schemas/goal";
+import type { GoalBoardEntry, GoalBoardSnapshot, GoalBoardV1 } from "@/common/types/goal";
+import { createMuxMessage, pickStartupRetrySendOptions } from "@/common/types/message";
+import type { ProvidersConfigMap, SendMessageOptions } from "@/common/orpc/types";
+import { isWorkspaceArchived } from "@/common/utils/archive";
+import {
+  hasBudgetedResumableGoal,
+  hasGoalBudgetLimit,
+  modelHasPricingData,
+  normalizeGoalBudgetCents,
+  UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+} from "@/common/utils/goals/budgetPricing";
+import type { SendMessageError } from "@/common/types/errors";
+import type { Config } from "@/node/config";
+import type { HistoryService } from "@/node/services/historyService";
+import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+import {
+  DEFAULT_GOAL_CONTINUATION_COOLDOWN_MS,
+  GOAL_BUDGET_LIMIT_KIND,
+  GOAL_CONTINUATION_IDLE_CONSUMER_NAME,
+  GOAL_CONTINUATION_IDLE_CONSUMER_PRIORITY,
+  GOAL_CONTINUATION_KIND,
+  type GoalSyntheticMessageKind,
+} from "@/constants/goals";
+import { buildGoalBudgetLimitMessage, buildGoalContinuationMessage } from "@/constants/goalPrompts";
+import type { IdleDispatcher, IdleDispatchPayload } from "./idleDispatcher";
+import { log } from "./log";
+
+const GOAL_FILE = "goal.json";
+const GOAL_BOARD_FILE = "goal-board.json";
+const PENDING_GOAL_EDIT_MESSAGE =
+  "Goal is still being saved. Wait for the current stream to finish before editing it.";
+
+const GOAL_HISTORY_FILE = "goal-history.jsonl";
+// Cap the number of history entries returned to the renderer. Goal lifecycles
+// are coarse-grained (one entry per clear / replace / mark-complete) so a
+// generous cap still keeps the response payload bounded; older entries remain
+// on disk in the JSONL but are simply not surfaced to the UI.
+const GOAL_HISTORY_RENDER_CAP = 200;
+const MICRO_CENTS_PER_CENT = 1_000_000;
+
+function costUsdToMicroCents(costUsd: number | null | undefined): number {
+  return Math.max(0, Math.round((costUsd ?? 0) * 100 * MICRO_CENTS_PER_CENT));
+}
+
+/**
+ * Returns the goal's accumulated cost in micro-cents, falling back to the
+ * coarser `costCents` field for goals persisted before micro-cent tracking
+ * was added.
+ */
+function getGoalCostMicroCents(goal: GoalRecordV1): number {
+  return goal.costMicroCents ?? goal.costCents * MICRO_CENTS_PER_CENT;
+}
+
+type GoalLifecycleEvent =
+  | "goal_created"
+  | "goal_replaced"
+  | "goal_cleared"
+  | "goal_paused"
+  | "goal_resumed"
+  | "goal_completed"
+  | "goal_budget_changed"
+  | "goal_budget_limited"
+  | "goal_continuation_fired"
+  | "goal_wrapup_fired"
+  | "goal_crash_gate_set";
+
+type GoalLifecycleProperties = Record<string, string | number | boolean | null>;
+type GoalLifecycleInitiator = "user" | "model" | "auto";
+
+export interface GoalLifecycleAnalyticsSink {
+  recordGoalLifecycleEvent(event: GoalLifecycleEvent, properties: GoalLifecycleProperties): void;
+}
+
+export interface SetGoalInput {
+  workspaceId: string;
+  objective?: string | null;
+  status?: GoalStatus | null;
+  budgetCents?: number | null;
+  turnCap?: number | null;
+  completionSummary?: string | null;
+  expectedGoalId?: string | null;
+  requireUserAcknowledgmentSinceMs?: number | null;
+  initiator?: GoalLifecycleInitiator;
+  /**
+   * When true and a current goal already exists, an objective update mutates
+   * the existing record in place (preserving goalId + accounting) instead of
+   * archiving + replacing. See the matching field on the public
+   * `GoalSetInputSchema` for the rationale.
+   */
+  editInPlace?: boolean | null;
+}
+
+export type GoalContinuationSkipReason =
+  | "not_registered"
+  | "no_pending_candidate"
+  | "workspace_not_found"
+  | "archived"
+  | "transcript_only"
+  | "initializing"
+  | "incompatible_runtime"
+  | "child_workspace"
+  | "active_descendant_tasks"
+  | "currently_streaming"
+  | "queued_user_input"
+  | "pending_follow_up"
+  | "plan_mode"
+  | "compact_mode"
+  | "user_stop"
+  | "goal_missing"
+  | "goal_mismatch"
+  | "goal_not_active"
+  | "requires_ack"
+  | "budget_wrapup_already_fired"
+  | "budget_wrapup_suppressed"
+  | "cooldown";
+
+export interface GoalContinuationRuntimeState {
+  isInitializing?: boolean;
+  isRuntimeCompatible?: boolean;
+  isBusy?: boolean;
+  hasQueuedMessages?: boolean;
+  hasPendingFollowUp?: boolean;
+}
+
+export interface GoalContinuationRuntimeBridge {
+  hasActiveDescendantTasks(workspaceId: string): boolean;
+  getRuntimeState(workspaceId: string): GoalContinuationRuntimeState;
+  executeGoalContinuation(input: {
+    workspaceId: string;
+    message: string;
+    options: SendMessageOptions;
+    kind?: GoalSyntheticMessageKind;
+  }): Promise<boolean>;
+  /**
+   * Build default SendMessageOptions for a kickoff continuation that is armed
+   * outside of a stream-end (e.g. when the user resumes a paused goal on an
+   * idle workspace). Returns null when defaults can't be derived.
+   */
+  getKickoffSendOptions?(workspaceId: string): SendMessageOptions | null;
+}
+
+interface PendingGoalContinuationCandidate {
+  goalId: string;
+  requestedAtMs: number;
+  streamEndedAtMs: number;
+  sendOptions: SendMessageOptions;
+}
+
+interface GoalContinuationEligibilityResult {
+  eligible: boolean;
+  reason?: GoalContinuationSkipReason;
+  goal?: GoalRecordV1;
+  candidate?: PendingGoalContinuationCandidate;
+  lastStreamStamp?: GoalStreamStamp;
+  deferUntilMs?: number;
+}
+
+interface PendingGoalMutation {
+  objective: string;
+  budgetCents?: number | null;
+  turnCap?: number | null;
+  status?: GoalStatus | null;
+  completionSummary?: string | null;
+  expectedGoalId?: string | null;
+  initiator?: GoalLifecycleInitiator;
+  /**
+   * Carries the caller's `editInPlace` intent across mid-stream deferral so
+   * a queued rename preserves goalId + accounting when it drains.
+   */
+  editInPlace?: boolean | null;
+}
+
+export type GoalStreamOriginKind = "goal_continuation" | "goal_budget_limit" | "user" | "other";
+
+interface GoalStreamStamp {
+  originKind: GoalStreamOriginKind;
+  sequence: number;
+  goalId: string | null;
+}
+
+interface StreamAccountingInput {
+  workspaceId: string;
+  /** Total cost attributable to this stream from start (cumulative for previews, final for records). */
+  costUsd?: number | null;
+  isCompaction?: boolean;
+  streamStartedAtMs?: number | null;
+  streamOriginKind?: GoalStreamOriginKind;
+}
+
+export interface ChildReportAttributionInput {
+  parentWorkspaceId: string;
+  childWorkspaceId: string;
+  childCostCents: number;
+}
+
+export interface ChildReportAttributionResult {
+  goalBefore: GoalRecordV1;
+  goalAfter: GoalRecordV1;
+  attributed: boolean;
+  causedBudgetLimit: boolean;
+}
+
+function skippedChildAttribution(goal: GoalRecordV1): ChildReportAttributionResult {
+  return {
+    goalBefore: goal,
+    goalAfter: goal,
+    attributed: false,
+    causedBudgetLimit: false,
+  };
+}
+
+export class WorkspaceGoalChildWorkspaceError extends Error {
+  readonly code = "GOAL_CHILD_WORKSPACE";
+
+  constructor(workspaceId: string) {
+    super(
+      `Workspace ${workspaceId} is a child task workspace. Goals can only be set on parent workspaces.`
+    );
+    this.name = "WorkspaceGoalChildWorkspaceError";
+  }
+}
+
+export class WorkspaceGoalTransitionError extends Error {
+  readonly code = "GOAL_INVALID_TRANSITION";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspaceGoalTransitionError";
+  }
+}
+
+function isNotFound(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+}
+
+function lengthBucket(length: number): string {
+  if (length < 10) return "0-9";
+  if (length < 50) return "10-49";
+  if (length < 100) return "50-99";
+  return "100+";
+}
+
+function centsBucket(cents: number): string {
+  if (cents === 0) return "0";
+  if (cents < 100) return "1-99";
+  if (cents < 1_000) return "100-999";
+  return "1000+";
+}
+
+function countBucket(count: number): string {
+  if (count === 0) return "0";
+  if (count < 10) return "1-9";
+  if (count < 100) return "10-99";
+  return "100+";
+}
+
+/**
+ * Local helper kept bare-decimal because the only call site (clear summary)
+ * embeds it in a template literal that already supplies the `$` prefix.
+ * Distinct from the shared `formatGoalCents` in `budgetPricing.ts` (which is
+ * dollar-prefixed); callers that want the prefixed form must import from
+ * there rather than defining a local copy.
+ */
+function formatCentsBare(cents: number): string {
+  return (cents / 100).toFixed(2);
+}
+
+function actionForStatus(status: GoalStatus): "pause" | "resume" | "complete" {
+  if (status === "active") {
+    return "resume";
+  }
+  if (status === "complete") {
+    return "complete";
+  }
+  return "pause";
+}
+
+function completionSummaryPatch(
+  status: GoalStatus | null | undefined,
+  completionSummary: string | null
+): Pick<GoalRecordV1, "completionSummary"> | Record<string, never> {
+  if (status === "complete" && completionSummary != null) {
+    return { completionSummary };
+  }
+  if (status != null && status !== "complete") {
+    return { completionSummary: undefined };
+  }
+  return {};
+}
+
+/**
+ * Whitelist the model/agent configuration carried into synthetic continuations.
+ *
+ * The prior turn's full `SendMessageOptions` may carry payload-adjacent fields
+ * (e.g. attachments at the IPC boundary, edit/correlation ids, mux metadata)
+ * that should never be re-sent on auto-continuations:
+ *  - re-sending attachments inflates cost and can hit per-request limits.
+ *  - replaying `editMessageId` / `acpPromptId` / `muxMetadata` retargets the
+ *    synthetic message at the wrong turn or breaks ACP correlation.
+ *
+ * `pickStartupRetrySendOptions` already encodes the canonical whitelist used
+ * for crash-recovery retries, so reuse it here.
+ */
+function continuationSendOptions(sendOptions: SendMessageOptions): SendMessageOptions {
+  return pickStartupRetrySendOptions(sendOptions) as SendMessageOptions;
+}
+
+export interface WorkspaceGoalServiceOptions {
+  /** Override interactive continuation cooldown; CLI goal runs use 0 to drive immediately. */
+  continuationCooldownMs?: number;
+  /** Allow CLI kickoff turns to receive the same budget-limit wrap-up as continuations. */
+  allowUserOriginBudgetWrapup?: boolean;
+  /** Prevent setGoal from queuing an automatic kickoff when the CLI sends its own message. */
+  suppressKickoffContinuation?: boolean;
+}
+
+export class WorkspaceGoalService {
+  private readonly fileLocks = workspaceFileLocks;
+  private readonly continuationCooldownMs: number;
+  private readonly allowUserOriginBudgetWrapup: boolean;
+  private readonly suppressKickoffContinuation: boolean;
+  private readonly pendingGoalMutations = new Map<string, PendingGoalMutation>();
+  private readonly pendingGoalSnapshots = new Map<string, GoalSnapshot>();
+  private readonly liveGoalPreviewSnapshots = new Map<string, GoalSnapshot>();
+
+  private pendingContinuationCandidates = new Map<string, PendingGoalContinuationCandidate>();
+  private continuationReRequestTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private lastUserStopAtMsByWorkspace = new Map<string, number>();
+  private recordedStreamStartedAtMsByWorkspace = new Map<string, number>();
+  private lastGoalStreamStamps = new Map<string, GoalStreamStamp>();
+  private nextGoalStreamStampSequence = 1;
+  private goalContinuationBridge: GoalContinuationRuntimeBridge | null = null;
+  private goalContinuationDispatcher: IdleDispatcher | null = null;
+  private goalContinuationConsumerDisposer: (() => void) | null = null;
+
+  private onActivityChange?: (workspaceId: string, snapshot: WorkspaceActivitySnapshot) => void;
+
+  /**
+   * Injected callback that interrupts the active stream for a workspace.
+   * Wired in `coreServices` via `WorkspaceService.interruptStream`. Tests
+   * that don't supply one simply skip the interrupt step — `promote
+   * UpcomingGoal` then falls back to its file-lock body as a plain
+   * stream-free promotion, which keeps unit tests deterministic.
+   */
+  private streamInterrupter?: (workspaceId: string) => Promise<void>;
+
+  constructor(
+    private readonly config: Config,
+    private readonly historyService: HistoryService,
+    private readonly extensionMetadata: ExtensionMetadataService,
+    private readonly analytics?: GoalLifecycleAnalyticsSink,
+    options: WorkspaceGoalServiceOptions = {}
+  ) {
+    this.continuationCooldownMs =
+      options.continuationCooldownMs ?? DEFAULT_GOAL_CONTINUATION_COOLDOWN_MS;
+    this.allowUserOriginBudgetWrapup = options.allowUserOriginBudgetWrapup === true;
+    this.suppressKickoffContinuation = options.suppressKickoffContinuation === true;
+    assert(
+      Number.isFinite(this.continuationCooldownMs) && this.continuationCooldownMs >= 0,
+      "WorkspaceGoalService requires a non-negative continuation cooldown"
+    );
+  }
+
+  async restoreGoalAccountingSnapshot(
+    workspaceId: string,
+    streamStartedAtMs: number | null = null
+  ): Promise<void> {
+    assert(workspaceId.trim().length > 0, "restoreGoalAccountingSnapshot requires workspaceId");
+    await this.restorePersistedGoalSnapshot(workspaceId, { streamStartedAtMs });
+  }
+
+  setOnActivityChange(
+    listener: (workspaceId: string, snapshot: WorkspaceActivitySnapshot) => void
+  ): void {
+    this.onActivityChange = listener;
+  }
+
+  setStreamInterrupter(interrupter: (workspaceId: string) => Promise<void>): void {
+    this.streamInterrupter = interrupter;
+  }
+
+  private getFilePath(workspaceId: string): string {
+    assert(workspaceId.trim().length > 0, "WorkspaceGoalService requires non-empty workspaceId");
+    return path.join(this.config.getSessionDir(workspaceId), GOAL_FILE);
+  }
+
+  private getHistoryFilePath(workspaceId: string): string {
+    assert(workspaceId.trim().length > 0, "WorkspaceGoalService requires non-empty workspaceId");
+    return path.join(this.config.getSessionDir(workspaceId), GOAL_HISTORY_FILE);
+  }
+
+  /**
+   * Append a goal record snapshot to the workspace's goal-history JSONL.
+   * Callers are expected to hold the workspace file lock so this never races
+   * with a `writeGoal` for the same workspace. A serialize-then-append failure
+   * is logged but never bubbled: the user's lifecycle action (clear, replace,
+   * complete) must succeed even if history persistence fails, because the
+   * authoritative state lives in `goal.json` and the lifecycle event log.
+   */
+  private async appendGoalHistoryEntry(
+    workspaceId: string,
+    goal: GoalRecordV1,
+    endReason: GoalHistoryEndReason
+  ): Promise<void> {
+    const entry: GoalHistoryEntry = {
+      version: 1,
+      endReason,
+      endedAtMs: Date.now(),
+      goal,
+    };
+    const filePath = this.getHistoryFilePath(workspaceId);
+    try {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      // JSONL append: one entry per line, no rewriting prior history. Newline
+      // first would corrupt readers expecting a trailing newline on the last
+      // record, so we always emit `<json>\n`.
+      await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, "utf-8");
+    } catch (error) {
+      log.warn("Failed to append goal history entry", { workspaceId, endReason, error });
+    }
+  }
+
+  private createGoal(input: {
+    objective: string;
+    budgetCents: number | null;
+    turnCap: number | null;
+    status?: GoalStatus | null;
+    completionSummary?: string | null;
+  }): GoalRecordV1 {
+    const now = Date.now();
+    const status = input.status ?? "active";
+    const goal = GoalRecordV1Schema.parse({
+      version: 1,
+      goalId: crypto.randomUUID(),
+      objective: input.objective,
+      status,
+      budgetCents: normalizeGoalBudgetCents(input.budgetCents),
+      turnCap: input.turnCap,
+      costCents: 0,
+      costMicroCents: 0,
+      turnsUsed: 0,
+      attributedChildren: [],
+      budgetLimitInjectedForGoalId: null,
+      requireUserAcknowledgmentSinceMs: null,
+      lastContinuationFiredAtMs: null,
+      ...(input.completionSummary != null
+        ? { completionSummary: input.completionSummary.trim() }
+        : {}),
+      createdAtMs: now,
+      updatedAtMs: now,
+    });
+    return status === "active" ? this.applyBudgetDrivenStatus(goal) : goal;
+  }
+
+  private async writeGoal(workspaceId: string, goal: GoalRecordV1): Promise<void> {
+    const filePath = this.getFilePath(workspaceId);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await writeFileAtomic(filePath, `${JSON.stringify(goal, null, 2)}\n`, "utf-8");
+  }
+
+  private async renameCorruptGoal(
+    workspaceId: string,
+    filePath: string,
+    error: unknown
+  ): Promise<void> {
+    const corruptPath = `${filePath}.corrupt-${Date.now()}`;
+    try {
+      await fs.rename(filePath, corruptPath);
+    } catch (renameError) {
+      if (!isNotFound(renameError)) {
+        log.warn("Failed to rename corrupt goal.json", { workspaceId, error: renameError });
+      }
+    }
+    log.warn("Ignoring corrupt goal.json", { workspaceId, corruptPath, error });
+    await this.pushSnapshot(workspaceId, null);
+  }
+
+  private async readGoalFile(workspaceId: string): Promise<GoalRecordV1 | null> {
+    const filePath = this.getFilePath(workspaceId);
+    let raw: string;
+    try {
+      raw = await fs.readFile(filePath, "utf-8");
+    } catch (error) {
+      if (isNotFound(error)) {
+        return null;
+      }
+      throw error;
+    }
+
+    try {
+      return GoalRecordV1Schema.parse(JSON.parse(raw));
+    } catch (error) {
+      await this.renameCorruptGoal(workspaceId, filePath, error);
+      return null;
+    }
+  }
+
+  private async pushSnapshot(
+    workspaceId: string,
+    goal: GoalRecordV1 | null
+  ): Promise<GoalSnapshot | null> {
+    const snapshot = goal ? toGoalSnapshot(goal) : null;
+    const activity = await this.extensionMetadata.setGoal(workspaceId, snapshot);
+    this.onActivityChange?.(workspaceId, activity);
+    return snapshot;
+  }
+
+  private async pushTransientGoalSnapshot(
+    workspaceId: string,
+    snapshot: GoalSnapshot
+  ): Promise<boolean> {
+    const activity = await this.extensionMetadata.getSnapshot(workspaceId);
+    if (!activity) {
+      // No baseline activity snapshot to overlay the transient goal on
+      // (extensionMetadata has no entry for this workspace yet). Callers
+      // that must guarantee delivery — e.g. live cost previews — should
+      // observe this `false` return and fall back to `pushSnapshot`, which
+      // creates the entry and emits via the durable path. Pending-goal
+      // publication does not retry here because it only fires after a
+      // `setGoal` that already created the entry.
+      return false;
+    }
+    this.onActivityChange?.(workspaceId, {
+      ...activity,
+      goal: snapshot,
+      transientGoalOnly: true,
+    });
+    return true;
+  }
+
+  private async pushLiveGoalPreviewOverlay(
+    workspaceId: string,
+    durableGoal: GoalRecordV1
+  ): Promise<void> {
+    const livePreview = this.liveGoalPreviewSnapshots.get(workspaceId);
+    if (!livePreview || livePreview.goalId !== durableGoal.goalId) {
+      return;
+    }
+
+    const durableSnapshot = toGoalSnapshot(durableGoal);
+    if (livePreview.costCents <= durableSnapshot.costCents) {
+      return;
+    }
+
+    // Preserve live "budget used" while a user edits budget/turn limits mid-stream.
+    // The mutable edit must persist the durable pre-stream accounting to goal.json so
+    // final `recordStreamAccounting` can add the cumulative stream cost exactly once,
+    // but the Goals UI should keep showing the same live usage Stats already reports.
+    await this.pushTransientGoalSnapshot(workspaceId, {
+      ...durableSnapshot,
+      costCents: livePreview.costCents,
+    });
+  }
+  private async publishPendingGoalSnapshot(workspaceId: string, goal: GoalRecordV1): Promise<void> {
+    const snapshot = toPendingGoalSnapshot(goal);
+    this.pendingGoalSnapshots.set(workspaceId, snapshot);
+    await this.pushTransientGoalSnapshot(workspaceId, snapshot);
+  }
+
+  private async pushGoalReadSnapshot(
+    workspaceId: string,
+    goal: GoalRecordV1 | null
+  ): Promise<GoalSnapshot | null> {
+    const pendingSnapshot = this.pendingGoalSnapshots.get(workspaceId);
+    if (pendingSnapshot) {
+      // Goal reads keep activity snapshots warm, but mid-stream queued goals
+      // must keep showing the transient replacement until stream-end persistence.
+      await this.pushTransientGoalSnapshot(workspaceId, pendingSnapshot);
+      return pendingSnapshot;
+    }
+    if (!goal) {
+      // Goals are GA, so normal model/tool-availability paths call getGoal()
+      // for every turn. Avoid writing `goal: null` on every no-goal read;
+      // explicit lifecycle operations (clear/corrupt repair/etc.) still push
+      // null snapshots when state actually changes.
+      return null;
+    }
+    return this.pushSnapshot(workspaceId, goal);
+  }
+
+  private async restorePersistedGoalSnapshot(
+    workspaceId: string,
+    options: { streamStartedAtMs?: number | null } = {}
+  ): Promise<void> {
+    try {
+      await this.fileLocks.withLock(workspaceId, async () => {
+        this.liveGoalPreviewSnapshots.delete(workspaceId);
+        if (options.streamStartedAtMs != null) {
+          this.recordedStreamStartedAtMsByWorkspace.set(workspaceId, options.streamStartedAtMs);
+        }
+        const current = await this.readGoalFile(workspaceId);
+        await this.pushSnapshot(workspaceId, current);
+      });
+    } catch (error) {
+      log.warn("Failed to restore persisted goal snapshot", { workspaceId, error });
+    }
+  }
+
+  private assertParentWorkspace(workspaceId: string): void {
+    const workspace = this.config.findWorkspace(workspaceId);
+    if (workspace?.parentWorkspaceId != null) {
+      throw new WorkspaceGoalChildWorkspaceError(workspaceId);
+    }
+  }
+
+  private emitLifecycle(event: GoalLifecycleEvent, properties: GoalLifecycleProperties): void {
+    try {
+      this.analytics?.recordGoalLifecycleEvent(event, properties);
+    } catch (error) {
+      log.warn("Failed to record goal lifecycle event", { event, error });
+    }
+  }
+
+  private async isWorkspaceStreaming(workspaceId: string): Promise<boolean> {
+    const snapshot = await this.extensionMetadata.getSnapshot(workspaceId);
+    return snapshot?.streaming === true;
+  }
+
+  /**
+   * Bounded poll for the workspace's streaming flag to drop. Same backoff
+   * as `runDeferredAutoPromoteAfterStreamEnd` so callers never wait more
+   * than ~600ms. Returns silently when the timer exhausts; the caller is
+   * expected to proceed regardless (promote falls open).
+   */
+  private async waitForStreamSettled(workspaceId: string): Promise<void> {
+    const backoffMs = [0, 50, 100, 200, 250];
+    for (const delay of backoffMs) {
+      if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      if (!(await this.isWorkspaceStreaming(workspaceId))) return;
+    }
+  }
+
+  registerGoalContinuationConsumer(
+    idleDispatcher: IdleDispatcher,
+    bridge: GoalContinuationRuntimeBridge
+  ): () => void {
+    assert(idleDispatcher, "registerGoalContinuationConsumer requires an idle dispatcher");
+    assert(bridge, "registerGoalContinuationConsumer requires a runtime bridge");
+    assert(
+      this.goalContinuationConsumerDisposer == null,
+      "goal continuation idle consumer is already registered"
+    );
+
+    this.goalContinuationBridge = bridge;
+    this.goalContinuationDispatcher = idleDispatcher;
+    this.goalContinuationConsumerDisposer = idleDispatcher.registerConsumer({
+      name: GOAL_CONTINUATION_IDLE_CONSUMER_NAME,
+      priority: GOAL_CONTINUATION_IDLE_CONSUMER_PRIORITY,
+      buildPayload: (workspaceId) => this.buildGoalContinuationPayload(workspaceId),
+    });
+
+    return () => {
+      this.goalContinuationConsumerDisposer?.();
+      this.goalContinuationConsumerDisposer = null;
+      this.goalContinuationBridge = null;
+      this.goalContinuationDispatcher = null;
+      for (const timer of this.continuationReRequestTimers.values()) {
+        clearTimeout(timer);
+      }
+      this.continuationReRequestTimers.clear();
+    };
+  }
+
+  private getPricedContinuationSendOptions(
+    workspaceId: string,
+    goal: GoalRecordV1,
+    sendOptions: SendMessageOptions
+  ): SendMessageOptions | null {
+    const normalized = continuationSendOptions(sendOptions);
+    if (!hasBudgetedResumableGoal(goal)) {
+      return normalized;
+    }
+    const providersConfig = this.getProvidersConfigForPricing();
+    if (modelHasPricingData(normalized.model, providersConfig)) {
+      return normalized;
+    }
+    const kickoff = this.goalContinuationBridge?.getKickoffSendOptions?.(workspaceId);
+    if (!kickoff || kickoff.agentId === "plan" || kickoff.agentId === "compact") {
+      return null;
+    }
+    const fallback = continuationSendOptions(kickoff);
+    return modelHasPricingData(fallback.model, providersConfig) ? fallback : null;
+  }
+
+  async requestContinuationAfterStreamEnd(input: {
+    workspaceId: string;
+    sendOptions: SendMessageOptions;
+    streamEndedAtMs?: number;
+  }): Promise<void> {
+    assert(
+      input.workspaceId.trim().length > 0,
+      "requestContinuationAfterStreamEnd requires workspaceId"
+    );
+    if (this.goalContinuationDispatcher == null) {
+      return;
+    }
+
+    const goal = await this.getGoal(input.workspaceId);
+    if (goal?.status !== "active" && goal?.status !== "budget_limited") {
+      this.pendingContinuationCandidates.delete(input.workspaceId);
+      return;
+    }
+
+    const sendOptions = this.getPricedContinuationSendOptions(
+      input.workspaceId,
+      goal,
+      input.sendOptions
+    );
+    if (!sendOptions) {
+      this.pendingContinuationCandidates.delete(input.workspaceId);
+      return;
+    }
+
+    const streamEndedAtMs = input.streamEndedAtMs ?? Date.now();
+    this.pendingContinuationCandidates.set(input.workspaceId, {
+      goalId: goal.goalId,
+      requestedAtMs: Date.now(),
+      streamEndedAtMs,
+      sendOptions,
+    });
+    await this.goalContinuationDispatcher.requestDispatch(
+      input.workspaceId,
+      GOAL_CONTINUATION_IDLE_CONSUMER_NAME
+    );
+  }
+
+  clearPendingContinuationForManualUserMessage(workspaceId: string): void {
+    assert(
+      workspaceId.trim().length > 0,
+      "clearPendingContinuationForManualUserMessage requires workspaceId"
+    );
+    this.pendingContinuationCandidates.delete(workspaceId);
+  }
+
+  /**
+   * Treat an agent's text-only `goal_continuation` turn as implicit
+   * completion. The continuation prompt asks the agent to call
+   * `complete_goal` explicitly, but real models sometimes finish with a
+   * plain text "looks done" reply instead. Without this fallback the
+   * continuation loop would re-fire on the same idle output until budget
+   * or cooldown gates intervene.
+   *
+   * AgentSession owns the "no tool calls + goalKind === continuation"
+   * predicate (it has the stream parts + activeStreamContext in scope);
+   * this method re-reads goal state and only acts when the goal is
+   * currently `active`. `budget_limited` is intentionally out-of-scope —
+   * its one-shot wrap-up flow owns terminal text turns. `paused` /
+   * `complete` / missing goals also fall through.
+   *
+   * Errors from the underlying `setGoal` (e.g. a concurrent clear/replace
+   * surfacing as `goal_conflict`, or a status flip racing with the read)
+   * are logged and swallowed so the stream-end handler never throws on
+   * this best-effort path.
+   *
+   * **Auto-promotion of upcoming goals.** When the workspace has queued
+   * upcoming goals, the inline `setGoal({ status: "complete" })` call
+   * triggers `maybeAutoPromoteOnComplete`, but that helper skips while
+   * `isWorkspaceStreaming` is still true — and at stream-end the
+   * `extensionMetadata.setStreaming(false)` update is asynchronous, so
+   * the skip is likely. We therefore re-run the deferred auto-promote
+   * pass (`runDeferredAutoPromoteAfterStreamEnd`) after a successful
+   * completion. This is the same hook `applyPendingAfterStreamEnd`
+   * already uses for the parallel "agent called `complete_goal`
+   * mid-stream" case (#3326 Codex P2 PRRT_kwDOPxxmWM6DMh9j); without
+   * it the next upcoming goal stays stuck in `upcoming` until some
+   * later manual mutation.
+   */
+  async completeGoalFromSilentContinuation(input: {
+    workspaceId: string;
+    completionSummary: string;
+  }): Promise<GoalRecordV1 | null> {
+    assert(
+      input.workspaceId.trim().length > 0,
+      "completeGoalFromSilentContinuation requires workspaceId"
+    );
+    const summary = input.completionSummary.trim();
+    if (summary.length === 0) {
+      return null;
+    }
+    const goal = await this.getGoal(input.workspaceId);
+    if (goal?.status !== "active") {
+      return null;
+    }
+    const result = await this.setGoal({
+      workspaceId: input.workspaceId,
+      status: "complete",
+      initiator: "model",
+      completionSummary: summary,
+      // Optimistic-concurrency guard so a goal that was cleared or
+      // replaced between the read above and the write below surfaces as
+      // a typed `goal_conflict` instead of a confusing validation error.
+      expectedGoalId: goal.goalId,
+    });
+    if (!result.success) {
+      log.info("completeGoalFromSilentContinuation: skipped", {
+        workspaceId: input.workspaceId,
+        error: result.error.type,
+      });
+      return null;
+    }
+    // Auto-promote any queued upcoming goal once streaming actually
+    // settles. See the JSDoc above for the race description; this
+    // mirrors `applyPendingAfterStreamEnd`'s tail so both completion
+    // paths (mid-stream tool call + silent text-only) converge on the
+    // same promotion behaviour.
+    await this.runDeferredAutoPromoteAfterStreamEnd(input.workspaceId);
+    return result.data;
+  }
+
+  async recordUserStoppedStream(workspaceId: string, stoppedAtMs = Date.now()): Promise<void> {
+    assert(workspaceId.trim().length > 0, "recordUserStoppedStream requires workspaceId");
+    assert(Number.isFinite(stoppedAtMs) && stoppedAtMs >= 0, "user stop timestamp must be valid");
+    this.lastUserStopAtMsByWorkspace.set(workspaceId, stoppedAtMs);
+    this.pendingContinuationCandidates.delete(workspaceId);
+    this.pendingGoalSnapshots.delete(workspaceId);
+    this.liveGoalPreviewSnapshots.delete(workspaceId);
+    // Drop queued goal mutations too. If a
+    // user sets a goal mid-stream then stops the stream, the mutation would
+    // otherwise stay queued and apply on the NEXT stream's stream-end via
+    // applyPendingAfterStreamEnd, writing goal.json with createdAtMs > the
+    // userStopAtMs gate — auto-continuation would then fire in a context the
+    // user did not intend (the stop was meant to discard the goal change).
+    const hadPendingGoalMutation = this.pendingGoalMutations.delete(workspaceId);
+
+    await this.fileLocks.withLock(workspaceId, async () => {
+      const current = await this.readGoalFile(workspaceId);
+      if (current?.status !== "active" && current?.status !== "budget_limited") {
+        // Mid-stream /goal now publishes an optimistic activity snapshot so the
+        // Goal panel opens immediately. If the user aborts that stream, revert
+        // the panel to the persisted goal file (or null) along with dropping the
+        // queued mutation.
+        if (hadPendingGoalMutation) {
+          await this.pushSnapshot(workspaceId, current);
+        }
+        return;
+      }
+      const next = GoalRecordV1Schema.parse({
+        ...current,
+        requireUserAcknowledgmentSinceMs: Math.floor(stoppedAtMs),
+        updatedAtMs: Date.now(),
+      });
+      await this.writeGoal(workspaceId, next);
+      await this.pushSnapshot(workspaceId, next);
+    });
+  }
+
+  async buildGoalContinuationPayload(workspaceId: string): Promise<IdleDispatchPayload | null> {
+    const eligibility = await this.checkGoalContinuationEligibility(workspaceId, Date.now());
+    if (!eligibility.eligible) {
+      // Self-deferring reasons (e.g. `currently_streaming`, `initializing`)
+      // re-request dispatch on a ~1s timer, so logging at info level produces
+      // one line per retry for the entire duration of an active stream. Drop
+      // those to debug; keep terminal reasons at info since they fire once
+      // and are useful diagnostic signal.
+      const logFn = eligibility.deferUntilMs != null ? log.debug : log.info;
+      logFn("WorkspaceGoalService: skipped goal continuation", {
+        workspaceId,
+        reason: eligibility.reason,
+      });
+      if (eligibility.deferUntilMs != null) {
+        this.scheduleContinuationReRequest(workspaceId, eligibility.deferUntilMs);
+        return null;
+      }
+      return null;
+    }
+
+    const { goal, candidate } = eligibility;
+    assert(goal != null, "eligible goal continuation requires a goal");
+    assert(candidate != null, "eligible goal continuation requires a pending candidate");
+
+    if (goal.status === "budget_limited") {
+      const lastStreamStamp = eligibility.lastStreamStamp;
+      assert(lastStreamStamp != null, "eligible budget wrap-up requires a stream stamp");
+      const message = buildGoalBudgetLimitMessage(goal);
+      return {
+        dispatch: async () => {
+          // Send first, mark only on accept. If sendMessage rejects transiently
+          // (e.g. requireIdle fails because a new turn started), we want a future
+          // dispatch to retry — we must not permanently flip
+          // budgetLimitInjectedForGoalId or the goal gets stuck in budget_limited
+          // with no wrap-up. Mirrors the active-continuation path below.
+          const accepted = await this.goalContinuationBridge?.executeGoalContinuation({
+            workspaceId,
+            message,
+            options: candidate.sendOptions,
+            kind: GOAL_BUDGET_LIMIT_KIND,
+          });
+          if (accepted !== true) {
+            this.scheduleContinuationReRequest(workspaceId, Date.now() + 1_000);
+            return;
+          }
+          const reserved = await this.tryMarkBudgetLimitInjected(
+            workspaceId,
+            goal.goalId,
+            lastStreamStamp
+          );
+          if (reserved) {
+            this.emitBudgetWrapupFired(reserved, Date.now());
+          }
+          this.deletePendingCandidateIfStillSame(workspaceId, candidate);
+        },
+      };
+    }
+
+    assert(goal.status === "active", "goal idle payload requires active or budget-limited goal");
+    const message = buildGoalContinuationMessage(goal);
+    return {
+      dispatch: async () => {
+        const accepted = await this.goalContinuationBridge?.executeGoalContinuation({
+          workspaceId,
+          message,
+          options: candidate.sendOptions,
+          kind: GOAL_CONTINUATION_KIND,
+        });
+        if (accepted !== true) {
+          this.scheduleContinuationReRequest(workspaceId, Date.now() + 1_000);
+          return;
+        }
+        await this.recordContinuationFired(workspaceId, goal.goalId, Date.now());
+        this.deletePendingCandidateIfStillSame(workspaceId, candidate);
+      },
+    };
+  }
+
+  /**
+   * Delete the pending continuation candidate for a workspace ONLY if the map
+   * entry still references the same candidate this dispatch closure captured.
+   *
+   * Between executeGoalContinuation returning true and the cleanup
+   * delete, two file-lock awaits yield the event loop
+   * (tryMarkBudgetLimitInjected / recordContinuationFired). If the
+   * continuation stream fails immediately and the stream-end handler writes a
+   * NEW candidate during the yield, an unconditional delete-by-key would drop
+   * that fresh candidate — the next dispatch cycle would then find no
+   * candidate and skip silently.
+   *
+   * Reference equality is the simplest correct guard: each pending candidate
+   * is a distinct object, so identity checks against the captured closure
+   * variable cannot collide with a concurrently-written replacement.
+   */
+  private deletePendingCandidateIfStillSame(
+    workspaceId: string,
+    candidate: PendingGoalContinuationCandidate
+  ): void {
+    if (this.pendingContinuationCandidates.get(workspaceId) === candidate) {
+      this.pendingContinuationCandidates.delete(workspaceId);
+    }
+  }
+
+  async checkGoalContinuationEligibility(
+    workspaceId: string,
+    nowMs: number
+  ): Promise<GoalContinuationEligibilityResult> {
+    assert(workspaceId.trim().length > 0, "checkGoalContinuationEligibility requires workspaceId");
+    assert(Number.isFinite(nowMs) && nowMs >= 0, "checkGoalContinuationEligibility requires nowMs");
+
+    const candidate = this.pendingContinuationCandidates.get(workspaceId);
+    if (!candidate) {
+      return { eligible: false, reason: "no_pending_candidate" };
+    }
+    const bridge = this.goalContinuationBridge;
+    if (!bridge) {
+      return { eligible: false, reason: "not_registered" };
+    }
+
+    const workspace = this.findWorkspaceConfigEntry(workspaceId);
+    if (!workspace) {
+      this.pendingContinuationCandidates.delete(workspaceId);
+      return { eligible: false, reason: "workspace_not_found" };
+    }
+    if (isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt)) {
+      this.pendingContinuationCandidates.delete(workspaceId);
+      return { eligible: false, reason: "archived" };
+    }
+    if (!workspace.path) {
+      this.pendingContinuationCandidates.delete(workspaceId);
+      return { eligible: false, reason: "transcript_only" };
+    }
+    if (workspace.parentWorkspaceId != null) {
+      this.pendingContinuationCandidates.delete(workspaceId);
+      return { eligible: false, reason: "child_workspace" };
+    }
+    if (bridge.hasActiveDescendantTasks(workspaceId)) {
+      return { eligible: false, reason: "active_descendant_tasks" };
+    }
+
+    const runtimeState = bridge.getRuntimeState(workspaceId);
+    if (runtimeState.isInitializing === true) {
+      return { eligible: false, reason: "initializing", deferUntilMs: nowMs + 1_000 };
+    }
+    if (runtimeState.isRuntimeCompatible === false) {
+      this.pendingContinuationCandidates.delete(workspaceId);
+      return { eligible: false, reason: "incompatible_runtime" };
+    }
+    if (runtimeState.isBusy === true || (await this.isWorkspaceStreaming(workspaceId))) {
+      return { eligible: false, reason: "currently_streaming", deferUntilMs: nowMs + 1_000 };
+    }
+    if (runtimeState.hasQueuedMessages === true) {
+      return { eligible: false, reason: "queued_user_input" };
+    }
+    if (runtimeState.hasPendingFollowUp === true) {
+      return { eligible: false, reason: "pending_follow_up" };
+    }
+    if (candidate.sendOptions.agentId === "plan" || candidate.sendOptions.mode === "plan") {
+      this.pendingContinuationCandidates.delete(workspaceId);
+      return { eligible: false, reason: "plan_mode" };
+    }
+    if (candidate.sendOptions.agentId === "compact" || candidate.sendOptions.mode === "compact") {
+      this.pendingContinuationCandidates.delete(workspaceId);
+      return { eligible: false, reason: "compact_mode" };
+    }
+
+    const userStopAtMs = this.lastUserStopAtMsByWorkspace.get(workspaceId);
+    if (userStopAtMs != null) {
+      const goalForStopCheck = await this.readGoalFile(workspaceId);
+      if (!goalForStopCheck) {
+        this.pendingContinuationCandidates.delete(workspaceId);
+        return { eligible: false, reason: "goal_missing" };
+      }
+      if (userStopAtMs >= goalForStopCheck.createdAtMs) {
+        this.pendingContinuationCandidates.delete(workspaceId);
+        return { eligible: false, reason: "user_stop" };
+      }
+    }
+
+    const goal = await this.normalizeGoalLimits(workspaceId);
+    if (!goal) {
+      this.pendingContinuationCandidates.delete(workspaceId);
+      return { eligible: false, reason: "goal_missing" };
+    }
+    if (goal.goalId !== candidate.goalId) {
+      this.pendingContinuationCandidates.delete(workspaceId);
+      return { eligible: false, reason: "goal_mismatch" };
+    }
+    if (goal.status !== "active" && goal.status !== "budget_limited") {
+      this.pendingContinuationCandidates.delete(workspaceId);
+      return { eligible: false, reason: "goal_not_active" };
+    }
+    if (goal.requireUserAcknowledgmentSinceMs != null) {
+      return { eligible: false, reason: "requires_ack" };
+    }
+
+    if (goal.status === "budget_limited") {
+      const lastStreamStamp = this.lastGoalStreamStamps.get(workspaceId);
+      if (goal.budgetLimitInjectedForGoalId === goal.goalId) {
+        this.pendingContinuationCandidates.delete(workspaceId);
+        return { eligible: false, reason: "budget_wrapup_already_fired" };
+      }
+      if (
+        lastStreamStamp?.goalId !== goal.goalId ||
+        !this.isBudgetWrapupEligibleOrigin(lastStreamStamp.originKind)
+      ) {
+        this.pendingContinuationCandidates.delete(workspaceId);
+        return { eligible: false, reason: "budget_wrapup_suppressed" };
+      }
+      return { eligible: true, goal, candidate, lastStreamStamp };
+    }
+
+    const lastContinuationFiredAtMs = goal.lastContinuationFiredAtMs ?? null;
+    if (
+      lastContinuationFiredAtMs != null &&
+      nowMs - lastContinuationFiredAtMs < this.continuationCooldownMs
+    ) {
+      return {
+        eligible: false,
+        reason: "cooldown",
+        deferUntilMs: lastContinuationFiredAtMs + this.continuationCooldownMs,
+      };
+    }
+
+    return { eligible: true, goal, candidate };
+  }
+
+  private scheduleContinuationReRequest(workspaceId: string, dueAtMs: number): void {
+    if (this.goalContinuationDispatcher == null) {
+      return;
+    }
+    const delayMs = Math.max(0, dueAtMs - Date.now());
+    const existing = this.continuationReRequestTimers.get(workspaceId);
+    if (existing != null) {
+      clearTimeout(existing);
+    }
+    const timer = setTimeout(() => {
+      this.continuationReRequestTimers.delete(workspaceId);
+      if (!this.pendingContinuationCandidates.has(workspaceId)) {
+        return;
+      }
+      this.goalContinuationDispatcher
+        ?.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME)
+        .catch((error: unknown) => {
+          log.warn("Failed to re-request goal continuation dispatch", { workspaceId, error });
+        });
+    }, delayMs);
+    this.continuationReRequestTimers.set(workspaceId, timer);
+  }
+
+  private findWorkspaceConfigEntry(workspaceId: string): Workspace | null {
+    const config = this.config.loadConfigOrDefault();
+    for (const [, projectConfig] of config.projects) {
+      const workspace = projectConfig.workspaces.find((candidate) => candidate.id === workspaceId);
+      if (workspace) {
+        return workspace;
+      }
+    }
+    return null;
+  }
+
+  private async normalizeGoalLimits(workspaceId: string): Promise<GoalRecordV1 | null> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      const current = await this.readGoalFile(workspaceId);
+      if (!current) {
+        await this.pushGoalReadSnapshot(workspaceId, null);
+        return null;
+      }
+      const next = this.applyBudgetDrivenStatus(current);
+      if (next !== current) {
+        await this.writeGoal(workspaceId, next);
+        await this.pushGoalReadSnapshot(workspaceId, next);
+        this.emitBudgetLimited(next, current.status);
+        return next;
+      }
+      await this.pushGoalReadSnapshot(workspaceId, current);
+      return current;
+    });
+  }
+
+  private async recordContinuationFired(
+    workspaceId: string,
+    expectedGoalId: string,
+    firedAtMs: number
+  ): Promise<void> {
+    await this.fileLocks.withLock(workspaceId, async () => {
+      const current = await this.readGoalFile(workspaceId);
+      if (current?.goalId !== expectedGoalId || current.status !== "active") {
+        return;
+      }
+      const next = GoalRecordV1Schema.parse({
+        ...current,
+        lastContinuationFiredAtMs: firedAtMs,
+        updatedAtMs: firedAtMs,
+      });
+      await this.writeGoal(workspaceId, next);
+      await this.pushSnapshot(workspaceId, next);
+      this.emitContinuationFired(next, firedAtMs);
+    });
+  }
+
+  private emitContinuationFired(goal: GoalRecordV1, firedAtMs: number): void {
+    const budgetRemaining =
+      goal.budgetCents == null ? null : Math.max(0, goal.budgetCents - goal.costCents);
+    this.emitLifecycle("goal_continuation_fired", {
+      turns_used: goal.turnsUsed,
+      cost_cents_bucket: centsBucket(goal.costCents),
+      budget_remaining_cents_bucket:
+        budgetRemaining == null ? "unlimited" : centsBucket(budgetRemaining),
+      elapsed_minutes_bucket: countBucket(
+        Math.floor(Math.max(0, firedAtMs - goal.createdAtMs) / 60_000)
+      ),
+      turn_cap_present: goal.turnCap != null,
+      source: "stream_end_idle_dispatch",
+    });
+  }
+
+  private isBudgetWrapupEligibleOrigin(originKind: GoalStreamOriginKind): boolean {
+    return this.allowUserOriginBudgetWrapup || originKind !== "user";
+  }
+
+  private async tryMarkBudgetLimitInjected(
+    workspaceId: string,
+    expectedGoalId: string,
+    expectedLastStreamStamp: GoalStreamStamp
+  ): Promise<GoalRecordV1 | null> {
+    assert(expectedGoalId.trim().length > 0, "budget wrap-up reservation requires a goal id");
+    assert(
+      this.isBudgetWrapupEligibleOrigin(expectedLastStreamStamp.originKind),
+      "budget wrap-up reservation requires a goal-attributable stream"
+    );
+
+    return this.fileLocks.withLock(workspaceId, async () => {
+      const currentStamp = this.lastGoalStreamStamps.get(workspaceId);
+      if (
+        currentStamp?.goalId !== expectedGoalId ||
+        !this.isBudgetWrapupEligibleOrigin(currentStamp.originKind)
+      ) {
+        return null;
+      }
+
+      const current = await this.readGoalFile(workspaceId);
+      if (
+        current?.goalId !== expectedGoalId ||
+        current.status !== "budget_limited" ||
+        current.budgetLimitInjectedForGoalId === expectedGoalId
+      ) {
+        return null;
+      }
+
+      const next = GoalRecordV1Schema.parse({
+        ...current,
+        budgetLimitInjectedForGoalId: expectedGoalId,
+        updatedAtMs: Date.now(),
+      });
+      await this.writeGoal(workspaceId, next);
+      await this.pushSnapshot(workspaceId, next);
+      return next;
+    });
+  }
+
+  private emitBudgetWrapupFired(goal: GoalRecordV1, firedAtMs: number): void {
+    this.emitLifecycle("goal_wrapup_fired", {
+      turns_used: goal.turnsUsed,
+      cost_cents_bucket: centsBucket(goal.costCents),
+      "cost-overshoot": centsBucket(
+        Math.max(0, goal.costCents - (goal.budgetCents ?? goal.costCents))
+      ),
+      elapsed_minutes_bucket: countBucket(
+        Math.floor(Math.max(0, firedAtMs - goal.createdAtMs) / 60_000)
+      ),
+      source: "stream_end_idle_dispatch",
+    });
+  }
+
+  private validateStatusTransition(
+    current: GoalRecordV1 | null,
+    nextStatus: GoalStatus,
+    completionSummary: string | null,
+    initiator: GoalLifecycleInitiator
+  ): void {
+    if (!current) {
+      throw new WorkspaceGoalTransitionError(
+        `Cannot ${actionForStatus(nextStatus)} a goal because no goal is set.`
+      );
+    }
+
+    // Reviving a completed goal is a deliberate user action: agents that
+    // marked a goal complete via the `complete_goal` tool (initiator
+    // "model") must not be able to walk that back on the next turn — that
+    // would let a loop re-arm itself indefinitely. But a human in the
+    // GoalTab is allowed to resume the goal they archived themselves
+    // (e.g., the agent declared victory too early), so we only block
+    // non-user initiators here.
+    if (current.status === "complete" && nextStatus !== "complete" && initiator !== "user") {
+      throw new WorkspaceGoalTransitionError(
+        `Cannot ${actionForStatus(nextStatus)} a completed goal. Clear it before starting another.`
+      );
+    }
+
+    // From `complete` the user may go to either `active` (resume work) or
+    // `paused` (revive without immediately re-arming continuations).
+    // From any other state the normal pause/resume guards still apply.
+    if (nextStatus === "paused" && current.status !== "active" && current.status !== "complete") {
+      throw new WorkspaceGoalTransitionError("Cannot pause a goal that is not active.");
+    }
+
+    if (nextStatus === "active" && current.status !== "paused" && current.status !== "complete") {
+      throw new WorkspaceGoalTransitionError("Cannot resume a goal that is not paused.");
+    }
+
+    if (nextStatus === "complete") {
+      if (completionSummary == null || completionSummary.length === 0) {
+        throw new WorkspaceGoalTransitionError("Completion summary is required.");
+      }
+      if (current.status !== "active" && current.status !== "budget_limited") {
+        throw new WorkspaceGoalTransitionError(
+          "Cannot complete a goal that is not active or budget-limited."
+        );
+      }
+    }
+  }
+
+  private conflictForExpectedGoalId(
+    current: GoalRecordV1 | null,
+    expectedGoalId: string | null | undefined
+  ): GoalSetError | null {
+    if (expectedGoalId === undefined) {
+      return null;
+    }
+    const actualGoalId = current?.goalId ?? null;
+    if (actualGoalId === expectedGoalId) {
+      return null;
+    }
+    return { type: "goal_conflict", expectedGoalId, actualGoalId };
+  }
+
+  private applyMutableFields(goal: GoalRecordV1, input: SetGoalInput): GoalRecordV1 {
+    const completionSummary = input.completionSummary?.trim() ?? null;
+    if (input.status != null) {
+      this.validateStatusTransition(
+        goal,
+        input.status,
+        completionSummary,
+        input.initiator ?? "user"
+      );
+    }
+
+    const next: GoalRecordV1 = GoalRecordV1Schema.parse({
+      ...goal,
+      ...(input.status != null ? { status: input.status } : {}),
+      ...(Object.hasOwn(input, "budgetCents")
+        ? { budgetCents: normalizeGoalBudgetCents(input.budgetCents) }
+        : {}),
+      ...(Object.hasOwn(input, "turnCap") ? { turnCap: input.turnCap ?? null } : {}),
+      ...(Object.hasOwn(input, "requireUserAcknowledgmentSinceMs")
+        ? { requireUserAcknowledgmentSinceMs: input.requireUserAcknowledgmentSinceMs ?? null }
+        : {}),
+      ...completionSummaryPatch(input.status, completionSummary),
+      updatedAtMs: Date.now(),
+    });
+    return this.applyBudgetDrivenStatus(next);
+  }
+
+  private hasReachedBudgetLimit(goal: GoalRecordV1): boolean {
+    const { budgetCents } = goal;
+    if (budgetCents == null || !hasGoalBudgetLimit(budgetCents)) {
+      return false;
+    }
+    return getGoalCostMicroCents(goal) >= budgetCents * MICRO_CENTS_PER_CENT;
+  }
+
+  private hasReachedTurnLimit(goal: GoalRecordV1): boolean {
+    return goal.turnCap != null && goal.turnsUsed >= goal.turnCap;
+  }
+
+  private hasReachedAnyLimit(goal: GoalRecordV1): boolean {
+    return this.hasReachedBudgetLimit(goal) || this.hasReachedTurnLimit(goal);
+  }
+
+  private applyCostAccounting(
+    goal: GoalRecordV1,
+    costMicroCentsThisStream: number
+  ): Pick<GoalRecordV1, "costCents" | "costMicroCents"> {
+    const costMicroCents = getGoalCostMicroCents(goal) + costMicroCentsThisStream;
+    return {
+      costCents: Math.round(costMicroCents / MICRO_CENTS_PER_CENT),
+      costMicroCents,
+    };
+  }
+
+  private applyBudgetDrivenStatus(
+    next: GoalRecordV1,
+    options?: { originKind?: GoalStreamOriginKind }
+  ): GoalRecordV1 {
+    const normalizedBudgetCents = normalizeGoalBudgetCents(next.budgetCents);
+    const normalized =
+      normalizedBudgetCents === next.budgetCents
+        ? next
+        : GoalRecordV1Schema.parse({
+            ...next,
+            budgetCents: normalizedBudgetCents,
+            updatedAtMs: Date.now(),
+          });
+    const reachedLimit = this.hasReachedAnyLimit(normalized);
+    const shouldLimitActiveGoal = normalized.status === "active" && reachedLimit;
+    const shouldRearmBudgetLimitedGoal = normalized.status === "budget_limited" && !reachedLimit;
+    if (!shouldLimitActiveGoal && !shouldRearmBudgetLimitedGoal) {
+      return normalized;
+    }
+
+    return GoalRecordV1Schema.parse({
+      ...normalized,
+      status: shouldLimitActiveGoal ? "budget_limited" : "active",
+      // Raising/removing limits re-arms the one-shot budget wrap-up.
+      budgetLimitInjectedForGoalId: shouldRearmBudgetLimitedGoal
+        ? null
+        : normalized.budgetLimitInjectedForGoalId,
+      // Persist the origin kind on active→budget_limited so restart recovery
+      // can decide whether to arm a wrap-up. Clear it when re-arming back to
+      // `active` after the budget is raised or removed.
+      budgetLimitOriginKind: shouldLimitActiveGoal
+        ? (options?.originKind ?? null)
+        : shouldRearmBudgetLimitedGoal
+          ? null
+          : normalized.budgetLimitOriginKind,
+      updatedAtMs: Date.now(),
+    });
+  }
+
+  private emitBudgetLimited(
+    goal: GoalRecordV1,
+    previousStatus: GoalStatus,
+    properties?: GoalLifecycleProperties
+  ): void {
+    if (previousStatus === "budget_limited" || goal.status !== "budget_limited") {
+      return;
+    }
+
+    this.emitLifecycle("goal_budget_limited", {
+      hasBudget: goal.budgetCents != null,
+      hasTurnCap: goal.turnCap != null,
+      "cost-overshoot": this.hasReachedBudgetLimit(goal)
+        ? centsBucket(Math.max(0, goal.costCents - (goal.budgetCents ?? 0)))
+        : null,
+      "turn-overshoot": this.hasReachedTurnLimit(goal)
+        ? countBucket(Math.max(0, goal.turnsUsed - (goal.turnCap ?? 0)))
+        : null,
+      ...(properties ?? {}),
+    });
+  }
+
+  private budgetDeltaProperties(
+    field: "budget" | "turn-cap",
+    previous: number | null,
+    next: number | null
+  ): GoalLifecycleProperties {
+    const previousValue = previous ?? 0;
+    const nextValue = next ?? 0;
+    const delta = nextValue - previousValue;
+    let deltaSign = "zero";
+    let raisedVsLowered = "unchanged";
+    if (delta > 0) {
+      deltaSign = "positive";
+      raisedVsLowered = "raised";
+    } else if (delta < 0) {
+      deltaSign = "negative";
+      raisedVsLowered = "lowered";
+    }
+    return {
+      [`${field}-delta-sign`]: deltaSign,
+      [`${field}-raised-vs-lowered`]: raisedVsLowered,
+      [`${field}-delta-cents`]: field === "budget" ? delta : null,
+      [`${field}-delta-turns`]: field === "turn-cap" ? delta : null,
+    };
+  }
+
+  private emitBudgetChanged(
+    current: GoalRecordV1 | null,
+    next: GoalRecordV1,
+    input: SetGoalInput
+  ): void {
+    const budgetTouched = Object.hasOwn(input, "budgetCents");
+    const turnCapTouched = Object.hasOwn(input, "turnCap");
+    if (!budgetTouched && !turnCapTouched) {
+      return;
+    }
+
+    this.emitLifecycle("goal_budget_changed", {
+      hasBudget: next.budgetCents != null,
+      hasTurnCap: next.turnCap != null,
+      ...(budgetTouched
+        ? this.budgetDeltaProperties("budget", current?.budgetCents ?? null, next.budgetCents)
+        : {}),
+      ...(turnCapTouched
+        ? this.budgetDeltaProperties("turn-cap", current?.turnCap ?? null, next.turnCap)
+        : {}),
+    });
+  }
+
+  private emitStatusLifecycle(
+    goal: GoalRecordV1,
+    previousStatus: GoalStatus,
+    initiator: GoalLifecycleInitiator
+  ): void {
+    if (goal.status === previousStatus) {
+      return;
+    }
+
+    if (goal.status === "paused") {
+      this.emitLifecycle("goal_paused", { initiator });
+    } else if (
+      goal.status === "active" &&
+      (previousStatus === "paused" || previousStatus === "complete")
+    ) {
+      // BudgetLimited → Active is a budget-driven re-arm, not a user resume;
+      // it is reported via goal_budget_changed only. Complete → Active is
+      // a user-initiated revive (validateStatusTransition only lets the
+      // `user` initiator out of `complete`) — surface it as `goal_resumed`
+      // so the lifecycle funnel sees revived goals symmetrically with
+      // paused→active resumes.
+      this.emitLifecycle("goal_resumed", { initiator });
+    } else if (goal.status === "complete") {
+      this.emitLifecycle("goal_completed", {
+        initiator,
+        summaryLengthBucket: lengthBucket(goal.completionSummary?.length ?? 0),
+      });
+    }
+  }
+
+  private getProvidersConfigForPricing(): ProvidersConfigMap | null {
+    const maybeConfig = this.config as Config & {
+      loadProvidersConfig?: () => ProvidersConfigMap | null;
+    };
+    if (typeof maybeConfig.loadProvidersConfig !== "function") {
+      return null;
+    }
+    return maybeConfig.loadProvidersConfig() as unknown as ProvidersConfigMap | null;
+  }
+
+  async getGoal(workspaceId: string): Promise<GoalRecordV1 | null> {
+    return this.normalizeGoalLimits(workspaceId);
+  }
+
+  /**
+   * Reject sends/resumes that would run a non-terminal budgeted goal on an
+   * unpriced model. Without this gate, the turn streams happily, accounting
+   * records 0 cost (no pricing data → `getTotalCost(...) ?? 0`), and budget
+   * enforcement is silently bypassed for real work. Persistence-only blocks
+   * are not enough: the actual stream is what burns the budget.
+   *
+   * Owned by WorkspaceGoalService so every dispatch path can share one gate
+   * implementation:
+   *  - `WorkspaceService.sendMessage` / `resumeStream` (initial calls) — to
+   *    avoid persisting an unpriced model into workspace AI settings before
+   *    the rejection.
+   *  - `AgentSession.sendMessage` (every internal/queued/auto dispatch) — to
+   *    catch races where the goal becomes budgeted while a queued message
+   *    waits, or where a server-internal caller picks an unpriced model.
+   *
+   * Intentionally does NOT honour `options.skipAiSettingsPersistence`: that
+   * field is part of the public `SendMessageOptionsSchema` and forwarded
+   * verbatim by the router, so trusting it would let any oRPC caller flip a
+   * single bool to disarm the gate. Internal compaction / heartbeat callers
+   * always pick a priced model via `getPreferredCompactionModel` /
+   * heartbeat builders, so they hit the early `modelHasPricingData` exit
+   * below without touching `goal.json`.
+   */
+  async assertPricedModelForBudgetedGoal(
+    workspaceId: string,
+    model: string | undefined
+  ): Promise<Result<void, SendMessageError>> {
+    if (!model || modelHasPricingData(model, this.getProvidersConfigForPricing())) {
+      return Ok(undefined);
+    }
+    const goal = await this.getGoal(workspaceId);
+    if (!hasBudgetedResumableGoal(goal)) {
+      return Ok(undefined);
+    }
+    return Err({ type: "unknown", raw: UNPRICED_TARGET_MODEL_GOAL_MESSAGE });
+  }
+
+  async inheritFromFork(
+    parentWorkspaceId: string,
+    forkWorkspaceId: string
+  ): Promise<GoalRecordV1 | null> {
+    assert(
+      parentWorkspaceId.trim().length > 0,
+      "inheritFromFork requires non-empty parentWorkspaceId"
+    );
+    assert(forkWorkspaceId.trim().length > 0, "inheritFromFork requires non-empty forkWorkspaceId");
+    assert(
+      parentWorkspaceId !== forkWorkspaceId,
+      "inheritFromFork requires distinct parent and fork workspaces"
+    );
+
+    const parentGoal = await this.fileLocks.withLock(parentWorkspaceId, () =>
+      this.readGoalFile(parentWorkspaceId)
+    );
+    if (!parentGoal) {
+      return null;
+    }
+
+    const inherited = this.createGoal({
+      objective: parentGoal.objective,
+      budgetCents: parentGoal.budgetCents,
+      turnCap: parentGoal.turnCap,
+      status: "paused",
+    });
+
+    return this.fileLocks.withLock(forkWorkspaceId, async () => {
+      const existingForkGoal = await this.readGoalFile(forkWorkspaceId);
+      assert(existingForkGoal == null, "inheritFromFork expects a fresh fork workspace goal file");
+      await this.writeGoal(forkWorkspaceId, inherited);
+      await this.pushSnapshot(forkWorkspaceId, inherited);
+      this.emitLifecycle("goal_created", {
+        viaFork: true,
+        sourceStatus: parentGoal.status,
+        objectiveLengthBucket: lengthBucket(inherited.objective.length),
+        hasBudget: inherited.budgetCents != null,
+        hasTurnCap: inherited.turnCap != null,
+      });
+      return inherited;
+    });
+  }
+
+  async setGoal(input: SetGoalInput): Promise<Result<GoalRecordV1, GoalSetError>> {
+    // Catch the two known throw paths (`assertParentWorkspace` and
+    // `applyMutableFields`/`validateStatusTransition`) and surface them as
+    // typed Result errors so the oRPC `setGoal` handler does not leak them as
+    // unhandled 500s.
+    try {
+      return await this.setGoalInternal(input);
+    } catch (error) {
+      if (error instanceof WorkspaceGoalChildWorkspaceError) {
+        return Err({ type: "child_workspace", message: error.message });
+      }
+      if (error instanceof WorkspaceGoalTransitionError) {
+        return Err({ type: "invalid_transition", message: error.message });
+      }
+      throw error;
+    }
+  }
+
+  private async setGoalInternal(input: SetGoalInput): Promise<Result<GoalRecordV1, GoalSetError>> {
+    const objective = input.objective?.trim();
+    this.assertParentWorkspace(input.workspaceId);
+
+    if (!objective && this.pendingGoalSnapshots.has(input.workspaceId)) {
+      // Until stream-end persists the queued objective, status/budget-only edits
+      // would target the old durable goal (or no goal) while the panel displays
+      // the optimistic replacement. Reject them instead of mutating the wrong record.
+      return Err({ type: "invalid_transition", message: PENDING_GOAL_EDIT_MESSAGE });
+    }
+
+    // -----------------------------------------------------------------------
+    // Mid-stream branch: setGoal during an active stream defers the actual
+    // disk write until applyPendingAfterStreamEnd. The returned `Ok(projected)`
+    // is a synthetic record for immediate UI rendering; it has NOT been
+    // persisted yet.
+    //
+    // ⚠️ DO NOT use `projected.goalId` as `expectedGoalId` on a follow-up
+    // mutation — the eventual persisted record gets a fresh `goalId` from
+    // `setGoalImmediately`/`createGoal` on stream-end, so the projected id is
+    // throwaway. Re-fetch via `getGoal` after the stream ends before issuing
+    // any optimistic-concurrency mutation. The `goalId` mismatch is a known
+    // footgun — current callers all
+    // re-fetch first so no bug manifests today, but new callers must respect
+    // this contract.
+    // -----------------------------------------------------------------------
+    if (objective && (await this.isWorkspaceStreaming(input.workspaceId))) {
+      return this.fileLocks.withLock(input.workspaceId, async () => {
+        const current = await this.readGoalFile(input.workspaceId);
+        const conflict = this.conflictForExpectedGoalId(current, input.expectedGoalId);
+        if (conflict) {
+          return Err(conflict);
+        }
+        // For an `editInPlace` rename, the eventual drain renames the
+        // existing record instead of creating a fresh one. Mirror that path
+        // here so the optimistic Goal tab snapshot preserves id/accounting
+        // and applies budget-driven status before stream end.
+        let projected: GoalRecordV1;
+        if (input.editInPlace === true && current) {
+          const renamed = GoalRecordV1Schema.parse({
+            ...current,
+            objective,
+            updatedAtMs: Date.now(),
+          });
+          projected = this.applyMutableFields(renamed, input);
+        } else {
+          projected = this.createGoal({
+            objective,
+            budgetCents: input.budgetCents ?? null,
+            turnCap: input.turnCap ?? null,
+            status: input.status,
+            completionSummary: input.completionSummary,
+          });
+        }
+        if (
+          (projected.status === "active" || projected.status === "budget_limited") &&
+          !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, projected)
+        ) {
+          return Err({
+            type: "invalid_transition" as const,
+            message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+          });
+        }
+        this.pendingGoalMutations.set(input.workspaceId, {
+          objective,
+          ...(Object.hasOwn(input, "budgetCents")
+            ? { budgetCents: input.budgetCents ?? null }
+            : {}),
+          ...(Object.hasOwn(input, "turnCap") ? { turnCap: input.turnCap ?? null } : {}),
+          ...(input.status != null ? { status: input.status } : {}),
+          ...(input.completionSummary != null
+            ? { completionSummary: input.completionSummary }
+            : {}),
+          ...(Object.hasOwn(input, "expectedGoalId")
+            ? { expectedGoalId: input.expectedGoalId ?? null }
+            : {}),
+          ...(input.initiator != null ? { initiator: input.initiator } : {}),
+          // Forward `editInPlace` so an inline rename submitted while the
+          // agent is streaming still takes the rename branch when the
+          // pending mutation drains.
+          ...(input.editInPlace != null ? { editInPlace: input.editInPlace } : {}),
+        });
+        // A user can run /goal while the first turn is still streaming. The
+        // durable goal write must wait for stream accounting, but the Goal panel
+        // reads activity snapshots, so publish the projected goal immediately
+        // without persisting this crash-unsafe optimistic state.
+        await this.publishPendingGoalSnapshot(input.workspaceId, projected);
+        return Ok(projected);
+      });
+    }
+
+    return this.setGoalImmediately({ ...input, objective });
+  }
+
+  private canRunBudgetedGoalOnKickoffModel(workspaceId: string, goal: GoalRecordV1): boolean {
+    if (!hasBudgetedResumableGoal(goal)) {
+      return true;
+    }
+    const model = this.goalContinuationBridge?.getKickoffSendOptions?.(workspaceId)?.model;
+    if (!model) {
+      return true;
+    }
+    return modelHasPricingData(model, this.getProvidersConfigForPricing());
+  }
+
+  private async setGoalImmediately(
+    input: SetGoalInput & { objective?: string }
+  ): Promise<Result<GoalRecordV1, GoalSetError>> {
+    const result = await this.fileLocks.withLock(input.workspaceId, async () => {
+      const current = await this.readGoalFile(input.workspaceId);
+      const conflict = this.conflictForExpectedGoalId(current, input.expectedGoalId);
+      if (conflict) {
+        return Err(conflict);
+      }
+      const trimmedObjective = input.objective?.trim();
+      const objective =
+        trimmedObjective && trimmedObjective.length > 0 ? trimmedObjective : current?.objective;
+      if (!objective) {
+        // No objective + status mutation + no current goal will fall into
+        // `validateStatusTransition(null, ...)` below, which throws a typed
+        // `WorkspaceGoalTransitionError`. That throw is caught by the outer
+        // `setGoal` wrapper and surfaced as a typed `invalid_transition`
+        // Result error — no
+        // unhandled 500 reaches the oRPC layer.
+        if (input.status != null) {
+          this.validateStatusTransition(
+            null,
+            input.status,
+            input.completionSummary?.trim() ?? null,
+            input.initiator ?? "user"
+          );
+        }
+        // No-objective + no-status path (e.g. RightSidebar "Update budget"
+        // race where another window cleared the goal concurrently): use the
+        // typed transition error so the outer `setGoal` wrapper surfaces it
+        // as a typed `invalid_transition` Result instead of letting a plain
+        // Error escape as an unhandled 500.
+        throw new WorkspaceGoalTransitionError(
+          "Goal objective is required because no goal currently exists for this workspace."
+        );
+      }
+
+      // Edit-in-place objective change: when the caller is the right-sidebar
+      // "Edit goal objective" affordance (or any other entry point that opts in
+      // via `editInPlace`), changing the objective on the existing goal should
+      // feel like editing budget / turn-cap — preserve `goalId` + accounting.
+      // The default `setGoal` path (slash command, kickoff prompts) still
+      // archives + recreates because callers there express the intent "start a
+      // new goal", not "rename the current one".
+      const isEditInPlace =
+        input.editInPlace === true && current != null && current.objective !== objective;
+      if (isEditInPlace) {
+        const previousStatus = current.status;
+        const renamed = GoalRecordV1Schema.parse({
+          ...current,
+          objective,
+          updatedAtMs: Date.now(),
+        });
+        // Apply other inline edits (status / budget / turnCap) on top of the
+        // renamed record so a single payload can rename and update budget
+        // atomically.
+        const withEdits = this.applyMutableFields(renamed, input);
+        if (
+          (withEdits.status === "active" || withEdits.status === "budget_limited") &&
+          !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, withEdits)
+        ) {
+          return Err({
+            type: "invalid_transition" as const,
+            message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+          });
+        }
+        await this.writeGoal(input.workspaceId, withEdits);
+        await this.pushSnapshot(input.workspaceId, withEdits);
+        await this.pushLiveGoalPreviewOverlay(input.workspaceId, withEdits);
+        this.emitBudgetChanged(current, withEdits, input);
+        this.emitBudgetLimited(withEdits, previousStatus);
+        this.emitStatusLifecycle(withEdits, previousStatus, input.initiator ?? "user");
+        // Lifecycle event: this is a rename, not a replace. Reuse
+        // `goal_replaced` (same-objective semantics already overloaded for
+        // attribute-only mutations) with `sameObjective: false` so analytics
+        // can still distinguish rename from a full reset by checking
+        // `goalId` continuity in the funnel.
+        this.emitLifecycle("goal_replaced", {
+          sameObjective: false,
+          objectiveLengthBucket: lengthBucket(objective.length),
+          hasBudget: withEdits.budgetCents != null,
+          hasTurnCap: withEdits.turnCap != null,
+          editInPlace: true,
+        });
+        await this.maybeAutoPromoteOnComplete(input.workspaceId, withEdits, previousStatus);
+        return Ok(withEdits);
+      }
+
+      if (current?.objective === objective) {
+        const hasMutableChange =
+          input.status != null ||
+          input.completionSummary != null ||
+          Object.hasOwn(input, "budgetCents") ||
+          Object.hasOwn(input, "turnCap") ||
+          Object.hasOwn(input, "requireUserAcknowledgmentSinceMs");
+        const previousStatus = current.status;
+        let updated = hasMutableChange ? this.applyMutableFields(current, input) : current;
+        if (hasMutableChange) {
+          if (
+            (updated.status === "active" || updated.status === "budget_limited") &&
+            !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, updated)
+          ) {
+            return Err({
+              type: "invalid_transition" as const,
+              message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+            });
+          }
+
+          // User resume is an explicit opt-in after a stop/crash gate; clear
+          // both the in-memory stop marker and persisted acknowledgment gate.
+          if (
+            previousStatus === "paused" &&
+            updated.status === "active" &&
+            (input.initiator ?? "user") === "user"
+          ) {
+            this.lastUserStopAtMsByWorkspace.delete(input.workspaceId);
+            updated = GoalRecordV1Schema.parse({
+              ...updated,
+              requireUserAcknowledgmentSinceMs: null,
+              updatedAtMs: Date.now(),
+            });
+          }
+          await this.writeGoal(input.workspaceId, updated);
+          await this.pushSnapshot(input.workspaceId, updated);
+          await this.pushLiveGoalPreviewOverlay(input.workspaceId, updated);
+          this.emitBudgetChanged(current, updated, input);
+          this.emitBudgetLimited(updated, previousStatus);
+          this.emitStatusLifecycle(updated, previousStatus, input.initiator ?? "user");
+          await this.maybeAutoPromoteOnComplete(input.workspaceId, updated, previousStatus);
+        }
+        if (input.objective != null) {
+          this.emitLifecycle("goal_replaced", {
+            sameObjective: true,
+            objectiveLengthBucket: lengthBucket(objective.length),
+            hasBudget: updated.budgetCents != null,
+            hasTurnCap: updated.turnCap != null,
+          });
+        }
+        return Ok(updated);
+      }
+
+      const next = this.createGoal({
+        objective,
+        budgetCents: input.budgetCents ?? null,
+        turnCap: input.turnCap ?? null,
+        status: input.status,
+        completionSummary: input.completionSummary,
+      });
+      if (
+        (next.status === "active" || next.status === "budget_limited") &&
+        !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, next)
+      ) {
+        return Err({
+          type: "invalid_transition" as const,
+          message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+        });
+      }
+      this.liveGoalPreviewSnapshots.delete(input.workspaceId);
+      // Archive the outgoing goal to history before we overwrite goal.json.
+      // The new goal gets a fresh `goalId` so the right-sidebar GoalTab needs
+      // a record of the prior one in its completed-goals list (cleared/
+      // replaced/completed all flow through here for the "previous current
+      // goal" snapshot).
+      if (current) {
+        await this.appendGoalHistoryEntry(
+          input.workspaceId,
+          current,
+          current.status === "complete" ? "completed" : "replaced"
+        );
+      }
+      await this.writeGoal(input.workspaceId, next);
+      await this.pushSnapshot(input.workspaceId, next);
+      this.emitBudgetChanged(current, next, input);
+      this.emitLifecycle(current ? "goal_replaced" : "goal_created", {
+        sameObjective: false,
+        objectiveLengthBucket: lengthBucket(objective.length),
+        hasBudget: next.budgetCents != null,
+        hasTurnCap: next.turnCap != null,
+      });
+      return Ok(next);
+    });
+
+    if (result.success) {
+      if (result.data.status === "active") {
+        this.armKickoffContinuationIfIdle(input.workspaceId, result.data);
+      } else if (result.data.status === "budget_limited") {
+        this.armBudgetWrapupForBudgetLimitedGoal(input.workspaceId, result.data);
+      }
+    }
+    return result;
+  }
+
+  private armKickoffContinuationIfIdle(workspaceId: string, goal: GoalRecordV1): void {
+    if (this.suppressKickoffContinuation) {
+      return;
+    }
+    if (goal.status !== "active") {
+      return;
+    }
+    if (this.goalContinuationDispatcher == null || this.goalContinuationBridge == null) {
+      return;
+    }
+    const existingCandidate = this.pendingContinuationCandidates.get(workspaceId);
+    if (existingCandidate?.goalId === goal.goalId) {
+      // A real stream-end already armed this goal; re-request dispatch in case
+      // the previous request was consumed while an acknowledgment gate was set.
+      this.goalContinuationDispatcher
+        .requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME)
+        .catch((error: unknown) => {
+          log.warn("Failed to re-request kickoff goal continuation dispatch", {
+            workspaceId,
+            error,
+          });
+        });
+      return;
+    }
+    const sendOptions = this.goalContinuationBridge.getKickoffSendOptions?.(workspaceId);
+    if (!sendOptions) {
+      return;
+    }
+    if (sendOptions.agentId === "plan" || sendOptions.agentId === "compact") {
+      return;
+    }
+
+    const nowMs = Date.now();
+    this.pendingContinuationCandidates.set(workspaceId, {
+      goalId: goal.goalId,
+      requestedAtMs: nowMs,
+      streamEndedAtMs: nowMs,
+      sendOptions: continuationSendOptions(sendOptions),
+    });
+    this.goalContinuationDispatcher
+      .requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME)
+      .catch((error: unknown) => {
+        log.warn("Failed to request kickoff goal continuation dispatch", { workspaceId, error });
+      });
+  }
+
+  private armContinuationForPromotedGoal(workspaceId: string, goal: GoalRecordV1): void {
+    // Promotion is an explicit handoff to this queued goal. Any stop/ack gate
+    // was attached to an older active turn and would otherwise strand the
+    // promoted goal until the user pause/unpauses it.
+    this.lastUserStopAtMsByWorkspace.delete(workspaceId);
+    if (goal.status === "active") {
+      this.armKickoffContinuationIfIdle(workspaceId, goal);
+    } else if (goal.status === "budget_limited") {
+      this.armBudgetWrapupForBudgetLimitedGoal(workspaceId, goal);
+    }
+  }
+
+  /**
+   * Re-arm pending continuation / budget-wrap-up dispatches after a process
+   * restart. `pendingContinuationCandidates` and `lastGoalStreamStamps` are
+   * in-memory and are wiped on restart; the goal record on disk is the
+   * persisted source of truth, so we re-derive whatever dispatch state is
+   * owed by the persisted status.
+   *
+   * Without this, a `budget_limited` goal with `budgetLimitInjectedForGoalId
+   * === null` (i.e. the budget was hit but the wrap-up message had not yet
+   * fired before the crash) is permanently stranded:
+   *   - eligibility lookup finds no in-memory stamp and returns
+   *     `budget_wrapup_suppressed`, deleting the candidate.
+   *   - `armKickoffContinuationIfIdle` only fires for `status === "active"`.
+   *
+   * The user would need to manually clear the goal or raise the budget to
+   * recover. Instead we synthesize the stamp + candidate so the wrap-up can
+   * fire on the next idle moment.
+   *
+   * Called from `AgentSession.runStartupRecovery` per workspace.
+   */
+  async recoverPendingDispatchAfterRestart(workspaceId: string): Promise<void> {
+    assert(
+      workspaceId.trim().length > 0,
+      "recoverPendingDispatchAfterRestart requires workspaceId"
+    );
+    const goal = await this.normalizeGoalLimits(workspaceId);
+    if (!goal) {
+      return;
+    }
+    if (goal.status === "active") {
+      this.armKickoffContinuationIfIdle(workspaceId, goal);
+      return;
+    }
+    if (goal.status === "budget_limited" && goal.budgetLimitInjectedForGoalId === null) {
+      // only synthesize a wrap-up if the stream that hit the
+      // budget was goal-attributable. A user-origin stream that exhausted
+      // the budget was correctly suppressed pre-restart
+      // (`checkGoalContinuationEligibility` rejects it as
+      // `budget_wrapup_suppressed`); after restart we'd otherwise lose that
+      // suppression because in-memory `lastGoalStreamStamps` is empty and
+      // this function would synthesize a `GOAL_CONTINUATION_KIND` stamp.
+      // Legacy goal records with `budgetLimitOriginKind` undefined arm by
+      // default — the field is new and most existing budget_limited goals
+      // would otherwise be permanently stranded.
+      const originKind = goal.budgetLimitOriginKind ?? null;
+      if (originKind === "user") {
+        return;
+      }
+      this.armBudgetWrapupForBudgetLimitedGoal(workspaceId, goal);
+    }
+  }
+
+  /**
+   * Synthesize a `GOAL_CONTINUATION_KIND` stream stamp + arm a continuation
+   * candidate so the budget-wrap-up eligibility check passes its identity
+   * guards (`lastStreamStamp.goalId === goal.goalId` && a non-user origin).
+   *
+   * Called from two paths:
+   *   1. `recoverPendingDispatchAfterRestart` — in-memory dispatch state was
+   *      wiped on restart and the persisted goal is `budget_limited` with no
+   *      wrap-up injected.
+   *   2. `attributeChildReport` — a child task's cost rolled the goal into
+   *      `budget_limited`. Without this the wrap-up never fires because the
+   *      attribution path does not produce a continuation-origin stream.
+   */
+  private armBudgetWrapupForBudgetLimitedGoal(workspaceId: string, goal: GoalRecordV1): void {
+    if (this.goalContinuationDispatcher == null || this.goalContinuationBridge == null) {
+      return;
+    }
+    if (this.pendingContinuationCandidates.has(workspaceId)) {
+      return;
+    }
+    const sendOptions = this.goalContinuationBridge.getKickoffSendOptions?.(workspaceId);
+    if (!sendOptions || sendOptions.agentId === "plan" || sendOptions.agentId === "compact") {
+      return;
+    }
+
+    this.recordLastGoalStream(workspaceId, GOAL_CONTINUATION_KIND, goal.goalId);
+    const nowMs = Date.now();
+    this.pendingContinuationCandidates.set(workspaceId, {
+      goalId: goal.goalId,
+      requestedAtMs: nowMs,
+      streamEndedAtMs: nowMs,
+      sendOptions: continuationSendOptions(sendOptions),
+    });
+    this.goalContinuationDispatcher
+      .requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME)
+      .catch((error: unknown) => {
+        log.warn("Failed to request budget-wrap-up dispatch", {
+          workspaceId,
+          error,
+        });
+      });
+  }
+
+  async requireUserAcknowledgment(
+    workspaceId: string,
+    sinceMs = Date.now()
+  ): Promise<GoalRecordV1 | null> {
+    assert(
+      Number.isInteger(sinceMs) && sinceMs >= 0,
+      "requireUserAcknowledgment requires a non-negative integer timestamp"
+    );
+    return this.fileLocks.withLock(workspaceId, async () => {
+      const current = await this.readGoalFile(workspaceId);
+      if (!current) {
+        await this.pushSnapshot(workspaceId, null);
+        return null;
+      }
+      const next = this.applyMutableFields(current, {
+        workspaceId,
+        requireUserAcknowledgmentSinceMs: sinceMs,
+      });
+      await this.writeGoal(workspaceId, next);
+      await this.pushSnapshot(workspaceId, next);
+      return next;
+    });
+  }
+
+  async acknowledgeUser(workspaceId: string): Promise<GoalRecordV1 | null> {
+    assert(workspaceId.trim().length > 0, "acknowledgeUser requires workspaceId");
+    return this.fileLocks.withLock(workspaceId, async () => {
+      const current = await this.readGoalFile(workspaceId);
+      if (!current) {
+        await this.pushSnapshot(workspaceId, null);
+        return null;
+      }
+      if (current.requireUserAcknowledgmentSinceMs == null) {
+        await this.pushSnapshot(workspaceId, current);
+        return current;
+      }
+
+      const next = this.applyMutableFields(current, {
+        workspaceId,
+        requireUserAcknowledgmentSinceMs: null,
+      });
+      await this.writeGoal(workspaceId, next);
+      await this.pushSnapshot(workspaceId, next);
+      return next;
+    });
+  }
+
+  async requireUserAcknowledgmentForCrashRecovery(
+    workspaceId: string,
+    sinceMs = Date.now()
+  ): Promise<GoalRecordV1 | null> {
+    assert(
+      Number.isInteger(sinceMs) && sinceMs >= 0,
+      "requireUserAcknowledgmentForCrashRecovery requires a non-negative integer timestamp"
+    );
+    const next = await this.requireUserAcknowledgment(workspaceId, sinceMs);
+    if (next) {
+      this.emitLifecycle("goal_crash_gate_set", {
+        workspaceIdLengthBucket: lengthBucket(workspaceId.length),
+      });
+    }
+    return next;
+  }
+
+  private recordLastGoalStream(
+    workspaceId: string,
+    originKind: GoalStreamOriginKind,
+    goalId: string | null
+  ): GoalStreamStamp {
+    const stamp = {
+      originKind,
+      sequence: this.nextGoalStreamStampSequence,
+      goalId,
+    };
+    this.nextGoalStreamStampSequence += 1;
+    this.lastGoalStreamStamps.set(workspaceId, stamp);
+    return stamp;
+  }
+
+  /**
+   * Push a live cost preview to the activity snapshot. The cost is the
+   * cumulative current-stream cost on top of the durable base;
+   * `recordStreamAccounting` performs final accounting at stream end.
+   *
+   * Previously this path always called `pushSnapshot` which rewrote the
+   * shared `extensionMetadata.json` (writeFileAtomic, serialized through a
+   * global mutation lock) on every `usage-delta` event. That made the Goals
+   * UI cost lag behind the Stats/Costs tabs mid-stream: Stats reads the
+   * frontend aggregator in-memory, while Goal cost waited on a per-delta
+   * disk write + activity round-trip. Restart recovery overwrites
+   * extensionMetadata from goal.json anyway (`restorePersistedGoalSnapshot`
+   * and `restoreGoalAccountingSnapshot`), so preview writes were redundant
+   * once a baseline activity snapshot exists.
+   *
+   * Prefer `pushTransientGoalSnapshot` so subscribers (the renderer's
+   * WorkspaceStore, the Goal tab) receive the preview without the global
+   * write lock. If no baseline activity exists yet, fall back to
+   * `pushSnapshot` so the first preview still creates and emits the
+   * workspace activity entry instead of being dropped.
+   */
+  async previewStreamAccounting(input: StreamAccountingInput): Promise<GoalSnapshot | null> {
+    assert(input.workspaceId.trim().length > 0, "previewStreamAccounting requires workspaceId");
+    if (input.isCompaction === true) {
+      return null;
+    }
+
+    const pendingSnapshot = this.pendingGoalSnapshots.get(input.workspaceId);
+    if (pendingSnapshot) {
+      return pendingSnapshot;
+    }
+
+    const costMicroCentsThisStream = costUsdToMicroCents(input.costUsd);
+    return this.fileLocks.withLock(input.workspaceId, async () => {
+      const current = await this.readGoalFile(input.workspaceId);
+      if (!current) {
+        return null;
+      }
+
+      if (input.streamStartedAtMs != null && current.createdAtMs > input.streamStartedAtMs) {
+        return null;
+      }
+      if (
+        input.streamStartedAtMs != null &&
+        this.recordedStreamStartedAtMsByWorkspace.get(input.workspaceId) === input.streamStartedAtMs
+      ) {
+        return null;
+      }
+
+      if (current.status === "paused" || current.status === "complete") {
+        return toGoalSnapshot(current);
+      }
+
+      const preview = GoalRecordV1Schema.parse({
+        ...current,
+        ...this.applyCostAccounting(current, costMicroCentsThisStream),
+        updatedAtMs: Date.now(),
+      });
+      const snapshot = toGoalSnapshot(preview);
+      this.liveGoalPreviewSnapshots.set(input.workspaceId, snapshot);
+      const didEmitTransient = await this.pushTransientGoalSnapshot(input.workspaceId, snapshot);
+      if (!didEmitTransient) {
+        // If the baseline activity snapshot does not exist yet (for
+        // example, extensionMetadata was reset or stream-start's
+        // fire-and-forget metadata write has not finished), fall back to
+        // the durable path so this preview is still delivered to Goals UI
+        // subscribers instead of being dropped.
+        return this.pushSnapshot(input.workspaceId, preview);
+      }
+      return snapshot;
+    });
+  }
+
+  async recordStreamAccounting(input: StreamAccountingInput): Promise<GoalRecordV1 | null> {
+    assert(input.workspaceId.trim().length > 0, "recordStreamAccounting requires workspaceId");
+    const originKind = input.streamOriginKind ?? (input.isCompaction === true ? "other" : "user");
+
+    if (input.isCompaction === true) {
+      this.recordLastGoalStream(input.workspaceId, originKind, null);
+      return null;
+    }
+
+    const costMicroCentsThisStream = costUsdToMicroCents(input.costUsd);
+    this.liveGoalPreviewSnapshots.delete(input.workspaceId);
+    return this.fileLocks.withLock(input.workspaceId, async () => {
+      const current = await this.readGoalFile(input.workspaceId);
+      if (!current) {
+        this.recordLastGoalStream(input.workspaceId, originKind, null);
+        return null;
+      }
+
+      if (input.streamStartedAtMs != null && current.createdAtMs > input.streamStartedAtMs) {
+        this.recordLastGoalStream(input.workspaceId, originKind, current.goalId);
+        await this.pushSnapshot(input.workspaceId, current);
+        return null;
+      }
+
+      if ((current.status === "paused" || current.status === "complete") && originKind === "user") {
+        this.recordLastGoalStream(input.workspaceId, originKind, current.goalId);
+        await this.pushSnapshot(input.workspaceId, current);
+        return current;
+      }
+
+      // Only count goal-attributable turns. A rare `user`-origin stream that
+      // reaches here while still active must not consume a turn against the cap.
+      const turnsDelta = originKind === "user" ? 0 : 1;
+      const accounted = GoalRecordV1Schema.parse({
+        ...current,
+        ...this.applyCostAccounting(current, costMicroCentsThisStream),
+        turnsUsed: current.turnsUsed + turnsDelta,
+        updatedAtMs: Date.now(),
+      });
+      const next = this.applyBudgetDrivenStatus(accounted, { originKind });
+      if (input.streamStartedAtMs != null) {
+        this.recordedStreamStartedAtMsByWorkspace.set(input.workspaceId, input.streamStartedAtMs);
+      }
+      await this.writeGoal(input.workspaceId, next);
+      await this.pushSnapshot(input.workspaceId, next);
+      this.recordLastGoalStream(input.workspaceId, originKind, next.goalId);
+      this.emitBudgetLimited(next, current.status);
+      return next;
+    });
+  }
+
+  async attributeChildReport(
+    input: ChildReportAttributionInput
+  ): Promise<ChildReportAttributionResult | null> {
+    assert(
+      input.parentWorkspaceId.trim().length > 0,
+      "attributeChildReport requires parentWorkspaceId"
+    );
+    assert(
+      input.childWorkspaceId.trim().length > 0,
+      "attributeChildReport requires childWorkspaceId"
+    );
+    assert(
+      input.parentWorkspaceId !== input.childWorkspaceId,
+      "attributeChildReport requires distinct parent and child workspaces"
+    );
+    assert(
+      Number.isInteger(input.childCostCents) && input.childCostCents >= 0,
+      "attributeChildReport requires a non-negative integer childCostCents"
+    );
+
+    return this.fileLocks.withLock(input.parentWorkspaceId, async () => {
+      const current = await this.readGoalFile(input.parentWorkspaceId);
+      if (!current) {
+        return null;
+      }
+
+      if (current.status === "paused" || current.status === "complete") {
+        await this.pushSnapshot(input.parentWorkspaceId, current);
+        return skippedChildAttribution(current);
+      }
+
+      if (current.attributedChildren.includes(input.childWorkspaceId)) {
+        await this.pushSnapshot(input.parentWorkspaceId, current);
+        return skippedChildAttribution(current);
+      }
+
+      const accounted = GoalRecordV1Schema.parse({
+        ...current,
+        ...this.applyCostAccounting(current, input.childCostCents * MICRO_CENTS_PER_CENT),
+        turnsUsed: current.turnsUsed + 1,
+        attributedChildren: [...current.attributedChildren, input.childWorkspaceId],
+        updatedAtMs: Date.now(),
+      });
+      // Tag the budget-limit transition so post-restart recovery knows the
+      // wrap-up is owed . `goal_continuation` is the right tag here
+      // because the wrap-up MUST fire — child attribution is goal-attributable
+      // work. The recovery path checks for `!= "user"`.
+      const next = this.applyBudgetDrivenStatus(accounted, { originKind: "goal_continuation" });
+      const causedLimit = current.status === "active" && next.status === "budget_limited";
+
+      await this.writeGoal(input.parentWorkspaceId, next);
+      await this.pushSnapshot(input.parentWorkspaceId, next);
+      this.emitBudgetLimited(next, current.status, { "caused-by-child": true });
+      // when child attribution drives the
+      // goal into budget_limited, arm the same wrap-up stamp + candidate the
+      // restart-recovery path uses. Without this the goal sits stuck in
+      // budget_limited with no mechanism to fire the wrap-up because the
+      // attribution path never produces a normal stream-end candidate/stamp.
+      if (causedLimit) {
+        this.armBudgetWrapupForBudgetLimitedGoal(input.parentWorkspaceId, next);
+      } else if (next.status === "active") {
+        this.armKickoffContinuationIfIdle(input.parentWorkspaceId, next);
+      }
+      return {
+        goalBefore: current,
+        goalAfter: next,
+        attributed: true,
+        causedBudgetLimit: causedLimit,
+      };
+    });
+  }
+
+  async clearGoal(workspaceId: string): Promise<GoalRecordV1 | null> {
+    const cleared = await this.fileLocks.withLock(workspaceId, async () => {
+      const current = await this.readGoalFile(workspaceId);
+      this.pendingGoalMutations.delete(workspaceId);
+      this.pendingGoalSnapshots.delete(workspaceId);
+      this.liveGoalPreviewSnapshots.delete(workspaceId);
+      this.pendingContinuationCandidates.delete(workspaceId);
+      this.recordedStreamStartedAtMsByWorkspace.delete(workspaceId);
+      this.lastGoalStreamStamps.delete(workspaceId);
+      const timer = this.continuationReRequestTimers.get(workspaceId);
+      if (timer != null) {
+        clearTimeout(timer);
+        this.continuationReRequestTimers.delete(workspaceId);
+      }
+      if (!current) {
+        await this.pushSnapshot(workspaceId, null);
+        return null;
+      }
+
+      // Archive the cleared goal to history before deleting the canonical
+      // record. `endReason` reflects the goal's *exit reason*: a manual clear
+      // of a goal that the user (or model) had already marked complete is
+      // recorded as "completed" so the UI can label it as such in the
+      // completed-goals list under the present goal.
+      await this.appendGoalHistoryEntry(
+        workspaceId,
+        current,
+        current.status === "complete" ? "completed" : "cleared"
+      );
+
+      await fs.rm(this.getFilePath(workspaceId), { force: true });
+      await this.pushSnapshot(workspaceId, null);
+      this.emitLifecycle("goal_cleared", {
+        finalStatus: current.status,
+        costCentsBucket: centsBucket(current.costCents),
+        turnsUsed: current.turnsUsed,
+      });
+      // Auto-promote the head of `upcoming` (if any) to the active slot
+      // so the workspace's roadmap continues without an extra user
+      // action. Promotion uses initiator-neutral lifecycle reporting
+      // (`goal_created`); the user can still pause / replace as desired.
+      await this.promoteNextUpcomingUnlocked(workspaceId);
+      return current;
+    });
+
+    if (cleared) {
+      await this.appendClearSummary(workspaceId, cleared);
+    }
+
+    return cleared;
+  }
+
+  private async appendClearSummary(workspaceId: string, goal: GoalRecordV1): Promise<void> {
+    // The goal-cleared summary exists for MODEL context — after a goal
+    // is cleared the agent still needs to know what just happened so it
+    // can answer follow-up questions ("what did we just finish?",
+    // "resume the previous one"). The right-sidebar Goal Board already
+    // surfaces the same information visually (Completed / Archived
+    // sections), so rendering this synthetic message as a full assistant
+    // chat bubble was pure noise — it appeared inline whenever the user
+    // cleared, replaced, or completed a goal, and clobbered the actual
+    // conversation flow.
+    //
+    // `uiVisible: false` (the default for synthetic messages) keeps it
+    // in the AI request payload but hides it from the rendered transcript,
+    // which is what we want here.
+    const summary = `Goal cleared: "${goal.objective}" — spent $${formatCentsBare(goal.costCents)} over ${goal.turnsUsed} turns (status: ${goal.status})`;
+    const message = createMuxMessage(
+      `goal-cleared-${Date.now()}-${crypto.randomUUID()}`,
+      "assistant",
+      summary,
+      {
+        synthetic: true,
+        muxMetadata: { type: "goal-cleared-summary" },
+      }
+    );
+    const result = await this.historyService.appendToHistory(workspaceId, message);
+    if (!result.success) {
+      log.warn("Failed to append goal cleared summary", { workspaceId, error: result.error });
+    }
+  }
+
+  async applyPendingAfterStreamEnd(workspaceId: string): Promise<GoalRecordV1 | null> {
+    this.liveGoalPreviewSnapshots.delete(workspaceId);
+    const pending = this.pendingGoalMutations.get(workspaceId);
+    let drained: GoalRecordV1 | null = null;
+
+    if (pending) {
+      this.pendingGoalMutations.delete(workspaceId);
+      this.pendingGoalSnapshots.delete(workspaceId);
+      // Mirror the `setGoal` wrapper here: invalid queued transitions must
+      // be logged and swallowed so the stream-end pipeline stays alive.
+      // The caller already treats null as "no apply happened".
+      try {
+        const result = await this.setGoalImmediately({ workspaceId, ...pending });
+        drained = result.success ? result.data : null;
+      } catch (error) {
+        log.warn("applyPendingAfterStreamEnd: dropped invalid queued goal mutation", {
+          workspaceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        // Always re-read the durable record: queued snapshots are optimistic, and
+        // drains can succeed as persistence no-ops, reject, or throw.
+        await this.restorePersistedGoalSnapshot(workspaceId);
+      }
+    }
+
+    // Stream-end deferred auto-promotion.
+    //
+    // Runs AFTER any queued setGoal drains so the deferred setGoal can
+    // target the same goal it was queued against — otherwise its
+    // `expectedGoalId` would race ahead of the promote and the
+    // setGoalImmediately call would return `goal_conflict` and silently
+    // drop the user's edit.
+    //
+    // Two reasons this helper might find work to do at this point:
+    //   (a) The agent called `complete_goal` mid-stream — goal.json is
+    //       already complete and no pending mutation queued.
+    //   (b) The queued mutation we just drained completed the goal —
+    //       `maybeAutoPromoteOnComplete` skipped because the stream
+    //       was still live during the drain's `applyMutableFields`.
+    // Either way, the active goal is `complete` on disk by now and the
+    // upcoming head deserves promotion.
+    await this.runDeferredAutoPromoteAfterStreamEnd(workspaceId);
+
+    return drained;
+  }
+
+  /**
+   * Stream-end hook for deferred auto-promotion. When the agent marks
+   * the active goal complete mid-stream, `maybeAutoPromoteOnComplete`
+   * skips because `isWorkspaceStreaming` is still true. This method
+   * runs after the stream has settled and picks up where that skipped:
+   * if the current active goal is `complete` and there's an upcoming
+   * head, archive the completed goal to history and promote the head.
+   *
+   * **Retry on streaming race.** `applyPendingAfterStreamEnd`
+   * is called from AgentSession once per stream; the
+   * `extensionMetadata.setStreaming(false)` call comes from a separate
+   * async listener in WorkspaceService and may not have run yet. We
+   * poll `isWorkspaceStreaming` with a small bounded backoff so we
+   * don't drop the auto-promote on this race. If after all retries
+   * we still see streaming, give up — the next manual mutation will
+   * land here naturally.
+   *
+   * Failures are logged + swallowed; the stream-end pipeline must not
+   * be disrupted by board mutations.
+   */
+  private async runDeferredAutoPromoteAfterStreamEnd(workspaceId: string): Promise<void> {
+    // Quick early exit if there's nothing to promote — avoids the
+    // streaming-poll cost on the hot path for single-goal workspaces.
+    const earlyBoard = await this.readBoard(workspaceId);
+    if (earlyBoard.upcoming.length === 0) {
+      return;
+    }
+    const earlyGoal = await this.readGoalFile(workspaceId);
+    if (earlyGoal?.status !== "complete") {
+      return;
+    }
+
+    // poll for stop-streaming up to ~600ms total. The races
+    // we've seen in practice resolve in one or two ticks; the longer
+    // bound is defensive against laggy listeners. We stop polling the
+    // first time we see streaming=false (so the common case is fast).
+    const POLL_DELAYS_MS = [0, 50, 100, 200, 250];
+    let stillStreaming = true;
+    for (const delayMs of POLL_DELAYS_MS) {
+      if (delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+      if (!(await this.isWorkspaceStreaming(workspaceId))) {
+        stillStreaming = false;
+        break;
+      }
+    }
+    if (stillStreaming) {
+      log.warn(
+        "Deferred auto-promote skipped: workspace still streaming after retries; will rearm on next mutation",
+        { workspaceId, goalId: earlyBoard.upcoming[0].goalId }
+      );
+      return;
+    }
+
+    try {
+      await this.fileLocks.withLock(workspaceId, async () => {
+        const current = await this.readGoalFile(workspaceId);
+        if (current?.status !== "complete") {
+          return;
+        }
+        const board = await this.readBoard(workspaceId);
+        if (board.upcoming.length === 0) {
+          return;
+        }
+        const [head] = board.upcoming;
+        const projected = GoalRecordV1Schema.parse({
+          ...head,
+          status: "active",
+          updatedAtMs: Date.now(),
+        });
+        if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, projected)) {
+          log.warn(
+            "Deferred auto-promote skipped: queued goal is budgeted but kickoff model is unpriced",
+            { workspaceId, goalId: head.goalId }
+          );
+          return;
+        }
+        // Same as `maybeAutoPromoteOnComplete`: archive the completed
+        // goal then write the promotion. Both happen under the same
+        // workspace lock as the stream-end accounting drain so the UI
+        // sees a consistent board.
+        await this.appendGoalHistoryEntry(workspaceId, current, "completed");
+        await this.promoteNextUpcomingUnlocked(workspaceId);
+      });
+    } catch (error) {
+      log.warn("Deferred auto-promote after stream end failed", {
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Goal board (multi-goal queue)
+  //
+  // The board is stored at `goal-board.json` next to `goal.json` so the
+  // existing single-goal storage + agent contract are untouched. The
+  // agent's `get_goal` tool still reads only `goal.json` and never sees
+  // upcoming or archived goals — the user owns the queue, not the agent.
+  //
+  // Concurrency uses the same per-workspace `fileLocks` as goal.json so
+  // a board mutation can't race a setGoal write that flips the active
+  // goal. Auto-promotion (`promoteNextOnComplete`) reads/writes both
+  // files inside one lock for the same reason.
+  // ───────────────────────────────────────────────────────────────────────
+
+  private getBoardFilePath(workspaceId: string): string {
+    assert(workspaceId.trim().length > 0, "WorkspaceGoalService requires non-empty workspaceId");
+    return path.join(this.config.getSessionDir(workspaceId), GOAL_BOARD_FILE);
+  }
+
+  private async readBoard(workspaceId: string): Promise<GoalBoardV1> {
+    const filePath = this.getBoardFilePath(workspaceId);
+    try {
+      const raw = await fs.readFile(filePath, "utf-8");
+      return GoalBoardV1Schema.parse(JSON.parse(raw));
+    } catch (error) {
+      if (isNotFound(error)) {
+        return { version: 1, upcoming: [], archived: [] };
+      }
+      log.warn("Ignoring corrupt goal-board.json", { workspaceId, error });
+      return { version: 1, upcoming: [], archived: [] };
+    }
+  }
+
+  private async writeBoard(workspaceId: string, board: GoalBoardV1): Promise<void> {
+    const filePath = this.getBoardFilePath(workspaceId);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    // When both lists are empty, drop the file entirely so a workspace
+    // that never used the board stays bit-identical to a never-touched
+    // one (matches the heartbeat / goal-defaults pattern).
+    if (board.upcoming.length === 0 && board.archived.length === 0) {
+      await fs.rm(filePath, { force: true });
+      return;
+    }
+    await writeFileAtomic(filePath, `${JSON.stringify(board, null, 2)}\n`, "utf-8");
+  }
+
+  /**
+   * Renderer-facing snapshot of all four board sections, oldest-first
+   * within each section. Active comes from `goal.json`, completed from
+   * `goal-history.jsonl` (newest first, capped at the existing render
+   * cap), upcoming + archived from `goal-board.json`.
+   */
+  async getGoalBoard(workspaceId: string): Promise<GoalBoardSnapshot> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      const [activeGoal, board, history] = await Promise.all([
+        this.readGoalFile(workspaceId),
+        this.readBoard(workspaceId),
+        this.readHistoryUnlocked(workspaceId),
+      ]);
+
+      const entries: GoalBoardEntry[] = [];
+
+      if (activeGoal) {
+        entries.push({ section: "active", goal: activeGoal });
+      }
+      for (const goal of board.upcoming) {
+        entries.push({ section: "upcoming", goal });
+      }
+      // Completed entries come from history. We dedupe against:
+      //   - the active goal id (stale history line race during edit)
+      //   - the archived list (archived-from-complete goals)
+      //   - the upcoming list (when a user archives a completed goal then
+      //     revives it, the original history entry still exists; without
+      //     this dedup the goal would render in both Upcoming and Completed).
+      //   - earlier history rows for the same goalId (a goal
+      //     completed → archived → revived → promoted → completed
+      //     again has TWO 'completed' rows; we want only the newest).
+      //     `history` is sorted newest-first, so the first row we see
+      //     for a goalId is the most recent.
+      const seenCompletedIds = new Set<string>();
+      for (const entry of history) {
+        if (entry.endReason !== "completed") continue;
+        if (activeGoal && entry.goal.goalId === activeGoal.goalId) continue;
+        if (board.archived.some((g) => g.goalId === entry.goal.goalId)) continue;
+        if (board.upcoming.some((g) => g.goalId === entry.goal.goalId)) continue;
+        if (seenCompletedIds.has(entry.goal.goalId)) continue;
+        seenCompletedIds.add(entry.goal.goalId);
+        entries.push({ section: "complete", goal: entry.goal, endedAtMs: entry.endedAtMs });
+      }
+      for (const goal of board.archived) {
+        entries.push({ section: "archived", goal });
+      }
+
+      return { entries };
+    });
+  }
+
+  /**
+   * Read history WITHOUT acquiring the lock. Only callers that already
+   * hold the lock may use this (`getGoalBoard` reads goal.json + board
+   * + history under one lock).
+   */
+  private async readHistoryUnlocked(
+    workspaceId: string,
+    logCorruptLines = false
+  ): Promise<GoalHistoryEntry[]> {
+    const filePath = this.getHistoryFilePath(workspaceId);
+    try {
+      const raw = await fs.readFile(filePath, "utf-8");
+      const indexed: Array<{ index: number; entry: GoalHistoryEntry }> = [];
+      let appendIndex = 0;
+      for (const line of raw.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.length === 0) continue;
+        try {
+          indexed.push({
+            index: appendIndex,
+            entry: GoalHistoryEntrySchema.parse(JSON.parse(trimmed)),
+          });
+        } catch (error) {
+          if (logCorruptLines) {
+            log.warn("Skipping corrupt goal history entry", { workspaceId, error });
+          }
+        }
+        appendIndex += 1;
+      }
+      indexed.sort((a, b) => {
+        if (b.entry.endedAtMs !== a.entry.endedAtMs) {
+          return b.entry.endedAtMs - a.entry.endedAtMs;
+        }
+        return b.index - a.index;
+      });
+      return indexed.slice(0, GOAL_HISTORY_RENDER_CAP).map((row) => row.entry);
+    } catch (error) {
+      if (isNotFound(error)) return [];
+      log.warn("Failed to read goal history", { workspaceId, error });
+      return [];
+    }
+  }
+
+  /**
+   * Append a new goal to the workspace's `upcoming` list. The goal is
+   * created in the standard way (via `createGoal`) so it has a stable
+   * goalId + cost accounting fields, but its status is the placeholder
+   * `paused` — meaningless until promotion, but it satisfies the
+   * non-empty status constraint on `GoalRecordV1`. Promotion (manual or
+   * auto) is what actually flips it to `active`.
+   */
+  async addUpcomingGoal(input: {
+    workspaceId: string;
+    objective: string;
+    budgetCents?: number | null;
+    turnCap?: number | null;
+  }): Promise<GoalRecordV1> {
+    this.assertParentWorkspace(input.workspaceId);
+    const objective = input.objective.trim();
+    assert(objective.length > 0, "addUpcomingGoal requires a non-empty objective");
+
+    return this.fileLocks.withLock(input.workspaceId, async () => {
+      const board = await this.readBoard(input.workspaceId);
+      const goal = this.createGoal({
+        objective,
+        budgetCents: input.budgetCents ?? null,
+        turnCap: input.turnCap ?? null,
+        // `paused` is the placeholder status for upcoming goals — they
+        // are not actively running and not yet acknowledged by the
+        // agent. The promote path replaces this with `active` after a
+        // proper write through setGoal.
+        status: "paused",
+      });
+      const next: GoalBoardV1 = {
+        ...board,
+        upcoming: [...board.upcoming, goal],
+      };
+      await this.writeBoard(input.workspaceId, next);
+      return goal;
+    });
+  }
+
+  /**
+   * Patch an upcoming goal in place. Used by the right-sidebar Upcoming
+   * row's inline editor — users can change a queued goal's objective,
+   * budget, or turn cap without first promoting it. Returns the patched
+   * record on success and `null` when the id is unknown (idempotent for
+   * double-submit). Fields explicitly set to `null` clear the limit;
+   * fields left as `undefined` are preserved from the existing record
+   * so the UI can patch a single column.
+   *
+   * Active goals do not flow through this method — they keep using
+   * `setGoal` with `editInPlace: true` so the agent's view stays in sync
+   * via the lifecycle event stream. Upcoming goals are not visible to
+   * the agent, so a pure file-locked write is sufficient here.
+   */
+  async updateUpcomingGoal(input: {
+    workspaceId: string;
+    goalId: string;
+    objective?: string;
+    budgetCents?: number | null;
+    turnCap?: number | null;
+  }): Promise<GoalRecordV1 | null> {
+    this.assertParentWorkspace(input.workspaceId);
+    if (input.objective?.trim().length === 0) {
+      throw new WorkspaceGoalTransitionError("Goal objective cannot be empty.");
+    }
+    return this.fileLocks.withLock(input.workspaceId, async () => {
+      const board = await this.readBoard(input.workspaceId);
+      const idx = board.upcoming.findIndex((g) => g.goalId === input.goalId);
+      if (idx === -1) return null;
+      const existing = board.upcoming[idx];
+      const updated: GoalRecordV1 = GoalRecordV1Schema.parse({
+        ...existing,
+        objective: input.objective === undefined ? existing.objective : input.objective.trim(),
+        budgetCents: input.budgetCents === undefined ? existing.budgetCents : input.budgetCents,
+        turnCap: input.turnCap === undefined ? existing.turnCap : input.turnCap,
+        updatedAtMs: Date.now(),
+      });
+      const nextUpcoming = [...board.upcoming];
+      nextUpcoming[idx] = updated;
+      await this.writeBoard(input.workspaceId, { ...board, upcoming: nextUpcoming });
+      return updated;
+    });
+  }
+
+  /**
+   * Move a goal from one board location to archived. The goal can come
+   * from any section: active (the slot is cleared and history records a
+   * "cleared" entry), upcoming (removed from queue), or complete
+   * (snapshotted from history into the board so the user can still see
+   * it after the history line scrolls off the render cap).
+   *
+   * The user is the only initiator of archive — the agent never sees
+   * archived goals (filtered out of `goal-board.json` reads in the
+   * agent tool boundary if/when those tools are added).
+   */
+  async archiveGoal(workspaceId: string, goalId: string): Promise<void> {
+    this.assertParentWorkspace(workspaceId);
+    await this.fileLocks.withLock(workspaceId, async () => {
+      const [activeGoal, board, history] = await Promise.all([
+        this.readGoalFile(workspaceId),
+        this.readBoard(workspaceId),
+        this.readHistoryUnlocked(workspaceId),
+      ]);
+
+      // Already archived: idempotent no-op so a double-click doesn't
+      // surprise the user.
+      if (board.archived.some((g) => g.goalId === goalId)) {
+        return;
+      }
+
+      // Source priority: always prefer the currently-active
+      // slot. A goal that was completed → archived → revived →
+      // promoted → completed-again has both a stale history entry AND
+      // is the current active. Checking history first would snapshot
+      // the stale history row and leave the live active slot in
+      // place; the user's archive click would then appear not to
+      // work and could surface duplicate Archived rows.
+      if (activeGoal?.goalId === goalId) {
+        // Append a "cleared" history entry so the user's view of
+        // completed/cleared history stays accurate, then place a
+        // snapshot in archived. We use the current ACTIVE record
+        // (with its latest accounting) rather than any older history
+        // entry for the same id.
+        await this.appendGoalHistoryEntry(workspaceId, activeGoal, "cleared");
+        await fs.rm(this.getFilePath(workspaceId), { force: true });
+        await this.pushSnapshot(workspaceId, null);
+        const next: GoalBoardV1 = {
+          ...board,
+          archived: [activeGoal, ...board.archived],
+        };
+        await this.writeBoard(workspaceId, next);
+        return;
+      }
+
+      // Source: upcoming list.
+      const upcomingIdx = board.upcoming.findIndex((g) => g.goalId === goalId);
+      if (upcomingIdx !== -1) {
+        const [removed] = board.upcoming.splice(upcomingIdx, 1);
+        const next: GoalBoardV1 = {
+          ...board,
+          archived: [removed, ...board.archived],
+        };
+        await this.writeBoard(workspaceId, next);
+        return;
+      }
+
+      // Source: history (completed goal). Add to archived; the
+      // `getGoalBoard` dedup filters the history line so the goal
+      // doesn't double-render.
+      const historyEntry = history.find(
+        (e) => e.goal.goalId === goalId && e.endReason === "completed"
+      );
+      if (historyEntry) {
+        const next: GoalBoardV1 = {
+          ...board,
+          archived: [historyEntry.goal, ...board.archived],
+        };
+        await this.writeBoard(workspaceId, next);
+        return;
+      }
+      // Unknown id: silently ignored. The renderer can race a board
+      // refresh against a concurrent clear; throwing here would
+      // surface confusing errors for what is a benign race.
+    });
+  }
+
+  /**
+   * Move an archived goal back into `upcoming`. The user can then
+   * promote it to active or leave it in the queue.
+   */
+  async reviveArchivedGoal(workspaceId: string, goalId: string): Promise<void> {
+    this.assertParentWorkspace(workspaceId);
+    await this.fileLocks.withLock(workspaceId, async () => {
+      const board = await this.readBoard(workspaceId);
+      const idx = board.archived.findIndex((g) => g.goalId === goalId);
+      if (idx === -1) return;
+      const [revived] = board.archived.splice(idx, 1);
+      const next: GoalBoardV1 = {
+        ...board,
+        upcoming: [...board.upcoming, revived],
+      };
+      await this.writeBoard(workspaceId, next);
+    });
+  }
+
+  /**
+   * Reorder the `upcoming` list to match the given goalId sequence.
+   * Goals whose ids aren't in the input list are appended at the end
+   * (defensive against concurrent additions); ids in the input that
+   * don't match an upcoming goal are silently dropped (defensive
+   * against stale UI state).
+   */
+  async reorderUpcomingGoals(workspaceId: string, upcomingIds: string[]): Promise<void> {
+    this.assertParentWorkspace(workspaceId);
+    await this.fileLocks.withLock(workspaceId, async () => {
+      const board = await this.readBoard(workspaceId);
+      const byId = new Map(board.upcoming.map((g) => [g.goalId, g]));
+      const reordered: GoalRecordV1[] = [];
+      for (const id of upcomingIds) {
+        const goal = byId.get(id);
+        if (goal) {
+          reordered.push(goal);
+          byId.delete(id);
+        }
+      }
+      // Anything still in the map wasn't covered by the input order;
+      // preserve their relative order at the end.
+      for (const goal of board.upcoming) {
+        if (byId.has(goal.goalId)) {
+          reordered.push(goal);
+        }
+      }
+      const next: GoalBoardV1 = { ...board, upcoming: reordered };
+      await this.writeBoard(workspaceId, next);
+    });
+  }
+
+  /**
+   * Promote an upcoming goal to active. If a goal is already active,
+   * it is demoted to the head of `upcoming` so the user's roadmap
+   * stays intact (matches the design's "swap on drag-to-activate"
+   * semantics — the demoted goal is the natural next pick).
+   *
+   * **Mid-stream guard.** Promotion overwrites `goal.json`,
+   * which `recordStreamAccounting` reads on every chunk to attribute
+   * cost. If we promote while a stream is still running for the
+   * current active goal, the freshly-promoted goal would absorb the
+   * previous goal's cost. Interrupt/poll first so the promoted goal can
+   * safely receive its kickoff continuation once the workspace is idle.
+   *
+   * Returns the new active record (the promoted goal, with status
+   * flipped to `active` via the normal createGoal-like path) or
+   * `null` when the requested upcoming id doesn't exist.
+   */
+  async promoteUpcomingGoal(workspaceId: string, goalId: string): Promise<GoalRecordV1 | null> {
+    this.assertParentWorkspace(workspaceId);
+
+    // Interrupt the active stream (if any) before promoting so the
+    // in-flight turn's costs are attributed to the goal that ran them.
+    // The promoted goal's view (via the agent's `get_goal` tool) then
+    // takes effect on the kickoff continuation; otherwise a mid-stream
+    // promote could attribute the current stream tail to the new goal.
+    //
+    // Behavior intentionally fails open: if no interrupter is wired
+    // (tests) or the interrupt errors, we still proceed to promote.
+    // The promotion arm below picks up the new goal via `get_goal`; worst
+    // case is the small slice of stream tail that lands before the abort
+    // settles. We log so production paths flag the rare error.
+    if (await this.isWorkspaceStreaming(workspaceId)) {
+      if (this.streamInterrupter) {
+        try {
+          await this.streamInterrupter(workspaceId);
+        } catch (error) {
+          log.warn("promoteUpcomingGoal: stream interrupt failed; continuing with promote", {
+            workspaceId,
+            error,
+          });
+        }
+        // Stream tear-down may not flip `streaming=false` synchronously
+        // with `interruptStream` resolving. Poll briefly (same backoff
+        // as `runDeferredAutoPromoteAfterStreamEnd`) so the file-lock
+        // body sees the post-interrupt state.
+        await this.waitForStreamSettled(workspaceId);
+      }
+    }
+
+    const promotedGoal = await this.fileLocks.withLock(workspaceId, async () => {
+      const [currentActive, board] = await Promise.all([
+        this.readGoalFile(workspaceId),
+        this.readBoard(workspaceId),
+      ]);
+      const idx = board.upcoming.findIndex((g) => g.goalId === goalId);
+      if (idx === -1) return null;
+      const [promoted] = board.upcoming.splice(idx, 1);
+
+      // Flip status to active. We reuse `createGoal` shape via direct
+      // schema parse rather than calling setGoal to avoid re-entering
+      // the streaming/conflict path — promotion happens inside one
+      // file lock and shouldn't fan out into the public setGoal flow.
+      //
+      // a previously-active goal demoted back into upcoming
+      // may already have cost ≥ budget or turnsUsed ≥ turnCap
+      // (e.g. it hit `budget_limited`, was demoted by a different
+      // promote, then re-queued). Run `applyBudgetDrivenStatus` so the
+      // re-activated record correctly lands in `budget_limited` if the
+      // limits are already exhausted; otherwise it would accept a send
+      // and only flip after the next chunk's accounting.
+      //
+      // Also clear `completionSummary` so a previously-completed goal
+      // that's been archived → revived → promoted doesn't carry its
+      // 'done' message into the new active turn. The agent's
+      // `get_goal` tool reads goal.json directly and would otherwise
+      // see a stale summary. Matches the
+      // `completionSummaryPatch` invariant for non-complete statuses.
+      const now = Date.now();
+      const baseActivated = GoalRecordV1Schema.parse({
+        ...promoted,
+        status: "active",
+        updatedAtMs: now,
+        completionSummary: undefined,
+        requireUserAcknowledgmentSinceMs: null,
+      });
+      const activated = this.applyBudgetDrivenStatus(baseActivated);
+
+      // gate budgeted goal promotion on pricing data. A user
+      // who queued a goal under a priced model and then switched to an
+      // unpriced one would otherwise activate a budgeted goal they
+      // can't actually send messages against — `assertPricedModelFor
+      // BudgetedGoal` would block every send until the model is
+      // changed or the goal cleared. Same guard `setGoal` uses for
+      // direct creates.
+      if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, activated)) {
+        throw new WorkspaceGoalTransitionError(UNPRICED_TARGET_MODEL_GOAL_MESSAGE);
+      }
+
+      // Demote the previously-active goal to the head of upcoming, but
+      // ONLY if it's still alive. A completed goal sitting in the active
+      // slot (the user-marked-complete + queued-next workflow) must NOT
+      // re-enter the queue: completed goals are terminal
+      // from the queue's perspective. Push them to history under the
+      // "completed" reason so the board's Completed section surfaces
+      // them, and skip the upcoming demote.
+      let nextUpcoming: GoalRecordV1[];
+      if (currentActive) {
+        if (currentActive.status === "complete") {
+          await this.appendGoalHistoryEntry(workspaceId, currentActive, "completed");
+          nextUpcoming = board.upcoming;
+        } else {
+          nextUpcoming = [currentActive, ...board.upcoming];
+        }
+      } else {
+        nextUpcoming = board.upcoming;
+      }
+
+      await this.writeBoard(workspaceId, {
+        ...board,
+        upcoming: nextUpcoming,
+      });
+      await this.writeGoal(workspaceId, activated);
+      await this.pushSnapshot(workspaceId, activated);
+      this.emitLifecycle("goal_resumed", { initiator: "user" });
+      return activated;
+    });
+    if (promotedGoal) {
+      this.armContinuationForPromotedGoal(workspaceId, promotedGoal);
+    }
+    return promotedGoal;
+  }
+
+  /**
+   * Called after a `complete` status transition inside `setGoal` to move the
+   * completed goal into the Complete board section and promote the next queued
+   * goal into focus.
+   *
+   * Behavior:
+   *   - If the transition isn't into `complete`, no-op.
+   *   - If there are no upcoming goals queued, no-op — the existing
+   *     UX (completion summary on the active card) stays intact for
+   *     users who don't use the queue. This preserves backward compat.
+   *   - Otherwise: append the completed goal to `goal-history.jsonl`
+   *     under `completed` endReason, then promote the head of upcoming
+   *     into the active slot. The previously-completed goal then only
+   *     lives in history (the Board renders it under the Completed
+   *     section).
+   *
+   * Caller must hold the workspace file lock; promotion + history
+   * append happen under the same lock as the original mutation so the
+   * board snapshot is always consistent.
+   */
+  private async maybeAutoPromoteOnComplete(
+    workspaceId: string,
+    completedGoal: GoalRecordV1,
+    previousStatus: GoalStatus
+  ): Promise<void> {
+    if (completedGoal.status !== "complete" || previousStatus === "complete") {
+      return;
+    }
+    const board = await this.readBoard(workspaceId);
+    if (board.upcoming.length === 0) {
+      return;
+    }
+    // check BOTH the streaming guard and the pricing
+    // gate BEFORE appending the completion history entry. Either
+    // failure here means promotion can't go through; we must leave
+    // the completed goal in `goal.json` so a later retry archives it
+    // exactly once instead of producing a duplicate Completed row.
+    if (await this.isWorkspaceStreaming(workspaceId)) {
+      log.warn("Auto-promote on complete skipped: workspace is still streaming", {
+        workspaceId,
+        goalId: board.upcoming[0].goalId,
+      });
+      return;
+    }
+    const [head] = board.upcoming;
+    const projected = GoalRecordV1Schema.parse({
+      ...head,
+      status: "active",
+      updatedAtMs: Date.now(),
+    });
+    if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, projected)) {
+      log.warn(
+        "Auto-promote on complete skipped: queued goal is budgeted but kickoff model is unpriced",
+        { workspaceId, goalId: head.goalId }
+      );
+      return;
+    }
+    // Move the completed goal into history before overwriting goal.json
+    // with the promoted goal. The board's Completed section reads from
+    // history, so this is what makes the just-completed goal visible
+    // there.
+    await this.appendGoalHistoryEntry(workspaceId, completedGoal, "completed");
+    await this.promoteNextUpcomingUnlocked(workspaceId);
+  }
+
+  /**
+   * Called after a goal is marked complete (by agent or user) or
+   * cleared. If `upcoming` has a head, promote it to active so the
+   * agent has a roadmap to pick up immediately. Promotion also arms the
+   * kickoff continuation when a runtime bridge can supply send options; this
+   * matches explicit resume and prevents queued goals from waiting on a
+   * pause/unpause nudge.
+   *
+   * Caller must hold the workspace file lock. Returns the new active
+   * record if a promotion happened, null otherwise.
+   */
+  private async promoteNextUpcomingUnlocked(workspaceId: string): Promise<GoalRecordV1 | null> {
+    const board = await this.readBoard(workspaceId);
+    if (board.upcoming.length === 0) return null;
+    // same mid-stream guard as `promoteUpcomingGoal`.
+    // `clearGoal` and `maybeAutoPromoteOnComplete` invoke this helper
+    // while a stream may still be running (the agent's `complete_goal`
+    // tool fires mid-turn). Writing the queued goal to `goal.json` in
+    // that window lets the remaining stream cost get attributed to the
+    // newly-promoted record. Skip the auto-promote while streaming —
+    // the caller (manual setGoal/clearGoal flow) already succeeded;
+    // the upcoming head stays intact and the user can trigger a
+    // promote later (or stream-end will land here naturally on the
+    // next mutation).
+    if (await this.isWorkspaceStreaming(workspaceId)) {
+      log.warn("Auto-promote on complete skipped: workspace is still streaming", {
+        workspaceId,
+        goalId: board.upcoming[0].goalId,
+      });
+      return null;
+    }
+    const [head, ...rest] = board.upcoming;
+    const now = Date.now();
+    // same budget-driven normalization as
+    // `promoteUpcomingGoal`. Cover the auto-promote-on-complete path
+    // and the deferred stream-end path; both write the head into
+    // `goal.json` and need to respect already-exhausted limits.
+    // Also clear `completionSummary` (see `promoteUpcomingGoal` for
+    // the rationale — agent's `get_goal` would otherwise see a stale
+    // 'done' message on a revived/promoted goal).
+    const baseActivated = GoalRecordV1Schema.parse({
+      ...head,
+      status: "active",
+      updatedAtMs: now,
+      completionSummary: undefined,
+      requireUserAcknowledgmentSinceMs: null,
+    });
+    const activated = this.applyBudgetDrivenStatus(baseActivated);
+    // same pricing gate as `promoteUpcomingGoal`. If the next
+    // queued goal is budgeted and the workspace is currently on an
+    // unpriced model, refuse the auto-promotion — otherwise we'd leave
+    // the workspace in a state where the user can't send messages
+    // (their active goal is blocked by `assertPricedModelForBudgetedGoal`).
+    // The completion mutation still succeeds; the upcoming list keeps
+    // its head and the user is left to either change models or clear
+    // the head goal before the next promote attempt.
+    if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, activated)) {
+      log.warn(
+        "Auto-promote on complete skipped: queued goal is budgeted but kickoff model is unpriced",
+        { workspaceId, goalId: head.goalId }
+      );
+      return null;
+    }
+    await this.writeBoard(workspaceId, { ...board, upcoming: rest });
+    await this.writeGoal(workspaceId, activated);
+    await this.pushSnapshot(workspaceId, activated);
+    this.emitLifecycle("goal_created", {
+      viaFork: false,
+      sourceStatus: head.status,
+      objectiveLengthBucket: lengthBucket(head.objective.length),
+      hasBudget: activated.budgetCents != null,
+      hasTurnCap: activated.turnCap != null,
+    });
+    this.armContinuationForPromotedGoal(workspaceId, activated);
+    return activated;
+  }
+}

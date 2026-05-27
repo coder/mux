@@ -60,15 +60,16 @@ import { withSequentialExecution } from "@/node/services/tools/withSequentialExe
 import type { ResolvedCallSettingsOverrides } from "@/common/config/schemas/modelParameters";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { getErrorMessage } from "@/common/utils/errors";
+import { runLanguageModelCleanup } from "./languageModelCleanup";
 import { shellQuote } from "@/common/utils/shell";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 import { normalizeLiteralRequiredToolPattern } from "@/common/utils/agentTools";
+import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 
 // Disable noisy AI SDK warning logging.
 globalThis.AI_SDK_LOG_WARNINGS = false;
 
 export type StreamTextOnChunk = NonNullable<Parameters<typeof streamText>[0]["onChunk"]>;
-export type StreamTextOnChunkEvent = Parameters<StreamTextOnChunk>[0];
 
 const EMPTY_STREAM_OUTPUT_ERROR_MESSAGE =
   "The model ended the stream before producing any assistant-visible output. This usually means the upstream stream was dropped rather than completed normally. Mux will retry automatically when possible, and if retries keep failing you should try again or switch models.";
@@ -1833,20 +1834,13 @@ export class StreamManager extends EventEmitter {
 
               case "text-delta": {
                 // Providers/SDKs may stream text deltas under different keys.
-                const textDeltaPart = part as {
-                  text?: unknown;
-                  delta?: unknown;
-                  textDelta?: unknown;
-                };
+                const textDeltaPart = part as Record<string, unknown>;
 
-                const deltaText =
-                  typeof textDeltaPart.text === "string"
-                    ? textDeltaPart.text
-                    : typeof textDeltaPart.delta === "string"
-                      ? textDeltaPart.delta
-                      : typeof textDeltaPart.textDelta === "string"
-                        ? textDeltaPart.textDelta
-                        : "";
+                const deltaText = extractChunkDeltaText(textDeltaPart, [
+                  "text",
+                  "delta",
+                  "textDelta",
+                ]);
 
                 if (deltaText.length === 0) {
                   if (
@@ -2333,6 +2327,8 @@ export class StreamManager extends EventEmitter {
         clearTimeout(streamInfo.partialWriteTimer);
         streamInfo.partialWriteTimer = undefined;
       }
+
+      runLanguageModelCleanup(streamInfo.request?.model);
 
       streamInfo.unlinkAbortSignal?.();
       streamInfo.unlinkAbortSignal = undefined;
@@ -3013,6 +3009,7 @@ export class StreamManager extends EventEmitter {
         return Ok(streamToken);
       } finally {
         if (!streamRegistered) {
+          runLanguageModelCleanup(model);
           unlinkAbortSignal();
           if (runtimeTempDir) {
             this.cleanupStreamTempDir(runtime, runtimeTempDir);

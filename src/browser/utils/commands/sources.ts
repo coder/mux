@@ -2,43 +2,59 @@ import { THEME_OPTIONS, type ThemePreference } from "@/browser/contexts/ThemeCon
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import type { APIClient } from "@/browser/contexts/API";
 import type { ConfirmDialogOptions } from "@/browser/contexts/ConfirmDialogContext";
+import { getContextResetSuccessMessage } from "@/browser/utils/contextResetFeedback";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import assert from "@/common/utils/assert";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import {
-  getRightSidebarLayoutKey,
-  RIGHT_SIDEBAR_COLLAPSED_KEY,
-  RIGHT_SIDEBAR_TAB_KEY,
-} from "@/common/constants/storage";
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
+import {
+  getOrderedBaseTabIds,
+  getTabConfig,
+  type BaseTabType,
+} from "@/browser/features/RightSidebar/Tabs/tabConfig";
 import {
   getEffectiveSlotKeybind,
   getLayoutsConfigOrDefault,
   getPresetForSlot,
 } from "@/browser/utils/uiLayouts";
-import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
+import { formatProjectHierarchyLabel, getTopLevelProjectEntries } from "@/common/utils/subProjects";
 import type { LayoutPresetsConfig, LayoutSlotNumber } from "@/common/types/uiLayouts";
 import {
   addToolToFocusedTabset,
-  getDefaultRightSidebarLayoutState,
   hasTab,
-  parseRightSidebarLayoutState,
   selectTabInTabset,
   setFocusedTabset,
   splitFocusedTabset,
   toggleTab,
+  type RightSidebarLayoutState,
 } from "@/browser/utils/rightSidebarLayout";
+import {
+  readRightSidebarLayout,
+  updateRightSidebarLayout,
+} from "@/browser/utils/rightSidebarTabFocus";
 
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import { isGoalPendingPersistence, type GoalSetError, type GoalStatus } from "@/common/types/goal";
+import { GOAL_OBJECTIVE_PLACEHOLDER } from "@/constants/goals";
 import { getErrorMessage } from "@/common/utils/errors";
+import { parseGoalBudgetCents } from "@/browser/utils/slashCommands/registry";
+import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
+import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
+import {
+  hasGoalBudgetLimit,
+  modelHasPricingData,
+  UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
+} from "@/common/utils/goals/budgetPricing";
+import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 
 export interface BuildSourcesParams {
   api: APIClient | null;
@@ -110,6 +126,7 @@ export const COMMAND_SECTIONS = {
   PROJECTS: "Projects",
   APPEARANCE: "Appearance",
   SETTINGS: "Settings",
+  GOALS: "Goals",
 } as const;
 
 const section = {
@@ -122,36 +139,7 @@ const section = {
   help: COMMAND_SECTIONS.HELP,
   projects: COMMAND_SECTIONS.PROJECTS,
   settings: COMMAND_SECTIONS.SETTINGS,
-};
-
-const getRightSidebarTabFallback = (): TabType => {
-  const raw = readPersistedState<string>(RIGHT_SIDEBAR_TAB_KEY, "costs");
-  return isTabType(raw) ? raw : "costs";
-};
-
-const readRightSidebarLayout = (workspaceId: string) => {
-  const fallback = getRightSidebarTabFallback();
-  const raw = readPersistedState(
-    getRightSidebarLayoutKey(workspaceId),
-    getDefaultRightSidebarLayoutState(fallback)
-  );
-  return parseRightSidebarLayoutState(raw, fallback);
-};
-
-const updateRightSidebarLayout = (
-  workspaceId: string,
-  updater: (
-    state: ReturnType<typeof parseRightSidebarLayoutState>
-  ) => ReturnType<typeof parseRightSidebarLayoutState>
-) => {
-  const fallback = getRightSidebarTabFallback();
-  const defaultLayout = getDefaultRightSidebarLayoutState(fallback);
-
-  updatePersistedState<ReturnType<typeof parseRightSidebarLayoutState>>(
-    getRightSidebarLayoutKey(workspaceId),
-    (prev) => updater(parseRightSidebarLayoutState(prev, fallback)),
-    defaultLayout
-  );
+  goals: COMMAND_SECTIONS.GOALS,
 };
 
 function toFileUrl(filePath: string): string {
@@ -218,7 +206,7 @@ const showCommandFeedbackToast = (feedback: {
 };
 
 const findFirstTerminalSessionTab = (
-  node: ReturnType<typeof parseRightSidebarLayoutState>["root"]
+  node: RightSidebarLayoutState["root"]
 ): { tabsetId: string; tab: TabType } | null => {
   if (node.type === "tabset") {
     const tab = node.tabs.find((t) => t.startsWith("terminal:") && t !== "terminal");
@@ -229,6 +217,101 @@ const findFirstTerminalSessionTab = (
     findFirstTerminalSessionTab(node.children[0]) ?? findFirstTerminalSessionTab(node.children[1])
   );
 };
+
+/**
+ * Build a "Hide/Show <Name>" command for a config-defined tab.
+ *
+ * Each command-source factory is re-invoked per palette render, so the
+ * Hide/Show title is up-to-date without any explicit subscription wiring.
+ *
+ * This is secondary discoverability only; default visibility is controlled by
+ * `inDefaultLayout` in `tabConfig.ts` and enforced by the layout migration.
+ */
+function buildToggleTabCommand(
+  workspaceId: string,
+  tabId: BaseTabType,
+  navigationSection: CommandAction["section"]
+): CommandAction {
+  const reg = getTabConfig(tabId);
+  const visible = hasTab(readRightSidebarLayout(workspaceId), tabId as TabType);
+  return {
+    id: `nav:toggle-tab:${tabId}`,
+    title: `${visible ? "Hide" : "Show"} ${reg.name}`,
+    section: navigationSection,
+    keywords: reg.paletteKeywords ?? [tabId],
+    run: () => {
+      updateRightSidebarLayout(workspaceId, (s) => toggleTab(s, tabId as TabType));
+      if (!visible) {
+        updatePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
+      }
+    },
+  };
+}
+
+function getGoalSetErrorMessage(error: GoalSetError): string {
+  if (error.type === "goal_conflict") {
+    return "Goal changed in another window. Please try again.";
+  }
+  return error.message;
+}
+
+interface GoalPaletteSetGoalInput {
+  objective?: string;
+  // Palette commands only ever request user-facing transitions (pause, resume,
+  // complete); `budget_limited` is internal-only and is now excluded from the
+  // public oRPC `setGoal` input shape (Coder-agents-review nit DEREM-53).
+  status?: Exclude<GoalStatus, "budget_limited">;
+  budgetCents?: number | null;
+  turnCap?: number | null;
+  completionSummary?: string;
+}
+
+function canSetBudgetedGoalWithCurrentPaletteModel(
+  workspaceId: string,
+  selectedWorkspaceState: WorkspaceState | null | undefined,
+  budgetCents: number | null,
+  providersConfig: unknown
+): boolean {
+  if (!hasGoalBudgetLimit(budgetCents)) {
+    return true;
+  }
+  const selectedModel =
+    typeof window === "undefined"
+      ? (selectedWorkspaceState?.currentModel ?? "")
+      : getSendOptionsFromStorage(workspaceId).model;
+  return selectedModel.length === 0 || modelHasPricingData(selectedModel, providersConfig);
+}
+
+function showUnpricedCurrentModelGoalFeedback(): void {
+  showCommandFeedbackToast({
+    type: "error",
+    message: UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
+  });
+}
+
+async function requireGoalSetSuccess(
+  api: APIClient,
+  workspaceId: string,
+  input: GoalPaletteSetGoalInput
+): Promise<boolean> {
+  // Shared retry helper centralized in `@/browser/utils/goals/` to avoid the
+  // three-way drift Coder-agents-review P3 DEREM-25 flagged.
+  const result = await setGoalWithConflictRetry(api, workspaceId, input);
+  if (!result.success) {
+    showCommandFeedbackToast({ type: "error", message: getGoalSetErrorMessage(result.error) });
+    return false;
+  }
+  return true;
+}
+
+function openGoalPanel(workspaceId: string, openCompleteInput = false): void {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") {
+    return;
+  }
+  window.dispatchEvent(
+    createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId, openCompleteInput })
+  );
+}
 export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandAction[]> {
   const actions: Array<() => CommandAction[]> = [];
 
@@ -238,13 +321,16 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
   const createWorkspaceForSelectedProjectAction = (
     selected: NonNullable<BuildSourcesParams["selectedWorkspace"]>
   ): CommandAction => {
+    const metadata = p.workspaceMetadata.get(selected.workspaceId);
+    const targetProjectPath = metadata?.subProjectPath ?? selected.projectPath;
+    const targetProjectLabel = formatProjectHierarchyLabel(targetProjectPath, p.userProjects);
     return {
       id: CommandIds.workspaceNew(),
       title: "Create New Workspace…",
-      subtitle: `for ${selected.projectName}`,
+      subtitle: `for ${targetProjectLabel}`,
       section: section.workspaces,
       shortcutHint: formatKeybind(KEYBINDS.NEW_WORKSPACE),
-      run: () => p.onStartWorkspaceCreation(selected.projectPath),
+      run: () => p.onStartWorkspaceCreation(targetProjectPath),
     };
   };
 
@@ -535,19 +621,16 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     const wsId = p.selectedWorkspace?.workspaceId;
     if (wsId) {
       list.push(
-        {
-          id: CommandIds.navToggleOutput(),
-          title: hasTab(readRightSidebarLayout(wsId), "output") ? "Hide Output" : "Show Output",
-          section: section.navigation,
-          keywords: ["log", "logs", "output"],
-          run: () => {
-            const isOutputVisible = hasTab(readRightSidebarLayout(wsId), "output");
-            updateRightSidebarLayout(wsId, (s) => toggleTab(s, "output"));
-            if (!isOutputVisible) {
-              updatePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
-            }
-          },
-        },
+        // Generic per-tab "Hide/Show <Name>" commands are only for optional tabs.
+        // Default-layout tabs (Stats/Review/Instructions) are auto-restored by
+        // the layout migration, so exposing hide commands for them would be a
+        // no-op and obscure the fact that they are meant to be visible by default.
+        ...getOrderedBaseTabIds()
+          .filter((tabId) => {
+            const config = getTabConfig(tabId);
+            return config.inDefaultLayout !== true && config.featureFlag == null;
+          })
+          .map((tabId) => buildToggleTabCommand(wsId, tabId, section.navigation)),
         {
           id: CommandIds.navOpenLogFile(),
           title: "Open Log File",
@@ -601,21 +684,21 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 name: "tool",
                 label: "Tool",
                 placeholder: "Select a tool…",
-                getOptions: () =>
-                  (["costs", "review", "output", "debug", "terminal"] as TabType[]).map((tab) => ({
-                    id: tab,
-                    label:
-                      tab === "costs"
-                        ? "Costs"
-                        : tab === "review"
-                          ? "Review"
-                          : tab === "output"
-                            ? "Output"
-                            : tab === "debug"
-                              ? "Debug"
-                              : "Terminal",
-                    keywords: [tab],
-                  })),
+                // Static tabs come straight from the lightweight config (in default order).
+                // Terminal is appended manually because it lives outside the static registry.
+                getOptions: () => [
+                  ...getOrderedBaseTabIds()
+                    .filter((tabId) => getTabConfig(tabId).featureFlag == null)
+                    .map((tabId) => {
+                      const config = getTabConfig(tabId);
+                      return {
+                        id: tabId as TabType,
+                        label: config.name,
+                        keywords: config.paletteKeywords ?? [tabId],
+                      };
+                    }),
+                  { id: "terminal" as TabType, label: "Terminal", keywords: ["terminal"] },
+                ],
               },
             ],
             onSubmit: (vals) => {
@@ -733,11 +816,224 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     return list;
   });
 
+  // Goals
+  actions.push(() => {
+    const selected = p.selectedWorkspace;
+    if (!selected) {
+      return [];
+    }
+
+    const workspaceId = selected.workspaceId;
+    const selectedMetadata = p.workspaceMetadata.get(workspaceId);
+    // Goal writes are rejected for child task workspaces by
+    // WorkspaceGoalService.assertParentWorkspace(), so keep palette actions
+    // hidden there just like the Goal tab.
+    if (selectedMetadata?.parentWorkspaceId != null) {
+      return [];
+    }
+
+    const api = p.api;
+    const goal = p.selectedWorkspaceState?.goal ?? null;
+    const list: CommandAction[] = [
+      {
+        id: CommandIds.goalSetObjective(),
+        title: "Goal: Set objective",
+        section: section.goals,
+        keywords: ["target", "objective", "budget"],
+        run: () => undefined,
+        prompt: {
+          title: "Set Goal Objective",
+          fields: [
+            {
+              type: "text",
+              name: "objective",
+              label: "Goal objective",
+              placeholder: GOAL_OBJECTIVE_PLACEHOLDER,
+              validate: (value) => (!value.trim() ? "Goal objective is required" : null),
+            },
+            {
+              type: "text",
+              name: "budget",
+              label: "Goal budget",
+              placeholder: "$5.00 or blank for no budget",
+              validate: (value) => {
+                const trimmed = value.trim();
+                if (!trimmed || parseGoalBudgetCents(trimmed) != null) {
+                  return null;
+                }
+                return "Use a budget like $5.00 or 500c";
+              },
+            },
+          ],
+          onSubmit: async (values) => {
+            assert(api, "Goal palette actions require a connected backend");
+            const objective = values.objective.trim();
+            assert(objective.length > 0, "Goal objective is required");
+            const budget = values.budget.trim();
+            const budgetCents = budget ? parseGoalBudgetCents(budget) : null;
+            assert(
+              !budget || budgetCents !== null,
+              "Goal budget must be blank or formatted like $5.00 or 500c"
+            );
+            // Apply shared defaults for turn caps, while preserving the palette
+            // field contract that a blank budget means no budget. Pass the
+            // workspaceId so a per-workspace override (configured from the
+            // GoalTab) wins over the global default for palette-initiated
+            // goal creation.
+            const defaults = await loadGoalDefaults(api, workspaceId);
+            const intent = resolveGoalSetIntent(
+              {
+                objective,
+                budgetCents,
+              },
+              defaults
+            );
+            let providersConfig: unknown = null;
+            try {
+              providersConfig = await api.providers.getConfig();
+            } catch {
+              providersConfig = null;
+            }
+            if (
+              !canSetBudgetedGoalWithCurrentPaletteModel(
+                workspaceId,
+                p.selectedWorkspaceState,
+                intent.budgetCents,
+                providersConfig
+              )
+            ) {
+              showUnpricedCurrentModelGoalFeedback();
+              return;
+            }
+            const ok = await requireGoalSetSuccess(api, workspaceId, {
+              objective: intent.objective,
+              budgetCents: intent.budgetCents,
+              ...(intent.turnCap != null ? { turnCap: intent.turnCap } : {}),
+            });
+            if (!ok) return;
+            openGoalPanel(workspaceId);
+          },
+        },
+      },
+    ];
+
+    const isPendingGoalPersistence = isGoalPendingPersistence(goal);
+
+    if (!isPendingGoalPersistence && goal?.status === "active") {
+      list.push({
+        id: CommandIds.goalPause(),
+        title: "Goal: Pause",
+        section: section.goals,
+        keywords: ["target", "objective"],
+        run: async () => {
+          assert(api, "Goal palette actions require a connected backend");
+          await requireGoalSetSuccess(api, workspaceId, { status: "paused" });
+        },
+      });
+    }
+
+    if (!isPendingGoalPersistence && goal?.status === "paused") {
+      list.push({
+        id: CommandIds.goalResume(),
+        title: "Goal: Resume",
+        section: section.goals,
+        keywords: ["target", "objective"],
+        run: async () => {
+          assert(api, "Goal palette actions require a connected backend");
+          await requireGoalSetSuccess(api, workspaceId, { status: "active" });
+        },
+      });
+    }
+
+    if (
+      !isPendingGoalPersistence &&
+      (goal?.status === "active" || goal?.status === "budget_limited")
+    ) {
+      list.push({
+        id: CommandIds.goalMarkComplete(),
+        title: "Goal: Mark complete",
+        section: section.goals,
+        keywords: ["target", "objective", "summary"],
+        run: () => undefined,
+        prompt: {
+          title: "Complete Goal",
+          fields: [
+            {
+              type: "text",
+              name: "summary",
+              label: "Completion summary",
+              placeholder: "Summarize the completed goal…",
+              validate: (value) => (!value.trim() ? "Completion summary is required" : null),
+            },
+          ],
+          onSubmit: async (values) => {
+            assert(api, "Goal palette actions require a connected backend");
+            const completionSummary = values.summary.trim();
+            assert(completionSummary.length > 0, "Completion summary is required");
+            const ok = await requireGoalSetSuccess(api, workspaceId, {
+              status: "complete",
+              completionSummary,
+            });
+            if (!ok) return;
+            openGoalPanel(workspaceId);
+          },
+        },
+      });
+    }
+
+    if (goal) {
+      if (!isPendingGoalPersistence) {
+        list.push({
+          id: CommandIds.goalClear(),
+          title: "Goal: Clear",
+          section: section.goals,
+          keywords: ["target", "objective"],
+          run: async () => {
+            assert(api, "Goal palette actions require a connected backend");
+            await api.workspace.clearGoal({ workspaceId });
+          },
+        });
+      }
+      list.push({
+        id: CommandIds.goalOpenPanel(),
+        title: "Goal: Open panel",
+        section: section.goals,
+        keywords: ["target", "objective", "sidebar"],
+        run: () => openGoalPanel(workspaceId),
+      });
+    }
+
+    return list;
+  });
+
   // Chat utilities
   actions.push(() => {
     const list: CommandAction[] = [];
     if (p.selectedWorkspace) {
       const id = p.selectedWorkspace.workspaceId;
+      list.push({
+        id: CommandIds.chatResetContext(),
+        title: "Reset Context, Preserve History",
+        section: section.chat,
+        keywords: ["context reset", "soft clear", "preserve history", "reset chat"],
+        run: async () => {
+          assert(p.api, "Reset Context palette action requires a connected backend");
+          const result = await p.api.workspace.resetContext({ workspaceId: id });
+          if (!result.success) {
+            showCommandFeedbackToast({ type: "error", message: result.error });
+            throw new Error(result.error);
+          }
+          if (result.data === "reset") {
+            window.dispatchEvent(
+              createCustomEvent(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, { workspaceId: id })
+            );
+          }
+          showCommandFeedbackToast({
+            type: "success",
+            message: getContextResetSuccessMessage(result.data),
+          });
+        },
+      });
       list.push({
         id: CommandIds.chatClear(),
         title: "Clear History",
@@ -984,13 +1280,11 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               label: "Select project",
               placeholder: "Search projects…",
               getOptions: (_values) =>
-                Array.from(p.userProjects.entries())
-                  .filter(([, projectConfig]) => !projectConfig.parentProjectPath)
-                  .map(([projectPath]) => ({
-                    id: projectPath,
-                    label: formatProjectHierarchyLabel(projectPath, p.userProjects),
-                    keywords: [projectPath],
-                  })),
+                getTopLevelProjectEntries(p.userProjects).map(([projectPath]) => ({
+                  id: projectPath,
+                  label: formatProjectHierarchyLabel(projectPath, p.userProjects),
+                  keywords: [projectPath],
+                })),
             },
           ],
           onSubmit: async (vals) => {

@@ -9,7 +9,7 @@ import {
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { Input } from "@/browser/components/Input/Input";
 import { Switch } from "@/browser/components/Switch/Switch";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
@@ -18,6 +18,12 @@ import {
   TERMINAL_FONT_CONFIG_KEY,
   DEFAULT_TERMINAL_FONT_CONFIG,
   LAUNCH_BEHAVIOR_KEY,
+  BASH_COLLAPSED_SUMMARY_MODE_KEY,
+  BASH_COLLAPSED_SUMMARY_MODES,
+  CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
+  DEFAULT_BASH_COLLAPSED_SUMMARY_MODE,
+  normalizeBashCollapsedSummaryMode,
+  type BashCollapsedSummaryMode,
   type EditorConfig,
   type EditorType,
   type LaunchBehavior,
@@ -143,6 +149,15 @@ const LAUNCH_BEHAVIOR_OPTIONS = [
   { value: "new-chat", label: "New chat on recent project" },
   { value: "last-workspace", label: "Last visited workspace" },
 ] as const;
+const BASH_COLLAPSED_SUMMARY_MODE_LABELS: Record<BashCollapsedSummaryMode, string> = {
+  command: "Command",
+  "intent-command": "Intent and command",
+  intent: "Intent",
+};
+const BASH_COLLAPSED_SUMMARY_MODE_OPTIONS = BASH_COLLAPSED_SUMMARY_MODES.map((value) => ({
+  value,
+  label: BASH_COLLAPSED_SUMMARY_MODE_LABELS[value],
+}));
 const ARCHIVE_BEHAVIOR_OPTIONS = [
   { value: "keep", label: "Keep running" },
   { value: "stop", label: "Stop workspace" },
@@ -167,6 +182,11 @@ export function GeneralSection() {
     LAUNCH_BEHAVIOR_KEY,
     "dashboard"
   );
+  const [rawBashCollapsedSummaryMode, setBashCollapsedSummaryMode] = usePersistedState<unknown>(
+    BASH_COLLAPSED_SUMMARY_MODE_KEY,
+    DEFAULT_BASH_COLLAPSED_SUMMARY_MODE
+  );
+  const bashCollapsedSummaryMode = normalizeBashCollapsedSummaryMode(rawBashCollapsedSummaryMode);
   const [rawTerminalFontConfig, setTerminalFontConfig] = usePersistedState<TerminalFontConfig>(
     TERMINAL_FONT_CONFIG_KEY,
     DEFAULT_TERMINAL_FONT_CONFIG
@@ -205,6 +225,7 @@ export function GeneralSection() {
     DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR
   );
   const [archiveSettingsLoaded, setArchiveSettingsLoaded] = useState(false);
+  const [chatTranscriptFullWidth, setChatTranscriptFullWidth] = useState(false);
   const [llmDebugLogs, setLlmDebugLogs] = useState(false);
   const archiveBehaviorLoadNonceRef = useRef(0);
   const archiveBehaviorRef = useRef<CoderWorkspaceArchiveBehavior>(DEFAULT_CODER_ARCHIVE_BEHAVIOR);
@@ -212,11 +233,13 @@ export function GeneralSection() {
     DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR
   );
 
+  const chatTranscriptFullWidthLoadNonceRef = useRef(0);
   const llmDebugLogsLoadNonceRef = useRef(0);
 
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
   // selections can't race and persist a stale value via out-of-order writes.
   const archiveBehaviorUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const chatTranscriptFullWidthUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const llmDebugLogsUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const archiveBehaviorPendingUpdateRef = useRef<CoderWorkspaceArchiveBehavior | undefined>(
     undefined
@@ -232,6 +255,7 @@ export function GeneralSection() {
 
     setArchiveSettingsLoaded(false);
     const archiveBehaviorNonce = ++archiveBehaviorLoadNonceRef.current;
+    const chatTranscriptFullWidthNonce = ++chatTranscriptFullWidthLoadNonceRef.current;
     const llmDebugLogsNonce = ++llmDebugLogsLoadNonceRef.current;
 
     void api.config
@@ -255,7 +279,16 @@ export function GeneralSection() {
           setArchiveSettingsLoaded(true);
         }
 
-        // Use an independent nonce so debug-log toggles do not discard archive-setting updates.
+        // Use independent nonces so appearance/debug toggles do not discard archive updates.
+        if (chatTranscriptFullWidthNonce === chatTranscriptFullWidthLoadNonceRef.current) {
+          const enabled = cfg.chatTranscriptFullWidth === true;
+          setChatTranscriptFullWidth(enabled);
+          updatePersistedState<boolean | undefined>(
+            CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
+            enabled ? true : undefined
+          );
+        }
+
         if (llmDebugLogsNonce === llmDebugLogsLoadNonceRef.current) {
           setLlmDebugLogs(cfg.llmDebugLogs === true);
         }
@@ -341,6 +374,29 @@ export function GeneralSection() {
     },
     [api, archiveSettingsLoaded, queueArchiveBehaviorUpdate]
   );
+
+  const handleChatTranscriptFullWidthChange = (checked: boolean) => {
+    // Invalidate any in-flight config load so it does not overwrite the user's selection.
+    chatTranscriptFullWidthLoadNonceRef.current++;
+    setChatTranscriptFullWidth(checked);
+    updatePersistedState<boolean | undefined>(
+      CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
+      checked ? true : undefined
+    );
+
+    if (!api?.config?.updateChatTranscriptFullWidth) {
+      return;
+    }
+
+    chatTranscriptFullWidthUpdateChainRef.current = chatTranscriptFullWidthUpdateChainRef.current
+      .catch(() => {
+        // Best-effort only.
+      })
+      .then(() => api.config.updateChatTranscriptFullWidth({ enabled: checked }))
+      .catch(() => {
+        // Best-effort persistence.
+      });
+  };
 
   const handleLlmDebugLogsChange = (checked: boolean) => {
     // Invalidate any in-flight debug-log load so it doesn't overwrite the user's selection.
@@ -494,6 +550,47 @@ export function GeneralSection() {
               </SelectTrigger>
               <SelectContent>
                 {LAUNCH_BEHAVIOR_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Full-width chat transcript</div>
+              <div className="text-muted text-xs">
+                Let messages use the full chat pane instead of the default readable column.
+              </div>
+            </div>
+            <Switch
+              checked={chatTranscriptFullWidth}
+              onCheckedChange={handleChatTranscriptFullWidthChange}
+              aria-label="Toggle full-width chat transcript"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Collapsed bash summaries</div>
+              <div className="text-muted text-xs">
+                Choose whether collapsed bash tools show the raw command, the model&apos;s intent,
+                or both.
+              </div>
+            </div>
+            <Select
+              value={bashCollapsedSummaryMode}
+              onValueChange={(value) =>
+                setBashCollapsedSummaryMode(value as BashCollapsedSummaryMode)
+              }
+            >
+              <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {BASH_COLLAPSED_SUMMARY_MODE_OPTIONS.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
                     {option.label}
                   </SelectItem>

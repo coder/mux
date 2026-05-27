@@ -249,7 +249,15 @@ describe("agentSkillsService", () => {
 
     // Should include project/global skills plus built-in skills
     // Note: deep-review skill is a project skill in the Mux repo, not a built-in
-    expect(skills.map((s) => s.name)).toEqual(["bar", "foo", "init", "mux-diagram", "mux-docs"]);
+    expect(skills.map((s) => s.name)).toEqual([
+      "bar",
+      "foo",
+      "imagegen",
+      "init",
+      "mux-diagram",
+      "mux-docs",
+      "orchestrate",
+    ]);
 
     const foo = skills.find((s) => s.name === "foo");
     expect(foo).toBeDefined();
@@ -651,9 +659,11 @@ describe("agentSkillsService", () => {
 
     expect(diagnostics.skills.map((s) => s.name)).toEqual([
       "foo",
+      "imagegen",
       "init",
       "mux-diagram",
       "mux-docs",
+      "orchestrate",
     ]);
 
     const invalidNames = diagnostics.invalidSkills.map((issue) => issue.directoryName).sort();

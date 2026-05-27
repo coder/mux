@@ -65,8 +65,10 @@ Core workflow:
 3. `agent-browser click @e1` / `fill @e2 "text"` - Interact using refs
 4. Re-snapshot after page changes
 
-## PR Workflow (Codex)
+## PR Workflow
 
+- When checking PR readiness, audit **all** PR reviews, review comments, and issue comments from every reviewer/bot (including `coder-agents-review`), not just Codex; address or explicitly resolve them before declaring readiness.
+- If a PR has `coder-agents-review` feedback, address it and reply before resolving: either reply inline on each finding or leave a PR comment that explicitly lists each finding and your response. Do not silently resolve those threads.
 - If a PR has Codex review comments, address + resolve them, then re-request review by commenting `@codex review` on the PR.
 - Prefer `gh` CLI for GitHub interactions over manual web/curl flows.
 
@@ -226,6 +228,7 @@ Freely make breaking changes, and reorganize / cleanup IPC as needed.
 - **Use conditional rendering for testability:** Components like `AgentModePicker` use `{isOpen && <div>...}` instead of Radix Portal. This renders inline and works in happy-dom.
 - When adding new dropdown/popover components that need tests/ui coverage, prefer the conditional rendering pattern over Radix Portal.
 - E2E tests (tests/e2e) work with Radix but are slow (~2min startup); reserve for scenarios that truly need real Electron.
+- **Storybook responsive/Chromatic validation:** Do not prove responsive snapshots by only resizing `iframe.html`; that bypasses Storybook/Chromatic viewport mode configuration. If a story depends on a breakpoint (wide gutters, mobile, touch), pin an explicit `parameters.chromatic.modes[*].viewport`, mirror it with story `globals.viewport` for local viewing, and validate through the Storybook manager or an equivalent Chromatic-mode check. Add a play/static contract when a missing mode would silently snapshot the wrong UI.
 - Only use `validateApiKeys()` in tests that actually make AI API calls.
 
 ## Tool: todo_write

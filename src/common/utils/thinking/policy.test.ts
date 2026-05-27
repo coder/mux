@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { getThinkingPolicyForModel, enforceThinkingPolicy, resolveThinkingInput } from "./policy";
+import {
+  getThinkingPolicyForModel,
+  enforceThinkingPolicy,
+  resolveThinkingInput,
+  isGeminiFlashThinkingLevelModelName,
+} from "./policy";
 
 describe("getThinkingPolicyForModel", () => {
   test("returns 5 levels including xhigh for gpt-5.1-codex-max", () => {
@@ -386,6 +391,55 @@ describe("getThinkingPolicyForModel", () => {
     expect(getThinkingPolicyForModel("google:gemini-3.1-pro-preview")).toEqual(["low", "high"]);
   });
 
+  test("returns off/low/medium/high for stable Gemini 3.5 Flash", () => {
+    expect(getThinkingPolicyForModel("google:gemini-3.5-flash")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(getThinkingPolicyForModel("mux-gateway:google/gemini-3.5-flash")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
+
+  test("returns off/low/medium/high for versioned stable Gemini 3.5 Flash IDs", () => {
+    for (const model of [
+      "google:gemini-3.5-flash-001",
+      "google:gemini-3.5-flash-latest",
+      "google:gemini-3.5-flash-preview",
+    ]) {
+      expect(getThinkingPolicyForModel(model)).toEqual(["off", "low", "medium", "high"]);
+    }
+  });
+
+  test("returns off/low/medium/high for stable Gemini 3.5 Flash behind OpenRouter", () => {
+    expect(getThinkingPolicyForModel("openrouter:google/gemini-3.5-flash")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
+
+  test("returns off/low/medium/high for non-preview Gemini 3 Flash IDs", () => {
+    for (const model of ["google:gemini-3-flash", "google:gemini-3-flash-001"]) {
+      expect(getThinkingPolicyForModel(model)).toEqual(["off", "low", "medium", "high"]);
+    }
+  });
+
+  test("returns off/low/medium/high for versioned Gemini 3 Flash Preview IDs", () => {
+    for (const model of [
+      "google:gemini-3-flash-preview-20251217",
+      "google:gemini-3-flash-preview-latest",
+    ]) {
+      expect(getThinkingPolicyForModel(model)).toEqual(["off", "low", "medium", "high"]);
+    }
+  });
+
   test("returns off/low/medium/high for Gemini 3 Flash", () => {
     expect(getThinkingPolicyForModel("google:gemini-3-flash-preview")).toEqual([
       "off",
@@ -408,6 +462,13 @@ describe("getThinkingPolicyForModel", () => {
       "medium",
       "high",
     ]);
+  });
+});
+
+describe("isGeminiFlashThinkingLevelModelName", () => {
+  test("does not classify Gemini Flash Lite variants as Flash thinking-level chat models", () => {
+    expect(isGeminiFlashThinkingLevelModelName("gemini-3-flash-lite")).toBe(false);
+    expect(isGeminiFlashThinkingLevelModelName("gemini-3.5-flash-lite")).toBe(false);
   });
 });
 

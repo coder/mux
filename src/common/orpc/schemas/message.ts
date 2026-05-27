@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { ThinkingLevelSchema } from "../../types/thinking";
 import { AgentIdSchema } from "./agentDefinition";
 import { StreamErrorTypeSchema } from "./errors";
@@ -126,6 +127,7 @@ export const MuxMessageSchema = z.object({
       systemMessageTokens: z.number().optional(),
       muxMetadata: z.any().optional(),
       cmuxMetadata: z.any().optional(), // Legacy field for backward compatibility
+      kind: z.union([z.literal("goal_continuation"), z.literal("goal_budget_limit")]).optional(),
       // ACP prompt correlation id for reconnect/diagnostic continuity.
       acpPromptId: z.string().optional(),
       // Compaction source: "user" (manual), "idle" (auto), "heartbeat" (synthetic reset), or legacy boolean (true)
@@ -137,6 +139,7 @@ export const MuxMessageSchema = z.object({
       compactionEpoch: CompactionEpochSchema,
       // Durable boundary marker for compaction summaries.
       compactionBoundary: z.boolean().optional(),
+      contextBoundaryKind: z.literal(CONTEXT_BOUNDARY_KINDS.RESET).optional(),
       toolPolicy: z.any().optional(),
       disableWorkspaceAgents: z.boolean().optional(),
       retrySendOptions: z.any().optional(),

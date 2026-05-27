@@ -18,12 +18,75 @@ import {
   MUX_AI_PROVIDER_USER_AGENT,
   normalizeCodexResponsesBody,
   resolveAIProviderHeaderSource,
+  resolveOpenAIWebSocketResponsesUrl,
   wrapFetchWithAnthropicCacheControl,
+  wrapFetchWithOpenAIImageResponseNormalization,
 } from "./providerModelFactory";
 import { MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER } from "@/common/utils/ai/providerOptions";
+import { hasLanguageModelCleanup } from "./languageModelCleanup";
+import type { DevToolsService } from "./devToolsService";
 import { CodexOauthService } from "./codexOauthService";
 import { PolicyService } from "./policyService";
 import { ProviderService } from "./providerService";
+
+const LOCAL_VLLM_BASE_URL = "http://localhost:8000/v1";
+const LOCAL_VLLM_MODEL = "qwen3-coder";
+const COPILOT_TOKEN = "copilot-token";
+
+function saveLocalVllmConfig(config: Config, overrides: Record<string, unknown> = {}): void {
+  config.saveProvidersConfig({
+    "local-vllm": {
+      providerType: "openai-compatible",
+      baseUrl: LOCAL_VLLM_BASE_URL,
+      ...overrides,
+    },
+  } as Parameters<Config["saveProvidersConfig"]>[0]);
+}
+
+function saveCopilotConfig(config: Config, models: unknown): void {
+  config.saveProvidersConfig({
+    "github-copilot": {
+      apiKey: COPILOT_TOKEN,
+      models,
+    },
+  } as Parameters<Config["saveProvidersConfig"]>[0]);
+}
+
+async function saveRoutePriority(
+  config: Config,
+  routePriority: string[],
+  overrides: Record<string, unknown> = {}
+): Promise<void> {
+  await config.saveConfig({
+    ...config.loadConfigOrDefault(),
+    ...overrides,
+    routePriority,
+  });
+}
+
+type ResolveAndCreateModelResult = Awaited<
+  ReturnType<ProviderModelFactory["resolveAndCreateModel"]>
+>;
+type SuccessfulResolvedModel = Extract<ResolveAndCreateModelResult, { success: true }>["data"];
+
+function expectSuccessfulRouteResult(
+  result: ResolveAndCreateModelResult,
+  expected: {
+    effectiveModelString: string;
+    routeProvider: SuccessfulResolvedModel["routeProvider"];
+    routedThroughGateway?: boolean;
+  }
+): void {
+  expect(result.success).toBe(true);
+  if (!result.success) {
+    throw new Error(`Expected route creation to succeed, got ${result.error.type}`);
+  }
+  expect(result.data.effectiveModelString).toBe(expected.effectiveModelString);
+  expect(result.data.routeProvider).toBe(expected.routeProvider);
+  if (expected.routedThroughGateway !== undefined) {
+    expect(result.data.routedThroughGateway).toBe(expected.routedThroughGateway);
+  }
+}
 
 async function withTempConfig(
   run: (config: Config, factory: ProviderModelFactory) => Promise<void> | void
@@ -37,6 +100,27 @@ async function withTempConfig(
     await run(config, factory);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function withOpenAIBaseUrlEnvUnset(run: () => Promise<void>): Promise<void> {
+  const savedBaseUrl = process.env.OPENAI_BASE_URL;
+  const savedApiBase = process.env.OPENAI_API_BASE;
+  delete process.env.OPENAI_BASE_URL;
+  delete process.env.OPENAI_API_BASE;
+  try {
+    await run();
+  } finally {
+    if (savedBaseUrl === undefined) {
+      delete process.env.OPENAI_BASE_URL;
+    } else {
+      process.env.OPENAI_BASE_URL = savedBaseUrl;
+    }
+    if (savedApiBase === undefined) {
+      delete process.env.OPENAI_API_BASE;
+    } else {
+      process.env.OPENAI_API_BASE = savedApiBase;
+    }
   }
 }
 
@@ -73,6 +157,21 @@ async function withTempPolicyProviderFactory(
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
+
+describe("resolveOpenAIWebSocketResponsesUrl", () => {
+  it("uses the official default when no base URL is configured", () => {
+    expect(resolveOpenAIWebSocketResponsesUrl(undefined)).toBeUndefined();
+  });
+
+  it("maps HTTPS and HTTP OpenAI base URLs to Responses WebSocket URLs", () => {
+    expect(resolveOpenAIWebSocketResponsesUrl("https://api.openai.com/v1")).toBe(
+      "wss://api.openai.com/v1/responses"
+    );
+    expect(resolveOpenAIWebSocketResponsesUrl("http://localhost:8080/openai/v1/")).toBe(
+      "ws://localhost:8080/openai/v1/responses"
+    );
+  });
+});
 
 describe("normalizeCodexResponsesBody", () => {
   it("enforces Codex-compatible fields, strips truncation, and lifts system prompts into instructions", () => {
@@ -131,6 +230,90 @@ describe("normalizeCodexResponsesBody", () => {
   });
 });
 
+describe("wrapFetchWithOpenAIImageResponseNormalization", () => {
+  it("normalizes successful binary OpenAI image edit responses into AI SDK JSON", async () => {
+    const pngBytes = Buffer.from("tiny-png-bytes");
+    const calls: Array<{
+      input: Parameters<typeof fetch>[0];
+      init?: Parameters<typeof fetch>[1];
+    }> = [];
+    const baseFetch = Object.assign(
+      (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        calls.push({ input, init });
+        return Promise.resolve(
+          new Response(pngBytes, {
+            status: 200,
+            statusText: "OK",
+            headers: {
+              "content-type": "image/png",
+              "content-length": String(pngBytes.length),
+            },
+          })
+        );
+      },
+      fetch
+    ) as typeof fetch;
+    const wrappedFetch = wrapFetchWithOpenAIImageResponseNormalization(baseFetch);
+    const form = new FormData();
+    form.set("model", "gpt-image-2");
+    form.set("n", "1");
+    form.set("output_format", "png");
+
+    const response = await wrappedFetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      body: form,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(response.headers.get("content-length")).toBeNull();
+    const body = (await response.json()) as {
+      created: number;
+      output_format: string;
+      data: Array<{ b64_json: string }>;
+    };
+    expect(Number.isInteger(body.created)).toBe(true);
+    expect(body.output_format).toBe("png");
+    expect(body.data).toEqual([{ b64_json: pngBytes.toString("base64") }]);
+  });
+
+  it("adds filenames to OpenAI image edit uploads before sending multipart requests", async () => {
+    let capturedImage: FormDataEntryValue | null = null;
+    const baseFetch = Object.assign(
+      (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        if (init?.body instanceof FormData) {
+          capturedImage = init.body.get("image");
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ data: [{ b64_json: Buffer.from("png").toString("base64") }] }),
+            {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }
+          )
+        );
+      },
+      fetch
+    ) as typeof fetch;
+    const wrappedFetch = wrapFetchWithOpenAIImageResponseNormalization(baseFetch);
+    const form = new FormData();
+    form.set("model", "gpt-image-1.5");
+    form.set("prompt", "make it blue");
+    form.set("image", new Blob([Buffer.from("png")], { type: "image/png" }));
+
+    await wrappedFetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      body: form,
+    });
+
+    if (capturedImage == null || typeof capturedImage === "string") {
+      throw new Error("Expected OpenAI image edit upload to be a file-like object");
+    }
+    expect((capturedImage as { name?: unknown }).name).toBe("image.png");
+  });
+});
+
 describe("ProviderModelFactory.createModel", () => {
   it("returns provider_disabled when a non-gateway provider is disabled", async () => {
     await withTempConfig(async (config, factory) => {
@@ -181,12 +364,7 @@ describe("ProviderModelFactory.createModel", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        muxGatewayEnabled: true,
-        routePriority: ["mux-gateway", "direct"],
-      });
+      await saveRoutePriority(config, ["mux-gateway", "direct"], { muxGatewayEnabled: true });
 
       const result = await factory.createModel("openai:gpt-5");
       if (!result.success) {
@@ -197,13 +375,7 @@ describe("ProviderModelFactory.createModel", () => {
 
   it("creates keyless custom OpenAI-compatible models and does not treat models as an allowlist", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-          models: ["qwen3-coder"],
-        },
-      });
+      saveLocalVllmConfig(config, { models: [LOCAL_VLLM_MODEL] });
 
       const listedModel = await factory.createModel("local-vllm:qwen3-coder");
       expect(listedModel.success).toBe(true);
@@ -276,13 +448,7 @@ describe("ProviderModelFactory.createModel", () => {
 
   it("returns provider_disabled for disabled custom OpenAI-compatible providers", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-          enabled: false,
-        },
-      });
+      saveLocalVllmConfig(config, { enabled: false });
 
       const result = await factory.createModel("local-vllm:qwen3-coder");
 
@@ -323,14 +489,7 @@ describe("ProviderModelFactory.createModel", () => {
   it("returns a path-specific API key file error for custom providers", async () => {
     await withTempConfig(async (config, factory) => {
       const missingPath = path.join(os.tmpdir(), "mux-missing-custom-provider-key");
-      config.saveProvidersConfig({
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-          apiKeyFile: missingPath,
-          models: ["qwen3-coder"],
-        },
-      });
+      saveLocalVllmConfig(config, { apiKeyFile: missingPath, models: [LOCAL_VLLM_MODEL] });
 
       const result = await factory.createModel("local-vllm:qwen3-coder");
 
@@ -383,10 +542,7 @@ describe("ProviderModelFactory.createModel", () => {
   it("returns provider_not_supported for unknown provider entries without a custom provider type", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
-        "local-vllm": {
-          baseUrl: "http://localhost:8000/v1",
-          models: ["qwen3-coder"],
-        },
+        "local-vllm": { baseUrl: LOCAL_VLLM_BASE_URL, models: [LOCAL_VLLM_MODEL] },
       });
 
       const result = await factory.createModel("local-vllm:qwen3-coder");
@@ -402,18 +558,93 @@ describe("ProviderModelFactory.createModel", () => {
   });
 });
 
+describe("ProviderModelFactory.createImageModel", () => {
+  it("creates an OpenAI image model when credentials are configured", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({ openai: { apiKey: "sk-test" } });
+
+      const result = await factory.createImageModel("openai:gpt-image-1.5");
+
+      expect(result.success).toBe(true);
+    });
+  });
+
+  it("rejects non-OpenAI image providers in v1", async () => {
+    await withTempConfig(async (_config, factory) => {
+      const result = await factory.createImageModel("google:imagen-test");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({ type: "provider_not_supported", provider: "google" });
+      }
+    });
+  });
+
+  it("returns api_key_not_found when OpenAI credentials are missing", async () => {
+    const savedApiKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      await withOpenAIBaseUrlEnvUnset(async () => {
+        await withTempConfig(async (_config, factory) => {
+          const result = await factory.createImageModel("openai:gpt-image-1.5");
+
+          expect(result.success).toBe(false);
+          if (!result.success) {
+            expect(result.error).toEqual({ type: "api_key_not_found", provider: "openai" });
+          }
+        });
+      });
+    } finally {
+      if (savedApiKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = savedApiKey;
+      }
+    }
+  });
+
+  it("returns provider_disabled when OpenAI is disabled", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({ openai: { apiKey: "sk-test", enabled: false } });
+
+      const result = await factory.createImageModel("openai:gpt-image-1.5");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({ type: "provider_disabled", provider: "openai" });
+      }
+    });
+  });
+
+  it("enforces provider and model policy for image models", async () => {
+    await withTempPolicyProviderFactory(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "openai", model_access: ["gpt-image-1-mini"] }],
+      },
+      async (config, factory) => {
+        config.saveProvidersConfig({ openai: { apiKey: "sk-test" } });
+
+        const denied = await factory.createImageModel("openai:gpt-image-1.5");
+        expect(denied.success).toBe(false);
+        if (!denied.success) {
+          expect(denied.error.type).toBe("policy_denied");
+        }
+
+        const allowed = await factory.createImageModel("openai:gpt-image-1-mini");
+        expect(allowed.success).toBe(true);
+      }
+    );
+  });
+});
+
 describe("ProviderModelFactory GitHub Copilot", () => {
   it("creates routed gpt-5.5 models with the chat completions API mode", async () => {
     await withTempConfig(async (config, factory) => {
       const originalOpenAIRegistry = PROVIDER_REGISTRY.openai;
       let capturedProviderName: string | undefined;
 
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["gpt-5.5"],
-        },
-      });
+      saveCopilotConfig(config, ["gpt-5.5"]);
 
       PROVIDER_REGISTRY.openai = async () => {
         const module = await originalOpenAIRegistry();
@@ -427,11 +658,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
       };
 
       try {
-        const projectConfig = config.loadConfigOrDefault();
-        await config.saveConfig({
-          ...projectConfig,
-          routePriority: ["github-copilot", "direct"],
-        });
+        await saveRoutePriority(config, ["github-copilot", "direct"]);
 
         const result = await factory.resolveAndCreateModel("openai:gpt-5.5", "off");
         expect(result.success).toBe(true);
@@ -457,12 +684,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
       const originalOpenAIRegistry = PROVIDER_REGISTRY.openai;
       let capturedModelId: string | undefined;
 
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["claude-opus-4.6"],
-        },
-      });
+      saveCopilotConfig(config, ["claude-opus-4.6"]);
 
       PROVIDER_REGISTRY.openai = async () => {
         const module = await originalOpenAIRegistry();
@@ -502,18 +724,9 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
   it("routes Codex models through the Copilot Responses API path", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["gpt-5.3-codex"],
-        },
-      });
+      saveCopilotConfig(config, ["gpt-5.3-codex"]);
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["github-copilot", "direct"],
-      });
+      await saveRoutePriority(config, ["github-copilot", "direct"]);
 
       const result = await factory.resolveAndCreateModel("openai:gpt-5.3-codex", "off");
       expect(result.success).toBe(true);
@@ -660,12 +873,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
   it("does not force store=false for Copilot Responses requests", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["gpt-5.3-codex"],
-        },
-      });
+      saveCopilotConfig(config, ["gpt-5.3-codex"]);
 
       const result = await factory.createModel("github-copilot:gpt-5.3-codex");
       expect(result.success).toBe(true);
@@ -700,12 +908,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
   it("fails when the requested model is missing from the stored Copilot model list", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["gpt-4.1"],
-        },
-      });
+      saveCopilotConfig(config, ["gpt-4.1"]);
 
       const result = await factory.createModel("github-copilot:gpt-5.5");
 
@@ -722,12 +925,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
   it("allows Copilot model creation when the stored model list is malformed", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: "not-an-array",
-        },
-      } as unknown as Parameters<Config["saveProvidersConfig"]>[0]);
+      saveCopilotConfig(config, "not-an-array");
 
       const result = await factory.createModel("github-copilot:gpt-5.5");
 
@@ -742,12 +940,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
   it("allows Copilot model creation when the stored model list contains malformed entries", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: ["   ", null],
-        },
-      } as unknown as Parameters<Config["saveProvidersConfig"]>[0]);
+      saveCopilotConfig(config, ["   ", null]);
 
       const result = await factory.createModel("github-copilot:gpt-5.5");
 
@@ -762,12 +955,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
 
   it("allows Copilot model creation when no stored model list exists yet", async () => {
     await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        "github-copilot": {
-          apiKey: "copilot-token",
-          models: [],
-        },
-      });
+      saveCopilotConfig(config, []);
 
       const result = await factory.createModel("github-copilot:gpt-5.5");
 
@@ -777,6 +965,146 @@ describe("ProviderModelFactory GitHub Copilot", () => {
       }
 
       expect(result.data.constructor.name).toBe("OpenAIChatLanguageModel");
+    });
+  });
+});
+
+describe("ProviderModelFactory OpenAI WebSocket transport", () => {
+  it("attaches cleanup when enabled for Responses models", async () => {
+    await withOpenAIBaseUrlEnvUnset(async () =>
+      withTempConfig(async (config, factory) => {
+        config.saveProvidersConfig({
+          openai: {
+            apiKey: "sk-test",
+            webSocketTransportEnabled: true,
+          },
+        });
+
+        const result = await factory.createModel("openai:gpt-4.1-mini");
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+        expect(hasLanguageModelCleanup(result.data)).toBe(true);
+      })
+    );
+  });
+
+  it("does not attach cleanup for Codex OAuth routed models", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          webSocketTransportEnabled: true,
+          codexOauth: {
+            type: "oauth",
+            access: "test-access-token",
+            refresh: "test-refresh-token",
+            expires: Date.now() + 60_000,
+            accountId: "test-account-id",
+          },
+        },
+      });
+
+      const result = await factory.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(hasLanguageModelCleanup(result.data)).toBe(false);
+      expect(modelCostsIncluded(result.data)).toBe(true);
+    });
+  });
+
+  it("attaches cleanup when a custom OpenAI base URL is configured", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          baseURL: "https://proxy.openai.test/v1",
+          webSocketTransportEnabled: true,
+        },
+      });
+
+      const result = await factory.createModel("openai:gpt-4.1-mini");
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(hasLanguageModelCleanup(result.data)).toBe(true);
+    });
+  });
+
+  it("preserves cleanup when DevTools wraps an OpenAI WebSocket model", async () => {
+    await withOpenAIBaseUrlEnvUnset(async () =>
+      withTempConfig(async (config) => {
+        config.saveProvidersConfig({
+          openai: {
+            apiKey: "sk-test",
+            webSocketTransportEnabled: true,
+          },
+        });
+        const providerService = new ProviderService(config);
+        const devToolsService = { enabled: true } as unknown as DevToolsService;
+        const factory = new ProviderModelFactory(
+          config,
+          providerService,
+          undefined,
+          undefined,
+          devToolsService
+        );
+
+        const result = await factory.createModel("openai:gpt-4.1-mini", undefined, {
+          workspaceId: "devtools-workspace",
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+        expect(hasLanguageModelCleanup(result.data)).toBe(true);
+      })
+    );
+  });
+
+  it("does not attach cleanup when Chat Completions is selected", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          wireFormat: "chatCompletions",
+          webSocketTransportEnabled: true,
+        },
+      });
+
+      const result = await factory.createModel("openai:gpt-4.1-mini");
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(hasLanguageModelCleanup(result.data)).toBe(false);
+    });
+  });
+
+  it("ignores invalid persisted WebSocket transport values", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          webSocketTransportEnabled: "true",
+        },
+      } as unknown as Parameters<Config["saveProvidersConfig"]>[0]);
+
+      const result = await factory.createModel("openai:gpt-4.1-mini");
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(hasLanguageModelCleanup(result.data)).toBe(false);
     });
   });
 });
@@ -837,11 +1165,7 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["openrouter", "direct"],
-      });
+      await saveRoutePriority(config, ["openrouter", "direct"]);
 
       const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5");
       expect(resolved).toBe("openrouter:openai/gpt-5");
@@ -850,14 +1174,11 @@ describe("ProviderModelFactory routing", () => {
       expect(created.success).toBe(true);
 
       const result = await factory.resolveAndCreateModel("openai:gpt-5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(result.data.effectiveModelString).toBe("openrouter:openai/gpt-5");
-      expect(result.data.routeProvider).toBe("openrouter");
-      expect(result.data.routedThroughGateway).toBe(false);
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "openrouter:openai/gpt-5",
+        routeProvider: "openrouter",
+        routedThroughGateway: false,
+      });
     });
   });
 
@@ -873,21 +1194,14 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["github-copilot", "direct"],
-      });
+      await saveRoutePriority(config, ["github-copilot", "direct"]);
 
       const result = await factory.resolveAndCreateModel("openai:gpt-5.5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(result.data.effectiveModelString).toBe("openai:gpt-5.5");
-      expect(result.data.routeProvider).toBe("openai");
-      expect(result.data.routedThroughGateway).toBe(false);
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "openai:gpt-5.5",
+        routeProvider: "openai",
+        routedThroughGateway: false,
+      });
     });
   });
 
@@ -900,21 +1214,53 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["openrouter", "direct"],
-      });
+      await saveRoutePriority(config, ["openrouter", "direct"]);
 
       const result = await factory.resolveAndCreateModel("openai:gpt-5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "openrouter:openai/gpt-5",
+        routeProvider: "openrouter",
+        routedThroughGateway: false,
+      });
+    });
+  });
 
-      expect(result.data.effectiveModelString).toBe("openrouter:openai/gpt-5");
-      expect(result.data.routeProvider).toBe("openrouter");
-      expect(result.data.routedThroughGateway).toBe(false);
+  it("omits configured model catalog from OpenRouter request body", async () => {
+    await withTempConfig(async (config, factory) => {
+      const originalOpenRouterRegistry = PROVIDER_REGISTRY.openrouter;
+      let capturedExtraBody: unknown;
+
+      config.saveProvidersConfig({
+        openrouter: {
+          apiKey: "or-test",
+          models: [
+            "openai/gpt-5",
+            "anthropic/claude-sonnet-4.6",
+            "google/gemini-3-pro",
+            "x-ai/grok-4",
+          ],
+          allow_fallbacks: false,
+        },
+      });
+
+      PROVIDER_REGISTRY.openrouter = async () => {
+        const module = await originalOpenRouterRegistry();
+        return {
+          ...module,
+          createOpenRouter: (options) => {
+            capturedExtraBody = options?.extraBody;
+            return module.createOpenRouter(options);
+          },
+        };
+      };
+
+      try {
+        const result = await factory.createModel("openrouter:openai/gpt-5");
+        expect(result.success).toBe(true);
+        expect(capturedExtraBody).toEqual({ provider: { allow_fallbacks: false } });
+      } finally {
+        PROVIDER_REGISTRY.openrouter = originalOpenRouterRegistry;
+      }
     });
   });
 
@@ -925,17 +1271,13 @@ describe("ProviderModelFactory routing", () => {
         bedrock: { region: "us-east-1" },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["bedrock", "direct"],
-      });
+      await saveRoutePriority(config, ["bedrock", "direct"]);
 
       const result = await factory.resolveAndCreateModel("anthropic:claude-sonnet-4-5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) return;
-      expect(result.data.effectiveModelString).toBe("bedrock:anthropic.claude-sonnet-4-5");
-      expect(result.data.routeProvider).toBe("bedrock");
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "bedrock:anthropic.claude-sonnet-4-5",
+        routeProvider: "bedrock",
+      });
     });
   });
 
@@ -955,11 +1297,8 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
+      await saveRoutePriority(config, ["openrouter", "mux-gateway", "direct"], {
         muxGatewayEnabled: true,
-        routePriority: ["openrouter", "mux-gateway", "direct"],
       });
 
       const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5");
@@ -979,12 +1318,7 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        muxGatewayEnabled: true,
-        routePriority: ["mux-gateway", "direct"],
-      });
+      await saveRoutePriority(config, ["mux-gateway", "direct"], { muxGatewayEnabled: true });
 
       const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5");
       expect(resolved).toBe("openai:gpt-5");
@@ -1003,11 +1337,7 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        routePriority: ["mux-gateway", "openrouter", "direct"],
-      });
+      await saveRoutePriority(config, ["mux-gateway", "openrouter", "direct"]);
 
       const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5");
       expect(resolved).toBe("openrouter:openai/gpt-5");
@@ -1032,12 +1362,7 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        muxGatewayEnabled: true,
-        routePriority: ["mux-gateway", "direct"],
-      });
+      await saveRoutePriority(config, ["mux-gateway", "direct"], { muxGatewayEnabled: true });
 
       const resolved = factory.resolveGatewayModelString(
         "openrouter:openai/gpt-5",
@@ -1047,14 +1372,11 @@ describe("ProviderModelFactory routing", () => {
       expect(resolved).toBe("openrouter:openai/gpt-5");
 
       const result = await factory.resolveAndCreateModel("openrouter:openai/gpt-5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(result.data.effectiveModelString).toBe("openrouter:openai/gpt-5");
-      expect(result.data.routeProvider).toBe("openrouter");
-      expect(result.data.routedThroughGateway).toBe(false);
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "openrouter:openai/gpt-5",
+        routeProvider: "openrouter",
+        routedThroughGateway: false,
+      });
     });
   });
 
@@ -1074,11 +1396,8 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
+      await saveRoutePriority(config, ["openrouter", "mux-gateway", "direct"], {
         muxGatewayEnabled: true,
-        routePriority: ["openrouter", "mux-gateway", "direct"],
       });
 
       const resolved = factory.resolveGatewayModelString(
@@ -1089,14 +1408,11 @@ describe("ProviderModelFactory routing", () => {
       expect(resolved).toBe("mux-gateway:openai/gpt-5");
 
       const result = await factory.resolveAndCreateModel("openrouter:openai/gpt-5", "off");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(result.data.effectiveModelString).toBe("mux-gateway:openai/gpt-5");
-      expect(result.data.routeProvider).toBe("mux-gateway");
-      expect(result.data.routedThroughGateway).toBe(true);
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "mux-gateway:openai/gpt-5",
+        routeProvider: "mux-gateway",
+        routedThroughGateway: true,
+      });
     });
   });
 
@@ -1108,12 +1424,7 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
-        muxGatewayEnabled: true,
-        routePriority: ["direct"],
-      });
+      await saveRoutePriority(config, ["direct"], { muxGatewayEnabled: true });
 
       const resolved = factory.resolveGatewayModelString(
         "mux-gateway:anthropic/claude-sonnet-4-6",
@@ -1126,14 +1437,11 @@ describe("ProviderModelFactory routing", () => {
         "mux-gateway:anthropic/claude-sonnet-4-6",
         "off"
       );
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(result.data.effectiveModelString).toBe("mux-gateway:anthropic/claude-sonnet-4-6");
-      expect(result.data.routeProvider).toBe("mux-gateway");
-      expect(result.data.routedThroughGateway).toBe(true);
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "mux-gateway:anthropic/claude-sonnet-4-6",
+        routeProvider: "mux-gateway",
+        routedThroughGateway: true,
+      });
     });
   });
 
@@ -1159,23 +1467,16 @@ describe("ProviderModelFactory routing", () => {
           },
         });
 
-        const projectConfig = config.loadConfigOrDefault();
-        await config.saveConfig({
-          ...projectConfig,
-          routePriority: ["direct", "openrouter"],
-        });
+        await saveRoutePriority(config, ["direct", "openrouter"]);
 
         // Direct OpenAI should win because Codex OAuth makes it available for routing.
         // Use a model from CODEX_OAUTH_ALLOWED_MODELS so createModel can route through OAuth.
         const result = await factory.resolveAndCreateModel("openai:gpt-5.2", "off");
-        expect(result.success).toBe(true);
-        if (!result.success) {
-          return;
-        }
-
-        expect(result.data.effectiveModelString).toBe("openai:gpt-5.2");
-        expect(result.data.routeProvider).toBe("openai");
-        expect(result.data.routedThroughGateway).toBe(false);
+        expectSuccessfulRouteResult(result, {
+          effectiveModelString: "openai:gpt-5.2",
+          routeProvider: "openai",
+          routedThroughGateway: false,
+        });
       });
     } finally {
       if (savedKey !== undefined) {
@@ -1198,11 +1499,8 @@ describe("ProviderModelFactory routing", () => {
         },
       });
 
-      const projectConfig = config.loadConfigOrDefault();
-      await config.saveConfig({
-        ...projectConfig,
+      await saveRoutePriority(config, ["direct", "mux-gateway", "openrouter"], {
         muxGatewayEnabled: true,
-        routePriority: ["direct", "mux-gateway", "openrouter"],
       });
 
       const result = await factory.resolveAndCreateModel("openai:gpt-5", "off");

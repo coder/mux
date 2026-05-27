@@ -21,6 +21,7 @@ import {
   type CompactionFollowUpInput,
   pickPreservedSendOptions,
 } from "@/common/types/message";
+import type { GoalRecordV1, GoalSetError, GoalStatus } from "@/common/types/goal";
 import type { ReviewNoteData } from "@/common/types/review";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -35,6 +36,15 @@ import {
   getFollowUpContentText,
 } from "@/browser/utils/compaction/format";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
+import { type GoalDefaults } from "@/constants/goals";
+import {
+  hasBudgetedResumableGoal,
+  hasGoalBudgetLimit,
+  modelHasPricingData,
+  UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
+  UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+} from "@/common/utils/goals/budgetPricing";
+import { getContextResetSuccessMessage } from "@/browser/utils/contextResetFeedback";
 import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
 import {
   WORKSPACE_ONLY_COMMAND_KEYS,
@@ -65,6 +75,9 @@ import {
 } from "@/browser/features/ChatInput/ChatInputToasts";
 import { trackCommandUsed } from "@/common/telemetry";
 import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
+import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
+import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
+import { SIDE_QUESTION_COMMAND } from "@/common/utils/messages/sideQuestion";
 
 const BUILT_IN_MODEL_SET = new Set<string>(Object.values(KNOWN_MODELS).map((model) => model.id));
 
@@ -150,10 +163,19 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   setVimEnabled: (cb: (prev: boolean) => boolean) => void;
 
   // Workspace Actions
+  onResetContext?: () => Promise<"reset" | "noop">;
   onTruncateHistory?: (percentage?: number) => Promise<void>;
   resetInputHeight: () => void;
+  /** Read the latest composer text so async command failures don't overwrite newer drafts. */
+  getInput?: () => string;
+  /** Token identifying the command invocation that launched async follow-up work. */
+  asyncCommandToken?: number;
+  /** Return false when an async command completion belongs to a stale workspace/input. */
+  isAsyncCommandCurrent?: (token: number, workspaceId: string) => boolean;
   /** Callback to trigger message-sent side effects (auto-scroll, auto-background) */
   onMessageSent?: (dispatchMode: QueueDispatchMode) => void;
+  /** Callback to detach review context from the composer without marking it checked */
+  onDetachAllReviews?: () => void;
   /** Callback to mark review IDs as checked after successful send */
   onCheckReviews?: (reviewIds: string[]) => void;
   /** Review IDs that are attached (for marking as checked on success) */
@@ -230,6 +252,14 @@ export async function processSlashCommand(
             ? `Could not verify provider "${provider}": backend unreachable. Please retry.`
             : `Unknown provider "${provider}"`,
         });
+        return { clearInput: false, toastShown: true };
+      }
+
+      if (
+        !modelHasPricingData(selectedModel, providersConfig ?? null) &&
+        (await hasBudgetedResumableGoalForWorkspaceModelSwitch(context))
+      ) {
+        showUnpricedModelGoalToast(setToast, "target");
         return { clearInput: false, toastShown: true };
       }
 
@@ -451,6 +481,7 @@ export async function processSlashCommand(
     switch (parsed.type) {
       case "command-missing-args":
       case "command-invalid-args":
+      case "command-unknown-flag":
       case "unknown-command":
         return parsed.command;
       default:
@@ -477,8 +508,6 @@ export async function processSlashCommand(
     switch (parsed.type) {
       case "clear":
         return handleClearCommand(parsed, context);
-      case "truncate":
-        return handleTruncateCommand(parsed, context);
       case "compact":
         // handleCompactCommand expects workspaceId in context
         if (!context.workspaceId) throw new Error("Workspace ID required");
@@ -528,6 +557,79 @@ export async function processSlashCommand(
           api: client,
           workspaceId: context.workspaceId,
         } as CommandHandlerContext);
+      case "goal-show":
+      case "goal-set":
+      case "goal-budget":
+      case "goal-pause":
+      case "goal-resume":
+      case "goal-complete":
+      case "goal-clear":
+        if (!context.workspaceId) throw new Error("Workspace ID required");
+        if (!requireClient()) {
+          return { clearInput: false, toastShown: true };
+        }
+        return handleGoalCommand(parsed, {
+          ...context,
+          api: client,
+          workspaceId: context.workspaceId,
+        } as CommandHandlerContext);
+      case "side-question": {
+        // /btw: forked, single-turn, read-only side question.
+        //
+        // The backend persists both the question and the answer to chat
+        // history with side-question metadata, and streams the answer
+        // through the normal onChat events — so the rendered output uses
+        // the standard TypewriterMarkdown / smooth-text path. The RPC
+        // itself only resolves once the side question is fully streamed,
+        // but we don't await it inline: the chat events drive the UI in
+        // parallel, and a long-running side question shouldn't pin the
+        // chat input handler.
+        if (!context.workspaceId) throw new Error("Workspace ID required");
+        const activeClient = requireClient();
+        if (!activeClient) {
+          return { clearInput: false, toastShown: true };
+        }
+        const workspaceId = context.workspaceId;
+        const rawCommand = `${SIDE_QUESTION_COMMAND} ${parsed.question}`;
+        const asyncCommandToken = context.asyncCommandToken;
+        const isCurrentSideQuestion = (): boolean =>
+          asyncCommandToken === undefined ||
+          context.isAsyncCommandCurrent?.(asyncCommandToken, workspaceId) !== false;
+        const showSideQuestionError = (message: string): void => {
+          if (!isCurrentSideQuestion()) {
+            return;
+          }
+          const currentInput = context.getInput?.();
+          // Restore the consumed command text only if the composer is still
+          // empty. /btw runs asynchronously; if the user typed a new draft while
+          // it was pending, surfacing the error must not overwrite that draft.
+          if (currentInput === undefined || currentInput.trim().length === 0) {
+            setInput(rawCommand);
+          }
+          setToast({
+            id: Date.now().toString(),
+            type: "error",
+            message,
+          });
+        };
+        setInput("");
+        context.setAttachments([]);
+        context.onDetachAllReviews?.();
+        void activeClient.workspace
+          .sideQuestion({ workspaceId, question: parsed.question })
+          .then((result) => {
+            if (!result.success) {
+              showSideQuestionError(`Side question failed: ${result.error}`);
+            }
+          })
+          .catch((err: unknown) => {
+            showSideQuestionError(
+              err instanceof Error ? err.message : "Side question failed unexpectedly"
+            );
+          });
+        trackCommandUsed("btw");
+        return { clearInput: true, toastShown: false };
+      }
     }
   }
 
@@ -545,11 +647,310 @@ export async function processSlashCommand(
 // Command Handlers
 // ============================================================================
 
+// Slash-command intents only ever produce user-facing transitions; the
+// internal `budget_limited` status is now excluded from the public oRPC
+// `setGoal` input shape (Coder-agents-review nit DEREM-53).
+type PublicSetGoalStatus = Exclude<GoalStatus, "budget_limited">;
+
+interface GoalSetCommandIntent {
+  objective?: string | null;
+  status?: PublicSetGoalStatus | null;
+  budgetCents?: number | null;
+  turnCap?: number | null;
+  completionSummary?: string | null;
+}
+
+type GoalSetCommandResult =
+  | { success: true; goal: GoalRecordV1 }
+  | { success: false; error: GoalSetError };
+
+async function setGoalWithSingleConflictRetry(
+  context: CommandHandlerContext,
+  intent: GoalSetCommandIntent
+): Promise<GoalSetCommandResult> {
+  // Shared retry helper centralized in `@/browser/utils/goals/` to avoid the
+  // three-way drift Coder-agents-review P3 DEREM-25 flagged. Adapts the raw
+  // API result to the typed `GoalSetCommandResult` this caller exposes.
+  const result = await setGoalWithConflictRetry(context.api, context.workspaceId, intent);
+  if (result.success) {
+    return { success: true, goal: result.data };
+  }
+  return { success: false, error: result.error };
+}
+
+async function getGoalDefaults(context: CommandHandlerContext): Promise<GoalDefaults> {
+  // Centralized in `@/browser/utils/goals/` so the slash command path and
+  // the command palette path read defaults the same way (Coder-agents-
+  // review P3 DEREM-27). Pass the workspaceId so the helper layers any
+  // per-workspace override on top of the global default — workspace rules
+  // win for `/goal` invocations inside that workspace.
+  return loadGoalDefaults(context.api, context.workspaceId);
+}
+
+function resolveSlashGoalSetIntent(
+  parsed: Extract<ParsedCommand, { type: "goal-set" }>,
+  defaults: GoalDefaults
+): GoalSetCommandIntent {
+  // The slash command's parser leaves `budgetCents`/`turnCap` undefined
+  // when omitted (rather than `null`), so we forward as-is to the shared
+  // resolver which treats `undefined` as "apply default".
+  return resolveGoalSetIntent(
+    {
+      objective: parsed.objective,
+      ...(Object.hasOwn(parsed, "budgetCents") ? { budgetCents: parsed.budgetCents ?? null } : {}),
+      ...(Object.hasOwn(parsed, "turnCap") ? { turnCap: parsed.turnCap ?? null } : {}),
+    },
+    defaults
+  );
+}
+
+async function hasBudgetedResumableGoalForWorkspaceModelSwitch(
+  context: SlashCommandContext
+): Promise<boolean> {
+  if (context.variant !== "workspace" || !context.api || !context.workspaceId) {
+    return false;
+  }
+
+  try {
+    const result = await context.api.workspace.getGoal({ workspaceId: context.workspaceId });
+    return hasBudgetedResumableGoal(result.goal);
+  } catch {
+    return false;
+  }
+}
+
+async function currentModelHasPricingData(context: CommandHandlerContext): Promise<boolean> {
+  let providersConfig: unknown = null;
+  try {
+    providersConfig = await context.api.providers.getConfig();
+  } catch {
+    providersConfig = null;
+  }
+  return modelHasPricingData(context.sendMessageOptions.model, providersConfig);
+}
+
+function showUnpricedModelGoalToast(
+  setToast: (toast: Toast) => void,
+  modelPosition: "current" | "target" = "current"
+): void {
+  setToast({
+    id: Date.now().toString(),
+    type: "error",
+    message:
+      modelPosition === "current"
+        ? UNPRICED_CURRENT_MODEL_GOAL_MESSAGE
+        : UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+  });
+}
+
+function getGoalSetErrorMessage(error: GoalSetError): string {
+  if (error.type === "goal_conflict") {
+    return "Goal changed in another window. Please try again.";
+  }
+  return error.message;
+}
+
+function showGoalSetErrorToast(setToast: (toast: Toast) => void, error: GoalSetError): void {
+  setToast({
+    id: Date.now().toString(),
+    type: "error",
+    message: getGoalSetErrorMessage(error),
+  });
+}
+
+async function handleGoalCommand(
+  parsed: Extract<
+    ParsedCommand,
+    {
+      type:
+        | "goal-show"
+        | "goal-set"
+        | "goal-budget"
+        | "goal-pause"
+        | "goal-resume"
+        | "goal-complete"
+        | "goal-clear";
+    }
+  >,
+  context: CommandHandlerContext
+): Promise<CommandHandlerResult> {
+  const { api, workspaceId, setInput, setToast } = context;
+
+  setInput("");
+
+  try {
+    if (parsed.type === "goal-show") {
+      const result = await api.workspace.getGoal({ workspaceId });
+      if (result.goal) {
+        window.dispatchEvent?.(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
+        return { clearInput: true, toastShown: false };
+      }
+
+      setToast({
+        id: Date.now().toString(),
+        type: "success",
+        message: "No goal is set. Use /goal <objective> to create one.",
+      });
+      return { clearInput: true, toastShown: true };
+    }
+
+    if (parsed.type === "goal-pause") {
+      const result = await setGoalWithSingleConflictRetry(context, { status: "paused" });
+      if (!result.success) {
+        showGoalSetErrorToast(setToast, result.error);
+        return { clearInput: false, toastShown: true };
+      }
+      setToast({ id: Date.now().toString(), type: "success", message: "Goal paused" });
+      trackCommandUsed("goal");
+      return { clearInput: true, toastShown: true };
+    }
+
+    if (parsed.type === "goal-resume") {
+      const currentGoal = await api.workspace.getGoal({ workspaceId });
+      if (
+        hasBudgetedResumableGoal(currentGoal.goal) &&
+        !(await currentModelHasPricingData(context))
+      ) {
+        showUnpricedModelGoalToast(setToast);
+        return { clearInput: false, toastShown: true };
+      }
+
+      const result = await setGoalWithSingleConflictRetry(context, { status: "active" });
+      if (!result.success) {
+        showGoalSetErrorToast(setToast, result.error);
+        return { clearInput: false, toastShown: true };
+      }
+      setToast({ id: Date.now().toString(), type: "success", message: "Goal resumed" });
+      trackCommandUsed("goal");
+      return { clearInput: true, toastShown: true };
+    }
+
+    if (parsed.type === "goal-complete") {
+      if (!parsed.summary) {
+        window.dispatchEvent?.(
+          createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, {
+            workspaceId,
+            openCompleteInput: true,
+          })
+        );
+        return { clearInput: true, toastShown: false };
+      }
+
+      const result = await setGoalWithSingleConflictRetry(context, {
+        status: "complete",
+        completionSummary: parsed.summary,
+      });
+      if (!result.success) {
+        showGoalSetErrorToast(setToast, result.error);
+        return { clearInput: false, toastShown: true };
+      }
+      setToast({ id: Date.now().toString(), type: "success", message: "Goal marked complete" });
+      window.dispatchEvent?.(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
+      trackCommandUsed("goal");
+      return { clearInput: true, toastShown: true };
+    }
+
+    if (parsed.type === "goal-clear") {
+      const result = await api.workspace.clearGoal({ workspaceId });
+      setToast({
+        id: Date.now().toString(),
+        type: "success",
+        message: result.cleared ? "Goal cleared" : "No goal was set",
+      });
+      trackCommandUsed("goal");
+      return { clearInput: true, toastShown: true };
+    }
+
+    if (parsed.type === "goal-budget") {
+      if (hasGoalBudgetLimit(parsed.budgetCents) && !(await currentModelHasPricingData(context))) {
+        showUnpricedModelGoalToast(setToast);
+        return { clearInput: false, toastShown: true };
+      }
+
+      const result = await setGoalWithSingleConflictRetry(context, {
+        budgetCents: parsed.budgetCents,
+      });
+      if (!result.success) {
+        showGoalSetErrorToast(setToast, result.error);
+        return { clearInput: false, toastShown: true };
+      }
+      setToast({ id: Date.now().toString(), type: "success", message: "Goal budget updated" });
+      window.dispatchEvent?.(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
+      trackCommandUsed("goal");
+      return { clearInput: true, toastShown: true };
+    }
+
+    const goalDefaults = await getGoalDefaults(context);
+    const goalSetIntent = resolveSlashGoalSetIntent(parsed, goalDefaults);
+    if (
+      hasGoalBudgetLimit(goalSetIntent.budgetCents) &&
+      !(await currentModelHasPricingData(context))
+    ) {
+      showUnpricedModelGoalToast(setToast);
+      return { clearInput: false, toastShown: true };
+    }
+
+    const result = await setGoalWithSingleConflictRetry(context, goalSetIntent);
+    if (!result.success) {
+      showGoalSetErrorToast(setToast, result.error);
+      return { clearInput: false, toastShown: true };
+    }
+    window.dispatchEvent?.(createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId }));
+    trackCommandUsed("goal");
+    return { clearInput: true, toastShown: false };
+  } catch (error) {
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: error instanceof Error ? error.message : "Goal command failed",
+    });
+    return { clearInput: false, toastShown: true };
+  }
+}
+
 async function handleClearCommand(
-  _parsed: Extract<ParsedCommand, { type: "clear" }>,
+  parsed: Extract<ParsedCommand, { type: "clear" }>,
   context: SlashCommandContext
 ): Promise<CommandHandlerResult> {
-  const { setInput, onTruncateHistory, resetInputHeight, setToast } = context;
+  const {
+    setInput,
+    setAttachments,
+    onDetachAllReviews,
+    onResetContext,
+    onTruncateHistory,
+    resetInputHeight,
+    setToast,
+  } = context;
+
+  if (parsed.mode === "soft") {
+    if (!onResetContext) return { clearInput: true, toastShown: false };
+
+    try {
+      const result = await onResetContext();
+      setInput("");
+      resetInputHeight();
+      if (result === "reset") {
+        setAttachments([]);
+        onDetachAllReviews?.();
+      }
+      trackCommandUsed("clear:soft");
+      setToast({
+        id: Date.now().toString(),
+        type: "success",
+        message: getContextResetSuccessMessage(result),
+      });
+      return { clearInput: true, toastShown: true };
+    } catch (error) {
+      const normalized = error instanceof Error ? error : new Error("Failed to reset context");
+      console.error("Failed to reset context:", normalized);
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: normalized.message,
+      });
+      return { clearInput: false, toastShown: true };
+    }
+  }
 
   setInput("");
   resetInputHeight();
@@ -558,7 +959,9 @@ async function handleClearCommand(
 
   try {
     await onTruncateHistory(1.0);
-    trackCommandUsed("clear");
+    setAttachments([]);
+    onDetachAllReviews?.();
+    trackCommandUsed("clear:hard");
     setToast({
       id: Date.now().toString(),
       type: "success",
@@ -568,37 +971,6 @@ async function handleClearCommand(
   } catch (error) {
     const normalized = error instanceof Error ? error : new Error("Failed to clear history");
     console.error("Failed to clear history:", normalized);
-    setToast({
-      id: Date.now().toString(),
-      type: "error",
-      message: normalized.message,
-    });
-    return { clearInput: false, toastShown: true };
-  }
-}
-
-async function handleTruncateCommand(
-  parsed: Extract<ParsedCommand, { type: "truncate" }>,
-  context: SlashCommandContext
-): Promise<CommandHandlerResult> {
-  const { setInput, onTruncateHistory, resetInputHeight, setToast } = context;
-
-  setInput("");
-  resetInputHeight();
-
-  if (!onTruncateHistory) return { clearInput: true, toastShown: false };
-
-  try {
-    await onTruncateHistory(parsed.percentage);
-    setToast({
-      id: Date.now().toString(),
-      type: "success",
-      message: `Chat history truncated by ${Math.round(parsed.percentage * 100)}%`,
-    });
-    return { clearInput: true, toastShown: true };
-  } catch (error) {
-    const normalized = error instanceof Error ? error : new Error("Failed to truncate history");
-    console.error("Failed to truncate history:", normalized);
     setToast({
       id: Date.now().toString(),
       type: "error",
@@ -685,10 +1057,7 @@ async function handleForkCommand(
  * - "devcontainer <configPath>" -> Dev container runtime
  * - undefined -> Worktree runtime (default)
  */
-export function parseRuntimeString(
-  runtime: string | undefined,
-  _workspaceName: string
-): RuntimeConfig | undefined {
+export function parseRuntimeString(runtime: string | undefined): RuntimeConfig | undefined {
   // Use shared parser from common/types/runtime
   const parsed = parseRuntimeModeAndHost(runtime);
 
@@ -801,13 +1170,8 @@ export async function createNewWorkspace(
     }
   }
 
-  // Parse runtime config if provided. Use a placeholder when no caller-provided
-  // workspace name is available (auto-name path); parseRuntimeString only uses
-  // the name for error reporting context.
-  const runtimeConfig = parseRuntimeString(
-    effectiveRuntime,
-    options.workspaceName ?? "(auto-generated)"
-  );
+  // Parse runtime config if provided.
+  const runtimeConfig = parseRuntimeString(effectiveRuntime);
 
   const result = await options.client.workspace.create({
     projectPath: options.projectPath,
@@ -1006,6 +1370,7 @@ export async function executeCompaction(
 export interface CommandHandlerContext {
   api: RouterClient<AppRouter>;
   workspaceId: string;
+  currentModel?: string | null;
   sendMessageOptions: SendMessageOptions;
   fileParts?: FilePart[];
   /** Reviews attached to the message (from code review panel) */

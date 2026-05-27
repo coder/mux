@@ -475,6 +475,17 @@ export const KEYBINDS = {
   /** Toggle immersive review mode */
   TOGGLE_REVIEW_IMMERSIVE: { key: "i", shift: true },
 
+  /**
+   * Toggle the Assisted (agent-flagged hunks only) filter in the Code Review panel.
+   *
+   * Plain "p" (Pin filter) — chosen to avoid the global FOCUS_INPUT_A
+   * collision on plain "a" and the dual-handler clash with
+   * `TOGGLE_PLAN_ANNOTATE` on Shift+A. The review-panel handler already
+   * gates on `isPanelFocused` + `isEditableElement`, so this single-letter
+   * binding only fires when the user is genuinely in the review pane.
+   */
+  TOGGLE_ASSISTED_REVIEW: { key: "p" },
+
   /** Navigate to next file in immersive review */
   REVIEW_NEXT_FILE: { key: "l" },
 

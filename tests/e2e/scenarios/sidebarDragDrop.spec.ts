@@ -201,8 +201,9 @@ test.describe("sidebar drag and drop", () => {
     const tablists = await sidebar.getByRole("tablist").all();
     expect(tablists.length).toBe(2);
 
-    // Verify each tablist has expected tabs.
-    await expect(tablists[0].getByRole("tab")).toHaveCount(2); // Stats (costs), Review
+    // Verify each tablist has expected tabs. The first tabset receives
+    // default-layout tabs injected by the migration (Stats, Review, Instructions).
+    await expect(tablists[0].getByRole("tab")).toHaveCount(3);
     await expect(tablists[1].getByRole("tab")).toHaveCount(1); // Stats (duplicate costs in split)
   });
 

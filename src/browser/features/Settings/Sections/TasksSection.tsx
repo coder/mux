@@ -17,6 +17,7 @@ import { copyToClipboard } from "@/browser/utils/clipboard";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { getDefaultModel, useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
+import { resolveAdvisorEnabledForAgent } from "@/common/constants/advisor";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import {
   AGENT_AI_DEFAULTS_KEY,
@@ -271,6 +272,23 @@ function renderPolicySummary(agent: AgentDefinitionDescriptor): React.ReactNode 
       ))}
     </>
   );
+}
+
+function getAdvisorSwitchState(
+  agentId: string,
+  advisorEnabledOverride: boolean | undefined
+): { checked: boolean; title: string } {
+  const checked = resolveAdvisorEnabledForAgent(agentId, advisorEnabledOverride);
+  const title =
+    advisorEnabledOverride === undefined
+      ? checked
+        ? "Advisor enabled by default."
+        : "Advisor disabled by default."
+      : advisorEnabledOverride
+        ? "Advisor enabled (local override)."
+        : "Advisor disabled (local override).";
+
+  return { checked, title };
 }
 
 function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
@@ -863,13 +881,7 @@ export function TasksSection() {
     const writesSubagentAiDefaults = agent.subagentRunnable && !agent.uiSelectable;
     const enabledOverride = entry?.enabled;
     const advisorEnabledOverride = entry?.advisorEnabled;
-    const advisorEnabledValue = advisorEnabledOverride ?? false;
-    const advisorEnabledTitle =
-      advisorEnabledOverride === undefined
-        ? "Advisor disabled by default."
-        : advisorEnabledOverride
-          ? "Advisor enabled (local override)."
-          : "Advisor disabled (local override).";
+    const advisorSwitchState = getAdvisorSwitchState(agent.id, advisorEnabledOverride);
 
     const enablementLocked =
       agent.id === "exec" || agent.id === "plan" || agent.id === "compact" || agent.id === "mux";
@@ -994,13 +1006,13 @@ export function TasksSection() {
                     <div className="flex items-center gap-2">
                       <div className="text-muted text-xs">Advisor</div>
                       <Switch
-                        checked={advisorEnabledValue}
+                        checked={advisorSwitchState.checked}
                         onCheckedChange={(checked) => setAgentAdvisorEnabled(agent.id, checked)}
                         aria-label={`Toggle ${agent.id} advisor`}
                       />
                     </div>
                   </TooltipTrigger>
-                  <TooltipContent>{advisorEnabledTitle}</TooltipContent>
+                  <TooltipContent>{advisorSwitchState.title}</TooltipContent>
                 </Tooltip>
                 {advisorEnabledOverride !== undefined ? (
                   <Button
@@ -1094,13 +1106,7 @@ export function TasksSection() {
     const modelValue = entry?.modelString ?? INHERIT;
     const thinkingValue = entry?.thinkingLevel ?? INHERIT;
     const advisorEnabledOverride = entry?.advisorEnabled;
-    const advisorEnabledValue = advisorEnabledOverride ?? false;
-    const advisorEnabledTitle =
-      advisorEnabledOverride === undefined
-        ? "Advisor disabled by default."
-        : advisorEnabledOverride
-          ? "Advisor enabled (local override)."
-          : "Advisor disabled (local override).";
+    const advisorSwitchState = getAdvisorSwitchState(agentId, advisorEnabledOverride);
     const effectiveModel = modelValue !== INHERIT ? modelValue : inheritedEffectiveModel;
 
     return (
@@ -1120,13 +1126,13 @@ export function TasksSection() {
                   <div className="flex items-center gap-2">
                     <div className="text-muted text-xs">Advisor</div>
                     <Switch
-                      checked={advisorEnabledValue}
+                      checked={advisorSwitchState.checked}
                       onCheckedChange={(checked) => setAgentAdvisorEnabled(agentId, checked)}
                       aria-label={`Toggle ${agentId} advisor`}
                     />
                   </div>
                 </TooltipTrigger>
-                <TooltipContent>{advisorEnabledTitle}</TooltipContent>
+                <TooltipContent>{advisorSwitchState.title}</TooltipContent>
               </Tooltip>
               {advisorEnabledOverride !== undefined ? (
                 <Button

@@ -11,6 +11,13 @@ interface ChatInputDecorationProps {
   summaryClassName?: string;
   contentClassName?: string;
   dataComponent?: string;
+  /**
+   * Optional icon rendered in the trailing slot of the collapsed row. When
+   * omitted the component shows the default expand/collapse chevron. Pass a
+   * custom icon (e.g. an external-link / arrow) for "link-style" decorations
+   * whose `onToggle` navigates elsewhere instead of expanding inline.
+   */
+  trailingIcon?: ReactNode;
 }
 
 // Keep collapsible decorations aligned with the chat input gutter so swapping
@@ -37,11 +44,12 @@ export function ChatInputDecoration(props: ChatInputDecorationProps) {
       >
         {props.summary}
         <div className="ml-auto">
-          {props.expanded ? (
-            <ChevronDown className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
-          ) : (
-            <ChevronRight className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
-          )}
+          {props.trailingIcon ??
+            (props.expanded ? (
+              <ChevronDown className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
+            ) : (
+              <ChevronRight className="text-muted group-hover:text-secondary size-3.5 transition-colors" />
+            ))}
         </div>
       </button>
       {props.expanded && props.renderExpanded && (

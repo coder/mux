@@ -14,6 +14,15 @@ export class WindowService {
     this.restartAppHandler = handler;
   }
 
+  /**
+   * Whether the desktop main window is currently focused. Falls back to
+   * `true` in non-desktop contexts (CLI server, tests) so backend services
+   * don't throttle themselves to "unfocused" cadence when there is no window.
+   */
+  isFocused(): boolean {
+    return this.mainWindow?.isFocused?.() ?? true;
+  }
+
   async restartApp(): Promise<{ supported: true } | { supported: false; message: string }> {
     const restartAppHandler = this.restartAppHandler;
     if (!restartAppHandler) {

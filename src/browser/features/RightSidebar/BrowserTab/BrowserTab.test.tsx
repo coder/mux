@@ -1,12 +1,19 @@
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { useState } from "react";
 
-import type { BrowserDiscoveredSession, BrowserSession } from "./browserBridgeTypes";
+import type {
+  BrowserDiscoveredOtherSession,
+  BrowserDiscoveredSession,
+  BrowserSession,
+} from "./browserBridgeTypes";
 
 const listSessionsMock = mock(() =>
-  Promise.resolve({ sessions: [] as BrowserDiscoveredSession[] })
+  Promise.resolve({
+    sessions: [] as BrowserDiscoveredSession[],
+    otherSessions: [] as BrowserDiscoveredOtherSession[],
+  })
 );
 const connectMock = mock(() => undefined);
 const disconnectMock = mock(() => undefined);
@@ -45,6 +52,7 @@ void mock.module("./useBrowserBridgeConnection", () => ({
 import {
   BROWSER_PREVIEW_RETRY_INTERVAL_MS,
   BrowserTab,
+  chooseExplicitOtherSession,
   shouldBackOffBrowserReconnect,
 } from "./BrowserTab";
 
@@ -88,7 +96,7 @@ describe("BrowserTab", () => {
     globalThis.document = globalThis.window.document;
 
     listSessionsMock.mockReset();
-    listSessionsMock.mockResolvedValue({ sessions: [] });
+    listSessionsMock.mockResolvedValue({ sessions: [], otherSessions: [] });
     connectMock.mockReset();
     disconnectMock.mockReset();
     setPendingUrlMock.mockReset();
@@ -106,6 +114,7 @@ describe("BrowserTab", () => {
   test("connects to missing_stream sessions while showing the activating state", async () => {
     listSessionsMock.mockResolvedValue({
       sessions: [createDiscoveredSession({ status: "missing_stream" })],
+      otherSessions: [],
     });
 
     const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
@@ -120,9 +129,129 @@ describe("BrowserTab", () => {
     expect(view.queryByText(/AGENT_BROWSER_STREAM_PORT/)).toBeNull();
   });
 
+  test("shows other running sessions in the session picker without auto-attaching", async () => {
+    listSessionsMock.mockResolvedValue({
+      sessions: [],
+      otherSessions: [
+        {
+          sessionName: "other-alpha",
+          status: "attachable",
+          cwd: "/tmp/other-project",
+        },
+      ],
+    });
+
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
+
+    await waitFor(() => {
+      expect(view.getByText("Select session")).toBeTruthy();
+    });
+    expect(view.getByText("Choose a browser session")).toBeTruthy();
+    expect(view.getByText("Select another session from the picker to connect.")).toBeTruthy();
+
+    fireEvent.click(view.getByText("Select session"));
+
+    expect(view.getByText("Other sessions")).toBeTruthy();
+    expect(view.getByText("other-alpha")).toBeTruthy();
+    expect(view.getByText("/tmp/other-project")).toBeTruthy();
+    expect(connectMock).not.toHaveBeenCalled();
+  });
+
+  test("auto-selects current sessions while still listing other sessions in the picker", async () => {
+    listSessionsMock.mockResolvedValue({
+      sessions: [createDiscoveredSession({ sessionName: "current-alpha" })],
+      otherSessions: [
+        {
+          sessionName: "other-alpha",
+          status: "attachable",
+          cwd: "/tmp/other-project",
+        },
+      ],
+    });
+
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
+
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenCalledWith("current-alpha");
+    });
+
+    fireEvent.click(view.getByText("current-alpha"));
+
+    expect(view.getByTestId("browser-session-current-alpha")).toBeTruthy();
+    expect(view.getByTestId("browser-other-session-other-alpha")).toBeTruthy();
+  });
+
+  test("can switch from an explicitly selected other session back to a current session", async () => {
+    listSessionsMock.mockResolvedValue({
+      sessions: [createDiscoveredSession({ sessionName: "current-alpha" })],
+      otherSessions: [
+        {
+          sessionName: "other-alpha",
+          status: "attachable",
+          cwd: "/tmp/other-project",
+        },
+      ],
+    });
+
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
+
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenCalledWith("current-alpha");
+    });
+
+    fireEvent.click(view.getByText("current-alpha"));
+    fireEvent.click(view.getByTestId("browser-other-session-other-alpha"));
+
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenCalledWith("other-alpha", {
+        allowOtherWorkspaceSession: true,
+      });
+    });
+
+    fireEvent.click(view.getByText("other-alpha"));
+    fireEvent.click(view.getByTestId("browser-session-current-alpha"));
+
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenLastCalledWith("current-alpha");
+    });
+  });
+
+  test("attaches to an other running session only after selecting it from the picker", async () => {
+    listSessionsMock.mockResolvedValue({
+      sessions: [],
+      otherSessions: [
+        {
+          sessionName: "other-alpha",
+          status: "attachable",
+          cwd: "/tmp/other-project",
+        },
+      ],
+    });
+
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
+
+    await waitFor(() => {
+      expect(view.getByText("Select session")).toBeTruthy();
+    });
+
+    fireEvent.click(view.getByText("Select session"));
+    fireEvent.click(view.getByTestId("browser-other-session-other-alpha"));
+
+    await waitFor(() => {
+      expect(view.getByText("Waiting for browser frames")).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      expect(connectMock).toHaveBeenCalledWith("other-alpha", {
+        allowOtherWorkspaceSession: true,
+      });
+    });
+  });
+
   test("renders the navigation toolbar with the active session URL", async () => {
     listSessionsMock.mockResolvedValue({
       sessions: [createDiscoveredSession()],
+      otherSessions: [],
     });
     mockSession = createSession({
       currentUrl: "https://current.example.com",
@@ -142,6 +271,28 @@ describe("BrowserTab", () => {
     expect((view.getByLabelText("Forward") as HTMLButtonElement).disabled).toBe(false);
     expect((view.getByLabelText("Reload") as HTMLButtonElement).disabled).toBe(false);
     expect(view.getByTestId("browser-toolbar-loading-icon")).toBeTruthy();
+  });
+});
+
+describe("chooseExplicitOtherSession", () => {
+  test("preserves an explicitly selected other session while it is still discovered", () => {
+    expect(
+      chooseExplicitOtherSession("other-alpha", [
+        { sessionName: "other-alpha", status: "attachable", cwd: "/tmp/other-project" },
+      ])
+    ).toBe("other-alpha");
+  });
+
+  test("clears an explicitly selected other session when only a different other session exists", () => {
+    expect(
+      chooseExplicitOtherSession("other-alpha", [
+        { sessionName: "other-beta", status: "attachable", cwd: "/tmp/other-project" },
+      ])
+    ).toBeNull();
+  });
+
+  test("clears an explicitly selected other session after discovery loses it", () => {
+    expect(chooseExplicitOtherSession("other-alpha", [])).toBeNull();
   });
 });
 

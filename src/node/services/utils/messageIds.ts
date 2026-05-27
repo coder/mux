@@ -28,6 +28,10 @@ export const createAgentSkillSnapshotMessageId = (): string =>
 export const createCompactionSummaryMessageId = (): string =>
   `summary-${Date.now()}-${randomSuffix(9)}`;
 
+/** Context reset boundary IDs: context-reset-{timestamp}-{random} */
+export const createContextResetBoundaryMessageId = (): string =>
+  `context-reset-${Date.now()}-${randomSuffix(9)}`;
+
 /** Task report message IDs: task-report-{timestamp}-{random} */
 export const createTaskReportMessageId = (): string =>
   `task-report-${Date.now()}-${randomSuffix(9)}`;

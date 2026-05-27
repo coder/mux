@@ -27,11 +27,21 @@ export const DEFAULT_TERMINAL_SIZE = { cols: 80, rows: 24 };
  * In browser mode, opens the window client-side since the backend can't open windows.
  * In Electron mode, the backend opens a BrowserWindow.
  *
+ * Returns the underlying `api.terminal.openWindow` promise so callers can observe and
+ * surface backend failures. Without this, an Electron-side `terminalWindowManager` reject
+ * would become an unhandled promise rejection — the same silent-freeze symptom we are
+ * trying to fix on the Run-button path. The browser-mode `window.open` call is synchronous
+ * and not part of the returned promise.
+ *
  * @param api - The API client
  * @param workspaceId - Workspace ID
  * @param sessionId - Terminal session ID (required)
  */
-export function openTerminalPopout(api: APIClient, workspaceId: string, sessionId: string): void {
+export function openTerminalPopout(
+  api: APIClient,
+  workspaceId: string,
+  sessionId: string
+): Promise<void> {
   const isBrowser = !window.api;
 
   if (isBrowser) {
@@ -46,8 +56,10 @@ export function openTerminalPopout(api: APIClient, workspaceId: string, sessionI
     );
   }
 
-  // Open via backend (Electron pops up BrowserWindow, browser already opened above)
-  void api.terminal.openWindow({ workspaceId, sessionId });
+  // Open via backend (Electron pops up BrowserWindow, browser already opened above).
+  // Returned to the caller so a backend rejection can be observed instead of vanishing
+  // into an unhandled promise rejection.
+  return api.terminal.openWindow({ workspaceId, sessionId });
 }
 
 /**

@@ -4,7 +4,12 @@ import * as path from "path";
 import * as os from "os";
 import { execSync } from "node:child_process";
 
-import { Config, type Workspace as WorkspaceConfigEntry } from "@/node/config";
+import {
+  Config,
+  type ProjectConfig,
+  type ProjectsConfig,
+  type Workspace as WorkspaceConfigEntry,
+} from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
 import * as subagentGitPatchArtifacts from "@/node/services/subagentGitPatchArtifacts";
 import {
@@ -15,6 +20,10 @@ import {
   readSubagentReportArtifact,
   upsertSubagentReportArtifact,
 } from "@/node/services/subagentReportArtifacts";
+import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import { SessionUsageService } from "@/node/services/sessionUsageService";
+import { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
+import { IdleDispatcher } from "@/node/services/idleDispatcher";
 import { TaskService, ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
@@ -61,6 +70,18 @@ function findWorkspaceInConfig(config: Config, workspaceId: string) {
   return Array.from(config.loadConfigOrDefault().projects.values())
     .flatMap((project) => project.workspaces)
     .find((workspace) => workspace.id === workspaceId);
+}
+
+async function workspaceGoalFileExists(config: Config, workspaceId: string): Promise<boolean> {
+  try {
+    await fsPromises.access(path.join(config.getSessionDir(workspaceId), "goal.json"));
+    return true;
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 async function waitForWorkspaceRemoval(
@@ -119,6 +140,60 @@ async function createTestProject(
   return projectPath;
 }
 
+type TestConfigOverrides = Omit<ProjectsConfig, "projects">;
+
+type TestTaskSettings = NonNullable<ProjectsConfig["taskSettings"]>;
+
+type SaveProjectWorkspacesOptions = TestConfigOverrides & {
+  extraProjects?: Array<[string, ProjectConfig]>;
+};
+
+function testTaskSettings(maxParallelAgentTasks = 3, maxTaskNestingDepth = 3): TestTaskSettings {
+  return { maxParallelAgentTasks, maxTaskNestingDepth };
+}
+
+function projectWorkspace(
+  projectPath: string,
+  directoryName: string,
+  id: string,
+  options: Omit<Partial<WorkspaceConfigEntry>, "id" | "path"> = {}
+): WorkspaceConfigEntry {
+  const { name = directoryName, ...workspaceOptions } = options;
+  return {
+    path: path.join(projectPath, directoryName),
+    id,
+    name,
+    ...workspaceOptions,
+  };
+}
+
+async function saveTestConfig(
+  config: Config,
+  projects: Array<[string, ProjectConfig]>,
+  overrides: TestConfigOverrides = {}
+): Promise<void> {
+  await config.saveConfig({
+    projects: new Map(projects),
+    ...overrides,
+  });
+}
+
+async function saveWorkspaces(
+  config: Config,
+  projectPath: string,
+  workspaces: WorkspaceConfigEntry[],
+  options: SaveProjectWorkspacesOptions | TestTaskSettings = {}
+): Promise<void> {
+  const normalizedOptions =
+    "maxParallelAgentTasks" in options ? { taskSettings: options } : options;
+  const { extraProjects = [], ...overrides } = normalizedOptions;
+  await saveTestConfig(
+    config,
+    [[projectPath, { trusted: true, workspaces }], ...extraProjects],
+    overrides
+  );
+}
+
 async function saveLocalParentWorkspace(
   config: Config,
   rootDir: string,
@@ -130,33 +205,29 @@ async function saveLocalParentWorkspace(
 ): Promise<{ parentId: string; projectPath: string }> {
   const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
   const parentId = "1111111111";
-  await config.saveConfig({
-    projects: new Map([
-      [
-        projectPath,
-        {
-          trusted: true,
-          workspaces: [
-            {
-              path: projectPath,
-              id: parentId,
-              name: "parent",
-              createdAt: new Date().toISOString(),
-              runtimeConfig: { type: "local" },
-              aiSettings: options?.parentAiSettings ?? {
-                model: "anthropic:claude-opus-4-6",
-                thinkingLevel: "high",
-              },
-            },
-          ],
+  await saveWorkspaces(
+    config,
+    projectPath,
+    [
+      {
+        path: projectPath,
+        id: parentId,
+        name: "parent",
+        createdAt: new Date().toISOString(),
+        runtimeConfig: { type: "local" },
+        aiSettings: options?.parentAiSettings ?? {
+          model: "anthropic:claude-opus-4-6",
+          thinkingLevel: "high",
         },
-      ],
-    ]),
-    taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    agentAiDefaults: options?.agentAiDefaults,
-    subagentAiDefaults: options?.subagentAiDefaults,
-    migrations: { execSubagentDefaultsSplit: true },
-  });
+      },
+    ],
+    {
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+      agentAiDefaults: options?.agentAiDefaults,
+      subagentAiDefaults: options?.subagentAiDefaults,
+      migrations: { execSubagentDefaultsSplit: true },
+    }
+  );
   return { parentId, projectPath };
 }
 
@@ -226,6 +297,22 @@ function createAIServiceMocks(
   };
 }
 
+async function createAgentTask(
+  taskService: TaskService,
+  parentWorkspaceId: string,
+  prompt: string,
+  options: Partial<Parameters<TaskService["create"]>[0]> = {}
+) {
+  return taskService.create({
+    parentWorkspaceId,
+    kind: "agent",
+    agentType: "explore",
+    prompt,
+    title: "Test task",
+    ...options,
+  });
+}
+
 function createWorkspaceServiceMocks(
   overrides?: Partial<{
     sendMessage: ReturnType<typeof mock>;
@@ -238,6 +325,7 @@ function createWorkspaceServiceMocks(
     replaceHistory: ReturnType<typeof mock>;
     updateAgentStatus: ReturnType<typeof mock>;
     isExperimentEnabled: ReturnType<typeof mock>;
+    emitChatEvent: ReturnType<typeof mock>;
   }>
 ): {
   workspaceService: WorkspaceService;
@@ -251,6 +339,7 @@ function createWorkspaceServiceMocks(
   replaceHistory: ReturnType<typeof mock>;
   updateAgentStatus: ReturnType<typeof mock>;
   isExperimentEnabled: ReturnType<typeof mock>;
+  emitChatEvent: ReturnType<typeof mock>;
 } {
   const sendMessage =
     overrides?.sendMessage ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
@@ -269,6 +358,7 @@ function createWorkspaceServiceMocks(
   const updateAgentStatus =
     overrides?.updateAgentStatus ?? mock((): Promise<void> => Promise.resolve());
   const isExperimentEnabled = overrides?.isExperimentEnabled ?? mock(() => false);
+  const emitChatEvent = overrides?.emitChatEvent ?? mock(() => undefined);
 
   return {
     workspaceService: {
@@ -282,6 +372,7 @@ function createWorkspaceServiceMocks(
       replaceHistory,
       updateAgentStatus,
       isExperimentEnabled,
+      emitChatEvent,
     } as unknown as WorkspaceService,
     sendMessage,
     resumeStream,
@@ -293,6 +384,7 @@ function createWorkspaceServiceMocks(
     replaceHistory,
     updateAgentStatus,
     isExperimentEnabled,
+    emitChatEvent,
   };
 }
 
@@ -302,6 +394,8 @@ function createTaskServiceHarness(
     aiService?: AIService;
     workspaceService?: WorkspaceService;
     initStateManager?: InitStateManager;
+    sessionUsageService?: SessionUsageService;
+    workspaceGoalService?: WorkspaceGoalService;
   }
 ): {
   historyService: HistoryService;
@@ -325,7 +419,9 @@ function createTaskServiceHarness(
     aiService,
     workspaceService,
     initStateManager,
-    undefined
+    undefined,
+    overrides?.sessionUsageService,
+    overrides?.workspaceGoalService
   );
 
   return {
@@ -373,55 +469,31 @@ describe("TaskService", () => {
     const parentId = "1111111111";
     const parentPath = runtime.getWorkspacePath(projectPath, parentName);
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: parentPath,
-                id: parentId,
-                name: parentName,
-                createdAt: new Date().toISOString(),
-                runtimeConfig,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 2 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: parentPath,
+          id: parentId,
+          name: parentName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+      ],
+      testTaskSettings(3, 2)
+    );
     const { taskService } = createTaskServiceHarness(config);
 
-    const first = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "explore this repo",
-      title: "Test task",
-    });
+    const first = await createAgentTask(taskService, parentId, "explore this repo");
     expect(first.success).toBe(true);
     if (!first.success) return;
 
-    const second = await taskService.create({
-      parentWorkspaceId: first.data.taskId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "nested explore",
-      title: "Test task",
-    });
+    const second = await createAgentTask(taskService, first.data.taskId, "nested explore");
     expect(second.success).toBe(true);
     if (!second.success) return;
 
-    const third = await taskService.create({
-      parentWorkspaceId: second.data.taskId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "nested explore again",
-      title: "Test task",
-    });
+    const third = await createAgentTask(taskService, second.data.taskId, "nested explore again");
     expect(third.success).toBe(false);
     if (!third.success) {
       expect(third.error).toContain("maxTaskNestingDepth");
@@ -458,54 +530,36 @@ describe("TaskService", () => {
     const parent1Id = "1111111111";
     const parent2Id = "2222222222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: runtime.getWorkspacePath(projectPath, parent1Name),
-                id: parent1Id,
-                name: parent1Name,
-                createdAt: new Date().toISOString(),
-                runtimeConfig,
-              },
-              {
-                path: runtime.getWorkspacePath(projectPath, parent2Name),
-                id: parent2Id,
-                name: parent2Name,
-                createdAt: new Date().toISOString(),
-                runtimeConfig,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: runtime.getWorkspacePath(projectPath, parent1Name),
+          id: parent1Id,
+          name: parent1Name,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+        {
+          path: runtime.getWorkspacePath(projectPath, parent2Name),
+          id: parent2Id,
+          name: parent2Name,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const running = await taskService.create({
-      parentWorkspaceId: parent1Id,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "task 1",
-      title: "Test task",
-    });
+    const running = await createAgentTask(taskService, parent1Id, "task 1");
     expect(running.success).toBe(true);
     if (!running.success) return;
 
-    const queued = await taskService.create({
-      parentWorkspaceId: parent2Id,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "task 2",
-      title: "Test task",
-    });
+    const queued = await createAgentTask(taskService, parent2Id, "task 2");
     expect(queued.success).toBe(true);
     if (!queued.success) return;
     expect(queued.data.status).toBe("queued");
@@ -562,49 +616,31 @@ describe("TaskService", () => {
     });
 
     const rootWorkspaceId = "root-111";
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: runtime.getWorkspacePath(projectPath, rootName),
-                id: rootWorkspaceId,
-                name: rootName,
-                createdAt: new Date().toISOString(),
-                runtimeConfig,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: runtime.getWorkspacePath(projectPath, rootName),
+          id: rootWorkspaceId,
+          name: rootName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
-    const parentTask = await taskService.create({
-      parentWorkspaceId: rootWorkspaceId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "parent task",
-      title: "Test task",
-    });
+    const parentTask = await createAgentTask(taskService, rootWorkspaceId, "parent task");
     expect(parentTask.success).toBe(true);
     if (!parentTask.success) return;
     streamingWorkspaceId = parentTask.data.taskId;
 
     // With maxParallelAgentTasks=1, nested tasks will be created as queued.
-    const childTask = await taskService.create({
-      parentWorkspaceId: parentTask.data.taskId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "child task",
-      title: "Test task",
-    });
+    const childTask = await createAgentTask(taskService, parentTask.data.taskId, "child task");
     expect(childTask.success).toBe(true);
     if (!childTask.success) return;
     expect(childTask.data.status).toBe("queued");
@@ -661,26 +697,20 @@ describe("TaskService", () => {
     });
 
     const parentId = "1111111111";
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: runtime.getWorkspacePath(projectPath, parentName),
-                id: parentId,
-                name: parentName,
-                createdAt: new Date().toISOString(),
-                runtimeConfig,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: runtime.getWorkspacePath(projectPath, parentName),
+          id: parentId,
+          name: parentName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const forkedSrcBaseDir = path.join(config.srcDir, "forked-runtime");
     const sourceSrcBaseDir = path.join(config.srcDir, "source-runtime");
@@ -706,23 +736,11 @@ describe("TaskService", () => {
     try {
       const { taskService } = createTaskServiceHarness(config);
 
-      const running = await taskService.create({
-        parentWorkspaceId: parentId,
-        kind: "agent",
-        agentType: "explore",
-        prompt: "task 1",
-        title: "Test task",
-      });
+      const running = await createAgentTask(taskService, parentId, "task 1");
       expect(running.success).toBe(true);
       if (!running.success) return;
 
-      const queued = await taskService.create({
-        parentWorkspaceId: parentId,
-        kind: "agent",
-        agentType: "explore",
-        prompt: "task 2",
-        title: "Test task",
-      });
+      const queued = await createAgentTask(taskService, parentId, "task 2");
       expect(queued.success).toBe(true);
       if (!queued.success) return;
       expect(queued.data.status).toBe("queued");
@@ -929,37 +947,31 @@ describe("TaskService", () => {
     const queuedTaskId = "task-queued";
     const queuedWorkspaceName = "agent_exec_task-queued";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: runtime.getWorkspacePath(projectPath, parentName),
-                id: parentId,
-                name: parentName,
-                createdAt: new Date().toISOString(),
-                runtimeConfig,
-              },
-              {
-                path: runtime.getWorkspacePath(projectPath, queuedWorkspaceName),
-                id: queuedTaskId,
-                name: queuedWorkspaceName,
-                createdAt: new Date().toISOString(),
-                runtimeConfig,
-                parentWorkspaceId: parentId,
-                taskStatus: "queued",
-                taskPrompt: "start queued task",
-                taskTrunkBranch: "main",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: runtime.getWorkspacePath(projectPath, parentName),
+          id: parentId,
+          name: parentName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+        {
+          path: runtime.getWorkspacePath(projectPath, queuedWorkspaceName),
+          id: queuedTaskId,
+          name: queuedWorkspaceName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+          parentWorkspaceId: parentId,
+          taskStatus: "queued",
+          taskPrompt: "start queued task",
+          taskTrunkBranch: "main",
+        },
+      ],
+      testTaskSettings(1, 3)
+    );
 
     await config.editConfig((cfg) => {
       const project = cfg.projects.get(projectPath);
@@ -1093,26 +1105,20 @@ describe("TaskService", () => {
     });
 
     const parentId = "1111111111";
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: runtime.getWorkspacePath(projectPath, parentName),
-                id: parentId,
-                name: parentName,
-                createdAt: new Date().toISOString(),
-                runtimeConfig,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: runtime.getWorkspacePath(projectPath, parentName),
+          id: parentId,
+          name: parentName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const initStateManager = new RealInitStateManager(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -1121,26 +1127,14 @@ describe("TaskService", () => {
       initStateManager: initStateManager as unknown as InitStateManager,
     });
 
-    const running = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "task 1",
-      title: "Test task",
-    });
+    const running = await createAgentTask(taskService, parentId, "task 1");
     expect(running.success).toBe(true);
     if (!running.success) return;
 
     // Wait for running task init (fire-and-forget) so the init-status file exists.
     await initStateManager.waitForInit(running.data.taskId);
 
-    const queued = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "task 2",
-      title: "Test task",
-    });
+    const queued = await createAgentTask(taskService, parentId, "task 2");
     expect(queued.success).toBe(true);
     if (!queued.success) return;
     expect(queued.data.status).toBe("queued");
@@ -1209,36 +1203,26 @@ describe("TaskService", () => {
     const reportedTaskId = "task-reported";
     const queuedTaskId = "task-queued";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "reported"),
-                id: reportedTaskId,
-                name: "agent_explore_reported",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "reported",
-              },
-              {
-                path: path.join(projectPath, "queued"),
-                id: queuedTaskId,
-                name: "agent_explore_queued",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "queued",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "reported", reportedTaskId, {
+          name: "agent_explore_reported",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "reported",
+        }),
+        projectWorkspace(projectPath, "queued", queuedTaskId, {
+          name: "agent_explore_queued",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "queued",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { aiService } = createAIServiceMocks(config, {
       isStreaming: mock((workspaceId: string) => workspaceId === reportedTaskId),
@@ -1281,57 +1265,33 @@ describe("TaskService", () => {
     const parentId = "1111111111";
     const parentPath = runtime.getWorkspacePath(projectPath, parentName);
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: parentPath,
-                id: parentId,
-                name: parentName,
-                createdAt: new Date().toISOString(),
-                runtimeConfig,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 2, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: parentPath,
+          id: parentId,
+          name: parentName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+      ],
+      testTaskSettings(2, 3)
+    );
     const { taskService } = createTaskServiceHarness(config);
 
-    const first = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "task 1",
-      title: "Test task",
-    });
+    const first = await createAgentTask(taskService, parentId, "task 1");
     expect(first.success).toBe(true);
     if (!first.success) return;
     expect(first.data.status).toBe("running");
 
-    const second = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "task 2",
-      title: "Test task",
-    });
+    const second = await createAgentTask(taskService, parentId, "task 2");
     expect(second.success).toBe(true);
     if (!second.success) return;
     expect(second.data.status).toBe("running");
 
-    const third = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "task 3",
-      title: "Test task",
-    });
+    const third = await createAgentTask(taskService, parentId, "task 3");
     expect(third.success).toBe(true);
     if (!third.success) return;
     expect(third.data.status).toBe("queued");
@@ -1344,35 +1304,24 @@ describe("TaskService", () => {
     const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
 
     const parentId = "1111111111";
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: projectPath,
-                id: parentId,
-                name: "parent",
-                createdAt: new Date().toISOString(),
-                runtimeConfig: { type: "local" },
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        },
+      ],
+      testTaskSettings()
+    );
     const { taskService } = createTaskServiceHarness(config);
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "run task from local workspace",
-      title: "Test task",
+    const created = await createAgentTask(taskService, parentId, "run task from local workspace", {
       modelString: "openai:gpt-5.2",
       thinkingLevel: "medium",
     });
@@ -1398,37 +1347,26 @@ describe("TaskService", () => {
     const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
 
     const parentId = "1111111111";
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: projectPath,
-                id: parentId,
-                name: "parent",
-                createdAt: new Date().toISOString(),
-                runtimeConfig: { type: "local" },
-                aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "high" },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "high" },
+        },
+      ],
+      testTaskSettings()
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "run task with inherited model",
-      title: "Test task",
+    const created = await createAgentTask(taskService, parentId, "run task with inherited model", {
       modelString: "openai:gpt-5.3-codex",
       thinkingLevel: "xhigh",
     });
@@ -1467,38 +1405,30 @@ describe("TaskService", () => {
     const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
 
     const parentId = "1111111111";
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: projectPath,
-                id: parentId,
-                name: "parent",
-                createdAt: new Date().toISOString(),
-                runtimeConfig: { type: "local" },
-                aiSettings: { model: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          aiSettings: { model: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+        },
+      ],
+      testTaskSettings()
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "run task inheriting parent settings",
-      title: "Test task",
-    });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run task inheriting parent settings"
+    );
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -1530,44 +1460,38 @@ describe("TaskService", () => {
     const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
 
     const parentId = "1111111111";
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: projectPath,
-                id: parentId,
-                name: "parent",
-                createdAt: new Date().toISOString(),
-                runtimeConfig: { type: "local" },
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "high" },
-                aiSettingsByAgent: {
-                  explore: { model: "openai:gpt-5.2-pro", thinkingLevel: "medium" },
-                },
-              },
-            ],
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+          aiSettingsByAgent: {
+            explore: { model: "openai:gpt-5.2-pro", thinkingLevel: "medium" },
           },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-      agentAiDefaults: {
-        explore: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
-      },
-    });
+        },
+      ],
+      {
+        taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+        agentAiDefaults: {
+          explore: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+        },
+      }
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "run task with same-agent conflicts",
-      title: "Test task",
-    });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run task with same-agent conflicts"
+    );
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -1612,40 +1536,32 @@ describe("TaskService", () => {
     );
 
     const parentId = "1111111111";
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: projectPath,
-                id: parentId,
-                name: "parent",
-                createdAt: new Date().toISOString(),
-                runtimeConfig: { type: "local" },
-                aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "high" },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-      agentAiDefaults: {
-        exec: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
-      },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "high" },
+        },
+      ],
+      {
+        taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+        agentAiDefaults: {
+          exec: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+        },
+      }
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
+    const created = await createAgentTask(taskService, parentId, "run task with custom agent", {
       agentType: "custom",
-      prompt: "run task with custom agent",
-      title: "Test task",
       modelString: "openai:gpt-5.3-codex",
       thinkingLevel: "xhigh",
     });
@@ -1693,40 +1609,32 @@ describe("TaskService", () => {
     );
 
     const parentId = "1111111111";
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: projectPath,
-                id: parentId,
-                name: "parent",
-                createdAt: new Date().toISOString(),
-                runtimeConfig: { type: "local" },
-                aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "high" },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-      agentAiDefaults: {
-        custom: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
-      },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "high" },
+        },
+      ],
+      {
+        taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+        agentAiDefaults: {
+          custom: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+        },
+      }
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
+    const created = await createAgentTask(taskService, parentId, "run task with custom agent", {
       agentType: "custom",
-      prompt: "run task with custom agent",
-      title: "Test task",
       modelString: "openai:gpt-4o-mini",
       thinkingLevel: "off",
     });
@@ -1746,6 +1654,44 @@ describe("TaskService", () => {
     );
   }, 20_000);
 
+  test("task-created child workspaces do not inherit the parent's goal file", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["goalchild1"], "goalchild2");
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const historyService = new HistoryService(config);
+    const extensionMetadata = new ExtensionMetadataService(
+      path.join(rootDir, "task-goal-extensionMetadata.json")
+    );
+    const workspaceGoalService = new WorkspaceGoalService(
+      config,
+      historyService,
+      extensionMetadata
+    );
+    const result = await workspaceGoalService.setGoal({
+      workspaceId: parentId,
+      objective: "Parent owns the goal",
+      budgetCents: 100,
+    });
+    expect(result.success).toBe(true);
+    expect(await workspaceGoalFileExists(config, parentId)).toBe(true);
+
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "child should not inherit a goal",
+      {
+        agentType: "exec",
+        title: "No child goal",
+      }
+    );
+
+    expect(created.success).toBe(true);
+    assert(created.success);
+    expect(await workspaceGoalFileExists(config, created.data.taskId)).toBe(false);
+  }, 20_000);
+
   test("parent runtime AI settings outrank persisted parent workspace settings", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
@@ -1756,14 +1702,15 @@ describe("TaskService", () => {
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "exec",
-      prompt: "run exec task with parent runtime fallback",
-      title: "Test task",
-      parentRuntimeAiSettings: { modelString: "openai:gpt-5.3-codex" },
-    });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run exec task with parent runtime fallback",
+      {
+        agentType: "exec",
+        parentRuntimeAiSettings: { modelString: "openai:gpt-5.3-codex" },
+      }
+    );
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -1795,14 +1742,15 @@ describe("TaskService", () => {
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "exec",
-      prompt: "run exec task with configured default",
-      title: "Test task",
-      parentRuntimeAiSettings: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
-    });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run exec task with configured default",
+      {
+        agentType: "exec",
+        parentRuntimeAiSettings: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+      }
+    );
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -1836,14 +1784,15 @@ describe("TaskService", () => {
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "exec",
-      prompt: "run exec task with parent runtime thinking fallback",
-      title: "Test task",
-      parentRuntimeAiSettings: { thinkingLevel: requestedThinkingLevel },
-    });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run exec task with parent runtime thinking fallback",
+      {
+        agentType: "exec",
+        parentRuntimeAiSettings: { thinkingLevel: requestedThinkingLevel },
+      }
+    );
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -1878,13 +1827,14 @@ describe("TaskService", () => {
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "exec",
-      prompt: "run exec task with subagent defaults",
-      title: "Test task",
-    });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run exec task with subagent defaults",
+      {
+        agentType: "exec",
+      }
+    );
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -1916,15 +1866,16 @@ describe("TaskService", () => {
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "exec",
-      prompt: "run exec task with explicit args",
-      title: "Test task",
-      modelString: "openai:gpt-5.2",
-      thinkingLevel: "medium",
-    });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run exec task with explicit args",
+      {
+        agentType: "exec",
+        modelString: "openai:gpt-5.2",
+        thinkingLevel: "medium",
+      }
+    );
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -1956,13 +1907,14 @@ describe("TaskService", () => {
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "exec",
-      prompt: "run exec task with agent defaults",
-      title: "Test task",
-    });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run exec task with agent defaults",
+      {
+        agentType: "exec",
+      }
+    );
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -1994,13 +1946,14 @@ describe("TaskService", () => {
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "exec",
-      prompt: "run exec task with partial defaults",
-      title: "Test task",
-    });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run exec task with partial defaults",
+      {
+        agentType: "exec",
+      }
+    );
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -2035,13 +1988,14 @@ describe("TaskService", () => {
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "exec",
-      prompt: "run exec task with clamped default thinking",
-      title: "Test task",
-    });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run exec task with clamped default thinking",
+      {
+        agentType: "exec",
+      }
+    );
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -2073,14 +2027,15 @@ describe("TaskService", () => {
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "exec",
-      prompt: "run exec task with clamped thinking",
-      title: "Test task",
-      thinkingLevel: "off",
-    });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run exec task with clamped thinking",
+      {
+        agentType: "exec",
+        thinkingLevel: "off",
+      }
+    );
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -2107,13 +2062,14 @@ describe("TaskService", () => {
     });
 
     const { taskService } = createTaskServiceHarness(config);
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "exec",
-      prompt: "run exec task before defaults change",
-      title: "Test task",
-    });
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run exec task before defaults change",
+      {
+        agentType: "exec",
+      }
+    );
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -2139,45 +2095,30 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const childTaskId = "task-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: path.join(projectPath, "root"),
-                id: rootWorkspaceId,
-                name: "root",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root",
@@ -2205,35 +2146,24 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const childTaskId = "task-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: path.join(projectPath, "root"),
-                id: rootWorkspaceId,
-                name: "root",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const hasPendingQueuedOrPreparingTurn = mock(() => true);
@@ -2242,11 +2172,7 @@ describe("TaskService", () => {
     });
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root",
@@ -2265,34 +2191,24 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const childTaskId = "task-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            workspaces: [
-              {
-                path: path.join(projectPath, "root"),
-                id: rootWorkspaceId,
-                name: "root",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -2306,11 +2222,7 @@ describe("TaskService", () => {
     const waitError = await waitPromise.catch((error: unknown) => error);
     expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root",
@@ -2328,44 +2240,30 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const childTaskId = "task-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            workspaces: [
-              {
-                path: path.join(projectPath, "root"),
-                id: rootWorkspaceId,
-                name: "root",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root",
@@ -2392,34 +2290,24 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const childTaskId = "task-bg";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            workspaces: [
-              {
-                path: path.join(projectPath, "root"),
-                id: rootWorkspaceId,
-                name: "root",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task-bg"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task-bg", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -2433,11 +2321,7 @@ describe("TaskService", () => {
     const waitError = await waitPromise.catch((error: unknown) => error);
     expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root-1",
@@ -2448,7 +2332,7 @@ describe("TaskService", () => {
     // First stream-end: exemption active → no nudge.
     expect(sendMessage).not.toHaveBeenCalled();
 
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root-2",
@@ -2477,44 +2361,32 @@ describe("TaskService", () => {
     const taskAId = "task-bg-a";
     const taskBId = "task-bg-b";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            workspaces: [
-              {
-                path: path.join(projectPath, "root"),
-                id: rootWorkspaceId,
-                name: "root",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task-bg-a"),
-                id: taskAId,
-                name: "agent_explore_a",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-              {
-                path: path.join(projectPath, "child-task-bg-b"),
-                id: taskBId,
-                name: "agent_explore_b",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task-bg-a", taskAId, {
+          name: "agent_explore_a",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+        projectWorkspace(projectPath, "child-task-bg-b", taskBId, {
+          name: "agent_explore_b",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -2537,11 +2409,7 @@ describe("TaskService", () => {
     expect(waitAError).toBeInstanceOf(ForegroundWaitBackgroundedError);
     expect(waitBError).toBeInstanceOf(ForegroundWaitBackgroundedError);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root-1",
@@ -2551,7 +2419,7 @@ describe("TaskService", () => {
 
     expect(sendMessage).not.toHaveBeenCalled();
 
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root-2",
@@ -2587,34 +2455,24 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const childTaskId = "task-bg";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            workspaces: [
-              {
-                path: path.join(projectPath, "root"),
-                id: rootWorkspaceId,
-                name: "root",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task-bg"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task-bg", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -2639,11 +2497,7 @@ describe("TaskService", () => {
       expect(secondWaitError.message).toBe("Timed out waiting for agent_report");
     }
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root-renewed",
@@ -2671,44 +2525,32 @@ describe("TaskService", () => {
     const backgroundTaskId = "task-bg";
     const blockingTaskId = "task-blocking";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            workspaces: [
-              {
-                path: path.join(projectPath, "root"),
-                id: rootWorkspaceId,
-                name: "root",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task-bg"),
-                id: backgroundTaskId,
-                name: "agent_explore_bg",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-              {
-                path: path.join(projectPath, "child-task-blocking"),
-                id: blockingTaskId,
-                name: "agent_explore_blocking",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task-bg", backgroundTaskId, {
+          name: "agent_explore_bg",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+        projectWorkspace(projectPath, "child-task-blocking", blockingTaskId, {
+          name: "agent_explore_blocking",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -2722,11 +2564,7 @@ describe("TaskService", () => {
     const waitError = await waitPromise.catch((error: unknown) => error);
     expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root",
@@ -2758,45 +2596,30 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const childTaskId = "task-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: path.join(projectPath, "root"),
-                id: rootWorkspaceId,
-                name: "root",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root",
@@ -2822,35 +2645,24 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const childTaskId = "task-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: path.join(projectPath, "root"),
-                id: rootWorkspaceId,
-                name: "root",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -2870,11 +2682,7 @@ describe("TaskService", () => {
     );
     expect(appendResult.success).toBe(true);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root",
@@ -2900,45 +2708,30 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const childTaskId = "task-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: path.join(projectPath, "root"),
-                id: rootWorkspaceId,
-                name: "root",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: rootWorkspaceId,
       messageId: "assistant-root",
@@ -2964,35 +2757,26 @@ describe("TaskService", () => {
     const parentWorkspaceId = "parent-111";
     const childTaskId = "task-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: path.join(projectPath, "parent"),
-                id: parentWorkspaceId,
-                name: "parent",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        {
+          path: path.join(projectPath, "child-task"),
+          id: childTaskId,
+          name: "agent_explore_child",
+          parentWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        },
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -3012,11 +2796,7 @@ describe("TaskService", () => {
     );
     expect(appendResult.success).toBe(true);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childTaskId,
       messageId: "assistant-child-output",
@@ -3051,34 +2831,26 @@ describe("TaskService", () => {
     const parentWorkspaceId = "parent-111";
     const childTaskId = "task-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            workspaces: [
-              {
-                path: path.join(projectPath, "parent"),
-                id: parentWorkspaceId,
-                name: "parent",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        {
+          path: path.join(projectPath, "child-task"),
+          id: childTaskId,
+          name: "agent_explore_child",
+          parentWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        },
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -3092,11 +2864,7 @@ describe("TaskService", () => {
       requestingWorkspaceId: parentWorkspaceId,
     });
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childTaskId,
       messageId: "assistant-child-output",
@@ -3132,35 +2900,26 @@ describe("TaskService", () => {
     const parentWorkspaceId = "parent-111";
     const childTaskId = "task-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: path.join(projectPath, "parent"),
-                id: parentWorkspaceId,
-                name: "parent",
-                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.2",
-                taskThinkingLevel: "medium",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        {
+          path: path.join(projectPath, "child-task"),
+          id: childTaskId,
+          name: "agent_explore_child",
+          parentWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        },
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -3171,11 +2930,7 @@ describe("TaskService", () => {
 
     taskService.markParentWorkspaceInterrupted(parentWorkspaceId);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childTaskId,
       messageId: "assistant-child-output",
@@ -3202,28 +2957,20 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const taskId = "task-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "task"),
-                id: taskId,
-                name: "agent_exec_task",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "exec",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "task", taskId, {
+          name: "agent_exec_task",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService, stopStream } = createAIServiceMocks(config);
     const { workspaceService, remove } = createWorkspaceServiceMocks();
@@ -3259,36 +3006,26 @@ describe("TaskService", () => {
     const parentTaskId = "task-parent";
     const childTaskId = "task-child";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "parent-task"),
-                id: parentTaskId,
-                name: "agent_exec_parent",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "exec",
-                taskStatus: "running",
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentTaskId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, remove } = createWorkspaceServiceMocks();
@@ -3314,36 +3051,26 @@ describe("TaskService", () => {
     const parentTaskId = "task-parent";
     const childTaskId = "task-child";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "parent-task"),
-                id: parentTaskId,
-                name: "agent_exec_parent",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "exec",
-                taskStatus: "running",
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentTaskId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const callOrder: string[] = [];
     const clearQueue = mock((workspaceId: string): Result<void> => {
@@ -3399,37 +3126,27 @@ describe("TaskService", () => {
     const childTaskId = "task-child";
     const completedAt = "2026-03-09T11:05:58.780Z";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "parent-task"),
-                id: parentTaskId,
-                name: "agent_exec_parent",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "exec",
-                taskStatus: "running",
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentTaskId,
-                agentType: "explore",
-                taskStatus: "reported",
-                reportedAt: completedAt,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "reported",
+          reportedAt: completedAt,
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const callOrder: string[] = [];
     const clearQueue = mock((workspaceId: string): Result<void> => {
@@ -3472,37 +3189,27 @@ describe("TaskService", () => {
     const childTaskId = "task-child";
     const staleReportedAt = "2026-03-09T11:05:58.780Z";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "parent-task"),
-                id: parentTaskId,
-                name: "agent_exec_parent",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "exec",
-                taskStatus: "running",
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentTaskId,
-                agentType: "explore",
-                taskStatus: "running",
-                reportedAt: staleReportedAt,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+          reportedAt: staleReportedAt,
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService } = createWorkspaceServiceMocks();
@@ -3526,36 +3233,26 @@ describe("TaskService", () => {
     const parentTaskId = "task-parent";
     const childTaskId = "task-child";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "parent-task"),
-                id: parentTaskId,
-                name: "agent_exec_parent",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "exec",
-                taskStatus: "running",
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentTaskId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService } = createWorkspaceServiceMocks();
@@ -3609,36 +3306,26 @@ describe("TaskService", () => {
     const parentTaskId = "task-parent";
     const childTaskId = "task-child";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "parent-task"),
-                id: parentTaskId,
-                name: "agent_exec_parent",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "exec",
-                taskStatus: "running",
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentTaskId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService } = createWorkspaceServiceMocks();
@@ -3676,20 +3363,12 @@ describe("TaskService", () => {
     const projectPath = path.join(rootDir, "repo");
     const rootWorkspaceId = "root-111";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [projectWorkspace(projectPath, "root", rootWorkspaceId)],
+      testTaskSettings()
+    );
 
     const { aiService, stopStream } = createAIServiceMocks(config);
     const { workspaceService, remove } = createWorkspaceServiceMocks();
@@ -3708,29 +3387,21 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const queuedTaskId = "task-queued";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "queued-task"),
-                id: queuedTaskId,
-                name: "agent_exec_queued",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "exec",
-                taskStatus: "queued",
-                taskPrompt: "resume me later",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "queued-task", queuedTaskId, {
+          name: "agent_exec_queued",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "queued",
+          taskPrompt: "resume me later",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { taskService } = createTaskServiceHarness(config);
 
@@ -3756,29 +3427,21 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const childTaskId = "task-child";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "interrupted",
-                taskPrompt: "stale prompt",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+          taskPrompt: "stale prompt",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { taskService } = createTaskServiceHarness(config);
 
@@ -3799,28 +3462,20 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const childTaskId = "task-child";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const editConfigSpy = spyOn(config, "editConfig");
     const { taskService } = createTaskServiceHarness(config);
@@ -3838,29 +3493,21 @@ describe("TaskService", () => {
     const rootWorkspaceId = "root-111";
     const childTaskId = "task-child";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: childTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "explore",
-                taskStatus: "running",
-                reportedAt: "2026-03-09T11:05:58.780Z",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          reportedAt: "2026-03-09T11:05:58.780Z",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { taskService } = createTaskServiceHarness(config);
 
@@ -3880,28 +3527,20 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "awaiting_report",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "awaiting_report",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -3945,35 +3584,29 @@ describe("TaskService", () => {
       ].join("\n")
     );
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: path.join(projectPath, "parent"),
-                id: parentId,
-                name: "parent",
-                runtimeConfig,
-              },
-              {
-                path: childWorkspacePath,
-                id: childId,
-                name: "agent_custom_plan_child",
-                parentWorkspaceId: parentId,
-                agentId: customAgentId,
-                agentType: customAgentId,
-                taskStatus: "awaiting_report",
-                runtimeConfig,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: path.join(projectPath, "parent"),
+          id: parentId,
+          name: "parent",
+          runtimeConfig,
+        },
+        {
+          path: childWorkspacePath,
+          id: childId,
+          name: "agent_custom_plan_child",
+          parentWorkspaceId: parentId,
+          agentId: customAgentId,
+          agentType: customAgentId,
+          taskStatus: "awaiting_report",
+          runtimeConfig,
+        },
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
@@ -3998,27 +3631,22 @@ describe("TaskService", () => {
       const childId = "child-task-ws";
       const projectPath = "/test/project";
 
-      await config.saveConfig({
-        projects: new Map([
-          [
-            projectPath,
-            {
-              workspaces: [
-                { path: `${projectPath}/parent`, id: parentId, name: "parent" },
-                {
-                  path: `${projectPath}/child`,
-                  id: childId,
-                  name: "agent_explore_child",
-                  parentWorkspaceId: parentId,
-                  agentType: "explore",
-                  taskStatus: "running",
-                },
-              ],
-            },
-          ],
-        ]),
-        taskSettings: { maxParallelAgentTasks: 2, maxTaskNestingDepth: 3 },
-      });
+      await saveWorkspaces(
+        config,
+        projectPath,
+        [
+          { path: `${projectPath}/parent`, id: parentId, name: "parent" },
+          {
+            path: `${projectPath}/child`,
+            id: childId,
+            name: "agent_explore_child",
+            parentWorkspaceId: parentId,
+            agentType: "explore",
+            taskStatus: "running",
+          },
+        ],
+        testTaskSettings(2, 3)
+      );
 
       const { taskService } = createTaskServiceHarness(config);
 
@@ -4044,27 +3672,22 @@ describe("TaskService", () => {
       const childId = "child-task-ws";
       const projectPath = "/test/project";
 
-      await config.saveConfig({
-        projects: new Map([
-          [
-            projectPath,
-            {
-              workspaces: [
-                { path: `${projectPath}/parent`, id: parentId, name: "parent" },
-                {
-                  path: `${projectPath}/child`,
-                  id: childId,
-                  name: "agent_explore_child",
-                  parentWorkspaceId: parentId,
-                  agentType: "explore",
-                  taskStatus: "running",
-                },
-              ],
-            },
-          ],
-        ]),
-        taskSettings: { maxParallelAgentTasks: 2, maxTaskNestingDepth: 3 },
-      });
+      await saveWorkspaces(
+        config,
+        projectPath,
+        [
+          { path: `${projectPath}/parent`, id: parentId, name: "parent" },
+          {
+            path: `${projectPath}/child`,
+            id: childId,
+            name: "agent_explore_child",
+            parentWorkspaceId: parentId,
+            agentType: "explore",
+            taskStatus: "running",
+          },
+        ],
+        testTaskSettings(2, 3)
+      );
 
       const { taskService } = createTaskServiceHarness(config);
 
@@ -4086,27 +3709,22 @@ describe("TaskService", () => {
       const childId = "child-task-ws";
       const projectPath = "/test/project";
 
-      await config.saveConfig({
-        projects: new Map([
-          [
-            projectPath,
-            {
-              workspaces: [
-                { path: `${projectPath}/parent`, id: parentId, name: "parent" },
-                {
-                  path: `${projectPath}/child`,
-                  id: childId,
-                  name: "agent_explore_child",
-                  parentWorkspaceId: parentId,
-                  agentType: "explore",
-                  taskStatus: "running",
-                },
-              ],
-            },
-          ],
-        ]),
-        taskSettings: { maxParallelAgentTasks: 2, maxTaskNestingDepth: 3 },
-      });
+      await saveWorkspaces(
+        config,
+        projectPath,
+        [
+          { path: `${projectPath}/parent`, id: parentId, name: "parent" },
+          {
+            path: `${projectPath}/child`,
+            id: childId,
+            name: "agent_explore_child",
+            parentWorkspaceId: parentId,
+            agentType: "explore",
+            taskStatus: "running",
+          },
+        ],
+        testTaskSettings(2, 3)
+      );
 
       const { taskService } = createTaskServiceHarness(config);
 
@@ -4138,28 +3756,20 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "queued",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "queued",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { taskService } = createTaskServiceHarness(config);
 
@@ -4188,28 +3798,20 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "awaiting_report",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "awaiting_report",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
@@ -4244,28 +3846,20 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "interrupted",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { taskService } = createTaskServiceHarness(config);
 
@@ -4289,28 +3883,20 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "interrupted",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { taskService } = createTaskServiceHarness(config);
 
@@ -4337,28 +3923,20 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "interrupted",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { taskService } = createTaskServiceHarness(config);
 
@@ -4388,28 +3966,20 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { taskService } = createTaskServiceHarness(config);
 
@@ -4441,28 +4011,20 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { taskService } = createTaskServiceHarness(config);
 
@@ -4490,28 +4052,20 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { taskService } = createTaskServiceHarness(config);
 
@@ -4539,28 +4093,20 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { taskService } = createTaskServiceHarness(config);
 
@@ -4598,44 +4144,31 @@ describe("TaskService", () => {
     const parentTaskId = "task-222";
     const descendantTaskId = "task-333";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "parent-task"),
-                id: parentTaskId,
-                name: "agent_exec_parent",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "exec",
-                taskStatus: "running",
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: descendantTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentTaskId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "child-task", descendantTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: parentTaskId,
       messageId: "assistant-parent-task",
@@ -4660,44 +4193,31 @@ describe("TaskService", () => {
     const parentTaskId = "task-222";
     const descendantTaskId = "task-333";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "parent-task"),
-                id: parentTaskId,
-                name: "agent_exec_parent",
-                parentWorkspaceId: rootWorkspaceId,
-                agentType: "exec",
-                taskStatus: "awaiting_report",
-              },
-              {
-                path: path.join(projectPath, "child-task"),
-                id: descendantTaskId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentTaskId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+        }),
+        projectWorkspace(projectPath, "child-task", descendantTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: parentTaskId,
       messageId: "assistant-parent-task",
@@ -4737,38 +4257,26 @@ describe("TaskService", () => {
     const parentId = "1111111111";
     const parentPath = runtime.getWorkspacePath(projectPath, parentName);
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: parentPath,
-                id: parentId,
-                name: parentName,
-                createdAt: new Date().toISOString(),
-                runtimeConfig,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: parentPath,
+          id: parentId,
+          name: parentName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+      ],
+      testTaskSettings()
+    );
     const { aiService } = createAIServiceMocks(config);
     const failingSendMessage = mock(() => Promise.resolve(Err("send failed")));
     const { workspaceService } = createWorkspaceServiceMocks({ sendMessage: failingSendMessage });
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "do the thing",
-      title: "Test task",
-    });
+    const created = await createAgentTask(taskService, parentId, "do the thing");
 
     expect(created.success).toBe(false);
 
@@ -4793,11 +4301,7 @@ describe("TaskService", () => {
     const config = await createTestConfig(rootDir);
     const { taskService } = createTaskServiceHarness(config);
 
-    const created = await taskService.create({
-      parentWorkspaceId: "parent-workspace",
-      kind: "agent",
-      agentType: "explore",
-      prompt: "review frontend",
+    const created = await createAgentTask(taskService, "parent-workspace", "review frontend", {
       title: "Split review",
       bestOf: {
         groupId: "task-group-variants",
@@ -4821,28 +4325,20 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -4914,15 +4410,11 @@ describe("TaskService", () => {
     const writeChildPartial = await partialService.writePartial(childId, childPartial);
     expect(writeChildPartial.success).toBe(true);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
     // Simulate stream manager committing the final partial right before natural stream end.
     const commitChildPartial = await partialService.commitPartial(childId);
     expect(commitChildPartial.success).toBe(true);
 
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-partial",
@@ -4998,32 +4490,26 @@ describe("TaskService", () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: params.parentId, name: "parent" },
-              ...params.children.map((child) => ({
-                path: path.join(projectPath, child.pathName ?? child.id),
-                id: child.id,
-                name: child.name,
-                ...(child.title ? { title: child.title } : {}),
-                parentWorkspaceId: params.parentId,
-                agentType: child.agentType ?? "explore",
-                ...(child.agentId ? { agentId: child.agentId } : {}),
-                taskStatus: child.taskStatus,
-                ...(child.createdAt ? { createdAt: child.createdAt } : {}),
-                bestOf: child.bestOf,
-              })),
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", params.parentId),
+        ...params.children.map((child) => ({
+          path: path.join(projectPath, child.pathName ?? child.id),
+          id: child.id,
+          name: child.name,
+          ...(child.title ? { title: child.title } : {}),
+          parentWorkspaceId: params.parentId,
+          agentType: child.agentType ?? "explore",
+          ...(child.agentId ? { agentId: child.agentId } : {}),
+          taskStatus: child.taskStatus,
+          ...(child.createdAt ? { createdAt: child.createdAt } : {}),
+          bestOf: child.bestOf,
+        })),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -5351,82 +4837,90 @@ describe("TaskService", () => {
     expect(serializedOutput).toContain('"label":"backend"');
   });
 
-  test("agent_report finalizes interrupted best-of parent output after partial best-of spawn failure", async () => {
-    const parentId = "parent-best-of-partial-spawn";
-    const childOneId = "child-best-of-partial-1";
-    const childTwoId = "child-best-of-partial-2";
-    const bestOf = { groupId: "best-of-partial-group", index: 0, total: 3 } as const;
+  // Test exercises real config + history + partial-on-disk I/O across many
+  // sequential awaits. Under CI parallel-test contention this can momentarily
+  // exceed Bun's default 5s per-test timeout even though it completes in
+  // ~250ms locally; bump the budget for headroom.
+  test(
+    "agent_report finalizes interrupted best-of parent output after partial best-of spawn failure",
+    async () => {
+      const parentId = "parent-best-of-partial-spawn";
+      const childOneId = "child-best-of-partial-1";
+      const childTwoId = "child-best-of-partial-2";
+      const bestOf = { groupId: "best-of-partial-group", index: 0, total: 3 } as const;
 
-    const { config, historyService, partialService, taskService, remove } =
-      await createBestOfTaskServiceTestHarness({
+      const { config, historyService, partialService, taskService, remove } =
+        await createBestOfTaskServiceTestHarness({
+          parentId,
+          children: [
+            {
+              id: childOneId,
+              name: "agent_explore_child_1",
+              taskStatus: "running",
+              bestOf,
+            },
+            {
+              id: childTwoId,
+              name: "agent_explore_child_2",
+              taskStatus: "running",
+              bestOf: { ...bestOf, index: 1 },
+            },
+          ],
+        });
+
+      await writePendingBestOfParentPartial({
+        partialService,
         parentId,
-        children: [
-          {
-            id: childOneId,
-            name: "agent_explore_child_1",
-            taskStatus: "running",
-            bestOf,
-          },
-          {
-            id: childTwoId,
-            name: "agent_explore_child_2",
-            taskStatus: "running",
-            bestOf: { ...bestOf, index: 1 },
-          },
-        ],
+        messageId: "assistant-parent-best-of-partial-spawn",
+        toolCallId: "task-best-of-partial-call",
+        title: "Best of 3",
+        n: 3,
+        timestamp: Date.now(),
       });
 
-    await writePendingBestOfParentPartial({
-      partialService,
-      parentId,
-      messageId: "assistant-parent-best-of-partial-spawn",
-      toolCallId: "task-best-of-partial-call",
-      title: "Best of 3",
-      n: 3,
-      timestamp: Date.now(),
-    });
+      await finalizeReportedChildTaskForTest({
+        historyService,
+        partialService,
+        taskService,
+        childId: childOneId,
+        reportMarkdown: "Report from child one",
+        title: "Option one",
+      });
 
-    await finalizeReportedChildTaskForTest({
-      historyService,
-      partialService,
-      taskService,
-      childId: childOneId,
-      reportMarkdown: "Report from child one",
-      title: "Option one",
-    });
+      const parentHistoryAfterFirst = await collectFullHistory(historyService, parentId);
+      expect(JSON.stringify(parentHistoryAfterFirst)).not.toContain("Report from child one");
 
-    const parentHistoryAfterFirst = await collectFullHistory(historyService, parentId);
-    expect(JSON.stringify(parentHistoryAfterFirst)).not.toContain("Report from child one");
+      const afterFirstParentPartial = await partialService.readPartial(parentId);
+      expect(afterFirstParentPartial).not.toBeNull();
+      expect(getTaskToolPart(afterFirstParentPartial)?.state).toBe("input-available");
+      expect(remove).not.toHaveBeenCalled();
 
-    const afterFirstParentPartial = await partialService.readPartial(parentId);
-    expect(afterFirstParentPartial).not.toBeNull();
-    expect(getTaskToolPart(afterFirstParentPartial)?.state).toBe("input-available");
-    expect(remove).not.toHaveBeenCalled();
+      await finalizeReportedChildTaskForTest({
+        historyService,
+        partialService,
+        taskService,
+        childId: childTwoId,
+        reportMarkdown: "Report from child two",
+        title: "Option two",
+      });
 
-    await finalizeReportedChildTaskForTest({
-      historyService,
-      partialService,
-      taskService,
-      childId: childTwoId,
-      reportMarkdown: "Report from child two",
-      title: "Option two",
-    });
+      const afterSecondParentPartial = await partialService.readPartial(parentId);
+      expect(afterSecondParentPartial).not.toBeNull();
+      const toolPart = getTaskToolPart(afterSecondParentPartial);
+      expect(toolPart?.state).toBe("output-available");
+      expect(toolPart?.output && typeof toolPart.output === "object").toBe(true);
+      const serializedOutput = JSON.stringify(toolPart?.output);
+      expect(serializedOutput).toContain(childOneId);
+      expect(serializedOutput).toContain(childTwoId);
+      expect(serializedOutput).toContain("Report from child one");
+      expect(serializedOutput).toContain("Report from child two");
 
-    const afterSecondParentPartial = await partialService.readPartial(parentId);
-    expect(afterSecondParentPartial).not.toBeNull();
-    const toolPart = getTaskToolPart(afterSecondParentPartial);
-    expect(toolPart?.state).toBe("output-available");
-    expect(toolPart?.output && typeof toolPart.output === "object").toBe(true);
-    const serializedOutput = JSON.stringify(toolPart?.output);
-    expect(serializedOutput).toContain(childOneId);
-    expect(serializedOutput).toContain(childTwoId);
-    expect(serializedOutput).toContain("Report from child one");
-    expect(serializedOutput).toContain("Report from child two");
-
-    const remainingTaskIds = getConfiguredWorkspaceIds(config);
-    expect(remainingTaskIds).not.toContain(childOneId);
-    expect(remainingTaskIds).not.toContain(childTwoId);
-  });
+      const remainingTaskIds = getConfiguredWorkspaceIds(config);
+      expect(remainingTaskIds).not.toContain(childOneId);
+      expect(remainingTaskIds).not.toContain(childTwoId);
+    },
+    { timeout: 15_000 }
+  );
 
   test("agent_report avoids duplicate synthetic parent reports after grouped partial finalization", async () => {
     const parentId = "parent-best-of-no-duplicate";
@@ -5514,38 +5008,30 @@ describe("TaskService", () => {
     const childTwoId = "child-best-of-fallback-2";
     const bestOf = { groupId: "best-of-fallback-group", index: 0, total: 2 } as const;
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child-1"),
-                id: childOneId,
-                name: "agent_explore_child_1",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-                bestOf,
-              },
-              {
-                path: path.join(projectPath, "child-2"),
-                id: childTwoId,
-                name: "agent_explore_child_2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "interrupted",
-                bestOf: { ...bestOf, index: 1 },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        {
+          path: path.join(projectPath, "child-1"),
+          id: childOneId,
+          name: "agent_explore_child_1",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          bestOf,
+        },
+        projectWorkspace(projectPath, "child-2", childTwoId, {
+          name: "agent_explore_child_2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+          bestOf: { ...bestOf, index: 1 },
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -5591,10 +5077,6 @@ describe("TaskService", () => {
     );
     expect((await partialService.writePartial(parentId, parentPartial)).success).toBe(true);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
     const childPrompt = createMuxMessage(`user-${childOneId}-prompt`, "user", "compare options", {
       timestamp: Date.now(),
     });
@@ -5634,7 +5116,7 @@ describe("TaskService", () => {
     expect((await partialService.writePartial(childOneId, childPartial)).success).toBe(true);
     expect((await partialService.commitPartial(childOneId)).success).toBe(true);
 
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childOneId,
       messageId: `assistant-${childOneId}-partial`,
@@ -5664,38 +5146,30 @@ describe("TaskService", () => {
     const childTwoId = "child-best-of-deferred-fallback-2";
     const bestOf = { groupId: "best-of-deferred-fallback-group", index: 0, total: 2 } as const;
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child-1"),
-                id: childOneId,
-                name: "agent_explore_child_1",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-                bestOf,
-              },
-              {
-                path: path.join(projectPath, "child-2"),
-                id: childTwoId,
-                name: "agent_explore_child_2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-                bestOf: { ...bestOf, index: 1 },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        {
+          path: path.join(projectPath, "child-1"),
+          id: childOneId,
+          name: "agent_explore_child_1",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          bestOf,
+        },
+        projectWorkspace(projectPath, "child-2", childTwoId, {
+          name: "agent_explore_child_2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          bestOf: { ...bestOf, index: 1 },
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -5729,10 +5203,6 @@ describe("TaskService", () => {
       ]
     );
     expect((await partialService.writePartial(parentId, parentPartial)).success).toBe(true);
-
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
 
     async function finalizeChildReport(
       childId: string,
@@ -5778,7 +5248,7 @@ describe("TaskService", () => {
       expect((await partialService.writePartial(childId, childPartial)).success).toBe(true);
       expect((await partialService.commitPartial(childId)).success).toBe(true);
 
-      await internal.handleStreamEnd({
+      await handleTaskServiceStreamEndForTest(taskService, {
         type: "stream-end",
         workspaceId: childId,
         messageId: `assistant-${childId}-partial`,
@@ -5801,14 +5271,14 @@ describe("TaskService", () => {
       return cfg;
     });
 
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childTwoId,
       messageId: "assistant-child-two-interrupted",
       metadata: { model: "test-model" },
       parts: [],
     });
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childTwoId,
       messageId: "assistant-child-two-interrupted-repeat",
@@ -5847,36 +5317,30 @@ describe("TaskService", () => {
     execSync("git add README.md", { cwd: childPath, stdio: "ignore" });
     execSync('git commit -m "child change"', { cwd: childPath, stdio: "ignore" });
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: parentPath,
-                id: parentId,
-                name: "parent",
-                runtimeConfig: { type: "local" },
-              },
-              {
-                path: childPath,
-                id: childId,
-                name: "agent_exec_child",
-                parentWorkspaceId: parentId,
-                agentType: "exec",
-                agentId: "exec",
-                taskStatus: "running",
-                runtimeConfig: { type: "local" },
-                taskBaseCommitSha: baseCommitSha,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: parentPath,
+          id: parentId,
+          name: "parent",
+          runtimeConfig: { type: "local" },
+        },
+        {
+          path: childPath,
+          id: childId,
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          agentId: "exec",
+          taskStatus: "running",
+          runtimeConfig: { type: "local" },
+          taskBaseCommitSha: baseCommitSha,
+        },
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -5926,10 +5390,6 @@ describe("TaskService", () => {
     const writeChildPartial = await partialService.writePartial(childId, childPartial);
     expect(writeChildPartial.success).toBe(true);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
     const parentSessionDir = config.getSessionDir(parentId);
     const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId, "repo");
 
@@ -5938,7 +5398,7 @@ describe("TaskService", () => {
       requestingWorkspaceId: parentId,
     });
 
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-partial",
@@ -6032,44 +5492,38 @@ describe("TaskService", () => {
       stdio: "ignore",
     });
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          primaryProjectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: parentPath,
-                id: parentId,
-                name: "parent",
-                runtimeConfig: { type: "local" },
-              },
-              {
-                path: childWorkspacePath,
-                id: childId,
-                name: "agent_exec_child",
-                parentWorkspaceId: parentId,
-                agentType: "exec",
-                agentId: "exec",
-                taskStatus: "running",
-                runtimeConfig: { type: "local" },
-                taskBaseCommitSha: primaryBaseCommitSha,
-                taskBaseCommitShaByProjectPath: {
-                  [primaryProjectPath]: primaryBaseCommitSha,
-                  [secondaryProjectPath]: secondaryBaseCommitSha,
-                },
-                projects: [
-                  { projectPath: primaryProjectPath, projectName: "project-a" },
-                  { projectPath: secondaryProjectPath, projectName: "project-b" },
-                ],
-              },
-            ],
+    await saveWorkspaces(
+      config,
+      primaryProjectPath,
+      [
+        {
+          path: parentPath,
+          id: parentId,
+          name: "parent",
+          runtimeConfig: { type: "local" },
+        },
+        {
+          path: childWorkspacePath,
+          id: childId,
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          agentId: "exec",
+          taskStatus: "running",
+          runtimeConfig: { type: "local" },
+          taskBaseCommitSha: primaryBaseCommitSha,
+          taskBaseCommitShaByProjectPath: {
+            [primaryProjectPath]: primaryBaseCommitSha,
+            [secondaryProjectPath]: secondaryBaseCommitSha,
           },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+          projects: [
+            { projectPath: primaryProjectPath, projectName: "project-a" },
+            { projectPath: secondaryProjectPath, projectName: "project-b" },
+          ],
+        },
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -6117,10 +5571,6 @@ describe("TaskService", () => {
     );
     expect((await partialService.writePartial(childId, childPartial)).success).toBe(true);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
     const parentSessionDir = config.getSessionDir(parentId);
     const secondaryPatchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId, "project-b");
 
@@ -6129,7 +5579,7 @@ describe("TaskService", () => {
       requestingWorkspaceId: parentId,
     });
 
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-partial",
@@ -6201,36 +5651,30 @@ describe("TaskService", () => {
     execSync("git add README.md", { cwd: childPath, stdio: "ignore" });
     execSync('git commit -m "child change"', { cwd: childPath, stdio: "ignore" });
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: parentPath,
-                id: parentId,
-                name: "parent",
-                runtimeConfig: { type: "local" },
-              },
-              {
-                path: childPath,
-                id: childId,
-                name: "agent_test_file_child",
-                parentWorkspaceId: parentId,
-                agentType: "test-file",
-                agentId: "test-file",
-                taskStatus: "running",
-                runtimeConfig: { type: "local" },
-                taskBaseCommitSha: baseCommitSha,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: parentPath,
+          id: parentId,
+          name: "parent",
+          runtimeConfig: { type: "local" },
+        },
+        {
+          path: childPath,
+          id: childId,
+          name: "agent_test_file_child",
+          parentWorkspaceId: parentId,
+          agentType: "test-file",
+          agentId: "test-file",
+          taskStatus: "running",
+          runtimeConfig: { type: "local" },
+          taskBaseCommitSha: baseCommitSha,
+        },
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -6280,10 +5724,6 @@ describe("TaskService", () => {
     const writeChildPartial = await partialService.writePartial(childId, childPartial);
     expect(writeChildPartial.success).toBe(true);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
     const parentSessionDir = config.getSessionDir(parentId);
     const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId, "repo");
 
@@ -6292,7 +5732,7 @@ describe("TaskService", () => {
       requestingWorkspaceId: parentId,
     });
 
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-partial",
@@ -6356,28 +5796,20 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -6433,11 +5865,7 @@ describe("TaskService", () => {
     const writeChildPartial = await partialService.writePartial(childId, childPartial);
     expect(writeChildPartial.success).toBe(true);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-partial",
@@ -6492,29 +5920,21 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "awaiting_report",
-                taskModelString: "openai:gpt-4o-mini",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "awaiting_report",
+          taskModelString: "openai:gpt-4o-mini",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -6545,11 +5965,7 @@ describe("TaskService", () => {
     const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
     expect(writeParentPartial.success).toBe(true);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: unknown) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-output",
@@ -6610,6 +6026,153 @@ describe("TaskService", () => {
     expect(sendMessage).toHaveBeenCalled();
   });
 
+  test("agent_report attributes child usage to parent goal and emits one child-budget toast", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-goal-report";
+    const childUnderId = "child-under-budget";
+    const childOverId = "child-over-budget";
+    const childModel = "openai:gpt-4o-mini";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child-under", childUnderId, {
+          name: "agent_explore_under",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "awaiting_report",
+          taskModelString: childModel,
+        }),
+        projectWorkspace(projectPath, "child-over", childOverId, {
+          name: "agent_explore_over",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "awaiting_report",
+          taskModelString: childModel,
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService, emitChatEvent } = createWorkspaceServiceMocks({ remove });
+    const historyService = new HistoryService(config);
+    const sessionUsageService = new SessionUsageService(config, historyService);
+    const extensionMetadata = new ExtensionMetadataService(
+      path.join(rootDir, "task-report-goals-extensionMetadata.json")
+    );
+    const workspaceGoalService = new WorkspaceGoalService(
+      config,
+      historyService,
+      extensionMetadata
+    );
+    workspaceGoalService.registerGoalContinuationConsumer(new IdleDispatcher(), {
+      hasActiveDescendantTasks: () => false,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: () => Promise.resolve(true),
+    });
+    const goalResult = await workspaceGoalService.setGoal({
+      workspaceId: parentId,
+      objective: "Parent budget",
+      budgetCents: 100,
+    });
+    expect(goalResult.success).toBe(true);
+
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+      sessionUsageService,
+      workspaceGoalService,
+    });
+    async function finishChildReport(input: {
+      workspaceId: string;
+      costUsd: number;
+      messageId: string;
+      toolCallId: string;
+      reportMarkdown: string;
+      title: string;
+    }): Promise<void> {
+      await sessionUsageService.recordUsage(input.workspaceId, childModel, {
+        input: { tokens: 100, cost_usd: input.costUsd },
+        cached: { tokens: 0, cost_usd: 0 },
+        cacheCreate: { tokens: 0, cost_usd: 0 },
+        output: { tokens: 0, cost_usd: 0 },
+        reasoning: { tokens: 0, cost_usd: 0 },
+        model: childModel,
+      });
+      await handleTaskServiceStreamEndForTest(taskService, {
+        type: "stream-end",
+        workspaceId: input.workspaceId,
+        messageId: input.messageId,
+        metadata: { model: childModel },
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: input.toolCallId,
+            toolName: "agent_report",
+            input: { reportMarkdown: input.reportMarkdown, title: input.title },
+            state: "output-available",
+            output: { success: true },
+          },
+        ],
+      });
+    }
+
+    await finishChildReport({
+      workspaceId: childUnderId,
+      costUsd: 0.37,
+      messageId: "assistant-child-under",
+      toolCallId: "agent-report-under",
+      reportMarkdown: "Under budget",
+      title: "Under",
+    });
+
+    expect(await workspaceGoalService.getGoal(parentId)).toMatchObject({
+      status: "active",
+      costCents: 37,
+      turnsUsed: 1,
+      attributedChildren: [childUnderId],
+    });
+    expect(emitChatEvent).not.toHaveBeenCalledWith(
+      parentId,
+      expect.objectContaining({ type: "goal-budget-limited" })
+    );
+
+    await finishChildReport({
+      workspaceId: childOverId,
+      costUsd: 0.75,
+      messageId: "assistant-child-over",
+      toolCallId: "agent-report-over",
+      reportMarkdown: "Over budget",
+      title: "Over",
+    });
+
+    expect(await workspaceGoalService.getGoal(parentId)).toMatchObject({
+      status: "budget_limited",
+      costCents: 112,
+      turnsUsed: 2,
+      attributedChildren: [childUnderId, childOverId],
+    });
+    expect(emitChatEvent).toHaveBeenCalledTimes(1);
+    expect(emitChatEvent).toHaveBeenCalledWith(
+      parentId,
+      expect.objectContaining({
+        type: "goal-budget-limited",
+        causedByChild: true,
+        childWorkspaceId: childOverId,
+        message: "Child workspace exceeded the parent's goal budget.",
+      })
+    );
+  });
+
   test("handleStreamEnd finalizes report when task status is interrupted", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -6617,29 +6180,21 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "interrupted",
-                taskModelString: "openai:gpt-4o-mini",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+          taskModelString: "openai:gpt-4o-mini",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const isStreaming = mock((workspaceId: string): boolean => workspaceId === childId);
     const { aiService } = createAIServiceMocks(config, { isStreaming });
@@ -6659,7 +6214,7 @@ describe("TaskService", () => {
       completedReportsByTaskId: Map<string, unknown>;
     };
 
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-output",
@@ -6701,29 +6256,21 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "interrupted",
-                taskModelString: "openai:gpt-4o-mini",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+          taskModelString: "openai:gpt-4o-mini",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     let childStreaming = true;
     const isStreaming = mock(
@@ -6743,11 +6290,7 @@ describe("TaskService", () => {
 
     childStreaming = false;
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-output",
@@ -6770,29 +6313,21 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-4o-mini",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-4o-mini",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -6823,11 +6358,7 @@ describe("TaskService", () => {
     const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
     expect(writeParentPartial.success).toBe(true);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-output",
@@ -6886,29 +6417,21 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-4o-mini",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-4o-mini",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -6917,11 +6440,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-output",
@@ -6953,29 +6472,21 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-4o-mini",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-4o-mini",
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -7006,11 +6517,7 @@ describe("TaskService", () => {
     const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
     expect(writeParentPartial.success).toBe(true);
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-output",
@@ -7018,7 +6525,7 @@ describe("TaskService", () => {
       parts: [],
     });
 
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child-output",
@@ -7087,38 +6594,30 @@ describe("TaskService", () => {
     const childTwoId = "child-best-of-cleanup-recheck-2";
     const bestOf = { groupId: "best-of-cleanup-recheck", index: 0, total: 2 } as const;
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child-1"),
-                id: childOneId,
-                name: "agent_explore_child_1",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                bestOf,
-              },
-              {
-                path: path.join(projectPath, "child-2"),
-                id: childTwoId,
-                name: "agent_explore_child_2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                bestOf: { ...bestOf, index: 1 },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        {
+          path: path.join(projectPath, "child-1"),
+          id: childOneId,
+          name: "agent_explore_child_1",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          bestOf,
+        },
+        projectWorkspace(projectPath, "child-2", childTwoId, {
+          name: "agent_explore_child_2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          bestOf: { ...bestOf, index: 1 },
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -7131,11 +6630,7 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: parentId,
       messageId: "assistant-parent-cleanup-recheck",
@@ -7171,64 +6666,50 @@ describe("TaskService", () => {
     const staleCreatedAt = new Date(partialTimestamp - 60_000).toISOString();
     const currentCreatedAt = new Date(partialTimestamp + 60_000).toISOString();
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "stale-1"),
-                id: staleChildOneId,
-                name: "agent_explore_stale_1",
-                title: "Best of 2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                createdAt: staleCreatedAt,
-                bestOf: { groupId: "best-of-stale-group", index: 0, total: 2 },
-              },
-              {
-                path: path.join(projectPath, "stale-2"),
-                id: staleChildTwoId,
-                name: "agent_explore_stale_2",
-                title: "Best of 2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                createdAt: staleCreatedAt,
-                bestOf: { groupId: "best-of-stale-group", index: 1, total: 2 },
-              },
-              {
-                path: path.join(projectPath, "current-1"),
-                id: currentChildOneId,
-                name: "agent_explore_current_1",
-                title: "Best of 2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                createdAt: currentCreatedAt,
-                bestOf: { groupId: "best-of-current-group", index: 0, total: 2 },
-              },
-              {
-                path: path.join(projectPath, "current-2"),
-                id: currentChildTwoId,
-                name: "agent_explore_current_2",
-                title: "Best of 2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                createdAt: currentCreatedAt,
-                bestOf: { groupId: "best-of-current-group", index: 1, total: 2 },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "stale-1", staleChildOneId, {
+          name: "agent_explore_stale_1",
+          title: "Best of 2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          createdAt: staleCreatedAt,
+          bestOf: { groupId: "best-of-stale-group", index: 0, total: 2 },
+        }),
+        projectWorkspace(projectPath, "stale-2", staleChildTwoId, {
+          name: "agent_explore_stale_2",
+          title: "Best of 2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          createdAt: staleCreatedAt,
+          bestOf: { groupId: "best-of-stale-group", index: 1, total: 2 },
+        }),
+        projectWorkspace(projectPath, "current-1", currentChildOneId, {
+          name: "agent_explore_current_1",
+          title: "Best of 2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          createdAt: currentCreatedAt,
+          bestOf: { groupId: "best-of-current-group", index: 0, total: 2 },
+        }),
+        projectWorkspace(projectPath, "current-2", currentChildTwoId, {
+          name: "agent_explore_current_2",
+          title: "Best of 2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          createdAt: currentCreatedAt,
+          bestOf: { groupId: "best-of-current-group", index: 1, total: 2 },
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -7281,11 +6762,7 @@ describe("TaskService", () => {
       });
     }
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: parentId,
       messageId: "assistant-parent-pending-group-target",
@@ -7323,42 +6800,34 @@ describe("TaskService", () => {
     const staleCreatedAt = new Date(partialTimestamp - 60_000).toISOString();
     const bestOf = { groupId: "best-of-stale-single-group", index: 0, total: 2 } as const;
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child-1"),
-                id: childOneId,
-                name: "agent_explore_child_1",
-                title: "Best of 2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                createdAt: staleCreatedAt,
-                bestOf,
-              },
-              {
-                path: path.join(projectPath, "child-2"),
-                id: childTwoId,
-                name: "agent_explore_child_2",
-                title: "Best of 2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                createdAt: staleCreatedAt,
-                bestOf: { ...bestOf, index: 1 },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        {
+          path: path.join(projectPath, "child-1"),
+          id: childOneId,
+          name: "agent_explore_child_1",
+          title: "Best of 2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          createdAt: staleCreatedAt,
+          bestOf,
+        },
+        projectWorkspace(projectPath, "child-2", childTwoId, {
+          name: "agent_explore_child_2",
+          title: "Best of 2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          createdAt: staleCreatedAt,
+          bestOf: { ...bestOf, index: 1 },
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -7415,11 +6884,7 @@ describe("TaskService", () => {
       nowMs: Date.now(),
     });
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: parentId,
       messageId: "assistant-parent-stale-single-group",
@@ -7455,40 +6920,32 @@ describe("TaskService", () => {
     const currentCreatedAt = new Date(partialTimestamp + 60_000).toISOString();
     const bestOf = { groupId: "best-of-finalize-ready", index: 0, total: 2 } as const;
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child-1"),
-                id: childOneId,
-                name: "agent_explore_child_1",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                createdAt: currentCreatedAt,
-                bestOf,
-              },
-              {
-                path: path.join(projectPath, "child-2"),
-                id: childTwoId,
-                name: "agent_explore_child_2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                createdAt: currentCreatedAt,
-                bestOf: { ...bestOf, index: 1 },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        {
+          path: path.join(projectPath, "child-1"),
+          id: childOneId,
+          name: "agent_explore_child_1",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          createdAt: currentCreatedAt,
+          bestOf,
+        },
+        projectWorkspace(projectPath, "child-2", childTwoId, {
+          name: "agent_explore_child_2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          createdAt: currentCreatedAt,
+          bestOf: { ...bestOf, index: 1 },
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -7545,11 +7002,7 @@ describe("TaskService", () => {
       nowMs: Date.now(),
     });
 
-    const internal = taskService as unknown as {
-      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-    };
-
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: parentId,
       messageId: "assistant-parent-finalize-ready",
@@ -7608,47 +7061,37 @@ describe("TaskService", () => {
       total: 3,
     } as const;
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child-1"),
-                id: childOneId,
-                name: "agent_explore_child_1",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                bestOf,
-              },
-              {
-                path: path.join(projectPath, "child-2"),
-                id: childTwoId,
-                name: "agent_explore_child_2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "interrupted",
-                bestOf: { ...bestOf, index: 1 },
-              },
-              {
-                path: path.join(projectPath, "child-3"),
-                id: childThreeId,
-                name: "agent_explore_child_3",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "interrupted",
-                bestOf: { ...bestOf, index: 2 },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        {
+          path: path.join(projectPath, "child-1"),
+          id: childOneId,
+          name: "agent_explore_child_1",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          bestOf,
+        },
+        projectWorkspace(projectPath, "child-2", childTwoId, {
+          name: "agent_explore_child_2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+          bestOf: { ...bestOf, index: 1 },
+        }),
+        projectWorkspace(projectPath, "child-3", childThreeId, {
+          name: "agent_explore_child_3",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+          bestOf: { ...bestOf, index: 2 },
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService } = createWorkspaceServiceMocks();
@@ -7735,38 +7178,30 @@ describe("TaskService", () => {
       total: 2,
     } as const;
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child-1"),
-                id: childOneId,
-                name: "agent_explore_child_1",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                bestOf,
-              },
-              {
-                path: path.join(projectPath, "child-2"),
-                id: childTwoId,
-                name: "agent_explore_child_2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "interrupted",
-                bestOf: { ...bestOf, index: 1 },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        {
+          path: path.join(projectPath, "child-1"),
+          id: childOneId,
+          name: "agent_explore_child_1",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          bestOf,
+        },
+        projectWorkspace(projectPath, "child-2", childTwoId, {
+          name: "agent_explore_child_2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+          bestOf: { ...bestOf, index: 1 },
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const { workspaceService } = createWorkspaceServiceMocks();
@@ -7866,40 +7301,32 @@ describe("TaskService", () => {
     const currentCreatedAt = new Date(partialTimestamp + 60_000).toISOString();
     const bestOf = { groupId: "best-of-initialize-finalize-ready", index: 0, total: 2 } as const;
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child-1"),
-                id: childOneId,
-                name: "agent_explore_child_1",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                createdAt: currentCreatedAt,
-                bestOf,
-              },
-              {
-                path: path.join(projectPath, "child-2"),
-                id: childTwoId,
-                name: "agent_explore_child_2",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "reported",
-                createdAt: currentCreatedAt,
-                bestOf: { ...bestOf, index: 1 },
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        {
+          path: path.join(projectPath, "child-1"),
+          id: childOneId,
+          name: "agent_explore_child_1",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          createdAt: currentCreatedAt,
+          bestOf,
+        },
+        projectWorkspace(projectPath, "child-2", childTwoId, {
+          name: "agent_explore_child_2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          createdAt: currentCreatedAt,
+          bestOf: { ...bestOf, index: 1 },
+        }),
+      ],
+      testTaskSettings()
+    );
 
     const { aiService } = createAIServiceMocks(config);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -8036,43 +7463,39 @@ describe("TaskService", () => {
 
     const agentAiDefaults = { ...(options?.agentAiDefaults ?? {}) };
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              {
-                path: path.join(projectPath, "parent"),
-                id: parentId,
-                name: "parent",
-                runtimeConfig,
-                aiSettingsByAgent: options?.parentAiSettingsByAgent,
-              },
-              {
-                path: childWorkspacePath,
-                id: childId,
-                name: "agent_plan_child",
-                parentWorkspaceId: parentId,
-                agentId: childAgentId,
-                agentType: childAgentId,
-                taskStatus: "running",
-                aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "max" },
-                taskModelString: "openai:gpt-4o-mini",
-                runtimeConfig,
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: {
-        maxParallelAgentTasks: 3,
-        maxTaskNestingDepth: options?.maxTaskNestingDepth ?? 3,
-      },
-      agentAiDefaults: Object.keys(agentAiDefaults).length > 0 ? agentAiDefaults : undefined,
-      subagentAiDefaults: options?.subagentAiDefaults,
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: path.join(projectPath, "parent"),
+          id: parentId,
+          name: "parent",
+          runtimeConfig,
+          aiSettingsByAgent: options?.parentAiSettingsByAgent,
+        },
+        {
+          path: childWorkspacePath,
+          id: childId,
+          name: "agent_plan_child",
+          parentWorkspaceId: parentId,
+          agentId: childAgentId,
+          agentType: childAgentId,
+          taskStatus: "running",
+          aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "max" },
+          taskModelString: "openai:gpt-4o-mini",
+          runtimeConfig,
+        },
+      ],
+      {
+        taskSettings: {
+          maxParallelAgentTasks: 3,
+          maxTaskNestingDepth: options?.maxTaskNestingDepth ?? 3,
+        },
+        agentAiDefaults: Object.keys(agentAiDefaults).length > 0 ? agentAiDefaults : undefined,
+        subagentAiDefaults: options?.subagentAiDefaults,
+      }
+    );
 
     const getInfo = mock(() => ({
       id: childId,
@@ -8365,29 +7788,21 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.5-pro",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.5-pro",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
@@ -8397,7 +7812,7 @@ describe("TaskService", () => {
       handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
     };
 
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child",
@@ -8454,29 +7869,21 @@ describe("TaskService", () => {
     const parentId = "parent-111";
     const childId = "child-222";
 
-    await config.saveConfig({
-      projects: new Map([
-        [
-          projectPath,
-          {
-            trusted: true,
-            workspaces: [
-              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
-              {
-                path: path.join(projectPath, "child"),
-                id: childId,
-                name: "agent_explore_child",
-                parentWorkspaceId: parentId,
-                agentType: "explore",
-                taskStatus: "running",
-                taskModelString: "openai:gpt-5.5-pro",
-              },
-            ],
-          },
-        ],
-      ]),
-      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.5-pro",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
@@ -8486,7 +7893,7 @@ describe("TaskService", () => {
       handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
     };
 
-    await internal.handleStreamEnd({
+    await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childId,
       messageId: "assistant-child",
@@ -8595,13 +8002,7 @@ describe("TaskService", () => {
 
     // Creating a task should succeed by falling back to "main" as trunkBranch
     // instead of failing with "fatal: 'non-existent-branch-xyz' is not a commit"
-    const created = await taskService.create({
-      parentWorkspaceId: parentId,
-      kind: "agent",
-      agentType: "explore",
-      prompt: "explore this repo",
-      title: "Test task",
-    });
+    const created = await createAgentTask(taskService, parentId, "explore this repo");
     expect(created.success).toBe(true);
     if (!created.success) return;
 
@@ -8648,31 +8049,25 @@ describe("TaskService", () => {
           {
             trusted: true,
             workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "parent-task"),
-                id: parentTaskId,
+              projectWorkspace(projectPath, "root", rootWorkspaceId),
+              projectWorkspace(projectPath, "parent-task", parentTaskId, {
                 name: "agent_exec_parent",
                 parentWorkspaceId: rootWorkspaceId,
                 agentType: "exec",
                 taskStatus: "reported",
-              },
-              {
-                path: path.join(projectPath, "child-task-a"),
-                id: childTaskAId,
+              }),
+              projectWorkspace(projectPath, "child-task-a", childTaskAId, {
                 name: "agent_explore_child_a",
                 parentWorkspaceId: parentTaskId,
                 agentType: "explore",
                 taskStatus: "reported",
-              },
-              {
-                path: path.join(projectPath, "child-task-b"),
-                id: childTaskBId,
+              }),
+              projectWorkspace(projectPath, "child-task-b", childTaskBId, {
                 name: "agent_explore_child_b",
                 parentWorkspaceId: parentTaskId,
                 agentType: "explore",
                 taskStatus: "reported",
-              },
+              }),
             ],
           },
         ],
@@ -8725,31 +8120,25 @@ describe("TaskService", () => {
           {
             trusted: true,
             workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "grandparent-task"),
-                id: grandparentTaskId,
+              projectWorkspace(projectPath, "root", rootWorkspaceId),
+              projectWorkspace(projectPath, "grandparent-task", grandparentTaskId, {
                 name: "agent_exec_grandparent",
                 parentWorkspaceId: rootWorkspaceId,
                 agentType: "exec",
                 taskStatus: "reported",
-              },
-              {
-                path: path.join(projectPath, "parent-task"),
-                id: parentTaskId,
+              }),
+              projectWorkspace(projectPath, "parent-task", parentTaskId, {
                 name: "agent_exec_parent",
                 parentWorkspaceId: grandparentTaskId,
                 agentType: "exec",
                 taskStatus: "reported",
-              },
-              {
-                path: path.join(projectPath, "child-task-a"),
-                id: childTaskId,
+              }),
+              projectWorkspace(projectPath, "child-task-a", childTaskId, {
                 name: "agent_explore_child_a",
                 parentWorkspaceId: parentTaskId,
                 agentType: "explore",
                 taskStatus: "reported",
-              },
+              }),
             ],
           },
         ],
@@ -8810,34 +8199,28 @@ describe("TaskService", () => {
           {
             trusted: true,
             workspaces: [
-              { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
-              {
-                path: path.join(projectPath, "grandparent-task"),
-                id: grandparentTaskId,
+              projectWorkspace(projectPath, "root", rootWorkspaceId),
+              projectWorkspace(projectPath, "grandparent-task", grandparentTaskId, {
                 name: "agent_exec_grandparent",
                 parentWorkspaceId: rootWorkspaceId,
                 agentType: "exec",
                 taskStatus: "interrupted",
                 reportedAt: completedAt,
-              },
-              {
-                path: path.join(projectPath, "parent-task"),
-                id: parentTaskId,
+              }),
+              projectWorkspace(projectPath, "parent-task", parentTaskId, {
                 name: "agent_exec_parent",
                 parentWorkspaceId: grandparentTaskId,
                 agentType: "exec",
                 taskStatus: "interrupted",
                 reportedAt: completedAt,
-              },
-              {
-                path: path.join(projectPath, "child-task-a"),
-                id: childTaskId,
+              }),
+              projectWorkspace(projectPath, "child-task-a", childTaskId, {
                 name: "agent_explore_child_a",
                 parentWorkspaceId: parentTaskId,
                 agentType: "explore",
                 taskStatus: "interrupted",
                 reportedAt: completedAt,
-              },
+              }),
             ],
           },
         ],
@@ -8949,7 +8332,7 @@ describe("TaskService", () => {
       ];
 
       const workspaces: WorkspaceConfigEntry[] = [
-        { path: path.join(projectPath, "root"), id: rootWorkspaceId, name: "root" },
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
       ];
       let parentWorkspaceId = rootWorkspaceId;
       for (const task of taskChain) {
@@ -8965,19 +8348,9 @@ describe("TaskService", () => {
         parentWorkspaceId = task.id;
       }
 
-      await config.saveConfig({
-        projects: new Map([
-          [
-            projectPath,
-            {
-              trusted: true,
-              workspaces,
-            },
-          ],
-        ]),
+      await saveWorkspaces(config, projectPath, workspaces, {
         taskSettings: {
-          maxParallelAgentTasks: 3,
-          maxTaskNestingDepth: 5,
+          ...testTaskSettings(3, 5),
           preserveSubagentsUntilArchive: options?.preserveSubagentsUntilArchive ?? true,
         },
       });
@@ -9263,21 +8636,15 @@ describe("TaskService", () => {
             {
               trusted: true,
               workspaces: [
-                {
-                  path: path.join(projectPath, "root"),
-                  id: rootWorkspaceId,
-                  name: "root",
+                projectWorkspace(projectPath, "root", rootWorkspaceId, {
                   aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" as const },
-                },
-                {
-                  path: path.join(projectPath, "child-task"),
-                  id: childTaskId,
-                  name: "child-task",
+                }),
+                projectWorkspace(projectPath, "child-task", childTaskId, {
                   parentWorkspaceId: rootWorkspaceId,
                   agentType: "explore",
                   taskStatus: "running" as const,
                   taskModelString: "openai:gpt-5.2",
-                },
+                }),
               ],
             },
           ],
@@ -9385,34 +8752,22 @@ describe("TaskService", () => {
             {
               trusted: true,
               workspaces: [
-                {
-                  path: path.join(projectPath, "root-a"),
-                  id: rootA,
-                  name: "root-a",
+                projectWorkspace(projectPath, "root-a", rootA, {
                   aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" as const },
-                },
-                {
-                  path: path.join(projectPath, "child-a"),
-                  id: childA,
-                  name: "child-a",
+                }),
+                projectWorkspace(projectPath, "child-a", childA, {
                   parentWorkspaceId: rootA,
                   taskStatus: "running" as const,
                   taskModelString: "openai:gpt-5.2",
-                },
-                {
-                  path: path.join(projectPath, "root-b"),
-                  id: rootB,
-                  name: "root-b",
+                }),
+                projectWorkspace(projectPath, "root-b", rootB, {
                   aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" as const },
-                },
-                {
-                  path: path.join(projectPath, "child-b"),
-                  id: childB,
-                  name: "child-b",
+                }),
+                projectWorkspace(projectPath, "child-b", childB, {
                   parentWorkspaceId: rootB,
                   taskStatus: "running" as const,
                   taskModelString: "openai:gpt-5.2",
-                },
+                }),
               ],
             },
           ],
@@ -9427,13 +8782,9 @@ describe("TaskService", () => {
         workspaceService,
       });
 
-      const internal = taskService as unknown as {
-        handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
-      };
-
       // Exhaust limit on workspace A
       for (let i = 0; i < 3; i++) {
-        await internal.handleStreamEnd({
+        await handleTaskServiceStreamEndForTest(taskService, {
           type: "stream-end",
           workspaceId: rootA,
           messageId: `a-${i}`,
@@ -9444,7 +8795,7 @@ describe("TaskService", () => {
       expect(sendMessage).toHaveBeenCalledTimes(3);
 
       // Workspace A is now blocked
-      await internal.handleStreamEnd({
+      await handleTaskServiceStreamEndForTest(taskService, {
         type: "stream-end",
         workspaceId: rootA,
         messageId: "a-blocked",
@@ -9454,7 +8805,7 @@ describe("TaskService", () => {
       expect(sendMessage).toHaveBeenCalledTimes(3); // still 3
 
       // Workspace B should still work (independent counter)
-      await internal.handleStreamEnd({
+      await handleTaskServiceStreamEndForTest(taskService, {
         type: "stream-end",
         workspaceId: rootB,
         messageId: "b-0",

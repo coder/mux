@@ -127,6 +127,50 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
+  it("accepts bash tool calls with model_intent", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      model_intent: "Checking repository state",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.model_intent).toBe("Checking repository state");
+    }
+  });
+
+  it("accepts bash tool calls without model_intent", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.model_intent).toBeUndefined();
+    }
+  });
+
+  it("accepts bash tool calls with null model_intent", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      model_intent: null,
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.model_intent).toBeNull();
+    }
+  });
+
   it("prefers script when both script and command are provided", () => {
     const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
       script: "echo hi",
@@ -147,6 +191,53 @@ describe("TOOL_DEFINITIONS", () => {
       timeout_secs: 60,
       run_in_background: false,
       display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("accepts bash tool calls using description (alias for display_name)", () => {
+    // DeepSeek v4 emits `description` instead of `display_name`; ensure it normalizes.
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      description: "List files",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.display_name).toBe("List files");
+      expect("description" in parsed.data).toBe(false);
+    }
+  });
+
+  it("prefers display_name when both display_name and description are provided", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Real Name",
+      description: "Alias Name",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.display_name).toBe("Real Name");
+    }
+  });
+
+  it("requires complete_goal summary", () => {
+    expect(TOOL_DEFINITIONS.complete_goal.schema.safeParse({}).success).toBe(false);
+    expect(TOOL_DEFINITIONS.complete_goal.schema.safeParse({ summary: "Done." }).success).toBe(
+      true
+    );
+  });
+
+  it("exposes complete_goal as the single completion path only", () => {
+    const parsed = TOOL_DEFINITIONS.complete_goal.schema.safeParse({
+      summary: "Done.",
+      status: "paused",
     });
 
     expect(parsed.success).toBe(false);
@@ -317,6 +408,29 @@ describe("TOOL_DEFINITIONS", () => {
 
     expect(tools).toContain("skills_catalog_search");
     expect(tools).toContain("skills_catalog_read");
+  });
+
+  it("includes image_generate only when image generation is enabled", () => {
+    expect(getAvailableTools("openai:gpt-5")).not.toContain("image_generate");
+    expect(getAvailableTools("openai:gpt-5", { enableImageGeneration: true })).toContain(
+      "image_generate"
+    );
+  });
+
+  it("includes image_edit only when image tools and upload consent are both enabled", () => {
+    expect(getAvailableTools("openai:gpt-5")).not.toContain("image_edit");
+    expect(getAvailableTools("openai:gpt-5", { enableImageEditing: true })).not.toContain(
+      "image_edit"
+    );
+    expect(getAvailableTools("openai:gpt-5", { enableImageGeneration: true })).not.toContain(
+      "image_edit"
+    );
+    expect(
+      getAvailableTools("openai:gpt-5", {
+        enableImageGeneration: true,
+        enableImageEditing: true,
+      })
+    ).toContain("image_edit");
   });
 
   it("agent_skill_write schema rejects an advertise tool argument (advertise is authored in content)", () => {

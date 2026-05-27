@@ -3,6 +3,7 @@ import { TokenizerService } from "./tokenizerService";
 import type { SessionUsageService } from "./sessionUsageService";
 import * as tokenizerUtils from "@/node/utils/main/tokenizer";
 import * as statsUtils from "@/common/utils/tokens/tokenStatsCalculator";
+import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { createMuxMessage } from "@/common/types/message";
 const GLOBAL_WORKSPACE_ID = "workspace-global";
 
@@ -92,6 +93,41 @@ describe("TokenizerService", () => {
       );
 
       nowSpy.mockRestore();
+      statsSpy.mockRestore();
+      persistSpy.mockRestore();
+    });
+
+    test("excludes a leading reset boundary from token stats", async () => {
+      const resetBoundary = createMuxMessage("reset", "assistant", "", {
+        historySequence: 2,
+        contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+      });
+      const messages = [
+        resetBoundary,
+        createMuxMessage("msg1", "user", "Hello", { historySequence: 3 }),
+      ];
+      const mockResult = {
+        consumers: [{ name: "User", tokens: 1, percentage: 100 }],
+        totalTokens: 1,
+        model: "gpt-4",
+        tokenizerName: "cl100k",
+        usageHistory: [],
+      };
+      const statsSpy = spyOn(statsUtils, "calculateTokenStats").mockResolvedValue(mockResult);
+      const persistSpy = spyOn(sessionUsageService, "setTokenStatsCache").mockResolvedValue(
+        undefined
+      );
+
+      await service.calculateStats("test-workspace", messages, "gpt-4");
+
+      expect(statsSpy).toHaveBeenCalledWith([messages[1]], "gpt-4", null, {
+        enableAgentReport: false,
+      });
+      expect(persistSpy).toHaveBeenCalledWith(
+        "test-workspace",
+        expect.objectContaining({ history: { messageCount: 1, maxHistorySequence: 3 } })
+      );
+
       statsSpy.mockRestore();
       persistSpy.mockRestore();
     });

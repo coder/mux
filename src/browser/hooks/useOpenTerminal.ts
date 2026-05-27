@@ -39,13 +39,24 @@ export function useOpenTerminal() {
       const isDevcontainer = isDevcontainerRuntime(runtimeConfig);
 
       // SSH/Devcontainer workspaces always use web terminal (in browser popup or Electron window)
-      // because the PTY service handles the SSH/container connection
-      if (isBrowser || isSSH || isDevcontainer) {
-        // Create terminal session first - window needs sessionId to connect
-        const session = await createTerminalSession(api, workspaceId, options);
-        openTerminalPopout(api, workspaceId, session.sessionId);
-      } else {
-        void api.terminal.openNative({ workspaceId });
+      // because the PTY service handles the SSH/container connection.
+      //
+      // Callers (e.g. WorkspaceMenuBar, the markdown Run button's mobile path) discard the
+      // returned promise via `void`, so we must catch rejections here to avoid an unhandled
+      // promise rejection that the user perceives as the app silently freezing/crashing.
+      try {
+        if (isBrowser || isSSH || isDevcontainer) {
+          // Create terminal session first - window needs sessionId to connect.
+          const session = await createTerminalSession(api, workspaceId, options);
+          // Awaited so a rejected `terminal.openWindow` (e.g., Electron
+          // terminalWindowManager failure) is observed by this try/catch instead of
+          // becoming an unhandled rejection that looks like a silent freeze.
+          await openTerminalPopout(api, workspaceId, session.sessionId);
+        } else {
+          await api.terminal.openNative({ workspaceId });
+        }
+      } catch (err) {
+        console.error("[useOpenTerminal] Failed to open terminal:", err);
       }
     },
     [api]

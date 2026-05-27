@@ -17,6 +17,8 @@ import type { RuntimeEnablementId } from "./runtime";
 import type { TaskSettings, SubagentAiDefaults } from "./tasks";
 import type { LayoutPresetsConfig } from "./uiLayouts";
 import type { ThinkingLevel } from "./thinking";
+import type { GoalDefaults } from "@/constants/goals";
+import type { ImageGenerationConfig } from "./imageGeneration";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
@@ -80,6 +82,8 @@ export interface ProjectsConfig {
   taskSettings?: TaskSettings;
   /** UI layout presets + hotkeys (shared via ~/.mux/config.json). */
   layoutPresets?: LayoutPresetsConfig;
+  /** Let chat transcripts use the full chat pane width instead of the default readable column. */
+  chatTranscriptFullWidth?: boolean;
   /**
    * Mux Gateway routing preferences (shared via ~/.mux/config.json).
    * Mirrors browser localStorage so switching server ports doesn't reset the UI.
@@ -91,6 +95,8 @@ export interface ProjectsConfig {
   heartbeatDefaultPrompt?: string;
   /** Default heartbeat interval used when a workspace heartbeat does not set its own cadence. */
   heartbeatDefaultIntervalMs?: number;
+  /** Global defaults for new workspace goals. */
+  goalDefaults?: GoalDefaults;
   muxGatewayModels?: string[];
   routePriority?: string[];
   routeOverrides?: Record<string, string>;
@@ -108,6 +114,8 @@ export interface ProjectsConfig {
   advisorMaxUsesPerTurn?: number | null;
   /** Positive max-output-tokens cap for advisor responses; null/undefined means unlimited. */
   advisorMaxOutputTokens?: number | null;
+  /** Global image-generation defaults for the experimental image generation tool. */
+  imageGeneration?: ImageGenerationConfig;
   /**
    * Hidden model IDs (shared via ~/.mux/config.json).
    * Mirrors the browser localStorage cache (HIDDEN_MODELS_KEY).

@@ -47,6 +47,15 @@ describe("getModelCapabilities", () => {
     expect(caps?.maxPdfSizeMb).toBeGreaterThan(0);
   });
 
+  it("returns multimodal capabilities for Gemini 3.5 Flash", () => {
+    const caps = getModelCapabilities("google:gemini-3.5-flash");
+    expect(caps).not.toBeNull();
+    expect(caps?.supportsPdfInput).toBe(true);
+    expect(caps?.supportsVision).toBe(true);
+    expect(caps?.supportsAudioInput).toBe(true);
+    expect(caps?.supportsVideoInput).toBe(true);
+  });
+
   it("returns null for unknown models", () => {
     expect(getModelCapabilities("anthropic:this-model-does-not-exist")).toBeNull();
   });

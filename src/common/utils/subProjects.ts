@@ -16,23 +16,22 @@ export function isPathDescendant(parentPath: string, candidatePath: string): boo
   return candidate.startsWith(`${parent}/`) && candidate.length > parent.length + 1;
 }
 
-export function getDirectParentProjectPath(
+function getTopLevelAncestorProjectPath(
   projectPath: string,
-  projects: Map<string, ProjectConfig>
+  projectPaths: Iterable<string>
 ): string | null {
-  const ancestorPaths = Array.from(projects.keys()).filter(
-    (candidatePath) => candidatePath !== projectPath && isPathDescendant(candidatePath, projectPath)
-  );
+  let topLevelAncestorPath: string | null = null;
+  for (const candidatePath of projectPaths) {
+    if (!isPathDescendant(candidatePath, projectPath)) {
+      continue;
+    }
 
-  const topLevelAncestors = ancestorPaths.filter(
-    (ancestorPath) =>
-      !ancestorPaths.some(
-        (otherAncestorPath) =>
-          otherAncestorPath !== ancestorPath && isPathDescendant(otherAncestorPath, ancestorPath)
-      )
-  );
+    if (topLevelAncestorPath === null || candidatePath.length < topLevelAncestorPath.length) {
+      topLevelAncestorPath = candidatePath;
+    }
+  }
 
-  return topLevelAncestors.sort((left, right) => right.length - left.length)[0] ?? null;
+  return topLevelAncestorPath;
 }
 
 export function deriveProjectHierarchy(
@@ -40,26 +39,59 @@ export function deriveProjectHierarchy(
 ): Map<string, ProjectConfig> {
   const next = new Map<string, ProjectConfig>();
   for (const [projectPath, projectConfig] of projects) {
-    next.set(projectPath, { ...projectConfig, parentProjectPath: undefined });
-  }
-
-  for (const [projectPath, projectConfig] of next) {
-    const parentProjectPath = getDirectParentProjectPath(projectPath, next);
-    if (!parentProjectPath) {
-      next.set(projectPath, { ...projectConfig, parentProjectPath: undefined });
-      continue;
-    }
-    next.set(projectPath, { ...projectConfig, parentProjectPath });
+    next.set(projectPath, {
+      ...projectConfig,
+      parentProjectPath: getTopLevelAncestorProjectPath(projectPath, projects.keys()) ?? undefined,
+    });
   }
 
   return next;
 }
 
-export function getTopLevelProjectPath(
-  projectPath: string,
+export function getTopLevelProjectEntries(
   projects: Map<string, ProjectConfig>
-): string {
-  return projects.get(projectPath)?.parentProjectPath ?? projectPath;
+): Array<[string, ProjectConfig]> {
+  return Array.from(projects.entries()).filter(
+    ([, projectConfig]) => !projectConfig.parentProjectPath
+  );
+}
+
+export function getFirstTopLevelProjectPath(projects: Map<string, ProjectConfig>): string | null {
+  for (const [projectPath, projectConfig] of projects) {
+    if (!projectConfig.parentProjectPath) {
+      return projectPath;
+    }
+  }
+  return null;
+}
+
+export interface WorkspaceCreationScope {
+  projectPath: string;
+  subProjectPath: string | null;
+}
+
+export function resolveWorkspaceCreationScope(
+  projectPath: string,
+  projects: Map<string, ProjectConfig>,
+  subProjectPath?: string | null
+): WorkspaceCreationScope {
+  const requestedProjectConfig = projects.get(projectPath);
+  const owningProjectPath = requestedProjectConfig?.parentProjectPath ?? projectPath;
+  const requestedSubProjectPath = requestedProjectConfig?.parentProjectPath
+    ? projectPath
+    : (subProjectPath ?? null);
+  const requestedSubProjectConfig = requestedSubProjectPath
+    ? projects.get(requestedSubProjectPath)
+    : undefined;
+  const normalizedSubProjectPath =
+    requestedSubProjectConfig?.parentProjectPath === owningProjectPath
+      ? requestedSubProjectPath
+      : null;
+
+  return {
+    projectPath: owningProjectPath,
+    subProjectPath: normalizedSubProjectPath,
+  };
 }
 
 export function getSubProjectsForParent(

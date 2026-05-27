@@ -2,7 +2,7 @@ import type { JSX } from "react";
 import { useMemo } from "react";
 import Markdown from "react-native-markdown-display";
 import { useTheme } from "../theme";
-import { assert } from "../utils/assert";
+import { assert } from "@/common/utils/assert";
 import {
   createMarkdownStyles,
   type MarkdownVariant,

@@ -271,7 +271,8 @@ export class BrowserBridgeServer {
 
     const liveSession = await this.browserSessionDiscoveryService.getSessionConnection(
       payload.workspaceId,
-      payload.sessionName
+      payload.sessionName,
+      { allowOtherWorkspaceSession: payload.allowOtherWorkspaceSession }
     );
     if (
       !liveSession ||

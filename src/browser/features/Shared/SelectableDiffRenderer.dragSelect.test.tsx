@@ -135,6 +135,40 @@ describe("SelectableDiffRenderer drag selection", () => {
     });
   });
 
+  test("typing in the review composer does not schedule textarea layout work per key", async () => {
+    const content = Array.from({ length: 200 }, (_, index) => ` line ${index + 1}`).join("\n");
+
+    const { container, getByPlaceholderText } = render(
+      <ThemeProvider forcedTheme="dark">
+        <TooltipProvider>
+          <SelectableDiffRenderer
+            content={content}
+            filePath="src/test.ts"
+            onReviewNote={onReviewNote}
+            maxHeight="none"
+            enableHighlighting={false}
+          />
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+
+    const commentButton = await waitFor(() =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Add review comment"]')
+    );
+    expect(commentButton).toBeTruthy();
+
+    fireEvent.click(commentButton!);
+    const textarea = (await waitFor(() =>
+      getByPlaceholderText(/Add a review note/i)
+    )) as HTMLTextAreaElement;
+
+    const animationFramesBeforeTyping = rafHandleCounter;
+    fireEvent.input(textarea, { target: { value: "a" } });
+    fireEvent.input(textarea, { target: { value: "ab" } });
+
+    expect(rafHandleCounter).toBe(animationFramesBeforeTyping);
+  });
+
   test("dragging on the indicator column selects a line range", async () => {
     const content = "+const a = 1;\n+const b = 2;\n+const c = 3;";
 

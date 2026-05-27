@@ -4,7 +4,7 @@ import type { PropsWithChildren } from "react";
 import { colors, type ThemeColors } from "./colors";
 import { spacing, type ThemeSpacing } from "./spacing";
 import { typography, type ThemeTypography } from "./typography";
-import { assert } from "../utils/assert";
+import { assert } from "@/common/utils/assert";
 
 export interface ThemeRadii {
   xs: number;

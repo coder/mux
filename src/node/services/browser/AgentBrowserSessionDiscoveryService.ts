@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import * as fsPromises from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 import { isPathInsideDir } from "@/node/utils/pathUtils";
+import { getAgentBrowserSocketDir } from "./agentBrowserSocketPaths";
 
 const CLI_TIMEOUT_MS = 30_000;
 const PROCESS_CWD_TIMEOUT_MS = 5_000;
@@ -182,8 +182,6 @@ if ($null -ne $result) {
 }
 `;
 
-export type AgentBrowserDiscoveredSessionStatus = "attachable" | "missing_stream";
-
 interface AgentBrowserDiscoveredSessionBase {
   sessionName: string;
   pid: number;
@@ -203,6 +201,16 @@ export type AgentBrowserDiscoveredSession =
   | AgentBrowserDiscoveredSessionConnection
   | AgentBrowserMissingStreamSession;
 
+/** Sessions split by whether their process CWD is inside the active workspace paths. */
+export interface AgentBrowserSessionGroups {
+  sessions: AgentBrowserDiscoveredSession[];
+  otherSessions: AgentBrowserDiscoveredSession[];
+}
+
+export interface AgentBrowserSessionLookupOptions {
+  allowOtherWorkspaceSession?: boolean;
+}
+
 interface StreamStatusResult {
   enabled: boolean;
   port: number | null;
@@ -221,26 +229,6 @@ interface AgentBrowserSessionDiscoveryServiceOptions {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function getAgentBrowserSocketDir(env: NodeJS.ProcessEnv): string {
-  const override = env.AGENT_BROWSER_SOCKET_DIR?.trim();
-  if (override) {
-    return override;
-  }
-
-  const xdgRuntimeDir = env.XDG_RUNTIME_DIR?.trim();
-  if (xdgRuntimeDir) {
-    return path.join(xdgRuntimeDir, "agent-browser");
-  }
-
-  const homeDir = env.HOME?.trim();
-  if (homeDir) {
-    return path.join(homeDir, ".agent-browser");
-  }
-
-  const tmpDir = env.TMPDIR?.trim();
-  return path.join(tmpDir ?? os.tmpdir(), "agent-browser");
 }
 
 function extractSessionNames(payload: unknown): string[] {
@@ -564,23 +552,31 @@ export class AgentBrowserSessionDiscoveryService {
 
   async listSessions(workspaceId: string): Promise<AgentBrowserDiscoveredSession[]> {
     assert(workspaceId.trim().length > 0, "listSessions requires a non-empty workspaceId");
-    return await this.discoverSessions(workspaceId);
+    return (await this.discoverSessionGroups(workspaceId)).sessions;
+  }
+
+  async listSessionGroups(workspaceId: string): Promise<AgentBrowserSessionGroups> {
+    assert(workspaceId.trim().length > 0, "listSessionGroups requires a non-empty workspaceId");
+    return await this.discoverSessionGroups(workspaceId);
   }
 
   async getSessionConnection(
     workspaceId: string,
-    sessionName: string
+    sessionName: string,
+    options?: AgentBrowserSessionLookupOptions
   ): Promise<AgentBrowserDiscoveredSessionConnection | null> {
     assert(workspaceId.trim().length > 0, "getSessionConnection requires a non-empty workspaceId");
     assert(sessionName.trim().length > 0, "getSessionConnection requires a non-empty sessionName");
-    const sessions = await this.discoverSessions(workspaceId);
+    const sessionGroups = await this.discoverSessionGroups(workspaceId);
+    const sessions = this.getLookupSessions(sessionGroups, options);
     const session = sessions.find((candidate) => candidate.sessionName === sessionName) ?? null;
     return session?.status === "attachable" ? session : null;
   }
 
   async ensureSessionAttachable(
     workspaceId: string,
-    sessionName: string
+    sessionName: string,
+    options?: AgentBrowserSessionLookupOptions
   ): Promise<AgentBrowserDiscoveredSessionConnection> {
     assert(
       workspaceId.trim().length > 0,
@@ -591,10 +587,11 @@ export class AgentBrowserSessionDiscoveryService {
       "ensureSessionAttachable requires a non-empty sessionName"
     );
 
-    const sessions = await this.discoverSessions(workspaceId);
+    const sessionGroups = await this.discoverSessionGroups(workspaceId);
+    const sessions = this.getLookupSessions(sessionGroups, options);
     const session = sessions.find((candidate) => candidate.sessionName === sessionName) ?? null;
     if (session == null) {
-      if (sessions.length === 0) {
+      if (sessionGroups.sessions.length + sessionGroups.otherSessions.length === 0) {
         throw new Error(
           `Session "${sessionName}" is unavailable (no sessions discovered for workspace "${workspaceId}")`
         );
@@ -648,16 +645,17 @@ export class AgentBrowserSessionDiscoveryService {
     };
   }
 
-  private async discoverSessions(workspaceId: string): Promise<AgentBrowserDiscoveredSession[]> {
+  private async discoverSessionGroups(workspaceId: string): Promise<AgentBrowserSessionGroups> {
     const candidatePaths = await this.resolveWorkspaceCandidatePathsFn(workspaceId);
     const comparableCandidatePaths = await this.resolveComparableCandidatePaths(candidatePaths);
     if (comparableCandidatePaths.length === 0) {
-      return [];
+      return { sessions: [], otherSessions: [] };
     }
 
     const socketDir = getAgentBrowserSocketDir(this.env);
     const sessionNames = await this.listSessionNamesFn();
     const sessions: AgentBrowserDiscoveredSession[] = [];
+    const otherSessions: AgentBrowserDiscoveredSession[] = [];
 
     for (const sessionName of sessionNames) {
       const pid = await readPositiveIntegerFile(
@@ -673,36 +671,42 @@ export class AgentBrowserSessionDiscoveryService {
         continue;
       }
 
-      const comparableCwd = await this.resolveComparablePath(cwd);
-      if (
-        !comparableCandidatePaths.some((candidatePath) =>
-          isPathInsideDir(candidatePath, comparableCwd)
-        )
-      ) {
-        continue;
-      }
-
       const streamPort = await readPositiveIntegerFile(
         this.readFileFn,
         path.join(socketDir, `${sessionName}.stream`)
       );
-      if (streamPort == null) {
-        sessions.push({ sessionName, pid, cwd, status: "missing_stream" });
-        continue;
-      }
+      const discoveredSession: AgentBrowserDiscoveredSession =
+        streamPort == null
+          ? { sessionName, pid, cwd, status: "missing_stream" }
+          : { sessionName, pid, cwd, status: "attachable", streamPort };
 
-      const attachableSession: AgentBrowserDiscoveredSessionConnection = {
-        sessionName,
-        pid,
-        cwd,
-        status: "attachable",
-        streamPort,
-      };
-      sessions.push(attachableSession);
+      const comparableCwd = await this.resolveComparablePath(cwd);
+      const isCurrentWorkspaceSession = comparableCandidatePaths.some((candidatePath) =>
+        isPathInsideDir(candidatePath, comparableCwd)
+      );
+      if (isCurrentWorkspaceSession) {
+        sessions.push(discoveredSession);
+      } else {
+        otherSessions.push(discoveredSession);
+      }
     }
 
-    sessions.sort((a, b) => a.sessionName.localeCompare(b.sessionName));
-    return sessions;
+    const compareBySessionName = (
+      a: AgentBrowserDiscoveredSession,
+      b: AgentBrowserDiscoveredSession
+    ) => a.sessionName.localeCompare(b.sessionName);
+    sessions.sort(compareBySessionName);
+    otherSessions.sort(compareBySessionName);
+    return { sessions, otherSessions };
+  }
+
+  private getLookupSessions(
+    sessionGroups: AgentBrowserSessionGroups,
+    options?: AgentBrowserSessionLookupOptions
+  ): AgentBrowserDiscoveredSession[] {
+    return options?.allowOtherWorkspaceSession === true
+      ? [...sessionGroups.sessions, ...sessionGroups.otherSessions]
+      : sessionGroups.sessions;
   }
 
   private async resolveComparableCandidatePaths(candidatePaths: string[]): Promise<string[]> {

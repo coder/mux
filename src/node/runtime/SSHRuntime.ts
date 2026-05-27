@@ -17,6 +17,7 @@
 
 import { spawn, type ChildProcess } from "child_process";
 import * as crypto from "crypto";
+import { promises as fsPromises, type Dirent } from "fs";
 import * as path from "path";
 import type {
   EnsureReadyOptions,
@@ -68,8 +69,30 @@ const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 /** Small backoff for concurrent writers healing the same shared base repo config. */
 const BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS = [50, 100, 200];
 const BASE_REPO_HEALTH_PROBE_TIMEOUT_SECONDS = 10;
+const BASE_REPO_CONNECTIVITY_CHECK_TIMEOUT_SECONDS = 120;
+const BASE_REPO_MISSING_OBJECT_REPAIR_TIMEOUT_MS = 300_000;
 const BASE_REPO_PROMISOR_CLEANUP_TIMEOUT_SECONDS = 10;
-const BASE_REPO_MAINTENANCE_TIMEOUT_SECONDS = 120;
+/**
+ * Timeout for *spawning* remote detached gc, not for gc itself. The remote
+ * shell returns as soon as it has started `git gc` in the background, so this
+ * only needs to cover one SSH round-trip.
+ */
+const BASE_REPO_MAINTENANCE_SPAWN_TIMEOUT_SECONDS = 10;
+/**
+ * Retry-time maintenance should still wait for gc so the next sync attempt can
+ * benefit from the repair. The gc process itself is detached, so this timeout
+ * can stop waiting without SIGKILLing Git mid-pack-finalization.
+ */
+const BASE_REPO_MAINTENANCE_WAIT_TIMEOUT_SECONDS = 30 * 60;
+/** Git config keys that announce a bare repo as a promisor remote to
+ *  `repo_has_promisor_remote()`. Unsetting all three is what makes
+ *  receive-pack's `check_connected()` skip the buggy partial-clone fast
+ *  path on subsequent pushes (see `stripBaseRepoPromisorConfig`). */
+const BASE_REPO_PROMISOR_CONFIG_KEYS = [
+  "remote.origin.promisor",
+  "remote.origin.partialclonefilter",
+  "extensions.partialclone",
+] as const;
 const BASE_REPO_FRAGMENTED_PACK_THRESHOLD = 25;
 const PROJECT_SYNC_MAX_ATTEMPTS = 3;
 const PROJECT_SYNC_RETRYABLE_ERRORS = [
@@ -79,7 +102,42 @@ const PROJECT_SYNC_RETRYABLE_ERRORS = [
   "Broken pipe",
   "EPIPE",
   "Command killed by signal",
+  // Receive-pack thin-pack resolution failures. These happen when the bare
+  // base repo routes a small push through `unpack-objects` (because object
+  // count < `transfer.unpackLimit`, default 100) and the thin pack references
+  // delta bases that unpack-objects cannot resolve, or when the on-disk pack
+  // store is missing the assumed-present base objects (e.g. a `.pack` with no
+  // `.idx`). The retry path runs `repairBaseRepoForSync`, which sets
+  // `receive.unpackLimit=1` (forcing index-pack with `--fix-thin`) and runs
+  // gc, and the next push is force-promoted to `--no-thin` so the pack is
+  // self-contained. See `isUnresolvedDeltaPushFailure`.
+  "unresolved deltas",
+  "unpacker error",
+  "unpack-objects abnormal exit",
+  "remote unpack failed",
 ] as const;
+
+/**
+ * Patterns matching the receive-pack failure described above. Detected
+ * separately from generic retryable errors so the retry path can opt the next
+ * push into `--no-thin` instead of just rerunning the same thin push.
+ */
+const UNRESOLVED_DELTA_PUSH_PATTERNS = [
+  "unresolved deltas",
+  "unpacker error",
+  "unpack-objects abnormal exit",
+  "remote unpack failed",
+] as const;
+
+function isUnresolvedDeltaPushFailure(errorMsg: string): boolean {
+  return UNRESOLVED_DELTA_PUSH_PATTERNS.some((pattern) => errorMsg.includes(pattern));
+}
+
+function isMissingObjectCheckoutFailure(message: string): boolean {
+  return /unable to read sha1 file|Could not reset index file|missing (blob|tree|commit)|bad object|unable to read tree|object file .* is empty|loose object .* is corrupt/i.test(
+    message
+  );
+}
 
 const sharedProjectSyncTails = new Map<string, Promise<void>>();
 
@@ -213,8 +271,17 @@ function createAbortController(
   };
 }
 async function waitForProcessExit(proc: ChildProcess): Promise<number> {
+  // Callers often consume stdout before awaiting the process. Tiny git helpers
+  // can close in that window, so make the helper safe even when subscribed late.
+  if (proc.exitCode !== null) {
+    return proc.exitCode;
+  }
+  if (proc.signalCode !== null) {
+    return 1;
+  }
+
   return new Promise((resolve, reject) => {
-    proc.on("close", (code) => resolve(code ?? 0));
+    proc.on("close", (code) => resolve(code ?? 1));
     proc.on("error", (err) => reject(err));
   });
 }
@@ -264,6 +331,147 @@ export type { SSHRuntimeConfig } from "./sshConnectionPool";
  */
 export function computeBaseRepoPath(srcBaseDir: string, projectPath: string): string {
   return buildRemoteProjectLayout(srcBaseDir, projectPath).baseRepoPath;
+}
+
+/**
+ * Run `git show-ref --heads` against a local project and return the raw stdout
+ * (newline-separated `<oid> <refname>` lines).
+ *
+ * Returns `null` when the project has no refs (fresh repo with no commits) or
+ * git fails for any reason — callers should treat that as "fall back to the
+ * slow path" rather than retrying.
+ *
+ * STARTUP-PERF: This helper exists so the warm fast-path can read local heads
+ * once and derive both the snapshot digest and the sorted ref manifest from a
+ * single fork+exec, instead of paying ~70-100ms twice for the same `git`
+ * subprocess.
+ */
+async function readGitHeadsRefs(projectPath: string): Promise<string | null> {
+  return new Promise<string | null>((resolve) => {
+    const proc = spawn("git", ["-C", projectPath, "show-ref", "--heads"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    const stdoutChunks: Buffer[] = [];
+    proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(Buffer.from(chunk)));
+    proc.once("close", (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdoutChunks).toString());
+      } else {
+        // Exit code 1 with empty output = "no refs to display"; treat as null.
+        resolve(null);
+      }
+    });
+    proc.once("error", () => resolve(null));
+  });
+}
+
+/**
+ * Fast-path: read the local repo's heads directly from the filesystem
+ * (`<projectPath>/.git/refs/heads/**` + `<projectPath>/.git/packed-refs`)
+ * and return them in the same `<oid> <refname>` format as `git show-ref --heads`.
+ *
+ * Returns null and lets the caller fall back to `git show-ref` when:
+ *   - `.git` is a file (worktree gitdir indirection — uncommon for project roots)
+ *   - any read fails (e.g. broken refs)
+ *
+ * STARTUP-PERF: `git show-ref` costs ~70-100ms per invocation on macOS due to
+ * git's fork+exec + dynamic loader + libcrypto warmup. The same data sits in
+ * a couple of files we can read with a single readdir + a handful of small
+ * file reads (~3-5ms total for a typical repo). For the warm fast-path that
+ *'s a meaningful chunk of the total wall-time budget, and any ambiguity we
+ * fall back gracefully.
+ *
+ * NOTE: We don't try to be a complete `git show-ref` replacement; we only
+ * cover the loose-ref + packed-refs combination that 100% of warm projects
+ * fit into. Worktree gitdir files and reftable-based repos fall back.
+ */
+async function fastReadGitHeadsRefs(projectPath: string): Promise<string | null> {
+  try {
+    const gitDir = `${projectPath}/.git`;
+    const gitStat = await fsPromises.stat(gitDir);
+    if (!gitStat.isDirectory()) {
+      // `.git` is a file (worktree indirection) — bail to the safe path.
+      return null;
+    }
+
+    const heads: Array<{ oid: string; refname: string }> = [];
+
+    // 1. Loose refs under .git/refs/heads/**
+    const headsDir = `${gitDir}/refs/heads`;
+    const walk = async (relDir: string): Promise<void> => {
+      const fullDir = relDir.length > 0 ? `${headsDir}/${relDir}` : headsDir;
+      let entries: Dirent[];
+      try {
+        entries = await fsPromises.readdir(fullDir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      await Promise.all(
+        entries.map(async (entry) => {
+          const childRel = relDir.length > 0 ? `${relDir}/${entry.name}` : entry.name;
+          if (entry.isDirectory()) {
+            await walk(childRel);
+            return;
+          }
+          if (!entry.isFile()) return;
+          let raw: string;
+          try {
+            raw = await fsPromises.readFile(`${headsDir}/${childRel}`, "utf-8");
+          } catch {
+            return;
+          }
+          const oid = raw.trim();
+          // Skip symref redirects (rare for branch heads) — git's own format
+          // would be "ref: refs/heads/..." in those cases. Treat them as
+          // unsupported and let the caller fall back.
+          if (!/^[0-9a-f]{40}$/i.test(oid)) {
+            throw new Error("symref or invalid loose ref");
+          }
+          heads.push({ oid, refname: `refs/heads/${childRel}` });
+        })
+      );
+    };
+
+    try {
+      await walk("");
+    } catch {
+      return null;
+    }
+
+    // 2. Packed refs under .git/packed-refs (one entry per branch, possibly
+    //    interleaved with peeled-tag lines that start with '^' — those are
+    //    skipped).
+    let packed: string;
+    try {
+      packed = await fsPromises.readFile(`${gitDir}/packed-refs`, "utf-8");
+    } catch {
+      packed = "";
+    }
+    const seen = new Set(heads.map((h) => h.refname));
+    for (const line of packed.split("\n")) {
+      if (line.length === 0 || line.startsWith("#") || line.startsWith("^")) continue;
+      const space = line.indexOf(" ");
+      if (space === -1) continue;
+      const oid = line.slice(0, space);
+      const refname = line.slice(space + 1).trim();
+      if (!refname.startsWith("refs/heads/")) continue;
+      if (seen.has(refname)) continue; // loose refs override packed ones
+      if (!/^[0-9a-f]{40}$/i.test(oid)) return null;
+      heads.push({ oid, refname });
+      seen.add(refname);
+    }
+
+    if (heads.length === 0) {
+      return null;
+    }
+
+    // Match `git show-ref` output order: refname-sorted, single trailing newline.
+    heads.sort((a, b) => (a.refname < b.refname ? -1 : a.refname > b.refname ? 1 : 0));
+    return `${heads.map((h) => `${h.oid} ${h.refname}`).join("\n")}\n`;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -379,18 +587,107 @@ export class SSHRuntime extends RemoteRuntime {
     };
   }
 
-  protected async repairBaseRepoForSync(
+  /**
+   * Remove stale partial-clone / promisor configuration from a shared bare
+   * base repo. Idempotent — absent keys are silently treated as success.
+   *
+   * Why this matters (real, current upstream Git bug):
+   *
+   *   Git's `check_connected()` (`connected.c`) has a fast path that
+   *   activates whenever the receiving repo is a promisor remote, i.e.
+   *   `repo_has_promisor_remote()` returns true. That path was added in
+   *   50033772d ("connected: verify promisor-ness of partial clone",
+   *   2020-01) and is byte-identical on every release from v2.27.0 through
+   *   current `master`. It violates `check_connected_options::err_fd`'s
+   *   documented contract — "The descriptor is closed before
+   *   check_connected returns" (header comment in `connected.h`) — by
+   *   returning 0 directly when all pushed ref tips are already present in
+   *   a promisor pack, without ever calling `close(opt->err_fd)`.
+   *
+   *   On the receive-pack side, `execute_commands()` runs the connectivity
+   *   check with `err_fd = muxer.in`, where `muxer` is an async pthread
+   *   spawned by `start_async()` to relay child stderr over the sideband.
+   *   When the buggy fast path returns, the muxer pipe's write end is
+   *   still held open by receive-pack itself, so the keepalive worker
+   *   thread keeps polling its read end (timing out every 5s and emitting
+   *   `0005\1` sideband keepalives) and never sees EOF. The subsequent
+   *   `finish_async(&muxer)` is `pthread_join`, which then blocks forever.
+   *   The local push hangs in OpenSSH mux-channel I/O even though TCP
+   *   keepalives still flow on the underlying connection.
+   *
+   *   Jeff King already fixed an architecturally identical deadlock years
+   *   ago — 6cdad1f13 ("receive-pack: fix deadlock when we cannot create
+   *   tmpdir", 2017-03) — by adding the missing `close(err_fd)` to an
+   *   early-return path in `unpack()`. The same lesson was never applied
+   *   to the promisor path added three years later.
+   *
+   *   Mux never deliberately turns the shared base repo into a partial
+   *   clone, but legacy bare repos populated by earlier Mux versions, or
+   *   by user-initiated `git fetch --filter` runs on the remote, can
+   *   carry these keys. Stripping them makes `repo_has_promisor_remote()`
+   *   return false, routing `check_connected()` through the slow rev-list
+   *   path that closes its sideband fd correctly. The companion `.promisor`
+   *   marker file cleanup in `repairBaseRepoForSync` handles the on-disk
+   *   side of the same legacy state.
+   */
+  protected async stripBaseRepoPromisorConfig(
     baseRepoPathArg: string,
-    repairContext: string,
     abortSignal?: AbortSignal
   ): Promise<void> {
     if (abortSignal?.aborted) {
       throw new Error("Operation aborted");
     }
 
-    const promisorPackDirArg = `${baseRepoPathArg}/objects/pack`;
+    // `git config --unset-all` exits 0 (removed) or 5 (key/section absent);
+    // both are idempotent successes. Anything else is a real failure we
+    // want surfaced but not fatal — workspace init must not depend on
+    // remote config writes that may race with concurrent worktrees.
+    //
+    // Three keys cover every way a bare repo can advertise itself as a
+    // partial clone to `repo_has_promisor_remote()`:
+    //   - remote.origin.promisor       (flag set by `clone/fetch --filter`)
+    //   - remote.origin.partialclonefilter  (the filter spec itself)
+    //   - extensions.partialclone      (the repository-format extension)
+    //
+    // Collapsed into one remote shell call to keep workspace init to a
+    // single SSH round trip; `; true` ensures the pipeline as a whole
+    // returns 0 even when every key was already absent.
+    const cmd =
+      BASE_REPO_PROMISOR_CONFIG_KEYS.map(
+        (key) => `git -C ${baseRepoPathArg} config --unset-all ${key}`
+      ).join("; ") + "; true";
+
+    const result = await execBuffered(this, cmd, {
+      cwd: "/tmp",
+      timeout: BASE_REPO_PROMISOR_CLEANUP_TIMEOUT_SECONDS,
+      abortSignal,
+    });
+
+    const stderr = result.stderr.trim();
+    if (stderr) {
+      log.warn(`Partial-clone config cleanup reported diagnostics: ${stderr}`);
+    }
+  }
+
+  protected async repairBaseRepoForSync(
+    baseRepoPathArg: string,
+    repairContext: string,
+    abortSignal?: AbortSignal,
+    options: { waitForGc?: boolean } = {}
+  ): Promise<void> {
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+
     log.info(repairContext);
 
+    // Strip partial-clone config before the on-disk cleanup so that even
+    // if `git gc` fails, subsequent pushes no longer route through the
+    // buggy `check_connected()` promisor fast path. See the doc comment
+    // on stripBaseRepoPromisorConfig for the full upstream-bug story.
+    await this.stripBaseRepoPromisorConfig(baseRepoPathArg, abortSignal);
+
+    const promisorPackDirArg = `${baseRepoPathArg}/objects/pack`;
     const promisorCleanupResult = await execBuffered(
       this,
       `find ${promisorPackDirArg} -name '*.promisor' -print -delete 2>/dev/null || true`,
@@ -410,15 +707,87 @@ export class SSHRuntime extends RemoteRuntime {
       );
     }
 
-    const gcResult = await execBuffered(this, `git -C ${baseRepoPathArg} gc --prune=now`, {
+    // Rebuild any orphaned pack indexes (`pack-<sha>.pack` with no matching
+    // `pack-<sha>.idx`). A previous gc that was SIGKILLed mid-finalization
+    // can leave a pack on disk whose `.idx` was never written, hiding every
+    // object inside that pack from negotiation. Subsequent thin pushes then
+    // assume those objects are missing → the remote pulls in delta bases
+    // that aren't actually reachable → `unresolved deltas left after
+    // unpacking`. `git index-pack` rebuilds the missing `.idx` from the
+    // `.pack` so the objects rejoin the negotiation surface before the next
+    // push. Best-effort: a corrupt `.pack` or environment without `git
+    // index-pack` will fall through to `gc` and ultimately the `--no-thin`
+    // retry push.
+    const reindexCommand = [
+      `pack_dir=${promisorPackDirArg}`,
+      'if [ ! -d "$pack_dir" ]; then exit 0; fi',
+      // Use `find` to enumerate orphan packs; for each, run `git index-pack`
+      // and log a line so the count is visible in the maintenance log.
+      `for pack in "$pack_dir"/pack-*.pack; do`,
+      '  [ -e "$pack" ] || continue',
+      '  idx="${pack%.pack}.idx"',
+      '  if [ -f "$idx" ]; then continue; fi',
+      `  if git index-pack "$pack" >/dev/null 2>&1; then`,
+      '    echo "reindexed $pack"',
+      "  else",
+      '    echo "reindex-failed $pack" >&2',
+      "  fi",
+      "done",
+    ].join("\n");
+    const reindexResult = await execBuffered(this, reindexCommand, {
       cwd: "/tmp",
-      timeout: BASE_REPO_MAINTENANCE_TIMEOUT_SECONDS,
+      timeout: BASE_REPO_PROMISOR_CLEANUP_TIMEOUT_SECONDS,
+      abortSignal,
+    });
+    const reindexedCount = reindexResult.stdout
+      .split("\n")
+      .filter((line) => line.startsWith("reindexed ")).length;
+    if (reindexedCount > 0) {
+      log.info(
+        `Rebuilt ${reindexedCount} orphaned pack index file(s) during base repo maintenance`
+      );
+    }
+    const reindexFailures = reindexResult.stderr
+      .split("\n")
+      .filter((line) => line.startsWith("reindex-failed ")).length;
+    if (reindexFailures > 0) {
+      log.warn(
+        `Failed to rebuild ${reindexFailures} pack index file(s) during base repo maintenance`
+      );
+    }
+
+    // Always detach `git gc` from mux's SSH command timeout. A SIGKILL between
+    // `tmp_pack_X → pack-<sha>.pack` and `tmp_idx_X → pack-<sha>.idx` leaves a
+    // .pack with no .idx, hiding every object inside that pack and making thin
+    // pushes fail with `unresolved deltas left after unpacking`.
+    //
+    // `setsid -f` forks gc into its own session/process group before execing
+    // Git, so gc survives SSH channel shutdown and the `timeout -s KILL` group
+    // kill that `RemoteRuntime.exec` wraps every remote command in. `nohup` is
+    // not enough because SIGKILL ignores SIGHUP-disposition tricks. Git's own
+    // `gc.pid` lock prevents concurrent gcs from racing on the same repo.
+    //
+    // Proactive preflight is advisory and only waits for the detached spawn.
+    // Retry cleanup uses `setsid -w` to wait for the detached child, so the
+    // retry can benefit from completed maintenance without ever putting gc
+    // itself under a client-side kill timeout. Logs land in
+    // /tmp/.mux-base-repo-gc.log.
+    const setsidArgs = options.waitForGc ? "-f -w" : "-f";
+    const gcCommand = [
+      `base_repo=${baseRepoPathArg}`,
+      "command -v setsid >/dev/null 2>&1 || { echo 'setsid command not found; cannot detach git gc' >&2; exit 127; }",
+      `setsid ${setsidArgs} sh -c 'exec git -C "$1" gc --prune=now >>/tmp/.mux-base-repo-gc.log 2>&1' sh "$base_repo" </dev/null`,
+    ].join("\n");
+    const gcResult = await execBuffered(this, gcCommand, {
+      cwd: "/tmp",
+      timeout: options.waitForGc
+        ? BASE_REPO_MAINTENANCE_WAIT_TIMEOUT_SECONDS
+        : BASE_REPO_MAINTENANCE_SPAWN_TIMEOUT_SECONDS,
       abortSignal,
     });
     if (gcResult.exitCode !== 0) {
-      log.warn(
-        `Remote git gc exited ${gcResult.exitCode} during base repo maintenance: ${gcResult.stderr || gcResult.stdout}`
-      );
+      const detail = (gcResult.stderr || gcResult.stdout).trim() || `exit ${gcResult.exitCode}`;
+      log.warn(`Remote git gc maintenance failed: ${detail}`);
     }
   }
 
@@ -455,6 +824,203 @@ export class SSHRuntime extends RemoteRuntime {
     }
   }
 
+  private async checkBaseRepoBundleConnectivity(
+    baseRepoPathArg: string,
+    abortSignal?: AbortSignal
+  ): Promise<{ healthy: true } | { healthy: false; detail: string }> {
+    const result = await execBuffered(
+      this,
+      [
+        `set -- $(git -C ${baseRepoPathArg} for-each-ref --format='%(refname)' ${shescape.quote(BUNDLE_REF_PREFIX)})`,
+        'if [ "$#" -eq 0 ]; then echo "no synced bundle refs found" >&2; exit 1; fi',
+        `git -C ${baseRepoPathArg} fsck --connectivity-only --no-dangling "$@"`,
+      ].join("\n"),
+      {
+        cwd: "/tmp",
+        timeout: BASE_REPO_CONNECTIVITY_CHECK_TIMEOUT_SECONDS,
+        abortSignal,
+      }
+    );
+
+    if (result.exitCode === 0) {
+      return { healthy: true };
+    }
+
+    return {
+      healthy: false,
+      detail: (result.stderr || result.stdout).trim() || `exit ${result.exitCode}`,
+    };
+  }
+
+  private async checkBaseRepoRevisionConnectivity(
+    baseRepoPathArg: string,
+    revision: string,
+    abortSignal?: AbortSignal
+  ): Promise<{ healthy: true } | { healthy: false; detail: string }> {
+    const result = await execBuffered(
+      this,
+      `git -C ${baseRepoPathArg} fsck --connectivity-only --no-dangling ${shescape.quote(revision)}`,
+      {
+        cwd: "/tmp",
+        timeout: BASE_REPO_CONNECTIVITY_CHECK_TIMEOUT_SECONDS,
+        abortSignal,
+      }
+    );
+
+    if (result.exitCode === 0) {
+      return { healthy: true };
+    }
+
+    return {
+      healthy: false,
+      detail: (result.stderr || result.stdout).trim() || `exit ${result.exitCode}`,
+    };
+  }
+
+  private async repairBaseRepoMissingObjectsFromLocal(
+    projectPath: string,
+    baseRepoPathArg: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+
+    await this.transport.acquireConnection({
+      abortSignal,
+      onWait: (waitMs) => logSSHBackoffWait(initLogger, waitMs),
+    });
+
+    if (abortSignal?.aborted) {
+      throw new Error("Operation aborted");
+    }
+
+    initLogger.logStep("Repairing shared base repository object cache...");
+    const remoteAbortController = createAbortController(
+      BASE_REPO_MISSING_OBJECT_REPAIR_TIMEOUT_MS,
+      abortSignal
+    );
+
+    try {
+      const remoteStream = await this.exec(`git -C ${baseRepoPathArg} unpack-objects -r`, {
+        cwd: "/tmp",
+        abortSignal: remoteAbortController.signal,
+      });
+      const remoteStdoutPromise = streamToString(remoteStream.stdout);
+      const remoteStderrPromise = streamToString(remoteStream.stderr);
+
+      // A normal fetch/push can be a no-op when the remote already has the
+      // commit object but is missing blobs from the same tree. Stream a complete
+      // non-thin local pack and let `unpack-objects -r` add only the missing
+      // objects without deleting or recreating the shared gitdir used by siblings.
+      const gitProc = spawn("git", ["-C", projectPath, "pack-objects", "--all", "--stdout"], {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+
+      let packStderr = "";
+      gitProc.stderr?.on("data", (data: Buffer) => {
+        const chunk = data.toString();
+        packStderr += chunk;
+        for (const line of chunk.split("\n").filter(Boolean)) {
+          initLogger.logStderr(line);
+        }
+      });
+      const gitExitCodePromise = waitForProcessExit(gitProc);
+
+      try {
+        await pipeReadableToWebWritable(gitProc.stdout, remoteStream.stdin, abortSignal);
+      } catch (error) {
+        gitProc.kill();
+        throw error;
+      }
+
+      const [gitExitCode, remoteExitCode, remoteStdout, remoteStderr] = await Promise.all([
+        gitExitCodePromise,
+        remoteStream.exitCode,
+        remoteStdoutPromise,
+        remoteStderrPromise,
+      ]);
+
+      if (remoteAbortController.didTimeout()) {
+        throw new Error(
+          `SSH command timed out after ${BASE_REPO_MISSING_OBJECT_REPAIR_TIMEOUT_MS}ms: git -C ${baseRepoPathArg} unpack-objects -r`
+        );
+      }
+
+      if (abortSignal?.aborted) {
+        throw new Error("Operation aborted");
+      }
+
+      if (gitExitCode !== 0) {
+        throw new Error(
+          `Failed to create repair pack: ${packStderr.trim() || `exit ${gitExitCode}`}`
+        );
+      }
+
+      if (remoteExitCode !== 0) {
+        const detail = (remoteStderr || remoteStdout).trim() || `exit ${remoteExitCode}`;
+        throw new Error(`Failed to unpack repair pack into shared base repository: ${detail}`);
+      }
+    } finally {
+      remoteAbortController.dispose();
+    }
+
+    initLogger.logStep("Shared base repository object cache repaired");
+  }
+
+  private async ensureBaseRepoSnapshotConnectivity(
+    projectPath: string,
+    baseRepoPathArg: string,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    const initialCheck = await this.checkBaseRepoBundleConnectivity(baseRepoPathArg, abortSignal);
+    if (initialCheck.healthy) {
+      return;
+    }
+
+    initLogger.logStep("Remote snapshot is missing objects; repairing shared base repository...");
+    log.warn("Remote snapshot failed connectivity check before reuse", {
+      detail: initialCheck.detail,
+    });
+
+    await this.repairBaseRepoMissingObjectsFromLocal(
+      projectPath,
+      baseRepoPathArg,
+      initLogger,
+      abortSignal
+    );
+
+    const repairedCheck = await this.checkBaseRepoBundleConnectivity(baseRepoPathArg, abortSignal);
+    if (!repairedCheck.healthy) {
+      throw new Error(
+        `Shared base repository is still missing objects after repair: ${repairedCheck.detail}`
+      );
+    }
+  }
+
+  private async cleanupFailedNewWorktreeCheckout(
+    baseRepoPathArg: string,
+    workspacePathArg: string,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    const result = await execBuffered(
+      this,
+      `git -C ${baseRepoPathArg} worktree remove --force ${workspacePathArg} >/dev/null 2>&1 || rm -rf ${workspacePathArg}`,
+      {
+        cwd: "/tmp",
+        timeout: 30,
+        abortSignal,
+      }
+    );
+    if (result.exitCode !== 0) {
+      const detail = (result.stderr || result.stdout).trim() || `exit ${result.exitCode}`;
+      log.warn(`Failed to clean up partial SSH worktree checkout: ${detail}`);
+    }
+  }
+
   protected async cleanupRetryableProjectSyncFailure(
     baseRepoPathArg: string,
     attempt: number,
@@ -469,7 +1035,8 @@ export class SSHRuntime extends RemoteRuntime {
       await this.repairBaseRepoForSync(
         baseRepoPathArg,
         `Running remote promisor cleanup and git gc before retrying sync push (attempt ${attempt + 1}/${maxAttempts})`,
-        abortSignal
+        abortSignal,
+        { waitForGc: true }
       );
     } catch (cleanupError) {
       const cleanupErrorMsg = getErrorMessage(cleanupError);
@@ -491,32 +1058,7 @@ export class SSHRuntime extends RemoteRuntime {
     // Workspace materialization only depends on branch tips. Tags are shared repo
     // metadata that can legitimately drift, so they must not participate in the
     // authoritative snapshot identity or force a resync on their own.
-    const refsOutput = await new Promise<string>((resolve, reject) => {
-      const proc = spawn("git", ["-C", projectPath, "show-ref", "--heads"], {
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
-      const stdoutChunks: Buffer[] = [];
-      const stderrChunks: Buffer[] = [];
-      proc.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(Buffer.from(chunk)));
-      proc.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(Buffer.from(chunk)));
-      proc.once("close", (code) => {
-        if (code === 0) {
-          resolve(Buffer.concat(stdoutChunks).toString());
-          return;
-        }
-        const stderrText = Buffer.concat(stderrChunks).toString().trim();
-        reject(
-          new Error(
-            stderrText.length > 0
-              ? stderrText
-              : `git show-ref failed with code ${code ?? "unknown"}`
-          )
-        );
-      });
-      proc.once("error", reject);
-    });
-
+    const refsOutput = (await readGitHeadsRefs(projectPath)) ?? "";
     return crypto.createHash("sha256").update(refsOutput).digest("hex");
   }
 
@@ -641,41 +1183,114 @@ export class SSHRuntime extends RemoteRuntime {
     projectPath: string,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
-  ): Promise<string> {
+  ): Promise<{ baseRepoPathArg: string; freshlyCreated: boolean }> {
     const layout = this.getProjectLayout(projectPath);
     const baseRepoPath = layout.baseRepoPath;
     const baseRepoPathArg = expandTildeForSSH(baseRepoPath);
+    const parentDirArg = expandTildeForSSH(path.posix.dirname(baseRepoPath));
 
-    const check = await execBuffered(this, `test -d ${baseRepoPathArg}`, {
+    // STARTUP-PERF: This used to be 3-5 sequential SSH round-trips
+    // (test -d, mkdir, git init, unset core.bare, unset 3× promisor keys).
+    // Each round-trip costs ~80-100ms even over a multiplexed control channel,
+    // so on a cold SSH workspace this single batched command shaves ~500ms off
+    // the critical path of `mux run --runtime ssh <host>`.
+    //
+    // The script is split into two well-defined sections, each producing a
+    // status sentinel that the caller parses:
+    //
+    //   STATUS_CREATED=<existed|created>   — repo presence/creation outcome
+    //   STATUS_CORE_BARE=<unset|absent|locked|error>  — normalization result
+    //
+    // Promisor keys are idempotently neutered as a best-effort epilogue (no
+    // sentinel needed; failures fall through harmlessly because subsequent
+    // pushes can re-run the cleanup if a deadlock recurs).
+    const promisorUnsetCmds = BASE_REPO_PROMISOR_CONFIG_KEYS.map(
+      (key) => `git -C ${baseRepoPathArg} config --unset-all ${key} 2>/dev/null || true`
+    ).join("\n");
+
+    const cmd = [
+      "set -u",
+      // 1. Ensure repo directory exists (mkdir parent + git init --bare).
+      `if test -d ${baseRepoPathArg}; then`,
+      "  echo STATUS_CREATED=existed",
+      "else",
+      `  if ! mkdir -p ${parentDirArg}; then`,
+      `    echo "ERROR: mkdir parent failed" >&2`,
+      "    exit 1",
+      "  fi",
+      `  if ! git init --bare ${baseRepoPathArg} >/dev/null 2>&1; then`,
+      `    echo "ERROR: git init --bare failed" >&2`,
+      "    exit 1",
+      "  fi",
+      "  echo STATUS_CREATED=created",
+      "fi",
+      // 2. Normalize core.bare in the *local* config — see
+      //    normalizeBaseRepoSharedConfig() for full context.
+      //    Exit codes: 0 = removed, 5 = key absent.  Anything else needs the
+      //    retry/inspect dance, which the caller handles by re-running the
+      //    slow-path helper.
+      `git -C ${baseRepoPathArg} config --local --unset-all core.bare 2>/tmp/.mux-corebare.err`,
+      "rc=$?",
+      'if [ "$rc" -eq 0 ]; then',
+      "  echo STATUS_CORE_BARE=unset",
+      'elif [ "$rc" -eq 5 ]; then',
+      "  echo STATUS_CORE_BARE=absent",
+      "else",
+      // Surface the stderr to the caller so the slow-path retry can decide
+      // whether this is a lock conflict (transient) or a real error.
+      "  echo STATUS_CORE_BARE=error",
+      "  cat /tmp/.mux-corebare.err >&2 2>/dev/null || true",
+      "fi",
+      "rm -f /tmp/.mux-corebare.err 2>/dev/null || true",
+      // 3. Idempotently strip partial-clone / promisor keys (always best-effort).
+      //    See stripBaseRepoPromisorConfig() docstring for the upstream Git
+      //    sideband-deadlock bug this guards against.
+      promisorUnsetCmds,
+      // 4. Force receive-pack to use index-pack (with `--fix-thin`) instead of
+      //    `unpack-objects` for incoming pushes, regardless of object count.
+      //    This avoids the "unresolved deltas left after unpacking" /
+      //    "unpacker error" failure mode where small thin pushes (below the
+      //    default `transfer.unpackLimit=100`) reach `unpack-objects`, which
+      //    cannot resolve thin-pack delta bases. Best-effort: an older Git
+      //    that does not honor this key still works under the retry path.
+      //    Trade-off: more small packs, but the existing fragmented-base-repo
+      //    maintenance (`ensureHealthyBaseRepoForSync`) collapses them on a
+      //    schedule, so this is a net robustness win.
+      `git -C ${baseRepoPathArg} config --local receive.unpackLimit 1 2>/dev/null || true`,
+    ].join("\n");
+
+    const result = await execBuffered(this, cmd, {
       cwd: "/tmp",
-      timeout: 10,
+      timeout: 30,
       abortSignal,
     });
 
-    if (check.exitCode !== 0) {
-      initLogger.logStep("Creating shared base repository...");
-      const parentDir = path.posix.dirname(baseRepoPath);
-      await execBuffered(this, `mkdir -p ${expandTildeForSSH(parentDir)}`, {
-        cwd: "/tmp",
-        timeout: 10,
-        abortSignal,
-      });
-      const initResult = await execBuffered(this, `git init --bare ${baseRepoPathArg}`, {
-        cwd: "/tmp",
-        timeout: 30,
-        abortSignal,
-      });
-      if (initResult.exitCode !== 0) {
-        throw new Error(`Failed to create base repo: ${initResult.stderr || initResult.stdout}`);
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Failed to ensure base repo: ${result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`}`
+      );
+    }
+
+    const created = result.stdout.includes("STATUS_CREATED=created");
+    const coreBareStatus = /STATUS_CORE_BARE=(\w+)/.exec(result.stdout)?.[1];
+
+    if (created) {
+      initLogger.logStep("Created shared base repository");
+    }
+
+    if (coreBareStatus === "unset") {
+      initLogger.logStep("Normalized shared base repository config for worktrees");
+    } else if (coreBareStatus === "error") {
+      // Fall back to the slow-path retry helper, which handles lock conflicts
+      // by re-trying with backoff and inspecting whether the key is still set.
+      const normalized = await this.normalizeBaseRepoSharedConfig(baseRepoPathArg, abortSignal);
+      if (normalized) {
+        initLogger.logStep("Normalized shared base repository config for worktrees");
       }
     }
+    // STATUS_CORE_BARE=absent: nothing to do.
 
-    const normalizedConfig = await this.normalizeBaseRepoSharedConfig(baseRepoPathArg, abortSignal);
-    if (normalizedConfig) {
-      initLogger.logStep("Normalized shared base repository config for worktrees");
-    }
-
-    return baseRepoPathArg;
+    return { baseRepoPathArg, freshlyCreated: created };
   }
 
   /**
@@ -852,6 +1467,42 @@ export class SSHRuntime extends RemoteRuntime {
     return null;
   }
 
+  private async remoteTrackingBranchExists(
+    baseRepoPathArg: string,
+    trunkBranch: string,
+    abortSignal?: AbortSignal
+  ): Promise<boolean> {
+    const originRef = `refs/remotes/origin/${trunkBranch}`;
+    const check = await execBuffered(
+      this,
+      `git -C ${baseRepoPathArg} rev-parse --verify --quiet ${shescape.quote(originRef)}`,
+      { cwd: "/tmp", timeout: 10, abortSignal }
+    );
+    return check.exitCode === 0;
+  }
+
+  private async resolveFreshWorkspaceSourceBase(
+    baseRepoPathArg: string,
+    trunkBranch: string,
+    fetchedOrigin: boolean,
+    fallbackRef: string | null,
+    initLogger: InitLogger,
+    abortSignal?: AbortSignal
+  ): Promise<string> {
+    if (
+      fetchedOrigin &&
+      (await this.remoteTrackingBranchExists(baseRepoPathArg, trunkBranch, abortSignal))
+    ) {
+      return `origin/${trunkBranch}`;
+    }
+
+    const fallbackBase = fallbackRef ?? "HEAD";
+    initLogger.logStderr(
+      `Note: origin/${trunkBranch} was not available on the remote host; using local snapshot ${fallbackBase}`
+    );
+    return fallbackBase;
+  }
+
   private async resolveLocalSyncRefManifest(projectPath: string): Promise<string | null> {
     try {
       using proc = execFileAsync("git", ["-C", projectPath, "show-ref", "--heads"]);
@@ -938,8 +1589,21 @@ export class SSHRuntime extends RemoteRuntime {
     baseRepoPathArg: string,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
-  ): Promise<void> {
-    // Ensure the remote base repo knows where origin is before fetching.
+  ): Promise<{ refreshedOrigin: boolean }> {
+    // Skip the entire prefetch dance when the local project has no `origin`
+    // remote. The fetch is *guaranteed* to fail in that case (no origin URL
+    // gets propagated to the remote base repo by `refreshBaseRepoOrigin`), and
+    // each SSH round-trip costs ~80–100ms on a fresh connection. On a cold SSH
+    // workspace startup against a project without `origin` (e.g. `mux run` on
+    // a scratch repo, local-only project, or fresh clone with no remote), this
+    // single guard removes ~500ms of pure overhead from the critical path.
+    const { originUrl } = await this.getOriginUrlForSync(projectPath, initLogger);
+    if (!originUrl) {
+      return { refreshedOrigin: false };
+    }
+
+    // Local has an origin; propagate it to the remote base repo so the fetch
+    // below has somewhere to pull from.
     await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
 
     try {
@@ -956,12 +1620,21 @@ export class SSHRuntime extends RemoteRuntime {
         initLogger.logStep("Pre-fetched from origin on remote host");
       } else {
         initLogger.logStep("Pre-fetch from origin skipped (fetch failed)");
+        // Preserve the stderr in debug logs so we can diagnose recurrent
+        // prefetch misses (auth, unreachable URL, mismatched origin) without
+        // surfacing noisy detail on the happy path.
+        const detail = (result.stderr || result.stdout).trim();
+        if (detail) {
+          log.debug("Pre-fetch from origin failed", { detail });
+        }
       }
-    } catch {
+    } catch (error) {
       // Best-effort — if origin is unreachable or not configured, the local
       // push will still transfer all required objects.
       initLogger.logStep("Pre-fetch from origin skipped (not reachable)");
+      log.debug("Pre-fetch from origin errored", { error: getErrorMessage(error) });
     }
+    return { refreshedOrigin: true };
   }
 
   override async ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult> {
@@ -1303,8 +1976,15 @@ export class SSHRuntime extends RemoteRuntime {
     layout: RemoteProjectLayout,
     currentSnapshotPath: string,
     initLogger: InitLogger,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    options: { forceNoThin?: boolean } = {}
   ): Promise<void> {
+    // `forceNoThin` opts the push out of thin-pack delta-base optimization.
+    // This is set by the retry path after an "unresolved deltas" / "unpacker
+    // error" failure: the remote couldn't resolve the thin pack's delta
+    // bases, so we resend a self-contained pack on the next attempt instead
+    // of rerunning the same thin push and failing the same way.
+    const forceNoThin = options.forceNoThin === true;
     const prepareSnapshotDir = await execBuffered(
       this,
       `mkdir -p ${this.quoteForRemote(path.posix.dirname(currentSnapshotPath))}`,
@@ -1370,6 +2050,10 @@ export class SSHRuntime extends RemoteRuntime {
     // so it depends on the local `ssh` CLI being available. On OpenSSH runtimes,
     // the transport already depends on that binary and shares the same ControlPath.
     const runPush = async (pushArgs: string[]): Promise<void> => {
+      if (abortSignal?.aborted) {
+        throw new Error("Git push aborted");
+      }
+
       using pushProc = execFileAsync("git", pushArgs, {
         env: { GIT_SSH_COMMAND: gitSshCommand },
         onStderrData: (chunk) => {
@@ -1384,6 +2068,9 @@ export class SSHRuntime extends RemoteRuntime {
       const pushTimeout = setTimeout(() => pushProc[Symbol.dispose](), 300_000);
       const onAbort = () => pushProc[Symbol.dispose]();
       abortSignal?.addEventListener("abort", onAbort, { once: true });
+      if (abortSignal?.aborted) {
+        onAbort();
+      }
       try {
         await pushProc.result;
       } finally {
@@ -1402,6 +2089,9 @@ export class SSHRuntime extends RemoteRuntime {
       }
       throw new Error(`Failed to push to remote: ${errorMsg}`);
     };
+    // `--no-thin` flag is positioned before the URL so it applies to the
+    // pack-objects step git invokes for this push (and to nothing else).
+    const noThinFlag = forceNoThin ? ["--no-thin"] : [];
     const branchPushArgsBase = [
       "-C",
       projectPath,
@@ -1409,6 +2099,7 @@ export class SSHRuntime extends RemoteRuntime {
       "--force",
       "--prune",
       "--no-verify",
+      ...noThinFlag,
       remoteUrl,
       `+refs/heads/*:${BUNDLE_REF_PREFIX}*`,
     ];
@@ -1447,6 +2138,7 @@ export class SSHRuntime extends RemoteRuntime {
         "push",
         "--force",
         "--no-verify",
+        ...noThinFlag,
         remoteUrl,
         "+refs/tags/*:refs/tags/*",
       ]);
@@ -1484,13 +2176,20 @@ export class SSHRuntime extends RemoteRuntime {
     // Keep retries, cancellation handling, and retry cleanup inside the project-scoped
     // sync lock so a follow-up init cannot race the shared base repo while we are healing it.
     await enqueueProjectSync(projectKey, abortSignal, async () => {
+      // Latches once a thin-pack delta-base failure is observed so every
+      // subsequent attempt in this sync push a self-contained pack (`--no-thin`).
+      // Stays `false` for connection-reset / killed-by-signal retries since
+      // those don't benefit from forcing a larger pack.
+      let forceNoThinNextAttempt = false;
       for (let attempt = 1; attempt <= PROJECT_SYNC_MAX_ATTEMPTS; attempt++) {
         if (abortSignal?.aborted) {
           throw new Error("Operation aborted");
         }
 
         try {
-          await this.syncProjectToRemoteOnce(projectPath, layout, initLogger, abortSignal);
+          await this.syncProjectToRemoteOnce(projectPath, layout, initLogger, abortSignal, {
+            forceNoThin: forceNoThinNextAttempt,
+          });
           return;
         } catch (error) {
           const errorMsg = getErrorMessage(error);
@@ -1502,6 +2201,10 @@ export class SSHRuntime extends RemoteRuntime {
             attempt === PROJECT_SYNC_MAX_ATTEMPTS
           ) {
             throw new Error(`Failed to sync project: ${errorMsg}`);
+          }
+
+          if (isUnresolvedDeltaPushFailure(errorMsg)) {
+            forceNoThinNextAttempt = true;
           }
 
           log.info(
@@ -1529,7 +2232,8 @@ export class SSHRuntime extends RemoteRuntime {
     projectPath: string,
     layout: RemoteProjectLayout,
     initLogger: InitLogger,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    options: { forceNoThin?: boolean } = {}
   ): Promise<void> {
     if (abortSignal?.aborted) {
       throw new Error("Operation aborted");
@@ -1538,11 +2242,22 @@ export class SSHRuntime extends RemoteRuntime {
     const currentSnapshotPath = layout.currentSnapshotPath;
     const useNativeGitPush = this.transport instanceof OpenSSHTransport;
     const snapshotDigest = await this.computeSnapshotDigest(projectPath);
-    const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
+    const { baseRepoPathArg, freshlyCreated } = await this.ensureBaseRepo(
+      projectPath,
+      initLogger,
+      abortSignal
+    );
 
     // Treat the shared bare repo as a managed cache: verify its health before
     // we ask Git to negotiate another sync against a fragmented object store.
-    await this.ensureHealthyBaseRepoForSync(baseRepoPathArg, initLogger, abortSignal);
+    //
+    // STARTUP-PERF: When ensureBaseRepo just created the bare repo, we know
+    // it has zero packs — there is nothing to be fragmented yet. Skip the
+    // remote `count-objects -v` probe (~80-100ms SSH round-trip) on the cold
+    // path; the next sync against a populated repo will run it normally.
+    if (!freshlyCreated) {
+      await this.ensureHealthyBaseRepoForSync(baseRepoPathArg, initLogger, abortSignal);
+    }
 
     const snapshotStatusCheck = await execBuffered(
       this,
@@ -1573,6 +2288,12 @@ export class SSHRuntime extends RemoteRuntime {
           : await this.resolveRemoteSyncRefManifest(baseRepoPathArg, abortSignal);
       if (localRefManifest != null && remoteRefManifest === localRefManifest) {
         await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
+        await this.ensureBaseRepoSnapshotConnectivity(
+          projectPath,
+          baseRepoPathArg,
+          initLogger,
+          abortSignal
+        );
         initLogger.logStep("Reusing existing remote project snapshot");
         return;
       }
@@ -1586,6 +2307,7 @@ export class SSHRuntime extends RemoteRuntime {
       );
     }
 
+    let originAlreadyRefreshed = false;
     if (useNativeGitPush) {
       // Pre-populate the remote base repo with objects from origin before the
       // local→remote push. The SSH host's datacenter connection is typically
@@ -1594,14 +2316,21 @@ export class SSHRuntime extends RemoteRuntime {
       // small incremental transfer instead of a full repo upload.
       // Only useful for git-push sync — bundle sync uploads a fresh local bundle
       // that can't reuse remote objects, so the prefetch would be wasted I/O.
-      await this.prefetchOriginOnRemote(projectPath, baseRepoPathArg, initLogger, abortSignal);
+      const prefetchResult = await this.prefetchOriginOnRemote(
+        projectPath,
+        baseRepoPathArg,
+        initLogger,
+        abortSignal
+      );
+      originAlreadyRefreshed = prefetchResult.refreshedOrigin;
 
       await this.syncProjectSnapshotViaGitPush(
         projectPath,
         layout,
         currentSnapshotPath,
         initLogger,
-        abortSignal
+        abortSignal,
+        { forceNoThin: options.forceNoThin === true }
       );
     } else {
       await this.syncProjectSnapshotViaBundle(
@@ -1617,7 +2346,11 @@ export class SSHRuntime extends RemoteRuntime {
 
     // Keep the bare base repo's origin aligned with the local project so later
     // fetchOriginTrunk() calls base new worktrees on the intended remote.
-    await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
+    // Skip when prefetchOriginOnRemote already pushed the same origin URL this
+    // pass — saves one SSH round-trip on every cold sync.
+    if (!originAlreadyRefreshed) {
+      await this.refreshBaseRepoOrigin(projectPath, baseRepoPathArg, initLogger, abortSignal);
+    }
 
     const currentSnapshotWriter = this.writeFile(currentSnapshotPath).getWriter();
     try {
@@ -1637,49 +2370,33 @@ export class SSHRuntime extends RemoteRuntime {
     return getOriginUrlForBundle(projectPath, initLogger, /* logErrors */ false);
   }
 
+  /**
+   * Implements the async `Runtime.createWorkspace` contract. After the
+   * STARTUP-PERF mkdir removal this method no longer performs any awaited
+   * work, but it must remain async to satisfy the interface (other runtimes
+   * still do real I/O here) and so future runtime-specific provisioning can
+   * be reintroduced without churning every call site.
+   */
+  // eslint-disable-next-line @typescript-eslint/require-await
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
     try {
-      const { projectPath, directoryName, initLogger, abortSignal } = params;
+      const { projectPath, directoryName } = params;
       const layout = this.getProjectLayout(projectPath);
       // Workspace directories follow the persisted workspace name; branch checkout happens later.
       const workspacePath = getRemoteWorkspacePath(layout, directoryName);
 
-      // Prepare parent directory for git clone (fast - returns immediately)
-      // Note: git clone will create the workspace directory itself during initWorkspace,
-      // but the parent directory must exist first
-      initLogger.logStep("Preparing remote workspace...");
-      try {
-        // Extract parent directory from workspace path
-        // Example: ~/workspace/project/branch -> ~/workspace/project
-        const lastSlash = workspacePath.lastIndexOf("/");
-        const parentDir = lastSlash > 0 ? workspacePath.substring(0, lastSlash) : "~";
-
-        // Expand tilde for mkdir command
-        const expandedParentDir = expandTildeForSSH(parentDir);
-        const parentDirCommand = `mkdir -p ${expandedParentDir}`;
-
-        const mkdirStream = await this.exec(parentDirCommand, {
-          cwd: "/tmp",
-          timeout: 10,
-          abortSignal,
-        });
-        const mkdirExitCode = await mkdirStream.exitCode;
-        if (mkdirExitCode !== 0) {
-          const stderr = await streamToString(mkdirStream.stderr);
-          return {
-            success: false,
-            error: `Failed to prepare remote workspace: ${stderr}`,
-          };
-        }
-      } catch (error) {
-        return {
-          success: false,
-          error: `Failed to prepare remote workspace: ${getErrorMessage(error)}`,
-        };
-      }
-
-      initLogger.logStep("Remote workspace prepared");
-
+      // STARTUP-PERF: The previous implementation issued an SSH `mkdir -p` here
+      // to ensure the workspace's parent directory exists before `initWorkspace`.
+      // That round-trip is unnecessary because both materialization paths in
+      // `prepareWorkspaceCheckout()` (warm fast-path + slow path) create their
+      // own parents:
+      //   - The slow path's `ensureBaseRepo()` runs `mkdir -p <baseRepoPath>`,
+      //     which creates the shared project root dir as a side effect.
+      //   - The warm fast-path's single fused command runs `mkdir -p` for the
+      //     workspace parent inline before `git worktree add`.
+      // Folding the mkdir into materialization shaves one full SSH RTT off
+      // every workspace startup, which is the dominant constant cost on the
+      // warm path.
       return {
         success: true,
         workspacePath,
@@ -1718,14 +2435,250 @@ export class SSHRuntime extends RemoteRuntime {
     });
   }
 
+  /**
+   * Try to create the workspace via a single fused SSH command (warm fast-path).
+   *
+   * Contract: when the remote already has a healthy shared base repo for this
+   * project AND the staged `refs/mux-bundle/*` tips already match the local
+   * project's `refs/heads/*` tips, we can skip the entire sync pipeline and
+   * jump straight to `git worktree add`. That's the **common case** for
+   * subsequent `mux run` invocations against the same SSH host + project.
+   *
+   * Why this matters: the slow path takes ~9 sequential SSH round-trips. Each
+   * SSH command is ~80ms even on a multiplexed control channel, so just the
+   * call overhead totals ~720ms before any real work. By fusing the probe +
+   * (optional origin fetch) + materialize into a single shell pipeline, we
+   * collapse that to a single client→host round-trip, keeping warm workspace
+   * creates well under the slow path's wall-clock budget.
+   *
+   * Origin freshness: when the local project has an `origin` remote, the
+   * fused script *also* runs `git fetch origin <trunkBranch>` on the host
+   * before `git worktree add`. The new worktree then bases on
+   * `refs/remotes/origin/<trunkBranch>` (matching the slow path's
+   * `resolveFreshWorkspaceSourceBase` semantics) and falls back to the
+   * bundle ref when the fetch fails. The fetch traverses the host's
+   * upstream link, not the client's SSH link, so it does not add a
+   * client-side round-trip.
+   *
+   * Returns true on a successful warm materialization. Returns false on miss
+   * (and the caller falls through to the slow path). Throws only on
+   * unrecoverable errors that are guaranteed to also fail on the slow path —
+   * everything else is treated as a miss so the slow path can self-heal.
+   *
+   * Miss reasons (printed to stdout as `WARM_MISS:<reason>` for log clarity):
+   *   - no-base-repo          : shared base repo doesn't exist yet (cold start)
+   *   - snapshot-marker-missing: snapshot identity file isn't present
+   *   - snapshot-digest-drift : local refs have moved since last sync
+   *   - workspace-exists      : target workspace path already populated
+   *   - no-bundle-ref         : no bundle ref *and* no origin tracking ref available
+   *   - worktree-add-failed   : git worktree add returned non-zero
+   */
+  /**
+   * Result returned by `tryWarmWorktreeAdd()` on a warm-path hit.
+   * `gitmodulesPresent` is reported by the fused SSH command so the caller
+   * can skip the post-worktree submodule-sync probe (another SSH RT) when
+   * the workspace has no `.gitmodules`.
+   */
+  private async tryWarmWorktreeAdd(
+    params: WorkspaceInitParams,
+    nhp: string
+  ): Promise<{ gitmodulesPresent: boolean } | null> {
+    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal } = params;
+
+    // Local prerequisites — all computed without any SSH calls.
+    //
+    // STARTUP-PERF: We deliberately use only the snapshot **digest** to gate
+    // the warm path (no separate ref-manifest check). The digest is the
+    // sha256 of `git show-ref --heads` output: if it matches the digest
+    // persisted on the remote at sync time, the local heads MUST be the same
+    // (modulo a sha256 collision). Skipping the manifest verification saves
+    // both an SSH round-trip and a `git show-ref` parse pass — both are pure
+    // overhead on the warm path because they always agree when the digests
+    // match. If a digest mismatch happens, we fall through to the slow path,
+    // which independently re-verifies via the full manifest before pushing.
+    const layout = this.getProjectLayout(projectPath);
+    // Try the fs-direct fast reader first; fall back to `git show-ref` only
+    // when the cheap path can't handle the project layout. The fallback keeps
+    // the warm path correct against worktree gitdir indirection, reftables,
+    // and symref'd branch heads, which `fastReadGitHeadsRefs` deliberately
+    // refuses to interpret.
+    const headsOutput =
+      (await fastReadGitHeadsRefs(projectPath)) ?? (await readGitHeadsRefs(projectPath));
+    if (headsOutput == null || headsOutput.length === 0) {
+      // No local refs means a freshly-init'd local repo (no commits) or a
+      // non-git directory. Either way the slow path needs to run.
+      return null;
+    }
+    const snapshotDigest = crypto.createHash("sha256").update(headsOutput).digest("hex");
+    const baseRepoPathArg = expandTildeForSSH(layout.baseRepoPath);
+    const currentSnapshotPathArg = expandTildeForSSH(layout.currentSnapshotPath);
+    const workspacePathArg = expandTildeForSSH(workspacePath);
+    const workspaceParentArg = expandTildeForSSH(
+      workspacePath.includes("/") ? workspacePath.substring(0, workspacePath.lastIndexOf("/")) : "~"
+    );
+
+    // CORRECTNESS (origin-freshness): When the local project has an `origin`
+    // remote, the slow path always prefers `origin/<trunkBranch>` over the
+    // bundle ref so new workspaces base on the freshest upstream tip — see
+    // `resolveFreshWorkspaceSourceBase()`. The warm path must match this or
+    // it would silently check out a stale local snapshot when upstream has
+    // advanced. We fold the same `git fetch origin <trunk>` into the fused
+    // SSH script (single round-trip on the wire; the network hop to the
+    // upstream stays on the datacenter side, so adding it preserves the
+    // single-SSH-RTT envelope on the *client* side).
+    const { originUrl } = await this.getOriginUrlForSync(projectPath, initLogger);
+
+    // The remote bundle ref to base the worktree on. Prefer an exact match for
+    // the requested branch (most projects use `main` or the trunk branch name
+    // as the bundle ref), and we can let the remote script pick the first
+    // available bundle ref as a fallback.
+    const bundleRefArg = shescape.quote(`${BUNDLE_REF_PREFIX}${trunkBranch}`);
+    const bundleRefFallbackPrefix = shescape.quote(BUNDLE_REF_PREFIX);
+
+    const branchArg = shescape.quote(branchName);
+    const digestArg = shescape.quote(snapshotDigest);
+    const trunkRefspecArg = shescape.quote(
+      `+refs/heads/${trunkBranch}:refs/remotes/origin/${trunkBranch}`
+    );
+    const trunkTrackingRefArg = shescape.quote(`refs/remotes/origin/${trunkBranch}`);
+    const originUrlArg = originUrl ? shescape.quote(originUrl) : null;
+
+    // Origin-freshness preamble (only when local has an `origin` URL):
+    //   1. Realign the remote base repo's `origin` URL with local — handles
+    //      the rare case where the user changed origin between syncs. Both
+    //      `remote set-url` and the fallback `remote add` are idempotent and
+    //      cost no network I/O.
+    //   2. Best-effort `git fetch origin +refs/heads/<trunk>:refs/remotes/origin/<trunk>`.
+    //      This mirrors `fetchOriginTrunk()` in the slow path: failure is
+    //      tolerated (logged via `fo=0`) and the worktree falls back to the
+    //      bundle ref, exactly like `resolveFreshWorkspaceSourceBase()` does
+    //      when `fetchedOrigin` is false. The fetch runs on the SSH host, so
+    //      its latency is upstream→datacenter (typically fast, and the same
+    //      cost the slow path pays separately).
+    const originPreamble = originUrlArg
+      ? [
+          `git -C ${baseRepoPathArg} remote set-url origin ${originUrlArg} 2>/dev/null || git -C ${baseRepoPathArg} remote add origin ${originUrlArg} >/dev/null 2>&1 || true`,
+          `if ${nhp}git -C ${baseRepoPathArg} fetch --quiet origin ${trunkRefspecArg} 2>/dev/null; then fo=1; else fo=0; fi`,
+        ]
+      : ["fo=0"];
+
+    // Tight script: every byte matters because the script body is shipped
+    // over the SSH wire on every warm probe. We avoid temp files, capture
+    // shell builtins where possible, and use `&&` chaining so a single
+    // explicit branch decides WARM_OK vs WARM_MISS:<reason> with no extra
+    // process spawns.
+    const script = [
+      // Guards (cheap shell builtins, single fork for the snapshot read):
+      `test -d ${baseRepoPathArg} || { echo WARM_MISS:no-base-repo; exit 0; }`,
+      `test -f ${currentSnapshotPathArg} || { echo WARM_MISS:snapshot-marker-missing; exit 0; }`,
+      `read -r s < ${currentSnapshotPathArg} || true`,
+      `[ "$s" = ${digestArg} ] || { echo WARM_MISS:snapshot-digest-drift; exit 0; }`,
+      `test -e ${workspacePathArg} && { echo WARM_MISS:workspace-exists; exit 0; }`,
+      // Optional origin fetch (preserves slow-path origin-freshness).
+      ...originPreamble,
+      // Choose the worktree base ref. Prefer freshly-fetched
+      // `refs/remotes/origin/<trunk>` whenever the fetch succeeded; otherwise
+      // fall back to the local-snapshot bundle ref, matching
+      // resolveFreshWorkspaceSourceBase()'s fallback semantics.
+      `if [ "$fo" = "1" ] && git -C ${baseRepoPathArg} rev-parse --verify ${trunkTrackingRefArg} >/dev/null 2>&1; then`,
+      `  r=${trunkTrackingRefArg}`,
+      "else",
+      `  r=${bundleRefArg}`,
+      `  git -C ${baseRepoPathArg} rev-parse --verify "$r" >/dev/null 2>&1 || r=$(git -C ${baseRepoPathArg} for-each-ref --count=1 --format='%(refname)' ${bundleRefFallbackPrefix})`,
+      `  [ -n "$r" ] || { echo WARM_MISS:no-bundle-ref; exit 0; }`,
+      "fi",
+      // Materialize. Capture checkout failures so a missing-object cache can
+      // fall through to the repairing slow path instead of becoming an opaque
+      // `worktree-add-failed` miss. The path was proven absent above, so removing
+      // a partial checkout here cannot wipe a pre-existing workspace.
+      `mkdir -p ${workspaceParentArg}`,
+      `wt_output=$(${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${branchArg} "$r" 2>&1 >/dev/null)`,
+      "wt_status=$?",
+      'if [ "$wt_status" -ne 0 ]; then',
+      '  case "$wt_output" in',
+      '    *"unable to read sha1 file"*|*"Could not reset index file"*|*"missing blob"*|*"missing tree"*|*"missing commit"*|*"bad object"*|*"unable to read tree"*) wt_reason=missing-objects ;;',
+      "    *) wt_reason=worktree-add-failed ;;",
+      "  esac",
+      `  git -C ${baseRepoPathArg} worktree remove --force ${workspacePathArg} >/dev/null 2>&1 || rm -rf ${workspacePathArg}`,
+      '  [ -z "$wt_output" ] || printf "%s\\n" "$wt_output" >&2',
+      '  echo "WARM_MISS:$wt_reason"',
+      "  exit 0",
+      "fi",
+      // .gitmodules probe folded inline to skip a post-warm SSH RTT.
+      `test -f ${workspacePathArg}/.gitmodules && echo GITMODULES=present || echo GITMODULES=missing`,
+      "echo WARM_OK",
+    ].join("\n");
+
+    initLogger.logStep("Probing for warm-cached remote workspace...");
+    const result = await execBuffered(this, script, {
+      cwd: "/tmp",
+      timeout: 120,
+      abortSignal,
+    });
+
+    if (result.exitCode !== 0) {
+      // Treat unexpected failures as a miss — slow path will retry deterministically.
+      return null;
+    }
+
+    const stdout = result.stdout;
+    if (!stdout.includes("WARM_OK")) {
+      const missMatch = /WARM_MISS:(\S+)/.exec(stdout);
+      const reason = missMatch ? missMatch[1] : "unknown";
+      initLogger.logStep(`Warm fast-path miss (${reason}); using slow path`);
+      return null;
+    }
+
+    const gitmodulesPresent = stdout.includes("GITMODULES=present");
+    // Mirror the slow path's snapshot-reuse log line — semantically the warm
+    // path *is* reusing the remote project snapshot (digest match → bundle/
+    // origin-trunk tip already on the host), just with the materialization
+    // fused into the same round-trip. Keeping the same step text means
+    // downstream tooling (and tests like
+    // "initWorkspace reuses snapshots and preserves remote-only tags...")
+    // continue to observe a consistent lifecycle event.
+    initLogger.logStep("Reusing existing remote project snapshot");
+    initLogger.logStep(`Materialized workspace via warm fast-path (branch: ${branchName})`);
+    return { gitmodulesPresent };
+  }
+
   private async prepareWorkspaceCheckout(params: WorkspaceInitParams, nhp: string): Promise<void> {
     const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal, env } =
       params;
+
+    // STARTUP-PERF (warm fast-path): try to materialize the workspace in a
+    // single fused SSH command. See `tryWarmWorktreeAdd()` for the contract
+    // and miss reasons. When this succeeds, we skip the entire multi-call
+    // slow path (test-d → git-check → ensureBaseRepo → snapshot check →
+    // manifest check → refreshOrigin → fetchOrigin → resolveBundleTrunkRef →
+    // resolveFreshWorkspaceSourceBase → worktree-add), collapsing ~9 sequential
+    // SSH round-trips into one.
+    const warmHit = await this.tryWarmWorktreeAdd(params, nhp);
+    if (warmHit) {
+      // STARTUP-PERF: The warm SSH command already reported whether
+      // `.gitmodules` exists in the freshly-materialized worktree, so we can
+      // skip the (otherwise unavoidable) probe-RTT inside
+      // `hasRuntimeGitmodules()` when the answer is "missing". On a typical
+      // single-package project this saves one full SSH round-trip on every
+      // warm workspace create.
+      if (warmHit.gitmodulesPresent) {
+        await syncRuntimeGitSubmodules({
+          runtime: this,
+          workspacePath,
+          initLogger,
+          abortSignal,
+          env,
+          trusted: params.trusted,
+        });
+      }
+      return;
+    }
 
     // If the workspace directory already exists and contains a git repo (e.g. forked from
     // another SSH workspace via worktree add or legacy cp), skip the expensive sync step.
     const workspacePathArg = expandTildeForSSH(workspacePath);
     let needsWorktreeCheckout = true;
+    let workspacePathExistedBeforeCheckout = false;
 
     try {
       const dirCheck = await execBuffered(this, `test -d ${workspacePathArg}`, {
@@ -1734,6 +2687,7 @@ export class SSHRuntime extends RemoteRuntime {
         abortSignal,
       });
       if (dirCheck.exitCode === 0) {
+        workspacePathExistedBeforeCheckout = true;
         const gitCheck = await execBuffered(
           this,
           `git -C ${workspacePathArg} rev-parse --is-inside-work-tree`,
@@ -1746,8 +2700,10 @@ export class SSHRuntime extends RemoteRuntime {
         needsWorktreeCheckout = gitCheck.exitCode !== 0;
       }
     } catch {
-      // Default to materializing the workspace on unexpected errors.
+      // Default to materializing the workspace on unexpected errors, but do not
+      // later delete the path because we failed to prove it was absent first.
       needsWorktreeCheckout = true;
+      workspacePathExistedBeforeCheckout = true;
     }
 
     if (needsWorktreeCheckout) {
@@ -1762,10 +2718,10 @@ export class SSHRuntime extends RemoteRuntime {
       // or submodule sync run. Re-enter ensureBaseRepo() here so older shared repos still get their
       // local core.bare config normalized before we reuse them for a fresh worktree checkout.
       const baseRepoPath = this.getBaseRepoPath(projectPath);
-      const baseRepoPathArg = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
+      const { baseRepoPathArg } = await this.ensureBaseRepo(projectPath, initLogger, abortSignal);
 
-      // Fetch latest from origin in the base repo (best-effort) so new branches
-      // can start from the latest upstream state.
+      // Fetch latest from origin in the base repo so an explicit Source branch
+      // means the upstream branch, not the local snapshot staged in refs/mux-bundle/*.
       const fetchedOrigin = await this.fetchOriginTrunk(
         baseRepoPath,
         trunkBranch,
@@ -1774,42 +2730,92 @@ export class SSHRuntime extends RemoteRuntime {
         nhp
       );
 
-      // Resolve the bundle's staging ref to use as the local fallback start point.
-      // The staging ref is refs/mux-bundle/<trunk>, but the local project's default
-      // branch may differ from trunkBranch (e.g. "master" vs "main").
+      // Resolve the bundle's staging ref to use only as a local fallback start point.
+      // refs/mux-bundle/* is a transport cache for the user's laptop state; it must
+      // not override origin/<source> when the remote source branch is available.
       const bundleTrunkRef = await this.resolveBundleTrunkRef(
         baseRepoPathArg,
         trunkBranch,
         abortSignal
       );
-
-      const shouldUseOrigin =
-        fetchedOrigin &&
-        bundleTrunkRef != null &&
-        (await this.canFastForwardToOrigin(
-          baseRepoPath,
-          bundleTrunkRef,
-          trunkBranch,
-          initLogger,
-          abortSignal
-        ));
-
-      // When origin is reachable, branch from the fresh remote tracking ref.
-      // Otherwise, use the bundle's staging ref (or HEAD as last resort).
-      const newBranchBase = shouldUseOrigin ? `origin/${trunkBranch}` : (bundleTrunkRef ?? "HEAD");
+      const newBranchBase = await this.resolveFreshWorkspaceSourceBase(
+        baseRepoPathArg,
+        trunkBranch,
+        fetchedOrigin,
+        bundleTrunkRef,
+        initLogger,
+        abortSignal
+      );
 
       // git worktree add creates the directory and checks out the branch in one step.
       // -B creates the branch or resets it to the start point if it already exists
       // (e.g. orphaned from a previously deleted workspace). Git still prevents
       // checking out a branch that's active in another worktree.
       initLogger.logStep(`Creating worktree for branch: ${branchName}`);
-      const worktreeCmd = `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(newBranchBase)}`;
+      const runWorktreeAdd = (baseRef: string) =>
+        execBuffered(
+          this,
+          `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(baseRef)}`,
+          {
+            cwd: "/tmp",
+            timeout: 300,
+            abortSignal,
+          }
+        );
 
-      const worktreeResult = await execBuffered(this, worktreeCmd, {
-        cwd: "/tmp",
-        timeout: 300,
-        abortSignal,
-      });
+      let worktreeBase = newBranchBase;
+      let worktreeResult = await runWorktreeAdd(worktreeBase);
+
+      if (
+        worktreeResult.exitCode !== 0 &&
+        isMissingObjectCheckoutFailure(worktreeResult.stderr || worktreeResult.stdout)
+      ) {
+        initLogger.logStep("Shared base repository is missing checkout objects; repairing...");
+        if (!workspacePathExistedBeforeCheckout) {
+          await this.cleanupFailedNewWorktreeCheckout(
+            baseRepoPathArg,
+            workspacePathArg,
+            abortSignal
+          );
+        }
+
+        await this.repairBaseRepoMissingObjectsFromLocal(
+          projectPath,
+          baseRepoPathArg,
+          initLogger,
+          abortSignal
+        );
+
+        const repairedBaseCheck = await this.checkBaseRepoRevisionConnectivity(
+          baseRepoPathArg,
+          worktreeBase,
+          abortSignal
+        );
+        if (!repairedBaseCheck.healthy) {
+          if (worktreeBase === `origin/${trunkBranch}` && bundleTrunkRef != null) {
+            initLogger.logStderr(
+              `Note: origin/${trunkBranch} is still missing objects after repair; using local snapshot ${bundleTrunkRef}`
+            );
+            worktreeBase = bundleTrunkRef;
+            const fallbackCheck = await this.checkBaseRepoRevisionConnectivity(
+              baseRepoPathArg,
+              worktreeBase,
+              abortSignal
+            );
+            if (!fallbackCheck.healthy) {
+              throw new Error(
+                `Shared base repository is still missing objects after repair: ${fallbackCheck.detail}`
+              );
+            }
+          } else {
+            throw new Error(
+              `Shared base repository is still missing objects after repair: ${repairedBaseCheck.detail}`
+            );
+          }
+        }
+
+        worktreeResult = await runWorktreeAdd(worktreeBase);
+      }
 
       if (worktreeResult.exitCode !== 0) {
         throw new Error(
@@ -1830,13 +2836,7 @@ export class SSHRuntime extends RemoteRuntime {
       );
       const shouldUseOrigin =
         fetchedOrigin &&
-        (await this.canFastForwardToOrigin(
-          workspacePath,
-          trunkBranch,
-          trunkBranch,
-          initLogger,
-          abortSignal
-        ));
+        (await this.canFastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal));
 
       if (shouldUseOrigin) {
         await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal, nhp);
@@ -1854,7 +2854,7 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   /**
-   * Fetch trunk branch from origin before checkout.
+   * Fetch trunk branch from origin into its remote-tracking ref before checkout.
    * Returns true if fetch succeeded (origin is available for branching).
    */
   private async fetchOriginTrunk(
@@ -1867,7 +2867,8 @@ export class SSHRuntime extends RemoteRuntime {
     try {
       initLogger.logStep(`Fetching latest from origin/${trunkBranch}...`);
 
-      const fetchCmd = `${nhp}git fetch origin ${shescape.quote(trunkBranch)}`;
+      const remoteTrackingRefSpec = `+refs/heads/${trunkBranch}:refs/remotes/origin/${trunkBranch}`;
+      const fetchCmd = `${nhp}git fetch origin ${shescape.quote(remoteTrackingRefSpec)}`;
       const fetchStream = await this.exec(fetchCmd, {
         cwd: workspacePath,
         timeout: 120, // 2 minutes for network operation
@@ -1900,24 +2901,22 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   /**
-   * Check if a local ref can fast-forward to origin/<originBranch>.
-   * Returns true if localRef is behind or equal to origin (safe to use origin).
-   * Returns false if localRef is ahead or diverged (preserve local state).
+   * Check if the local <branch> can fast-forward to origin/<branch>.
+   * Returns true if local is behind or equal to origin (safe to use origin).
+   * Returns false if local is ahead or diverged (preserve local state).
    *
-   * @param localRef - The ref to compare (e.g. "main" or "refs/mux-bundle/main")
-   * @param originBranch - The branch name on origin (e.g. "main")
+   * @param branch - The branch name to compare locally and on origin (e.g. "main")
    */
   private async canFastForwardToOrigin(
     workspacePath: string,
-    localRef: string,
-    originBranch: string,
+    branch: string,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<boolean> {
     try {
-      // Check if localRef is an ancestor of origin/<originBranch>
+      // Check if local <branch> is an ancestor of origin/<branch>
       // Exit code 0 = local is ancestor (can fast-forward), non-zero = cannot
-      const checkCmd = `git merge-base --is-ancestor ${shescape.quote(localRef)} origin/${shescape.quote(originBranch)}`;
+      const checkCmd = `git merge-base --is-ancestor ${shescape.quote(branch)} origin/${shescape.quote(branch)}`;
       const checkStream = await this.exec(checkCmd, {
         cwd: workspacePath,
         timeout: 30,
@@ -1931,7 +2930,7 @@ export class SSHRuntime extends RemoteRuntime {
 
       // Local is ahead or diverged - preserve local state
       initLogger.logStderr(
-        `Note: Local ${localRef} is ahead of or diverged from origin/${originBranch}, using local state`
+        `Note: Local ${branch} is ahead of or diverged from origin/${branch}, using local state`
       );
       return false;
     } catch {
@@ -2287,18 +3286,96 @@ export class SSHRuntime extends RemoteRuntime {
   async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
     const { projectPath, sourceWorkspaceName, newWorkspaceName, initLogger, abortSignal } = params;
 
+    // SAFETY (workspace-deletion regression): the new workspace path is
+    // computed from the *canonical* project layout, never from the source
+    // workspace's persisted parent directory.
+    //
+    // Why this matters:
+    //   - Legacy SSH workspaces created before #3125 are still persisted at
+    //     `<srcBaseDir>/<basename>/<name>`, while the shared base repo lives
+    //     at `<srcBaseDir>/<basename>-<12hex>/.mux-base.git`. If we kept
+    //     `dirname(sourceWorkspacePath)`, forks off legacy workspaces would
+    //     land in the legacy parent dir, then `git worktree add` (rooted at
+    //     the canonical base repo) would fail with `fatal: invalid reference`,
+    //     and the failure-cleanup `rm -rf <newWorkspacePath>` would run
+    //     against a path that could collide with a *different* canonical
+    //     workspace sharing `newWorkspaceName`. That was the wiping mechanism
+    //     observed in production (see investigation report dated 2026-05-17).
+    //   - The source workspace's persisted path is intentionally *not* moved
+    //     by this PR — leaving legacy records in place is safe now that forks
+    //     no longer destructively touch their parent dir. They migrate
+    //     naturally as users archive + re-fork them.
+    const layout = this.getProjectLayout(projectPath);
     const sourceWorkspacePath = this.getWorkspacePath(projectPath, sourceWorkspaceName);
-    const newWorkspacePath = path.posix.join(
-      path.posix.dirname(sourceWorkspacePath),
-      newWorkspaceName
-    );
+    const newWorkspacePath = getRemoteWorkspacePath(layout, newWorkspaceName);
 
     // For SSH commands, tilde must be expanded using $HOME - plain quoting won't expand it.
     const sourceWorkspacePathArg = expandTildeForSSH(sourceWorkspacePath);
     const newWorkspacePathArg = expandTildeForSSH(newWorkspacePath);
 
+    // SAFETY (rm-rf cannot wipe a sibling): every byte of work this fork
+    // produces lands in a per-attempt staging directory whose name carries
+    // 96 bits of crypto-random entropy. The final canonical path is only
+    // created via an atomic `mv` (worktree path) or `git worktree move`
+    // (worktree-add path), guarded by a final `test -e` collision check.
+    // If anything between branch detection and finalize fails, `rm -rf`
+    // operates exclusively on the staging path and *cannot* touch any
+    // real workspace — even if a concurrent fork raced on the same
+    // `newWorkspaceName`.
+    const stagingId = crypto.randomBytes(6).toString("hex");
+    const stagingName = `.mux-fork-staging-${stagingId}`;
+    const stagingPath = path.posix.join(layout.projectRoot, stagingName);
+    const stagingPathArg = expandTildeForSSH(stagingPath);
+
+    const removeStaging = async (reason: string): Promise<void> => {
+      // SAFE rm -rf: `stagingName` carries 96 bits of crypto entropy and the
+      // `.mux-fork-staging-` prefix is not used anywhere else, so this command
+      // can only ever target our own staging dir. Logged so future
+      // workspace-loss investigations can correlate cleanups with the fork
+      // attempt that produced them.
+      log.info(
+        `forkWorkspace: rm -rf staging path ${stagingPath} (project=${projectPath}, source=${sourceWorkspaceName}, target=${newWorkspaceName}, reason=${reason})`
+      );
+      await execBuffered(this, `rm -rf ${stagingPathArg}`, {
+        cwd: "/tmp",
+        timeout: 30,
+      }).catch(() => undefined);
+    };
+
+    const removeStagingWorktree = async (
+      baseRepoPathArg: string,
+      nhp: string,
+      reason: string
+    ): Promise<void> => {
+      // The staging worktree is registered in the base repo under
+      // `<bare>/worktrees/<stagingName>/`. `worktree remove --force` unwinds
+      // both the registration and the on-disk dir; the rm-rf afterwards is
+      // belt-and-suspenders for the case where the registration was created
+      // but the dir wasn't (or vice versa).
+      log.info(
+        `forkWorkspace: removing staging worktree ${stagingPath} (project=${projectPath}, source=${sourceWorkspaceName}, target=${newWorkspaceName}, reason=${reason})`
+      );
+      await execBuffered(
+        this,
+        `${nhp}git -C ${baseRepoPathArg} worktree remove --force ${stagingPathArg} 2>/dev/null || true`,
+        { cwd: "/tmp", timeout: 30 }
+      ).catch(() => undefined);
+      await removeStaging(reason);
+    };
+
+    // Hoisted outside the try block so the catch handler can reach them when
+    // cleaning up after a thrown/aborted fork — both for `removeStagingWorktree`
+    // (needs the base repo arg + no-hooks prefix) and for the registration flag
+    // that distinguishes "rm-rf is enough" from "must also unregister".
+    const baseRepoPath = this.getBaseRepoPath(projectPath);
+    const baseRepoPathArg = expandTildeForSSH(baseRepoPath);
+    const nhp = gitNoHooksPrefix(params.trusted);
+    let stagingHasWorktreeRegistration = false;
+
     try {
-      // Guard: avoid clobbering an existing directory.
+      // Guard: avoid clobbering an existing destination directory. Surface a
+      // crisp error to the caller — the staging machinery below catches
+      // TOCTOU collisions a second time at the finalize step.
       {
         const exists = await execBuffered(this, `test -e ${newWorkspacePathArg}`, {
           cwd: "/tmp",
@@ -2329,8 +3406,6 @@ export class SSHRuntime extends RemoteRuntime {
       // committed HEAD. Uncommitted working-tree changes from the source are NOT
       // carried over (inherent git worktree limitation). The cp -R -P fallback
       // preserves full working-tree state including uncommitted changes.
-      const baseRepoPath = this.getBaseRepoPath(projectPath);
-      const baseRepoPathArg = expandTildeForSSH(baseRepoPath);
       let usedWorktree = false;
 
       const hasBaseRepo = await execBuffered(this, `test -d ${baseRepoPathArg}`, {
@@ -2344,9 +3419,10 @@ export class SSHRuntime extends RemoteRuntime {
         // Use -b (not -B) so we fail instead of silently resetting an existing
         // branch that another worktree might reference. initWorkspace uses -B
         // because it owns the branch lifecycle; fork is creating a new name.
-        // Disable git hooks for untrusted projects (prevents post-checkout execution)
-        const nhp = gitNoHooksPrefix(params.trusted);
-        const worktreeCmd = `${nhp}git -C ${baseRepoPathArg} worktree add ${newWorkspacePathArg} -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
+        // Stage the worktree under `stagingPath`; `git worktree move` will
+        // rename it (and update the bare repo's gitdir back-reference) into
+        // `newWorkspacePath` once everything else has succeeded.
+        const worktreeCmd = `${nhp}git -C ${baseRepoPathArg} worktree add ${stagingPathArg} -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
         const worktreeResult = await execBuffered(this, worktreeCmd, {
           cwd: "/tmp",
           timeout: 60,
@@ -2355,18 +3431,16 @@ export class SSHRuntime extends RemoteRuntime {
 
         if (worktreeResult.exitCode === 0) {
           usedWorktree = true;
+          stagingHasWorktreeRegistration = true;
         } else {
-          // Source branch likely doesn't exist in the base repo (legacy workspace).
-          // Clean up any partial directory left by the failed `worktree add`
-          // before falling through to cp -R -P (which behaves differently if
-          // the target dir already exists — it copies *into* it, creating a
-          // nested mess instead of a clean clone).
-          await execBuffered(this, `rm -rf ${newWorkspacePathArg}`, {
-            cwd: "/tmp",
-            timeout: 10,
-            // Best-effort cleanup — ignore failures since we're about to fall
-            // through to the cp path which will overwrite the target anyway.
-          }).catch(() => undefined);
+          // Source branch likely doesn't exist in the base repo (legacy
+          // workspace) — fall through to the cp -R -P path. Cleanup operates
+          // exclusively on the unique staging path so it cannot touch a
+          // sibling workspace, even if `git worktree add` left a partial dir
+          // before failing on the bad reference.
+          await removeStaging(
+            `worktree add failed: ${(worktreeResult.stderr || worktreeResult.stdout).trim()}`
+          );
           log.info(
             `Worktree fork failed (${(worktreeResult.stderr || worktreeResult.stdout).trim()}); falling back to full copy`
           );
@@ -2375,14 +3449,15 @@ export class SSHRuntime extends RemoteRuntime {
       }
 
       if (!usedWorktree) {
-        // Full directory copy — either no base repo or worktree creation failed.
+        // Full directory copy into the staging path. `parentDir` is the
+        // canonical project root; `mkdir -p` is idempotent and only ever
+        // creates `<srcBaseDir>/<projectId>/`, never a legacy `<basename>/`.
         initLogger.logStep("Preparing remote workspace...");
-        const parentDir = path.posix.dirname(newWorkspacePath);
-        const mkdirResult = await execBuffered(this, `mkdir -p ${expandTildeForSSH(parentDir)}`, {
-          cwd: "/tmp",
-          timeout: 10,
-          abortSignal,
-        });
+        const mkdirResult = await execBuffered(
+          this,
+          `mkdir -p ${expandTildeForSSH(layout.projectRoot)}`,
+          { cwd: "/tmp", timeout: 10, abortSignal }
+        );
         if (mkdirResult.exitCode !== 0) {
           return {
             success: false,
@@ -2395,18 +3470,13 @@ export class SSHRuntime extends RemoteRuntime {
         initLogger.logStep("Copying workspace on remote...");
         const copyResult = await execBuffered(
           this,
-          `cp -R -P ${sourceWorkspacePathArg} ${newWorkspacePathArg}`,
+          `cp -R -P ${sourceWorkspacePathArg} ${stagingPathArg}`,
           { cwd: "/tmp", timeout: 300, abortSignal }
         );
         if (copyResult.exitCode !== 0) {
-          try {
-            await execBuffered(this, `rm -rf ${newWorkspacePathArg}`, {
-              cwd: "/tmp",
-              timeout: 30,
-            });
-          } catch {
-            // Best-effort cleanup of partially copied workspace.
-          }
+          await removeStaging(
+            `cp -R -P failed: ${(copyResult.stderr || copyResult.stdout).trim()}`
+          );
           return {
             success: false,
             error: `Failed to copy workspace: ${copyResult.stderr || copyResult.stdout}`,
@@ -2418,7 +3488,7 @@ export class SSHRuntime extends RemoteRuntime {
         try {
           await execBuffered(
             this,
-            `cd ${newWorkspacePathArg} && for branch in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | grep -v 'origin/HEAD'); do localname=\${branch#origin/}; git show-ref --verify --quiet refs/heads/$localname || git branch $localname $branch; done`,
+            `cd ${stagingPathArg} && for branch in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin/ | grep -v 'origin/HEAD'); do localname=\${branch#origin/}; git show-ref --verify --quiet refs/heads/$localname || git branch $localname $branch; done`,
             { cwd: "/tmp", timeout: 30 }
           );
         } catch {
@@ -2436,13 +3506,13 @@ export class SSHRuntime extends RemoteRuntime {
           if (originUrl.length > 0) {
             await execBuffered(
               this,
-              `git -C ${newWorkspacePathArg} remote set-url origin ${shescape.quote(originUrl)}`,
+              `git -C ${stagingPathArg} remote set-url origin ${shescape.quote(originUrl)}`,
               { cwd: "/tmp", timeout: 10 }
             );
           } else {
             await execBuffered(
               this,
-              `git -C ${newWorkspacePathArg} remote remove origin 2>/dev/null || true`,
+              `git -C ${stagingPathArg} remote remove origin 2>/dev/null || true`,
               { cwd: "/tmp", timeout: 10 }
             );
           }
@@ -2450,18 +3520,20 @@ export class SSHRuntime extends RemoteRuntime {
           // Ignore - best-effort.
         }
 
-        // Checkout the destination branch, creating it from sourceBranch if needed.
-        // Disable git hooks for untrusted projects (prevents post-checkout execution)
-        const forkNhp = gitNoHooksPrefix(params.trusted);
+        // Checkout the destination branch in the staging dir, creating it
+        // from sourceBranch if needed.
         initLogger.logStep(`Checking out branch: ${newWorkspaceName}`);
         const checkoutCmd =
-          `${forkNhp}git checkout ${shescape.quote(newWorkspaceName)} 2>/dev/null || ` +
-          `${forkNhp}git checkout -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
+          `${nhp}git -C ${stagingPathArg} checkout ${shescape.quote(newWorkspaceName)} 2>/dev/null || ` +
+          `${nhp}git -C ${stagingPathArg} checkout -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
         const checkoutResult = await execBuffered(this, checkoutCmd, {
-          cwd: newWorkspacePath,
+          cwd: "/tmp",
           timeout: 120,
         });
         if (checkoutResult.exitCode !== 0) {
+          await removeStaging(
+            `checkout failed: ${(checkoutResult.stderr || checkoutResult.stdout).trim()}`
+          );
           return {
             success: false,
             error: `Failed to checkout forked branch: ${checkoutResult.stderr || checkoutResult.stdout}`,
@@ -2469,8 +3541,114 @@ export class SSHRuntime extends RemoteRuntime {
         }
       }
 
+      // Finalize: move the staging dir into the canonical destination. There
+      // are two cases:
+      //   - Worktree-add path: use `git worktree move` so the bare repo's
+      //     `worktrees/<name>/gitdir` back-reference is updated atomically
+      //     with the on-disk rename.
+      //   - Copy fallback path: plain `mv` (no gitdir indirection to track).
+      // Both cases guard against a TOCTOU collision at the destination — if
+      // another fork landed there since the initial `test -e`, we refuse to
+      // proceed and clean up our staging dir instead of overwriting.
+      initLogger.logStep("Finalizing workspace path...");
+      if (usedWorktree) {
+        const moveResult = await execBuffered(
+          this,
+          [
+            `if [ -e ${newWorkspacePathArg} ]; then echo MUX_FORK_COLLISION; exit 7; fi`,
+            `${nhp}git -C ${baseRepoPathArg} worktree move ${stagingPathArg} ${newWorkspacePathArg}`,
+          ].join(" && "),
+          { cwd: "/tmp", timeout: 30 }
+        );
+        if (moveResult.exitCode !== 0) {
+          const collision = moveResult.stdout.includes("MUX_FORK_COLLISION");
+          await removeStagingWorktree(
+            baseRepoPathArg,
+            nhp,
+            collision
+              ? "finalize collision (destination created by another process)"
+              : `worktree move failed: ${(moveResult.stderr || moveResult.stdout).trim()}`
+          );
+          stagingHasWorktreeRegistration = false;
+          return {
+            success: false,
+            error: collision
+              ? `Workspace at ${newWorkspacePath} was created by another process during fork; pick a different name`
+              : `Failed to finalize forked worktree: ${moveResult.stderr || moveResult.stdout}`,
+          };
+        }
+        stagingHasWorktreeRegistration = false;
+      } else {
+        // Shell `mv <src-dir> <dest-dir>` has a nasty surprise: if `<dest-dir>`
+        // exists as a directory at the moment the rename(2) syscall runs, BOTH
+        // GNU coreutils mv and BSD mv fall back to "move source INTO dest" —
+        // i.e. they produce `<dest>/<src-basename>/…` instead of failing. The
+        // pre-check `test -e <dest>` mitigates the common case, but it cannot
+        // close the TOCTOU window between the check and the rename: two
+        // concurrent forks racing the cp-fallback path on the same
+        // `newWorkspaceName` would both observe an empty destination, both
+        // call `mv`, and the second `mv` would nest its staging dir under
+        // the first fork's freshly-created destination. Without a post-hoc
+        // detector, the second fork would then return success with
+        // `workspacePath = <dest>` while the actual content sits at
+        // `<dest>/.mux-fork-staging-<hex>/`.
+        //
+        // The shell snippet below does the pre-check, the mv, and a post-hoc
+        // nesting check in a single SSH round-trip. If the post-check finds
+        // our staging dir nested inside the destination, we know another
+        // fork raced ahead — we report it as `MUX_FORK_COLLISION` and clean
+        // up only our nested staging dir, leaving the winning fork's
+        // destination contents intact.
+        const stagingBaseArg = shescape.quote(stagingName);
+        // Multi-statement script (not `&&`-joined) because `&&` is invalid
+        // syntax inside `if/then/fi`. Each top-level statement either
+        // succeeds (and execution continues) or `exit`s on a known sentinel
+        // code: 0=ok, 7=collision (with cleanup already done), 8=mv failed.
+        const finalizeScript = [
+          `if [ -e ${newWorkspacePathArg} ]; then echo MUX_FORK_COLLISION; exit 7; fi`,
+          `mv ${stagingPathArg} ${newWorkspacePathArg} || { echo MUX_FORK_MV_FAILED; exit 8; }`,
+          // Post-hoc nesting detector: only triggers when another fork won
+          // the race after our pre-check passed. Removing only the nested
+          // path is safe because the staging name is unique to this attempt
+          // (96-bit suffix) and can never collide with a real workspace name.
+          `if [ -d ${newWorkspacePathArg}/${stagingBaseArg} ]; then rm -rf ${newWorkspacePathArg}/${stagingBaseArg}; echo MUX_FORK_COLLISION; exit 7; fi`,
+        ].join("; ");
+        const moveResult = await execBuffered(this, finalizeScript, {
+          cwd: "/tmp",
+          timeout: 30,
+        });
+        if (moveResult.exitCode !== 0) {
+          const collision = moveResult.stdout.includes("MUX_FORK_COLLISION");
+          // On `MUX_FORK_COLLISION` the inline script has already removed the
+          // nested staging dir (if any) and left the winning fork's dest
+          // untouched, so `removeStaging` here is a no-op safety net.
+          await removeStaging(
+            collision
+              ? "finalize collision (destination created by another process)"
+              : `mv failed: ${(moveResult.stderr || moveResult.stdout).trim()}`
+          );
+          return {
+            success: false,
+            error: collision
+              ? `Workspace at ${newWorkspacePath} was created by another process during fork; pick a different name`
+              : `Failed to finalize forked workspace: ${moveResult.stderr || moveResult.stdout}`,
+          };
+        }
+      }
+
       return { success: true, workspacePath: newWorkspacePath, sourceBranch };
     } catch (error) {
+      // Catch-all cleanup so an aborted/thrown fork can never leave the
+      // staging worktree registered in the bare repo with a dangling gitdir.
+      if (stagingHasWorktreeRegistration) {
+        await removeStagingWorktree(
+          baseRepoPathArg,
+          nhp,
+          `unexpected error: ${getErrorMessage(error)}`
+        );
+      } else {
+        await removeStaging(`unexpected error: ${getErrorMessage(error)}`);
+      }
       return { success: false, error: getErrorMessage(error) };
     }
   }

@@ -4,39 +4,65 @@ import {
   getReservedLayoutStackHeightPx,
   measureLayoutStackHeightPx,
   rememberLayoutStackHeight,
-  type LayoutStackItem,
+  type ChatInputDecorationStackItem,
+  type LayoutStackLaneKind,
+  type TranscriptTailStackItem,
 } from "./layoutStack";
 
-/**
- * Shared lane for a stack of layout-affecting transcript chrome. Previously split
- * into `TranscriptTailStack` (top-aligned, scroll-pinning) and
- * `ChatInputDecorationStack` (bottom-aligned, measurement-only) which shared ~85%
- * of their machinery — the per-workspace reserved-height memory, the RO settle
- * dance, and the hydration bookkeeping.
- *
- * Differences are now expressed as props:
- *  - `align` picks between `justify-start` (tail, above the composer's opposite
- *    side of the transcript) and `justify-end` (composer decoration).
- *  - `overflowAnchor="none"` opts the tail lane out of browser scroll anchoring
- *    so a newly-inserted tail row (streaming barrier, etc.) can't win the anchor
- *    heuristic and flash the layout underneath.
- *
- * Height changes are observed by the transcript scroll owner; this lane only
- * handles reservation and alignment.
- */
-interface LayoutStackLaneProps {
-  workspaceId: string;
-  isHydrating: boolean;
-  items: readonly LayoutStackItem[];
+interface LayoutStackLaneConfig {
   align: "start" | "end";
+  dataComponent: string;
   overflowAnchor?: "none";
-  dataComponent?: string;
 }
 
-export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
+const LAYOUT_STACK_LANE_CONFIG: Record<LayoutStackLaneKind, LayoutStackLaneConfig> = {
+  "transcript-tail": {
+    align: "start",
+    dataComponent: "TranscriptTailStack",
+    overflowAnchor: "none",
+  },
+  "composer-decoration": {
+    align: "end",
+    dataComponent: "ChatInputDecorationStack",
+  },
+};
+
+interface BaseLayoutStackLaneProps {
+  workspaceId: string;
+  isHydrating: boolean;
+}
+
+interface TranscriptTailStackLaneProps extends BaseLayoutStackLaneProps {
+  items: readonly TranscriptTailStackItem[];
+}
+
+interface ChatInputDecorationStackLaneProps extends BaseLayoutStackLaneProps {
+  items: readonly ChatInputDecorationStackItem[];
+}
+
+type LayoutStackLaneProps =
+  | (TranscriptTailStackLaneProps & { lane: "transcript-tail" })
+  | (ChatInputDecorationStackLaneProps & { lane: "composer-decoration" });
+
+/**
+ * Shared implementation for layout-affecting chat chrome. Public callers choose a
+ * semantic lane through the wrappers below instead of passing low-level layout knobs.
+ *
+ * Lane semantics are intentionally centralized here:
+ *  - transcript tail: content that belongs in the scrollport after messages and
+ *    must opt out of browser scroll anchoring.
+ *  - composer decoration: persistent workspace chrome above the textarea whose
+ *    height changes are handled by the transcript scroll owner from outside the
+ *    scrollport.
+ *
+ * This keeps future warnings/banners from accidentally reintroducing the class of
+ * flash where appending a message moves a live tail row before bottom-lock settles.
+ */
+const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
   const contentRef = useRef<HTMLDivElement>(null);
   const stackHeightByWorkspaceIdRef = useRef(new Map<string, number>());
   const lastMeasuredStackHeightRef = useRef(0);
+  const laneConfig = LAYOUT_STACK_LANE_CONFIG[props.lane];
 
   const hasItems = props.items.length > 0;
   const reservedStackHeightPx = getReservedLayoutStackHeightPx({
@@ -121,16 +147,16 @@ export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
   if (reservedStackHeightPx !== null) {
     style.minHeight = `${reservedStackHeightPx}px`;
   }
-  if (props.overflowAnchor === "none") {
+  if (laneConfig.overflowAnchor === "none") {
     style.overflowAnchor = "none";
   }
 
   return (
     <div
       className={
-        props.align === "end" ? "flex flex-col justify-end" : "flex flex-col justify-start"
+        laneConfig.align === "end" ? "flex flex-col justify-end" : "flex flex-col justify-start"
       }
-      data-component={props.dataComponent}
+      data-component={laneConfig.dataComponent}
       style={style}
     >
       <div ref={contentRef}>
@@ -140,4 +166,14 @@ export const LayoutStackLane: React.FC<LayoutStackLaneProps> = (props) => {
       </div>
     </div>
   );
+};
+
+export const TranscriptTailStackLane: React.FC<TranscriptTailStackLaneProps> = (props) => {
+  return <LayoutStackLane {...props} lane="transcript-tail" />;
+};
+
+export const ChatInputDecorationStackLane: React.FC<ChatInputDecorationStackLaneProps> = (
+  props
+) => {
+  return <LayoutStackLane {...props} lane="composer-decoration" />;
 };

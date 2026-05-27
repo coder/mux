@@ -12,9 +12,17 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SendMessageOptions, ProvidersConfigMap } from "@/common/orpc/types";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
-import { ADVISOR_DEFAULT_MAX_USES_PER_TURN } from "@/common/constants/advisor";
+import {
+  ADVISOR_DEFAULT_MAX_USES_PER_TURN,
+  resolveAdvisorEnabledForAgent,
+} from "@/common/constants/advisor";
+import {
+  DEFAULT_IMAGE_GENERATION_MAX_IMAGES,
+  DEFAULT_IMAGE_GENERATION_MODEL,
+} from "@/common/types/imageGeneration";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
+import type { GoalRecordV1 } from "@/common/types/goal";
 import type { ModelMessage, MuxMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
@@ -22,6 +30,7 @@ import { StreamManager, type StreamTextOnChunk } from "./streamManager";
 import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel, type AdvisorStepCaptureRef } from "@/common/utils/tools/tools";
+import { getGoalToolAvailability } from "@/common/utils/tools/toolAvailability";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import {
@@ -40,6 +49,7 @@ import type { MuxToolScope } from "@/common/types/toolScope";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
+import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
@@ -57,7 +67,13 @@ import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 import { readToolInstructions } from "./systemMessage";
+import {
+  effectiveAdditionalSystemContext,
+  mergeAdditionalSystemInstructions,
+  readAdditionalSystemContext,
+} from "./additionalSystemContext";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
@@ -74,7 +90,7 @@ import {
 } from "@/common/utils/ai/providerOptions";
 import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
 import { isPlainObject } from "@/common/utils/isPlainObject";
-import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
+import { sliceMessagesForProviderFromLatestContextBoundary } from "@/common/utils/messages/compactionBoundary";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { uniqueSuffix } from "@/common/utils/hasher";
 import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
@@ -89,7 +105,7 @@ import type {
   StreamAbortReason,
   StreamEndEvent,
 } from "@/common/types/stream";
-import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import { applyToolPolicyToNames, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { DEVTOOLS_RUN_METADATA_ID_HEADER } from "./devToolsHeaderCapture";
@@ -106,9 +122,43 @@ import {
 } from "./streamSimulation";
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
 import { getErrorMessage } from "@/common/utils/errors";
+import { filterSideQuestionMessages } from "@/common/utils/messages/sideQuestion";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
 
 const STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS = 1_000;
+
+export function prepareProviderRequestMessages(
+  messages: MuxMessage[],
+  canonicalProviderName: string,
+  effectiveThinkingLevel: ThinkingLevel
+): {
+  activeContextMessages: MuxMessage[];
+  providerRequestMessages: MuxMessage[];
+  sideQuestionFilteredCount: number;
+  contextBoundarySlicedCount: number;
+} {
+  // /btw side questions are durable UI history, not main-agent context.
+  // Filter them before boundary slicing so future normal turns don't see
+  // side-question Q/A pairs and accidentally continue from an aside.
+  const messagesWithoutSideQuestions = filterSideQuestionMessages(messages);
+  const sideQuestionFilteredCount = messages.length - messagesWithoutSideQuestions.length;
+  const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
+    messagesWithoutSideQuestions
+  );
+  const contextBoundarySlicedCount =
+    messagesWithoutSideQuestions.length - activeContextMessages.length;
+  const preserveReasoningOnly =
+    canonicalProviderName === "anthropic" && effectiveThinkingLevel !== "off";
+  return {
+    activeContextMessages,
+    providerRequestMessages: filterEmptyAssistantMessages(
+      activeContextMessages,
+      preserveReasoningOnly
+    ),
+    sideQuestionFilteredCount,
+    contextBoundarySlicedCount,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // streamMessage options
@@ -122,6 +172,8 @@ export interface StreamMessageOptions {
   thinkingLevel?: ThinkingLevel;
   toolPolicy?: ToolPolicy;
   abortSignal?: AbortSignal;
+  /** Live workspace scratchpad snapshot from the renderer; when present it wins over disk. */
+  additionalSystemContext?: string;
   additionalSystemInstructions?: string;
   maxOutputTokens?: number;
   muxProviderOptions?: MuxProviderOptions;
@@ -136,6 +188,7 @@ export interface StreamMessageOptions {
   changedFileAttachments?: EditedFileAttachment[];
   postCompactionAttachments?: PostCompactionAttachment[] | null;
   experiments?: SendMessageOptions["experiments"];
+  workspaceGoalService?: WorkspaceGoalService;
   disableWorkspaceAgents?: boolean;
   hasQueuedMessage?: () => boolean;
   openaiTruncationModeOverride?: "auto" | "disabled";
@@ -188,25 +241,6 @@ function markProviderMetadataCostsIncluded(
 interface ToolExecutionContext {
   toolCallId?: string;
   abortSignal?: AbortSignal;
-}
-
-/**
- * Extract the first string-typed value from a chunk object by trying field names
- * in priority order. Different AI SDK chunk types (`text-delta`, `reasoning-delta`)
- * surface the delta text under varying field names; this avoids duplicating the
- * probe logic for each case.
- */
-function extractChunkDeltaText(
-  chunk: Record<string, unknown>,
-  fieldPriority: readonly string[]
-): string {
-  for (const field of fieldPriority) {
-    const value = chunk[field];
-    if (typeof value === "string") {
-      return value;
-    }
-  }
-  return "";
 }
 
 function isToolExecutionContext(value: unknown): value is ToolExecutionContext {
@@ -474,7 +508,7 @@ export class AIService extends EventEmitter {
             await this.historyService.deletePartial(data.workspaceId);
           } else {
             // Commit interrupted message to history with partial:true metadata
-            // This ensures /clear and /truncate can clean up interrupted messages
+            // This ensures /clear can clean up interrupted messages
             const partial = await this.historyService.readPartial(data.workspaceId);
             if (partial) {
               await this.historyService.commitPartial(data.workspaceId);
@@ -737,6 +771,7 @@ export class AIService extends EventEmitter {
       thinkingLevel,
       toolPolicy,
       abortSignal,
+      additionalSystemContext,
       additionalSystemInstructions,
       maxOutputTokens,
       muxProviderOptions,
@@ -748,6 +783,7 @@ export class AIService extends EventEmitter {
       changedFileAttachments,
       postCompactionAttachments,
       experiments,
+      workspaceGoalService,
       disableWorkspaceAgents,
       hasQueuedMessage,
       openaiTruncationModeOverride,
@@ -840,25 +876,27 @@ export class AIService extends EventEmitter {
       // Dump original messages for debugging
       log.debug_obj(`${workspaceId}/1_original_messages.json`, messages);
 
-      // Filter out assistant messages with only reasoning (no text/tools)
-      // EXCEPTION: When extended thinking is enabled, preserve reasoning-only messages
-      // to comply with Extended Thinking API requirements
-      const preserveReasoningOnly =
-        canonicalProviderName === "anthropic" && effectiveThinkingLevel !== "off";
-      const filteredMessages = filterEmptyAssistantMessages(messages, preserveReasoningOnly);
-      log.debug(`Filtered ${messages.length - filteredMessages.length} empty assistant messages`);
-      log.debug_obj(`${workspaceId}/1a_filtered_messages.json`, filteredMessages);
-
-      // WS2 request slicing: only send the latest compaction epoch to providers.
-      // This is request-only; persisted history remains append-only for replay/debugging.
-      const providerRequestMessages = sliceMessagesFromLatestCompactionBoundary(filteredMessages);
-      if (providerRequestMessages !== filteredMessages) {
-        log.debug("Sliced provider history from latest compaction boundary", {
+      // Context Boundary request slicing happens before empty-assistant filtering so
+      // provider-invisible reset rows can still bound the active context window.
+      const {
+        activeContextMessages,
+        providerRequestMessages,
+        sideQuestionFilteredCount,
+        contextBoundarySlicedCount,
+      } = prepareProviderRequestMessages(messages, canonicalProviderName, effectiveThinkingLevel);
+      if (sideQuestionFilteredCount > 0 || contextBoundarySlicedCount > 0) {
+        log.debug("Prepared provider history window", {
           workspaceId,
-          originalCount: filteredMessages.length,
-          slicedCount: providerRequestMessages.length,
+          originalCount: messages.length,
+          sideQuestionFilteredCount,
+          contextBoundarySlicedCount,
+          activeContextCount: activeContextMessages.length,
         });
       }
+      log.debug_obj(`${workspaceId}/1a_active_context_messages.json`, activeContextMessages);
+      log.debug(
+        `Filtered ${activeContextMessages.length - providerRequestMessages.length} empty assistant messages`
+      );
       log.debug_obj(`${workspaceId}/1b_provider_request_messages.json`, providerRequestMessages);
 
       // OpenAI-specific: Keep reasoning parts in history so each request can
@@ -1095,6 +1133,9 @@ export class AIService extends EventEmitter {
       const advisorExperimentEnabled =
         experiments?.advisorTool ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL) === true;
+      const imageGenerationExperimentEnabled =
+        experiments?.imageGenerationTool ??
+        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL) === true;
       emitStartupBreadcrumb("loading_workspace_context");
       const resolveAgentForStreamStartedAt = Date.now();
       const agentResult = await resolveAgentForStream({
@@ -1118,6 +1159,7 @@ export class AIService extends EventEmitter {
         agentDefinition,
         agentDiscoveryPath,
         isSubagentWorkspace,
+        agentInheritanceChain,
         agentIsPlanLike,
         effectiveMode,
         taskSettings,
@@ -1127,10 +1169,24 @@ export class AIService extends EventEmitter {
       } = agentResult.data;
       const projectTrusted = isProjectTrusted(this.config, metadata.projectPath);
       const sharedExecutionTrusted = isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
-      const agentAdvisorEnabled = cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled === true;
+      const agentAdvisorEnabled = resolveAdvisorEnabledForAgent(
+        effectiveAgentId,
+        cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled
+      );
       const advisorModelString = cfg.advisorModelString?.trim() ?? "";
       const advisorToolEligible =
         advisorExperimentEnabled && agentAdvisorEnabled && advisorModelString.length > 0;
+
+      // Goals graduated to GA: tools are gated solely on the workspace's
+      // current goal status + agent capability, not on an experiment flag.
+      let currentGoalForTools: GoalRecordV1 | null = null;
+      if (workspaceGoalService) {
+        currentGoalForTools = await workspaceGoalService.getGoal(workspaceId);
+      }
+      const goalToolAvailability = getGoalToolAvailability({
+        goalStatus: currentGoalForTools?.status ?? null,
+        agentInheritanceChain,
+      });
 
       // Fetch workspace MCP overrides (for filtering servers and tools)
       // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
@@ -1159,6 +1215,34 @@ export class AIService extends EventEmitter {
         : undefined;
       recordStartupPhaseTiming("listMcpServersMs", listMcpServersStartedAt);
 
+      const loadAdditionalSystemContextStartedAt = Date.now();
+      let workspaceAdditionalSystemContext = additionalSystemContext;
+      if (workspaceAdditionalSystemContext == null) {
+        try {
+          // Fall back to disk only when the renderer did not send a live snapshot.
+          // `effectiveAdditionalSystemContext` honors the `enabled` toggle: when
+          // the user has disabled the scratchpad, the persisted content is
+          // intentionally not injected.
+          const record = await readAdditionalSystemContext(this.config, workspaceId);
+          workspaceAdditionalSystemContext = effectiveAdditionalSystemContext(record);
+        } catch (error) {
+          // The scratchpad is user-editable state, so a transient read failure should not block a send.
+          log.warn("Failed to load workspace additional system context; continuing without it", {
+            workspaceId,
+            error,
+          });
+          workspaceAdditionalSystemContext = "";
+        }
+      }
+      const scratchpadAdditionalSystemInstructions = mergeAdditionalSystemInstructions(
+        workspaceAdditionalSystemContext,
+        additionalSystemInstructions
+      );
+      recordStartupPhaseTiming(
+        "loadAdditionalSystemContextMs",
+        loadAdditionalSystemContextStartedAt
+      );
+
       // Build plan-aware instructions and determine plan→exec transition content.
       // IMPORTANT: Derive this from the same boundary-sliced message payload that is sent to
       // the model so plan hints/handoffs cannot be suppressed by pre-boundary history.
@@ -1173,7 +1257,7 @@ export class AIService extends EventEmitter {
           effectiveAgentId,
           agentIsPlanLike,
           agentDiscoveryPath,
-          additionalSystemInstructions,
+          additionalSystemInstructions: scratchpadAdditionalSystemInstructions,
           shouldDisableTaskToolsForDepth,
           taskDepth,
           taskSettings,
@@ -1195,6 +1279,14 @@ export class AIService extends EventEmitter {
               return desktopCapabilityPromise;
             };
 
+      const imageGenerationDirectToolAvailable =
+        imageGenerationExperimentEnabled &&
+        experiments?.programmaticToolCallingExclusive !== true &&
+        applyToolPolicyToNames(["image_generate"], effectiveToolPolicy).includes("image_generate");
+      const imageEditingEnabled =
+        imageGenerationExperimentEnabled &&
+        cfg.imageGeneration?.allowImageUploadsForEditing === true;
+
       const buildStreamSystemContextForAdvisor = (advisorToolAvailable: boolean) =>
         buildStreamSystemContext({
           runtime,
@@ -1213,6 +1305,7 @@ export class AIService extends EventEmitter {
           muxScope,
           loadDesktopCapability,
           advisorToolAvailable,
+          imageGenerationToolAvailable: imageGenerationDirectToolAvailable,
         });
 
       // Build provisional agent context before tool policy finalizes the toolset.
@@ -1421,6 +1514,17 @@ export class AIService extends EventEmitter {
           secrets: await secretsToRecord(projectSecrets, this.opResolver),
           muxEnv,
           runtimeTempDir,
+          ...(imageGenerationExperimentEnabled
+            ? {
+                imageGenerationRuntime: {
+                  modelString: cfg.imageGeneration?.modelString ?? DEFAULT_IMAGE_GENERATION_MODEL,
+                  maxImagesPerCall:
+                    cfg.imageGeneration?.maxImagesPerCall ?? DEFAULT_IMAGE_GENERATION_MAX_IMAGES,
+                  createImageModel: (ms: string) => this.providerModelFactory.createImageModel(ms),
+                },
+              }
+            : {}),
+          imageEditingEnabled,
           ...(advisorToolEligible
             ? {
                 advisorRuntime: {
@@ -1492,11 +1596,15 @@ export class AIService extends EventEmitter {
             }
             this.emit(event.type, event as never);
           },
+          workspaceProjectPath: metadata.projectPath,
+          workspaceExecutionRootPath: metadata.subProjectPath ?? metadata.projectPath,
           workspaceSessionDir: this.config.getSessionDir(workspaceId),
           planFilePath,
           ancestorPlanFilePaths,
           workspaceId,
           muxScope,
+          goalService: workspaceGoalService,
+          enableGoalTools: goalToolAvailability,
           // Only child workspaces (tasks) can report to a parent.
           enableAgentReport: Boolean(metadata.parentWorkspaceId),
           // External edit detection callback
@@ -1573,7 +1681,7 @@ export class AIService extends EventEmitter {
           taskService: this.taskService,
           analyticsService: this.analyticsService,
           desktopSessionManager: this.desktopSessionManager,
-          // PTC experiments for inheritance to subagents
+          // Experiments for inheritance to subagents.
           experiments,
           // Dynamic context for tool descriptions (moved from system prompt for better model attention)
           availableSubagents: agentDefinitions,

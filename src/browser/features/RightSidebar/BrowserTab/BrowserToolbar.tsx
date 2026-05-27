@@ -16,6 +16,7 @@ import assert from "@/common/utils/assert";
 interface BrowserToolbarProps {
   workspaceId: string;
   sessionName: string | null;
+  allowOtherWorkspaceSession?: boolean;
   currentUrl: string | null;
   pendingUrl: string | null;
   isPageLoading: boolean;
@@ -141,6 +142,7 @@ export function BrowserToolbar(props: BrowserToolbarProps) {
         sessionName: targetSession,
         action,
         ...(url != null ? { url } : {}),
+        ...(props.allowOtherWorkspaceSession === true ? { allowOtherWorkspaceSession: true } : {}),
       });
       if (currentSessionNameRef.current !== targetSession) {
         return;

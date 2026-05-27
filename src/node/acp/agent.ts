@@ -758,7 +758,7 @@ export class MuxAgent implements Agent {
       skillsByName = await this.getSessionSkills(sessionId, workspaceId);
     } catch (error) {
       console.error("[acp] Failed to load skills for slash command parsing", error);
-      // Built-in ACP slash commands (/clear, /truncate, /compact, etc.) should
+      // Built-in ACP slash commands (/clear, /compact, etc.) should
       // still work when skill discovery has a transient failure.
       skillsByName = new Map<string, AgentSkillDescriptor>();
     }
@@ -801,24 +801,6 @@ export class MuxAgent implements Agent {
         }
 
         return this.respondToCommand(sessionId, "Cleared chat history.");
-      }
-
-      case "truncate": {
-        const truncateResult = await this.server.client.workspace.truncateHistory({
-          workspaceId,
-          percentage: parsedCommand.percentage,
-        });
-        if (!truncateResult.success) {
-          return this.respondToCommand(
-            sessionId,
-            `Failed to truncate chat history: ${truncateResult.error ?? "unknown error"}`
-          );
-        }
-
-        return this.respondToCommand(
-          sessionId,
-          `Truncated chat history by ${Math.round(parsedCommand.percentage * 100)}%.`
-        );
       }
 
       case "compact": {
@@ -1535,6 +1517,7 @@ export class MuxAgent implements Agent {
         event.type === "tool-call-delta" ||
         event.type === "usage-delta" ||
         event.type === "session-usage-delta" ||
+        event.type === "advisor-output" ||
         event.type === "bash-output" ||
         event.type === "init-output" ||
         // Drop replay history messages under saturation, but keep live message

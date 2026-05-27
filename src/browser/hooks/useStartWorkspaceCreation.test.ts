@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  getFirstProjectPath,
   persistWorkspaceCreationPrefill,
   type StartWorkspaceCreationDetail,
 } from "./useStartWorkspaceCreation";
@@ -11,8 +10,6 @@ import {
   getProjectScopeId,
   getTrunkBranchKey,
 } from "@/common/constants/storage";
-import type { ProjectConfig } from "@/node/config";
-
 import type { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 type PersistFn = typeof updatePersistedState;
@@ -75,18 +72,5 @@ describe("persistWorkspaceCreationPrefill", () => {
     const { persist, calls } = createPersistSpy();
     persistWorkspaceCreationPrefill(projectPath, undefined, persist);
     expect(calls).toHaveLength(0);
-  });
-});
-
-describe("getFirstProjectPath", () => {
-  test("returns first project path or null", () => {
-    const emptyProjects = new Map<string, ProjectConfig>();
-    expect(getFirstProjectPath(emptyProjects)).toBeNull();
-
-    const projects = new Map<string, ProjectConfig>();
-    projects.set("/tmp/a", { path: "/tmp/a", workspaces: [] } as ProjectConfig);
-    projects.set("/tmp/b", { path: "/tmp/b", workspaces: [] } as ProjectConfig);
-
-    expect(getFirstProjectPath(projects)).toBe("/tmp/a");
   });
 });

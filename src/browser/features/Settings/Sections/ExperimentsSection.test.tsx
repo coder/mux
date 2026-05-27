@@ -13,6 +13,24 @@ interface MockApiClient {
   general: {
     restartApp: () => Promise<{ supported: true } | { supported: false; message: string }>;
   };
+  config?: {
+    getConfig: () => Promise<{
+      goalDefaults?: unknown;
+      heartbeatDefaultPrompt?: string;
+      heartbeatDefaultIntervalMs?: number;
+    }>;
+    updateGoalDefaults: (input: { goalDefaults: unknown }) => Promise<void>;
+    updateHeartbeatDefaultPrompt: (input: { defaultPrompt?: string | null }) => Promise<void>;
+    updateHeartbeatDefaultIntervalMs: (input: { intervalMs?: number | null }) => Promise<void>;
+  };
+  server?: {
+    setApiServerSettings: (input: {
+      bindHost: string | null;
+      port: number | null;
+      serveWebUi: boolean | null;
+    }) => Promise<unknown>;
+    getApiServerStatus: () => Promise<unknown>;
+  };
 }
 
 function createDeferred<T>() {
@@ -25,6 +43,7 @@ function createDeferred<T>() {
 
 let mockApi: MockApiClient;
 let experimentEnabled = false;
+let experimentValues: Record<string, boolean> = {};
 
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({
@@ -37,10 +56,24 @@ void mock.module("@/browser/contexts/API", () => ({
 }));
 
 void mock.module("@/browser/contexts/ExperimentsContext", () => ({
-  useExperimentValue: () => experimentEnabled,
+  useExperiment: (experimentId: string) => [
+    experimentValues[experimentId] ?? experimentEnabled,
+    (enabled: boolean) => {
+      experimentValues[experimentId] = enabled;
+    },
+  ],
+  useExperimentValue: (experimentId: string) => experimentValues[experimentId] ?? experimentEnabled,
+  useRemoteExperimentValue: () => null,
 }));
 
-import { PortableDesktopExperimentWarning } from "./ExperimentsSection";
+void mock.module("@/browser/hooks/useTelemetry", () => ({
+  useTelemetry: () => ({
+    experimentOverridden: mock(() => undefined),
+  }),
+}));
+
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { ExperimentsSection, PortableDesktopExperimentWarning } from "./ExperimentsSection";
 
 let originalWindow: typeof globalThis.window;
 let originalDocument: typeof globalThis.document;
@@ -88,12 +121,33 @@ describe("PortableDesktopExperimentWarning", () => {
 
     globalThis.window.api = { platform: "linux", versions: {} };
     experimentEnabled = true;
+    experimentValues = {};
     mockApi = {
       desktop: {
         getPrereqStatus: mock(() => Promise.resolve({ available: true as const })),
       },
       general: {
         restartApp: mock(() => Promise.resolve({ supported: true as const })),
+      },
+      config: {
+        getConfig: mock(() => Promise.resolve({})),
+        updateGoalDefaults: mock(() => Promise.resolve()),
+        updateHeartbeatDefaultPrompt: mock(() => Promise.resolve()),
+        updateHeartbeatDefaultIntervalMs: mock(() => Promise.resolve()),
+      },
+      server: {
+        setApiServerSettings: mock(() => Promise.resolve({})),
+        getApiServerStatus: mock(() =>
+          Promise.resolve({
+            running: false,
+            baseUrl: null,
+            token: null,
+            networkBaseUrls: [],
+            configuredBindHost: null,
+            configuredServeWebUi: false,
+            configuredPort: null,
+          })
+        ),
       },
     };
   });
@@ -111,6 +165,115 @@ describe("PortableDesktopExperimentWarning", () => {
     globalThis.clearTimeout = originalClearTimeout;
     globalThis.setInterval = originalSetInterval;
     globalThis.clearInterval = originalClearInterval;
+  });
+
+  test("shows heartbeat defaults inline only when its experiment is enabled", async () => {
+    // Goal defaults moved out of ExperimentsSection into the Goal tab
+    // (`GoalDefaultsSection`); goals graduated to GA so it is no longer
+    // shown here at all. Heartbeat defaults remain inline here for now.
+    experimentEnabled = false;
+    experimentValues = {
+      [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: false,
+    };
+
+    const view = render(<ExperimentsSection />);
+
+    expect(view.queryByLabelText("Default goal budget in dollars")).toBeNull();
+    expect(view.queryByLabelText("Default heartbeat threshold in minutes")).toBeNull();
+
+    experimentValues = {
+      [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
+    };
+    view.rerender(<ExperimentsSection />);
+
+    await waitFor(() => {
+      expect(view.getByLabelText("Default heartbeat threshold in minutes")).toBeTruthy();
+    });
+    // Goal defaults are no longer rendered in the Experiments panel —
+    // they live in the Goal tab now.
+    expect(view.queryByLabelText("Default goal budget in dollars")).toBeNull();
+  });
+
+  test("reloads experiment settings when inline controls remount", async () => {
+    // Only the heartbeat panel still triggers an inline `getConfig`.
+    experimentEnabled = false;
+    experimentValues = {
+      [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
+    };
+
+    const view = render(<ExperimentsSection />);
+
+    await waitFor(() => {
+      expect(view.getByLabelText("Default heartbeat threshold in minutes")).toBeTruthy();
+    });
+    expect(mockApi.config?.getConfig).toHaveBeenCalledTimes(1);
+
+    experimentValues = {
+      [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: false,
+    };
+    view.rerender(<ExperimentsSection />);
+
+    expect(view.queryByLabelText("Default heartbeat threshold in minutes")).toBeNull();
+
+    experimentValues = {
+      [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
+    };
+    view.rerender(<ExperimentsSection />);
+
+    await waitFor(() => {
+      expect(mockApi.config?.getConfig).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  test("starts a fresh settings load when the API client changes", async () => {
+    experimentEnabled = false;
+    experimentValues = {
+      [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: true,
+    };
+
+    const staleConfig = createDeferred<{
+      goalDefaults?: unknown;
+      heartbeatDefaultPrompt?: string;
+      heartbeatDefaultIntervalMs?: number;
+    }>();
+    const staleGetConfig = mock(() => staleConfig.promise);
+    mockApi = {
+      ...mockApi,
+      config: {
+        getConfig: staleGetConfig,
+        updateGoalDefaults: mock(() => Promise.resolve()),
+        updateHeartbeatDefaultPrompt: mock(() => Promise.resolve()),
+        updateHeartbeatDefaultIntervalMs: mock(() => Promise.resolve()),
+      },
+    };
+
+    const view = render(<ExperimentsSection />);
+
+    await waitFor(() => {
+      expect(staleGetConfig).toHaveBeenCalledTimes(1);
+    });
+
+    const freshConfig = createDeferred<{
+      goalDefaults?: unknown;
+      heartbeatDefaultPrompt?: string;
+      heartbeatDefaultIntervalMs?: number;
+    }>();
+    const freshGetConfig = mock(() => freshConfig.promise);
+    mockApi = {
+      ...mockApi,
+      config: {
+        getConfig: freshGetConfig,
+        updateGoalDefaults: mock(() => Promise.resolve()),
+        updateHeartbeatDefaultPrompt: mock(() => Promise.resolve()),
+        updateHeartbeatDefaultIntervalMs: mock(() => Promise.resolve()),
+      },
+    };
+
+    view.rerender(<ExperimentsSection />);
+
+    await waitFor(() => {
+      expect(freshGetConfig).toHaveBeenCalledTimes(1);
+    });
   });
 
   test("loads prereq status on mount and shows the missing-binary warning when needed", async () => {

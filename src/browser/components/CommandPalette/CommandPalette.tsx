@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Command } from "cmdk";
 import { useCommandRegistry } from "@/browser/contexts/CommandRegistryContext";
 import { useAPI } from "@/browser/contexts/API";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
@@ -12,8 +13,10 @@ import {
   matchesKeybind,
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { resolveSlashCommandExperimentValue } from "@/browser/utils/slashCommands/experimentVisibility";
 import { getSlashCommandSuggestions } from "@/browser/utils/slashCommands/suggestions";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { getDisableWorkspaceAgentsKey, GLOBAL_SCOPE_ID } from "@/common/constants/storage";
 import { filterCommandsByPrefix } from "@/browser/utils/commandPaletteFiltering";
 import { rankByPaletteQuery } from "@/browser/utils/commandPaletteRanking";
@@ -24,6 +27,18 @@ interface CommandPaletteProps {
 
 type PromptDef = NonNullable<NonNullable<CommandAction["prompt"]>>;
 type PromptField = PromptDef["fields"][number];
+
+function getCommandInputPlaceholder(field: PromptField | null): string {
+  if (!field) {
+    return "Switch workspaces or type > for all commands, / for slash commands…";
+  }
+
+  if (field.type === "text") {
+    return field.placeholder ?? "Type value…";
+  }
+
+  return field.placeholder ?? "Search options…";
+}
 
 interface PromptPaletteItem {
   id: string;
@@ -45,6 +60,9 @@ interface PaletteGroup {
 export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext }) => {
   const { api } = useAPI();
 
+  const workspaceHeartbeatsExperimentEnabled = useExperimentValue(
+    EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
+  );
   const slashContext = getSlashContext?.();
   const slashWorkspaceId = slashContext?.workspaceId;
 
@@ -56,6 +74,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
 
   const [agentSkills, setAgentSkills] = useState<AgentSkillDescriptor[]>([]);
   const agentSkillsCacheRef = useRef<Map<string, AgentSkillDescriptor[]>>(new Map());
+  const commandPanelRef = useRef<HTMLDivElement | null>(null);
+  const paletteOpenOriginRef = useRef<HTMLElement | null>(null);
   const { isOpen, initialQuery, close, getActions, addRecent, recent } = useCommandRegistry();
   const [query, setQuery] = useState("");
   const [activePrompt, setActivePrompt] = useState<null | {
@@ -73,6 +93,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
     setQuery("");
   }, []);
 
+  const restorePaletteOpenFocus = useCallback(() => {
+    paletteOpenOriginRef.current?.focus();
+    paletteOpenOriginRef.current = null;
+  }, []);
+
+  const dismissPalette = useCallback(() => {
+    resetPaletteState();
+    close();
+    restorePaletteOpenFocus();
+  }, [close, resetPaletteState, restorePaletteOpenFocus]);
+
   // Close palette with Escape
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -81,13 +112,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
         // (e.g., stream interrupt).
         e.preventDefault();
         e.stopPropagation();
-        resetPaletteState();
-        close();
+        dismissPalette();
       }
     };
     window.addEventListener("keydown", onKey, { capture: true });
     return () => window.removeEventListener("keydown", onKey, { capture: true });
-  }, [isOpen, close, resetPaletteState]);
+  }, [isOpen, dismissPalette]);
 
   // useLayoutEffect fires after DOM commit but before browser paint —
   // ensures ">" appears in the input on the very first visible frame
@@ -97,6 +127,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       setQuery(initialQuery);
     } else {
       resetPaletteState();
+      paletteOpenOriginRef.current = null;
     }
   }, [isOpen, initialQuery, resetPaletteState]);
 
@@ -259,6 +290,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       const suggestions = getSlashCommandSuggestions(q, {
         agentSkills,
         variant: ctx.workspaceId ? "workspace" : "creation",
+        isExperimentEnabled: (experimentId) =>
+          resolveSlashCommandExperimentValue(experimentId, {
+            workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
+          }),
       });
       const section = "Slash Commands";
       const groups: PaletteGroup[] = [
@@ -325,7 +360,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
       groups,
       emptyText: filtered.length ? undefined : "No results",
     } satisfies { groups: PaletteGroup[]; emptyText: string | undefined };
-  }, [query, rawActions, recentIndex, getSlashContext, agentSkills]);
+  }, [
+    query,
+    rawActions,
+    recentIndex,
+    getSlashContext,
+    agentSkills,
+    workspaceHeartbeatsExperimentEnabled,
+  ]);
 
   useEffect(() => {
     if (!activePrompt) return;
@@ -347,6 +389,45 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
   const currentField: PromptField | null = activePrompt
     ? (activePrompt.fields[activePrompt.idx] ?? null)
     : null;
+
+  const trapPromptFocus = useCallback(
+    (event: React.KeyboardEvent) => {
+      if (!currentField || event.key !== "Tab") {
+        return;
+      }
+
+      const panel = commandPanelRef.current;
+      if (!panel) {
+        return;
+      }
+
+      const focusable = Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      );
+      if (focusable.length === 0) {
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const activeElement = document.activeElement;
+      if (event.shiftKey && activeElement === first) {
+        event.preventDefault();
+        stopKeyboardPropagation(event);
+        last.focus();
+        return;
+      }
+
+      if (!event.shiftKey && activeElement === last) {
+        event.preventDefault();
+        stopKeyboardPropagation(event);
+        first.focus();
+      }
+    },
+    [currentField]
+  );
 
   useEffect(() => {
     // Select prompts can return options synchronously or as a promise. This effect normalizes
@@ -426,13 +507,15 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
           })),
         },
       ];
-      emptyText = isLoadingOptions
-        ? "Loading options..."
-        : rankedOptions.length
-          ? undefined
-          : selectOptions.length
-            ? "No results"
-            : "No options";
+      if (isLoadingOptions) {
+        emptyText = "Loading options...";
+      } else if (rankedOptions.length > 0) {
+        emptyText = undefined;
+      } else if (selectOptions.length > 0) {
+        emptyText = "No results";
+      } else {
+        emptyText = "No options";
+      }
     } else {
       const typed = query.trim();
       const fallbackHint = currentField.placeholder ?? "Type value and press Enter";
@@ -455,6 +538,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
     }
   }
 
+  // Capture during render before Command.Input autoFocus moves focus into the palette.
+  if (isOpen && !paletteOpenOriginRef.current) {
+    paletteOpenOriginRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }
+
   if (!isOpen) return null;
 
   const groupsWithItems = groups.filter((group) => group.items.length > 0);
@@ -463,27 +552,22 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
   return (
     <div
       className="fixed inset-0 z-[2000] flex items-start justify-center bg-black/40 pt-[10vh]"
-      onMouseDown={() => {
-        resetPaletteState();
-        close();
-      }}
+      onMouseDown={dismissPalette}
     >
       <Command
+        label={currentField?.label ?? "Command palette"}
+        ref={commandPanelRef}
         className="font-primary w-[min(720px,92vw)] overflow-hidden rounded-lg border border-[var(--color-command-border)] bg-[var(--color-command-surface)] text-[var(--color-command-foreground)] shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
         onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
+        onKeyDown={trapPromptFocus}
         shouldFilter={false}
       >
         <Command.Input
           className="w-full border-b border-[var(--color-command-input-border)] bg-[var(--color-command-input)] px-3.5 py-3 text-sm text-[var(--color-command-foreground)] outline-none placeholder:text-[var(--color-command-subdued)]"
           value={query}
           onValueChange={handleQueryChange}
-          placeholder={
-            currentField
-              ? currentField.type === "text"
-                ? (currentField.placeholder ?? "Type value…")
-                : (currentField.placeholder ?? "Search options…")
-              : `Switch workspaces or type > for all commands, / for slash commands…`
-          }
+          placeholder={getCommandInputPlaceholder(currentField)}
+          aria-label={currentField?.label ?? "Command palette"}
           autoFocus
           onKeyDown={(e: React.KeyboardEvent) => {
             if (!currentField && isEditableElement(e.target)) return;
@@ -496,8 +580,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
               } else if (e.key === "Escape") {
                 e.preventDefault();
                 stopKeyboardPropagation(e);
-                resetPaletteState();
-                close();
+                dismissPalette();
               }
               return;
             }
@@ -536,6 +619,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
                     key={item.id}
                     value={item.title}
                     keywords={itemKeywords}
+                    aria-label={item.title}
                     className="hover:bg-hover aria-selected:bg-hover mx-1 my-0.5 grid cursor-pointer grid-cols-[1fr_auto] items-center gap-2 rounded-md px-3 py-2 text-[13px] aria-selected:text-[var(--color-command-foreground)]"
                     onSelect={() => {
                       if ("prompt" in item && item.prompt) {

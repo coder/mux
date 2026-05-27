@@ -82,8 +82,17 @@ export type ReviewSortOrder = "file-order" | "last-edit";
  * Filter options for review panel
  */
 export interface ReviewFilters {
-  /** Whether to show hunks marked as read */
+  /** Whether to show hunks marked as read (used outside of Assisted mode). */
   showReadHunks: boolean;
+  /**
+   * Whether to show read hunks while {@link assistedOnly} is on. Tracked
+   * separately so the "Read:" toggle in Assisted mode is a worklist
+   * affordance ("hide done") without overwriting the user's general
+   * review preference. Defaults to false so marking an assisted pin
+   * as read actually clears it from the view — the user's most-asked
+   * fix once Assisted shipped.
+   */
+  assistedShowReadHunks: boolean;
   /** File path filter (regex or glob pattern) */
   filePathFilter?: string;
   /** Base reference to diff against (e.g., "HEAD", "main", "origin/main") */
@@ -92,6 +101,36 @@ export interface ReviewFilters {
   includeUncommitted: boolean;
   /** Sort order for hunks */
   sortOrder: ReviewSortOrder;
+  /**
+   * When true, only show hunks the agent flagged via `review_pane_update`.
+   * Independent of pin-first behavior, which always applies when any
+   * assisted hunks exist.
+   */
+  assistedOnly: boolean;
+}
+
+/**
+ * A single agent-flagged review hint targeting one file (and optionally a
+ * line range on the *new* side of the diff). Stored in-memory per workspace
+ * via the {@link review_pane_update} tool.
+ */
+export interface AssistedReviewHunk {
+  /** File path relative to workspace root, as the agent specified it. */
+  path: string;
+  /** Optional inclusive new-file line range, e.g. {start:10,end:24}. */
+  range?: { start: number; end: number };
+  /** Optional agent comment explaining why this area needs review. */
+  comment?: string;
+  /**
+   * Frontend-only: timestamp (ms since epoch) when this pin was first
+   * observed during this client's lifetime — i.e., when `review_pane_update`
+   * introduced the path:range key. Used to render a transient "new" badge
+   * on freshly-added pins so the user can tell incremental adds apart from
+   * carried-over entries.
+   *
+   * Not persisted to disk; recomputed from the transcript on every load.
+   */
+  addedAt?: number;
 }
 
 /**

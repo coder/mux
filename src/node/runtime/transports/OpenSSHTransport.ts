@@ -10,6 +10,7 @@ import {
 import type { SpawnResult } from "../RemoteRuntime";
 import type {
   SSHTransport,
+  SSHTransportAcquireOptions,
   SSHTransportConfig,
   SpawnOptions,
   PtyHandle,
@@ -49,12 +50,7 @@ export class OpenSSHTransport implements SSHTransport {
     return this.config;
   }
 
-  async acquireConnection(options?: {
-    abortSignal?: AbortSignal;
-    timeoutMs?: number;
-    maxWaitMs?: number;
-    onWait?: (waitMs: number) => void;
-  }): Promise<void> {
+  async acquireConnection(options?: SSHTransportAcquireOptions): Promise<void> {
     await sshConnectionPool.acquireConnection(this.config, {
       abortSignal: options?.abortSignal,
       timeoutMs: options?.timeoutMs,

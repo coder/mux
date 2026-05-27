@@ -3,6 +3,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { DevcontainerRuntime } from "./DevcontainerRuntime";
+import type { ExecOptions, ExecStream } from "./Runtime";
 
 interface RuntimeState {
   remoteHomeDir?: string;
@@ -23,6 +24,48 @@ function createRuntime(state: RuntimeState): DevcontainerRuntime {
   internal.currentWorkspacePath = state.currentWorkspacePath;
   return runtime;
 }
+
+function createTextStream(value: string): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(value));
+      controller.close();
+    },
+  });
+}
+
+function createSinkStream(): WritableStream<Uint8Array> {
+  return new WritableStream<Uint8Array>();
+}
+
+class RecordingDevcontainerRuntime extends DevcontainerRuntime {
+  execOptions: ExecOptions | undefined;
+
+  override exec(_command: string, options: ExecOptions): Promise<ExecStream> {
+    this.execOptions = options;
+    return Promise.resolve({
+      stdout: createTextStream("123 456 regular file\n"),
+      stderr: createTextStream(""),
+      stdin: createSinkStream(),
+      exitCode: Promise.resolve(0),
+      duration: Promise.resolve(0),
+    });
+  }
+}
+
+describe("DevcontainerRuntime.stat", () => {
+  it("forwards abort signals to exec-backed container stats", async () => {
+    const runtime = new RecordingDevcontainerRuntime({
+      srcBaseDir: "/tmp/mux",
+      configPath: ".devcontainer/devcontainer.json",
+    });
+    const abortController = new AbortController();
+
+    await runtime.stat("/container-only/file.txt", abortController.signal);
+
+    expect(runtime.execOptions?.abortSignal).toBe(abortController.signal);
+  });
+});
 
 describe("DevcontainerRuntime.resolvePath", () => {
   it("resolves ~ to cached remoteHomeDir", async () => {

@@ -36,6 +36,20 @@ function createWheelEvent(
 
 let scheduledFrames: Array<{ id: number; callback: FrameRequestCallback }> = [];
 let nextFrameId = 1;
+let resizeObserverCallback: ResizeObserverCallback | null = null;
+
+class ResizeObserverMock {
+  constructor(callback: ResizeObserverCallback) {
+    resizeObserverCallback = callback;
+  }
+
+  observe(target: Element): void {
+    void target;
+  }
+  disconnect(): void {
+    resizeObserverCallback = null;
+  }
+}
 
 function flushOneFrame(): void {
   const next = scheduledFrames.shift();
@@ -56,6 +70,8 @@ describe("useAutoScroll", () => {
     cleanupDom = installDom();
     scheduledFrames = [];
     nextFrameId = 1;
+    resizeObserverCallback = null;
+    window.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
 
     // Install the deterministic scheduler on the per-test `window` rather than
     // `globalThis` so this mock never leaks into downstream test files. The
@@ -866,6 +882,43 @@ describe("useAutoScroll", () => {
 
     expect(result.current.autoScroll).toBe(true);
     expect(scheduledFrames.length).toBe(0);
+  });
+
+  test("ResizeObserver pins to bottom before the next rAF", () => {
+    const { result } = renderHook(() => useAutoScroll());
+    const element = document.createElement("div");
+    const metrics = attachScrollMetrics(element, {
+      scrollHeight: 1000,
+      clientHeight: 400,
+    });
+
+    act(() => {
+      (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+      result.current.disableAutoScroll();
+    });
+    act(() => {
+      result.current.jumpToBottom();
+    });
+    expect(resizeObserverCallback).not.toBeNull();
+
+    metrics.setScrollHeight(1500);
+    act(() => {
+      resizeObserverCallback?.([], {} as ResizeObserver);
+    });
+
+    expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
+
+    const queuedResizeObserverCallback = resizeObserverCallback;
+    act(() => {
+      result.current.disableAutoScroll();
+    });
+    metrics.setScrollTop(100);
+    metrics.setScrollHeight(1600);
+    act(() => {
+      queuedResizeObserverCallback?.([], {} as ResizeObserver);
+    });
+
+    expect(metrics.scrollTop).toBe(100);
   });
 
   test("rAF loop is torn down on unmount and stops scheduling new frames", () => {

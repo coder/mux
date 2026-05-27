@@ -10,14 +10,17 @@ import {
   ArrowRightLeft,
   Bell,
   BookOpen,
+  CircleCheck,
   Database,
   FileText,
   GitCommit,
   Globe,
   GraduationCap,
   Hand,
+  Image as ImageIcon,
   Keyboard,
   Lightbulb,
+  MessageCircleQuestion,
   Monitor,
   Move,
   MousePointerClick,
@@ -26,7 +29,9 @@ import {
   List,
   Pencil,
   Sparkles,
+  ScanEye,
   Square,
+  Target,
   Wrench,
 } from "lucide-react";
 import { EmojiIcon } from "@/browser/components/icons/EmojiIcon/EmojiIcon";
@@ -43,8 +48,11 @@ interface ToolContainerProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export const ToolContainer: React.FC<ToolContainerProps> = ({ expanded, className, ...props }) => (
   <div
+    data-transcript-row-surface="tool"
     className={cn(
-      "my-2 rounded font-mono text-[11px] transition-all duration-200",
+      // Transcript scroll pinning depends on row size settling before paint. Never animate
+      // layout-affecting properties here; coalescing swaps one tool row for another in-place.
+      "my-2 rounded font-mono text-[11px] transition-colors duration-200",
       "[container-type:inline-size]",
       expanded ? "py-2 px-3" : "py-1 px-3",
       className
@@ -237,8 +245,11 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   agent_skill_read: GraduationCap,
   agent_skill_read_file: GraduationCap,
   advisor: Lightbulb,
+  ask_user_question: MessageCircleQuestion,
   file_read: BookOpen,
   attach_file: Paperclip,
+  image_generate: ImageIcon,
+  image_edit: ImageIcon,
   desktop_screenshot: Monitor,
   desktop_move_mouse: Move,
   desktop_click: MousePointerClick,
@@ -255,8 +266,12 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   web_fetch: Globe,
   web_search: Globe,
   notify: Bell,
+  review_pane_update: Sparkles,
+  review_pane_get: ScanEye,
   analytics_query: Database,
   task_apply_git_patch: GitCommit,
+  get_goal: Target,
+  complete_goal: CircleCheck,
 };
 
 export const ToolIcon: React.FC<ToolIconProps> = ({ toolName, emoji, emojiSpin, className }) => {

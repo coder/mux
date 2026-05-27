@@ -1,17 +1,25 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shlex
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from harbor.agents.installed.base import BaseInstalledAgent
-from harbor.environments.base import BaseEnvironment
+from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.agent.context import AgentContext
+from harbor.trial.trial import AgentTimeoutError
 
+from .mux_run_contract import (
+    MUX_RUN_TIMEOUT_FAILURE_MARKER,
+    RUN_COMPLETE_MARKER,
+    TIMEOUT_RETURN_CODE,
+)
 from .mux_payload import build_app_archive
 
 
@@ -20,7 +28,7 @@ class _AgentCommand:
     command: str
     env: dict[str, str]
     cwd: str | None = None
-    timeout_sec: int | None = None
+    timeout_sec: float | None = None
 
 
 class MuxAgent(BaseInstalledAgent):
@@ -32,6 +40,8 @@ class MuxAgent(BaseInstalledAgent):
     _ARCHIVE_NAME = "mux-app.tar.gz"
     _RUNNER_NAME = "mux-run.sh"
     _SETUP_SCRIPT_NAME = "mux_setup.sh"
+    _COMMAND_STDOUT_NAME = "stdout.txt"
+    _COMMAND_STDERR_NAME = "stderr.txt"
     _DEFAULT_MODEL = "anthropic:claude-sonnet-4-5"
     _DEFAULT_PROJECT_CANDIDATES = "/workspace:/app:/workspaces:/root/project"
     _INCLUDE_PATHS: Sequence[str] = (
@@ -78,6 +88,7 @@ class MuxAgent(BaseInstalledAgent):
         # Generic pass-through for arbitrary mux run CLI flags (e.g., --thinking
         # high --use-1m --budget 5.00). Avoids per-flag plumbing.
         "MUX_RUN_ARGS",
+        "MUX_RUN_AS_GOAL",
     )
 
     def __init__(
@@ -85,13 +96,16 @@ class MuxAgent(BaseInstalledAgent):
         logs_dir: Path,
         model_name: str = "anthropic:claude-sonnet-4-5",
         experiments: str | None = None,
-        timeout: int | str | None = None,
+        timeout: float | int | str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(logs_dir=logs_dir, **kwargs)
-        # Set MUX_TIMEOUT_MS if timeout is provided via agent kwargs
-        if timeout is not None:
-            os.environ["MUX_TIMEOUT_MS"] = str(int(timeout) * 1000)
+        self._timeout_sec = self._parse_timeout_sec(timeout)
+        self._timeout_ms = (
+            str(round(self._timeout_sec * 1000))
+            if self._timeout_sec is not None
+            else None
+        )
         repo_root_env = os.environ.get("MUX_AGENT_REPO_ROOT")
         repo_root = (
             Path(repo_root_env).resolve()
@@ -130,6 +144,8 @@ class MuxAgent(BaseInstalledAgent):
         env.setdefault("MUX_APP_ROOT", "/opt/mux-app")
         env.setdefault("MUX_WORKSPACE_ID", "mux-bench")
         env.setdefault("MUX_PROJECT_CANDIDATES", self._DEFAULT_PROJECT_CANDIDATES)
+        if self._timeout_ms is not None:
+            env["MUX_TIMEOUT_MS"] = self._timeout_ms
 
         model_value = self._model_name or env["MUX_MODEL"]
         model_value = model_value.strip()
@@ -160,18 +176,51 @@ class MuxAgent(BaseInstalledAgent):
             env[key] = env[key].strip()
 
         if timeout_value := env.get("MUX_TIMEOUT_MS"):
-            if not timeout_value.strip().isdigit():
-                raise ValueError("MUX_TIMEOUT_MS must be an integer")
+            self._validate_timeout_ms(timeout_value)
 
         if project_path := env.get("MUX_PROJECT_PATH"):
             if not project_path.strip():
                 raise ValueError("MUX_PROJECT_PATH must be non-empty when provided")
+
+        mux_run_as_goal = self._normalize_mux_run_as_goal(env.get("MUX_RUN_AS_GOAL"))
+        if mux_run_as_goal is None:
+            env.pop("MUX_RUN_AS_GOAL", None)
+        else:
+            env["MUX_RUN_AS_GOAL"] = mux_run_as_goal
 
         # Set experiments from kwarg (takes precedence over env var)
         if self._experiments:
             env["MUX_EXPERIMENTS"] = self._experiments
 
         return env
+
+    @staticmethod
+    def _parse_timeout_sec(value: float | int | str | None) -> float | None:
+        if value is None:
+            return None
+
+        timeout_sec = float(value)
+        if timeout_sec <= 0:
+            raise ValueError("timeout must be a positive number")
+        return timeout_sec
+
+    @staticmethod
+    def _validate_timeout_ms(value: str) -> None:
+        if not value.strip().isdigit():
+            raise ValueError("MUX_TIMEOUT_MS must be an integer")
+
+    @staticmethod
+    def _normalize_mux_run_as_goal(value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        normalized = value.strip().lower()
+        if normalized in ("", "0", "false"):
+            return None
+        if normalized in ("1", "true"):
+            return "1"
+
+        raise ValueError("MUX_RUN_AS_GOAL must be one of: 1, true, 0, false")
 
     @property
     def _install_agent_template_path(self) -> Path:
@@ -278,7 +327,59 @@ class MuxAgent(BaseInstalledAgent):
     def create_run_agent_commands(self, instruction: str) -> list[_AgentCommand]:
         escaped = shlex.quote(instruction)
         command = f"bash /installed-agent/{self._RUNNER_NAME} {escaped}"
-        return [_AgentCommand(command=command, env=self._env)]
+        return [
+            _AgentCommand(command=command, env=self._env, timeout_sec=self._timeout_sec)
+        ]
+
+    async def _exec_agent_command(
+        self,
+        environment: BaseEnvironment,
+        exec_input: _AgentCommand,
+    ) -> ExecResult:
+        try:
+            return await environment.exec(
+                command=exec_input.command,
+                cwd=exec_input.cwd,
+                env=exec_input.env,
+                timeout_sec=exec_input.timeout_sec,
+            )
+        except asyncio.TimeoutError as exc:
+            if exec_input.timeout_sec is None:
+                raise
+            raise self._agent_timeout_error(exec_input.timeout_sec) from exc
+        except RuntimeError as exc:
+            if exec_input.timeout_sec is not None and "timed out" in str(exc).lower():
+                raise self._agent_timeout_error(exec_input.timeout_sec) from exc
+            raise
+
+    @staticmethod
+    def _agent_timeout_error(timeout_sec: float) -> AgentTimeoutError:
+        return AgentTimeoutError(
+            f"Agent execution timed out after {timeout_sec:g} seconds"
+        )
+
+    @staticmethod
+    def _is_exec_timeout_return(
+        result: ExecResult,
+        timeout_sec: float | None,
+        elapsed_sec: float,
+    ) -> bool:
+        if timeout_sec is None or result.return_code != TIMEOUT_RETURN_CODE:
+            return False
+
+        assert timeout_sec > 0, "timeout_sec is validated when MuxAgent is constructed"
+        timeout_threshold = max(timeout_sec * 0.95, timeout_sec - 10)
+        if elapsed_sec < timeout_threshold:
+            return False
+
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        if RUN_COMPLETE_MARKER in stdout:
+            return False
+        if MUX_RUN_TIMEOUT_FAILURE_MARKER in stderr:
+            return False
+
+        return True
 
     async def run(
         self,
@@ -288,23 +389,42 @@ class MuxAgent(BaseInstalledAgent):
     ) -> None:
         """Run agent commands, download token file, then populate context."""
         # Execute commands (from base class logic, but without calling populate_context)
+        failed_command: tuple[int, int] | None = None
+        timeout_error: AgentTimeoutError | None = None
         for i, exec_input in enumerate(self.create_run_agent_commands(instruction)):
             command_dir = self.logs_dir / f"command-{i}"
             command_dir.mkdir(parents=True, exist_ok=True)
             (command_dir / "command.txt").write_text(exec_input.command)
 
-            result = await environment.exec(
-                command=exec_input.command,
-                cwd=exec_input.cwd,
-                env=exec_input.env,
-                timeout_sec=exec_input.timeout_sec,
-            )
+            # /logs is bind-mounted; pre-create files so sandbox tee output
+            # does not leave root-owned files that host-side log writes cannot replace.
+            stdout_path = command_dir / self._COMMAND_STDOUT_NAME
+            stderr_path = command_dir / self._COMMAND_STDERR_NAME
+            for output_path in (stdout_path, stderr_path):
+                output_path.write_text("")
+
+            started_at = time.monotonic()
+            try:
+                result = await self._exec_agent_command(environment, exec_input)
+            except AgentTimeoutError as exc:
+                timeout_error = exc
+                break
+            elapsed_sec = time.monotonic() - started_at
 
             (command_dir / "return-code.txt").write_text(str(result.return_code))
             if result.stdout:
-                (command_dir / "stdout.txt").write_text(result.stdout)
+                stdout_path.write_text(result.stdout)
             if result.stderr:
-                (command_dir / "stderr.txt").write_text(result.stderr)
+                stderr_path.write_text(result.stderr)
+            if self._is_exec_timeout_return(
+                result, exec_input.timeout_sec, elapsed_sec
+            ):
+                assert exec_input.timeout_sec is not None
+                timeout_error = self._agent_timeout_error(exec_input.timeout_sec)
+                break
+            if result.return_code != 0:
+                failed_command = (i, result.return_code)
+                break
 
         # Download token file from container BEFORE populating context
         # Clear any stale token file first to avoid reading outdated data if download fails
@@ -316,6 +436,15 @@ class MuxAgent(BaseInstalledAgent):
             pass  # Token file may not exist if agent crashed early
 
         self.populate_context_post_run(context)
+
+        if timeout_error is not None:
+            raise timeout_error
+
+        if failed_command is not None:
+            command_index, return_code = failed_command
+            raise RuntimeError(
+                f"mux agent command failed (command {command_index}, exit {return_code})"
+            )
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Extract token usage and cost from the token file written by mux-run.sh."""

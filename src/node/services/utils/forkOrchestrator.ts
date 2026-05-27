@@ -17,6 +17,7 @@ import {
 import type { InitLogger, Runtime, WorkspaceForkResult } from "@/node/runtime/Runtime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
+import { isErrnoWithCode } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 
 interface OrchestrateForkParams {
@@ -198,10 +199,6 @@ function withRollbackErrors(errorMessage: string, rollbackErrors: string[]): str
   }
 
   return `${errorMessage} Rollback errors: ${rollbackErrors.join("; ")}`;
-}
-
-function isErrnoWithCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
 }
 
 function getMultiProjectForkDisabledMessage(sourceWorkspaceId: string): string {

@@ -13,6 +13,16 @@ import {
   type RightSidebarLayoutState,
 } from "./rightSidebarLayout";
 
+test("default layout includes Instructions alongside Stats and Review", () => {
+  const state = getDefaultRightSidebarLayoutState("costs");
+  expect(state.root.type).toBe("tabset");
+  if (state.root.type !== "tabset") throw new Error("expected tabset");
+
+  expect(state.root.tabs).toContain("costs");
+  expect(state.root.tabs).toContain("review");
+  expect(state.root.tabs).toContain("instructions");
+});
+
 test("selectTabInFocusedTabset adds missing tool and makes it active", () => {
   let s = getDefaultRightSidebarLayoutState("costs");
   // Start with a layout that only has costs.
@@ -140,8 +150,14 @@ test("moveTabToTabset removes empty source tabset", () => {
 });
 
 test("reorderTabInTabset reorders tabs within a tabset", () => {
-  // Default layout has ["costs", "review"]; reorder costs from 0 to 1
-  const s0 = getDefaultRightSidebarLayoutState("costs");
+  // Use an explicit minimal layout so this test exercises only reordering,
+  // independent of the registry's `inDefaultLayout` set.
+  const s0: RightSidebarLayoutState = {
+    version: 1,
+    nextId: 2,
+    focusedTabsetId: "tabset-1",
+    root: { type: "tabset", id: "tabset-1", tabs: ["costs", "review"], activeTab: "costs" },
+  };
   const s1 = reorderTabInTabset(s0, "tabset-1", 0, 1);
 
   expect(s1.root.type).toBe("tabset");
@@ -281,8 +297,14 @@ test("parseRightSidebarLayoutState strips removed static tabs from persisted lay
   expect(result.root.type).toBe("tabset");
   if (result.root.type !== "tabset") throw new Error("expected tabset");
 
-  // Removed tabs should be stripped without being re-injected.
-  expect(result.root.tabs).toEqual(["costs", "review"]);
+  // Removed tabs ("stats", "explorer") are stripped. New default-layout tabs
+  // declared in the registry (`inDefaultLayout: true`) are auto-injected so
+  // upgrades flow through without the user having to add them by hand — see
+  // `ensureDefaultLayoutTabs` in rightSidebarLayout.ts.
+  expect(result.root.tabs).toContain("costs");
+  expect(result.root.tabs).toContain("review");
+  expect(result.root.tabs).not.toContain("stats");
+  expect(result.root.tabs).not.toContain("explorer");
   expect(result.root.activeTab).toBe("costs");
 });
 
@@ -305,7 +327,9 @@ test("parseRightSidebarLayoutState falls back activeTab when stats was active", 
   if (result.root.type !== "tabset") throw new Error("expected tabset");
 
   // "stats" stripped; activeTab should fall back to the first remaining tab.
-  expect(result.root.tabs).toEqual(["costs", "review"]);
+  expect(result.root.tabs).toContain("costs");
+  expect(result.root.tabs).toContain("review");
+  expect(result.root.tabs).not.toContain("stats");
   expect(result.root.activeTab).toBe("costs");
 });
 test("parseRightSidebarLayoutState maps stats activeTab to costs even when reordered", () => {
@@ -327,8 +351,14 @@ test("parseRightSidebarLayoutState maps stats activeTab to costs even when reord
   expect(result.root.type).toBe("tabset");
   if (result.root.type !== "tabset") throw new Error("expected tabset");
 
-  // "stats" stripped; activeTab should map to "costs" (semantic replacement), not "review".
-  expect(result.root.tabs).toEqual(["review", "costs"]);
+  // "stats"/"explorer" stripped; activeTab should map to "costs" (semantic
+  // replacement), not "review". Default-layout tabs (`inDefaultLayout: true`)
+  // may be auto-injected by `ensureDefaultLayoutTabs`, so we assert presence
+  // of the original tabs rather than full-array equality.
+  expect(result.root.tabs).toContain("review");
+  expect(result.root.tabs).toContain("costs");
+  expect(result.root.tabs).not.toContain("stats");
+  expect(result.root.tabs).not.toContain("explorer");
   expect(result.root.activeTab).toBe("costs");
 });
 
@@ -373,8 +403,39 @@ test("parseRightSidebarLayoutState handles split layouts with removed tabs", () 
 
   if (left.type !== "tabset" || right.type !== "tabset") throw new Error("expected tabsets");
 
-  expect(left.tabs).toEqual(["costs"]);
+  // The left tabset still contains "costs" (and only "costs" of the originals);
+  // any additional default-layout tabs are auto-appended by
+  // `ensureDefaultLayoutTabs`. The right tabset is unaffected (it doesn't host
+  // the first tabset, which is where defaults land).
+  expect(left.tabs).toContain("costs");
+  expect(left.tabs).not.toContain("stats");
+  expect(left.tabs).not.toContain("explorer");
   expect(left.activeTab).toBe("costs");
   expect(right.tabs).toEqual(["review"]);
   expect(right.activeTab).toBe("review");
+});
+
+test("parseRightSidebarLayoutState auto-adds missing default-layout tabs from the registry", () => {
+  // A minimal pre-existing layout that pre-dates the addition of new default
+  // tabs. The migration should add every `inDefaultLayout: true` tab from the
+  // registry to the first tabset, leaving the active tab untouched.
+  const raw: RightSidebarLayoutState = {
+    version: 1,
+    nextId: 2,
+    focusedTabsetId: "tabset-1",
+    root: { type: "tabset", id: "tabset-1", tabs: ["costs"], activeTab: "costs" },
+  };
+
+  const result = parseRightSidebarLayoutState(raw, "costs");
+
+  expect(result.root.type).toBe("tabset");
+  if (result.root.type !== "tabset") throw new Error("expected tabset");
+
+  // Confirms the migration injects every default tab without re-ordering
+  // existing ones — pre-existing "costs" stays at index 0.
+  expect(result.root.tabs[0]).toBe("costs");
+  expect(result.root.tabs).toContain("costs");
+  expect(result.root.tabs).toContain("review");
+  expect(result.root.tabs).toContain("instructions");
+  expect(result.root.activeTab).toBe("costs");
 });

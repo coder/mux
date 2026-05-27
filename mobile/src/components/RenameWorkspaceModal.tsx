@@ -12,7 +12,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme";
 import { ThemedText } from "./ThemedText";
-import { validateWorkspaceName } from "../utils/workspaceValidation";
+import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 
 interface RenameWorkspaceModalProps {
   visible: boolean;

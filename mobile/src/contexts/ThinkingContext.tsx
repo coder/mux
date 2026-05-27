@@ -3,7 +3,7 @@ import type { PropsWithChildren } from "react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import { assert } from "../utils/assert";
+import { assert } from "@/common/utils/assert";
 
 export type { ThinkingLevel } from "@/common/types/thinking";
 

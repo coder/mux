@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { EXPERIMENT_IDS, type ExperimentId } from "@/common/constants/experiments";
 import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
 import { getCommandGhostHint } from "./registry";
 
@@ -37,6 +38,32 @@ describe("getCommandGhostHint", () => {
 
   it("returns null for workspace-only commands in creation mode", () => {
     expect(getCommandGhostHint("/compact ", false, "creation")).toBeNull();
+  });
+
+  it("returns null for experiment-gated command hints when disabled", () => {
+    expect(
+      getCommandGhostHint("/heartbeat ", false, {
+        isExperimentEnabled: () => false,
+      })
+    ).toBeNull();
+  });
+
+  it("returns hints for experiment-gated commands when enabled", () => {
+    const enabledExperiments = new Set<ExperimentId>([EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]);
+
+    expect(
+      getCommandGhostHint("/heartbeat ", false, {
+        isExperimentEnabled: (experimentId) => enabledExperiments.has(experimentId),
+      })
+    ).toBe(SLASH_COMMAND_HINTS.heartbeat);
+  });
+
+  it("returns goal hints regardless of experiment state after GA", () => {
+    expect(
+      getCommandGhostHint("/goal ", false, {
+        isExperimentEnabled: () => false,
+      })
+    ).toBe(SLASH_COMMAND_HINTS.goal);
   });
 
   it("still returns hints for creation-available commands in creation mode", () => {

@@ -1,13 +1,12 @@
 import type {
   MuxMessage,
   MuxMetadata,
-  MuxFilePart,
   DisplayedMessage,
   CompactionRequestData,
   InlineSkillSnapshotMap,
   AgentSkillReference,
 } from "@/common/types/message";
-import { createMuxMessage, getCompactionFollowUpContent } from "@/common/types/message";
+import { createMuxMessage, isCompactionSummaryMetadata } from "@/common/types/message";
 
 import {
   copyStreamLifecycleSnapshot,
@@ -27,8 +26,16 @@ import {
   type StreamLifecycleSnapshot,
 } from "@/common/types/stream";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
-import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
+import type {
+  TodoItem,
+  StatusSetToolResult,
+  NotifyToolResult,
+  AgentSkillReadToolResult,
+} from "@/common/types/tools";
+import type { AssistedReviewHunk } from "@/common/types/review";
+import { formatAssistedFilter, parseAssistedFilter } from "@/common/utils/review/assistedReview";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
+import { AgentSkillReadToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
 import { computePriorHistoryFingerprint } from "@/common/orpc/onChatCursorFingerprint";
@@ -44,12 +51,16 @@ import {
   buildResponseCompleteMetadata,
   type ResponseCompleteHandler,
 } from "./responseCompletionMetadata";
+import {
+  buildDisplayedMessagesForMessage,
+  getTextPartContent,
+  hasSuccessResult,
+  mergeAdjacentParts,
+  normalizeMessageRouteProvider,
+  resolveRouteProvider,
+} from "./displayedMessageBuilder";
 import { showBrowserNotification } from "@/browser/utils/ui/showBrowserNotification";
-import type {
-  DynamicToolPart,
-  DynamicToolPartPending,
-  DynamicToolPartAvailable,
-} from "@/common/types/toolParts";
+import type { DynamicToolPart, DynamicToolPartPending } from "@/common/types/toolParts";
 import type { AgentSkillDescriptor, AgentSkillScope } from "@/common/types/agentSkill";
 import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
 import { isDynamicToolPart } from "@/common/types/toolParts";
@@ -59,7 +70,15 @@ import { buildTranscriptTruncationPlan } from "./transcriptTruncationPlan";
 import { computeRecencyTimestamp } from "./recency";
 import { assert } from "@/common/utils/assert";
 import { getStatusStateKey } from "@/common/constants/storage";
-import { getFollowUpContentText } from "@/browser/utils/compaction/format";
+import {
+  CONTEXT_BOUNDARY_KINDS,
+  getContextBoundaryKind,
+} from "@/common/utils/messages/compactionBoundary";
+import {
+  SIDE_QUESTION_ANSWER_METADATA_TYPE,
+  isSideQuestionAnswerMessage as isSideQuestionAnswerMuxMessage,
+  isSideQuestionUserMessage as isSideQuestionUserMuxMessage,
+} from "@/common/utils/messages/sideQuestion";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
@@ -77,6 +96,80 @@ const AgentSkillSnapshotMetadataSchema = z.object({
   sha256: z.string().optional(),
   frontmatterYaml: z.string().optional(),
 });
+
+const TodoWriteInputSchema = z.object({
+  todos: z.array(
+    z.object({
+      content: z.string(),
+      status: z.enum(["pending", "in_progress", "completed"]),
+    })
+  ),
+});
+
+const StatusSetSuccessResultSchema = z.object({
+  success: z.literal(true),
+  emoji: z.string(),
+  message: z.string(),
+  url: z.string().optional(),
+}) satisfies z.ZodType<Extract<StatusSetToolResult, { success: true }>>;
+
+const ReviewPaneUpdateSuccessResultSchema = z.object({
+  success: z.literal(true),
+  operation: z.enum(["add", "replace"]),
+  hunks: z.array(
+    z.object({
+      path: z.string(),
+      comment: z.string().nullable().optional(),
+    })
+  ),
+});
+
+const NotifySuccessResultSchema = z.object({
+  success: z.literal(true),
+  title: z.string(),
+  message: z.string().optional(),
+}) satisfies z.ZodType<Extract<NotifyToolResult, { success: true }>>;
+
+const AgentSkillReadInputSchema = z.object({
+  name: z.string().optional(),
+});
+
+function parseLegacyNotifyRouting(
+  output: unknown
+): { notifiedVia?: string; workspaceId?: string } | null {
+  if (typeof output !== "object" || output === null) {
+    return null;
+  }
+  const record = output as Record<string, unknown>;
+  return {
+    notifiedVia: typeof record.notifiedVia === "string" ? record.notifiedVia : undefined,
+    workspaceId: typeof record.workspaceId === "string" ? record.workspaceId : undefined,
+  };
+}
+
+function parseAgentSkillReadToolResult(output: unknown): AgentSkillReadToolResult | null {
+  const parsed = AgentSkillReadToolResultSchema.safeParse(output);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseTodoWriteInput(input: unknown): { todos: TodoItem[] } | null {
+  const parsed = TodoWriteInputSchema.safeParse(input);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseStatusSetSuccessResult(
+  output: unknown
+): Extract<StatusSetToolResult, { success: true }> | null {
+  const parsed = StatusSetSuccessResultSchema.safeParse(output);
+  return parsed.success ? parsed.data : null;
+}
+
+function parseNotifySuccessResult(
+  output: unknown
+): Extract<NotifyToolResult, { success: true }> | null {
+  const parsed = NotifySuccessResultSchema.safeParse(output);
+  return parsed.success ? parsed.data : null;
+}
 
 /** Re-export for consumers that need the loaded skill type */
 export type LoadedSkill = AgentSkillDescriptor;
@@ -123,14 +216,11 @@ interface StreamingContext {
 
   isComplete: boolean;
   isCompacting: boolean;
-  // Idle compaction is background maintenance, not a user-visible completion, so
-  // completion notifications must stay suppressed even for the currently selected workspace.
-  isIdleCompaction: boolean;
-  hasCompactionContinue: boolean;
   // Track the last known queued-follow-up state on the active stream itself so
   // background activity completion can still suppress intermediate notifications
   // after the workspace loses its live queued-message subscription.
   hasQueuedFollowUp: boolean;
+  suppressNotification: boolean;
   isReplay: boolean;
   model: string;
   routedThroughGateway?: boolean;
@@ -156,112 +246,40 @@ interface PendingCompactionRequest {
   source?: "idle-compaction" | "auto-compaction";
 }
 
-/**
- * Check if a tool result indicates success (for tools that return { success: boolean })
- */
-function hasSuccessResult(result: unknown): boolean {
-  return (
-    typeof result === "object" && result !== null && "success" in result && result.success === true
-  );
-}
-
-/**
- * Check if a tool result indicates failure.
- * Handles both explicit failure ({ success: false }) and implicit failure ({ error: "..." })
- */
-function hasFailureResult(result: unknown): boolean {
-  if (typeof result !== "object" || result === null) return false;
-  // Explicit failure
-  if ("success" in result && result.success === false) return true;
-  // Implicit failure - error field present
-  if ("error" in result && result.error) return true;
-  return false;
-}
-
-function resolveRouteProvider(
-  routeProvider: string | undefined,
-  routedThroughGateway: boolean | undefined
-): string | undefined {
-  return routeProvider ?? (routedThroughGateway === true ? "mux-gateway" : undefined);
-}
-
-function normalizeMessageRouteProvider(message: MuxMessage): MuxMessage {
-  const routeProvider = resolveRouteProvider(
-    message.metadata?.routeProvider,
-    message.metadata?.routedThroughGateway
-  );
-
-  if (!message.metadata || routeProvider === message.metadata.routeProvider) {
-    return message;
-  }
-
-  return {
-    ...message,
-    metadata: {
-      ...message.metadata,
-      routeProvider,
-    },
-  };
-}
-
-/**
- * Merge adjacent text/reasoning parts using array accumulation + join().
- * Avoids O(n²) string allocations from repeated concatenation.
- * Tool parts are preserved as-is between merged text/reasoning runs.
- */
-function mergeAdjacentParts(parts: MuxMessage["parts"]): MuxMessage["parts"] {
-  if (parts.length <= 1) return parts;
-
-  const merged: MuxMessage["parts"] = [];
-  let pendingTexts: string[] = [];
-  let pendingTextTimestamp: number | undefined;
-  let pendingReasonings: string[] = [];
-  let pendingReasoningTimestamp: number | undefined;
-
-  const flushText = () => {
-    if (pendingTexts.length > 0) {
-      merged.push({
-        type: "text",
-        text: pendingTexts.join(""),
-        timestamp: pendingTextTimestamp,
-      });
-      pendingTexts = [];
-      pendingTextTimestamp = undefined;
+function markRowsBeforeLatestContextBoundary(messages: DisplayedMessage[]): DisplayedMessage[] {
+  let latestBoundarySequence: number | null = null;
+  for (const message of messages) {
+    if (message.type !== "compaction-boundary") {
+      continue;
     }
-  };
-
-  const flushReasoning = () => {
-    if (pendingReasonings.length > 0) {
-      merged.push({
-        type: "reasoning",
-        text: pendingReasonings.join(""),
-        timestamp: pendingReasoningTimestamp,
-      });
-      pendingReasonings = [];
-      pendingReasoningTimestamp = undefined;
-    }
-  };
-
-  for (const part of parts) {
-    if (part.type === "text") {
-      flushReasoning();
-      pendingTexts.push(part.text);
-      pendingTextTimestamp ??= part.timestamp;
-    } else if (part.type === "reasoning") {
-      flushText();
-      pendingReasonings.push(part.text);
-      pendingReasoningTimestamp ??= part.timestamp;
-    } else {
-      // Tool part - flush and keep as-is
-      flushText();
-      flushReasoning();
-      merged.push(part);
+    if (latestBoundarySequence === null || message.historySequence > latestBoundarySequence) {
+      latestBoundarySequence = message.historySequence;
     }
   }
-  flushText();
-  flushReasoning();
 
-  return merged;
+  if (latestBoundarySequence === null) {
+    return messages;
+  }
+
+  let changed = false;
+  const marked = messages.map((message) => {
+    if (message.type !== "user" && message.type !== "assistant") {
+      return message;
+    }
+
+    const isBeforeLatestContextBoundary = message.historySequence < latestBoundarySequence;
+    if (message.isBeforeLatestContextBoundary === isBeforeLatestContextBoundary) {
+      return message;
+    }
+
+    changed = true;
+    return {
+      ...message,
+      isBeforeLatestContextBoundary: isBeforeLatestContextBoundary ? true : undefined,
+    };
+  });
+
+  return changed ? marked : messages;
 }
 
 function extractAgentSkillSnapshotBody(snapshotText: string): string | null {
@@ -310,14 +328,15 @@ interface InlineSkillSnapshotDisplayState {
   cacheKey?: string;
 }
 
-function getTextPartContent(parts: ReadonlyArray<MuxMessage["parts"][number]>): string {
-  const content: string[] = [];
-  for (const part of parts) {
-    if (part.type === "text") {
-      content.push(part.text);
-    }
-  }
-  return content.join("");
+function getAgentSkillSnapshotDisplayCacheKey(snapshot: AgentSkillSnapshotContent): string {
+  // Displayed skill rows render both frontmatter and body. Include all rendered
+  // fields rather than trusting optional legacy sha256, so cache reuse is safe
+  // for old histories and synthetic snapshot edits.
+  return JSON.stringify({
+    sha256: snapshot.sha256 ?? "",
+    frontmatterYaml: snapshot.frontmatterYaml ?? "",
+    body: snapshot.body ?? "",
+  });
 }
 
 function getAgentSkillSnapshotKey(scope: AgentSkillScope, skillName: string): string {
@@ -389,7 +408,11 @@ function deriveInlineSkillSnapshotDisplayState(
     };
     cacheEntryBySkillName.set(
       ref.skillName,
-      `${ref.scope}|${ref.skillName}|${snapshot.sha256 ?? ""}`
+      JSON.stringify({
+        scope: ref.scope,
+        skillName: ref.skillName,
+        snapshot: getAgentSkillSnapshotDisplayCacheKey(snapshot),
+      })
     );
   }
 
@@ -406,9 +429,24 @@ function deriveInlineSkillSnapshotDisplayState(
   };
 }
 
+interface MessagePartSplitCut {
+  textLength: number;
+  partIndex?: number;
+}
+
+interface SideQuestionInterrupt {
+  atTextLength: number;
+  atPartIndex?: number;
+  sideQuestionUserMsg: MuxMessage;
+  sideQuestionAnswerMsg?: MuxMessage;
+}
+
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
+
+  private backgroundHandoffCompletion: ReturnType<typeof buildAggregateResponseCompleteMetadata> =
+    undefined;
 
   // Derived value cache - invalidated as a unit on every mutation.
   // Adding a new cached value? Add it here and it will auto-invalidate.
@@ -458,6 +496,16 @@ export class StreamingMessageAggregator {
   // Current agent status (updated when status_set is called)
   // Unlike todos, this persists after stream completion to show last activity
   private agentStatus: AgentStatus | undefined = undefined;
+
+  // Agent-flagged "Assisted review" hunks (updated by review_pane_update).
+  // Reconstructed from chat history on reload via processToolResult so the
+  // pinned set survives restarts; not persisted to disk.
+  //
+  // Each entry carries optional `addedAt` metadata so the UI can render a
+  // "new since last update" badge. The timestamp is populated only during
+  // live tool-call processing (not history replay); legacy paths and tests
+  // can omit it.
+  private assistedReviewHunks: AssistedReviewHunk[] = [];
 
   // Loaded skills (updated when agent_skill_read succeeds)
   // Persists after stream completion (like agentStatus) to show which skills were loaded
@@ -775,6 +823,14 @@ export class StreamingMessageAggregator {
    */
   getCurrentTodos(): TodoItem[] {
     return this.currentTodos;
+  }
+
+  /**
+   * Get the current set of agent-flagged Assisted Review hunks.
+   * Updated whenever `review_pane_update` succeeds.
+   */
+  getAssistedReviewHunks(): AssistedReviewHunk[] {
+    return this.assistedReviewHunks;
   }
 
   /**
@@ -1105,13 +1161,14 @@ export class StreamingMessageAggregator {
           let assistantUpdatedTodos = false;
           for (const part of message.parts) {
             if (isDynamicToolPart(part) && part.state === "output-available") {
+              // Replay deliberately omits the timestamp so historical
+              // assisted-review pins don't all light up as "new" on initial
+              // load; only live updates get a fresh addedAt.
               this.processToolResult(part.toolName, part.input, part.output);
               if (
                 part.toolName === "todo_write" &&
                 hasSuccessResult(part.output) &&
-                part.input != null &&
-                typeof part.input === "object" &&
-                Array.isArray((part.input as { todos?: unknown }).todos)
+                parseTodoWriteInput(part.input)
               ) {
                 assistantUpdatedTodos = true;
               }
@@ -1366,7 +1423,7 @@ export class StreamingMessageAggregator {
     const messages = this.getAllMessages();
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
-      if (message.role === "assistant" && this.isCompactionBoundarySummaryMessage(message)) {
+      if (message.role === "assistant" && this.isCompactionBoundaryMessage(message)) {
         // A completed summary closes the earlier /compact request, so later auto-continue
         // streams must not inherit a stale "compacting" UI state from that older turn.
         sawCompletedCompaction = true;
@@ -1392,24 +1449,38 @@ export class StreamingMessageAggregator {
     return this.pendingCompactionRequest ?? this.getLatestHistoricalCompactionRequest();
   }
 
-  private resolveStreamStartCompaction(data: StreamStartEvent): {
-    isCompacting: boolean;
-    isIdleCompaction: boolean;
-    hasCompactionContinue: boolean;
-  } {
+  private resolveStreamStartCompaction(data: StreamStartEvent): boolean {
     // Keep stream classification separate from stream context construction so
     // continue turns after /compact do not inherit stale UI state from history.
     const streamSignalsCompaction = data.agentId === "compact" || data.mode === "compact";
     if (!streamSignalsCompaction && data.agentId != null) {
-      return { isCompacting: false, isIdleCompaction: false, hasCompactionContinue: false };
+      return false;
     }
 
-    const compactionRequest = this.getLatestUnresolvedCompactionRequest();
-    return {
-      isCompacting: streamSignalsCompaction || compactionRequest !== null,
-      isIdleCompaction: compactionRequest?.source === "idle-compaction",
-      hasCompactionContinue: Boolean(compactionRequest?.parsed.followUpContent),
-    };
+    return streamSignalsCompaction || this.getLatestUnresolvedCompactionRequest() !== null;
+  }
+
+  private isDefaultPostCompactionContinueTurn(): boolean {
+    const messages = this.getAllMessages();
+    const latestMessage = messages.at(-1);
+    const previousMessage = messages.at(-2);
+    if (latestMessage?.role !== "user" || previousMessage?.role !== "assistant") {
+      return false;
+    }
+
+    if (latestMessage.metadata?.synthetic !== true) {
+      return false;
+    }
+
+    const summaryMetadata = previousMessage.metadata?.muxMetadata;
+    if (!isCompactionSummaryMetadata(summaryMetadata)) {
+      return false;
+    }
+
+    // The backend marks internal post-compaction resumes at the compaction follow-up
+    // source. This frontend check preserves the policy for replay/tests where only
+    // the synthetic user row and compaction summary are available.
+    return summaryMetadata.pendingFollowUp?.dispatchOptions?.source === "internal-resume";
   }
 
   private setPendingStreamStartTime(time: number | null): void {
@@ -1420,6 +1491,19 @@ export class StreamingMessageAggregator {
       this.optimisticPendingStreamStart = false;
       this.optimisticPendingStreamStartIdleCaughtUpCount = 0;
     }
+  }
+
+  private getActiveMainStreamEntry(): [string, StreamingContext] | undefined {
+    for (const entry of this.activeStreams) {
+      const [messageId] = entry;
+      // /btw side-answer streams render through the same event channel but do
+      // not belong to StreamManager. Active-stream callers such as interrupt,
+      // live usage, and stats must keep pointing at the real main-agent stream.
+      if (!this.isSideQuestionAnswerMessage(messageId)) {
+        return entry;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -1439,10 +1523,9 @@ export class StreamingMessageAggregator {
     /** Mode (plan/exec) for this stream */
     mode?: string;
   } | null {
-    // Get the first (and typically only) active stream
-    const entries = Array.from(this.activeStreams.entries());
-    if (entries.length === 0) return null;
-    const [messageId, context] = entries[0];
+    const activeMainStream = this.getActiveMainStreamEntry();
+    if (!activeMainStream) return null;
+    const [messageId, context] = activeMainStream;
 
     const now = Date.now();
 
@@ -1600,7 +1683,21 @@ export class StreamingMessageAggregator {
   }
 
   getActiveResponseCompleteMetadata() {
-    return buildAggregateResponseCompleteMetadata(this.activeStreams.values());
+    return (
+      buildAggregateResponseCompleteMetadata(this.activeStreams.values()) ??
+      this.backgroundHandoffCompletion
+    );
+  }
+
+  handleBackgroundStreamingGenerationAdvance(): void {
+    const completion = buildAggregateResponseCompleteMetadata(this.activeStreams.values());
+    this.backgroundHandoffCompletion =
+      completion?.suppressNotification === true ? completion : undefined;
+    this.clearActiveStreams();
+  }
+
+  clearBackgroundHandoffCompletion(): void {
+    this.backgroundHandoffCompletion = undefined;
   }
 
   setActiveQueuedFollowUp(hasQueuedFollowUp: boolean): void {
@@ -1610,11 +1707,11 @@ export class StreamingMessageAggregator {
   }
 
   /**
-   * Get the messageId of the first active stream (for token tracking)
-   * Returns undefined if no streams are active
+   * Get the active main-agent stream id (for interrupt, live usage, and token tracking).
+   * Returns undefined when no interruptible main-agent stream is active.
    */
   getActiveStreamMessageId(): string | undefined {
-    return this.activeStreams.keys().next().value;
+    return this.getActiveMainStreamEntry()?.[0];
   }
 
   /**
@@ -1653,17 +1750,62 @@ export class StreamingMessageAggregator {
     return false;
   }
 
-  getCurrentModel(): string | undefined {
-    // If there's an active stream, return its model
-    for (const context of this.activeStreams.values()) {
-      return context.model;
+  /** Is the /btw side-question pipeline currently streaming an answer? */
+  isSideQuestionStreaming(): boolean {
+    for (const messageId of this.activeStreams.keys()) {
+      if (this.isSideQuestionAnswerMessage(messageId)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Active streams that can be interrupted via the backend StreamManager. */
+  hasInterruptibleActiveStream(): boolean {
+    return this.getActiveMainStreamEntry() !== undefined;
+  }
+
+  /** Is `messageId` a /btw side-question answer? */
+  isSideQuestionAnswerMessage(messageId: string): boolean {
+    const message = this.messages.get(messageId);
+    return message !== undefined && isSideQuestionAnswerMuxMessage(message);
+  }
+
+  private isSideQuestionAnswerStreamEvent(event: {
+    messageId: string;
+    metadata?: { muxMetadata?: unknown };
+  }): boolean {
+    if (this.isSideQuestionAnswerMessage(event.messageId)) {
+      return true;
     }
 
-    // Otherwise, return the model from the most recent assistant message
+    const muxMetadata = event.metadata?.muxMetadata;
+    return (
+      typeof muxMetadata === "object" &&
+      muxMetadata !== null &&
+      "type" in muxMetadata &&
+      muxMetadata.type === SIDE_QUESTION_ANSWER_METADATA_TYPE
+    );
+  }
+
+  getCurrentModel(): string | undefined {
+    // If there's an active main-agent stream, return its model. /btw streams
+    // are read-only asides and must not become the workspace's current model.
+    for (const [messageId, context] of this.activeStreams) {
+      if (!this.isSideQuestionAnswerMessage(messageId)) {
+        return context.model;
+      }
+    }
+
+    // Otherwise, return the model from the most recent non-side-answer assistant message.
     const messages = this.getAllMessages();
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
-      if (message.role === "assistant" && message.metadata?.model) {
+      if (
+        message.role === "assistant" &&
+        !isSideQuestionAnswerMuxMessage(message) &&
+        message.metadata?.model
+      ) {
         return message.metadata.model;
       }
     }
@@ -1677,19 +1819,22 @@ export class StreamingMessageAggregator {
    * user-configured level.
    */
   getCurrentThinkingLevel(): string | undefined {
-    // If there's an active stream, return its thinking level
-    for (const context of this.activeStreams.values()) {
-      return context.thinkingLevel;
+    // If there's an active main-agent stream, return its thinking level.
+    // /btw streams are read-only asides and must not become workspace state.
+    for (const [messageId, context] of this.activeStreams) {
+      if (!this.isSideQuestionAnswerMessage(messageId)) {
+        return context.thinkingLevel;
+      }
     }
 
-    // Only check the most recent assistant message to avoid returning
-    // stale values from older turns where settings may have differed.
+    // Only check the most recent non-side-answer assistant message to avoid
+    // returning stale values from older turns where settings may have differed.
     // If it lacks thinkingLevel (e.g. error/abort), return undefined so
     // callers fall back to localStorage.
     const messages = this.getAllMessages();
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
-      if (message.role === "assistant") {
+      if (message.role === "assistant" && !isSideQuestionAnswerMuxMessage(message)) {
         return message.metadata?.thinkingLevel;
       }
     }
@@ -1791,24 +1936,36 @@ export class StreamingMessageAggregator {
 
   // Unified event handlers that encapsulate all complex logic
   handleStreamStart(data: StreamStartEvent): void {
-    const { isCompacting, isIdleCompaction, hasCompactionContinue } =
-      this.resolveStreamStartCompaction(data);
+    const isCompacting = this.resolveStreamStartCompaction(data);
+    const isSideQuestionAnswerStream = this.isSideQuestionAnswerStreamEvent(data);
 
-    // Clear pending "starting..." UI now that the assistant turn is live.
-    this.clearPendingStreamLifecycleState();
-    this.lastAbortReason = null;
+    // Clear pending "starting..." UI once a main-agent turn is live. /btw
+    // side-answer streams can start while a normal turn is still waiting for
+    // its own stream-start, so they must not hide the main startup barrier.
+    if (!isSideQuestionAnswerStream) {
+      this.clearPendingStreamLifecycleState();
+      this.lastAbortReason = null;
+    }
 
     // NOTE: We do NOT clear agentStatus or currentTodos here.
     // They are cleared when a new user message arrives (see handleMessage),
     // ensuring consistent behavior whether loading from history or processing live events.
 
-    for (const activeStream of this.activeStreams.values()) {
-      // A queued follow-up belongs to the handoff into the next stream. Once that next
-      // stream starts, older contexts must not keep suppressing later completions.
-      activeStream.hasQueuedFollowUp = false;
+    if (!isSideQuestionAnswerStream) {
+      for (const activeStream of this.activeStreams.values()) {
+        // A queued follow-up belongs to the handoff into the next main stream.
+        // /btw side-answer streams are independent asides, so they must not
+        // clear the main stream's queued-follow-up suppression state.
+        activeStream.hasQueuedFollowUp = false;
+      }
+      this.backgroundHandoffCompletion = undefined;
     }
     const routeProvider = resolveRouteProvider(data.routeProvider, data.routedThroughGateway);
 
+    const suppressNotification =
+      this.isDefaultPostCompactionContinueTurn() ||
+      this.getLatestUnresolvedCompactionRequest()?.parsed.followUpContent?.dispatchOptions
+        ?.source === "internal-resume";
     const now = Date.now();
     const context: StreamingContext = {
       serverStartTime: data.startTime,
@@ -1816,9 +1973,8 @@ export class StreamingMessageAggregator {
       lastServerTimestamp: data.startTime,
       isComplete: false,
       isCompacting,
-      isIdleCompaction,
-      hasCompactionContinue,
       hasQueuedFollowUp: false,
+      suppressNotification,
       isReplay: data.replay === true,
       model: data.model,
       routedThroughGateway: data.routedThroughGateway,
@@ -1867,6 +2023,16 @@ export class StreamingMessageAggregator {
     // If called twice, second call safely overwrites first
     this.activeStreams.set(data.messageId, context);
 
+    // Carry forward any muxMetadata that was attached when the message was
+    // first seen (e.g., the side-question pipeline emits a placeholder
+    // `message` event with `muxMetadata.type === "side-question-answer"`
+    // immediately before this stream-start). Without this, the fresh
+    // createMuxMessage below would silently drop the marker for the
+    // duration of the stream — breaking the "side answer" badge and the
+    // /btw split rendering, both of which key off this metadata when
+    // `buildDisplayedMessagesForMessage` runs.
+    const carriedMuxMetadata = existingMessage?.metadata?.muxMetadata;
+
     // Create initial streaming message with empty parts (deltas will append)
     const streamingMessage = createMuxMessage(data.messageId, "assistant", "", {
       historySequence: data.historySequence,
@@ -1876,6 +2042,7 @@ export class StreamingMessageAggregator {
       routeProvider,
       mode: data.mode,
       thinkingLevel: data.thinkingLevel,
+      ...(carriedMuxMetadata !== undefined ? { muxMetadata: carriedMuxMetadata } : {}),
     });
 
     this.messages.set(data.messageId, streamingMessage);
@@ -1922,9 +2089,14 @@ export class StreamingMessageAggregator {
   }
 
   handleStreamEnd(data: StreamEndEvent): void {
-    // A terminal event means any locally preserved "starting..." state is stale,
-    // even if reconnect delivered stream-end without the earlier stream-start.
-    this.clearPendingStreamLifecycleState();
+    const isSideQuestionAnswerStream = this.isSideQuestionAnswerStreamEvent(data);
+    // A terminal event for the main agent means any locally preserved
+    // "starting..." state is stale, even if reconnect delivered stream-end
+    // without the earlier stream-start. /btw side-answer streams are separate
+    // and must not hide a still-pending main startup barrier.
+    if (!isSideQuestionAnswerStream) {
+      this.clearPendingStreamLifecycleState();
+    }
 
     // Direct lookup by messageId - O(1) instead of O(n) find
     const activeStream = this.activeStreams.get(data.messageId);
@@ -1954,15 +2126,18 @@ export class StreamingMessageAggregator {
           // Sync up the tool results from the backend's parts array
           for (const backendPart of data.parts) {
             if (backendPart.type === "dynamic-tool" && backendPart.state === "output-available") {
-              // Find and update existing tool part
-              const toolPart = message.parts.find(
-                (part): part is DynamicToolPart =>
-                  part.type === "dynamic-tool" && part.toolCallId === backendPart.toolCallId
+              const toolPartIndex = message.parts.findIndex(
+                (part) => part.type === "dynamic-tool" && part.toolCallId === backendPart.toolCallId
               );
-              if (toolPart) {
-                // Update with result from backend
-                (toolPart as DynamicToolPartAvailable).output = backendPart.output;
-                (toolPart as DynamicToolPartAvailable).state = "output-available";
+              const toolPart = message.parts[toolPartIndex];
+              if (toolPart?.type === "dynamic-tool") {
+                // Replace the discriminated-union member instead of mutating its
+                // discriminator in place; this keeps TypeScript and runtime shape aligned.
+                message.parts[toolPartIndex] = {
+                  ...toolPart,
+                  state: "output-available",
+                  output: backendPart.output,
+                };
               }
             }
           }
@@ -1980,21 +2155,23 @@ export class StreamingMessageAggregator {
       // Clean up stream-scoped state for this stream.
       this.cleanupStreamState(data.messageId);
 
-      const isFinal = this.activeStreams.size === 0;
+      const isFinal = this.getActiveMainStreamEntry() === undefined;
 
-      // Completion timestamp for ALL final streams — the "stream ended" fact.
-      // Read-marking uses this to keep the active workspace current.
-      const completedAt = isFinal ? Date.now() : null;
+      // Completion timestamp for final main-agent streams — the "stream ended"
+      // fact. Side answers can overlap with the main stream but should not
+      // suppress the main final completion or emit replacement notifications.
+      const completedAt = isFinal && !isSideQuestionAnswerStream ? Date.now() : null;
 
-      // Recency policy: only non-compaction finals inflate lastResponseCompletedAt.
+      // Recency policy: only non-compaction main finals inflate lastResponseCompletedAt.
       // Compaction recency comes from the compacted summary's own timestamp.
       if (completedAt !== null && !activeStream.isCompacting) {
         this.lastResponseCompletedAt = completedAt;
       }
 
-      // Notify on normal stream completion (skip replay-only reconstruction)
-      // isFinal = true when this was the last active stream (assistant done with all work)
-      if (this.workspaceId && this.onResponseComplete) {
+      // Notify on normal stream completion (skip replay-only reconstruction and
+      // /btw side-answer streams).
+      // isFinal = true when the main agent is done with all work.
+      if (this.workspaceId && this.onResponseComplete && !isSideQuestionAnswerStream) {
         this.onResponseComplete({
           workspaceId: this.workspaceId,
           messageId: data.messageId,
@@ -2194,7 +2371,7 @@ export class StreamingMessageAggregator {
       input: data.args,
       timestamp: data.timestamp,
     };
-    message.parts.push(toolPart as never);
+    message.parts.push(toolPart);
 
     // Track tokens for tool input
     this.trackDelta(data.messageId, data.tokens, data.timestamp, "tool-args");
@@ -2263,15 +2440,12 @@ export class StreamingMessageAggregator {
   }
 
   private handleAgentSkillReadResult(input: unknown, output: unknown): void {
-    if (hasSuccessResult(output)) {
-      const result = output as {
-        success: true;
-        skill: {
-          scope: AgentSkillScope;
-          directoryName: string;
-          frontmatter: { name: string; description: string };
-        };
-      };
+    const result = parseAgentSkillReadToolResult(output);
+    if (!result) {
+      return;
+    }
+
+    if (result.success) {
       const skill = result.skill;
       this.trackLoadedSkill({
         name: skill.frontmatter.name,
@@ -2281,14 +2455,10 @@ export class StreamingMessageAggregator {
       return;
     }
 
-    if (!hasFailureResult(output)) {
-      return;
-    }
-
-    const args = input as { name?: string } | undefined;
-    const errorResult = output as { error?: string };
-    if (args?.name) {
-      this.trackSkillLoadError(args.name, errorResult.error ?? "Unknown error");
+    const parsedInput = AgentSkillReadInputSchema.safeParse(input);
+    const skillName = parsedInput.success ? parsedInput.data.name : undefined;
+    if (skillName) {
+      this.trackSkillLoadError(skillName, result.error);
     }
   }
 
@@ -2302,22 +2472,84 @@ export class StreamingMessageAggregator {
    * @param toolName - Name of the tool that was called
    * @param input - Tool input arguments
    * @param output - Tool output result
+   * @param messageContext - Optional metadata about the assistant message that
+   *   owns this tool call. Used by `review_pane_update` to stamp each
+   *   agent-flagged hunk with the originating turn's timestamp so the UI
+   *   can render a "new since last update" badge for freshly-added pins.
    */
-  private processToolResult(toolName: string, input: unknown, output: unknown): void {
+  private processToolResult(
+    toolName: string,
+    input: unknown,
+    output: unknown,
+    messageContext?: { timestamp?: number }
+  ): void {
     // Update TODO state if this was a successful todo_write.
     // We still reconstruct from history so interrupted/incomplete plans survive reloads;
     // final completed plans are cleared later when the last active stream ends.
-    if (
-      toolName === "todo_write" &&
-      hasSuccessResult(output) &&
-      input != null &&
-      typeof input === "object"
-    ) {
-      const args = input as { todos: TodoItem[] };
-      // Guard against malformed historical data - skip silently for self-healing
-      if (Array.isArray(args.todos) && !this.todosEqual(this.currentTodos, args.todos)) {
-        // Only update if todos actually changed (prevents flickering from reference changes)
+    if (toolName === "todo_write" && hasSuccessResult(output)) {
+      const args = parseTodoWriteInput(input);
+      if (args && !this.todosEqual(this.currentTodos, args.todos)) {
+        // Guard against malformed historical data and update only on real changes
+        // to prevent flicker from equivalent-but-new todo array references.
         this.currentTodos = args.todos;
+      }
+    }
+
+    // Update Assisted Review state when review_pane_update succeeds.
+    // The tool returns the resulting list directly (already merged + deduped
+    // by the handler), so we just re-parse the formatted strings into our
+    // structured AssistedReviewHunk form. Re-running this across the entire
+    // history naturally reconstructs the final state on reload.
+    //
+    // We additionally carry `addedAt` per pin so the UI can render a
+    // transient "new" badge for freshly-added pins.
+    //
+    // Carryover semantics:
+    //   - `operation: "add"` — the agent is appending to or refining the
+    //     existing set, so a previously-seen key keeps its original
+    //     `addedAt`. This prevents an `add` that just tweaks a comment
+    //     from re-arming the "new" badge.
+    //   - `operation: "replace"` — the agent is republishing a fresh
+    //     snapshot. Treat every entry as new for metadata purposes (the
+    //     same key reappearing is an explicit re-flag, not a refinement),
+    //     so the UI can re-highlight the snapshot.
+    if (toolName === "review_pane_update") {
+      const parsed = ReviewPaneUpdateSuccessResultSchema.safeParse(output);
+      if (parsed.success) {
+        const previousByKey = new Map<string, AssistedReviewHunk>();
+        for (const prev of this.assistedReviewHunks) {
+          previousByKey.set(formatAssistedFilter(prev), prev);
+        }
+
+        const isAdd = parsed.data.operation === "add";
+
+        const next: AssistedReviewHunk[] = [];
+        for (const entry of parsed.data.hunks) {
+          const filter = parseAssistedFilter(entry.path);
+          if (!filter) continue;
+          const candidate: AssistedReviewHunk = {
+            path: filter.path,
+            range: filter.range,
+            comment: entry.comment ?? undefined,
+          };
+          const key = formatAssistedFilter(candidate);
+          const previous = previousByKey.get(key);
+          if (isAdd && previous) {
+            // Carry forward addedAt for `add` ops only so a refined
+            // comment doesn't reset the "new" badge.
+            candidate.addedAt = previous.addedAt;
+          } else if (messageContext?.timestamp !== undefined) {
+            // `replace` op (or first time we've seen this key under any op):
+            // stamp with the current message's timestamp. `replace` is an
+            // explicit republish, so reuse of an old key should still
+            // re-arm the "new" badge. Replay deliberately omits the
+            // timestamp so historical pins don't all light up as "new"
+            // on initial load.
+            candidate.addedAt = messageContext.timestamp;
+          }
+          next.push(candidate);
+        }
+        this.assistedReviewHunks = next;
       }
     }
 
@@ -2331,33 +2563,36 @@ export class StreamingMessageAggregator {
     // Update agent status if this was a successful status_set
     // agentStatus persists: update both during streaming and on historical reload
     // Use output instead of input to get the truncated message
-    if (toolName === "status_set" && hasSuccessResult(output)) {
-      const result = output as Extract<StatusSetToolResult, { success: true }>;
+    if (toolName === "status_set") {
+      const result = parseStatusSetSuccessResult(output);
+      if (result) {
+        // Use the provided URL, or fall back to the last URL ever set.
+        const url = result.url ?? this.lastStatusUrl;
+        if (url) {
+          this.lastStatusUrl = url;
+        }
 
-      // Use the provided URL, or fall back to the last URL ever set
-      const url = result.url ?? this.lastStatusUrl;
-      if (url) {
-        this.lastStatusUrl = url;
+        this.agentStatus = {
+          emoji: result.emoji,
+          message: result.message,
+          url,
+        };
+        this.savePersistedAgentStatus(this.agentStatus);
       }
-
-      this.agentStatus = {
-        emoji: result.emoji,
-        message: result.message,
-        url,
-      };
-      this.savePersistedAgentStatus(this.agentStatus);
     }
 
     // Handle browser notifications when Electron wasn't available
-    if (toolName === "notify" && hasSuccessResult(output)) {
-      const result = output as Extract<NotifyToolResult, { success: true }>;
-      const uiOnlyNotify = getToolOutputUiOnly(output)?.notify;
-      const legacyNotify = output as { notifiedVia?: string; workspaceId?: string };
-      const notifiedVia = uiOnlyNotify?.notifiedVia ?? legacyNotify.notifiedVia;
-      const workspaceId = uiOnlyNotify?.workspaceId ?? legacyNotify.workspaceId;
+    if (toolName === "notify") {
+      const result = parseNotifySuccessResult(output);
+      if (result) {
+        const uiOnlyNotify = getToolOutputUiOnly(output)?.notify;
+        const legacyNotify = parseLegacyNotifyRouting(output);
+        const notifiedVia = uiOnlyNotify?.notifiedVia ?? legacyNotify?.notifiedVia;
+        const workspaceId = uiOnlyNotify?.workspaceId ?? legacyNotify?.workspaceId;
 
-      if (notifiedVia === "browser") {
-        this.sendBrowserNotification(result.title, result.message, workspaceId);
+        if (notifiedVia === "browser") {
+          this.sendBrowserNotification(result.title, result.message, workspaceId);
+        }
       }
     }
 
@@ -2430,19 +2665,26 @@ export class StreamingMessageAggregator {
         }
       }
 
-      // Find the specific tool part by its ID and update it with the result
-      // We don't move it - it stays in its original temporal position
-      const toolPart = message.parts.find(
-        (part): part is DynamicToolPart =>
-          part.type === "dynamic-tool" && part.toolCallId === data.toolCallId
+      // Find the specific tool part by its ID and update it with the result.
+      // We don't move it - it stays in its original temporal position.
+      const toolPartIndex = message.parts.findIndex(
+        (part) => part.type === "dynamic-tool" && part.toolCallId === data.toolCallId
       );
-      if (toolPart) {
-        // Type assertion needed because TypeScript can't narrow the discriminated union
-        (toolPart as DynamicToolPartAvailable).state = "output-available";
-        (toolPart as DynamicToolPartAvailable).output = data.result;
+      const toolPart = message.parts[toolPartIndex];
+      if (toolPart?.type === "dynamic-tool") {
+        message.parts[toolPartIndex] = {
+          ...toolPart,
+          state: "output-available",
+          output: data.result,
+        };
 
         // Process tool result to update derived state (todos, agentStatus, etc.)
-        this.processToolResult(data.toolName, toolPart.input, data.result);
+        // Live updates stamp a fresh `Date.now()` so the Assisted-review "new"
+        // badge can highlight just-introduced pins (the replay path
+        // intentionally omits this so historical pins don't flash on load).
+        this.processToolResult(data.toolName, toolPart.input, data.result, {
+          timestamp: Date.now(),
+        });
 
         // Tool output is now stable - invalidate all caches.
         this.markMessageDirty(data.messageId);
@@ -2535,11 +2777,20 @@ export class StreamingMessageAggregator {
   }
 
   handleMessage(data: WorkspaceChatMessage): void {
-    // Handle init hook events (ephemeral, not persisted to history)
     if (this.shouldSkipReplayInitEvent(data)) {
       return;
     }
 
+    if (this.handleInitMessage(data)) {
+      return;
+    }
+
+    if (isMuxMessage(data)) {
+      this.handleMuxMessage(data);
+    }
+  }
+
+  private handleInitMessage(data: WorkspaceChatMessage): boolean {
     if (isInitStart(data)) {
       const isReplay = (data as { replay?: boolean }).replay === true;
       if (
@@ -2552,7 +2803,7 @@ export class StreamingMessageAggregator {
         // as a no-op so switching back never clears the visible SSH/setup output mid-replay.
         this.replayInitVisiblePrefix = [...this.initState.lines];
         this.replayInitVisiblePrefixIndex = 0;
-        return;
+        return true;
       }
 
       this.clearReplayInitVisiblePrefix();
@@ -2565,54 +2816,53 @@ export class StreamingMessageAggregator {
         endTime: null,
       };
       this.invalidateCache();
-      return;
+      return true;
     }
 
     if (isInitOutput(data)) {
       if (!this.initState) {
         console.error("Received init-output without init-start", { data });
-        return;
+        return true;
       }
       if (!data.line) {
         console.error("Received init-output with missing line field", { data });
-        return;
+        return true;
       }
       const line = data.line.trimEnd();
       const isError = data.isError === true;
       const isReplay = (data as { replay?: boolean }).replay === true;
       if (isReplay && this.shouldSkipVisibleReplayInitOutput(line, isError)) {
-        return;
+        return true;
       }
 
-      // Truncation: keep only the most recent MAX_LINES (matches backend)
+      // Truncation: keep only the most recent MAX_LINES (matches backend).
       if (this.initState.lines.length >= INIT_HOOK_MAX_LINES) {
-        this.initState.lines.shift(); // Drop oldest line
+        this.initState.lines.shift();
         this.initState.truncatedLines = (this.initState.truncatedLines ?? 0) + 1;
       }
       this.initState.lines.push({ line, isError });
 
-      // Throttle cache invalidation during fast streaming to avoid re-render per line
+      // Throttle cache invalidation during fast streaming to avoid re-render per line.
       this.initOutputThrottleTimer ??= setTimeout(() => {
         this.initOutputThrottleTimer = null;
         this.invalidateCache();
       }, StreamingMessageAggregator.INIT_OUTPUT_THROTTLE_MS);
-      return;
+      return true;
     }
 
     if (isInitEnd(data)) {
       this.clearReplayInitVisiblePrefix();
       if (!this.initState) {
         console.error("Received init-end without init-start", { data });
-        return;
+        return true;
       }
       this.initState.exitCode = data.exitCode;
       this.initState.status = data.exitCode === 0 ? "success" : "error";
       this.initState.endTime = data.timestamp;
-      // Use backend truncation count if larger (covers replay of old data)
+      // Use backend truncation count if larger (covers replay of old data).
       if (data.truncatedLines && data.truncatedLines > (this.initState.truncatedLines ?? 0)) {
         this.initState.truncatedLines = data.truncatedLines;
       }
-      // Cancel any pending throttled update and flush immediately
       if (this.initOutputThrottleTimer) {
         clearTimeout(this.initOutputThrottleTimer);
         this.initOutputThrottleTimer = null;
@@ -2623,101 +2873,95 @@ export class StreamingMessageAggregator {
         this.setPendingStreamStartTime(Date.now());
       }
       this.invalidateCache();
+      return true;
+    }
+
+    return false;
+  }
+
+  private handleMuxMessage(data: MuxMessage): void {
+    const incomingMessage = normalizeMessageRouteProvider(data);
+
+    // Smart replacement logic for edits: if history was truncated, remove the
+    // existing message at the incoming sequence and all subsequent messages.
+    const incomingSequence = incomingMessage.metadata?.historySequence;
+    if (incomingSequence !== undefined) {
+      for (const [_id, msg] of this.messages.entries()) {
+        const existingSequence = msg.metadata?.historySequence;
+        if (existingSequence !== undefined && existingSequence >= incomingSequence) {
+          const messagesToRemove: string[] = [];
+          for (const [removeId, removeMsg] of this.messages.entries()) {
+            const removeSeq = removeMsg.metadata?.historySequence;
+            if (removeSeq !== undefined && removeSeq >= incomingSequence) {
+              messagesToRemove.push(removeId);
+            }
+          }
+          for (const removeId of messagesToRemove) {
+            this.deleteMessage(removeId);
+          }
+          break;
+        }
+      }
+    }
+
+    // When a compaction boundary arrives during a live session, prune messages
+    // older than the incoming boundary sequence so the UI matches a fresh load
+    // while older epochs remain available via Load More history pagination.
+    if (this.isCompactionBoundaryMessage(incomingMessage)) {
+      this.pruneBeforeLatestBoundary(incomingMessage);
+    }
+
+    this.addMessage(incomingMessage);
+    this.maybeTrackLoadedSkillFromAgentSkillSnapshot(incomingMessage.metadata?.agentSkillSnapshot);
+
+    if (incomingMessage.role !== "user" || isSideQuestionUserMuxMessage(incomingMessage)) {
       return;
     }
 
-    // Handle regular messages (user messages, historical messages)
-    // Check if it's a MuxMessage (has role property but no type)
-    if (isMuxMessage(data)) {
-      const incomingMessage = normalizeMessageRouteProvider(data);
+    // Reset terminal lifecycle snapshots from the previous turn immediately so
+    // the next accepted send never inherits a stale interrupted/failed state.
+    this.streamLifecycle = null;
 
-      // Smart replacement logic for edits:
-      // If a message arrives with a historySequence that already exists,
-      // it means history was truncated (edit operation). Remove the existing
-      // message at that sequence and all subsequent messages, then add the new one.
-      const incomingSequence = incomingMessage.metadata?.historySequence;
-      if (incomingSequence !== undefined) {
-        // Check if there's already a message with this sequence
-        for (const [_id, msg] of this.messages.entries()) {
-          const existingSequence = msg.metadata?.historySequence;
-          if (existingSequence !== undefined && existingSequence >= incomingSequence) {
-            // Found a conflict - remove this message and all after it
-            const messagesToRemove: string[] = [];
-            for (const [removeId, removeMsg] of this.messages.entries()) {
-              const removeSeq = removeMsg.metadata?.historySequence;
-              if (removeSeq !== undefined && removeSeq >= incomingSequence) {
-                messagesToRemove.push(removeId);
-              }
-            }
-            for (const removeId of messagesToRemove) {
-              this.deleteMessage(removeId);
-            }
-            break; // Found and handled the conflict
+    const muxMeta = incomingMessage.metadata?.muxMetadata as
+      | { displayStatus?: { emoji: string; message: string } }
+      | undefined;
+    const muxMetadata = incomingMessage.metadata?.muxMetadata;
+    this.pendingCompactionRequest =
+      muxMetadata?.type === "compaction-request"
+        ? {
+            parsed: muxMetadata.parsed,
+            source: muxMetadata.source,
           }
-        }
-      }
+        : null;
 
-      // When a compaction boundary arrives during a live session, prune messages
-      // older than the incoming boundary sequence so the UI matches a fresh load
-      // (emitHistoricalEvents now reads from skip=0, the latest boundary only).
-      // This keeps only the current epoch visible in-session; older epochs remain
-      // available via Load More history pagination.
-      if (this.isCompactionBoundarySummaryMessage(incomingMessage)) {
-        this.pruneBeforeLatestBoundary(incomingMessage);
-      }
+    this.optimisticPendingStreamStart = false;
+    this.optimisticPendingStreamStartIdleCaughtUpCount = 0;
+    this.pendingStreamModel = muxMetadata?.requestedModel ?? null;
 
-      // Now add the new message
-      this.addMessage(incomingMessage);
-
-      this.maybeTrackLoadedSkillFromAgentSkillSnapshot(
-        incomingMessage.metadata?.agentSkillSnapshot
-      );
-
-      // If this is a user message, clear derived state and record timestamp
-      if (incomingMessage.role === "user") {
-        // Reset terminal lifecycle snapshots from the previous turn immediately so the next
-        // accepted send never inherits a stale interrupted/failed classification while we wait
-        // for the backend's authoritative PREPARING lifecycle event.
-        this.streamLifecycle = null;
-
-        const muxMeta = incomingMessage.metadata?.muxMetadata as
-          | { displayStatus?: { emoji: string; message: string } }
-          | undefined;
-
-        // Capture pending compaction metadata for pre-stream UI ("starting" phase).
-        const muxMetadata = incomingMessage.metadata?.muxMetadata;
-        this.pendingCompactionRequest =
-          muxMetadata?.type === "compaction-request"
-            ? {
-                parsed: muxMetadata.parsed,
-                source: muxMetadata.source,
-              }
-            : null;
-
-        this.optimisticPendingStreamStart = false;
-        this.optimisticPendingStreamStartIdleCaughtUpCount = 0;
-        this.pendingStreamModel = muxMetadata?.requestedModel ?? null;
-
-        if (muxMeta?.displayStatus) {
-          // Background operation - show requested status (don't persist)
-          this.agentStatus = muxMeta.displayStatus;
-        } else {
-          // Normal user turn - clear status
-          this.agentStatus = undefined;
-          this.clearPersistedAgentStatus();
-        }
-
-        this.lastAbortReason = null;
-        this.setPendingStreamStartTime(Date.now());
-      }
+    if (muxMeta?.displayStatus) {
+      this.agentStatus = muxMeta.displayStatus;
+    } else {
+      this.agentStatus = undefined;
+      this.clearPersistedAgentStatus();
     }
+
+    this.lastAbortReason = null;
+    this.setPendingStreamStartTime(Date.now());
   }
 
-  private isCompactionBoundarySummaryMessage(message: MuxMessage): boolean {
+  private isContextBoundaryMessage(message: MuxMessage): boolean {
+    return (
+      this.isCompactionBoundaryMessage(message) ||
+      getContextBoundaryKind(message) === CONTEXT_BOUNDARY_KINDS.RESET
+    );
+  }
+
+  private isCompactionBoundaryMessage(message: MuxMessage): boolean {
     const muxMeta = message.metadata?.muxMetadata;
     return (
       message.role === "assistant" &&
-      (message.metadata?.compactionBoundary === true || muxMeta?.type === "compaction-summary")
+      (getContextBoundaryKind(message) === CONTEXT_BOUNDARY_KINDS.COMPACTION ||
+        muxMeta?.type === "compaction-summary")
     );
   }
 
@@ -2762,351 +3006,204 @@ export class StreamingMessageAggregator {
     }
   }
 
-  private createCompactionBoundaryRow(
-    message: MuxMessage,
-    historySequence: number
-  ): Extract<DisplayedMessage, { type: "compaction-boundary" }> {
-    assert(
-      message.role === "assistant",
-      "compaction boundaries must belong to assistant summaries"
-    );
-
-    const rawCompactionEpoch = message.metadata?.compactionEpoch;
-    const compactionEpoch =
-      typeof rawCompactionEpoch === "number" &&
-      Number.isInteger(rawCompactionEpoch) &&
-      rawCompactionEpoch > 0
-        ? rawCompactionEpoch
-        : undefined;
-
-    // Self-healing read path: malformed persisted compactionEpoch should not crash transcript rendering.
-    return {
-      type: "compaction-boundary",
-      id: `${message.id}-compaction-boundary`,
-      historySequence,
-      position: "start",
-      compactionEpoch,
-    };
-  }
-
   private buildDisplayedMessagesForMessage(
     message: MuxMessage,
     agentSkillSnapshot?: { frontmatterYaml?: string; body?: string },
     inlineSkillSnapshots?: InlineSkillSnapshotMap
   ): DisplayedMessage[] {
-    const displayedMessages: DisplayedMessage[] = [];
-    const baseTimestamp = message.metadata?.timestamp;
-    const historySequence = message.metadata?.historySequence ?? 0;
+    return buildDisplayedMessagesForMessage({
+      message,
+      agentSkillSnapshot,
+      inlineSkillSnapshots,
+      hasActiveStream: this.activeStreams.has(message.id),
+      streamIsReplay: this.activeStreams.get(message.id)?.isReplay,
+      isContextBoundaryMessage: (candidate) => this.isContextBoundaryMessage(candidate),
+    });
+  }
 
-    // Check for plan-display messages (ephemeral /plan output)
-    const muxMeta = message.metadata?.muxMetadata;
-    if (muxMeta?.type === "plan-display") {
-      const content = getTextPartContent(message.parts);
-      displayedMessages.push({
-        type: "plan-display",
-        id: message.id,
-        historyId: message.id,
-        content,
-        path: muxMeta.path,
-        historySequence,
-      });
-      return displayedMessages;
-    }
+  /**
+   * Split a list of message parts at one or more cumulative-text-length
+   * boundaries.
+   *
+   * Only `text` parts contribute to the cumulative length — reasoning and
+   * tool parts pass through to whichever segment is currently being filled.
+   * Non-text parts always land in the segment that owns the cumulative
+   * text position immediately before they appear in `parts`, which keeps
+   * "the reasoning that happened before the user fired /btw" anchored on
+   * the pre-aside side of the split.
+   *
+   * Returns `cutPoints.length + 1` segments. Each segment may be empty
+   * (no parts) if the boundaries coincide or the message has no content
+   * before/after a boundary.
+   */
+  private splitMessagePartsAtTextLengths(
+    parts: MuxMessage["parts"],
+    cutPoints: readonly MessagePartSplitCut[]
+  ): Array<MuxMessage["parts"]> {
+    const sortedCuts = [...cutPoints].sort(
+      (a, b) => a.textLength - b.textLength || (a.partIndex ?? Infinity) - (b.partIndex ?? Infinity)
+    );
+    const segments: Array<MuxMessage["parts"]> = sortedCuts.map(() => []);
+    segments.push([]);
 
-    if (message.role === "user") {
-      // User messages: combine all text parts into single block, extract attachments
-      const partsContent = getTextPartContent(message.parts);
+    let cumulativeText = 0;
+    let currentSegment = 0;
 
-      const fileParts = message.parts
-        .filter((p): p is MuxFilePart => p.type === "file")
-        .map((p) => ({
-          url: typeof p.url === "string" ? p.url : "",
-          mediaType: p.mediaType,
-          filename: p.filename,
-        }));
-
-      // Extract slash command from muxMetadata (present for /compact, /skill, etc.)
-      let rawCommand = muxMeta && "rawCommand" in muxMeta ? muxMeta.rawCommand : undefined;
-
-      const agentSkill =
-        muxMeta?.type === "agent-skill"
-          ? {
-              skillName: muxMeta.skillName,
-              scope: muxMeta.scope,
-              snapshot: agentSkillSnapshot,
-            }
-          : undefined;
-
-      const compactionFollowUp = getCompactionFollowUpContent(muxMeta);
-
-      const compactionRequest =
-        muxMeta?.type === "compaction-request"
-          ? {
-              parsed: {
-                model: muxMeta.parsed.model,
-                maxOutputTokens: muxMeta.parsed.maxOutputTokens,
-                followUpContent: compactionFollowUp,
-              } satisfies CompactionRequestData,
-            }
-          : undefined;
-
-      // Reconstruct full rawCommand if follow-up text isn't already included
-      if (rawCommand && compactionRequest?.parsed.followUpContent && !rawCommand.includes("\n")) {
-        const followUpText = getFollowUpContentText(compactionRequest.parsed.followUpContent);
-        if (followUpText) {
-          rawCommand = `${rawCommand}\n${followUpText}`;
+    const advanceThroughCuts = (newCumulative: number, nextPartIndex: number): void => {
+      while (currentSegment < sortedCuts.length) {
+        const cut = sortedCuts[currentSegment];
+        if (newCumulative < cut.textLength) {
+          return;
         }
+        if (cut.partIndex !== undefined && nextPartIndex < cut.partIndex) {
+          return;
+        }
+        currentSegment++;
+      }
+    };
+
+    for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+      const part = parts[partIndex];
+      advanceThroughCuts(cumulativeText, partIndex);
+      if (part.type !== "text") {
+        // Reasoning / tool / file parts ride with the current segment.
+        // interruptedPartIndex keeps non-text parts already visible at the
+        // same cumulative text offset on the pre-aside side after reload.
+        segments[currentSegment].push(part);
+        advanceThroughCuts(cumulativeText, partIndex + 1);
+        continue;
       }
 
-      // Content is rawCommand (what user typed) or parts (normal message)
-      const content = rawCommand ?? partsContent;
+      // Walk this text part across as many boundaries as it crosses. Each
+      // boundary peels off a prefix into the current segment, advances
+      // currentSegment, and leaves the remainder to be considered against
+      // the next boundary.
+      let remaining = part.text;
+      while (currentSegment < sortedCuts.length) {
+        const cut = sortedCuts[currentSegment];
+        if (cut.partIndex !== undefined && partIndex + 1 < cut.partIndex) {
+          // This split point is after a later non-text part at the same text
+          // offset; keep this whole text part in the current segment for now.
+          break;
+        }
+        const charsLeftInCurrentSegment = cut.textLength - cumulativeText;
+        if (charsLeftInCurrentSegment >= remaining.length) {
+          // This part fits entirely inside the current segment.
+          break;
+        }
+        if (charsLeftInCurrentSegment <= 0) {
+          advanceThroughCuts(cumulativeText, partIndex + 1);
+          continue;
+        }
+        const prefix = remaining.slice(0, charsLeftInCurrentSegment);
+        if (prefix.length > 0) {
+          // Preserve part metadata (e.g. timestamp) on each half.
+          segments[currentSegment].push({ ...part, text: prefix });
+        }
+        cumulativeText = cut.textLength;
+        remaining = remaining.slice(charsLeftInCurrentSegment);
+        advanceThroughCuts(cumulativeText, partIndex + 1);
+      }
 
-      // commandPrefix comes directly from metadata - no reconstruction needed
-      const commandPrefix = muxMeta?.commandPrefix;
-
-      // Extract reviews from muxMetadata for rich UI display (orthogonal to message type)
-      const reviews = muxMeta?.reviews;
-
-      displayedMessages.push({
-        type: "user",
-        id: message.id,
-        historyId: message.id,
-        content,
-        commandPrefix,
-        fileParts: fileParts.length > 0 ? fileParts : undefined,
-        historySequence,
-        isSynthetic: message.metadata?.synthetic === true ? true : undefined,
-        timestamp: baseTimestamp,
-        agentSkill,
-        inlineSkillSnapshots,
-        compactionRequest,
-        reviews,
-      });
-      return displayedMessages;
+      if (remaining.length > 0) {
+        segments[currentSegment].push({ ...part, text: remaining });
+        cumulativeText += remaining.length;
+        advanceThroughCuts(cumulativeText, partIndex + 1);
+      }
     }
 
-    if (message.role === "assistant") {
-      // Assistant messages: each part becomes a separate DisplayedMessage
-      // Use streamSequence to order parts within this message
-      let streamSeq = 0;
+    return segments;
+  }
 
-      // Check if this message has an active stream (for inferring streaming status)
-      // Direct Map.has() check - O(1) instead of O(n) iteration
-      const hasActiveStream = this.activeStreams.has(message.id);
-      const streamContext = hasActiveStream ? this.activeStreams.get(message.id) : undefined;
+  /**
+   * Build displayed rows for a main-agent assistant message that was
+   * interrupted by one or more /btw side questions.
+   *
+   * The interrupted message is split at each captured text-length
+   * boundary; the side-question Q+A pair for each interrupt is inserted
+   * between the surrounding segments. The result is a continuous run of
+   * displayed rows that reads:
+   *
+   *   [M1 pre-aside]
+   *   [Q1]
+   *   [A1]
+   *   [M1 middle (if multiple /btw interrupted the same turn)]
+   *   ...
+   *   [M1 post-aside]
+   *
+   * The LAST segment keeps M1's original message id so an active stream
+   * lookup (`activeStreams.has(M1.id)`) still surfaces the streaming
+   * indicator on the right row. Earlier segments use `${M1.id}#seg<i>`
+   * suffixes for React key stability; their `historyId` is rewritten
+   * back to `M1.id` so action handlers (Copy / Start Here / etc.) still
+   * target the persisted message.
+   */
+  private buildInterruptedMessageDisplay(
+    message: MuxMessage,
+    interrupts: readonly SideQuestionInterrupt[],
+    agentSkillSnapshot?: { frontmatterYaml?: string; body?: string },
+    inlineSkillSnapshots?: InlineSkillSnapshotMap
+  ): DisplayedMessage[] {
+    const sorted = [...interrupts].sort((a, b) => a.atTextLength - b.atTextLength);
+    const segments = this.splitMessagePartsAtTextLengths(
+      message.parts,
+      sorted.map((interrupt) => ({
+        textLength: interrupt.atTextLength,
+        partIndex: interrupt.atPartIndex,
+      }))
+    );
 
-      // isPartial from metadata (set by stream-abort event)
-      const isPartial = message.metadata?.partial === true;
+    const result: DisplayedMessage[] = [];
 
-      // Merge adjacent text/reasoning parts for display
-      const mergedParts = mergeAdjacentParts(message.parts);
+    for (let i = 0; i < segments.length; i++) {
+      const isLastSegment = i === segments.length - 1;
+      const segParts = segments[i];
 
-      // A part is "renderable" when getDisplayedMessages will emit a row for
-      // it. Empty text parts and other unsupported types are silently skipped
-      // by the loop below, so any flag derived from "what the user sees" must
-      // share this predicate to stay in sync. The text check uses a truthy
-      // test (rather than `.length > 0`) to keep self-healing behavior for
-      // malformed history entries where `part.text` may be undefined.
-      const isRenderablePart = (part: (typeof mergedParts)[number]): boolean =>
-        part.type === "reasoning" ||
-        (part.type === "text" && Boolean(part.text)) ||
-        isDynamicToolPart(part);
+      // Always render the last segment even if empty — it owns the
+      // streaming-indicator anchor and the meta row. Earlier segments
+      // skip when empty to avoid emitting hollow blocks.
+      if (segParts.length > 0 || isLastSegment) {
+        // Last segment keeps the original id so activeStreams lookup hits;
+        // earlier segments get a suffixed id for React key uniqueness.
+        const segMessageId = isLastSegment ? message.id : `${message.id}#seg${i}`;
+        const segMessage: MuxMessage = {
+          ...message,
+          id: segMessageId,
+          parts: segParts,
+        };
 
-      // Find the last part that will produce a DisplayedMessage and tally
-      // renderable parts to detect reasoning-only turns. Done in a single
-      // pass so the two derivations can't drift.
-      let lastPartIndex = -1;
-      let renderableCount = 0;
-      let renderableReasoningCount = 0;
-      for (let i = 0; i < mergedParts.length; i++) {
-        const part = mergedParts[i];
-        if (!isRenderablePart(part)) continue;
-        lastPartIndex = i;
-        renderableCount++;
-        if (part.type === "reasoning") renderableReasoningCount++;
-      }
+        const segRows = this.buildDisplayedMessagesForMessage(
+          segMessage,
+          agentSkillSnapshot,
+          inlineSkillSnapshots
+        );
 
-      const isCompactionBoundarySummary = this.isCompactionBoundarySummaryMessage(message);
-      if (isCompactionBoundarySummary) {
-        displayedMessages.push(this.createCompactionBoundaryRow(message, historySequence));
-      }
-
-      // A turn whose *renderable* parts are entirely reasoning (no text, no tool
-      // calls) is the visible signature of a max_tokens truncation mid-thinking.
-      // We pass this hint down so ReasoningMessage can skip its auto-collapse —
-      // otherwise the user is left looking at a single collapsed "Thinking"
-      // header with no other output to read.
-      const isReasoningOnlyMessage =
-        renderableCount > 0 && renderableCount === renderableReasoningCount;
-
-      mergedParts.forEach((part, partIndex) => {
-        const isLastPart = partIndex === lastPartIndex;
-        // Part is streaming if: active stream exists AND this is the last part
-        const isStreaming = hasActiveStream && isLastPart;
-
-        if (part.type === "reasoning") {
-          // Reasoning part - shows thinking/reasoning content
-          displayedMessages.push({
-            type: "reasoning",
-            id: `${message.id}-${partIndex}`,
-            historyId: message.id,
-            content: part.text,
-            historySequence,
-            streamSequence: streamSeq++,
-            isStreaming,
-            isPartial,
-            isLastPartOfMessage: isLastPart,
-            isOnlyMessageContent: isReasoningOnlyMessage,
-            timestamp: part.timestamp ?? baseTimestamp,
-            streamPresentation: isStreaming
-              ? { source: streamContext?.isReplay ? "replay" : "live" }
-              : undefined,
-          });
-        } else if (part.type === "text" && part.text) {
-          // Skip empty text parts
-          displayedMessages.push({
-            type: "assistant",
-            id: `${message.id}-${partIndex}`,
-            historyId: message.id,
-            content: part.text,
-            historySequence,
-            streamSequence: streamSeq++,
-            isStreaming,
-            isPartial,
-            isLastPartOfMessage: isLastPart,
-            // Support both new enum ("user"|"idle") and legacy boolean (true)
-            isCompacted: !!message.metadata?.compacted,
-            isIdleCompacted: message.metadata?.compacted === "idle",
-            model: message.metadata?.model,
-            routedThroughGateway: message.metadata?.routedThroughGateway,
-            routeProvider: resolveRouteProvider(
-              message.metadata?.routeProvider,
-              message.metadata?.routedThroughGateway
-            ),
-            mode: message.metadata?.mode,
-            agentId: message.metadata?.agentId ?? message.metadata?.mode,
-            timestamp: part.timestamp ?? baseTimestamp,
-            streamPresentation: isStreaming
-              ? { source: streamContext?.isReplay ? "replay" : "live" }
-              : undefined,
-          });
-        } else if (isDynamicToolPart(part)) {
-          // Determine status based on part state and result
-          let status: "pending" | "executing" | "completed" | "failed" | "interrupted" | "redacted";
-          if (part.state === "output-available") {
-            // Check if result indicates failure (for tools that return { success: boolean })
-            status = hasFailureResult(part.output) ? "failed" : "completed";
-          } else if (part.state === "output-redacted") {
-            status = part.failed ? "failed" : "redacted";
-          } else if (part.state === "input-available") {
-            // Most unfinished tool calls in partial messages represent an interruption.
-            // ask_user_question is different: it's intentionally waiting on user input,
-            // so after restart we should keep it answerable ("executing") instead of
-            // showing retry/auto-resume UX.
-            if (part.toolName === "ask_user_question") {
-              status = "executing";
-            } else if (isPartial) {
-              status = "interrupted";
-            } else {
-              status = "executing";
-            }
-          } else {
-            status = "pending";
-          }
-
-          // For code_execution, use streaming nestedCalls if present, or reconstruct from result
-          let nestedCalls = part.nestedCalls;
-          if (
-            !nestedCalls &&
-            part.toolName === "code_execution" &&
-            part.state === "output-available"
-          ) {
-            // Reconstruct nestedCalls from result.toolCalls (for historical replay)
-            const result = part.output as
-              | {
-                  toolCalls?: Array<{
-                    toolName: string;
-                    args: unknown;
-                    result?: unknown;
-                    error?: string;
-                    duration_ms: number;
-                  }>;
-                }
-              | undefined;
-            if (result?.toolCalls) {
-              nestedCalls = result.toolCalls.map((tc, idx) => ({
-                toolCallId: `${part.toolCallId}-nested-${idx}`,
-                toolName: tc.toolName,
-                input: tc.args,
-                output: tc.result ?? (tc.error ? { error: tc.error } : undefined),
-                state: "output-available" as const,
-                timestamp: part.timestamp,
-              }));
+        // Rewrite `historyId` on each emitted row back to the original
+        // message id. Without this rewrite, action handlers that resolve
+        // a row to its backend message (Start Here, Fork, etc.) would
+        // hit "message not found" because no real history row exists
+        // under the suffixed segment id.
+        if (!isLastSegment) {
+          for (const row of segRows) {
+            if ("historyId" in row && row.historyId === segMessageId) {
+              (row as { historyId: string }).historyId = message.id;
             }
           }
-
-          displayedMessages.push({
-            type: "tool",
-            id: `${message.id}-${partIndex}`,
-            historyId: message.id,
-            toolCallId: part.toolCallId,
-            toolName: part.toolName,
-            args: part.input,
-            result: part.state === "output-available" ? part.output : undefined,
-            status,
-            isPartial,
-            historySequence,
-            streamSequence: streamSeq++,
-            isLastPartOfMessage: isLastPart,
-            timestamp: part.timestamp ?? baseTimestamp,
-            nestedCalls,
-          });
         }
-      });
 
-      // Create stream-error DisplayedMessage if message has error metadata
-      // This happens after all parts are displayed, so error appears at the end
-      if (message.metadata?.error) {
-        displayedMessages.push({
-          type: "stream-error",
-          id: `${message.id}-error`,
-          historyId: message.id,
-          error: message.metadata.error,
-          errorType: message.metadata.errorType ?? "unknown",
-          historySequence,
-          model: message.metadata.model,
-          routedThroughGateway: message.metadata?.routedThroughGateway,
-          timestamp: baseTimestamp,
-        });
-      } else if (
-        // Stream ended cleanly *but* the provider truncated us at max_tokens.
-        // The backend's stream-end path treats this as a successful completion
-        // (no error metadata), so without this synthesis the chat appears to
-        // silently end — especially painful for reasoning-only turns where
-        // ReasoningMessage would otherwise auto-collapse the only output.
-        // Skip while still streaming: finishReason is only authoritative once
-        // the stream has settled.
-        message.role === "assistant" &&
-        !hasActiveStream &&
-        message.metadata?.finishReason === "length"
-      ) {
-        displayedMessages.push({
-          type: "stream-error",
-          id: `${message.id}-length`,
-          historyId: message.id,
-          error:
-            "The model hit its max output token limit before finishing this response. " +
-            "Lower the thinking level (or split the turn into smaller steps) to give it more headroom.",
-          errorType: "max_output_tokens",
-          historySequence,
-          model: message.metadata.model,
-          routedThroughGateway: message.metadata?.routedThroughGateway,
-          timestamp: baseTimestamp,
-        });
+        result.push(...segRows);
+      }
+
+      if (i < sorted.length) {
+        const interrupt = sorted[i];
+        result.push(...this.buildDisplayedMessagesForMessage(interrupt.sideQuestionUserMsg));
+        if (interrupt.sideQuestionAnswerMsg) {
+          result.push(...this.buildDisplayedMessagesForMessage(interrupt.sideQuestionAnswerMsg));
+        }
       }
     }
 
-    return displayedMessages;
+    return result;
   }
 
   /**
@@ -3158,6 +3255,87 @@ export class StreamingMessageAggregator {
       // messages that reference skills via /{skillName} or inline $skillName tokens.
       const latestAgentSkillSnapshotByKey = new Map<string, AgentSkillSnapshotContent>();
 
+      // ---------------------------------------------------------------
+      // /btw side-question splitting:
+      //
+      // When a /btw fires WHILE a main-agent assistant message is mid-
+      // stream, the backend stamps the user `/btw` row with
+      // `interruptedMessageId` + `interruptedTextLength`. The frontend
+      // uses those anchors to visually split the interrupted message so
+      // the side branch appears between the pre-aside and post-aside
+      // halves of the main agent's reply — without this, sequence-order
+      // rendering would shove the side branch below the entire reply
+      // (lower historySequence => higher in the transcript), defeating
+      // the "main chat continues after the aside" UX.
+      //
+      // We pre-walk allMessages to build:
+      //   - interruptionsByInterruptedId: which main-agent messages get
+      //     split, and at which text offsets.
+      //   - emittedAsSplitChildren: side-question user + answer rows
+      //     that the split path will emit inline. The main walk must
+      //     SKIP these to avoid double-rendering.
+      // ---------------------------------------------------------------
+      const interruptionsByInterruptedId = new Map<string, SideQuestionInterrupt[]>();
+      const emittedAsSplitChildren = new Set<string>();
+
+      const isRenderableSideQuestionAnswer = (answer: MuxMessage): boolean =>
+        this.activeStreams.has(answer.id) || answer.parts.length > 0;
+      const linkedSideAnswerByQuestionId = new Map<string, MuxMessage>();
+      for (const message of allMessages) {
+        if (!isSideQuestionAnswerMuxMessage(message)) {
+          continue;
+        }
+        const questionMessageId = message.metadata.muxMetadata.questionMessageId;
+        if (typeof questionMessageId === "string") {
+          linkedSideAnswerByQuestionId.set(questionMessageId, message);
+        }
+      }
+
+      // A /btw answer (side-question-answer) normally follows its user
+      // /btw row in history, but model setup can lag behind the user row.
+      // Pair by the stable questionMessageId when present, falling back to
+      // adjacency only for legacy history rows that predate that link.
+      for (let i = 0; i < allMessages.length; i++) {
+        const msg = allMessages[i];
+        if (!isSideQuestionUserMuxMessage(msg)) {
+          continue;
+        }
+        const muxMeta = msg.metadata.muxMetadata;
+        if (
+          typeof muxMeta.interruptedMessageId !== "string" ||
+          typeof muxMeta.interruptedTextLength !== "number"
+        ) {
+          continue;
+        }
+
+        const linkedAnswer = linkedSideAnswerByQuestionId.get(msg.id);
+        const next = allMessages[i + 1];
+        const adjacentAnswer =
+          next !== undefined && isSideQuestionAnswerMuxMessage(next) ? next : undefined;
+        const adjacentAnswerQuestionId = adjacentAnswer?.metadata.muxMetadata.questionMessageId;
+        const legacyAdjacentAnswer =
+          adjacentAnswer !== undefined && adjacentAnswerQuestionId === undefined
+            ? adjacentAnswer
+            : undefined;
+        const answer = linkedAnswer ?? legacyAdjacentAnswer;
+        const answerIsRenderable = answer !== undefined && isRenderableSideQuestionAnswer(answer);
+        const existing = interruptionsByInterruptedId.get(muxMeta.interruptedMessageId);
+        const entry = {
+          atTextLength: muxMeta.interruptedTextLength,
+          atPartIndex:
+            typeof muxMeta.interruptedPartIndex === "number"
+              ? muxMeta.interruptedPartIndex
+              : undefined,
+          sideQuestionUserMsg: msg,
+          sideQuestionAnswerMsg: answerIsRenderable ? answer : undefined,
+        };
+        if (existing) {
+          existing.push(entry);
+        } else {
+          interruptionsByInterruptedId.set(muxMeta.interruptedMessageId, [entry]);
+        }
+      }
+
       for (const message of allMessages) {
         maybeCollectAgentSkillSnapshot(message, latestAgentSkillSnapshotByKey);
         const isSynthetic = message.metadata?.synthetic === true;
@@ -3184,7 +3362,7 @@ export class StreamingMessageAggregator {
           : undefined;
 
         const agentSkillSnapshotCacheKey = agentSkillSnapshot
-          ? `${agentSkillSnapshot.sha256 ?? ""}\n${agentSkillSnapshot.frontmatterYaml ?? ""}`
+          ? getAgentSkillSnapshotDisplayCacheKey(agentSkillSnapshot)
           : undefined;
 
         const inlineSkillSnapshotState =
@@ -3195,6 +3373,40 @@ export class StreamingMessageAggregator {
               )
             : undefined;
         const inlineSkillSnapshotsCacheKey = inlineSkillSnapshotState?.cacheKey;
+
+        // Skip /btw rows that the split path is going to render INLINE
+        // inside the interrupted message's display block. Without this
+        // guard the side-question pair would render twice — once between
+        // the split halves and once at its natural sequence position
+        // (below the interrupted message).
+        if (emittedAsSplitChildren.has(message.id)) {
+          continue;
+        }
+
+        const interrupts = interruptionsByInterruptedId.get(message.id);
+        if (interrupts && message.role === "assistant") {
+          // Interrupted main-agent message: build its display rows with
+          // the /btw pair(s) interleaved in the middle. We bypass the
+          // displayedMessageCache here because the split output is a
+          // function of *multiple* messages' state — caching it under
+          // one message id would miss invalidations on the children.
+          const splitRows = this.buildInterruptedMessageDisplay(
+            message,
+            interrupts,
+            agentSkillSnapshotForDisplay,
+            inlineSkillSnapshotState?.snapshots
+          );
+          for (const interrupt of interrupts) {
+            emittedAsSplitChildren.add(interrupt.sideQuestionUserMsg.id);
+            if (interrupt.sideQuestionAnswerMsg) {
+              emittedAsSplitChildren.add(interrupt.sideQuestionAnswerMsg.id);
+            }
+          }
+          if (splitRows.length > 0) {
+            displayedMessages.push(...splitRows);
+          }
+          continue;
+        }
 
         const version = this.messageVersions.get(message.id) ?? 0;
         const cached = this.displayedMessageCache.get(message.id);
@@ -3243,6 +3455,8 @@ export class StreamingMessageAggregator {
             ? this.normalizeLastPartFlags(truncationPlan.rows)
             : truncationPlan.rows;
       }
+
+      resultMessages = markRowsBeforeLatestContextBoundary(resultMessages);
 
       // Add init state if present (ephemeral, appears at top)
       if (this.initState) {

@@ -1,5 +1,16 @@
-import { describe, expect, it, beforeEach, afterEach, mock, type Mock } from "bun:test";
-import type { DisplayedMessage } from "@/common/types/message";
+import { GlobalWindow } from "happy-dom";
+import {
+  describe,
+  expect,
+  it,
+  beforeEach,
+  afterEach,
+  afterAll,
+  mock,
+  spyOn,
+  type Mock,
+} from "bun:test";
+import type { CompactionFollowUpRequest, DisplayedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream";
 import type { WorkspaceActivitySnapshot, WorkspaceChatMessage } from "@/common/orpc/types";
@@ -132,21 +143,37 @@ const mockLocalStorage: Storage = {
   },
 };
 
-const mockWindow = {
-  localStorage: mockLocalStorage,
+type WorkspaceStoreTestWindow = Omit<Window & typeof globalThis, "api"> & {
   api: {
     workspace: {
-      onChat: mock((_workspaceId, _callback) => {
-        return () => {
-          // cleanup
-        };
-      }),
-    },
-  },
+      onChat: (_workspaceId: unknown, _callback: unknown) => () => void;
+    };
+  };
 };
 
-global.window = mockWindow as unknown as Window & typeof globalThis;
-global.window.dispatchEvent = mock();
+const originalWindow = global.window;
+
+const mockWindow = new GlobalWindow() as unknown as WorkspaceStoreTestWindow;
+Object.defineProperty(mockWindow, "localStorage", {
+  configurable: true,
+  value: mockLocalStorage,
+});
+mockWindow.api = {
+  workspace: {
+    onChat: mock((_workspaceId, _callback) => {
+      return () => {
+        // cleanup
+      };
+    }),
+  },
+};
+mockWindow.dispatchEvent = mock();
+
+global.window = mockWindow as Window & typeof globalThis;
+
+afterAll(() => {
+  global.window = originalWindow;
+});
 
 // Mock queueMicrotask
 global.queueMicrotask = (fn) => fn();
@@ -166,6 +193,12 @@ function makeWorkspaceMetadata(
     runtimeConfig: options.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
   };
 }
+
+const TEST_WORKSPACE_OPTIONS: Partial<FrontendWorkspaceMetadata> = {
+  name: "test-workspace",
+  projectPath: "/test/project",
+  namedWorkspacePath: "/test/project/test-workspace",
+};
 
 // Helper to create and add a workspace
 function createAndAddWorkspace(
@@ -360,6 +393,261 @@ function mockChatStreamFor(
   });
 }
 
+type ChatStep = WorkspaceChatMessage | Promise<void> | (() => void | Promise<void>);
+
+type ChatEvent<T extends WorkspaceChatMessage["type"]> = Extract<WorkspaceChatMessage, { type: T }>;
+
+async function runChatStep(step: ChatStep): Promise<WorkspaceChatMessage | undefined> {
+  if (typeof step === "function") {
+    await step();
+    return undefined;
+  }
+  if (step instanceof Promise) {
+    await step;
+    return undefined;
+  }
+  return step;
+}
+
+function mockChatScript(steps: ChatStep[], options: { keepOpen?: boolean } = {}): void {
+  mockOnChat.mockImplementation(async function* (
+    _input?: { workspaceId: string; mode?: unknown },
+    signalOptions?: { signal?: AbortSignal }
+  ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+    for (const step of steps) {
+      const event = await runChatStep(step);
+      if (event) {
+        yield event;
+      }
+    }
+    if (options.keepOpen ?? false) {
+      await waitForAbortSignal(signalOptions?.signal);
+    }
+  });
+}
+
+function mockChatReconnectScript(
+  getSteps: (subscriptionCount: number, signal: AbortSignal | undefined) => ChatStep[]
+): () => number {
+  let subscriptionCount = 0;
+  mockOnChat.mockImplementation(async function* (
+    _input?: { workspaceId: string; mode?: unknown },
+    options?: { signal?: AbortSignal }
+  ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
+    subscriptionCount += 1;
+    for (const step of getSteps(subscriptionCount, options?.signal)) {
+      const event = await runChatStep(step);
+      if (event) {
+        yield event;
+      }
+    }
+  });
+  return () => subscriptionCount;
+}
+
+const caughtUpEvent = (overrides: Partial<ChatEvent<"caught-up">> = {}): WorkspaceChatMessage => ({
+  type: "caught-up",
+  ...overrides,
+});
+
+const sinceCaughtUpEvent = (
+  historySequence = 1,
+  messageId = `history-${historySequence}`,
+  stream?: { messageId: string; lastTimestamp: number }
+): WorkspaceChatMessage =>
+  caughtUpEvent({
+    replay: "since",
+    cursor: { history: { messageId, historySequence }, ...(stream ? { stream } : {}) },
+  });
+
+const streamEndEvent = (
+  workspaceId: string,
+  messageId: string,
+  overrides: Partial<ChatEvent<"stream-end">> = {}
+): WorkspaceChatMessage => ({
+  type: "stream-end",
+  workspaceId,
+  messageId,
+  metadata: { model: TEST_MODEL, historySequence: 1, timestamp: 1_001 },
+  parts: [],
+  ...overrides,
+});
+
+const streamAbortEvent = (
+  workspaceId: string,
+  messageId: string,
+  overrides: Partial<ChatEvent<"stream-abort">> = {}
+): WorkspaceChatMessage => ({
+  type: "stream-abort",
+  workspaceId,
+  messageId,
+  abortReason: "user",
+  metadata: {},
+  ...overrides,
+});
+
+const bashOutputEvent = (
+  workspaceId: string,
+  toolCallId: string,
+  text: string,
+  overrides: Partial<ChatEvent<"bash-output">> = {}
+): WorkspaceChatMessage => ({
+  type: "bash-output",
+  workspaceId,
+  toolCallId,
+  text,
+  isError: false,
+  timestamp: 1,
+  ...overrides,
+});
+
+const toolCallEndEvent = (
+  workspaceId: string,
+  toolCallId: string,
+  toolName: string,
+  result: unknown,
+  overrides: Partial<ChatEvent<"tool-call-end">> = {}
+): WorkspaceChatMessage => ({
+  type: "tool-call-end",
+  workspaceId,
+  messageId: `m-${toolCallId}`,
+  toolCallId,
+  toolName,
+  result,
+  timestamp: 1,
+  ...overrides,
+});
+
+const advisorPhaseEvent = (
+  workspaceId: string,
+  toolCallId: string,
+  phase: ChatEvent<"advisor-phase">["phase"],
+  timestamp: number
+): WorkspaceChatMessage => ({ type: "advisor-phase", workspaceId, toolCallId, phase, timestamp });
+
+const advisorOutputEvent = (
+  workspaceId: string,
+  toolCallId: string,
+  text: string,
+  timestamp: number
+): WorkspaceChatMessage => ({ type: "advisor-output", workspaceId, toolCallId, text, timestamp });
+
+const taskCreatedEvent = (
+  workspaceId: string,
+  toolCallId: string,
+  taskId: string,
+  timestamp: number
+): WorkspaceChatMessage => ({ type: "task-created", workspaceId, toolCallId, taskId, timestamp });
+
+const TEST_MODEL = "claude-sonnet-4";
+
+function createReleaseGate(): { release: () => void; wait: Promise<void> } {
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { release, wait };
+}
+
+function createActivitySnapshot(
+  recency: number,
+  overrides: Partial<WorkspaceActivitySnapshot> = {}
+): WorkspaceActivitySnapshot {
+  return {
+    recency,
+    streaming: true,
+    lastModel: TEST_MODEL,
+    lastThinkingLevel: null,
+    ...overrides,
+  };
+}
+
+function mockBackgroundActivityTransition(
+  workspaceId: string,
+  initialSnapshot: WorkspaceActivitySnapshot,
+  nextSnapshots: WorkspaceActivitySnapshot[]
+): () => void {
+  const gate = createReleaseGate();
+  mockActivityList.mockResolvedValue({ [workspaceId]: initialSnapshot });
+  mockActivitySubscribe.mockImplementation(async function* (
+    _input?: void,
+    options?: { signal?: AbortSignal }
+  ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
+    await gate.wait;
+    if (options?.signal?.aborted) {
+      return;
+    }
+
+    for (const activity of nextSnapshots) {
+      yield { type: "activity", workspaceId, activity };
+    }
+
+    await waitForAbortSignal(options?.signal);
+  });
+  return gate.release;
+}
+
+function streamStartEvent(
+  workspaceId: string,
+  messageId: string,
+  overrides: Partial<StreamStartEvent> = {}
+): WorkspaceChatMessage {
+  return {
+    type: "stream-start",
+    workspaceId,
+    messageId,
+    historySequence: 1,
+    model: TEST_MODEL,
+    startTime: Date.now(),
+    ...overrides,
+  };
+}
+
+function queuedFollowUpEvent(workspaceId: string, text: string): WorkspaceChatMessage {
+  return {
+    type: "queued-message-changed",
+    workspaceId,
+    queuedMessages: [text],
+    displayText: text,
+  };
+}
+
+function compactionRequestEvent(
+  id: string,
+  followUpContent?: CompactionFollowUpRequest,
+  timestamp = Date.now()
+): WorkspaceChatMessage {
+  return {
+    type: "message",
+    id,
+    role: "user",
+    parts: [{ type: "text", text: "/compact" }],
+    metadata: {
+      historySequence: 1,
+      timestamp,
+      muxMetadata: {
+        type: "compaction-request",
+        rawCommand: "/compact",
+        parsed: {
+          model: TEST_MODEL,
+          ...(followUpContent ? { followUpContent } : {}),
+        },
+      },
+    },
+  };
+}
+
+function compactionFollowUp(
+  overrides: Partial<CompactionFollowUpRequest> = {}
+): CompactionFollowUpRequest {
+  return {
+    text: "continue after compaction",
+    model: TEST_MODEL,
+    agentId: "exec",
+    ...overrides,
+  };
+}
+
 /**
  * Cast `store` to expose internal fields a test needs to inspect/mutate.
  * Centralizes the verbose `as unknown as { ... }` pattern.
@@ -465,20 +753,18 @@ describe("WorkspaceStore", () => {
       const workspaceId = "pinned-todo-stream-end";
       const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
 
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield* pinnedTodoStreamEvents(workspaceId, pinnedTodos, {
-          kind: "stream-end",
-          messageId: "stream-end-msg",
-          model: "claude-sonnet-4",
-        });
-
-        await waitForAbortSignal(options?.signal);
-      });
+      mockChatScript(
+        [
+          caughtUpEvent(),
+          Promise.resolve(),
+          ...pinnedTodoStreamEvents(workspaceId, pinnedTodos, {
+            kind: "stream-end",
+            messageId: "stream-end-msg",
+            model: TEST_MODEL,
+          }),
+        ],
+        { keepOpen: true }
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -488,23 +774,67 @@ describe("WorkspaceStore", () => {
       expect(collapsed).toBe(true);
     });
 
+    it("does not collapse the pinned todo panel when an overlapping /btw answer ends", () => {
+      const workspaceId = "pinned-todo-side-answer-end";
+      const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
+
+      createAndAddWorkspace(store, workspaceId);
+      localStorageBacking.set(pinnedTodoKey, JSON.stringify(true));
+      seedPinnedTodos(store, workspaceId, pinnedTodos);
+
+      const rawStore = getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store);
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-answer-with-main-todos",
+        role: "assistant",
+        parts: [],
+        metadata: {
+          historySequence: 2,
+          timestamp: 2_000,
+          model: "claude-haiku-3.5",
+          muxMetadata: { type: "side-question-answer" },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "btw-answer-with-main-todos",
+        model: "claude-haiku-3.5",
+        historySequence: 2,
+        startTime: 2_100,
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-end",
+        workspaceId,
+        messageId: "btw-answer-with-main-todos",
+        parts: [{ type: "text", text: "side done" }],
+        metadata: {
+          model: "claude-haiku-3.5",
+          historySequence: 2,
+          muxMetadata: { type: "side-question-answer" },
+        },
+      });
+
+      expect(localStorageBacking.get(pinnedTodoKey)).toBe(JSON.stringify(true));
+    });
+
     it("persists a collapsed panel when an active workspace stream aborts with todos", async () => {
       const workspaceId = "pinned-todo-stream-abort";
       const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
 
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield* pinnedTodoStreamEvents(workspaceId, pinnedTodos, {
-          kind: "stream-abort",
-          messageId: "stream-abort-msg",
-        });
-
-        await waitForAbortSignal(options?.signal);
-      });
+      mockChatScript(
+        [
+          caughtUpEvent(),
+          Promise.resolve(),
+          ...pinnedTodoStreamEvents(workspaceId, pinnedTodos, {
+            kind: "stream-abort",
+            messageId: "stream-abort-msg",
+          }),
+        ],
+        { keepOpen: true }
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -558,20 +888,18 @@ describe("WorkspaceStore", () => {
 
         await waitForAbortSignal(options?.signal);
       });
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield* pinnedTodoStreamEvents(workspaceId, pinnedTodos, {
-          kind: "stream-end",
-          messageId: "stream-end-msg",
-          model: "claude-sonnet-4",
-        });
-
-        await waitForAbortSignal(options?.signal);
-      });
+      mockChatScript(
+        [
+          caughtUpEvent(),
+          Promise.resolve(),
+          ...pinnedTodoStreamEvents(workspaceId, pinnedTodos, {
+            kind: "stream-end",
+            messageId: "stream-end-msg",
+            model: TEST_MODEL,
+          }),
+        ],
+        { keepOpen: true }
+      );
 
       recreateStore();
       await tick(0);
@@ -720,35 +1048,18 @@ describe("WorkspaceStore", () => {
       const pinnedTodoKey = getPinnedTodoExpandedKey(workspaceId);
       let emittedStreamEnd = false;
 
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "stream-start",
-          workspaceId,
-          messageId: "stream-no-todos-msg",
-          historySequence: 1,
-          model: "claude-sonnet-4",
-          startTime: 1_000,
-        };
-        yield {
-          type: "stream-end",
-          workspaceId,
-          messageId: "stream-no-todos-msg",
-          metadata: {
-            model: "claude-sonnet-4",
-            historySequence: 1,
-            timestamp: 1_001,
+      mockChatScript(
+        [
+          caughtUpEvent(),
+          Promise.resolve(),
+          streamStartEvent(workspaceId, "stream-no-todos-msg", { startTime: 1_000 }),
+          streamEndEvent(workspaceId, "stream-no-todos-msg"),
+          () => {
+            emittedStreamEnd = true;
           },
-          parts: [],
-        };
-        emittedStreamEnd = true;
-
-        await waitForAbortSignal(options?.signal);
-      });
+        ],
+        { keepOpen: true }
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -782,14 +1093,7 @@ describe("WorkspaceStore", () => {
       const createdAt = new Date().toISOString();
 
       // Setup mock stream
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await tick(10);
-      });
+      mockChatScript([{ type: "caught-up" }, tick(10)]);
 
       createAndAddWorkspace(store, workspaceId, { name: "test-branch-2", createdAt });
 
@@ -817,21 +1121,10 @@ describe("WorkspaceStore", () => {
       const unsubscribe = store.subscribe(listener);
 
       // Setup mock stream
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        await Promise.resolve();
-        yield { type: "caught-up" };
-      });
+      mockChatScript([Promise.resolve(), { type: "caught-up" }]);
 
       // Add workspace (should trigger IPC subscription)
-      createAndAddWorkspace(store, "test-workspace", {
-        name: "test-workspace",
-        projectPath: "/test/project",
-        namedWorkspacePath: "/test/project/test-workspace",
-      });
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS);
 
       // Wait for async processing
       await tick(10);
@@ -846,22 +1139,11 @@ describe("WorkspaceStore", () => {
       const unsubscribe = store.subscribe(listener);
 
       // Setup mock stream
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        await Promise.resolve();
-        yield { type: "caught-up" };
-      });
+      mockChatScript([Promise.resolve(), { type: "caught-up" }]);
 
       // Unsubscribe before adding workspace (which triggers updates)
       unsubscribe();
-      createAndAddWorkspace(store, "test-workspace", {
-        name: "test-workspace",
-        projectPath: "/test/project",
-        namedWorkspacePath: "/test/project/test-workspace",
-      });
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS);
 
       // Wait for async processing
       await tick(10);
@@ -934,13 +1216,7 @@ describe("WorkspaceStore", () => {
     });
 
     it("switches onChat subscriptions when active workspace changes", async () => {
-      // eslint-disable-next-line require-yield
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        await waitForAbortSignal(options?.signal);
-      });
+      mockChatScript([], { keepOpen: true });
 
       createAndAddWorkspace(store, "workspace-1", {}, false);
       createAndAddWorkspace(store, "workspace-2", {}, false);
@@ -960,13 +1236,7 @@ describe("WorkspaceStore", () => {
     });
 
     it("clears replay buffers before aborting the previous active workspace subscription", async () => {
-      // eslint-disable-next-line require-yield
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        await waitForAbortSignal(options?.signal);
-      });
+      mockChatScript([], { keepOpen: true });
 
       createAndAddWorkspace(store, "workspace-1", {}, false);
       createAndAddWorkspace(store, "workspace-2", {}, false);
@@ -1017,14 +1287,13 @@ describe("WorkspaceStore", () => {
     it("keeps transcript hydration active across full replay resets", async () => {
       const workspaceId = "workspace-full-replay-hydration";
 
-      mockOnChat.mockImplementation(async function* (
-        _input?: { workspaceId: string; mode?: unknown },
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceChatMessage, void, unknown> {
-        // Full replay path emits history rows before the caught-up marker.
-        yield createHistoryMessageEvent("history-before-caught-up", 11);
-        await waitForAbortSignal(options?.signal);
-      });
+      mockChatScript(
+        [
+          // Full replay path emits history rows before the caught-up marker.
+          createHistoryMessageEvent("history-before-caught-up", 11),
+        ],
+        { keepOpen: true }
+      );
 
       createAndAddWorkspace(store, workspaceId, {}, false);
       store.setActiveWorkspaceId(workspaceId);
@@ -2493,6 +2762,92 @@ describe("WorkspaceStore", () => {
   });
 
   describe("activity fallbacks", () => {
+    it("tracks active goals across workspace activity snapshots", async () => {
+      const makeSnapshot = (
+        workspaceId: string,
+        status: "active" | "paused",
+        options: { pendingPersistence?: boolean } = {}
+      ): WorkspaceActivitySnapshot => ({
+        recency: 1_000,
+        streaming: false,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        goal: {
+          goalId: `00000000-0000-4000-8000-${workspaceId.padStart(12, "0")}`,
+          status,
+          objective: `Goal ${workspaceId}`,
+          budgetCents: null,
+          costCents: 0,
+          turnsUsed: 0,
+          turnCap: null,
+          startedAtMs: 1_000,
+          ...(options.pendingPersistence === true ? { pendingPersistence: true } : {}),
+        },
+      });
+      mockActivityList.mockResolvedValue({
+        "1": makeSnapshot("1", "active"),
+        "2": makeSnapshot("2", "active"),
+        "3": makeSnapshot("3", "active"),
+        "4": makeSnapshot("4", "active"),
+        pending: makeSnapshot("6", "active", { pendingPersistence: true }),
+        paused: makeSnapshot("5", "paused"),
+      });
+      recreateStore();
+
+      await tick(0);
+
+      expect(store.getActiveGoalCount()).toBe(4);
+    });
+
+    it("merges transient goal patches without replaying stale activity fields", () => {
+      const workspaceId = "transient-goal-patch";
+      createAndAddWorkspace(store, workspaceId, { createdAt: new Date(0).toISOString() }, false);
+      const storeAccess = store as unknown as {
+        applyWorkspaceActivitySnapshot: (
+          workspaceId: string,
+          snapshot: WorkspaceActivitySnapshot | null
+        ) => void;
+      };
+      const persistedSnapshot: WorkspaceActivitySnapshot = {
+        recency: 2_000,
+        streaming: false,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        goal: {
+          goalId: "00000000-0000-4000-8000-000000000101",
+          status: "active",
+          objective: "Persisted goal",
+          budgetCents: null,
+          costCents: 0,
+          turnsUsed: 0,
+          turnCap: null,
+          startedAtMs: 1_000,
+        },
+      };
+
+      storeAccess.applyWorkspaceActivitySnapshot(workspaceId, persistedSnapshot);
+      storeAccess.applyWorkspaceActivitySnapshot(workspaceId, {
+        ...persistedSnapshot,
+        streaming: true,
+        recency: 1_000,
+        transientGoalOnly: true,
+        goal: {
+          ...persistedSnapshot.goal!,
+          goalId: "00000000-0000-4000-8000-000000000102",
+          objective: "Queued replacement",
+          pendingPersistence: true,
+        },
+      });
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.canInterrupt).toBe(false);
+      expect(state.recencyTimestamp).toBe(2_000);
+      expect(state.goal).toMatchObject({
+        objective: "Queued replacement",
+        pendingPersistence: true,
+      });
+    });
+
     it("uses activity snapshots for non-active workspace sidebar fields", async () => {
       const workspaceId = "activity-fallback-workspace";
       const activityRecency = new Date("2024-01-03T12:00:00.000Z").getTime();
@@ -2591,6 +2946,60 @@ describe("WorkspaceStore", () => {
       expect(state.agentStatus).toEqual({ emoji: "🔄", message: "Run typecheck" });
     });
 
+    it("live todo derivation wins over aggregator getAgentStatus (status_set/heartbeat) for active workspaces", () => {
+      // Codex round 6: aggregator.getAgentStatus() conflates status_set and
+      // muxMeta.displayStatus into one field. A status_set value persisted
+      // from a previous turn could mask a fresh todo_write in the current
+      // turn. Live todo must win.
+      const workspaceId = "active-live-todo-beats-aggregator-status";
+      createAndAddWorkspace(store, workspaceId);
+      seedPinnedTodos(store, workspaceId, [{ content: "Run typecheck", status: "in_progress" }]);
+
+      // Simulate an aggregator that has a non-empty getAgentStatus()
+      // (e.g. an old status_set from a previous turn). The new precedence
+      // must ignore it because the live todo derivation is fresher.
+      const aggregator = store.getAggregator(workspaceId);
+      if (!aggregator) throw new Error("expected aggregator");
+      spyOn(aggregator, "getAgentStatus").mockReturnValue({
+        emoji: "🔍",
+        message: "Investigating crash",
+      });
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toEqual({ emoji: "🔄", message: "Run typecheck" });
+    });
+
+    it("falls back to persisted AI status for active workspaces with no live todos", async () => {
+      // Live aggregator todos are the freshest signal for "what is the
+      // agent doing right now" because `todo_write` is processed
+      // synchronously, before the async setTodoStatus + activity-emit round
+      // trip. So when the workspace has live todos we prefer those (see
+      // the existing "derives active workspace status from the current todo
+      // list" test). When there are NO live todos, the AI-generated
+      // todoStatus from AgentStatusService still has to surface — that's
+      // the common "free-form chat without a todo list" case.
+      const workspaceId = "active-ai-no-live-todos";
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: new Date("2024-01-04T13:00:00.000Z").getTime(),
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        todoStatus: { emoji: "🛠️", message: "AI-generated summary" },
+      };
+
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      recreateStore();
+      await tick(0);
+
+      createAndAddWorkspace(store, workspaceId);
+      // Intentionally no seedPinnedTodos — the aggregator has no todos, so
+      // the live derivation returns undefined and the persisted AI status
+      // must surface through the fallback chain.
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toEqual(activitySnapshot.todoStatus ?? undefined);
+    });
+
     it("prefers todo-derived activity status for inactive workspaces", async () => {
       const workspaceId = "activity-fallback-todo-status-workspace";
       const activitySnapshot: WorkspaceActivitySnapshot = {
@@ -2634,6 +3043,57 @@ describe("WorkspaceStore", () => {
       expect(state.agentStatus).toEqual(activitySnapshot.displayStatus ?? undefined);
     });
 
+    it("uses todoStatus from the activity snapshot for inactive workspaces", async () => {
+      // todoStatus is the persistent sidebar slot — written by both the
+      // small-model AgentStatusService and the todo-derivation path. Inactive
+      // workspaces don't run the aggregator, so the snapshot's todoStatus is
+      // what the sidebar must show.
+      const workspaceId = "activity-fallback-todo-status-workspace";
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: new Date("2024-01-04T16:00:00.000Z").getTime(),
+        streaming: false,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        todoStatus: { emoji: "🛠️", message: "Wiring sidebar precedence" },
+        hasTodos: true,
+      };
+
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      recreateStore();
+      await tick(0);
+
+      createAndAddWorkspace(store, workspaceId, { createdAt: "2020-01-01T00:00:00.000Z" }, false);
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toEqual(activitySnapshot.todoStatus ?? undefined);
+    });
+
+    it("keeps displayStatus precedence over todoStatus so explicit system status still wins", async () => {
+      // displayStatus is a deliberate, system-driven signal (e.g. "Compacting
+      // idle workspace…"). It must outrank todoStatus — otherwise a periodic
+      // small-model rewrite of todoStatus would mask the explicit progress
+      // message the backend is trying to communicate.
+      const workspaceId = "activity-fallback-display-over-todo";
+      const activitySnapshot: WorkspaceActivitySnapshot = {
+        recency: new Date("2024-01-04T17:00:00.000Z").getTime(),
+        streaming: false,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        displayStatus: { emoji: "💤", message: "Compacting idle workspace" },
+        todoStatus: { emoji: "🛠️", message: "Wiring sidebar precedence" },
+        hasTodos: false,
+      };
+
+      mockActivityList.mockResolvedValue({ [workspaceId]: activitySnapshot });
+      recreateStore();
+      await tick(0);
+
+      createAndAddWorkspace(store, workspaceId, { createdAt: "2020-01-01T00:00:00.000Z" }, false);
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.agentStatus).toEqual(activitySnapshot.displayStatus ?? undefined);
+    });
+
     it("suppresses stale legacy status fallback when activity says the todo list is empty", async () => {
       const workspaceId = "activity-fallback-empty-todo-status";
       const activitySnapshot: WorkspaceActivitySnapshot = {
@@ -2663,53 +3123,17 @@ describe("WorkspaceStore", () => {
       const activeWorkspaceId = "active-workspace";
       const backgroundWorkspaceId = "background-workspace";
       const initialRecency = new Date("2024-01-05T00:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundCompletion!: () => void;
-      const backgroundCompletionReady = new Promise<void>((resolve) => {
-        releaseBackgroundCompletion = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundCompletionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            recency: initialRecency + 1,
-            streaming: false,
-          },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+      const initialSnapshot = createActivitySnapshot(initialRecency);
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [{ ...initialSnapshot, recency: initialRecency + 1, streaming: false }]
+      );
       const onResponseComplete = createResponseCompleteSpy();
 
-      // Recreate the store so the first activity.list call uses this test snapshot.
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, activeWorkspaceId);
       createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
-
       releaseBackgroundCompletion();
       await tick(0);
 
@@ -2720,83 +3144,114 @@ describe("WorkspaceStore", () => {
       });
     });
 
+    it("marks background compaction stops from activity snapshots as non-notifying completions", async () => {
+      const activeWorkspaceId = "active-workspace-compaction-snapshot";
+      const backgroundWorkspaceId = "background-workspace-compaction-snapshot";
+      const initialRecency = new Date("2024-01-05T12:00:00.000Z").getTime();
+      const initialSnapshot = createActivitySnapshot(initialRecency);
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [
+          {
+            ...initialSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+            isCompaction: true,
+          },
+        ]
+      );
+      const onResponseComplete = createResponseCompleteSpy();
+
+      recreateStore(onResponseComplete);
+      createAndAddWorkspace(store, activeWorkspaceId);
+      createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
+      releaseBackgroundCompletion();
+      await tick(0);
+
+      expectResponseComplete(onResponseComplete, {
+        workspaceId: backgroundWorkspaceId,
+        isFinal: true,
+        completion: { kind: "compaction" },
+        completedAt: initialRecency + 1,
+      });
+    });
+
+    it("preserves internal resume metadata across background handoffs", async () => {
+      const activeWorkspaceId = "active-workspace-internal-resume-background";
+      const backgroundWorkspaceId = "background-workspace-internal-resume-background";
+      const initialRecency = new Date("2024-01-06T00:00:00.000Z").getTime();
+      const initialSnapshot = createActivitySnapshot(initialRecency, { streamingGeneration: 1 });
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [
+          { ...initialSnapshot, streamingGeneration: 2 },
+          {
+            ...initialSnapshot,
+            recency: initialRecency + 1,
+            streaming: false,
+            streamingGeneration: 2,
+          },
+        ]
+      );
+      mockChatStreamFor(backgroundWorkspaceId, function* () {
+        yield compactionRequestEvent(
+          "internal-resume-compaction-request",
+          compactionFollowUp({ text: "Continue", dispatchOptions: { source: "internal-resume" } })
+        );
+        yield streamStartEvent(backgroundWorkspaceId, "compaction-stream", {
+          historySequence: 2,
+          mode: "exec",
+        });
+        yield { type: "caught-up", hasOlderHistory: false };
+      });
+      const onResponseComplete = createResponseCompleteSpy();
+
+      recreateStore(onResponseComplete);
+      createAndAddWorkspace(store, backgroundWorkspaceId);
+      expect(
+        await waitUntil(() => store.getWorkspaceState(backgroundWorkspaceId).isCompacting)
+      ).toBe(true);
+      createAndAddWorkspace(store, activeWorkspaceId);
+      releaseBackgroundCompletion();
+      await tick(0);
+
+      expectResponseComplete(onResponseComplete, {
+        workspaceId: backgroundWorkspaceId,
+        isFinal: true,
+        completion: { kind: "compaction", suppressNotification: true },
+        completedAt: initialRecency + 1,
+      });
+    });
+
     it("preserves queued auto-follow-up metadata for background completion callbacks", async () => {
       const activeWorkspaceId = "active-workspace-queued-follow-up-background";
       const backgroundWorkspaceId = "background-workspace-queued-follow-up-background";
       const initialRecency = new Date("2024-01-07T00:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundCompletion!: () => void;
-      const backgroundCompletionReady = new Promise<void>((resolve) => {
-        releaseBackgroundCompletion = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundCompletionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            recency: initialRecency + 1,
-            streaming: false,
-          },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+      const followUpText = "follow-up after response";
+      const initialSnapshot = createActivitySnapshot(initialRecency);
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [{ ...initialSnapshot, recency: initialRecency + 1, streaming: false }]
+      );
       mockChatStreamFor(backgroundWorkspaceId, function* () {
         yield { type: "caught-up", hasOlderHistory: false };
-
-        yield {
-          type: "stream-start",
-          workspaceId: backgroundWorkspaceId,
-          messageId: "response-stream",
-          historySequence: 1,
-          model: "claude-sonnet-4",
-          startTime: Date.now(),
-        };
-
-        yield {
-          type: "queued-message-changed",
-          workspaceId: backgroundWorkspaceId,
-          queuedMessages: ["follow-up after response"],
-          displayText: "follow-up after response",
-        };
+        yield streamStartEvent(backgroundWorkspaceId, "response-stream");
+        yield queuedFollowUpEvent(backgroundWorkspaceId, followUpText);
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, backgroundWorkspaceId);
-
-      const sawQueuedFollowUp = await waitUntil(() => {
-        const state = store.getWorkspaceState(backgroundWorkspaceId);
-        return state.canInterrupt && state.queuedMessage?.content === "follow-up after response";
-      });
-      expect(sawQueuedFollowUp).toBe(true);
-
+      expect(
+        await waitUntil(() => {
+          const state = store.getWorkspaceState(backgroundWorkspaceId);
+          return state.canInterrupt && state.queuedMessage?.content === followUpText;
+        })
+      ).toBe(true);
       createAndAddWorkspace(store, activeWorkspaceId);
-
       releaseBackgroundCompletion();
       await tick(0);
 
@@ -2812,93 +3267,37 @@ describe("WorkspaceStore", () => {
       const activeWorkspaceId = "active-workspace-after-handoff";
       const backgroundWorkspaceId = "background-workspace-after-handoff";
       const initialRecency = new Date("2024-01-07T12:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        streamingGeneration: 1,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundCompletion!: () => void;
-      const backgroundCompletionReady = new Promise<void>((resolve) => {
-        releaseBackgroundCompletion = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundCompletionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            streamingGeneration: 2,
-          },
-        };
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
+      const followUpText = "follow-up after response";
+      const initialSnapshot = createActivitySnapshot(initialRecency, { streamingGeneration: 1 });
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [
+          { ...initialSnapshot, streamingGeneration: 2 },
+          {
+            ...initialSnapshot,
             recency: initialRecency + 1,
             streaming: false,
             streamingGeneration: 2,
           },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+        ]
+      );
       mockChatStreamFor(backgroundWorkspaceId, function* () {
         yield { type: "caught-up", hasOlderHistory: false };
-
-        yield {
-          type: "stream-start",
-          workspaceId: backgroundWorkspaceId,
-          messageId: "response-stream-a",
-          historySequence: 1,
-          model: "claude-sonnet-4",
-          startTime: Date.now(),
-        };
-
-        yield {
-          type: "queued-message-changed",
-          workspaceId: backgroundWorkspaceId,
-          queuedMessages: ["follow-up after response"],
-          displayText: "follow-up after response",
-        };
+        yield streamStartEvent(backgroundWorkspaceId, "response-stream-a");
+        yield queuedFollowUpEvent(backgroundWorkspaceId, followUpText);
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, backgroundWorkspaceId);
-
-      const sawQueuedFollowUp = await waitUntil(() => {
-        const state = store.getWorkspaceState(backgroundWorkspaceId);
-        return state.canInterrupt && state.queuedMessage?.content === "follow-up after response";
-      });
-      expect(sawQueuedFollowUp).toBe(true);
-
+      expect(
+        await waitUntil(() => {
+          const state = store.getWorkspaceState(backgroundWorkspaceId);
+          return state.canInterrupt && state.queuedMessage?.content === followUpText;
+        })
+      ).toBe(true);
       createAndAddWorkspace(store, activeWorkspaceId);
-
-      // Simulate the stale-context case Codex flagged: stream B starts while the workspace is
-      // backgrounded, so the activity subscription sees generation 2 but the renderer never
-      // receives live onChat events for that second stream.
       releaseBackgroundCompletion();
       await tick(0);
 
@@ -2913,149 +3312,59 @@ describe("WorkspaceStore", () => {
       const activeWorkspaceId = "active-workspace-continue";
       const backgroundWorkspaceId = "background-workspace-continue";
       const initialRecency = new Date("2024-01-08T00:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundCompletion!: () => void;
-      const backgroundCompletionReady = new Promise<void>((resolve) => {
-        releaseBackgroundCompletion = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundCompletionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            recency: initialRecency + 1,
-            streaming: false,
-          },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+      const initialSnapshot = createActivitySnapshot(initialRecency);
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [{ ...initialSnapshot, recency: initialRecency + 1, streaming: false }]
+      );
       mockChatStreamFor(backgroundWorkspaceId, function* () {
-        yield {
-          type: "message",
-          id: "compaction-request-msg",
-          role: "user",
-          parts: [{ type: "text", text: "/compact" }],
-          metadata: {
-            historySequence: 1,
-            timestamp: Date.now(),
-            muxMetadata: {
-              type: "compaction-request",
-              rawCommand: "/compact",
-              parsed: {
-                model: "claude-sonnet-4",
-                followUpContent: {
-                  text: "continue after compaction",
-                  model: "claude-sonnet-4",
-                  agentId: "exec",
-                },
-              },
-            },
-          },
-        };
-
-        yield {
-          type: "stream-start",
-          workspaceId: backgroundWorkspaceId,
-          messageId: "compaction-stream",
+        yield compactionRequestEvent("compaction-request-msg", compactionFollowUp());
+        yield streamStartEvent(backgroundWorkspaceId, "compaction-stream", {
           historySequence: 2,
-          model: "claude-sonnet-4",
-          startTime: Date.now(),
           mode: "exec",
-        };
-
+        });
         yield { type: "caught-up", hasOlderHistory: false };
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
-      // Recreate the store so the first activity.list call uses this test snapshot.
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, backgroundWorkspaceId);
-
-      const sawCompactingStream = await waitUntil(
-        () => store.getWorkspaceState(backgroundWorkspaceId).isCompacting
-      );
-      expect(sawCompactingStream).toBe(true);
-
-      // Move focus to a different workspace so the compaction workspace is backgrounded.
+      expect(
+        await waitUntil(() => store.getWorkspaceState(backgroundWorkspaceId).isCompacting)
+      ).toBe(true);
       createAndAddWorkspace(store, activeWorkspaceId);
-
       releaseBackgroundCompletion();
       await tick(0);
 
       expectResponseComplete(onResponseComplete, {
         workspaceId: backgroundWorkspaceId,
         isFinal: true,
-        completion: { kind: "compaction", hasAutoFollowUp: true },
+        completion: { kind: "compaction" },
         completedAt: initialRecency + 1,
       });
     });
 
     it("marks normal completions with queued follow-up for active callbacks", async () => {
       const workspaceId = "active-workspace-normal-queued-follow-up";
-
+      const followUpText = "follow-up after response";
       mockChatStreamFor(workspaceId, function* () {
         yield { type: "caught-up", hasOlderHistory: false };
-
-        yield {
-          type: "stream-start",
-          workspaceId,
-          messageId: "response-stream",
-          historySequence: 1,
-          model: "claude-sonnet-4",
-          startTime: Date.now(),
-        };
-
-        yield {
-          type: "queued-message-changed",
-          workspaceId,
-          queuedMessages: ["follow-up after response"],
-          displayText: "follow-up after response",
-        };
-
+        yield streamStartEvent(workspaceId, "response-stream");
+        yield queuedFollowUpEvent(workspaceId, followUpText);
         yield {
           type: "stream-end",
           workspaceId,
           messageId: "response-stream",
-          metadata: {
-            model: "claude-sonnet-4",
-          },
+          metadata: { model: TEST_MODEL },
           parts: [],
         };
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, workspaceId);
-
-      const sawResponseComplete = await waitUntil(() => onResponseComplete.mock.calls.length > 0);
-      expect(sawResponseComplete).toBe(true);
+      expect(await waitUntil(() => onResponseComplete.mock.calls.length > 0)).toBe(true);
 
       expectResponseComplete(onResponseComplete, {
         workspaceId,
@@ -3069,74 +3378,36 @@ describe("WorkspaceStore", () => {
 
     it("marks compaction completions with queued follow-up as auto-follow-up for active callbacks", async () => {
       const workspaceId = "active-workspace-queued-follow-up";
-
+      const timestamp = Date.now();
       mockChatStreamFor(workspaceId, function* () {
-        const timestamp = Date.now();
-
         yield { type: "caught-up", hasOlderHistory: false };
-
-        yield {
-          type: "message",
-          id: "compaction-request-msg",
-          role: "user",
-          parts: [{ type: "text", text: "/compact" }],
-          metadata: {
-            historySequence: 1,
-            timestamp,
-            muxMetadata: {
-              type: "compaction-request",
-              rawCommand: "/compact",
-              parsed: {
-                model: "claude-sonnet-4",
-              },
-            },
-          },
-        };
-
-        yield {
-          type: "stream-start",
-          workspaceId,
-          messageId: "compaction-stream",
+        yield compactionRequestEvent("compaction-request-msg", undefined, timestamp);
+        yield streamStartEvent(workspaceId, "compaction-stream", {
           historySequence: 2,
-          model: "claude-sonnet-4",
           startTime: timestamp + 1,
           mode: "compact",
-        };
-
-        // A queued message will be auto-sent by the backend when compaction stream ends.
-        yield {
-          type: "queued-message-changed",
-          workspaceId,
-          queuedMessages: ["follow-up after compaction"],
-          displayText: "follow-up after compaction",
-        };
-
+        });
+        yield queuedFollowUpEvent(workspaceId, "follow-up after compaction");
         yield {
           type: "stream-end",
           workspaceId,
           messageId: "compaction-stream",
-          metadata: {
-            model: "claude-sonnet-4",
-          },
+          metadata: { model: TEST_MODEL },
           parts: [],
         };
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, workspaceId);
-
-      const sawResponseComplete = await waitUntil(() => onResponseComplete.mock.calls.length > 0);
-      expect(sawResponseComplete).toBe(true);
+      expect(await waitUntil(() => onResponseComplete.mock.calls.length > 0)).toBe(true);
 
       expectResponseComplete(onResponseComplete, {
         workspaceId,
         messageId: "compaction-stream",
         isFinal: true,
         finalText: "",
-        completion: { kind: "compaction", hasAutoFollowUp: true },
+        completion: { kind: "compaction" },
         completedAt: expect.any(Number),
       });
     });
@@ -3145,109 +3416,42 @@ describe("WorkspaceStore", () => {
       const activeWorkspaceId = "active-workspace-background-queued-follow-up";
       const backgroundWorkspaceId = "background-workspace-background-queued-follow-up";
       const initialRecency = new Date("2024-01-09T00:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundCompletion!: () => void;
-      const backgroundCompletionReady = new Promise<void>((resolve) => {
-        releaseBackgroundCompletion = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundCompletionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            recency: initialRecency + 1,
-            streaming: false,
-          },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+      const followUpText = "follow-up after compaction";
+      const timestamp = Date.now();
+      const initialSnapshot = createActivitySnapshot(initialRecency);
+      const releaseBackgroundCompletion = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [{ ...initialSnapshot, recency: initialRecency + 1, streaming: false }]
+      );
       mockChatStreamFor(backgroundWorkspaceId, function* () {
-        const timestamp = Date.now();
-
         yield { type: "caught-up", hasOlderHistory: false };
-
-        yield {
-          type: "message",
-          id: "compaction-request-msg",
-          role: "user",
-          parts: [{ type: "text", text: "/compact" }],
-          metadata: {
-            historySequence: 1,
-            timestamp,
-            muxMetadata: {
-              type: "compaction-request",
-              rawCommand: "/compact",
-              parsed: {
-                model: "claude-sonnet-4",
-              },
-            },
-          },
-        };
-
-        yield {
-          type: "stream-start",
-          workspaceId: backgroundWorkspaceId,
-          messageId: "compaction-stream",
+        yield compactionRequestEvent("compaction-request-msg", undefined, timestamp);
+        yield streamStartEvent(backgroundWorkspaceId, "compaction-stream", {
           historySequence: 2,
-          model: "claude-sonnet-4",
           startTime: timestamp + 1,
           mode: "compact",
-        };
-
-        yield {
-          type: "queued-message-changed",
-          workspaceId: backgroundWorkspaceId,
-          queuedMessages: ["follow-up after compaction"],
-          displayText: "follow-up after compaction",
-        };
+        });
+        yield queuedFollowUpEvent(backgroundWorkspaceId, followUpText);
       });
-
       const onResponseComplete = createResponseCompleteSpy();
 
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, backgroundWorkspaceId);
-
-      const sawQueuedFollowUp = await waitUntil(() => {
-        const state = store.getWorkspaceState(backgroundWorkspaceId);
-        return state.isCompacting && state.queuedMessage?.content === "follow-up after compaction";
-      });
-      expect(sawQueuedFollowUp).toBe(true);
-
-      // Move focus to a different workspace so the compaction workspace is backgrounded
-      // and completion falls back to the activity snapshot path.
+      expect(
+        await waitUntil(() => {
+          const state = store.getWorkspaceState(backgroundWorkspaceId);
+          return state.isCompacting && state.queuedMessage?.content === followUpText;
+        })
+      ).toBe(true);
       createAndAddWorkspace(store, activeWorkspaceId);
-
       releaseBackgroundCompletion();
       await tick(0);
 
       expectResponseComplete(onResponseComplete, {
         workspaceId: backgroundWorkspaceId,
         isFinal: true,
-        completion: { kind: "compaction", hasAutoFollowUp: true },
+        completion: { kind: "compaction" },
         completedAt: initialRecency + 1,
       });
     });
@@ -3256,54 +3460,17 @@ describe("WorkspaceStore", () => {
       const activeWorkspaceId = "active-workspace-no-replay";
       const backgroundWorkspaceId = "background-workspace-no-replay";
       const initialRecency = new Date("2024-01-06T00:00:00.000Z").getTime();
-
-      const backgroundStreamingSnapshot: WorkspaceActivitySnapshot = {
-        recency: initialRecency,
-        streaming: true,
-        lastModel: "claude-sonnet-4",
-        lastThinkingLevel: null,
-      };
-
-      let releaseBackgroundTransition!: () => void;
-      const backgroundTransitionReady = new Promise<void>((resolve) => {
-        releaseBackgroundTransition = resolve;
-      });
-
-      mockActivityList.mockResolvedValue({
-        [backgroundWorkspaceId]: backgroundStreamingSnapshot,
-      });
-
-      mockActivitySubscribe.mockImplementation(async function* (
-        _input?: void,
-        options?: { signal?: AbortSignal }
-      ): AsyncGenerator<WorkspaceActivityEvent, void, unknown> {
-        await backgroundTransitionReady;
-        if (options?.signal?.aborted) {
-          return;
-        }
-
-        yield {
-          type: "activity" as const,
-          workspaceId: backgroundWorkspaceId,
-          activity: {
-            ...backgroundStreamingSnapshot,
-            // Abort/error transitions can stop streaming without advancing recency.
-            recency: initialRecency,
-            streaming: false,
-          },
-        };
-
-        await waitForAbortSignal(options?.signal);
-      });
-
+      const initialSnapshot = createActivitySnapshot(initialRecency);
+      const releaseBackgroundTransition = mockBackgroundActivityTransition(
+        backgroundWorkspaceId,
+        initialSnapshot,
+        [{ ...initialSnapshot, recency: initialRecency, streaming: false }]
+      );
       const onResponseComplete = createResponseCompleteSpy();
 
-      // Recreate the store so the first activity.list call uses this test snapshot.
       recreateStore(onResponseComplete);
-
       createAndAddWorkspace(store, activeWorkspaceId);
       createAndAddWorkspace(store, backgroundWorkspaceId, {}, false);
-
       releaseBackgroundTransition();
       await tick(0);
 
@@ -3833,29 +4000,21 @@ describe("WorkspaceStore", () => {
   describe("model tracking", () => {
     it("should call onModelUsed when stream starts", async () => {
       // Setup mock stream
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await tick(0);
-        yield {
+      mockChatScript([
+        { type: "caught-up" },
+        tick(0),
+        {
           type: "stream-start",
           historySequence: 1,
           messageId: "msg1",
           model: "claude-opus-4",
           workspaceId: "test-workspace",
           startTime: Date.now(),
-        };
-        await tick(10);
-      });
+        },
+        tick(10),
+      ]);
 
-      createAndAddWorkspace(store, "test-workspace", {
-        name: "test-workspace",
-        projectPath: "/test/project",
-        namedWorkspacePath: "/test/project/test-workspace",
-      });
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS);
 
       // Wait for async processing
       await tick(20);
@@ -3874,16 +4033,7 @@ describe("WorkspaceStore", () => {
     });
 
     it("getWorkspaceState() returns same reference when state hasn't changed", () => {
-      createAndAddWorkspace(
-        store,
-        "test-workspace",
-        {
-          name: "test-workspace",
-          projectPath: "/test/project",
-          namedWorkspacePath: "/test/project/test-workspace",
-        },
-        false
-      );
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS, false);
 
       const state1 = store.getWorkspaceState("test-workspace");
       const state2 = store.getWorkspaceState("test-workspace");
@@ -3989,29 +4139,21 @@ describe("WorkspaceStore", () => {
   describe("cache invalidation", () => {
     it("invalidates getWorkspaceState() cache when workspace changes", async () => {
       // Setup mock stream
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await tick(30);
-        yield {
+      mockChatScript([
+        { type: "caught-up" },
+        tick(30),
+        {
           type: "stream-start",
           historySequence: 1,
           messageId: "msg1",
           model: "claude-sonnet-4",
           workspaceId: "test-workspace",
           startTime: Date.now(),
-        };
-        await tick(10);
-      });
+        },
+        tick(10),
+      ]);
 
-      createAndAddWorkspace(store, "test-workspace", {
-        name: "test-workspace",
-        projectPath: "/test/project",
-        namedWorkspacePath: "/test/project/test-workspace",
-      });
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS);
 
       const state1 = store.getWorkspaceState("test-workspace");
 
@@ -4025,29 +4167,21 @@ describe("WorkspaceStore", () => {
 
     it("invalidates getAllStates() cache when workspace changes", async () => {
       // Setup mock stream
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await tick(0);
-        yield {
+      mockChatScript([
+        { type: "caught-up" },
+        tick(0),
+        {
           type: "stream-start",
           historySequence: 1,
           messageId: "msg1",
           model: "claude-sonnet-4",
           workspaceId: "test-workspace",
           startTime: Date.now(),
-        };
-        await tick(10);
-      });
+        },
+        tick(10),
+      ]);
 
-      createAndAddWorkspace(store, "test-workspace", {
-        name: "test-workspace",
-        projectPath: "/test/project",
-        namedWorkspacePath: "/test/project/test-workspace",
-      });
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS);
 
       const states1 = store.getAllStates();
 
@@ -4079,16 +4213,7 @@ describe("WorkspaceStore", () => {
     });
 
     it("maintains cache when no changes occur", () => {
-      createAndAddWorkspace(
-        store,
-        "test-workspace",
-        {
-          name: "test-workspace",
-          projectPath: "/test/project",
-          namedWorkspacePath: "/test/project/test-workspace",
-        },
-        false
-      );
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS, false);
 
       const state1 = store.getWorkspaceState("test-workspace");
       const state2 = store.getWorkspaceState("test-workspace");
@@ -4109,16 +4234,7 @@ describe("WorkspaceStore", () => {
 
   describe("race conditions", () => {
     it("properly cleans up workspace on removal", () => {
-      createAndAddWorkspace(
-        store,
-        "test-workspace",
-        {
-          name: "test-workspace",
-          projectPath: "/test/project",
-          namedWorkspacePath: "/test/project/test-workspace",
-        },
-        false
-      );
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS, false);
 
       // Verify workspace exists
       let allStates = store.getAllStates();
@@ -4167,16 +4283,7 @@ describe("WorkspaceStore", () => {
     });
 
     it("handles workspace removal during state access", () => {
-      createAndAddWorkspace(
-        store,
-        "test-workspace",
-        {
-          name: "test-workspace",
-          projectPath: "/test/project",
-          namedWorkspacePath: "/test/project/test-workspace",
-        },
-        false
-      );
+      createAndAddWorkspace(store, "test-workspace", TEST_WORKSPACE_OPTIONS, false);
 
       const state1 = store.getWorkspaceState("test-workspace");
       expect(state1).toBeDefined();
@@ -4195,40 +4302,20 @@ describe("WorkspaceStore", () => {
     it("retains live output when bash tool result has no output", async () => {
       const workspaceId = "bash-output-workspace-1";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "bash-output",
-          workspaceId,
-          toolCallId: "call-1",
-          text: "out\n",
-          isError: false,
-          timestamp: 1,
-        };
-        yield {
-          type: "bash-output",
-          workspaceId,
-          toolCallId: "call-1",
-          text: "err\n",
-          isError: true,
-          timestamp: 2,
-        };
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        bashOutputEvent(workspaceId, "call-1", "out\n"),
+        bashOutputEvent(workspaceId, "call-1", "err\n", { isError: true, timestamp: 2 }),
         // Simulate tmpfile overflow: tool result has no output field.
-        yield {
-          type: "tool-call-end",
+        toolCallEndEvent(
           workspaceId,
-          messageId: "m1",
-          toolCallId: "call-1",
-          toolName: "bash",
-          result: { success: false, error: "overflow", exitCode: -1, wall_duration_ms: 1 },
-          timestamp: 3,
-        };
-      });
+          "call-1",
+          "bash",
+          { success: false, error: "overflow", exitCode: -1, wall_duration_ms: 1 },
+          { messageId: "m1", timestamp: 3 }
+        ),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -4248,31 +4335,18 @@ describe("WorkspaceStore", () => {
     it("clears live output when bash tool result includes output", async () => {
       const workspaceId = "bash-output-workspace-2";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "bash-output",
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        bashOutputEvent(workspaceId, "call-2", "out\n"),
+        toolCallEndEvent(
           workspaceId,
-          toolCallId: "call-2",
-          text: "out\n",
-          isError: false,
-          timestamp: 1,
-        };
-        yield {
-          type: "tool-call-end",
-          workspaceId,
-          messageId: "m2",
-          toolCallId: "call-2",
-          toolName: "bash",
-          result: { success: true, output: "done", exitCode: 0, wall_duration_ms: 1 },
-          timestamp: 2,
-        };
-      });
+          "call-2",
+          "bash",
+          { success: true, output: "done", exitCode: 0, wall_duration_ms: 1 },
+          { messageId: "m2", timestamp: 2 }
+        ),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -4284,22 +4358,11 @@ describe("WorkspaceStore", () => {
     it("replays pre-caught-up bash output after full replay catches up", async () => {
       const workspaceId = "bash-output-workspace-3";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield {
-          type: "bash-output",
-          workspaceId,
-          toolCallId: "call-3",
-          text: "buffered\n",
-          isError: false,
-          timestamp: 1,
-        };
-        await Promise.resolve();
-        yield { type: "caught-up", replay: "full" };
-      });
+      mockChatScript([
+        bashOutputEvent(workspaceId, "call-3", "buffered\n"),
+        Promise.resolve(),
+        caughtUpEvent({ replay: "full" }),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -4314,28 +4377,12 @@ describe("WorkspaceStore", () => {
     it("tracks the latest live advisor phase while the advisor tool is running", async () => {
       const workspaceId = "advisor-phase-workspace-1";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "advisor-phase",
-          workspaceId,
-          toolCallId: "call-advisor-1",
-          phase: "preparing_context",
-          timestamp: 1,
-        };
-        yield {
-          type: "advisor-phase",
-          workspaceId,
-          toolCallId: "call-advisor-1",
-          phase: "waiting_for_response",
-          timestamp: 2,
-        };
-      });
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorPhaseEvent(workspaceId, "call-advisor-1", "preparing_context", 1),
+        advisorPhaseEvent(workspaceId, "call-advisor-1", "waiting_for_response", 2),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4363,31 +4410,22 @@ describe("WorkspaceStore", () => {
         releaseToolEnd = resolve;
       });
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "advisor-phase",
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorPhaseEvent(workspaceId, "call-advisor-2", "finalizing_result", 1),
+        waitForToolEnd,
+        toolCallEndEvent(
           workspaceId,
-          toolCallId: "call-advisor-2",
-          phase: "finalizing_result",
-          timestamp: 1,
-        };
-        await waitForToolEnd;
-        yield {
-          type: "tool-call-end",
-          workspaceId,
-          messageId: "m-advisor-2",
-          toolCallId: "call-advisor-2",
-          toolName: "advisor",
-          result: { success: true },
-          timestamp: 2,
-        };
-      });
+          "call-advisor-2",
+          "advisor",
+          { success: true },
+          {
+            messageId: "m-advisor-2",
+            timestamp: 2,
+          }
+        ),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4413,29 +4451,13 @@ describe("WorkspaceStore", () => {
         releaseDuplicate = resolve;
       });
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "advisor-phase",
-          workspaceId,
-          toolCallId: "call-advisor-3",
-          phase: "waiting_for_response",
-          timestamp: 1,
-        };
-        await waitForDuplicate;
-        yield {
-          type: "advisor-phase",
-          workspaceId,
-          toolCallId: "call-advisor-3",
-          phase: "waiting_for_response",
-          timestamp: 2,
-        };
-      });
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorPhaseEvent(workspaceId, "call-advisor-3", "waiting_for_response", 1),
+        waitForDuplicate,
+        advisorPhaseEvent(workspaceId, "call-advisor-3", "waiting_for_response", 2),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4471,25 +4493,130 @@ describe("WorkspaceStore", () => {
     });
   });
 
+  describe("advisor-output events", () => {
+    it("accumulates live advisor output while the advisor tool is running", async () => {
+      const workspaceId = "advisor-output-workspace-1";
+
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorOutputEvent(workspaceId, "call-advisor-output-1", "first ", 1),
+        advisorOutputEvent(workspaceId, "call-advisor-output-1", "second", 2),
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasLiveOutput = await waitUntil(
+        () =>
+          store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-1")?.text ===
+          "first second"
+      );
+      expect(hasLiveOutput).toBe(true);
+
+      const live = store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-1");
+      expect(live).toEqual({ text: "first second", timestamp: 2 });
+      expect(store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-1")).toBe(live);
+    });
+
+    it("clears live advisor output on advisor tool-call-end", async () => {
+      const workspaceId = "advisor-output-workspace-2";
+      let releaseToolEnd: (() => void) | undefined;
+      const waitForToolEnd = new Promise<void>((resolve) => {
+        releaseToolEnd = resolve;
+      });
+
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorOutputEvent(workspaceId, "call-advisor-output-2", "partial advice", 1),
+        waitForToolEnd,
+        toolCallEndEvent(
+          workspaceId,
+          "call-advisor-output-2",
+          "advisor",
+          { type: "advice", advice: "partial advice" },
+          { messageId: "m-advisor-output-2", timestamp: 2 }
+        ),
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasLiveOutput = await waitUntil(
+        () =>
+          store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-2")?.text ===
+          "partial advice"
+      );
+      expect(hasLiveOutput).toBe(true);
+
+      releaseToolEnd?.();
+
+      const clearedLiveOutput = await waitUntil(
+        () => store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-2") === null
+      );
+      expect(clearedLiveOutput).toBe(true);
+    });
+
+    it("clears stale live advisor output after message deletion", async () => {
+      const workspaceId = "advisor-output-workspace-delete";
+      let releaseDelete: (() => void) | undefined;
+      const waitForDelete = new Promise<void>((resolve) => {
+        releaseDelete = resolve;
+      });
+
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorOutputEvent(workspaceId, "call-advisor-output-delete", "stale partial advice", 1),
+        waitForDelete,
+        { type: "delete", historySequences: [1] },
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasLiveOutput = await waitUntil(
+        () =>
+          store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-delete")?.text ===
+          "stale partial advice"
+      );
+      expect(hasLiveOutput).toBe(true);
+
+      releaseDelete?.();
+
+      const clearedLiveOutput = await waitUntil(
+        () => store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-delete") === null
+      );
+      expect(clearedLiveOutput).toBe(true);
+    });
+
+    it("replays pre-caught-up advisor output after full replay catches up", async () => {
+      const workspaceId = "advisor-output-workspace-3";
+
+      mockChatScript([
+        advisorOutputEvent(workspaceId, "call-advisor-output-3", "buffered advice", 1),
+        Promise.resolve(),
+        caughtUpEvent({ replay: "full" }),
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasLiveOutput = await waitUntil(
+        () =>
+          store.getAdvisorToolLiveOutput(workspaceId, "call-advisor-output-3")?.text ===
+          "buffered advice"
+      );
+      expect(hasLiveOutput).toBe(true);
+    });
+  });
+
   describe("task-created events", () => {
     it("exposes live taskId while the task tool is running", async () => {
       const workspaceId = "task-created-workspace-1";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "task-created",
-          workspaceId,
-          toolCallId: "call-task-1",
-          taskId: "child-workspace-1",
-          timestamp: 1,
-        };
-      });
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        taskCreatedEvent(workspaceId, "call-task-1", "child-workspace-1", 1),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -4502,28 +4629,12 @@ describe("WorkspaceStore", () => {
     it("accumulates multiple live taskIds for best-of task tool calls", async () => {
       const workspaceId = "task-created-workspace-best-of";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "task-created",
-          workspaceId,
-          toolCallId: "call-task-best-of",
-          taskId: "child-workspace-1",
-          timestamp: 1,
-        };
-        yield {
-          type: "task-created",
-          workspaceId,
-          toolCallId: "call-task-best-of",
-          taskId: "child-workspace-2",
-          timestamp: 2,
-        };
-      });
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        taskCreatedEvent(workspaceId, "call-task-best-of", "child-workspace-1", 1),
+        taskCreatedEvent(workspaceId, "call-task-best-of", "child-workspace-2", 2),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -4537,30 +4648,18 @@ describe("WorkspaceStore", () => {
     it("clears live taskId on task tool-call-end", async () => {
       const workspaceId = "task-created-workspace-2";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield { type: "caught-up" };
-        await Promise.resolve();
-        yield {
-          type: "task-created",
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        taskCreatedEvent(workspaceId, "call-task-2", "child-workspace-2", 1),
+        toolCallEndEvent(
           workspaceId,
-          toolCallId: "call-task-2",
-          taskId: "child-workspace-2",
-          timestamp: 1,
-        };
-        yield {
-          type: "tool-call-end",
-          workspaceId,
-          messageId: "m-task-2",
-          toolCallId: "call-task-2",
-          toolName: "task",
-          result: { status: "queued", taskId: "child-workspace-2" },
-          timestamp: 2,
-        };
-      });
+          "call-task-2",
+          "task",
+          { status: "queued", taskId: "child-workspace-2" },
+          { messageId: "m-task-2", timestamp: 2 }
+        ),
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -4571,10 +4670,7 @@ describe("WorkspaceStore", () => {
     it("preserves pagination state across since reconnect retries", async () => {
       const workspaceId = "pagination-since-retry";
       let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
+      const firstSubscription = createReleaseGate();
 
       mockOnChat.mockImplementation(async function* (): AsyncGenerator<
         WorkspaceChatMessage,
@@ -4597,7 +4693,7 @@ describe("WorkspaceStore", () => {
             },
           };
 
-          await holdFirstSubscription;
+          await firstSubscription.wait;
           return;
         }
 
@@ -4620,7 +4716,7 @@ describe("WorkspaceStore", () => {
       );
       expect(seededPagination).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
       const preservedPagination = await waitUntil(() => {
         return (
@@ -4632,53 +4728,18 @@ describe("WorkspaceStore", () => {
 
     it("clears stale live tool state when since replay reports no active stream", async () => {
       const workspaceId = "task-created-workspace-4";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
-        if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "bash-output",
-            workspaceId,
-            toolCallId: "call-bash-4",
-            text: "stale-output\n",
-            isError: false,
-            timestamp: 1,
-          };
-          yield {
-            type: "task-created",
-            workspaceId,
-            toolCallId: "call-task-4",
-            taskId: "child-workspace-4",
-            timestamp: 2,
-          };
-
-          await holdFirstSubscription;
-          return;
-        }
-
-        yield {
-          type: "caught-up",
-          replay: "since",
-          cursor: {
-            history: {
-              messageId: "history-1",
-              historySequence: 1,
-            },
-          },
-        };
-      });
+      const firstSubscription = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount) =>
+        subscriptionCount === 1
+          ? [
+              caughtUpEvent(),
+              Promise.resolve(),
+              bashOutputEvent(workspaceId, "call-bash-4", "stale-output\n"),
+              taskCreatedEvent(workspaceId, "call-task-4", "child-workspace-4", 2),
+              firstSubscription.wait,
+            ]
+          : [sinceCaughtUpEvent()]
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4691,11 +4752,11 @@ describe("WorkspaceStore", () => {
       });
       expect(seededLiveState).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
       const clearedLiveState = await waitUntil(() => {
         return (
-          subscriptionCount >= 2 &&
+          getSubscriptionCount() >= 2 &&
           store.getBashToolLiveOutput(workspaceId, "call-bash-4") === null &&
           store.getTaskToolLiveTaskIds(workspaceId, "call-task-4") === null
         );
@@ -4705,76 +4766,36 @@ describe("WorkspaceStore", () => {
 
     it("clears stale live tool state when server stream exists but local stream context is missing", async () => {
       const workspaceId = "task-created-workspace-7";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
-        if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "stream-start",
-            workspaceId,
-            messageId: "msg-old-stream-missing-local",
-            historySequence: 1,
-            model: "claude-3-5-sonnet-20241022",
-            startTime: 1_000,
-          };
-          yield {
-            type: "bash-output",
-            workspaceId,
-            toolCallId: "call-bash-7",
-            text: "stale-after-end\n",
-            isError: false,
-            timestamp: 1_001,
-          };
-          yield {
-            type: "task-created",
-            workspaceId,
-            toolCallId: "call-task-7",
-            taskId: "child-workspace-7",
-            timestamp: 1_002,
-          };
-          yield {
-            type: "stream-end",
-            workspaceId,
-            messageId: "msg-old-stream-missing-local",
-            metadata: {
-              model: "claude-3-5-sonnet-20241022",
-              historySequence: 1,
-              timestamp: 1_003,
-            },
-            parts: [],
-          };
-
-          await holdFirstSubscription;
-          return;
-        }
-
-        yield {
-          type: "caught-up",
-          replay: "since",
-          cursor: {
-            history: {
-              messageId: "history-1",
-              historySequence: 1,
-            },
-            stream: {
-              messageId: "msg-new-stream-missing-local",
-              lastTimestamp: 2_000,
-            },
-          },
-        };
-      });
+      const firstSubscription = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount) =>
+        subscriptionCount === 1
+          ? [
+              caughtUpEvent(),
+              Promise.resolve(),
+              streamStartEvent(workspaceId, "msg-old-stream-missing-local", {
+                startTime: 1_000,
+                model: "claude-3-5-sonnet-20241022",
+              }),
+              bashOutputEvent(workspaceId, "call-bash-7", "stale-after-end\n", {
+                timestamp: 1_001,
+              }),
+              taskCreatedEvent(workspaceId, "call-task-7", "child-workspace-7", 1_002),
+              streamEndEvent(workspaceId, "msg-old-stream-missing-local", {
+                metadata: {
+                  model: "claude-3-5-sonnet-20241022",
+                  historySequence: 1,
+                  timestamp: 1_003,
+                },
+              }),
+              firstSubscription.wait,
+            ]
+          : [
+              sinceCaughtUpEvent(1, "history-1", {
+                messageId: "msg-new-stream-missing-local",
+                lastTimestamp: 2_000,
+              }),
+            ]
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4788,11 +4809,11 @@ describe("WorkspaceStore", () => {
       });
       expect(seededStaleLiveState).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
       const clearedStaleLiveState = await waitUntil(() => {
         return (
-          subscriptionCount >= 2 &&
+          getSubscriptionCount() >= 2 &&
           store.getBashToolLiveOutput(workspaceId, "call-bash-7") === null &&
           store.getTaskToolLiveTaskIds(workspaceId, "call-task-7") === null
         );
@@ -4802,74 +4823,35 @@ describe("WorkspaceStore", () => {
 
     it("clears stale active stream context when since replay reports a different stream", async () => {
       const workspaceId = "task-created-workspace-5";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
-        if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "stream-start",
-            workspaceId,
-            messageId: "msg-old-stream",
-            historySequence: 1,
-            model: "claude-3-5-sonnet-20241022",
-            startTime: 1_000,
-          };
-          yield {
-            type: "bash-output",
-            workspaceId,
-            toolCallId: "call-bash-5",
-            text: "old-stream-output\n",
-            isError: false,
-            timestamp: 1_001,
-          };
-          yield {
-            type: "task-created",
-            workspaceId,
-            toolCallId: "call-task-5",
-            taskId: "child-workspace-5",
-            timestamp: 1_002,
-          };
-
-          await holdFirstSubscription;
-          return;
-        }
-
-        yield {
-          type: "caught-up",
-          replay: "since",
-          cursor: {
-            history: {
-              messageId: "history-1",
-              historySequence: 1,
-            },
-            stream: {
-              messageId: "msg-new-stream",
-              lastTimestamp: 2_000,
-            },
-          },
-        };
-        await Promise.resolve();
-        yield {
-          type: "stream-start",
-          workspaceId,
-          messageId: "msg-new-stream",
-          historySequence: 2,
-          model: "claude-3-5-sonnet-20241022",
-          startTime: 2_000,
-        };
-      });
+      const firstSubscription = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount) =>
+        subscriptionCount === 1
+          ? [
+              caughtUpEvent(),
+              Promise.resolve(),
+              streamStartEvent(workspaceId, "msg-old-stream", {
+                startTime: 1_000,
+                model: "claude-3-5-sonnet-20241022",
+              }),
+              bashOutputEvent(workspaceId, "call-bash-5", "old-stream-output\n", {
+                timestamp: 1_001,
+              }),
+              taskCreatedEvent(workspaceId, "call-task-5", "child-workspace-5", 1_002),
+              firstSubscription.wait,
+            ]
+          : [
+              sinceCaughtUpEvent(1, "history-1", {
+                messageId: "msg-new-stream",
+                lastTimestamp: 2_000,
+              }),
+              Promise.resolve(),
+              streamStartEvent(workspaceId, "msg-new-stream", {
+                historySequence: 2,
+                model: "claude-3-5-sonnet-20241022",
+                startTime: 2_000,
+              }),
+            ]
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4887,11 +4869,11 @@ describe("WorkspaceStore", () => {
         "child-workspace-5",
       ]);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
       const switchedToNewStream = await waitUntil(() => {
         return (
-          subscriptionCount >= 2 &&
+          getSubscriptionCount() >= 2 &&
           store.getAggregator(workspaceId)?.getOnChatCursor()?.stream?.messageId ===
             "msg-new-stream" &&
           store.getBashToolLiveOutput(workspaceId, "call-bash-5") === null &&
@@ -4903,47 +4885,21 @@ describe("WorkspaceStore", () => {
 
     it("clears stale abort reason when since reconnect is downgraded to full replay", async () => {
       const workspaceId = "task-created-workspace-6";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
-        if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "stream-start",
-            workspaceId,
-            messageId: "msg-abort-old-stream",
-            historySequence: 1,
-            model: "claude-3-5-sonnet-20241022",
-            startTime: 1_000,
-          };
-          yield {
-            type: "stream-abort",
-            workspaceId,
-            messageId: "msg-abort-old-stream",
-            abortReason: "user",
-            metadata: {},
-          };
-
-          await holdFirstSubscription;
-          return;
-        }
-
-        yield {
-          type: "caught-up",
-          replay: "full",
-        };
-      });
+      const firstSubscription = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount) =>
+        subscriptionCount === 1
+          ? [
+              caughtUpEvent(),
+              Promise.resolve(),
+              streamStartEvent(workspaceId, "msg-abort-old-stream", {
+                startTime: 1_000,
+                model: "claude-3-5-sonnet-20241022",
+              }),
+              streamAbortEvent(workspaceId, "msg-abort-old-stream"),
+              firstSubscription.wait,
+            ]
+          : [caughtUpEvent({ replay: "full" })]
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -4952,11 +4908,12 @@ describe("WorkspaceStore", () => {
       });
       expect(seededAbortReason).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
       const clearedAbortReason = await waitUntil(() => {
         return (
-          subscriptionCount >= 2 && store.getWorkspaceState(workspaceId).lastAbortReason === null
+          getSubscriptionCount() >= 2 &&
+          store.getWorkspaceState(workspaceId).lastAbortReason === null
         );
       });
       expect(clearedAbortReason).toBe(true);
@@ -4964,36 +4921,17 @@ describe("WorkspaceStore", () => {
 
     it("clears stale auto-retry status when full replay reconnect replaces history", async () => {
       const workspaceId = "task-created-workspace-auto-retry-reset";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
-        if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "auto-retry-starting",
-            attempt: 2,
-          };
-
-          await holdFirstSubscription;
-          return;
-        }
-
-        yield {
-          type: "caught-up",
-          replay: "full",
-        };
-      });
+      const firstSubscription = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount) =>
+        subscriptionCount === 1
+          ? [
+              caughtUpEvent(),
+              Promise.resolve(),
+              { type: "auto-retry-starting", attempt: 2 },
+              firstSubscription.wait,
+            ]
+          : [caughtUpEvent({ replay: "full" })]
+      );
 
       createAndAddWorkspace(store, workspaceId);
 
@@ -5002,11 +4940,12 @@ describe("WorkspaceStore", () => {
       });
       expect(seededRetryStatus).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
       const clearedRetryStatus = await waitUntil(() => {
         return (
-          subscriptionCount >= 2 && store.getWorkspaceState(workspaceId).autoRetryStatus === null
+          getSubscriptionCount() >= 2 &&
+          store.getWorkspaceState(workspaceId).autoRetryStatus === null
         );
       });
       expect(clearedRetryStatus).toBe(true);
@@ -5015,21 +4954,17 @@ describe("WorkspaceStore", () => {
     it("replays pre-caught-up task-created after full replay catches up", async () => {
       const workspaceId = "task-created-workspace-3";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        yield {
+      mockChatScript([
+        {
           type: "task-created",
           workspaceId,
           toolCallId: "call-task-3",
           taskId: "child-workspace-3",
           timestamp: 1,
-        };
-        await Promise.resolve();
-        yield { type: "caught-up", replay: "full" };
-      });
+        },
+        Promise.resolve(),
+        { type: "caught-up", replay: "full" },
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -5041,56 +4976,36 @@ describe("WorkspaceStore", () => {
 
     it("preserves usage state while full replay resets the aggregator", async () => {
       const workspaceId = "usage-reset-replay-workspace";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      let releaseSecondCaughtUp: (() => void) | undefined;
-      const holdSecondCaughtUp = new Promise<void>((resolve) => {
-        releaseSecondCaughtUp = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
+      const firstSubscription = createReleaseGate();
+      const secondCaughtUp = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount, signal) => {
         if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "stream-start",
-            workspaceId,
-            messageId: "msg-live-usage",
-            historySequence: 1,
-            model: "claude-3-5-sonnet-20241022",
-            startTime: 1,
-          };
-          yield {
-            type: "usage-delta",
-            workspaceId,
-            messageId: "msg-live-usage",
-            usage: { inputTokens: 321, outputTokens: 9, totalTokens: 330 },
-            cumulativeUsage: { inputTokens: 500, outputTokens: 15, totalTokens: 515 },
-          };
-
-          await holdFirstSubscription;
-          return;
+          return [
+            caughtUpEvent(),
+            Promise.resolve(),
+            streamStartEvent(workspaceId, "msg-live-usage", {
+              startTime: 1,
+              model: "claude-3-5-sonnet-20241022",
+            }),
+            {
+              type: "usage-delta",
+              workspaceId,
+              messageId: "msg-live-usage",
+              usage: { inputTokens: 321, outputTokens: 9, totalTokens: 330 },
+              cumulativeUsage: { inputTokens: 500, outputTokens: 15, totalTokens: 515 },
+            },
+            firstSubscription.wait,
+          ];
         }
-
         if (subscriptionCount === 2) {
-          // Hold caught-up so the test can inspect usage after resetChatStateForReplay()
-          // cleared the aggregator but before replay completion.
-          await holdSecondCaughtUp;
-          yield { type: "caught-up", replay: "full" };
-          return;
+          return [
+            // Hold caught-up so the test can inspect usage after resetChatStateForReplay()
+            // cleared the aggregator but before replay completion.
+            secondCaughtUp.wait,
+            caughtUpEvent({ replay: "full" }),
+          ];
         }
-
-        await waitForAbortSignal();
+        return [() => waitForAbortSignal(signal)];
       });
 
       createAndAddWorkspace(store, workspaceId);
@@ -5101,16 +5016,16 @@ describe("WorkspaceStore", () => {
       });
       expect(seededUsage).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
-      const startedSecondSubscription = await waitUntil(() => subscriptionCount >= 2);
+      const startedSecondSubscription = await waitUntil(() => getSubscriptionCount() >= 2);
       expect(startedSecondSubscription).toBe(true);
 
       const usageDuringReplay = store.getWorkspaceUsage(workspaceId);
       expect(usageDuringReplay.liveUsage?.input.tokens).toBe(321);
       expect(usageDuringReplay.liveCostUsage?.input.tokens).toBe(500);
 
-      releaseSecondCaughtUp?.();
+      secondCaughtUp.release();
       await tick(10);
 
       const usageAfterCaughtUp = store.getWorkspaceUsage(workspaceId);
@@ -5119,59 +5034,38 @@ describe("WorkspaceStore", () => {
 
     it("clears replay usage snapshot when reconnect fails before caught-up", async () => {
       const workspaceId = "usage-reset-replay-failure-workspace";
-      let subscriptionCount = 0;
-      let releaseFirstSubscription: (() => void) | undefined;
-      const holdFirstSubscription = new Promise<void>((resolve) => {
-        releaseFirstSubscription = resolve;
-      });
-
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        subscriptionCount += 1;
-
+      const firstSubscription = createReleaseGate();
+      const getSubscriptionCount = mockChatReconnectScript((subscriptionCount, signal) => {
         if (subscriptionCount === 1) {
-          yield { type: "caught-up" };
-          await Promise.resolve();
-          yield {
-            type: "stream-start",
-            workspaceId,
-            messageId: "msg-live-usage-failure",
-            historySequence: 1,
-            model: "claude-3-5-sonnet-20241022",
-            startTime: 1,
-          };
-          yield {
-            type: "usage-delta",
-            workspaceId,
-            messageId: "msg-live-usage-failure",
-            usage: { inputTokens: 111, outputTokens: 9, totalTokens: 120 },
-            cumulativeUsage: { inputTokens: 300, outputTokens: 15, totalTokens: 315 },
-          };
-          // Keep two active streams so reconnect cannot build a safe incremental cursor.
-          // This forces a full replay attempt, which executes resetChatStateForReplay().
-          yield {
-            type: "stream-start",
-            workspaceId,
-            messageId: "msg-live-usage-failure-2",
-            historySequence: 2,
-            model: "claude-3-5-sonnet-20241022",
-            startTime: 2,
-          };
-
-          await holdFirstSubscription;
-          return;
+          return [
+            caughtUpEvent(),
+            Promise.resolve(),
+            streamStartEvent(workspaceId, "msg-live-usage-failure", {
+              startTime: 1,
+              model: "claude-3-5-sonnet-20241022",
+            }),
+            {
+              type: "usage-delta",
+              workspaceId,
+              messageId: "msg-live-usage-failure",
+              usage: { inputTokens: 111, outputTokens: 9, totalTokens: 120 },
+              cumulativeUsage: { inputTokens: 300, outputTokens: 15, totalTokens: 315 },
+            },
+            // Keep two active streams so reconnect cannot build a safe incremental cursor.
+            // This forces a full replay attempt, which executes resetChatStateForReplay().
+            streamStartEvent(workspaceId, "msg-live-usage-failure-2", {
+              historySequence: 2,
+              startTime: 2,
+              model: "claude-3-5-sonnet-20241022",
+            }),
+            firstSubscription.wait,
+          ];
         }
-
         if (subscriptionCount === 2) {
           // Simulate reconnect failure before authoritative caught-up.
-          await Promise.resolve();
-          return;
+          return [Promise.resolve()];
         }
-
-        await waitForAbortSignal();
+        return [() => waitForAbortSignal(signal)];
       });
 
       createAndAddWorkspace(store, workspaceId);
@@ -5182,9 +5076,9 @@ describe("WorkspaceStore", () => {
       });
       expect(seededUsage).toBe(true);
 
-      releaseFirstSubscription?.();
+      firstSubscription.release();
 
-      const startedSecondSubscription = await waitUntil(() => subscriptionCount >= 2);
+      const startedSecondSubscription = await waitUntil(() => getSubscriptionCount() >= 2);
       expect(startedSecondSubscription).toBe(true);
 
       const usageSnapshotCleared = await waitUntil(() => {
@@ -5197,13 +5091,9 @@ describe("WorkspaceStore", () => {
     it("uses compaction boundary context usage when it is the newest usage in the active epoch", async () => {
       const workspaceId = "boundary-context-usage-workspace";
 
-      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
-        WorkspaceChatMessage,
-        void,
-        unknown
-      > {
-        await Promise.resolve();
-        yield {
+      mockChatScript([
+        Promise.resolve(),
+        {
           type: "message",
           id: "pre-boundary-assistant",
           role: "assistant",
@@ -5214,9 +5104,8 @@ describe("WorkspaceStore", () => {
             model: "claude-3-5-sonnet-20241022",
             contextUsage: { inputTokens: 999, outputTokens: 10, totalTokens: undefined },
           },
-        };
-
-        yield {
+        },
+        {
           type: "message",
           id: "compaction-boundary-summary",
           role: "assistant",
@@ -5230,10 +5119,9 @@ describe("WorkspaceStore", () => {
             compactionEpoch: 1,
             contextUsage: { inputTokens: 42, outputTokens: 0, totalTokens: undefined },
           },
-        };
-
-        yield { type: "caught-up" };
-      });
+        },
+        { type: "caught-up" },
+      ]);
 
       createAndAddWorkspace(store, workspaceId);
       await tick(10);
@@ -5242,6 +5130,311 @@ describe("WorkspaceStore", () => {
       expect(usage.lastContextUsage?.input.tokens).toBe(42);
       expect(usage.lastContextUsage?.output.tokens).toBe(0);
       expect(usage.lastContextUsage?.model).toBe("claude-3-5-sonnet-20241022");
+    });
+  });
+
+  describe("/btw side-question interruption flow", () => {
+    /**
+     * The contract under test: while a /btw answer is streaming, the side
+     * branch stays at the captured interruption point instead of sticking to
+     * the transcript tail. Main-agent deltas keep flowing into the post-aside
+     * segment below the /btw pair.
+     */
+    it("renders main-agent stream-deltas below /btw while the side answer streams", async () => {
+      const workspaceId = "btw-tail-flow";
+      recreateStore();
+      await tick(0);
+      createAndAddWorkspace(store, workspaceId);
+
+      const rawStore = getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store);
+
+      // Catch up so live events flow through processStreamEvent instead of
+      // queueing into pendingStreamEvents.
+      rawStore.handleChatMessage(workspaceId, { type: "caught-up" });
+
+      // Open a main agent stream and seed one delta as the baseline. After
+      // this, the visible text for `main-1` is "hi ".
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "main-1",
+        model: TEST_MODEL,
+        historySequence: 1,
+        startTime: 1_000,
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-delta",
+        workspaceId,
+        messageId: "main-1",
+        delta: "hi ",
+        tokens: 1,
+        timestamp: 1_100,
+      });
+
+      const aggregator = store.getAggregator(workspaceId);
+      if (!aggregator) throw new Error("aggregator missing");
+
+      const readMainText = (): string => {
+        const msg = aggregator.getAllMessages().find((m: { id: string }) => m.id === "main-1");
+        if (!msg) return "";
+        const firstPart = (msg as { parts: Array<{ type: string; text?: string }> }).parts[0];
+        return firstPart?.type === "text" ? (firstPart.text ?? "") : "";
+      };
+      expect(readMainText()).toBe("hi ");
+
+      // /btw kicks off. The pipeline persists a user envelope (with the
+      // interruption snapshot — see sideQuestionService's `interruption`
+      // capture), a placeholder envelope, then opens stream-start.
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-user-1",
+        role: "user",
+        parts: [{ type: "text", text: "/btw what's 2+2" }],
+        metadata: {
+          historySequence: 2,
+          timestamp: 1_200,
+          muxMetadata: {
+            type: "side-question",
+            rawCommand: "/btw what's 2+2",
+            // The pre-aside half ends at text length 3 ("hi ") — the renderer
+            // splits main-1's content there in the transcript.
+            interruptedMessageId: "main-1",
+            interruptedTextLength: 3,
+            interruptedHistorySequence: 1,
+          },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-ans-1",
+        role: "assistant",
+        parts: [],
+        metadata: {
+          historySequence: 3,
+          timestamp: 1_300,
+          model: "claude-haiku-3.5",
+          muxMetadata: { type: "side-question-answer" },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "btw-ans-1",
+        model: "claude-haiku-3.5",
+        historySequence: 3,
+        startTime: 1_400,
+      });
+
+      // Main agent emits a delta while /btw is in flight. It should keep
+      // flowing into the interrupted main message so the side branch does
+      // not remain pinned to the transcript tail for the whole side stream.
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-delta",
+        workspaceId,
+        messageId: "main-1",
+        delta: "there ",
+        tokens: 1,
+        timestamp: 1_500,
+      });
+      expect(readMainText()).toBe("hi there ");
+
+      // The side answer streams normally and lands on its own message.
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-delta",
+        workspaceId,
+        messageId: "btw-ans-1",
+        delta: "four",
+        tokens: 1,
+        timestamp: 1_600,
+      });
+      const sideMsg = aggregator
+        .getAllMessages()
+        .find((m: { id: string }) => m.id === "btw-ans-1") as
+        | { parts: Array<{ type: string; text?: string }> }
+        | undefined;
+      const sidePart = sideMsg?.parts[0];
+      expect(sidePart?.type === "text" ? sidePart.text : undefined).toBe("four");
+
+      // While the side answer is still streaming, the /btw pair is already
+      // inserted at the interruption point with post-aside main content below.
+      const readVisibleHistoryIds = (): string[] =>
+        aggregator
+          .getDisplayedMessages()
+          .filter((m) => m.type === "assistant" || m.type === "user")
+          .map((m) => m.historyId);
+      expect(readVisibleHistoryIds()).toEqual(["main-1", "btw-user-1", "btw-ans-1", "main-1"]);
+
+      // After /btw settles, the underlying main message still has the full
+      // text and the displayed rows keep the same split order.
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-end",
+        workspaceId,
+        messageId: "btw-ans-1",
+        parts: [{ type: "text", text: "four" }],
+        metadata: {
+          model: "claude-haiku-3.5",
+          timestamp: 1_700,
+          duration: 300,
+          historySequence: 3,
+        },
+      });
+      expect(readMainText()).toBe("hi there ");
+      expect(readVisibleHistoryIds()).toEqual(["main-1", "btw-user-1", "btw-ans-1", "main-1"]);
+      const mainRows = aggregator
+        .getDisplayedMessages()
+        .filter(
+          (m): m is Extract<typeof m, { type: "assistant"; content: string }> =>
+            m.type === "assistant" && m.historyId === "main-1"
+        );
+      expect(mainRows.map((m) => m.content)).toEqual(["hi ", "there "]);
+    });
+    it("keeps standalone /btw answer streams out of workspace interrupt state", async () => {
+      const workspaceId = "btw-standalone-not-busy";
+      recreateStore();
+      await tick(0);
+      createAndAddWorkspace(store, workspaceId);
+
+      const rawStore = getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store);
+      rawStore.handleChatMessage(workspaceId, { type: "caught-up" });
+
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-user-standalone",
+        role: "user",
+        parts: [{ type: "text", text: "/btw what's next?" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: 1_000,
+          muxMetadata: {
+            type: "side-question",
+            rawCommand: "/btw what's next?",
+            commandPrefix: "/btw",
+          },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-answer-standalone",
+        role: "assistant",
+        parts: [],
+        metadata: {
+          historySequence: 2,
+          timestamp: 1_100,
+          model: "claude-haiku-3.5",
+          muxMetadata: { type: "side-question-answer" },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "btw-answer-standalone",
+        model: "claude-haiku-3.5",
+        historySequence: 2,
+        startTime: 1_200,
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-delta",
+        workspaceId,
+        messageId: "btw-answer-standalone",
+        delta: "side answer",
+        tokens: 1,
+        timestamp: 1_300,
+      });
+
+      const aggregator = store.getAggregator(workspaceId);
+      expect(aggregator?.isSideQuestionStreaming()).toBe(true);
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.canInterrupt).toBe(false);
+      expect(state.isStreamStarting).toBe(false);
+      expect(
+        aggregator
+          ?.getAllMessages()
+          .find((message) => message.id === "btw-answer-standalone")
+          ?.parts.some((part) => part.type === "text" && part.text === "side answer")
+      ).toBe(true);
+    });
+    it("keeps replayed /btw answer streams out of workspace interrupt state", async () => {
+      const workspaceId = "btw-replay-side-only-not-busy";
+      recreateStore();
+      await tick(0);
+      createAndAddWorkspace(store, workspaceId);
+
+      const rawStore = getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store);
+
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-answer-replay",
+        role: "assistant",
+        parts: [],
+        metadata: {
+          historySequence: 1,
+          timestamp: 1_000,
+          model: "claude-haiku-3.5",
+          muxMetadata: { type: "side-question-answer" },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "btw-answer-replay",
+        model: "claude-haiku-3.5",
+        historySequence: 1,
+        startTime: 1_100,
+      });
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.canInterrupt).toBe(false);
+      expect(state.isStreamStarting).toBe(false);
+    });
+
+    it("preserves buffered main-stream interrupt state when /btw starts during replay", async () => {
+      const workspaceId = "btw-buffered-main-stays-busy";
+      recreateStore();
+      await tick(0);
+      createAndAddWorkspace(store, workspaceId);
+
+      const rawStore = getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store);
+
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "main-buffered",
+        model: TEST_MODEL,
+        historySequence: 1,
+        startTime: 1_000,
+      });
+      expect(store.getWorkspaceState(workspaceId).canInterrupt).toBe(true);
+
+      rawStore.handleChatMessage(workspaceId, {
+        type: "message",
+        id: "btw-answer-buffered",
+        role: "assistant",
+        parts: [],
+        metadata: {
+          historySequence: 2,
+          timestamp: 1_100,
+          model: "claude-haiku-3.5",
+          muxMetadata: { type: "side-question-answer" },
+        },
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "btw-answer-buffered",
+        model: "claude-haiku-3.5",
+        historySequence: 2,
+        startTime: 1_200,
+      });
+
+      expect(store.getWorkspaceState(workspaceId).canInterrupt).toBe(true);
     });
   });
 });

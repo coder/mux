@@ -6,11 +6,18 @@ import * as os from "os";
 import * as path from "path";
 import type { Config } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
+import { IdleDispatcher } from "@/node/services/idleDispatcher";
 import { InitStateManager } from "@/node/services/initStateManager";
 import { ProviderService } from "@/node/services/providerService";
 import { AIService } from "@/node/services/aiService";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { SessionUsageService } from "@/node/services/sessionUsageService";
+import { log } from "@/node/services/log";
+import {
+  WorkspaceGoalService,
+  type GoalLifecycleAnalyticsSink,
+  type WorkspaceGoalServiceOptions,
+} from "@/node/services/workspaceGoalService";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager, type MCPServerManagerOptions } from "@/node/services/mcpServerManager";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
@@ -34,6 +41,8 @@ export interface CoreServicesOptions {
   /** Optional cross-cutting services (desktop creates before core services). */
   policyService?: PolicyService;
   telemetryService?: TelemetryService;
+  analyticsService?: GoalLifecycleAnalyticsSink;
+  goalServiceOptions?: WorkspaceGoalServiceOptions;
   experimentsService?: ExperimentsService;
   sessionTimingService?: SessionTimingService;
   opResolver?: ExternalSecretResolver;
@@ -46,6 +55,13 @@ export interface CoreServices {
   providerService: ProviderService;
   backgroundProcessManager: BackgroundProcessManager;
   sessionUsageService: SessionUsageService;
+  workspaceGoalService: WorkspaceGoalService;
+  /**
+   * Shared with HeartbeatService (when the desktop ServiceContainer wires it
+   * up) so an active goal naturally suppresses background heartbeats via
+   * priority dispatch ordering.
+   */
+  idleDispatcher: IdleDispatcher;
   aiService: AIService;
   mcpConfigService: MCPConfigService;
   mcpServerManager: MCPServerManager;
@@ -64,6 +80,14 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     path.join(os.tmpdir(), "mux-bashes")
   );
   const sessionUsageService = new SessionUsageService(config, historyService);
+  const extensionMetadata = new ExtensionMetadataService(extensionMetadataPath);
+  const workspaceGoalService = new WorkspaceGoalService(
+    config,
+    historyService,
+    extensionMetadata,
+    opts.analyticsService,
+    opts.goalServiceOptions
+  );
 
   const aiService = new AIService(
     config,
@@ -89,8 +113,6 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   );
   aiService.setMCPServerManager(mcpServerManager);
 
-  const extensionMetadata = new ExtensionMetadataService(extensionMetadataPath);
-
   const workspaceService = new WorkspaceService(
     config,
     historyService,
@@ -106,6 +128,26 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.opResolver
   );
   workspaceService.setMCPServerManager(mcpServerManager);
+  workspaceService.setWorkspaceGoalService(workspaceGoalService);
+  workspaceGoalService.setOnActivityChange((workspaceId, snapshot) => {
+    workspaceService.emit("activity", { workspaceId, activity: snapshot });
+  });
+  // Wire user-initiated `promoteUpcomingGoal` through `interruptStream`
+  // so promoting mid-stream cleanly aborts the in-flight turn before
+  // the new active goal lands. Without this, the goal service would
+  // proceed without aborting and the tail of the current stream could
+  // leak token usage into the newly-promoted goal's accounting (the
+  // earlier Codex P1 concern). Soft hand-off here means a queued
+  // message stays in the user's input box; the next `sendMessage`
+  // will start fresh against the promoted goal.
+  workspaceGoalService.setStreamInterrupter(async (workspaceId) => {
+    const result = await workspaceService.interruptStream(workspaceId);
+    if (!result.success) {
+      // The goal service logs + falls back; we just surface a warning
+      // here so production paths flag the rare error.
+      log.warn("coreServices: promote interrupt failed", { workspaceId, error: result.error });
+    }
+  });
 
   const taskService = new TaskService(
     config,
@@ -113,10 +155,27 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     aiService,
     workspaceService,
     initStateManager,
-    opts.opResolver
+    opts.opResolver,
+    sessionUsageService,
+    workspaceGoalService
   );
   aiService.setTaskService(taskService);
   workspaceService.setTaskService(taskService);
+
+  // Goal continuation bridge lives at the core scope so every codepath that
+  // uses createCoreServices (mux run, mux server via ServiceContainer, tests)
+  // gets a working dispatcher. Without this, requestContinuationAfterStreamEnd
+  // is a no-op and the auto-continuation loop never fires. The dispatcher is
+  // also exposed so ServiceContainer can share it with HeartbeatService.
+  const idleDispatcher = new IdleDispatcher();
+  workspaceGoalService.registerGoalContinuationConsumer(idleDispatcher, {
+    hasActiveDescendantTasks: (workspaceId) =>
+      taskService.hasActiveDescendantAgentTasksForWorkspace(workspaceId),
+    getRuntimeState: (workspaceId) => workspaceService.getGoalContinuationRuntimeState(workspaceId),
+    executeGoalContinuation: (input) => workspaceService.executeGoalContinuation(input),
+    getKickoffSendOptions: (workspaceId) =>
+      workspaceService.getGoalContinuationKickoffSendOptions(workspaceId),
+  });
 
   return {
     historyService,
@@ -124,6 +183,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     providerService,
     backgroundProcessManager,
     sessionUsageService,
+    workspaceGoalService,
+    idleDispatcher,
     aiService,
     mcpConfigService,
     mcpServerManager,

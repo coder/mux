@@ -45,6 +45,7 @@ describe("formatModelDisplayName", () => {
   describe("Gemini models", () => {
     test("formats Gemini models", () => {
       expect(formatModelDisplayName("gemini-2-0-flash-exp")).toBe("Gemini 2.0 Flash Exp");
+      expect(formatModelDisplayName("gemini-3.5-flash")).toBe("Gemini 3.5 Flash");
       expect(formatModelDisplayName("gemini-3.1-pro-preview")).toBe("Gemini 3.1 Pro Preview");
     });
   });

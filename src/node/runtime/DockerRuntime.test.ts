@@ -1,5 +1,21 @@
 import { describe, expect, it } from "bun:test";
 import { DockerRuntime, getContainerName } from "./DockerRuntime";
+import type { InitLogger } from "./Runtime";
+
+const noopInitLogger: InitLogger = {
+  logStep: () => {
+    // no-op
+  },
+  logStdout: () => {
+    // no-op
+  },
+  logStderr: () => {
+    // no-op
+  },
+  logComplete: () => {
+    // no-op
+  },
+};
 
 /**
  * DockerRuntime constructor tests (run with bun test)
@@ -38,6 +54,25 @@ describe("DockerRuntime constructor", () => {
     });
     expect(runtime.getImage()).toBe("ubuntu:22.04");
     // Runtime should be ready for exec operations without calling createWorkspace
+  });
+});
+
+describe("DockerRuntime.forkWorkspace", () => {
+  it("stops before Docker commands when the fork is already aborted", async () => {
+    const runtime = new DockerRuntime({ image: "ubuntu:22.04" });
+    const abortController = new AbortController();
+    abortController.abort();
+
+    const result = await runtime.forkWorkspace({
+      projectPath: "/tmp/project",
+      sourceWorkspaceName: "main",
+      newWorkspaceName: "feature",
+      initLogger: noopInitLogger,
+      abortSignal: abortController.signal,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("aborted");
   });
 });
 

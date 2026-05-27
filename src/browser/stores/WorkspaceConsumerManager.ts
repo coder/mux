@@ -2,7 +2,7 @@ import type { WorkspaceConsumersState } from "./WorkspaceStore";
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import type { ChatStats } from "@/common/types/chatStats";
 import type { MuxMessage } from "@/common/types/message";
-import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
+import { sliceMessagesForProviderFromLatestContextBoundary } from "@/common/utils/messages/compactionBoundary";
 
 const TOKENIZER_CANCELLED_MESSAGE = "Cancelled by newer request";
 
@@ -209,9 +209,11 @@ export class WorkspaceConsumerManager {
     // Run in next tick to avoid blocking caller
     void (async () => {
       try {
-        // Only count tokens for the current compaction epoch — pre-boundary
-        // messages carry stale context and inflate the consumer breakdown.
-        const messages = sliceMessagesFromLatestCompactionBoundary(aggregator.getAllMessages());
+        // Only count tokens for the current active context; pre-boundary
+        // transcript rows carry stale context and inflate the consumer breakdown.
+        const messages = sliceMessagesForProviderFromLatestContextBoundary(
+          aggregator.getAllMessages()
+        );
         const model = aggregator.getCurrentModel() ?? "unknown";
 
         const providersConfigFingerprint = this.getProvidersConfigVersion();

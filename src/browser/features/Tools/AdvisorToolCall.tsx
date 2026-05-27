@@ -5,6 +5,7 @@ import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { cn } from "@/common/lib/utils";
 import {
   type AdvisorLivePhaseState,
+  useAdvisorToolLiveOutput,
   useAdvisorToolLivePhase,
 } from "@/browser/stores/WorkspaceStore";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
@@ -212,34 +213,66 @@ const AdvisorMetadata: React.FC<{ advisorModel: string; reasoningLevel?: string 
   );
 };
 
-export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
-  args,
+export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = (props) => {
+  const toolStatus = isToolStatus(props.status) ? props.status : "pending";
+  const question = getAdvisorQuestion(props.args);
+  const advisorResult = isAdvisorToolResult(props.result) ? props.result : null;
+  const hasUnrecognizedResult =
+    props.result !== undefined && props.result !== null && advisorResult === null;
+  const isExecutingWithoutResult =
+    toolStatus === "executing" && advisorResult === null && !hasUnrecognizedResult;
+
+  // Key change forces remount so expansion resets when the call settles.
+  return (
+    <AdvisorToolCallContent
+      key={isExecutingWithoutResult ? "executing" : "settled"}
+      {...props}
+      toolStatus={toolStatus}
+      question={question}
+      advisorResult={advisorResult}
+      hasUnrecognizedResult={hasUnrecognizedResult}
+      isExecutingWithoutResult={isExecutingWithoutResult}
+    />
+  );
+};
+
+interface AdvisorToolCallContentProps extends AdvisorToolCallProps {
+  toolStatus: ToolStatus;
+  question: string | undefined;
+  advisorResult: AdvisorToolResult | null;
+  hasUnrecognizedResult: boolean;
+  isExecutingWithoutResult: boolean;
+}
+
+const AdvisorToolCallContent: React.FC<AdvisorToolCallContentProps> = ({
   result,
-  status,
   workspaceId,
   toolCallId,
   startedAt,
+  toolStatus,
+  question,
+  advisorResult,
+  hasUnrecognizedResult,
+  isExecutingWithoutResult,
 }) => {
-  const { expanded, toggleExpanded } = useToolExpansion();
-  const toolStatus = isToolStatus(status) ? status : "pending";
+  // Streamed chunks need expansion to be visible.
+  // Remount on settle so completed rows keep their collapsed default.
+  const { expanded, toggleExpanded } = useToolExpansion(isExecutingWithoutResult);
   const livePhase = useAdvisorToolLivePhase(workspaceId, toolCallId);
-  const question = getAdvisorQuestion(args);
-  const advisorResult = isAdvisorToolResult(result) ? result : null;
-  const hasUnrecognizedResult = result !== undefined && result !== null && advisorResult === null;
+  const liveOutput = useAdvisorToolLiveOutput(workspaceId, toolCallId);
+  const liveAdviceText = isExecutingWithoutResult && liveOutput?.text ? liveOutput.text : undefined;
   const detailsText =
     advisorResult?.type === "advice"
       ? advisorResult.advice
       : advisorResult?.type === "limit_reached" || advisorResult?.type === "error"
         ? advisorResult.message
-        : undefined;
+        : liveAdviceText;
   const statusPresentation = hasUnrecognizedResult
     ? {
         status: "failed" as const,
         content: getStatusDisplay("failed"),
       }
     : getAdvisorStatusPresentation(advisorResult, toolStatus);
-  const isExecutingWithoutResult =
-    toolStatus === "executing" && advisorResult === null && !hasUnrecognizedResult;
   const executingStatusLabel = livePhase ? ADVISOR_PHASE_LABELS[livePhase.phase] : "Running";
   const headerStatusContent = isExecutingWithoutResult ? (
     <>
@@ -296,6 +329,15 @@ export const AdvisorToolCall: React.FC<AdvisorToolCallProps> = ({
                 </DetailSection>
               )}
             </>
+          )}
+
+          {advisorResult === null && liveAdviceText && (
+            <DetailSection>
+              <DetailLabel>Advice</DetailLabel>
+              <div className="bg-code-bg rounded px-3 py-2 text-[12px] leading-relaxed">
+                <MarkdownRenderer content={liveAdviceText} preserveLineBreaks />
+              </div>
+            </DetailSection>
           )}
 
           {advisorResult?.type === "limit_reached" && (

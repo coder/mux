@@ -2,11 +2,23 @@ import { randomBytes } from "node:crypto";
 import { assert } from "@/common/utils/assert";
 import { log } from "@/node/services/log";
 
-interface TokenRecord {
+export interface BrowserBridgeTokenPayload {
   workspaceId: string;
   sessionName: string;
   streamPort: number;
+  allowOtherWorkspaceSession: boolean;
+}
+
+// TokenRecord = the validated payload plus the TTL deadline; extending the
+// payload type keeps the field list in one place so a future payload addition
+// (e.g. a new scoping flag) cannot drift between the stored record, the mint
+// input, and the validate-time rebuild below.
+interface TokenRecord extends BrowserBridgeTokenPayload {
   expiresAtMs: number;
+}
+
+interface BrowserBridgeTokenMintOptions {
+  allowOtherWorkspaceSession?: boolean;
 }
 
 const BROWSER_BRIDGE_TOKEN_TTL_MS = 30_000;
@@ -21,7 +33,12 @@ export class BrowserBridgeTokenManager {
     this.cleanupTimer.unref?.();
   }
 
-  mint(workspaceId: string, sessionName: string, streamPort: number): string {
+  mint(
+    workspaceId: string,
+    sessionName: string,
+    streamPort: number,
+    options?: BrowserBridgeTokenMintOptions
+  ): string {
     assert(workspaceId.length > 0, "BrowserBridgeTokenManager.mint requires non-empty workspaceId");
     assert(sessionName.length > 0, "BrowserBridgeTokenManager.mint requires non-empty sessionName");
     assert(
@@ -39,13 +56,14 @@ export class BrowserBridgeTokenManager {
       workspaceId,
       sessionName,
       streamPort,
+      allowOtherWorkspaceSession: options?.allowOtherWorkspaceSession === true,
       expiresAtMs: Date.now() + BROWSER_BRIDGE_TOKEN_TTL_MS,
     });
 
     return token;
   }
 
-  validate(token: string): { workspaceId: string; sessionName: string; streamPort: number } | null {
+  validate(token: string): BrowserBridgeTokenPayload | null {
     const record = this.tokens.get(token);
     if (!record) {
       return null;
@@ -58,11 +76,11 @@ export class BrowserBridgeTokenManager {
       return null;
     }
 
-    return {
-      workspaceId: record.workspaceId,
-      sessionName: record.sessionName,
-      streamPort: record.streamPort,
-    };
+    // Strip the TTL deadline; rest-spread keeps the payload field list driven
+    // by BrowserBridgeTokenPayload so adding a payload field doesn't require a
+    // matching edit here.
+    const { expiresAtMs, ...payload } = record;
+    return payload;
   }
 
   private cleanupExpired(): void {

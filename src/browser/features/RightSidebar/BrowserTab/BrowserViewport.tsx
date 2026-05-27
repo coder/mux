@@ -14,6 +14,7 @@ import { cn } from "@/common/lib/utils";
 import { clamp } from "@/common/utils/clamp";
 import assert from "@/common/utils/assert";
 import type {
+  BrowserFrameImageSize,
   BrowserViewportMetadata,
   BrowserInputEvent,
   BrowserKeyboardInput,
@@ -48,6 +49,11 @@ interface ViewportPoint {
   y: number;
 }
 
+interface BrowserFrameImageSnapshot {
+  sessionId: string;
+  imageSize: BrowserFrameImageSize;
+}
+
 interface BrowserViewportSessionSnapshot {
   sessionId: string | null;
   canInteract: boolean;
@@ -65,6 +71,9 @@ export function BrowserViewport(props: BrowserViewportProps) {
   assert(props.workspaceId.trim().length > 0, "BrowserViewport requires a workspaceId");
 
   const [hasFocus, setHasFocus] = useState(false);
+  const [frameImageSnapshot, setFrameImageSnapshot] = useState<BrowserFrameImageSnapshot | null>(
+    null
+  );
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const mountedRef = useRef(true);
   const sessionSnapshotRef = useRef<BrowserViewportSessionSnapshot>({
@@ -79,6 +88,8 @@ export function BrowserViewport(props: BrowserViewportProps) {
   const moveAnimationFrameRef = useRef<number | null>(null);
   const interactionState = getViewportInteractionState(props.session);
   const currentSessionId = props.session?.id ?? null;
+  const frameImageSize =
+    frameImageSnapshot?.sessionId === currentSessionId ? frameImageSnapshot.imageSize : null;
 
   sessionSnapshotRef.current = {
     sessionId: currentSessionId,
@@ -161,7 +172,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
       queuedMove.clientY,
       currentSurface.getBoundingClientRect(),
       session.frameMetadata,
-      { clampOutsideContent: true }
+      { clampOutsideContent: true, frameImageSize }
     );
     if (mappedPoint == null) {
       return;
@@ -244,6 +255,31 @@ export function BrowserViewport(props: BrowserViewportProps) {
   const focusSurface = () => {
     surfaceRef.current?.focus({ preventScroll: true });
   };
+  const handleScreenshotLoad = (event: { currentTarget: HTMLImageElement }) => {
+    if (currentSessionId == null) {
+      return;
+    }
+
+    const imageSize = {
+      width: event.currentTarget.naturalWidth,
+      height: event.currentTarget.naturalHeight,
+    } satisfies BrowserFrameImageSize;
+    if (!isValidFrameImageSize(imageSize)) {
+      return;
+    }
+
+    setFrameImageSnapshot((previousSnapshot) => {
+      if (
+        previousSnapshot?.sessionId === currentSessionId &&
+        previousSnapshot.imageSize.width === imageSize.width &&
+        previousSnapshot.imageSize.height === imageSize.height
+      ) {
+        return previousSnapshot;
+      }
+
+      return { sessionId: currentSessionId, imageSize };
+    });
+  };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!interactionState.canInteract || props.session == null) {
@@ -254,7 +290,8 @@ export function BrowserViewport(props: BrowserViewportProps) {
       event.clientX,
       event.clientY,
       event.currentTarget.getBoundingClientRect(),
-      props.session.frameMetadata
+      props.session.frameMetadata,
+      { frameImageSize }
     );
     if (mappedPoint == null) {
       return;
@@ -331,7 +368,7 @@ export function BrowserViewport(props: BrowserViewportProps) {
       event.clientY,
       event.currentTarget.getBoundingClientRect(),
       props.session.frameMetadata,
-      { clampOutsideContent: true }
+      { clampOutsideContent: true, frameImageSize }
     );
     if (mappedPoint != null) {
       sendInput(
@@ -366,7 +403,8 @@ export function BrowserViewport(props: BrowserViewportProps) {
       event.clientX,
       event.clientY,
       event.currentTarget.getBoundingClientRect(),
-      props.session.frameMetadata
+      props.session.frameMetadata,
+      { frameImageSize }
     );
     if (mappedPoint == null) {
       return;
@@ -468,7 +506,10 @@ export function BrowserViewport(props: BrowserViewportProps) {
         <img
           src={props.screenshotSrc}
           alt="Browser session screenshot"
-          className="pointer-events-none h-full w-full object-contain select-none"
+          onLoad={handleScreenshotLoad}
+          // agent-browser may cap screencast frames below the viewport size; rendering the
+          // captured bitmap at intrinsic size avoids making that capped stream blurrier.
+          className="pointer-events-none absolute top-1/2 left-1/2 max-h-full max-w-full -translate-x-1/2 -translate-y-1/2 select-none"
           draggable={false}
         />
         <div
@@ -651,7 +692,7 @@ export function mapDomPointToViewport(
   clientY: number,
   surfaceRect: MeasuredViewportRect,
   metadata: BrowserViewportMetadata | null,
-  options?: { clampOutsideContent?: boolean }
+  options?: { clampOutsideContent?: boolean; frameImageSize?: BrowserFrameImageSize | null }
 ): ViewportPoint | null {
   assert(metadata != null, "BrowserViewport requires frame metadata to map viewport coordinates");
   assert(Number.isFinite(metadata.deviceWidth), "BrowserViewport deviceWidth must be finite");
@@ -660,6 +701,63 @@ export function mapDomPointToViewport(
   assert(metadata.deviceHeight > 0, "BrowserViewport deviceHeight must be positive");
   assert(surfaceRect.width > 0, "BrowserViewport surface width must be positive");
   assert(surfaceRect.height > 0, "BrowserViewport surface height must be positive");
+
+  const renderedFrameRect = getRenderedFrameRect(surfaceRect, metadata, options?.frameImageSize);
+  const relativeX = clientX - renderedFrameRect.left;
+  const relativeY = clientY - renderedFrameRect.top;
+  const clampOutsideContent = options?.clampOutsideContent ?? false;
+
+  if (
+    !clampOutsideContent &&
+    (relativeX < 0 ||
+      relativeX > renderedFrameRect.width ||
+      relativeY < 0 ||
+      relativeY > renderedFrameRect.height)
+  ) {
+    return null;
+  }
+
+  const normalizedX = clamp(relativeX, 0, renderedFrameRect.width) / renderedFrameRect.width;
+  const normalizedY = clamp(relativeY, 0, renderedFrameRect.height) / renderedFrameRect.height;
+  const coordinateWidth = metadata.deviceWidth;
+  // agent-browser reports Chrome's outer viewport height in metadata, but the
+  // screencast JPEG can be the page viewport. Derive the Y coordinate space from
+  // the decoded frame aspect so clicks land under the visible cursor.
+  const coordinateHeight =
+    options?.frameImageSize == null
+      ? metadata.deviceHeight
+      : coordinateWidth * (options.frameImageSize.height / options.frameImageSize.width);
+
+  return {
+    x: Math.round(clamp(normalizedX * coordinateWidth, 0, coordinateWidth)),
+    y: Math.round(clamp(normalizedY * coordinateHeight, 0, coordinateHeight)),
+  };
+}
+
+function getRenderedFrameRect(
+  surfaceRect: MeasuredViewportRect,
+  metadata: BrowserViewportMetadata,
+  frameImageSize: BrowserFrameImageSize | null | undefined
+): MeasuredViewportRect {
+  if (frameImageSize != null) {
+    assert(
+      isValidFrameImageSize(frameImageSize),
+      "BrowserViewport frame image size must be positive"
+    );
+    const renderedScale = Math.min(
+      surfaceRect.width / frameImageSize.width,
+      surfaceRect.height / frameImageSize.height,
+      1
+    );
+    const renderedWidth = frameImageSize.width * renderedScale;
+    const renderedHeight = frameImageSize.height * renderedScale;
+    return {
+      left: surfaceRect.left + (surfaceRect.width - renderedWidth) / 2,
+      top: surfaceRect.top + (surfaceRect.height - renderedHeight) / 2,
+      width: renderedWidth,
+      height: renderedHeight,
+    };
+  }
 
   const viewportAspectRatio = metadata.deviceWidth / metadata.deviceHeight;
   const surfaceAspectRatio = surfaceRect.width / surfaceRect.height;
@@ -671,23 +769,22 @@ export function mapDomPointToViewport(
     surfaceAspectRatio > viewportAspectRatio
       ? surfaceRect.height
       : surfaceRect.width / viewportAspectRatio;
-  const renderedLeft = surfaceRect.left + (surfaceRect.width - renderedWidth) / 2;
-  const renderedTop = surfaceRect.top + (surfaceRect.height - renderedHeight) / 2;
-  const relativeX = clientX - renderedLeft;
-  const relativeY = clientY - renderedTop;
-  const clampOutsideContent = options?.clampOutsideContent ?? false;
-
-  if (
-    !clampOutsideContent &&
-    (relativeX < 0 || relativeX > renderedWidth || relativeY < 0 || relativeY > renderedHeight)
-  ) {
-    return null;
-  }
-
-  const normalizedX = clamp(relativeX, 0, renderedWidth) / renderedWidth;
-  const normalizedY = clamp(relativeY, 0, renderedHeight) / renderedHeight;
   return {
-    x: Math.round(clamp(normalizedX * metadata.deviceWidth, 0, metadata.deviceWidth)),
-    y: Math.round(clamp(normalizedY * metadata.deviceHeight, 0, metadata.deviceHeight)),
+    left: surfaceRect.left + (surfaceRect.width - renderedWidth) / 2,
+    top: surfaceRect.top + (surfaceRect.height - renderedHeight) / 2,
+    width: renderedWidth,
+    height: renderedHeight,
   };
+}
+
+function isValidFrameImageSize(
+  frameImageSize: BrowserFrameImageSize | null | undefined
+): frameImageSize is BrowserFrameImageSize {
+  return (
+    frameImageSize != null &&
+    Number.isFinite(frameImageSize.width) &&
+    Number.isFinite(frameImageSize.height) &&
+    frameImageSize.width > 0 &&
+    frameImageSize.height > 0
+  );
 }

@@ -296,6 +296,9 @@ async function main(): Promise<number> {
       env: {
         ...process.env,
         NODE_ENV: "development",
+        // Keep sandboxed desktop dev launches profile-ready too; callers can set
+        // MUX_PROFILE_REACT=0 to compare against an uninstrumented renderer.
+        MUX_PROFILE_REACT: process.env.MUX_PROFILE_REACT ?? "1",
         MUX_ROOT: muxRoot,
         MUX_DEVSERVER_HOST: "127.0.0.1",
         MUX_DEVSERVER_PORT: String(vitePort),

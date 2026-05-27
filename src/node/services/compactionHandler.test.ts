@@ -38,7 +38,6 @@ const createMockEmitter = (): { emitter: EventEmitter; events: EmittedEvent[] } 
 
 const createCompactionRequest = (id = "req-1"): MuxMessage =>
   createMuxMessage(id, "user", "Please summarize the conversation", {
-    historySequence: 0,
     muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
   });
 
@@ -1195,14 +1194,14 @@ describe("CompactionHandler", () => {
         "assistant",
         "Malformed boundary",
         {
-          historySequence: 4,
+          historySequence: 5,
           compacted: "user",
           compactionBoundary: true,
           compactionEpoch: 0,
         }
       );
       const compactionReq = createMuxMessage("req-malformed", "user", "Please summarize", {
-        historySequence: 5,
+        historySequence: 6,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
       });
 

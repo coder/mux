@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, mock, test } from "bun:test";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { BrowserBridgeServer } from "./BrowserBridgeServer";
+import type { BrowserBridgeTokenPayload } from "./BrowserBridgeTokenManager";
 import type { PageState } from "./BrowserSessionStateHub";
 
 const VALID_TOKEN = "valid-token";
@@ -50,12 +51,11 @@ function createAttachableConnection(sessionName: string, streamPort: number) {
 
 function createBridgeServer(
   options: {
-    validate?: (
-      token: string
-    ) => { workspaceId: string; sessionName: string; streamPort: number } | null;
+    validate?: (token: string) => BrowserBridgeTokenPayload | null;
     getSessionConnection?: (
       workspaceId: string,
-      sessionName: string
+      sessionName: string,
+      options?: { allowOtherWorkspaceSession?: boolean }
     ) => Promise<{
       sessionName: string;
       pid: number;
@@ -80,6 +80,7 @@ function createBridgeServer(
                 workspaceId: VALID_WORKSPACE_ID,
                 sessionName: VALID_SESSION_NAME,
                 streamPort: VALID_STREAM_PORT,
+                allowOtherWorkspaceSession: false,
               }
             : null
         ),
@@ -260,6 +261,7 @@ describe("BrowserBridgeServer", () => {
               workspaceId: VALID_WORKSPACE_ID,
               sessionName: VALID_SESSION_NAME,
               streamPort: upstreamHarness.port,
+              allowOtherWorkspaceSession: false,
             }
           : null
       ),
@@ -278,6 +280,38 @@ describe("BrowserBridgeServer", () => {
 
       upstreamSocket.send('{"type":"frame","data":"abc"}');
       expect(await waitForMessage(ws)).toBe('{"type":"frame","data":"abc"}');
+    } finally {
+      ws.terminate();
+      await upgradeHarness.close();
+      await bridgeServer.stop();
+      await upstreamHarness.close();
+    }
+  });
+
+  test("bridges explicit other-workspace tokens on the success path", async () => {
+    const upstreamHarness = await listenUpstreamServer();
+    const getSessionConnection = mock(() =>
+      Promise.resolve(createAttachableConnection(VALID_SESSION_NAME, upstreamHarness.port))
+    );
+    const bridgeServer = createBridgeServer({
+      getSessionConnection,
+      validate: mock(() => ({
+        workspaceId: VALID_WORKSPACE_ID,
+        sessionName: VALID_SESSION_NAME,
+        streamPort: upstreamHarness.port,
+        allowOtherWorkspaceSession: true,
+      })),
+    });
+    const upgradeHarness = await listenUpgradeServer(bridgeServer);
+
+    const ws = new WebSocket(`ws://127.0.0.1:${upgradeHarness.port}/?token=${VALID_TOKEN}`);
+    try {
+      await waitForWebSocketOpen(ws);
+      await upstreamHarness.connectionPromise;
+
+      expect(getSessionConnection).toHaveBeenCalledWith(VALID_WORKSPACE_ID, VALID_SESSION_NAME, {
+        allowOtherWorkspaceSession: true,
+      });
     } finally {
       ws.terminate();
       await upgradeHarness.close();
@@ -307,6 +341,35 @@ describe("BrowserBridgeServer", () => {
     }
   });
 
+  test("revalidates explicit other-workspace tokens with the same session scope", async () => {
+    const getSessionConnection = mock(() => Promise.resolve(null));
+    const bridgeServer = createBridgeServer({
+      validate: mock(() => ({
+        workspaceId: VALID_WORKSPACE_ID,
+        sessionName: VALID_SESSION_NAME,
+        streamPort: VALID_STREAM_PORT,
+        allowOtherWorkspaceSession: true,
+      })),
+      getSessionConnection,
+    });
+
+    try {
+      const ws = createMockClientSocket();
+      const bridgeServerPrivate = bridgeServer as unknown as BrowserBridgeServerPrivate;
+      await bridgeServerPrivate.handleUpgradedConnection(
+        ws as unknown as WebSocket,
+        { url: `/?token=${VALID_TOKEN}` } as IncomingMessage
+      );
+
+      expect(getSessionConnection).toHaveBeenCalledWith(VALID_WORKSPACE_ID, VALID_SESSION_NAME, {
+        allowOtherWorkspaceSession: true,
+      });
+      expect(ws.close).toHaveBeenCalledWith(4002, "session unavailable");
+    } finally {
+      await bridgeServer.stop();
+    }
+  });
+
   test("closes with 4002 when the live session is missing or mismatched", async () => {
     for (const liveSession of [null, createAttachableConnection(VALID_SESSION_NAME, 9999)]) {
       const bridgeServer = createBridgeServer({
@@ -314,6 +377,7 @@ describe("BrowserBridgeServer", () => {
           workspaceId: VALID_WORKSPACE_ID,
           sessionName: VALID_SESSION_NAME,
           streamPort: VALID_STREAM_PORT,
+          allowOtherWorkspaceSession: false,
         })),
         getSessionConnection: mock(() => Promise.resolve(liveSession)),
       });
@@ -360,6 +424,7 @@ describe("BrowserBridgeServer", () => {
               workspaceId: VALID_WORKSPACE_ID,
               sessionName: VALID_SESSION_NAME,
               streamPort: upstreamHarness.port,
+              allowOtherWorkspaceSession: false,
             }
           : null
       ),
@@ -409,6 +474,7 @@ describe("BrowserBridgeServer", () => {
               workspaceId: VALID_WORKSPACE_ID,
               sessionName: VALID_SESSION_NAME,
               streamPort: upstreamHarness.port,
+              allowOtherWorkspaceSession: false,
             }
           : null
       ),
@@ -468,6 +534,7 @@ describe("BrowserBridgeServer", () => {
               workspaceId: VALID_WORKSPACE_ID,
               sessionName: VALID_SESSION_NAME,
               streamPort: upstreamHarness.port,
+              allowOtherWorkspaceSession: false,
             }
           : null
       ),

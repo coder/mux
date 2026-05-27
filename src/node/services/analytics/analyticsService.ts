@@ -931,6 +931,13 @@ export class AnalyticsService {
     runClear();
   }
 
+  recordGoalLifecycleEvent(
+    event: string,
+    properties: Record<string, string | number | boolean | null>
+  ): void {
+    log.debug("[AnalyticsService] goal lifecycle event", { event, properties });
+  }
+
   ingestWorkspace(
     workspaceId: string,
     sessionDir: string,

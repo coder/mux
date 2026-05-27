@@ -40,6 +40,32 @@ import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 // RightSidebarLayoutState used for initial setup via persisted-state helpers - acceptable for test fixtures
 import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
 
+const RIGHT_SIDEBAR_SELECTOR = '[role="complementary"][aria-label="Workspace insights"]';
+
+async function findRequiredElement<T extends HTMLElement = HTMLElement>(
+  root: ParentNode,
+  selector: string,
+  errorMessage: string,
+  timeout = 5_000
+): Promise<T> {
+  return waitFor(
+    () => {
+      const element = root.querySelector(selector) as T | null;
+      if (!element) throw new Error(errorMessage);
+      return element;
+    },
+    { timeout }
+  );
+}
+
+function getSidebarWidth(sidebar: HTMLElement): number {
+  const styleWidth = sidebar.style.width;
+  if (styleWidth && styleWidth.endsWith("px")) {
+    return parseInt(styleWidth, 10);
+  }
+  return sidebar.getBoundingClientRect().width;
+}
+
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 describeIntegration("RightSidebar (UI)", () => {
@@ -124,7 +150,89 @@ describeIntegration("RightSidebar (UI)", () => {
     );
   }, 20_000);
 
+  async function setupRightSidebarView(beforeRender?: () => void) {
+    const cleanupDom = installDom();
+    beforeRender?.();
+    const view = renderApp({ apiClient: env.orpc, metadata });
+
+    try {
+      await setupWorkspaceView(view, metadata, workspaceId);
+      const sidebar = await findRequiredElement(
+        view.container,
+        RIGHT_SIDEBAR_SELECTOR,
+        "RightSidebar not found",
+        10_000
+      );
+      return { view, sidebar, cleanup: () => cleanupView(view, cleanupDom) };
+    } catch (error) {
+      await cleanupView(view, cleanupDom);
+      throw error;
+    }
+  }
+
+  const findSidebarTab = (sidebar: HTMLElement, tabKey: string, timeout = 5_000) =>
+    findRequiredElement(
+      sidebar,
+      `[role="tab"][aria-controls*="${tabKey}"]`,
+      `${tabKey} tab not found`,
+      timeout
+    );
+
+  const findSidebarPanel = (sidebar: HTMLElement, panelKey: string, timeout = 5_000) =>
+    findRequiredElement(
+      sidebar,
+      `[role="tabpanel"][id*="${panelKey}"]`,
+      `${panelKey} panel not found`,
+      timeout
+    );
+
+  async function createTerminalTab(sidebar: HTMLElement): Promise<HTMLElement> {
+    const newTerminalButton = await findRequiredElement(
+      sidebar,
+      'button[aria-label="New terminal"]',
+      "New terminal button not found"
+    );
+    fireEvent.click(newTerminalButton);
+    return findSidebarTab(sidebar, "terminal:", 10_000);
+  }
+
   test("does not show the browser tab by default", async () => {
+    const { sidebar, cleanup } = await setupRightSidebarView(() => {
+      updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
+    });
+
+    try {
+      await waitFor(() => {
+        const browserTab = sidebar.querySelector('[role="tab"][aria-controls*="browser"]');
+        expect(browserTab).toBeNull();
+      });
+    } finally {
+      await cleanup();
+    }
+  }, 60_000);
+
+  test("shows the Instructions tab by default", async () => {
+    const { sidebar, cleanup } = await setupRightSidebarView(() => {
+      updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
+    });
+
+    try {
+      await waitFor(() => {
+        const instructionsTab = sidebar.querySelector(
+          '[role="tab"][aria-controls*="instructions"]'
+        ) as HTMLElement | null;
+        if (!instructionsTab) {
+          throw new Error("Instructions tab should be present by default");
+        }
+      });
+    } finally {
+      await cleanup();
+    }
+  }, 60_000);
+
+  test("always shows the goal tab on top-level workspaces (even without an active goal)", async () => {
     const cleanupDom = installDom();
 
     updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
@@ -149,9 +257,18 @@ describeIntegration("RightSidebar (UI)", () => {
         { timeout: 10_000 }
       );
 
+      // Regression guard: the tab used to be gated on `goal != null ||
+      // goalHistory.length > 0`, so a brand-new workspace (no goal, no
+      // history) hid the tab entirely. Now that goals are GA the tab is
+      // always visible on top-level workspaces so it can surface the
+      // in-tab create form for new workspaces.
       await waitFor(() => {
-        const browserTab = sidebar.querySelector('[role="tab"][aria-controls*="browser"]');
-        expect(browserTab).toBeNull();
+        const goalTab = sidebar.querySelector(
+          '[role="tab"][aria-controls*="goal"]'
+        ) as HTMLElement | null;
+        if (!goalTab) {
+          throw new Error("Goal tab should always be present on top-level workspaces");
+        }
       });
     } finally {
       await cleanupView(view, cleanupDom);
@@ -159,31 +276,13 @@ describeIntegration("RightSidebar (UI)", () => {
   }, 60_000);
 
   test("adds the browser tab when the experiment is enabled", async () => {
-    const cleanupDom = installDom();
-
-    updatePersistedState(getExperimentKey(EXPERIMENT_IDS.AGENT_BROWSER), true);
-    updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
-    updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
-
-    const view = renderApp({
-      apiClient: env.orpc,
-      metadata,
+    const { sidebar, cleanup } = await setupRightSidebarView(() => {
+      updatePersistedState(getExperimentKey(EXPERIMENT_IDS.AGENT_BROWSER), true);
+      updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
     });
 
     try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      const sidebar = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            '[role="complementary"][aria-label="Workspace insights"]'
-          );
-          if (!el) throw new Error("RightSidebar not found");
-          return el as HTMLElement;
-        },
-        { timeout: 10_000 }
-      );
-
       await waitFor(() => {
         const browserTab = sidebar.querySelector(
           '[role="tab"][aria-controls*="browser"]'
@@ -194,46 +293,19 @@ describeIntegration("RightSidebar (UI)", () => {
       });
     } finally {
       updatePersistedState(getExperimentKey(EXPERIMENT_IDS.AGENT_BROWSER), null);
-      await cleanupView(view, cleanupDom);
+      await cleanup();
     }
   }, 60_000);
 
   test("tab switching updates active tab and persists selection", async () => {
-    const cleanupDom = installDom();
-
-    // Clear any persisted state
-    updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
-    updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
-
-    const view = renderApp({
-      apiClient: env.orpc,
-      metadata,
+    const { sidebar, cleanup } = await setupRightSidebarView(() => {
+      // Clear any persisted state
+      updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
     });
 
     try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      // Find the right sidebar
-      const sidebar = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            '[role="complementary"][aria-label="Workspace insights"]'
-          );
-          if (!el) throw new Error("RightSidebar not found");
-          return el as HTMLElement;
-        },
-        { timeout: 10_000 }
-      );
-
-      // Find the Costs tab (should be default)
-      const costsTab = await waitFor(
-        () => {
-          const tab = sidebar.querySelector('[role="tab"][aria-controls*="costs"]') as HTMLElement;
-          if (!tab) throw new Error("Costs tab not found");
-          return tab;
-        },
-        { timeout: 5_000 }
-      );
+      const costsTab = await findSidebarTab(sidebar, "costs");
 
       // Costs should be selected by default
       expect(costsTab.getAttribute("aria-selected")).toBe("true");
@@ -252,33 +324,9 @@ describeIntegration("RightSidebar (UI)", () => {
       });
 
       // Verify Review panel is now visible
-      await waitFor(() => {
-        const reviewPanel = sidebar.querySelector('[role="tabpanel"][id*="review"]');
-        if (!reviewPanel) throw new Error("Review panel should be visible after tab click");
-      });
+      await findSidebarPanel(sidebar, "review");
 
-      // Create a terminal via the "+" button
-      const newTerminalButton = await waitFor(
-        () => {
-          const btn = sidebar.querySelector('button[aria-label="New terminal"]');
-          if (!btn) throw new Error("New terminal button not found");
-          return btn as HTMLElement;
-        },
-        { timeout: 5_000 }
-      );
-      fireEvent.click(newTerminalButton);
-
-      // Wait for the terminal tab to appear and become selected
-      const terminalTab = await waitFor(
-        () => {
-          const tab = sidebar.querySelector(
-            '[role="tab"][aria-controls*="terminal:"]'
-          ) as HTMLElement | null;
-          if (!tab) throw new Error("Terminal tab not found");
-          return tab;
-        },
-        { timeout: 10_000 }
-      );
+      const terminalTab = await createTerminalTab(sidebar);
 
       await waitFor(() => {
         expect(terminalTab.getAttribute("aria-selected")).toBe("true");
@@ -286,44 +334,22 @@ describeIntegration("RightSidebar (UI)", () => {
       });
 
       // Verify terminal panel is now visible
-      await waitFor(() => {
-        const terminalPanel = sidebar.querySelector('[role="tabpanel"][id*="terminal"]');
-        if (!terminalPanel) throw new Error("Terminal panel should be visible after tab click");
-      });
+      await findSidebarPanel(sidebar, "terminal");
     } finally {
-      await cleanupView(view, cleanupDom);
+      await cleanup();
     }
   }, 60_000);
 
   // The standalone "stats" tab was absorbed into the "costs" tab as sub-tabs.
   // Verify the unified "Stats" tab (internal key "costs") is selected by default.
   test("stats tab is selected by default", async () => {
-    const cleanupDom = installDom();
-
-    // Clear any persisted state
-    updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
-    updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
-
-    const view = renderApp({
-      apiClient: env.orpc,
-      metadata,
+    const { sidebar, cleanup } = await setupRightSidebarView(() => {
+      // Clear any persisted state
+      updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
     });
 
     try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      // Find the right sidebar
-      const sidebar = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            '[role="complementary"][aria-label="Workspace insights"]'
-          );
-          if (!el) throw new Error("RightSidebar not found");
-          return el as HTMLElement;
-        },
-        { timeout: 10_000 }
-      );
-
       // Verify the costs/stats tab is selected by default (no standalone "stats" tab exists).
       await waitFor(() => {
         const costsTab = sidebar.querySelector(
@@ -340,51 +366,27 @@ describeIntegration("RightSidebar (UI)", () => {
         expect(statsTab).toBeNull();
       });
     } finally {
-      await cleanupView(view, cleanupDom);
+      await cleanup();
     }
   }, 60_000);
 
   test("sidebar collapse and expand via button", async () => {
-    const cleanupDom = installDom();
-
-    // Start expanded
-    updatePersistedState(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
-
-    const view = renderApp({
-      apiClient: env.orpc,
-      metadata,
+    const { view, sidebar, cleanup } = await setupRightSidebarView(() => {
+      // Start expanded
+      updatePersistedState(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
     });
 
     try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      // Find sidebar - should be expanded with tabs visible
-      const sidebar = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            '[role="complementary"][aria-label="Workspace insights"]'
-          );
-          if (!el) throw new Error("RightSidebar not found");
-          return el as HTMLElement;
-        },
-        { timeout: 10_000 }
-      );
-
       // Verify tabs are visible (expanded state)
       await waitFor(() => {
         const tablist = sidebar.querySelector('[role="tablist"]');
         if (!tablist) throw new Error("Tablist should be visible when expanded");
       });
 
-      // Find and click collapse button
-      const collapseButton = await waitFor(
-        () => {
-          // The collapse button has aria-label containing "collapse" or "expand"
-          const btn = sidebar.querySelector('button[aria-label*="ollapse"]') as HTMLElement;
-          if (!btn) throw new Error("Collapse button not found");
-          return btn;
-        },
-        { timeout: 5_000 }
+      const collapseButton = await findRequiredElement(
+        sidebar,
+        'button[aria-label*="ollapse"]',
+        "Collapse button not found"
       );
       fireEvent.click(collapseButton);
 
@@ -411,13 +413,11 @@ describeIntegration("RightSidebar (UI)", () => {
         if (!tablist) throw new Error("Tablist should be visible after expand");
       });
     } finally {
-      await cleanupView(view, cleanupDom);
+      await cleanup();
     }
   }, 60_000);
 
   test("tab selection persists across workspace navigation", async () => {
-    const cleanupDom = installDom();
-
     // Start with Review tab selected
     const initialLayout: RightSidebarLayoutState = {
       version: 1,
@@ -430,28 +430,11 @@ describeIntegration("RightSidebar (UI)", () => {
         activeTab: "review",
       },
     };
-    updatePersistedState(getRightSidebarLayoutKey(workspaceId), initialLayout);
-
-    const view = renderApp({
-      apiClient: env.orpc,
-      metadata,
+    const { view, sidebar, cleanup } = await setupRightSidebarView(() => {
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), initialLayout);
     });
 
     try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      // Find the right sidebar
-      const sidebar = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            '[role="complementary"][aria-label="Workspace insights"]'
-          );
-          if (!el) throw new Error("RightSidebar not found");
-          return el as HTMLElement;
-        },
-        { timeout: 10_000 }
-      );
-
       // Verify Review tab is selected (from persisted state)
       await waitFor(() => {
         const reviewTab = sidebar.querySelector(
@@ -500,131 +483,44 @@ describeIntegration("RightSidebar (UI)", () => {
         }
       });
     } finally {
-      await cleanupView(view, cleanupDom);
+      await cleanup();
     }
   }, 60_000);
 
   test("correct tab content is displayed for each tab", async () => {
-    const cleanupDom = installDom();
-
-    const view = renderApp({
-      apiClient: env.orpc,
-      metadata,
-    });
+    const { sidebar, cleanup } = await setupRightSidebarView();
 
     try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      const sidebar = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            '[role="complementary"][aria-label="Workspace insights"]'
-          );
-          if (!el) throw new Error("RightSidebar not found");
-          return el as HTMLElement;
-        },
-        { timeout: 10_000 }
-      );
-
       // Switch to Costs tab and verify content
-      const costsTab = await waitFor(
-        () => {
-          const tab = sidebar.querySelector(
-            '[role="tab"][aria-controls*="costs"]'
-          ) as HTMLElement | null;
-          if (!tab) throw new Error("Costs tab not found");
-          return tab;
-        },
-        { timeout: 5_000 }
-      );
+      const costsTab = await findSidebarTab(sidebar, "costs");
       fireEvent.click(costsTab);
-      await waitFor(() => {
-        // Costs panel should contain model/cost info or "No usage data"
-        const costsPanel = sidebar.querySelector('[role="tabpanel"][id*="costs"]');
-        if (!costsPanel) throw new Error("Costs panel not found");
-      });
+      await findSidebarPanel(sidebar, "costs");
 
       // Switch to Review tab and verify content
-      const reviewTab = await waitFor(
-        () => {
-          const tab = sidebar.querySelector(
-            '[role="tab"][aria-controls*="review"]'
-          ) as HTMLElement | null;
-          if (!tab) throw new Error("Review tab not found");
-          return tab;
-        },
-        { timeout: 5_000 }
-      );
+      const reviewTab = await findSidebarTab(sidebar, "review");
       fireEvent.click(reviewTab);
-      await waitFor(() => {
-        // Review panel should exist
-        const reviewPanel = sidebar.querySelector('[role="tabpanel"][id*="review"]');
-        if (!reviewPanel) throw new Error("Review panel not found");
-      });
+      await findSidebarPanel(sidebar, "review");
 
-      // Create a terminal via the "+" button
-      const newTerminalButton = await waitFor(
-        () => {
-          const btn = sidebar.querySelector('button[aria-label="New terminal"]');
-          if (!btn) throw new Error("New terminal button not found");
-          return btn as HTMLElement;
-        },
-        { timeout: 5_000 }
-      );
-      fireEvent.click(newTerminalButton);
-
-      // Wait for the terminal tab to appear and verify its content
-      const terminalTab = await waitFor(
-        () => {
-          const tab = sidebar.querySelector(
-            '[role="tab"][aria-controls*="terminal:"]'
-          ) as HTMLElement | null;
-          if (!tab) throw new Error("Terminal tab not found");
-          return tab;
-        },
-        { timeout: 10_000 }
-      );
+      // Create a terminal via the "+" button and verify its content
+      const terminalTab = await createTerminalTab(sidebar);
 
       await waitFor(() => {
         expect(terminalTab.getAttribute("aria-selected")).toBe("true");
       });
 
-      await waitFor(() => {
-        // Terminal panel should exist (may contain terminal-view class)
-        const terminalPanel = sidebar.querySelector('[role="tabpanel"][id*="terminal"]');
-        if (!terminalPanel) throw new Error("Terminal panel not found");
-      });
+      await findSidebarPanel(sidebar, "terminal");
     } finally {
-      await cleanupView(view, cleanupDom);
+      await cleanup();
     }
   }, 60_000);
 
   test("sidebar width persists consistently across costs and review tabs", async () => {
-    const cleanupDom = installDom();
-
-    // Clear any persisted width state
-    updatePersistedState(RIGHT_SIDEBAR_WIDTH_KEY, null);
-
-    const view = renderApp({
-      apiClient: env.orpc,
-      metadata,
+    const { sidebar, cleanup } = await setupRightSidebarView(() => {
+      // Clear any persisted width state
+      updatePersistedState(RIGHT_SIDEBAR_WIDTH_KEY, null);
     });
 
     try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      // Find the right sidebar
-      const sidebar = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            '[role="complementary"][aria-label="Workspace insights"]'
-          );
-          if (!el) throw new Error("RightSidebar not found");
-          return el as HTMLElement;
-        },
-        { timeout: 10_000 }
-      );
-
       // Find the resize handle (left edge of sidebar)
       const resizeHandle = await waitFor(
         () => {
@@ -649,16 +545,7 @@ describeIntegration("RightSidebar (UI)", () => {
       );
       expect(costsTab.getAttribute("aria-selected")).toBe("true");
 
-      // Helper to get sidebar's computed width (the style attribute is set inline)
-      const getSidebarWidth = () => {
-        const styleWidth = sidebar.style.width;
-        if (styleWidth && styleWidth.endsWith("px")) {
-          return parseInt(styleWidth, 10);
-        }
-        return sidebar.getBoundingClientRect().width;
-      };
-
-      const initialWidth = getSidebarWidth();
+      const initialWidth = getSidebarWidth(sidebar);
 
       // Shrink slightly rather than grow so this test remains stable even when the initial
       // sidebar width is already clamped by the available shell width, while still keeping
@@ -669,13 +556,13 @@ describeIntegration("RightSidebar (UI)", () => {
 
       // Wait for width to change (resize should update inline style)
       await waitFor(() => {
-        const width = getSidebarWidth();
+        const width = getSidebarWidth(sidebar);
         if (width >= initialWidth) {
           throw new Error(`Expected width < ${initialWidth}, got ${width}`);
         }
       });
 
-      const widthAfterResize = getSidebarWidth();
+      const widthAfterResize = getSidebarWidth(sidebar);
 
       // Switch to Review tab
       const reviewTab = await waitFor(
@@ -695,37 +582,19 @@ describeIntegration("RightSidebar (UI)", () => {
       });
 
       // Width should still be the same (unified across tabs) - verify via UI
-      expect(getSidebarWidth()).toBe(widthAfterResize);
+      expect(getSidebarWidth(sidebar)).toBe(widthAfterResize);
     } finally {
-      await cleanupView(view, cleanupDom);
+      await cleanup();
     }
   }, 60_000);
 
   test("resizing works the same regardless of which tab is active", async () => {
-    const cleanupDom = installDom();
-
-    // Clear any persisted state
-    updatePersistedState(RIGHT_SIDEBAR_WIDTH_KEY, null);
-
-    const view = renderApp({
-      apiClient: env.orpc,
-      metadata,
+    const { sidebar, cleanup } = await setupRightSidebarView(() => {
+      // Clear any persisted state
+      updatePersistedState(RIGHT_SIDEBAR_WIDTH_KEY, null);
     });
 
     try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      const sidebar = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            '[role="complementary"][aria-label="Workspace insights"]'
-          );
-          if (!el) throw new Error("RightSidebar not found");
-          return el as HTMLElement;
-        },
-        { timeout: 10_000 }
-      );
-
       // Switch to Review tab first
       const reviewTab = await waitFor(
         () => {
@@ -753,16 +622,7 @@ describeIntegration("RightSidebar (UI)", () => {
         { timeout: 5_000 }
       );
 
-      // Helper to get sidebar's visible width
-      const getSidebarWidth = () => {
-        const styleWidth = sidebar.style.width;
-        if (styleWidth && styleWidth.endsWith("px")) {
-          return parseInt(styleWidth, 10);
-        }
-        return sidebar.getBoundingClientRect().width;
-      };
-
-      const initialWidth = getSidebarWidth();
+      const initialWidth = getSidebarWidth(sidebar);
 
       // Shrink slightly while on Review so the assertion is stable even when the sidebar
       // starts at the maximum width allowed by the current shell measurement, while still
@@ -773,13 +633,13 @@ describeIntegration("RightSidebar (UI)", () => {
 
       // Wait for width to change in UI
       await waitFor(() => {
-        const width = getSidebarWidth();
+        const width = getSidebarWidth(sidebar);
         if (width >= initialWidth) {
           throw new Error(`Expected width < ${initialWidth}, got ${width}`);
         }
       });
 
-      const widthAfterReviewResize = getSidebarWidth();
+      const widthAfterReviewResize = getSidebarWidth(sidebar);
 
       // Switch to Costs tab
       const costsTab = await waitFor(
@@ -799,7 +659,7 @@ describeIntegration("RightSidebar (UI)", () => {
       });
 
       // Width should persist when switching to Costs (verify via UI)
-      expect(getSidebarWidth()).toBe(widthAfterReviewResize);
+      expect(getSidebarWidth(sidebar)).toBe(widthAfterReviewResize);
 
       // Resize again on Costs tab (shrink).
       // The sidebar may already be clamped to its max width depending on the viewport,
@@ -809,11 +669,11 @@ describeIntegration("RightSidebar (UI)", () => {
       fireEvent.mouseUp(document);
 
       await waitFor(() => {
-        const width = getSidebarWidth();
+        const width = getSidebarWidth(sidebar);
         if (width === widthAfterReviewResize) throw new Error("Width should have changed");
       });
 
-      const widthAfterCostsResize = getSidebarWidth();
+      const widthAfterCostsResize = getSidebarWidth(sidebar);
 
       // Switch back to Review - should have same new width (verify via UI)
       fireEvent.click(reviewTab);
@@ -821,38 +681,20 @@ describeIntegration("RightSidebar (UI)", () => {
         expect(reviewTab.getAttribute("aria-selected")).toBe("true");
       });
 
-      expect(getSidebarWidth()).toBe(widthAfterCostsResize);
+      expect(getSidebarWidth(sidebar)).toBe(widthAfterCostsResize);
     } finally {
-      await cleanupView(view, cleanupDom);
+      await cleanup();
     }
   }, 60_000);
 
   test("sidebar cannot be resized beyond available width", async () => {
-    const cleanupDom = installDom();
-
-    // Force a narrow viewport so the right sidebar max clamp is exercised.
-    Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
-    window.dispatchEvent(new Event("resize"));
-
-    const view = renderApp({
-      apiClient: env.orpc,
-      metadata,
+    const { sidebar, cleanup } = await setupRightSidebarView(() => {
+      // Force a narrow viewport so the right sidebar max clamp is exercised.
+      Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
+      window.dispatchEvent(new Event("resize"));
     });
 
     try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      const sidebar = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            '[role="complementary"][aria-label="Workspace insights"]'
-          );
-          if (!el) throw new Error("RightSidebar not found");
-          return el as HTMLElement;
-        },
-        { timeout: 10_000 }
-      );
-
       const resizeHandle = await waitFor(
         () => {
           const handle = sidebar.querySelector('[class*="cursor-col-resize"]') as HTMLElement;
@@ -882,13 +724,11 @@ describeIntegration("RightSidebar (UI)", () => {
         }
       });
     } finally {
-      await cleanupView(view, cleanupDom);
+      await cleanup();
     }
   }, 60_000);
 
   test("split layout renders multiple panes with separate tablists", async () => {
-    const cleanupDom = installDom();
-
     // Set up a split layout with two panes (top: costs, bottom: review)
     const splitLayout: RightSidebarLayoutState = {
       version: 1,
@@ -905,27 +745,11 @@ describeIntegration("RightSidebar (UI)", () => {
       },
       focusedTabsetId: "tabset-top",
     };
-    updatePersistedState(getRightSidebarLayoutKey(workspaceId), splitLayout);
-
-    const view = renderApp({
-      apiClient: env.orpc,
-      metadata,
+    const { sidebar, cleanup } = await setupRightSidebarView(() => {
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), splitLayout);
     });
 
     try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      const sidebar = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            '[role="complementary"][aria-label="Workspace insights"]'
-          );
-          if (!el) throw new Error("RightSidebar not found");
-          return el as HTMLElement;
-        },
-        { timeout: 10_000 }
-      );
-
       // Wait for both tablists (two panes)
       await waitFor(() => {
         const tablists = sidebar.querySelectorAll('[role="tablist"]');
@@ -953,37 +777,18 @@ describeIntegration("RightSidebar (UI)", () => {
       expect(costsPanel).toBeTruthy();
       expect(reviewPanel).toBeTruthy();
     } finally {
-      await cleanupView(view, cleanupDom);
+      await cleanup();
     }
   }, 60_000);
 
   test("Cmd+T opens terminal and selects its tab", async () => {
-    const cleanupDom = installDom();
-
-    // Clear any persisted state
-    updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
-    updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
-
-    const view = renderApp({
-      apiClient: env.orpc,
-      metadata,
+    const { sidebar, cleanup } = await setupRightSidebarView(() => {
+      // Clear any persisted state
+      updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
     });
 
     try {
-      await setupWorkspaceView(view, metadata, workspaceId);
-
-      // Find the right sidebar
-      const sidebar = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            '[role="complementary"][aria-label="Workspace insights"]'
-          );
-          if (!el) throw new Error("RightSidebar not found");
-          return el as HTMLElement;
-        },
-        { timeout: 10_000 }
-      );
-
       // Verify no terminal tab exists initially
       const initialTerminalTab = sidebar.querySelector('[role="tab"][aria-controls*="terminal:"]');
       expect(initialTerminalTab).toBeNull();
@@ -1033,7 +838,7 @@ describeIntegration("RightSidebar (UI)", () => {
       // The autoFocus behavior is verified by the implementation passing
       // autoFocus={true} to TerminalView when the terminal is opened via keybind.
     } finally {
-      await cleanupView(view, cleanupDom);
+      await cleanup();
     }
   }, 60_000);
 });

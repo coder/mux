@@ -15,6 +15,13 @@ describe("AppConfigOnDiskSchema", () => {
     expect(AppConfigOnDiskSchema.safeParse(valid).success).toBe(true);
   });
 
+  it("validates the full-width chat transcript flag", () => {
+    expect(AppConfigOnDiskSchema.safeParse({ chatTranscriptFullWidth: true }).success).toBe(true);
+    expect(AppConfigOnDiskSchema.safeParse({ chatTranscriptFullWidth: "true" }).success).toBe(
+      false
+    );
+  });
+
   it("validates taskSettings with limits", () => {
     const valid = {
       taskSettings: {
@@ -60,6 +67,30 @@ describe("AppConfigOnDiskSchema", () => {
         runtimeEnablement: { ssh: false, future_runtime: false },
       }).success
     ).toBe(true);
+  });
+
+  it("accepts sparse configs without image generation settings", () => {
+    expect(AppConfigOnDiskSchema.safeParse({ defaultModel: "openai:gpt-4o" }).success).toBe(true);
+  });
+
+  it("validates image generation configuration limits", () => {
+    expect(
+      AppConfigOnDiskSchema.safeParse({
+        imageGeneration: {
+          modelString: "openai:gpt-image-1.5",
+          maxImagesPerCall: 10,
+        },
+      }).success
+    ).toBe(true);
+
+    expect(
+      AppConfigOnDiskSchema.safeParse({
+        imageGeneration: {
+          modelString: "openai:gpt-image-1.5",
+          maxImagesPerCall: 11,
+        },
+      }).success
+    ).toBe(false);
   });
 
   it("preserves unknown fields via passthrough", () => {

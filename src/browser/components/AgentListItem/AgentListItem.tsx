@@ -667,6 +667,13 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
   const paddingLeft = getSidebarItemPaddingLeft(depth);
 
+  const workspaceSelection: WorkspaceSelection = {
+    projectPath,
+    projectName,
+    namedWorkspacePath,
+    workspaceId,
+  };
+
   // Drag handle for moving workspace between sections
   const [{ isDragging }, drag, dragPreview] = useDrag(
     () => ({
@@ -715,12 +722,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         onClick={() => {
           if (isDisabled) return;
           if (ctxMenu.suppressClickIfLongPress()) return;
-          onSelectWorkspace({
-            projectPath,
-            projectName,
-            namedWorkspacePath,
-            workspaceId,
-          });
+          onSelectWorkspace(workspaceSelection);
         }}
         onDoubleClick={(event) => {
           if (isDisabled || isEditing) {
@@ -764,12 +766,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           }
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            onSelectWorkspace({
-              projectPath,
-              projectName,
-              namedWorkspacePath,
-              workspaceId,
-            });
+            onSelectWorkspace(workspaceSelection);
           }
         }}
         onContextMenu={ctxMenu.onContextMenu}

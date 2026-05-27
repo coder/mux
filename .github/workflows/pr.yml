@@ -177,7 +177,29 @@ jobs:
       - run: make build-main
       # workflow_dispatch inputs are only triggerable by repo members, so direct
       # interpolation is acceptable and preserves shell quoting in the filter.
-      - run: bun test --coverage --coverage-reporter=lcov ${{ github.event.inputs.test_filter || 'src' }} # zizmor: ignore[template-injection]
+      - run: | # zizmor: ignore[template-injection]
+          set -euo pipefail
+
+          if [[ -n "${{ github.event.inputs.test_filter }}" ]]; then
+            bun test --max-concurrency=1 --coverage --coverage-reporter=lcov ${{ github.event.inputs.test_filter }}
+            exit 0
+          fi
+
+          isolated_unit_tests=(
+            src/browser/components/WorkspaceHeartbeatModal/WorkspaceHeartbeatModal.test.tsx
+            src/browser/features/Messages/InlineSkillMarkdown.test.tsx
+            src/browser/utils/commands/sources.test.ts
+          )
+          bun test --max-concurrency=1 "${isolated_unit_tests[@]}"
+
+          mapfile -d '' unit_files < <(
+            find src -type f \( -name '*.test.ts' -o -name '*.test.tsx' \) \
+              ! -path 'src/browser/components/WorkspaceHeartbeatModal/WorkspaceHeartbeatModal.test.tsx' \
+              ! -path 'src/browser/features/Messages/InlineSkillMarkdown.test.tsx' \
+              ! -path 'src/browser/utils/commands/sources.test.ts' \
+              -print0
+          )
+          bun test --max-concurrency=1 --coverage --coverage-reporter=lcov "${unit_files[@]}"
       - uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

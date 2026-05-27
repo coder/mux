@@ -3,6 +3,8 @@
  *
  * Creates a client that matches the AppRouter interface with configurable mock data.
  */
+import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults, type GoalDefaults } from "@/constants/goals";
+import type { GoalBoardSnapshot } from "@/common/types/goal";
 import type { APIClient } from "@/browser/contexts/API";
 import type {
   AgentDefinitionDescriptor,
@@ -40,6 +42,10 @@ import {
   type RuntimeEnablementId,
 } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import {
+  normalizeImageGenerationConfig,
+  type ImageGenerationConfig,
+} from "@/common/types/imageGeneration";
 import {
   DEFAULT_TASK_SETTINGS,
   normalizeSubagentAiDefaults,
@@ -126,6 +132,8 @@ export interface MockORPCClientOptions {
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
   /** What to do with mux-managed worktrees when archiving a chat. */
   worktreeArchiveBehavior?: WorktreeArchiveBehavior;
+  /** Initial full-width transcript toggle for config.getConfig */
+  chatTranscriptFullWidth?: boolean;
   /** Initial runtime enablement for config.getConfig */
   runtimeEnablement?: Record<string, boolean>;
   /** Initial default runtime for config.getConfig (global) */
@@ -136,6 +144,17 @@ export interface MockORPCClientOptions {
   heartbeatDefaultPrompt?: string;
   /** Initial global heartbeat default interval for config.getConfig */
   heartbeatDefaultIntervalMs?: number;
+  /** Initial image generation config for config.getConfig */
+  imageGeneration?: Partial<ImageGenerationConfig>;
+  /** Initial global goal defaults for config.getConfig */
+  goalDefaults?: GoalDefaults;
+  /**
+   * Pre-seeded goal-board snapshots per workspaceId. Stories that want
+   * the GoalTab's Upcoming / Completed / Archived sections to render
+   * populated (rather than the default empty board) pass a snapshot here
+   * keyed by the workspace ID the story uses.
+   */
+  goalBoardSnapshots?: Map<string, GoalBoardSnapshot>;
   /** Initial route priority for config.getConfig */
   routePriority?: string[];
   /** Initial per-model route overrides for config.getConfig */
@@ -172,6 +191,8 @@ export interface MockORPCClientOptions {
       exitCode?: number;
     }>
   >;
+  /** Chat Instructions scratchpads per workspace (Instructions tab / chat decoration). */
+  additionalSystemContexts?: Map<string, { content: string; enabled: boolean }>;
   /** Session usage data per workspace (for Costs tab) */
   workspaceStatsSnapshots?: Map<string, WorkspaceStatsSnapshot>;
   /** Global secrets (Settings → Secrets → Global) */
@@ -335,6 +356,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       string,
       { messages: MuxMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
     >(),
+    additionalSystemContexts = new Map<string, { content: string; enabled: boolean }>(),
     workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>(),
     globalSecrets = [],
     projectSecrets = new Map<string, Secret[]>(),
@@ -349,11 +371,15 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     agentAiDefaults: initialAgentAiDefaults,
     coderWorkspaceArchiveBehavior: initialCoderWorkspaceArchiveBehavior = "stop",
     worktreeArchiveBehavior: initialWorktreeArchiveBehavior = "keep",
+    chatTranscriptFullWidth: initialChatTranscriptFullWidth = false,
     runtimeEnablement: initialRuntimeEnablement,
     defaultRuntime: initialDefaultRuntime,
     onePasswordAccountName: initialOnePasswordAccountName = null,
     heartbeatDefaultPrompt: initialHeartbeatDefaultPrompt,
     heartbeatDefaultIntervalMs: initialHeartbeatDefaultIntervalMs,
+    imageGeneration: initialImageGeneration,
+    goalDefaults: initialGoalDefaults,
+    goalBoardSnapshots = new Map<string, GoalBoardSnapshot>(),
     routePriority: initialRoutePriority = ["direct"],
     routeOverrides: initialRouteOverrides = {},
     agentDefinitions: initialAgentDefinitions,
@@ -478,6 +504,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let muxGatewayModels: string[] | undefined = undefined;
   let coderWorkspaceArchiveBehavior = initialCoderWorkspaceArchiveBehavior;
   let worktreeArchiveBehavior = initialWorktreeArchiveBehavior;
+  let chatTranscriptFullWidth = initialChatTranscriptFullWidth;
   let runtimeEnablement: Record<string, boolean> = initialRuntimeEnablement ?? {
     local: true,
     worktree: true,
@@ -491,6 +518,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let onePasswordAccountName: string | null = initialOnePasswordAccountName;
   let heartbeatDefaultPrompt = initialHeartbeatDefaultPrompt;
   let heartbeatDefaultIntervalMs = initialHeartbeatDefaultIntervalMs;
+  let imageGeneration = normalizeImageGenerationConfig(initialImageGeneration);
+  let goalDefaults = normalizeGoalDefaults(initialGoalDefaults ?? DEFAULT_GOAL_DEFAULTS);
   let routePriority = [...initialRoutePriority];
   let routeOverrides = { ...initialRouteOverrides };
   const configChangeSubscribers = new Set<(value: void) => void>();
@@ -683,6 +712,9 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           onePasswordAccountName,
           heartbeatDefaultPrompt,
           heartbeatDefaultIntervalMs,
+          imageGeneration,
+          goalDefaults,
+          chatTranscriptFullWidth,
           muxGovernorEnrolled,
           llmDebugLogs: false,
         }),
@@ -754,6 +786,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },
+      updateChatTranscriptFullWidth: (input: { enabled: boolean }) => {
+        chatTranscriptFullWidth = input.enabled;
+        notifyConfigChanged();
+        return Promise.resolve(undefined);
+      },
       updateCoderPrefs: (input: {
         coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
         worktreeArchiveBehavior: WorktreeArchiveBehavior;
@@ -777,6 +814,16 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       updateHeartbeatDefaultIntervalMs: (input: { intervalMs?: number | null }) => {
         heartbeatDefaultIntervalMs = input.intervalMs ?? undefined;
+        notifyConfigChanged();
+        return Promise.resolve(undefined);
+      },
+      updateImageGenerationConfig: (input: { imageGeneration: ImageGenerationConfig }) => {
+        imageGeneration = normalizeImageGenerationConfig(input.imageGeneration);
+        notifyConfigChanged();
+        return Promise.resolve(undefined);
+      },
+      updateGoalDefaults: (input: { goalDefaults: GoalDefaults }) => {
+        goalDefaults = normalizeGoalDefaults(input.goalDefaults);
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },
@@ -1389,6 +1436,44 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       preflightArchive: () => Promise.resolve({ success: true, data: { kind: "ready" as const } }),
       archive: () => Promise.resolve({ success: true }),
       unarchive: () => Promise.resolve({ success: true }),
+      // Goal mocks: storybook stories don't drive lifecycle, but mounted
+      // settings/right-sidebar goal surfaces read current goal state.
+      getGoal: () => Promise.resolve({ goal: null }),
+      // Per-workspace goal-defaults override; stories don't drive it, but
+      // the in-tab `GoalDefaultsSection` reads it on mount via api.workspace.goalDefaults.get.
+      goalDefaults: {
+        get: () => Promise.resolve(null),
+        set: () => Promise.resolve({ success: true, data: undefined }),
+      },
+      // Goal board (multi-goal queue) endpoints. Stories that want the
+      // GoalTab's Upcoming / Completed / Archived sections populated
+      // pass a snapshot via `goalBoardSnapshots` keyed by workspaceId;
+      // everything else falls back to an empty board. The mutation
+      // endpoints exist for stories that simulate user interactions
+      // (currently none — they resolve voids).
+      getGoalBoard: (input: { workspaceId: string }) =>
+        Promise.resolve(goalBoardSnapshots.get(input.workspaceId) ?? { entries: [] }),
+      addUpcomingGoal: () =>
+        Promise.resolve({
+          version: 1 as const,
+          goalId: "00000000-0000-4000-8000-000000000000",
+          objective: "stub",
+          status: "paused" as const,
+          budgetCents: null,
+          turnCap: null,
+          costCents: 0,
+          turnsUsed: 0,
+          attributedChildren: [],
+          budgetLimitInjectedForGoalId: null,
+          requireUserAcknowledgmentSinceMs: null,
+          createdAtMs: Date.now(),
+          updatedAtMs: Date.now(),
+        }),
+      archiveGoal: () => Promise.resolve(undefined),
+      reviveArchivedGoal: () => Promise.resolve(undefined),
+      reorderUpcomingGoals: () => Promise.resolve(undefined),
+      promoteUpcomingGoal: () => Promise.resolve(null),
+      updateUpcomingGoal: () => Promise.resolve(null),
       create: (input: { projectPath: string; branchName: string }) => {
         createdWorkspaceCounter += 1;
 
@@ -1562,6 +1647,37 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           result[id] = sessionUsage.get(id);
         }
         return Promise.resolve(result);
+      },
+      getInstructions: (input: { workspaceId: string; model?: string | null }) =>
+        Promise.resolve({
+          workspaceId: input.workspaceId,
+          model: input.model ?? null,
+          additionalSystemContext: additionalSystemContexts.get(input.workspaceId) ?? {
+            content: "",
+            enabled: true,
+          },
+          sources: { global: null, context: [] },
+          files: [],
+          totalTokens: null,
+        }),
+      getAdditionalSystemContext: (input: { workspaceId: string }) =>
+        Promise.resolve(
+          additionalSystemContexts.get(input.workspaceId) ?? { content: "", enabled: true }
+        ),
+      setAdditionalSystemContext: (input: {
+        workspaceId: string;
+        content: string;
+        enabled: boolean;
+      }) => {
+        if (input.content.length === 0) {
+          additionalSystemContexts.delete(input.workspaceId);
+        } else {
+          additionalSystemContexts.set(input.workspaceId, {
+            content: input.content,
+            enabled: input.enabled,
+          });
+        }
+        return Promise.resolve({ content: input.content, enabled: input.enabled });
       },
       mcp: {
         get: (input: { workspaceId: string }) =>

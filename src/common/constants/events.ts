@@ -23,6 +23,12 @@ export const CUSTOM_EVENTS = {
   UPDATE_CHAT_INPUT: "mux:updateChatInput",
 
   /**
+   * Event to clear the active chat composer after an out-of-band command succeeds.
+   * Detail: { workspaceId: string }
+   */
+  CLEAR_CHAT_COMPOSER: "mux:clearChatComposer",
+
+  /**
    * Event to open the model selector
    * No detail
    */
@@ -112,6 +118,18 @@ export const CUSTOM_EVENTS = {
   OPEN_DEBUG_LLM_REQUEST: "mux:openDebugLlmRequest",
 
   /**
+   * Event to open the right-sidebar Goal tab.
+   * Detail: { workspaceId: string, openCompleteInput?: boolean }
+   */
+  OPEN_GOAL_TAB: "mux:openGoalTab",
+
+  /**
+   * Event to show a toast when a child task pushes the parent's goal over budget.
+   * Detail: { workspaceId: string, message: string }
+   */
+  GOAL_CHILD_BUDGET_TOAST: "mux:goalChildBudgetToast",
+
+  /**
    * Event emitted when LLM debug logs are toggled in Settings.
    * Detail: { enabled: boolean }
    */
@@ -132,6 +150,9 @@ export interface CustomEventPayloads {
     mode?: "replace" | "append";
     fileParts?: FilePart[];
     reviews?: ReviewNoteDataForDisplay[];
+  };
+  [CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER]: {
+    workspaceId: string;
   };
   [CUSTOM_EVENTS.OPEN_AGENT_PICKER]: never; // No payload
   [CUSTOM_EVENTS.CLOSE_AGENT_PICKER]: never; // No payload
@@ -172,6 +193,14 @@ export interface CustomEventPayloads {
     workspaceId: string;
   };
   [CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST]: never; // No payload
+  [CUSTOM_EVENTS.OPEN_GOAL_TAB]: {
+    workspaceId: string;
+    openCompleteInput?: boolean;
+  };
+  [CUSTOM_EVENTS.GOAL_CHILD_BUDGET_TOAST]: {
+    workspaceId: string;
+    message: string;
+  };
   [CUSTOM_EVENTS.LLM_DEBUG_LOGS_CHANGED]: {
     enabled: boolean;
   };

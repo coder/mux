@@ -40,10 +40,11 @@ import {
   createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
   resolveWorkspaceExecutionPath,
+  resolveWorkspaceRootPath,
 } from "@/node/runtime/runtimeHelpers";
 import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
-import { ensurePrivateDir } from "@/node/utils/fs";
+import { ensurePrivateDir, isErrnoWithCode } from "@/node/utils/fs";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { generateGitStatusScript, parseGitStatusScriptOutput } from "@/common/utils/git/gitStatus";
@@ -54,18 +55,32 @@ import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
-import { isDurableCompactedMarker } from "@/common/utils/messages/compactionBoundary";
+import {
+  CONTEXT_BOUNDARY_KINDS,
+  hasProviderEligibleMessages,
+  isDurableCompactedMarker,
+  sliceMessagesForProviderFromLatestContextBoundary,
+} from "@/common/utils/messages/compactionBoundary";
 import { isNonNegativeInteger, isPositiveInteger } from "@/common/utils/numbers";
 import { deriveTodoStatus } from "@/common/utils/todoList";
+import { createContextResetBoundaryMessageId } from "@/node/services/utils/messageIds";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
+import {
+  ADDITIONAL_SYSTEM_CONTEXT_DISABLED_FILENAME,
+  ADDITIONAL_SYSTEM_CONTEXT_FILENAME,
+} from "@/node/services/additionalSystemContext";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
+import {
+  askSideQuestion,
+  snapshotSideQuestionLiveStream,
+} from "@/node/services/sideQuestionService";
 import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import {
   getDevcontainerContainerName,
-  probeDevcontainerStatus,
+  probeDevcontainerStatuses,
   stopDevcontainer,
 } from "@/node/runtime/devcontainerCli";
 import { isWorktreeRuntime } from "@/node/runtime/worktreeLifecycleHooks";
@@ -99,6 +114,7 @@ import {
 } from "@/common/utils/tools/toolDefinitions";
 import type { UIMode } from "@/common/types/mode";
 import {
+  createMuxMessage,
   pickPreservedSendOptions,
   type CompactionFollowUpRequest,
   type MuxMessageMetadata,
@@ -116,6 +132,12 @@ import {
   normalizeSelectedModel,
   normalizeToCanonical,
 } from "@/common/utils/ai/models";
+import { DEFAULT_MODEL } from "@/common/constants/knownModels";
+import {
+  hasBudgetedResumableGoal,
+  modelHasPricingData,
+  UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+} from "@/common/utils/goals/budgetPricing";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { normalizeAgentId } from "@/common/utils/agentIds";
@@ -130,6 +152,7 @@ import {
   type HeartbeatContextMode,
 } from "@/constants/heartbeat";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { GOAL_CONTINUATION_KIND, type GoalSyntheticMessageKind } from "@/constants/goals";
 import type {
   StreamStartEvent,
   StreamEndEvent,
@@ -140,6 +163,7 @@ import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type {
   WorkspaceAISettingsSchema,
+  WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
 } from "@/common/orpc/schemas";
 import type {
@@ -149,6 +173,10 @@ import type {
 } from "@/common/orpc/schemas/api";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
+import type {
+  GoalContinuationRuntimeState,
+  WorkspaceGoalService,
+} from "@/node/services/workspaceGoalService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import type { TaskService } from "@/node/services/taskService";
@@ -206,6 +234,7 @@ const AUTO_NEW_WORKSPACE_BASE_NAME = "workspace";
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
 type WorkspaceHeartbeatSettings = z.infer<typeof WorkspaceHeartbeatSettingsSchema>;
+type WorkspaceGoalDefaultsOverride = z.infer<typeof WorkspaceGoalDefaultsOverrideSchema>;
 interface HeartbeatExecutionRequest {
   contextMode: HeartbeatContextMode;
   sendOptions: SendMessageOptions;
@@ -529,10 +558,6 @@ export function generateForkTitle(parentTitle: string, existingTitles: string[])
   return `${base} (${findMaxSequentialNumber(existingTitles, prefix, ")") + 1})`;
 }
 
-function isErrnoWithCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
-}
-
 async function copyIfExists(sourcePath: string, destinationPath: string): Promise<void> {
   try {
     await fsPromises.copyFile(sourcePath, destinationPath);
@@ -557,6 +582,46 @@ async function resetForkedSessionUsage(
     path.join(sessionDir, "session-usage.json"),
     JSON.stringify({ byModel: {}, version: 1 }, null, 2)
   );
+}
+
+async function materializeForkedPartialSnapshot(params: {
+  historyService: HistoryService;
+  partialSnapshot: MuxMessage | null;
+  sourceWorkspaceId: string;
+  targetWorkspaceId: string;
+}): Promise<void> {
+  if (!params.partialSnapshot) {
+    return;
+  }
+
+  // Forking must be read-only with respect to the source workspace. During tool calls
+  // such as task_await, deleting or committing the source partial can make the live
+  // parent turn look interrupted. Instead, copy the partial into the fork and finalize
+  // only that snapshot so the child has no inherited live-stream state. The snapshot
+  // is captured before fork checkout/copy I/O so a parent stream that finishes mid-fork
+  // cannot make the child miss the latest visible assistant state.
+  const writeResult = await params.historyService.writePartial(
+    params.targetWorkspaceId,
+    params.partialSnapshot
+  );
+  if (!writeResult.success) {
+    log.warn("Failed to snapshot source partial into fork", {
+      sourceWorkspaceId: params.sourceWorkspaceId,
+      targetWorkspaceId: params.targetWorkspaceId,
+      error: writeResult.error,
+    });
+    return;
+  }
+
+  const commitResult = await params.historyService.commitPartial(params.targetWorkspaceId);
+  if (!commitResult.success) {
+    log.warn("Failed to finalize forked partial snapshot", {
+      sourceWorkspaceId: params.sourceWorkspaceId,
+      targetWorkspaceId: params.targetWorkspaceId,
+      error: commitResult.error,
+    });
+    await params.historyService.deletePartial(params.targetWorkspaceId);
+  }
 }
 
 function getOldestSequencedMessage(
@@ -1193,9 +1258,17 @@ export class WorkspaceService extends EventEmitter {
   // from waking a dedicated workspace during archive().
   private readonly archivingWorkspaces = new Set<string>();
 
+  // Tracks stream generations that are compaction turns so background stop snapshots
+  // can carry authoritative notification policy instead of forcing the frontend to
+  // infer compaction from best-effort chat replay state.
+  private readonly compactionStreamGenerations = new Map<string, number>();
+
   // Tracks workspaces undergoing idle (background) compaction so the activity snapshot
   // can tag the stream, letting the frontend suppress notifications for maintenance work.
   private readonly idleCompactingWorkspaces = new Set<string>();
+
+  // Blocks new sends while a context reset is committing its durable boundary and cleanup.
+  private readonly resettingContextWorkspaces = new Set<string>();
 
   // Tracks in-flight fork auto-title generations so only the first accepted continue
   // message can claim the workspace title.
@@ -1257,6 +1330,7 @@ export class WorkspaceService extends EventEmitter {
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
   private worktreeArchiveSnapshotService?: WorktreeArchiveSnapshotLifecycleService;
   private taskService?: TaskService;
+  private workspaceGoalService?: WorkspaceGoalService;
 
   /**
    * Set the MCP server manager for tool access.
@@ -1264,6 +1338,10 @@ export class WorkspaceService extends EventEmitter {
    */
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
+  }
+
+  setWorkspaceGoalService(service: WorkspaceGoalService): void {
+    this.workspaceGoalService = service;
   }
 
   /**
@@ -1478,6 +1556,11 @@ export class WorkspaceService extends EventEmitter {
       if (isStreamStartEvent(data)) {
         const generation = (this.streamingGenerations.get(data.workspaceId) ?? 0) + 1;
         this.streamingGenerations.set(data.workspaceId, generation);
+        if (data.agentId === "compact" || data.mode === "compact") {
+          this.compactionStreamGenerations.set(data.workspaceId, generation);
+        } else {
+          this.compactionStreamGenerations.delete(data.workspaceId);
+        }
         void this.updateStreamingStatus(data.workspaceId, true, {
           model: data.model,
           thinkingLevel: data.thinkingLevel,
@@ -1495,12 +1578,18 @@ export class WorkspaceService extends EventEmitter {
     this.aiService.on("stream-abort", (data: unknown) => {
       if (isStreamAbortEvent(data)) {
         void this.stopStreamingStatus(data.workspaceId);
+        // Goal mutations are drained by AgentSession after any abort accounting
+        // runs. Draining here would race ahead of AgentSession's stream-abort
+        // listener and could charge the aborted in-flight stream to a goal that
+        // was queued during that stream. User aborts are still discarded by
+        // recordUserStoppedStream in AgentSession.
       }
     });
 
     this.aiService.on("error", (data: unknown) => {
       if (isErrorEvent(data)) {
         void this.stopStreamingStatus(data.workspaceId);
+        void this.workspaceGoalService?.applyPendingAfterStreamEnd(data.workspaceId);
       }
     });
 
@@ -1543,7 +1632,12 @@ export class WorkspaceService extends EventEmitter {
     });
   }
 
-  private emitWorkspaceActivity(
+  /**
+   * Public so AgentStatusService can broadcast a snapshot it produced after
+   * a direct setX call. (Most callers use emitWorkspaceActivityUpdate, which
+   * couples persist + emit but swallows persist errors.)
+   */
+  public emitWorkspaceActivity(
     workspaceId: string,
     snapshot: WorkspaceActivitySnapshot | null
   ): void {
@@ -1606,6 +1700,7 @@ export class WorkspaceService extends EventEmitter {
     streaming: boolean,
     update: ExtensionMetadataStreamingUpdate = {}
   ): Promise<void> {
+    const streamGeneration = update.generation ?? this.streamingGenerations.get(workspaceId) ?? 0;
     try {
       let { hasTodos, todoStatus } = update;
       if (!streaming && (hasTodos === undefined || todoStatus === undefined)) {
@@ -1614,7 +1709,13 @@ export class WorkspaceService extends EventEmitter {
         const sessionDir = this.config.getSessionDir(workspaceId);
         const todos = await readTodosForSessionDir(sessionDir);
         hasTodos ??= todos.length > 0;
-        todoStatus ??= deriveTodoStatus(todos) ?? null;
+        // When there are no todos to derive from, leave `todoStatus` undefined
+        // so setStreaming doesn't touch the slot. AgentStatusService writes
+        // its AI-generated summary into the same `todoStatus` field — passing
+        // `null` here would clobber a freshly generated summary every time a
+        // free-form (no-todo) turn ends. Explicit clears still happen via
+        // setTodoStatus(null) when the agent calls `todo_write([])`.
+        todoStatus ??= deriveTodoStatus(todos);
       }
       if (
         !streaming &&
@@ -1631,19 +1732,27 @@ export class WorkspaceService extends EventEmitter {
         ...(todoStatus !== undefined ? { todoStatus } : {}),
         ...(hasTodos !== undefined ? { hasTodos } : {}),
       });
-      // Idle compaction tagging is stop-snapshot only. Never tag streaming=true updates,
-      // otherwise fast follow-up turns can inherit stale idle metadata before cleanup runs.
+      // Compaction tagging is stop-snapshot only. Never tag streaming=true updates,
+      // otherwise fast follow-up turns can inherit stale compaction metadata before cleanup runs.
+      const shouldTagCompaction =
+        !streaming && this.compactionStreamGenerations.get(workspaceId) === streamGeneration;
       const shouldTagIdleCompaction = !streaming && this.idleCompactingWorkspaces.has(workspaceId);
-      this.emitWorkspaceActivity(
-        workspaceId,
-        shouldTagIdleCompaction ? { ...snapshot, isIdleCompaction: true } : snapshot
-      );
+      this.emitWorkspaceActivity(workspaceId, {
+        ...snapshot,
+        ...(shouldTagCompaction ? { isCompaction: true } : {}),
+        ...(shouldTagIdleCompaction ? { isIdleCompaction: true } : {}),
+      });
     } catch (error) {
       log.error("Failed to update workspace streaming status", { workspaceId, error });
     } finally {
-      // Idle compaction marker is turn-scoped. Always clear on streaming=false transitions,
-      // even when metadata writes fail, so stale state cannot leak into future user streams.
+      // Compaction markers are turn-scoped. Always clear matching streaming=false
+      // transitions, even when metadata writes fail, so stale state cannot leak into
+      // future user streams. Match by generation so an old stop cannot clear a newer
+      // compaction that started while the stop snapshot was doing async work.
       if (!streaming) {
+        if (this.compactionStreamGenerations.get(workspaceId) === streamGeneration) {
+          this.compactionStreamGenerations.delete(workspaceId);
+        }
         this.idleCompactingWorkspaces.delete(workspaceId);
       }
     }
@@ -1679,6 +1788,9 @@ export class WorkspaceService extends EventEmitter {
     }
 
     await this.stopStreamingStatus(workspaceId, generation);
+    // Goal mutations are drained by AgentSession after stream accounting. Doing
+    // it here races with per-session stream-end listeners because EventEmitter
+    // does not await async handlers.
   }
 
   private createInitLogger(workspaceId: string) {
@@ -1827,6 +1939,8 @@ export class WorkspaceService extends EventEmitter {
       aiService: this.aiService,
       telemetryService: this.telemetryService,
       initStateManager: this.initStateManager,
+      experimentsService: this.experimentsService,
+      workspaceGoalService: this.workspaceGoalService,
       backgroundProcessManager: this.backgroundProcessManager,
       onCompactionComplete: () => {
         this.schedulePostCompactionMetadataRefresh(workspaceId);
@@ -1899,6 +2013,12 @@ export class WorkspaceService extends EventEmitter {
 
     this.sessions.set(workspaceId, session);
     this.attachSessionSubscriptions(workspaceId, session);
+  }
+
+  public emitChatEvent(workspaceId: string, message: WorkspaceChatMessage): void {
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "emitChatEvent requires workspaceId");
+    this.sessions.get(trimmed)?.emitChatEvent(message);
   }
 
   public disposeSession(workspaceId: string): void {
@@ -3468,6 +3588,140 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Read the per-workspace goal-defaults override.
+   *
+   * Returns `null` when this workspace has no override (callers should fall
+   * back to `appConfig.goalDefaults`). The override is *sparse*: each field
+   * is independently nullable so a workspace can pin (e.g.) a custom budget
+   * without also overriding the turn cap.
+   */
+  getWorkspaceGoalDefaults(workspaceId: string): WorkspaceGoalDefaultsOverride | null {
+    const normalizedWorkspaceId = workspaceId.trim();
+    assert(
+      normalizedWorkspaceId.length > 0,
+      "getWorkspaceGoalDefaults requires a non-empty workspaceId"
+    );
+
+    const found = this.config.findWorkspace(normalizedWorkspaceId);
+    if (!found) {
+      return null;
+    }
+
+    const config = this.config.loadConfigOrDefault();
+    const projectConfig = config.projects.get(found.projectPath);
+    const workspaceEntry =
+      projectConfig?.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+      projectConfig?.workspaces.find((workspace) => workspace.path === found.workspacePath);
+    const override = workspaceEntry?.goalDefaults;
+    if (!override) {
+      return null;
+    }
+    // Normalize sparse shape: each field defaults to null when absent so
+    // the frontend can treat "missing" and "explicitly inherit" identically.
+    return {
+      defaultBudgetCents: override.defaultBudgetCents ?? null,
+      defaultTurnCap: override.defaultTurnCap ?? null,
+      alwaysRequireExplicitBudget: override.alwaysRequireExplicitBudget ?? null,
+    };
+  }
+
+  /**
+   * Write the per-workspace goal-defaults override.
+   *
+   * `null` fields mean "follow the global default" — when *every* field is
+   * null, the entire override is dropped from `~/.mux/config.json` so the
+   * workspace is indistinguishable from never having had one. Modeled on
+   * `setHeartbeatSettings` so consumers re-fetch via the existing workspace
+   * metadata subscription.
+   */
+  async setWorkspaceGoalDefaults(
+    workspaceId: string,
+    override: WorkspaceGoalDefaultsOverride
+  ): Promise<Result<void, string>> {
+    try {
+      const normalizedWorkspaceId = workspaceId.trim();
+      assert(
+        normalizedWorkspaceId.length > 0,
+        "setWorkspaceGoalDefaults requires a non-empty workspaceId"
+      );
+
+      const defaultBudgetCents = override.defaultBudgetCents;
+      assert(
+        defaultBudgetCents == null ||
+          (Number.isInteger(defaultBudgetCents) && defaultBudgetCents >= 0),
+        "Goal default budget must be a non-negative integer or null"
+      );
+      const defaultTurnCap = override.defaultTurnCap;
+      assert(
+        defaultTurnCap == null || (Number.isInteger(defaultTurnCap) && defaultTurnCap > 0),
+        "Goal default turn cap must be a positive integer or null"
+      );
+      assert(
+        override.alwaysRequireExplicitBudget == null ||
+          typeof override.alwaysRequireExplicitBudget === "boolean",
+        "alwaysRequireExplicitBudget must be a boolean or null"
+      );
+
+      const found = this.config.findWorkspace(normalizedWorkspaceId);
+      if (!found) {
+        return Err("Workspace not found");
+      }
+
+      const { projectPath, workspacePath } = found;
+      const config = this.config.loadConfigOrDefault();
+      const projectConfig = config.projects.get(projectPath);
+      if (!projectConfig) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      const workspaceEntry =
+        projectConfig.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+        projectConfig.workspaces.find((workspace) => workspace.path === workspacePath);
+      if (!workspaceEntry) {
+        return Err("Workspace not found");
+      }
+
+      // Drop the whole record when every field is null — keeps the
+      // config.json minimal and makes "no override" the canonical state
+      // that resolves to global defaults.
+      const allNull =
+        override.defaultBudgetCents == null &&
+        override.defaultTurnCap == null &&
+        override.alwaysRequireExplicitBudget == null;
+
+      const prior = workspaceEntry.goalDefaults;
+      if (allNull) {
+        if (prior == null) {
+          return Ok(undefined);
+        }
+        delete workspaceEntry.goalDefaults;
+      } else {
+        const next: WorkspaceGoalDefaultsOverride = {
+          defaultBudgetCents: override.defaultBudgetCents ?? null,
+          defaultTurnCap: override.defaultTurnCap ?? null,
+          alwaysRequireExplicitBudget: override.alwaysRequireExplicitBudget ?? null,
+        };
+        const unchanged =
+          prior != null &&
+          (prior.defaultBudgetCents ?? null) === next.defaultBudgetCents &&
+          (prior.defaultTurnCap ?? null) === next.defaultTurnCap &&
+          (prior.alwaysRequireExplicitBudget ?? null) === next.alwaysRequireExplicitBudget;
+        if (unchanged) {
+          return Ok(undefined);
+        }
+        workspaceEntry.goalDefaults = next;
+      }
+
+      await this.config.saveConfig(config);
+      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to set workspace goal defaults: ${message}`);
+    }
+  }
+
+  /**
    * Refresh workspace metadata from config and emit to subscribers.
    * Useful when external changes (like section assignment) modify workspace config.
    */
@@ -3847,7 +4101,13 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  private async getWorkspaceTitleModelCandidates(workspaceId: string): Promise<string[]> {
+  /**
+   * Candidate list for "small model" callers (title + AI sidebar status).
+   * Global preferences first, then any workspace-configured model so a
+   * custom-model workspace still works when global preferences are
+   * unavailable. Public so AgentStatusService can share the precedence.
+   */
+  public async getWorkspaceTitleModelCandidates(workspaceId: string): Promise<string[]> {
     const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
     const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
     if (!metadataResult.success) {
@@ -3867,6 +4127,107 @@ export class WorkspaceService extends EventEmitter {
     }
 
     return candidates;
+  }
+
+  /**
+   * Build the candidate-model list for a /btw side question.
+   *
+   * Unlike title generation, /btw should prefer the live parent stream's
+   * actual model first (important for one-shot overrides like /opus), then the
+   * workspace's configured chat models. The title-gen list is appended as a
+   * last-resort fallback so a misconfigured chat model can still produce an
+   * answer.
+   */
+  public async getSideQuestionModelCandidates(
+    workspaceId: string,
+    liveStreamModelOverride?: string
+  ): Promise<string[]> {
+    const candidates: string[] = [];
+    const liveStreamModel =
+      liveStreamModelOverride ?? this.aiService.getStreamInfo(workspaceId)?.model;
+    if (liveStreamModel) {
+      candidates.push(liveStreamModel);
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (metadataResult.success) {
+      const preferred = [
+        metadataResult.data.aiSettings?.model,
+        ...Object.values(metadataResult.data.aiSettingsByAgent ?? {}).map((s) => s.model),
+      ];
+      for (const model of preferred) {
+        if (model && !candidates.includes(model)) {
+          candidates.push(model);
+        }
+      }
+    }
+
+    // Fallback: small-model preference list (same set used by title/status
+    // generation). Keeps /btw working when no chat model has been chosen yet
+    // (e.g. brand-new workspace before the first send).
+    for (const model of NAME_GEN_PREFERRED_MODELS) {
+      if (!candidates.includes(model)) {
+        candidates.push(model);
+      }
+    }
+    return candidates;
+  }
+
+  /**
+   * Run a /btw side question over the workspace's current conversation.
+   *
+   * Both the user question and the assistant answer are persisted to
+   * chat.jsonl with side-question metadata, and stream lifecycle events
+   * are emitted through the standard chat-event channel so the renderer
+   * animates the response with TypewriterMarkdown.
+   *
+   * The workspace's "streaming" flag is intentionally NOT toggled here —
+   * /btw runs alongside the main agent without claiming busy state, so the
+   * user can fire a side question while the agent is mid-turn (or vice
+   * versa) without interfering with either.
+   */
+  public async askSideQuestion(
+    workspaceId: string,
+    question: string
+  ): Promise<{ success: true; modelUsed: string } | { success: false; error: string }> {
+    // Match other workspace ops: refuse on missing/in-flight workspaces so
+    // the user gets a clear error instead of a confusing model failure
+    // downstream.
+    const workspaceConfig = this.config.findWorkspace(workspaceId);
+    if (!workspaceConfig) {
+      return { success: false, error: "Workspace not found." };
+    }
+
+    const liveStreamSnapshot = snapshotSideQuestionLiveStream(
+      this.aiService.getStreamInfo(workspaceId)
+    );
+    const candidates = await this.getSideQuestionModelCandidates(
+      workspaceId,
+      liveStreamSnapshot?.model
+    );
+    const result = await askSideQuestion({
+      workspaceId,
+      question,
+      candidates,
+      aiService: this.aiService,
+      historyService: this.historyService,
+      liveStreamSnapshot,
+      // Re-use the session's existing chat-event emitter; this is the same
+      // path agentSession / streamManager use, so the frontend's onChat
+      // subscription handles side-question events identically to a normal
+      // agent stream (TypewriterMarkdown, smooth-text, replay all "just
+      // work").
+      emitChatEvent: (wsId, message) => {
+        this.sessions.get(wsId)?.emitChatEvent(message);
+      },
+    });
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error.raw ?? `Side question failed: ${result.error.type}`,
+      };
+    }
+    return { success: true, modelUsed: result.data.modelUsed };
   }
 
   private async maybeRunPendingAutoTitleFromMessage(
@@ -4489,47 +4850,45 @@ export class WorkspaceService extends EventEmitter {
     }
 
     const metadataById = new Map(allMetadata.map((metadata) => [metadata.id, metadata]));
-    const probes = workspaceIds.map(async (workspaceId) => {
+    const devcontainerWorkspaces: Array<{ workspaceId: string; hostWorkspacePath: string }> = [];
+
+    for (const workspaceId of workspaceIds) {
       const metadata = metadataById.get(workspaceId);
       if (!metadata) {
-        return { workspaceId, status: "unknown" as const };
-      }
-
-      if (metadata.runtimeConfig.type !== "devcontainer") {
-        return { workspaceId, status: "unsupported" as const };
-      }
-
-      // Passive status probes must not call ensureReady(); Docker labels are enough to tell
-      // whether the devcontainer is already running.
-      const probeResult = await probeDevcontainerStatus(
-        await this.getDevcontainerHostWorkspacePath(workspaceId)
-      );
-      // A clean miss means the container is stopped; probe failures should surface as unknown.
-      const status =
-        probeResult.kind === "found"
-          ? ("running" as const)
-          : probeResult.kind === "absent"
-            ? ("stopped" as const)
-            : ("unknown" as const);
-      return {
-        workspaceId,
-        status,
-      };
-    });
-
-    const probeResults = await Promise.allSettled(probes);
-    for (let i = 0; i < probeResults.length; i++) {
-      const probeResult = probeResults[i];
-      const workspaceId = workspaceIds[i];
-      if (probeResult.status === "fulfilled") {
-        statuses[probeResult.value.workspaceId] = probeResult.value.status;
         continue;
       }
 
-      log.debug("Failed to determine workspace runtime status", {
-        workspaceId,
-        error: getErrorMessage(probeResult.reason),
-      });
+      if (metadata.runtimeConfig.type !== "devcontainer") {
+        statuses[workspaceId] = "unsupported";
+        continue;
+      }
+
+      try {
+        devcontainerWorkspaces.push({
+          workspaceId,
+          hostWorkspacePath: await this.getDevcontainerHostWorkspacePath(workspaceId),
+        });
+      } catch (error) {
+        log.debug("Failed to resolve devcontainer workspace path for runtime status", {
+          workspaceId,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
+    // Passive status probes must not call ensureReady(); Docker labels are enough to tell
+    // whether devcontainers are already running. Probe all requested paths with one docker ps.
+    const probeResults = await probeDevcontainerStatuses(
+      devcontainerWorkspaces.map((workspace) => workspace.hostWorkspacePath)
+    );
+    for (const workspace of devcontainerWorkspaces) {
+      const probeResult = probeResults[workspace.hostWorkspacePath] ?? { kind: "absent" as const };
+      statuses[workspace.workspaceId] =
+        probeResult.kind === "found"
+          ? "running"
+          : probeResult.kind === "absent"
+            ? "stopped"
+            : "unknown";
     }
 
     return statuses;
@@ -4857,6 +5216,31 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Pre-dispatch gate at the WorkspaceService boundary. Delegates to
+   * `WorkspaceGoalService.assertPricedModelForBudgetedGoal` so the gate
+   * lives in exactly one place; this layer exists so `sendMessage` /
+   * `resumeStream` reject before persisting an unpriced model into the
+   * workspace's AI settings (otherwise the user's stored model selection
+   * gets corrupted on a rejected request).
+   *
+   * The same gate runs again inside `AgentSession.sendMessage` to cover
+   * every dispatch path (queued messages, internal compaction/heartbeat
+   * sends, agent-switch follow-ups), so a budgeted goal that becomes
+   * resumable after queueing still cannot bypass enforcement.
+   */
+  private async assertPricedModelForBudgetedGoal(
+    workspaceId: string,
+    options: SendMessageOptions | undefined
+  ): Promise<Result<void, SendMessageError>> {
+    return (
+      (await this.workspaceGoalService?.assertPricedModelForBudgetedGoal(
+        workspaceId,
+        options?.model
+      )) ?? Ok(undefined)
+    );
+  }
+
+  /**
    * Best-effort persist AI settings from send/resume options.
    * Skips requests explicitly marked to avoid persistence.
    */
@@ -4984,12 +5368,33 @@ export class WorkspaceService extends EventEmitter {
   async updateAgentAISettings(
     workspaceId: string,
     agentId: string,
-    aiSettings: WorkspaceAISettings
+    aiSettings: WorkspaceAISettings,
+    options?: { persistSelectedAgentId?: boolean }
   ): Promise<Result<void, string>> {
     try {
       const normalized = this.normalizeWorkspaceAISettings(aiSettings);
       if (!normalized.success) {
         return Err(normalized.error);
+      }
+
+      if (this.workspaceGoalService) {
+        const goal = await this.workspaceGoalService.getGoal(workspaceId);
+        // Use the resumable check rather than active-only: a paused or
+        // budget-limited budgeted goal will resume accounting when the user
+        // un-pauses or raises the budget. Letting them switch to an unpriced
+        // model in the meantime silently records 0 cost on the next stream
+        // and budget enforcement quietly stops working.
+        if (
+          hasBudgetedResumableGoal(goal) &&
+          !modelHasPricingData(
+            normalized.data.model,
+            typeof this.config.loadProvidersConfig === "function"
+              ? this.config.loadProvidersConfig()
+              : null
+          )
+        ) {
+          return Err(UNPRICED_TARGET_MODEL_GOAL_MESSAGE);
+        }
       }
 
       const persistResult = await this.persistWorkspaceAISettingsForAgent(
@@ -4998,6 +5403,7 @@ export class WorkspaceService extends EventEmitter {
         normalized.data,
         {
           emitMetadata: true,
+          ...(options?.persistSelectedAgentId === true ? { persistSelectedAgentId: true } : {}),
         }
       );
       if (!persistResult.success) {
@@ -5018,15 +5424,13 @@ export class WorkspaceService extends EventEmitter {
     pendingAutoTitle?: boolean
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
     try {
-      if (this.aiService.isStreaming(sourceWorkspaceId)) {
-        await this.historyService.commitPartial(sourceWorkspaceId);
-      }
-
       const sourceMetadataResult = await this.aiService.getWorkspaceMetadata(sourceWorkspaceId);
       if (!sourceMetadataResult.success) {
         return Err(`Failed to get source workspace metadata: ${sourceMetadataResult.error}`);
       }
       const sourceMetadata = sourceMetadataResult.data;
+      const partialSnapshot =
+        sourceMessageId == null ? await this.historyService.readPartial(sourceWorkspaceId) : null;
       const foundProjectPath = sourceMetadata.projectPath;
       const projectName = sourceMetadata.projectName;
       const sourceRuntimeConfig = sourceMetadata.runtimeConfig;
@@ -5217,7 +5621,14 @@ export class WorkspaceService extends EventEmitter {
       try {
         await ensurePrivateDir(newSessionDir);
 
-        const sessionFiles = ["chat.jsonl", "partial.json", "session-timing.json"] as const;
+        const sessionFiles = [
+          "chat.jsonl",
+          "session-timing.json",
+          ADDITIONAL_SYSTEM_CONTEXT_FILENAME,
+          // Preserve the enabled/disabled toggle when forking so the fork
+          // behaves identically to its source from the very first turn.
+          ADDITIONAL_SYSTEM_CONTEXT_DISABLED_FILENAME,
+        ] as const;
         for (const fileName of sessionFiles) {
           await copyIfExists(
             path.join(sourceSessionDir, fileName),
@@ -5246,6 +5657,13 @@ export class WorkspaceService extends EventEmitter {
             await fsPromises.rm(path.join(newSessionDir, "session-timing.json"), { force: true });
           }
         }
+
+        await materializeForkedPartialSnapshot({
+          historyService: this.historyService,
+          partialSnapshot,
+          sourceWorkspaceId,
+          targetWorkspaceId: newWorkspaceId,
+        });
 
         // Forks inherit chat history, but their cost ledger must start fresh.
         // Persist an explicit empty usage file so later reads do not rebuild
@@ -5339,6 +5757,7 @@ export class WorkspaceService extends EventEmitter {
       };
 
       await this.config.addWorkspace(foundProjectPath, metadata);
+      await this.workspaceGoalService?.inheritFromFork(sourceWorkspaceId, newWorkspaceId);
 
       const enrichedMetadata = this.enrichFrontendMetadata(metadata);
       session.emitMetadata(enrichedMetadata);
@@ -5360,6 +5779,10 @@ export class WorkspaceService extends EventEmitter {
       allowQueuedAgentTask?: boolean;
       skipAutoResumeReset?: boolean;
       synthetic?: boolean;
+      /** Marks a synthetic send as an active-goal continuation turn. */
+      goalContinuation?: boolean;
+      /** Specific active-goal synthetic turn kind to persist on the user message. */
+      goalKind?: GoalSyntheticMessageKind;
       /** Force Copilot billing classification to "agent" for internal sends. */
       agentInitiated?: boolean;
       /** When true, reject instead of queueing if the workspace is busy. */
@@ -5391,6 +5814,14 @@ export class WorkspaceService extends EventEmitter {
         return Err({
           type: "unknown",
           raw: "Workspace is being deleted. Please wait and try again.",
+        });
+      }
+
+      if (this.resettingContextWorkspaces.has(workspaceId)) {
+        log.debug("sendMessage blocked: context reset is in progress", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace context is resetting. Please wait and try again.",
         });
       }
 
@@ -5443,6 +5874,27 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const normalizedOptions = this.normalizeSendMessageAgentId(options);
+
+      // Reject before any settings persistence so an unpriced model can never
+      // be saved for a budgeted resumable goal — including via direct callers
+      // that bypass the client-side guard. Manual sends still delegate into
+      // AgentSession on rejection so it can preserve the user's interruption
+      // message and apply goal auto-pause safety.
+      const pricingGate = await this.assertPricedModelForBudgetedGoal(
+        workspaceId,
+        normalizedOptions
+      );
+      if (!pricingGate.success) {
+        if (internal?.synthetic !== true) {
+          return session.sendMessage(message, normalizedOptions, {
+            synthetic: internal?.synthetic,
+            agentInitiated: internal?.agentInitiated,
+            goalKind: internal?.goalKind,
+            goalContinuation: internal?.goalContinuation,
+          });
+        }
+        return Err(pricingGate.error);
+      }
 
       // Persist last-used model + thinking level for cross-device consistency.
       await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "send");
@@ -5546,6 +5998,8 @@ export class WorkspaceService extends EventEmitter {
       const result = await session.sendMessage(message, normalizedOptions, {
         synthetic: internal?.synthetic,
         agentInitiated: internal?.agentInitiated,
+        goalKind: internal?.goalKind,
+        goalContinuation: internal?.goalContinuation,
         onAcceptedPreStreamFailure: restoreInterruptedTaskAfterAcceptedEditFailure,
       });
       if (!result.success) {
@@ -5695,6 +6149,16 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const normalizedOptions = this.normalizeSendMessageAgentId(options);
+
+      // Reject before persistence/dispatch when the chosen model would silently
+      // bypass budget enforcement on a budgeted resumable goal.
+      const pricingGate = await this.assertPricedModelForBudgetedGoal(
+        workspaceId,
+        normalizedOptions
+      );
+      if (!pricingGate.success) {
+        return Err(pricingGate.error);
+      }
 
       // Persist last-used model + thinking level for cross-device consistency.
       await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "resume");
@@ -6216,10 +6680,84 @@ export class WorkspaceService extends EventEmitter {
       if (metadata) {
         await this.deletePlanFilesForWorkspace(workspaceId, metadata);
       }
+      // A full chat clear removes the context the goal loop was using; require
+      // one user re-engagement before later continuation slices resume it.
+      try {
+        await this.workspaceGoalService?.requireUserAcknowledgment(workspaceId);
+      } catch (error) {
+        return Err(getErrorMessage(error));
+      }
       this.sessions.get(workspaceId)?.clearFileState();
     }
 
     return Ok(undefined);
+  }
+
+  async resetContext(workspaceId: string): Promise<Result<"reset" | "noop">> {
+    if (this.resettingContextWorkspaces.has(workspaceId)) {
+      return Err("Context reset is already in progress for this workspace.");
+    }
+
+    this.resettingContextWorkspaces.add(workspaceId);
+    try {
+      const session = this.sessions.get(workspaceId);
+      if (session?.isBusy() || this.aiService.isStreaming(workspaceId)) {
+        return Err(
+          "Cannot reset context while a turn is active. Press Esc to stop the stream first."
+        );
+      }
+
+      if (this.hasPendingQueuedOrPreparingTurn(workspaceId)) {
+        return Err(
+          "Cannot reset context while queued user input is pending. Send or clear the queued message first."
+        );
+      }
+
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+      if (!historyResult.success) {
+        return Err(`Failed to read active context before reset: ${historyResult.error}`);
+      }
+
+      const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
+        historyResult.data
+      );
+      if (!hasProviderEligibleMessages(activeContextMessages)) {
+        return Ok("noop");
+      }
+
+      const boundaryMessage = createMuxMessage(
+        createContextResetBoundaryMessageId(),
+        "assistant",
+        "",
+        {
+          timestamp: Date.now(),
+          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+        }
+      );
+
+      const appendResult = await this.historyService.appendToHistory(workspaceId, boundaryMessage);
+      if (!appendResult.success) {
+        return Err(`Failed to append context reset boundary: ${appendResult.error}`);
+      }
+
+      const typedBoundaryMessage = { ...boundaryMessage, type: "message" as const };
+      if (session) {
+        session.emitChatEvent(typedBoundaryMessage);
+      } else {
+        this.emit("chat", { workspaceId, message: typedBoundaryMessage });
+      }
+
+      try {
+        await this.workspaceGoalService?.requireUserAcknowledgment(workspaceId);
+      } catch (error) {
+        log.error("Failed to require goal acknowledgment after context reset:", error);
+      }
+      this.sessions.get(workspaceId)?.clearFileState();
+
+      return Ok("reset");
+    } finally {
+      this.resettingContextWorkspaces.delete(workspaceId);
+    }
   }
 
   async replaceHistory(
@@ -6746,15 +7284,16 @@ export class WorkspaceService extends EventEmitter {
         return Err(readyResult.error ?? "Runtime not ready");
       }
 
+      const singleProjectMetadataWithPath = {
+        ...metadata,
+        namedWorkspacePath: workspace.workspacePath,
+      };
+      const workspaceRootPath = multiProjectRuntimes
+        ? undefined
+        : resolveWorkspaceRootPath(singleProjectMetadataWithPath, runtime);
       const workspacePath = multiProjectRuntimes
         ? undefined
-        : resolveWorkspaceExecutionPath(
-            {
-              ...metadata,
-              namedWorkspacePath: workspace.workspacePath,
-            },
-            runtime
-          );
+        : resolveWorkspaceExecutionPath(singleProjectMetadataWithPath, runtime);
       const multiProjectContainerPath = multiProjectRuntimes
         ? runtime.getWorkspacePath(metadata.projectPath, metadata.name)
         : undefined;
@@ -6792,6 +7331,13 @@ export class WorkspaceService extends EventEmitter {
       const requestedRepoRootProjectPath = normalizeRepoRootProjectPath(
         options?.repoRootProjectPath
       );
+      if (!multiProjectRuntimes && requiresRepoRootCwd) {
+        // Sub-project workspaces normally execute tools from their scoped cwd, but repo-context
+        // commands (Review, Git status, bare git command mode) need the checkout root so git
+        // pathspecs and diff output share the same repo-root coordinate system.
+        cwdForExecution = workspaceRootPath;
+        assert(cwdForExecution?.length, "Single-project repo-root execution requires a repo cwd");
+      }
       if (multiProjectRuntimes && requiresRepoRootCwd) {
         const repoRootRuntime = requestedRepoRootProjectPath
           ? multiProjectRuntimes.find(
@@ -6975,6 +7521,114 @@ export class WorkspaceService extends EventEmitter {
    */
   offBackgroundBashChange(callback: (workspaceId: string) => void): void {
     this.backgroundProcessManager.off("change", callback);
+  }
+
+  getGoalContinuationRuntimeState(workspaceId: string): GoalContinuationRuntimeState {
+    assert(workspaceId.trim().length > 0, "getGoalContinuationRuntimeState requires workspaceId");
+    const session =
+      this.sessions.get(workspaceId) ?? this.transientStartupRecoverySessions.get(workspaceId);
+    const initState = this.initStateManager.getInitState(workspaceId);
+    return {
+      // Finished init states remain cached; only "running" should block continuations.
+      isInitializing: initState?.status === "running",
+      isRuntimeCompatible: true,
+      isBusy: session?.isBusy() === true,
+      hasQueuedMessages: session?.hasQueuedMessages() === true,
+      hasPendingFollowUp: false,
+    };
+  }
+
+  getGoalContinuationKickoffSendOptions(workspaceId: string): SendMessageOptions | null {
+    assert(
+      workspaceId.trim().length > 0,
+      "getGoalContinuationKickoffSendOptions requires workspaceId"
+    );
+    const config = this.config.loadConfigOrDefault();
+    const workspaceMatch = this.config.findWorkspace(workspaceId);
+    if (!workspaceMatch) {
+      return null;
+    }
+    const project = config.projects.get(workspaceMatch.projectPath);
+    const workspaceEntry =
+      project?.workspaces.find((w) => w.id === workspaceId) ??
+      project?.workspaces.find((w) => w.path === workspaceMatch.workspacePath);
+
+    // Initial workspace `/goal` creation can arm a continuation before any normal
+    // sendMessage call runs, so resolve kickoff options from the persisted selected
+    // agent instead of assuming the default exec agent. Plan/compact are UI modes,
+    // not continuation-capable agents, so fall back to exec for the actual kickoff.
+    const persistedAgentId = normalizeAgentId(workspaceEntry?.agentId, WORKSPACE_DEFAULTS.agentId);
+    const agentId =
+      persistedAgentId === "plan" || persistedAgentId === "compact"
+        ? WORKSPACE_DEFAULTS.agentId
+        : persistedAgentId;
+    const selectedAgentSettings = workspaceEntry?.aiSettingsByAgent?.[agentId];
+    const execAgentSettings =
+      agentId !== WORKSPACE_DEFAULTS.agentId
+        ? workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId]
+        : undefined;
+
+    const candidates: Array<string | undefined> = [
+      selectedAgentSettings?.model,
+      workspaceEntry?.aiSettings?.model,
+      config.agentAiDefaults?.[agentId]?.modelString,
+      execAgentSettings?.model,
+      agentId !== WORKSPACE_DEFAULTS.agentId
+        ? config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString
+        : undefined,
+      DEFAULT_MODEL,
+    ];
+
+    for (const raw of candidates) {
+      if (typeof raw !== "string" || raw.trim().length === 0) {
+        continue;
+      }
+      const normalized = normalizeToCanonical(raw.trim());
+      if (isValidModelFormat(normalized)) {
+        return {
+          model: normalized,
+          agentId,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  async executeGoalContinuation(input: {
+    workspaceId: string;
+    message: string;
+    kind?: GoalSyntheticMessageKind;
+    options: SendMessageOptions;
+  }): Promise<boolean> {
+    assert(input.workspaceId.trim().length > 0, "executeGoalContinuation requires workspaceId");
+    assert(input.message.trim().length > 0, "executeGoalContinuation requires message");
+
+    const sendResult = await this.sendMessage(
+      input.workspaceId,
+      input.message,
+      {
+        ...input.options,
+        editMessageId: undefined,
+      },
+      {
+        skipAutoResumeReset: true,
+        synthetic: true,
+        agentInitiated: true,
+        requireIdle: true,
+        goalKind: input.kind ?? GOAL_CONTINUATION_KIND,
+        goalContinuation: true,
+      }
+    );
+
+    if (!sendResult.success) {
+      log.info("WorkspaceService: goal continuation send skipped", {
+        workspaceId: input.workspaceId,
+        error: sendResult.error,
+      });
+      return false;
+    }
+    return true;
   }
 
   /**

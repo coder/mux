@@ -83,6 +83,19 @@ export function useAutoScroll() {
     setAutoScroll(enabled);
   }, []);
 
+  // Seed the baseline read by handleScroll's released-branch direction check
+  // (`currentScrollTop > previousScrollTop`). Call this from any code path that
+  // flips autoScrollRef / programmaticDisableRef without a guaranteed follow-up
+  // scroll event — e.g. jumpToBottom skips the write when scrollTop is already
+  // max, and disableAutoScroll never fires a scroll event itself. Without a
+  // fresh baseline, the next user-driven scroll event could compare against a
+  // stale value (carried across workspace switches or the prior session) and
+  // misread a small wheel-up notch as "moving toward bottom", spuriously
+  // relocking the lock that was just released.
+  const seedScrollDirectionBaseline = useCallback(() => {
+    lastScrollTopRef.current = contentRef.current?.scrollTop ?? 0;
+  }, []);
+
   const stickToBottom = useCallback(() => {
     const scrollContainer = contentRef.current;
     if (!scrollContainer) return;
@@ -142,29 +155,22 @@ export function useAutoScroll() {
     programmaticDisableRef.current = false;
     setAutoScrollEnabled(true);
     stickToBottom();
-    // Seed the direction baseline used by handleScroll's released-branch
-    // user-intent path. stickToBottom doesn't always emit a scroll event
-    // (it skips the write when scrollTop is already max), so without this
-    // seed the next user-driven scroll event could compare against a stale
-    // value carried across workspace switches or earlier sessions.
-    lastScrollTopRef.current = contentRef.current?.scrollTop ?? 0;
+    // stickToBottom skips the write when scrollTop is already max, so we may
+    // not get a follow-up scroll event to refresh lastScrollTopRef.
+    seedScrollDirectionBaseline();
     startBottomLockFrameLoop();
-  }, [setAutoScrollEnabled, startBottomLockFrameLoop, stickToBottom]);
+  }, [seedScrollDirectionBaseline, setAutoScrollEnabled, startBottomLockFrameLoop, stickToBottom]);
 
   const disableAutoScroll = useCallback(() => {
     userScrollIntentUntilRef.current = 0;
     programmaticDisableRef.current = true;
     setAutoScrollEnabled(false);
-    // Seed the direction baseline. The released-branch user-intent path in
-    // handleScroll compares the next scroll event's scrollTop against
-    // lastScrollTopRef. disableAutoScroll never fires a scroll event itself,
-    // so without this seed a small wheel-up notch following a programmatic
-    // disable would be misread as "moving toward bottom" (because
-    // previousScrollTop was 0 or some unrelated earlier value), spuriously
-    // relocking the lock that was just disabled.
-    lastScrollTopRef.current = contentRef.current?.scrollTop ?? 0;
+    // disableAutoScroll never fires a scroll event itself, so seed the
+    // baseline now to keep the next user-driven scroll event's direction
+    // check honest.
+    seedScrollDirectionBaseline();
     stopBottomLockFrameLoop();
-  }, [setAutoScrollEnabled, stopBottomLockFrameLoop]);
+  }, [seedScrollDirectionBaseline, setAutoScrollEnabled, stopBottomLockFrameLoop]);
 
   const markUserScrollIntent = useCallback(() => {
     programmaticDisableRef.current = false;
@@ -333,6 +339,8 @@ export function useAutoScroll() {
     if (!scrollContainer || !ResizeObserverCtor) return;
 
     const observer = new ResizeObserverCtor(() => {
+      if (!autoScrollRef.current) return;
+      stickToBottom();
       startBottomLockFrameLoop();
     });
     observer.observe(scrollContainer);
@@ -342,7 +350,7 @@ export function useAutoScroll() {
     }
 
     return () => observer.disconnect();
-  }, [autoScroll, startBottomLockFrameLoop]);
+  }, [autoScroll, startBottomLockFrameLoop, stickToBottom]);
 
   return {
     contentRef,

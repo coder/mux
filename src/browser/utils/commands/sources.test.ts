@@ -4,7 +4,9 @@ import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { GlobalWindow } from "happy-dom";
+import { getModelKey } from "@/common/constants/storage";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
+import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { APIClient } from "@/browser/contexts/API";
 
 const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
@@ -59,6 +61,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onSetTheme: () => undefined,
     api: {
       workspace: {
+        resetContext: () => Promise.resolve({ success: true, data: "reset" }),
         truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
         interruptStream: () => Promise.resolve({ success: true, data: undefined }),
       },
@@ -76,9 +79,172 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
   return buildCoreSources(params);
 };
 
+interface ToastEventDetail {
+  type: "success" | "error";
+  message: string;
+  title?: string;
+}
+
+const getActions = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) =>
+  mk(over).flatMap((source) => source());
+
+const workspaceApi = (workspace: Record<string, unknown>) =>
+  ({
+    workspace: {
+      resetContext: () => Promise.resolve({ success: true as const, data: "reset" as const }),
+      truncateHistory: () => Promise.resolve({ success: true as const, data: undefined }),
+      interruptStream: () => Promise.resolve({ success: true as const, data: undefined }),
+      ...workspace,
+    },
+  }) as unknown as APIClient;
+
+const getResetContextAction = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
+  const action = getActions(over).find(
+    (candidate) => candidate.title === "Reset Context, Preserve History"
+  );
+  if (!action) {
+    throw new Error("Expected reset context action");
+  }
+  return action;
+};
+
+const collectCommandEvents = () => {
+  const receivedToasts: ToastEventDetail[] = [];
+  const clearEvents: string[] = [];
+  const handleToast = (event: Event) => {
+    receivedToasts.push((event as CustomEvent<ToastEventDetail>).detail);
+  };
+  const handleComposerClear = (event: Event) => {
+    clearEvents.push((event as CustomEvent<{ workspaceId: string }>).detail.workspaceId);
+  };
+
+  window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+  window.addEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
+
+  return {
+    receivedToasts,
+    clearEvents,
+    dispose: () => {
+      window.removeEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handleComposerClear);
+      window.removeEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
+    },
+  };
+};
+
+async function withTestWindow<T>(fn: () => Promise<T> | T): Promise<T> {
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
+
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+  document.body
+    .appendChild(document.createElement("div"))
+    .setAttribute("data-component", "ChatInputSection");
+
+  try {
+    return await fn();
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
+}
+
+test("chat commands include separate reset context and clear history actions", async () => {
+  await withTestWindow(async () => {
+    const resetContext = mock(() =>
+      Promise.resolve({ success: true as const, data: "reset" as const })
+    );
+    const truncateHistory = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
+    const actions = getActions({
+      api: workspaceApi({ resetContext, truncateHistory }),
+    });
+
+    const resetAction = actions.find(
+      (action) => action.title === "Reset Context, Preserve History"
+    );
+    const clearAction = actions.find((action) => action.title === "Clear History");
+
+    if (!resetAction) {
+      throw new Error("Expected reset context action");
+    }
+    expect(resetAction.keywords).toEqual([
+      "context reset",
+      "soft clear",
+      "preserve history",
+      "reset chat",
+    ]);
+    if (!clearAction) {
+      throw new Error("Expected clear history action");
+    }
+
+    await Promise.resolve(resetAction.run());
+    expect(resetContext).toHaveBeenCalledWith({ workspaceId: "w1" });
+    expect(truncateHistory).not.toHaveBeenCalled();
+
+    await Promise.resolve(clearAction.run());
+    expect(truncateHistory).toHaveBeenCalledWith({ workspaceId: "w1", percentage: 1.0 });
+  });
+});
+
+test("reset context command dispatches composer and toast outcomes", async () => {
+  await withTestWindow(async () => {
+    const cases = [
+      {
+        result: { success: true as const, data: "reset" as const },
+        clearEvents: ["w1"],
+        receivedToasts: [{ type: "success" as const, message: "Context reset; history preserved" }],
+      },
+      {
+        result: { success: true as const, data: "noop" as const },
+        clearEvents: [],
+        receivedToasts: [{ type: "success" as const, message: "No context to reset" }],
+      },
+      {
+        result: { success: false as const, error: "reset failed" },
+        clearEvents: [],
+        receivedToasts: [{ type: "error" as const, message: "reset failed" }],
+        errorMessage: "reset failed",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const resetContext = mock(() => Promise.resolve(testCase.result));
+      const events = collectCommandEvents();
+      try {
+        const resetAction = getResetContextAction({
+          api: workspaceApi({ resetContext }),
+        });
+
+        let thrown: unknown;
+        try {
+          await Promise.resolve(resetAction.run());
+        } catch (error) {
+          thrown = error;
+        }
+
+        if (testCase.errorMessage) {
+          expect(thrown).toBeInstanceOf(Error);
+          expect(thrown instanceof Error ? thrown.message : undefined).toBe(testCase.errorMessage);
+        } else {
+          expect(thrown).toBeUndefined();
+        }
+        expect(events.clearEvents).toEqual(testCase.clearEvents);
+        expect(events.receivedToasts).toEqual(testCase.receivedToasts);
+      } finally {
+        events.dispose();
+      }
+    }
+  });
+});
+
 test("buildCoreSources includes create/switch workspace actions", () => {
-  const sources = mk();
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions();
   const titles = actions.map((a) => a.title);
   expect(titles.some((t) => t.startsWith("Create New Workspace"))).toBe(true);
   // Workspace switcher shows workspace name (or title) as primary label
@@ -92,8 +258,7 @@ test("buildCoreSources includes create/switch workspace actions", () => {
 });
 
 test("appearance commands offer auto when a manual theme is selected", () => {
-  const sources = mk({ themePreference: "dark" });
-  const actions = sources.flatMap((source) => source());
+  const actions = getActions({ themePreference: "dark" });
 
   const autoAction = actions.find((action) => action.id === "appearance:theme:set:auto");
   expect(autoAction?.title).toBe("Use Auto Theme");
@@ -101,8 +266,7 @@ test("appearance commands offer auto when a manual theme is selected", () => {
 });
 
 test("appearance commands omit auto when auto preference is already selected", () => {
-  const sources = mk({ themePreference: "auto" });
-  const actions = sources.flatMap((source) => source());
+  const actions = getActions({ themePreference: "auto" });
 
   const themeSetCommandIds = actions
     .map((action) => action.id)
@@ -114,8 +278,7 @@ test("appearance commands omit auto when auto preference is already selected", (
 });
 
 test("buildCoreSources adds thinking effort command", () => {
-  const sources = mk({ getThinkingLevel: () => "medium" });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ getThinkingLevel: () => "medium" });
   const thinkingAction = actions.find((a) => a.id === "thinking:set-level");
 
   expect(thinkingAction).toBeDefined();
@@ -123,8 +286,7 @@ test("buildCoreSources adds thinking effort command", () => {
 });
 
 test("workspace switch commands include keywords for filtering", () => {
-  const sources = mk();
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions();
   const switchAction = actions.find((a) => a.id.startsWith("ws:switch:"));
 
   expect(switchAction).toBeDefined();
@@ -150,8 +312,7 @@ test("workspace switch with title shows title as primary label", () => {
       },
     ],
   ]);
-  const sources = mk({ workspaceMetadata });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ workspaceMetadata });
   const switchAction = actions.find((a) => a.id === "ws:switch:w-titled");
 
   expect(switchAction).toBeDefined();
@@ -168,8 +329,7 @@ test("workspace switch with title shows title as primary label", () => {
 
 test("thinking effort command submits selected level", async () => {
   const onSetThinkingLevel = mock();
-  const sources = mk({ onSetThinkingLevel, getThinkingLevel: () => "low" });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ onSetThinkingLevel, getThinkingLevel: () => "low" });
   const thinkingAction = actions.find((a) => a.id === "thinking:set-level");
 
   expect(thinkingAction?.prompt).toBeDefined();
@@ -178,9 +338,36 @@ test("thinking effort command submits selected level", async () => {
   expect(onSetThinkingLevel).toHaveBeenCalledWith("w1", "high");
 });
 
+test("selected-workspace create action targets the workspace sub-project", async () => {
+  const userProjects = new Map<string, ProjectConfig>([
+    ["/repo/a", { workspaces: [] }],
+    ["/repo/a/packages/api", { workspaces: [], parentProjectPath: "/repo/a", displayName: "API" }],
+  ]);
+  const workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>([
+    [
+      "w1",
+      {
+        id: "w1",
+        name: "feat-x",
+        projectName: "a",
+        projectPath: "/repo/a",
+        subProjectPath: "/repo/a/packages/api",
+        namedWorkspacePath: "/repo/a/feat-x",
+        runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+      },
+    ],
+  ]);
+  const onStartWorkspaceCreation = mock();
+  const actions = getActions({ userProjects, workspaceMetadata, onStartWorkspaceCreation });
+  const createAction = actions.find((action) => action.id === "ws:new");
+
+  expect(createAction?.subtitle).toBe("for a / API");
+  await createAction?.run();
+  expect(onStartWorkspaceCreation).toHaveBeenCalledWith("/repo/a/packages/api");
+});
+
 test("buildCoreSources includes archive merged workspaces in project action", () => {
-  const sources = mk();
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions();
   const archiveAction = actions.find((a) => a.id === "ws:archive-merged-in-project");
 
   expect(archiveAction).toBeDefined();
@@ -189,8 +376,7 @@ test("buildCoreSources includes archive merged workspaces in project action", ()
 
 test("archive merged workspaces prompt submits selected project", async () => {
   const onArchiveMergedWorkspacesInProject = mock(() => Promise.resolve());
-  const sources = mk({ onArchiveMergedWorkspacesInProject });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ onArchiveMergedWorkspacesInProject });
   const archiveAction = actions.find((a) => a.id === "ws:archive-merged-in-project");
 
   expect(archiveAction).toBeDefined();
@@ -215,8 +401,7 @@ test("archive merged workspaces prompt submits selected project", async () => {
 
 test("multi-project workspace command triggers creation flow", async () => {
   const onStartMultiProjectWorkspaceCreation = mock();
-  const sources = mk({ onStartMultiProjectWorkspaceCreation });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ onStartMultiProjectWorkspaceCreation });
   const multiProjectAction = actions.find((a) => a.id === "ws:new-multi-project");
 
   expect(multiProjectAction).toBeDefined();
@@ -230,11 +415,10 @@ test("multi-project workspace command triggers creation flow", async () => {
 
 test("multi-project workspace command hides itself when the experiment is disabled", async () => {
   const onStartMultiProjectWorkspaceCreation = mock();
-  const sources = mk({
+  const actions = getActions({
     onStartMultiProjectWorkspaceCreation,
     multiProjectWorkspacesEnabled: false,
   });
-  const actions = sources.flatMap((s) => s());
   const multiProjectAction = actions.find((a) => a.id === "ws:new-multi-project");
 
   expect(multiProjectAction).toBeDefined();
@@ -253,6 +437,14 @@ test("project commands exclude system projects from options", async () => {
         workspaces: [{ path: "/repo/a/feat-x" }, { path: "/repo/a/feat-y" }],
       },
     ],
+    [
+      "/repo/a/packages/api",
+      {
+        workspaces: [],
+        parentProjectPath: "/repo/a",
+        displayName: "API",
+      },
+    ],
     ["/repo/system", { workspaces: [], projectKind: "system" }],
   ]);
 
@@ -260,8 +452,7 @@ test("project commands exclude system projects from options", async () => {
     [...allProjects].filter(([, config]) => config.projectKind !== "system")
   );
 
-  const sources = mk({ userProjects });
-  const actions = sources.flatMap((s) => s());
+  const actions = getActions({ userProjects });
 
   const createWorkspaceAction = actions.find((a) => a.title === "Create New Workspace in Project…");
   expect(createWorkspaceAction).toBeDefined();
@@ -272,7 +463,10 @@ test("project commands exclude system projects from options", async () => {
   }
 
   const createOptions = await createProjectField.getOptions({});
-  expect(createOptions.map((option) => option.id)).toEqual(["/repo/a"]);
+  expect(createOptions.map((option) => option.id)).toEqual(["/repo/a", "/repo/a/packages/api"]);
+  expect(createOptions.find((option) => option.id === "/repo/a/packages/api")?.label).toBe(
+    "a / API"
+  );
   expect(createOptions.some((option) => option.id === "/repo/system")).toBe(false);
 
   const archiveAction = actions.find((a) => a.title === "Archive Merged Workspaces in Project…");
@@ -284,13 +478,425 @@ test("project commands exclude system projects from options", async () => {
   }
 
   const archiveOptions = await archiveProjectField.getOptions({});
+  expect(archiveOptions.some((option) => option.id === "/repo/a/packages/api")).toBe(false);
   expect(archiveOptions.map((option) => option.id)).toEqual(["/repo/a"]);
   expect(archiveOptions.some((option) => option.id === "/repo/system")).toBe(false);
 });
 
-test("buildCoreSources includes rebuild analytics database action with discoverable keywords", () => {
-  const sources = mk();
+const makeGoalSnapshot = (
+  status: "active" | "paused" | "budget_limited" | "complete",
+  overrides: Partial<NonNullable<WorkspaceState["goal"]>> = {}
+) => ({
+  goalId: "00000000-0000-4000-8000-000000000001",
+  status,
+  objective: "Ship palette parity",
+  budgetCents: 500,
+  costCents: 125,
+  turnsUsed: 2,
+  turnCap: null,
+  startedAtMs: 1_700_000_000_000,
+  ...overrides,
+});
+
+const makeGoalRecord = (status: "active" | "paused" | "budget_limited" | "complete") => ({
+  version: 1 as const,
+  goalId: "00000000-0000-4000-8000-000000000001",
+  status,
+  objective: "Ship palette parity",
+  budgetCents: 500,
+  turnCap: null,
+  costCents: 125,
+  turnsUsed: 2,
+  attributedChildren: [],
+  budgetLimitInjectedForGoalId: null,
+  requireUserAcknowledgmentSinceMs: null,
+  createdAtMs: 1_700_000_000_000,
+  updatedAtMs: 1_700_000_000_000,
+});
+
+function makeWorkspaceState(goal: WorkspaceState["goal"]): WorkspaceState {
+  return {
+    name: "feat-x",
+    messages: [],
+    queuedMessage: null,
+    canInterrupt: false,
+    isCompacting: false,
+    isStreamStarting: false,
+    awaitingUserQuestion: false,
+    loading: false,
+    isHydratingTranscript: false,
+    hasOlderHistory: false,
+    loadingOlderHistory: false,
+    muxMessages: [],
+    currentModel: null,
+    currentThinkingLevel: null,
+    recencyTimestamp: null,
+    todos: [],
+    loadedSkills: [],
+    skillLoadErrors: [],
+    agentStatus: undefined,
+    lastAbortReason: null,
+    pendingStreamStartTime: null,
+    pendingStreamModel: null,
+    runtimeStatus: null,
+    autoRetryStatus: null,
+    goal,
+  };
+}
+
+const getVisibleGoalActions = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
+  const sources = mk(over);
+  return sources
+    .flatMap((source) => source())
+    .filter((action) => action.visible?.() ?? true)
+    .filter((action) => action.title.startsWith("Goal:"));
+};
+
+const getVisibleGoalTitles = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) =>
+  getVisibleGoalActions(over)
+    .map((action) => action.title)
+    .sort();
+
+test("goal palette commands are hidden when no workspace is selected", () => {
+  expect(getVisibleGoalTitles({ selectedWorkspace: null })).toEqual([]);
+});
+
+test("goal palette commands are hidden for child task workspaces", () => {
+  const childMetadata = new Map<string, FrontendWorkspaceMetadata>();
+  childMetadata.set("child-ws", {
+    id: "child-ws",
+    name: "child-task",
+    projectName: "a",
+    projectPath: "/repo/a",
+    namedWorkspacePath: "/repo/a/child-task",
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    parentWorkspaceId: "parent-ws",
+  });
+
+  expect(
+    getVisibleGoalTitles({
+      workspaceMetadata: childMetadata,
+      selectedWorkspace: {
+        projectPath: "/repo/a",
+        projectName: "a",
+        namedWorkspacePath: "/repo/a/child-task",
+        workspaceId: "child-ws",
+      },
+    })
+  ).toEqual([]);
+});
+
+test("goal palette commands only show set objective with no current goal", () => {
+  expect(
+    getVisibleGoalTitles({
+      selectedWorkspaceState: makeWorkspaceState(null),
+    })
+  ).toEqual(["Goal: Set objective"]);
+});
+
+test("goal palette commands match the Active lifecycle state", () => {
+  expect(
+    getVisibleGoalTitles({
+      selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("active")),
+    })
+  ).toEqual([
+    "Goal: Clear",
+    "Goal: Mark complete",
+    "Goal: Open panel",
+    "Goal: Pause",
+    "Goal: Set objective",
+  ]);
+});
+
+test("goal palette hides mutating lifecycle commands for pending goals", () => {
+  expect(
+    getVisibleGoalTitles({
+      selectedWorkspaceState: makeWorkspaceState(
+        makeGoalSnapshot("active", { pendingPersistence: true })
+      ),
+    })
+  ).toEqual(["Goal: Open panel", "Goal: Set objective"]);
+});
+
+test("goal palette commands match the Paused lifecycle state", () => {
+  expect(
+    getVisibleGoalTitles({
+      selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("paused")),
+    })
+  ).toEqual(["Goal: Clear", "Goal: Open panel", "Goal: Resume", "Goal: Set objective"]);
+});
+
+test("goal palette commands match the BudgetLimited lifecycle state", () => {
+  expect(
+    getVisibleGoalTitles({
+      selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("budget_limited")),
+    })
+  ).toEqual(["Goal: Clear", "Goal: Mark complete", "Goal: Open panel", "Goal: Set objective"]);
+});
+
+test("goal palette commands match the Complete lifecycle state", () => {
+  expect(
+    getVisibleGoalTitles({
+      selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("complete")),
+    })
+  ).toEqual(["Goal: Clear", "Goal: Open panel", "Goal: Set objective"]);
+});
+
+test("goal set objective prompt treats blank budget as explicit no-budget", async () => {
+  // The palette placeholder promises that blank means no budget; unlike the
+  // slash-command path, there is no separate --no-budget flag in this prompt.
+  const setGoalCalls: Array<Record<string, unknown>> = [];
+  const sources = mk({
+    selectedWorkspaceState: {
+      lifecycle: "active",
+      goal: null,
+    } as unknown as WorkspaceState,
+    api: {
+      config: {
+        // Even with default budget settings, blank palette budget means no budget.
+        getConfig: () =>
+          Promise.resolve({
+            goalDefaults: {
+              alwaysRequireExplicitBudget: true,
+              defaultBudgetCents: 800,
+              defaultTurnCap: 5,
+            },
+          }),
+      },
+      workspace: {
+        getGoal: () => Promise.resolve({ goal: null }),
+        setGoal: (input: Record<string, unknown>) => {
+          setGoalCalls.push(input);
+          return Promise.resolve({
+            success: true,
+            data: {
+              version: 1,
+              goalId: "11111111-1111-4111-8111-111111111111",
+              objective: input.objective,
+              status: "active",
+              budgetCents: input.budgetCents ?? null,
+              turnCap: input.turnCap ?? null,
+              costCents: 0,
+              turnsUsed: 0,
+              attributedChildren: [],
+              createdAtMs: 1_000,
+              updatedAtMs: 1_000,
+              budgetLimitInjectedForGoalId: null,
+              requireUserAcknowledgmentSinceMs: null,
+              lastContinuationFiredAtMs: null,
+            },
+          });
+        },
+      },
+    } as unknown as APIClient,
+  });
   const actions = sources.flatMap((s) => s());
+  const setObjectiveAction = actions.find((action) => action.id === "goal:set-objective");
+  expect(setObjectiveAction?.prompt?.onSubmit).toBeDefined();
+
+  // Blank budget — palette should send explicit null instead of applying defaults.
+  await setObjectiveAction?.prompt?.onSubmit?.({
+    objective: "Ship the feature",
+    budget: "",
+  });
+
+  expect(setGoalCalls.length).toBe(1);
+  expect(setGoalCalls[0]).toMatchObject({
+    objective: "Ship the feature",
+    budgetCents: null,
+    turnCap: 5,
+  });
+});
+
+test("goal set objective prompt allows zero budget on unpriced model", async () => {
+  const setGoal = mock(() => Promise.resolve({ success: true, data: makeGoalRecord("active") }));
+  const actions = getVisibleGoalActions({
+    api: {
+      config: { getConfig: mock(() => Promise.resolve({})) },
+      providers: { getConfig: mock(() => Promise.resolve({})) },
+      workspace: { getGoal: mock(() => Promise.resolve({ goal: null })), setGoal },
+    } as unknown as APIClient,
+    selectedWorkspaceState: {
+      ...makeWorkspaceState(null),
+      currentModel: "custom:unpriced-model",
+    },
+  });
+
+  const setObjectiveAction = actions.find((action) => action.id === "goal:set-objective");
+  await setObjectiveAction!.prompt!.onSubmit({
+    objective: "Track without dollar limit",
+    budget: "0",
+  });
+
+  expect(setGoal).toHaveBeenCalledWith(
+    expect.objectContaining({
+      objective: "Track without dollar limit",
+      budgetCents: null,
+    })
+  );
+});
+
+test("goal set objective prompt submits objective and parsed budget", async () => {
+  const getGoal = mock(() => Promise.resolve({ goal: null }));
+  const setGoal = mock(() => Promise.resolve({ success: true, data: makeGoalRecord("active") }));
+  const actions = getVisibleGoalActions({
+    api: {
+      workspace: { getGoal, setGoal },
+    } as unknown as APIClient,
+    selectedWorkspaceState: makeWorkspaceState(null),
+  });
+
+  const setObjectiveAction = actions.find((action) => action.id === "goal:set-objective");
+  expect(setObjectiveAction?.prompt?.fields.map((field) => field.name)).toEqual([
+    "objective",
+    "budget",
+  ]);
+
+  await setObjectiveAction!.prompt!.onSubmit({
+    objective: "  Finish the feature  ",
+    budget: "$5.25",
+  });
+
+  expect(setGoal).toHaveBeenCalledWith({
+    workspaceId: "w1",
+    objective: "Finish the feature",
+    expectedGoalId: null,
+    budgetCents: 525,
+  });
+});
+
+test("goal set objective prompt blocks budgeted goals on unpriced selected model", async () => {
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  window.localStorage.setItem(getModelKey("w1"), JSON.stringify("custom:unpriced-model"));
+
+  try {
+    const getGoal = mock(() => Promise.resolve({ goal: null }));
+    const setGoal = mock(() => Promise.resolve({ success: true, data: makeGoalRecord("active") }));
+    const state = makeWorkspaceState(null);
+    state.currentModel = "openai:gpt-4o";
+    const actions = getVisibleGoalActions({
+      api: {
+        workspace: { getGoal, setGoal },
+      } as unknown as APIClient,
+      selectedWorkspaceState: state,
+    });
+
+    const setObjectiveAction = actions.find((action) => action.id === "goal:set-objective");
+    expect(setObjectiveAction?.prompt?.onSubmit).toBeDefined();
+
+    await setObjectiveAction!.prompt!.onSubmit({
+      objective: "Ship the feature",
+      budget: "$5.25",
+    });
+
+    expect(setGoal).not.toHaveBeenCalled();
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+  }
+});
+
+test("goal mark complete prompt submits completion summary", async () => {
+  const getGoal = mock(() => Promise.resolve({ goal: makeGoalRecord("active") }));
+  const setGoal = mock(() => Promise.resolve({ success: true, data: makeGoalRecord("complete") }));
+  const actions = getVisibleGoalActions({
+    api: {
+      workspace: { getGoal, setGoal },
+    } as unknown as APIClient,
+    selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("active")),
+  });
+
+  const completeAction = actions.find((action) => action.id === "goal:mark-complete");
+  expect(completeAction?.prompt?.fields.map((field) => field.name)).toEqual(["summary"]);
+
+  await completeAction!.prompt!.onSubmit({ summary: "  Done and verified.  " });
+
+  expect(setGoal).toHaveBeenCalledWith({
+    workspaceId: "w1",
+    status: "complete",
+    completionSummary: "Done and verified.",
+    expectedGoalId: "00000000-0000-4000-8000-000000000001",
+  });
+});
+
+test("goal palette surfaces invalid transition messages without throwing", async () => {
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
+  const alert = mock(() => undefined);
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+  window.alert = alert;
+
+  try {
+    const setGoal = mock(() =>
+      Promise.resolve({
+        success: false,
+        error: { type: "invalid_transition", message: "Cannot complete a missing goal." },
+      })
+    );
+    const actions = getVisibleGoalActions({
+      api: {
+        workspace: {
+          getGoal: mock(() => Promise.resolve({ goal: makeGoalRecord("active") })),
+          setGoal,
+        },
+      } as unknown as APIClient,
+      selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("active")),
+    });
+
+    const completeAction = actions.find((action) => action.id === "goal:mark-complete");
+    await completeAction!.prompt!.onSubmit({ summary: "Done." });
+
+    expect(alert).toHaveBeenCalledWith("Cannot complete a missing goal.");
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
+});
+
+test("goal open panel command dispatches the right-sidebar goal event", async () => {
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
+
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+
+  const receivedWorkspaceIds: string[] = [];
+  const handleOpenGoalTab = (event: Event) => {
+    receivedWorkspaceIds.push((event as CustomEvent<{ workspaceId: string }>).detail.workspaceId);
+  };
+  window.addEventListener(CUSTOM_EVENTS.OPEN_GOAL_TAB, handleOpenGoalTab);
+
+  try {
+    const actions = getVisibleGoalActions({
+      selectedWorkspaceState: makeWorkspaceState(makeGoalSnapshot("complete")),
+    });
+    const openPanelAction = actions.find((action) => action.id === "goal:open-panel");
+
+    await openPanelAction!.run();
+
+    expect(receivedWorkspaceIds).toEqual(["w1"]);
+  } finally {
+    window.removeEventListener(CUSTOM_EVENTS.OPEN_GOAL_TAB, handleOpenGoalTab);
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
+});
+
+test("buildCoreSources includes rebuild analytics database action with discoverable keywords", () => {
+  const actions = getActions();
   const rebuildAction = actions.find((a) => a.id === "analytics:rebuild-database");
 
   expect(rebuildAction).toBeDefined();
@@ -331,7 +937,7 @@ test("analytics rebuild command calls route and dispatches toast feedback", asyn
   window.addEventListener(CUSTOM_EVENTS.ANALYTICS_REBUILD_TOAST, handleToast);
 
   try {
-    const sources = mk({
+    const actions = getActions({
       api: {
         workspace: {
           truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
@@ -340,7 +946,6 @@ test("analytics rebuild command calls route and dispatches toast feedback", asyn
         analytics: { rebuildDatabase },
       } as unknown as APIClient,
     });
-    const actions = sources.flatMap((s) => s());
     const rebuildAction = actions.find((a) => a.id === "analytics:rebuild-database");
 
     expect(rebuildAction).toBeDefined();
@@ -377,7 +982,7 @@ test("analytics rebuild command falls back to alert when chat input toast host i
   window.alert = alertMock as unknown as typeof window.alert;
 
   try {
-    const sources = mk({
+    const actions = getActions({
       api: {
         workspace: {
           truncateHistory: () => Promise.resolve({ success: true, data: undefined }),
@@ -386,7 +991,6 @@ test("analytics rebuild command falls back to alert when chat input toast host i
         analytics: { rebuildDatabase },
       } as unknown as APIClient,
     });
-    const actions = sources.flatMap((s) => s());
     const rebuildAction = actions.find((a) => a.id === "analytics:rebuild-database");
 
     expect(rebuildAction).toBeDefined();
@@ -404,7 +1008,7 @@ test("analytics rebuild command falls back to alert when chat input toast host i
 });
 
 test("workspace generate title command is available for the current workspace", () => {
-  const sources = mk({
+  const actions = getActions({
     selectedWorkspace: {
       projectPath: "/repo/a",
       projectName: "a",
@@ -412,7 +1016,6 @@ test("workspace generate title command is available for the current workspace", 
       workspaceId: "w1",
     },
   });
-  const actions = sources.flatMap((s) => s());
 
   expect(actions.some((action) => action.id === "ws:generate-title")).toBe(true);
 });
@@ -436,8 +1039,7 @@ test("workspace generate title command dispatches a title-generation request eve
   window.addEventListener(CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED, handleRequest);
 
   try {
-    const sources = mk();
-    const actions = sources.flatMap((s) => s());
+    const actions = getActions();
     const generateTitleAction = actions.find((a) => a.id === "ws:generate-title");
 
     expect(generateTitleAction).toBeDefined();

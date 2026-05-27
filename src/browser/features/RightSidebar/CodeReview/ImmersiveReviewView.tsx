@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Circle,
   MessageSquare,
+  Sparkles,
   ThumbsDown,
   ThumbsUp,
   Trash2,
@@ -41,7 +42,12 @@ import {
   matchesKeybind,
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import { buildReadFileScript, processFileContents } from "@/browser/utils/fileRead";
+import {
+  buildReadFileScript,
+  EXIT_CODE_TOO_LARGE,
+  EXIT_CODE_TOO_MANY_LINES,
+  processFileContents,
+} from "@/browser/utils/fileRead";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import {
   parseReviewLineRange,
@@ -74,6 +80,18 @@ interface ImmersiveReviewViewProps {
   reviewsByFilePath: Map<string, Review[]>;
   /** Map of hunkId -> first-seen timestamp */
   firstSeenMap: Record<string, number>;
+  /**
+   * Set of hunkIds the agent flagged for review (via `review_pane_update`).
+   * When the selected hunk is in this set, the header surfaces an "Assisted"
+   * indicator so the agent's focus signal survives the immersive transition.
+   */
+  assistedHunkIds?: ReadonlySet<string>;
+  /**
+   * Per-hunkId agent comments, when available. Rendered next to the assisted
+   * indicator so the user gets the same "why was this flagged?" context they
+   * see in the side panel.
+   */
+  assistedCommentByHunkId?: Map<string, string>;
 }
 
 interface InlineComposerRequest {
@@ -114,6 +132,9 @@ interface ImmersiveOverlayData {
   lineHunkIds: Array<string | null>;
   hunkLineRanges: Map<string, HunkLineRange>;
 }
+
+const MAX_FULL_FILE_CONTEXT_LINES = 1500;
+const MAX_FULL_FILE_CONTEXT_BYTES = 256 * 1024;
 
 const LINE_JUMP_SIZE = 10;
 // Keep syntax highlighting on for larger review files now that per-line tooltip overhead is gone,
@@ -181,6 +202,28 @@ function normalizeFileLines(content: string): string[] {
     .split(/\r?\n/)
     .map((line) => (line.endsWith("\r") ? line.slice(0, Math.max(0, line.length - 1)) : line));
   return lines.filter((line, idx) => idx < lines.length - 1 || line !== "");
+}
+
+function isWithinFullFileContextLineBudget(content: string): boolean {
+  return normalizeFileLines(content).length <= MAX_FULL_FILE_CONTEXT_LINES;
+}
+
+function shouldAttemptFullFileContext(selectedHunk: DiffHunk | null): boolean {
+  if (!selectedHunk) {
+    return false;
+  }
+
+  const lastDisplayLine = selectedHunk.newStart + Math.max(selectedHunk.newLines, 1) - 1;
+  return lastDisplayLine <= MAX_FULL_FILE_CONTEXT_LINES;
+}
+
+function buildFileContentCacheKey(
+  workspaceId: string,
+  filePath: string,
+  sortedHunks: readonly DiffHunk[]
+): string {
+  const hunkSignature = sortedHunks.map((hunk) => hunk.id).join("|");
+  return [workspaceId, filePath, hunkSignature].join("\u0000");
 }
 
 function buildOverlayFromFileContent(
@@ -396,7 +439,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     onReviewNote,
     isRead,
     isTouchImmersive,
+    assistedHunkIds,
+    assistedCommentByHunkId,
   } = props;
+  const selectedAssistedComment =
+    selectedHunkId !== null ? (assistedCommentByHunkId?.get(selectedHunkId) ?? null) : null;
+  const isSelectedAssisted =
+    selectedHunkId !== null && (assistedHunkIds?.has(selectedHunkId) ?? false);
   const isTouchExperience = isTouchImmersive === true;
 
   // Flatten file tree into ordered file list
@@ -522,93 +571,123 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     content: null,
     isSettled: true,
   });
+  const fileContentCacheRef = useRef<Map<string, string | null>>(new Map());
+  const shouldLoadFullFileContext = useMemo(
+    () => shouldAttemptFullFileContext(selectedHunk),
+    [selectedHunk]
+  );
+  const activeFileContentCacheKey = useMemo(
+    () =>
+      activeFilePath
+        ? buildFileContentCacheKey(props.workspaceId, activeFilePath, currentFileHunks)
+        : null,
+    [activeFilePath, currentFileHunks, props.workspaceId]
+  );
 
-  // Hold diff reveal during file switches until loading + initial scroll are complete.
+  // Hold diff reveal during file switches until the initial scroll is complete.
   const [pendingRevealFilePath, setPendingRevealFilePath] = useState<string | null>(null);
   const revealAnimationFrameRef = useRef<number | null>(null);
 
-  // Load full file content so immersive mode can render one coherent file with hunk overlays.
-  // Keep a per-file loading state so switches can show a splash until loading settles,
-  // which avoids a visible fallback-overlay -> full-content jump.
+  // Load full file context only when it is cheap. The hunk overlay remains visible
+  // while this request is pending so file switches do not block on bash/base64 I/O.
   useEffect(() => {
     const apiClient = api;
     const filePath = activeFilePath;
+    const cacheKey = activeFileContentCacheKey;
 
-    if (!filePath || !apiClient) {
+    const settleContent = (content: string | null) => {
       setActiveFileContentState({
         filePath: filePath ?? null,
-        content: null,
+        content,
         isSettled: true,
       });
+    };
+
+    if (!filePath || !apiClient || !shouldLoadFullFileContext || !cacheKey) {
+      settleContent(null);
+      return;
+    }
+
+    if (fileContentCacheRef.current.has(cacheKey)) {
+      settleContent(fileContentCacheRef.current.get(cacheKey) ?? null);
       return;
     }
 
     const resolvedApi: NonNullable<typeof api> = apiClient;
     const resolvedFilePath: string = filePath;
-
     let cancelled = false;
+
     setActiveFileContentState({
       filePath: resolvedFilePath,
       content: null,
       isSettled: false,
     });
 
-    async function loadActiveFileContent() {
-      try {
-        // Keep plain file reads on the shared container root so immersive review can open
-        // sibling-project files without forcing the primary repo checkout.
-        const fileResult = await resolvedApi.workspace.executeBash({
-          workspaceId: props.workspaceId,
-          script: buildReadFileScript(resolvedFilePath),
-        });
-
-        if (cancelled) {
-          return;
-        }
-
-        if (!fileResult.success) {
-          setActiveFileContentState({
-            filePath: resolvedFilePath,
-            content: null,
-            isSettled: true,
-          });
-          return;
-        }
-
-        const bashResult = fileResult.data;
-
-        if (!bashResult.success && !bashResult.output) {
-          setActiveFileContentState({
-            filePath: resolvedFilePath,
-            content: null,
-            isSettled: true,
-          });
-          return;
-        }
-
-        const data = processFileContents(bashResult.output ?? "", bashResult.exitCode);
+    const settleLoadedContent = (content: string | null, shouldCache: boolean) => {
+      if (shouldCache) {
+        fileContentCacheRef.current.set(cacheKey, content);
+      }
+      if (!cancelled) {
         setActiveFileContentState({
           filePath: resolvedFilePath,
-          content: data.type === "text" ? data.content : null,
+          content,
           isSettled: true,
         });
-      } catch {
-        if (!cancelled) {
-          setActiveFileContentState({
-            filePath: resolvedFilePath,
-            content: null,
-            isSettled: true,
-          });
-        }
       }
+    };
+
+    async function loadActiveFileContent() {
+      // Keep plain file reads on the shared container root so immersive review can open
+      // sibling-project files without forcing the primary repo checkout.
+      const fileResult = await resolvedApi.workspace.executeBash({
+        workspaceId: props.workspaceId,
+        script: buildReadFileScript(resolvedFilePath, {
+          maxSizeBytes: MAX_FULL_FILE_CONTEXT_BYTES,
+          maxLineCount: MAX_FULL_FILE_CONTEXT_LINES,
+        }),
+      });
+
+      if (cancelled) {
+        return;
+      }
+
+      if (!fileResult.success) {
+        settleLoadedContent(null, false);
+        return;
+      }
+
+      const bashResult = fileResult.data;
+      const isDeterministicBudgetMiss =
+        bashResult.exitCode === EXIT_CODE_TOO_LARGE ||
+        bashResult.exitCode === EXIT_CODE_TOO_MANY_LINES;
+
+      if (!bashResult.success && !bashResult.output) {
+        settleLoadedContent(null, isDeterministicBudgetMiss);
+        return;
+      }
+
+      const data = processFileContents(bashResult.output ?? "", bashResult.exitCode);
+      const content =
+        data.type === "text" && isWithinFullFileContextLineBudget(data.content)
+          ? data.content
+          : null;
+      settleLoadedContent(content, content != null || isDeterministicBudgetMiss);
     }
 
-    void loadActiveFileContent();
+    loadActiveFileContent().catch(() => {
+      settleLoadedContent(null, false);
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [api, props.workspaceId, activeFilePath]);
+  }, [
+    activeFileContentCacheKey,
+    activeFilePath,
+    api,
+    props.workspaceId,
+    shouldLoadFullFileContext,
+  ]);
 
   const isActiveFileContentSettled =
     !activeFilePath ||
@@ -617,10 +696,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const resolvedActiveFileContent = isActiveFileContentSettled
     ? activeFileContentState.content
     : null;
-
-  const isActiveFileContentLoading = Boolean(
-    activeFilePath && currentFileHunks.length > 0 && !isActiveFileContentSettled
-  );
 
   const overlayData = useMemo<ImmersiveOverlayData>(() => {
     if (currentFileHunks.length === 0) {
@@ -763,7 +838,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     selectedHunkId !== null && currentFileHunks.some((hunk) => hunk.id === selectedHunkId);
 
   useEffect(() => {
-    if (!isActiveFileRevealPending || !isActiveFileContentSettled) {
+    if (!isActiveFileRevealPending) {
       return;
     }
 
@@ -786,7 +861,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     currentFileHunks.length,
     hasResolvedSelectedHunkForReveal,
     isActiveFileRevealPending,
-    isActiveFileContentSettled,
     selectedHunkRevealTargetLineIndex,
   ]);
 
@@ -1560,10 +1634,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       }
     }
 
-    if (isActiveFileRevealPending && !isActiveFileContentSettled) {
-      return;
-    }
-
     const lineIndexForScroll = isActiveFileRevealPending ? revealTargetLineIndex : activeLineIndex;
     if (lineIndexForScroll === null) {
       return;
@@ -1622,7 +1692,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   }, [
     activeFilePath,
     activeLineIndex,
-    isActiveFileContentSettled,
     isActiveFileRevealPending,
     overlayData.content,
     revealTargetLineIndex,
@@ -1856,6 +1925,29 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         )}
       </div>
 
+      {/* Assisted-review banner — surfaces the agent's flag + comment when
+          the selected hunk is one the agent pinned for review. We render it
+          between the header and the diff so the focus signal is impossible
+          to miss after entering immersive mode, where the side-panel cues
+          aren't visible. */}
+      {isSelectedAssisted && (
+        <div
+          className="border-review-accent/40 bg-review-accent/5 text-foreground flex items-start gap-2 border-b px-3 py-1.5 text-[11px] leading-[1.4]"
+          data-testid="immersive-assisted-banner"
+          role="status"
+          aria-live="polite"
+        >
+          <Sparkles aria-hidden="true" className="text-review-accent mt-[2px] h-3 w-3 shrink-0" />
+          {selectedAssistedComment ? (
+            <span className="min-w-0 break-words whitespace-pre-wrap">
+              {selectedAssistedComment}
+            </span>
+          ) : (
+            <span className="text-muted italic">Flagged by agent for review</span>
+          )}
+        </div>
+      )}
+
       {/* Unified whole-file diff with hunk overlays + notes sidebar */}
       <div className="flex min-h-0 flex-1">
         {/* Avoid top padding here; it reads as a blank block between the controls and diff. */}
@@ -1899,44 +1991,36 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             </div>
           ) : (
             <div className="bg-dark relative overflow-hidden">
-              {isActiveFileContentLoading ? (
-                <div className="text-muted flex items-center justify-center py-12 text-sm">
+              {isActiveFileRevealPending && (
+                <div className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm">
                   <span className="animate-pulse">Loading file...</span>
                 </div>
-              ) : (
-                <>
-                  {isActiveFileRevealPending && (
-                    <div className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm">
-                      <span className="animate-pulse">Loading file...</span>
-                    </div>
-                  )}
-                  <div className={cn(isActiveFileRevealPending && "invisible")}>
-                    <SelectableDiffRenderer
-                      content={overlayData.content}
-                      filePath={activeFilePath ?? currentFileHunks[0].filePath}
-                      inlineReviews={activeFileReviews}
-                      oldStart={1}
-                      newStart={1}
-                      fontSize="11px"
-                      maxHeight="none"
-                      className="rounded-none border-0 [&>div]:overflow-x-visible"
-                      onReviewNote={handleReviewNoteSubmit}
-                      onComposerCancel={handleInlineComposerCancel}
-                      reviewActions={diffReviewActions}
-                      enableHighlighting={shouldEnableHighlighting}
-                      selectedLineRange={selectedLineRange}
-                      onLineIndexSelect={handleLineIndexSelect}
-                      externalSelectionRequest={externalComposerSelectionRequest}
-                      externalEditRequest={inlineReviewEditRequest}
-                    />
-                  </div>
-                </>
               )}
+              <div className={cn(isActiveFileRevealPending && "invisible")}>
+                <SelectableDiffRenderer
+                  content={overlayData.content}
+                  filePath={activeFilePath ?? currentFileHunks[0].filePath}
+                  inlineReviews={activeFileReviews}
+                  oldStart={1}
+                  newStart={1}
+                  fontSize="11px"
+                  maxHeight="none"
+                  className="rounded-none border-0 [&>div]:overflow-x-visible"
+                  onReviewNote={handleReviewNoteSubmit}
+                  onComposerCancel={handleInlineComposerCancel}
+                  reviewActions={diffReviewActions}
+                  enableHighlighting={shouldEnableHighlighting}
+                  selectedLineRange={selectedLineRange}
+                  onLineIndexSelect={handleLineIndexSelect}
+                  externalSelectionRequest={externalComposerSelectionRequest}
+                  externalEditRequest={inlineReviewEditRequest}
+                />
+              </div>
             </div>
           )}
         </div>
 
-        {!isReviewComplete && overlayData && !isTouchExperience && !isActiveFileContentLoading && (
+        {!isReviewComplete && !isTouchExperience && (
           <ImmersiveMinimap
             content={overlayData.content}
             scrollContainerRef={scrollContainerRef}

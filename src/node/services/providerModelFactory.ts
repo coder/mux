@@ -1,8 +1,9 @@
 import assert from "node:assert";
+import { Buffer } from "node:buffer";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
-import { wrapLanguageModel, type LanguageModel } from "ai";
+import { wrapLanguageModel, type ImageModel, type LanguageModel } from "ai";
 import { anthropicSupportsNativeXhigh, type ThinkingLevel } from "@/common/types/thinking";
 import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
@@ -20,8 +21,10 @@ import {
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { Config, ProviderConfig, ProvidersConfig } from "@/node/config";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { ServiceTier } from "@/common/config/schemas/providersConfig";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
 import { isOpReference } from "@/common/utils/opRef";
+import { resolveConfigBaseUrl } from "@/common/utils/providers/baseUrl";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import {
   isBuiltInProvider,
@@ -41,6 +44,11 @@ import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
+import {
+  attachLanguageModelCleanup,
+  moveLanguageModelCleanup,
+} from "@/node/services/languageModelCleanup";
+import { createOpenAIWebSocketTransportFetch } from "@/node/services/openAIWebSocketTransportFetch";
 import { log } from "@/node/services/log";
 import {
   MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
@@ -183,6 +191,26 @@ const defaultFetchWithUnlimitedTimeout = (async (
   };
   return fetch(input, requestInit);
 }) as typeof fetch;
+
+export function resolveOpenAIWebSocketResponsesUrl(baseURL: unknown): string | undefined {
+  const resolvedBaseURL = resolveConfigBaseUrl({ baseURL });
+  if (resolvedBaseURL == null) {
+    return undefined;
+  }
+
+  const url = new URL(resolvedBaseURL);
+  if (url.protocol === "https:") {
+    url.protocol = "wss:";
+  } else if (url.protocol === "http:") {
+    url.protocol = "ws:";
+  } else {
+    throw new Error(`Unsupported OpenAI WebSocket base URL protocol: ${url.protocol}`);
+  }
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/responses`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
 
 type FetchWithBunExtensions = typeof fetch & {
   preconnect?: typeof fetch extends { preconnect: infer P } ? P : unknown;
@@ -492,6 +520,189 @@ function getProviderFetch(providerConfig: ProviderConfig): typeof fetch {
   };
 
   return Object.assign(wrappedFetch, customFetch) as typeof fetch;
+}
+
+function getFormString(body: BodyInit | null | undefined, name: string): string | null {
+  if (!(body instanceof FormData)) {
+    return null;
+  }
+  const value = body.get(name);
+  return typeof value === "string" ? value : null;
+}
+
+function getImageOutputFormat(contentType: string, body: BodyInit | null | undefined): string {
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase();
+  switch (mediaType) {
+    case "image/jpeg":
+    case "image/jpg":
+      return "jpeg";
+    case "image/webp":
+      return "webp";
+    case "image/png":
+      return "png";
+  }
+
+  const requestedFormat = getFormString(body, "output_format");
+  if (requestedFormat === "jpeg" || requestedFormat === "png" || requestedFormat === "webp") {
+    return requestedFormat;
+  }
+  return "png";
+}
+
+function getRequestedImageCount(body: BodyInit | null | undefined): number {
+  const value = getFormString(body, "n");
+  if (value == null || value.trim() === "") {
+    return 1;
+  }
+  const count = Number(value);
+  return Number.isInteger(count) && count > 0 ? count : 1;
+}
+
+function createOpenAIImageToolErrorResponse(message: string): Response {
+  return new Response(JSON.stringify({ error: { message, type: "mux_image_response_error" } }), {
+    status: 502,
+    statusText: "Bad Gateway",
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function isOpenAIImageEditEndpoint(input: Parameters<typeof fetch>[0]): boolean {
+  const url = getFetchInputUrl(input);
+  if (!url) {
+    return false;
+  }
+  try {
+    return new URL(url).pathname.endsWith("/images/edits");
+  } catch {
+    return false;
+  }
+}
+
+function getOpenAIImageEditFileName(key: string, mediaType: string): string {
+  const prefix = key === "mask" ? "mask" : "image";
+  switch (mediaType.toLowerCase().trim()) {
+    case "image/jpeg":
+    case "image/jpg":
+      return `${prefix}.jpg`;
+    case "image/webp":
+      return `${prefix}.webp`;
+    default:
+      return `${prefix}.png`;
+  }
+}
+
+function isOpenAIImageEditUploadKey(key: string): boolean {
+  return key === "image" || key === "image[]" || key === "mask";
+}
+
+function hasUploadFileName(value: Blob): boolean {
+  const name = (value as { name?: unknown }).name;
+  return typeof name === "string" && name.length > 0;
+}
+
+// OpenAI's `/v1/images/edits` endpoint rejects multipart uploads that lack a
+// filename (the AI SDK's `Image`/`Mask` blobs are nameless), so
+// `normalizeOpenAIImageEditFormData` rewrites them with a deterministic name.
+// This predicate matches the form entries that need that rewrite: an upload
+// field carrying a binary blob without a filename already attached.
+function isNamelessOpenAIImageEditUpload(key: string, formValue: FormDataEntryValue): boolean {
+  return (
+    isOpenAIImageEditUploadKey(key) &&
+    typeof formValue !== "string" &&
+    !hasUploadFileName(formValue)
+  );
+}
+
+function normalizeOpenAIImageEditFormData(
+  init: Parameters<typeof fetch>[1]
+): Parameters<typeof fetch>[1] {
+  if (!(init?.body instanceof FormData)) {
+    return init;
+  }
+
+  const entries = Array.from(init.body.entries());
+  const hasNamelessUpload = entries.some(([key, formValue]) =>
+    isNamelessOpenAIImageEditUpload(key, formValue)
+  );
+  if (!hasNamelessUpload) {
+    return init;
+  }
+
+  const formData = new FormData();
+  for (const [key, formValue] of entries) {
+    if (isNamelessOpenAIImageEditUpload(key, formValue)) {
+      const upload = formValue as unknown as Blob;
+      formData.append(
+        key,
+        upload,
+        getOpenAIImageEditFileName(key === "image[]" ? "image" : key, upload.type ?? "image/png")
+      );
+    } else {
+      formData.append(key, formValue);
+    }
+  }
+
+  const headers = init.headers == null ? undefined : new Headers(init.headers);
+  if (headers?.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
+    headers.delete("content-type");
+  }
+
+  return { ...init, body: formData, ...(headers != null ? { headers } : {}) };
+}
+
+// Some OpenAI-compatible image edit deployments return a successful image/* body
+// instead of the JSON shape AI SDK expects. Normalize only that narrow success path.
+export function wrapFetchWithOpenAIImageResponseNormalization(
+  baseFetch: typeof fetch
+): typeof fetch {
+  const wrappedFetch = async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1]
+  ): Promise<Response> => {
+    const isImageEditRequest = isOpenAIImageEditEndpoint(input);
+    const requestInit = isImageEditRequest ? normalizeOpenAIImageEditFormData(init) : init;
+    const response = await baseFetch(input, requestInit);
+    if (!isImageEditRequest || !response.ok) {
+      return response;
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().startsWith("image/")) {
+      return response;
+    }
+
+    const requestedCount = getRequestedImageCount(requestInit?.body);
+    if (requestedCount !== 1) {
+      return createOpenAIImageToolErrorResponse(
+        `OpenAI returned one binary image for an edit request that asked for ${requestedCount} images.`
+      );
+    }
+
+    const imageBuffer = await response.arrayBuffer();
+    if (imageBuffer.byteLength === 0) {
+      return createOpenAIImageToolErrorResponse("OpenAI returned an empty binary image response.");
+    }
+
+    const headers = new Headers(response.headers);
+    headers.set("content-type", "application/json");
+    headers.delete("content-length");
+    headers.delete("content-encoding");
+
+    return new Response(
+      JSON.stringify({
+        created: Math.floor(Date.now() / 1_000),
+        data: [{ b64_json: Buffer.from(imageBuffer).toString("base64") }],
+        output_format: getImageOutputFormat(contentType, requestInit?.body),
+      }),
+      {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      }
+    );
+  };
+
+  return Object.assign(wrappedFetch, baseFetch) as typeof fetch;
 }
 
 // ---------------------------------------------------------------------------
@@ -923,6 +1134,85 @@ export class ProviderModelFactory {
     return true;
   }
 
+  async createImageModel(modelString: string): Promise<Result<ImageModel, SendMessageError>> {
+    try {
+      const [providerName, modelId] = parseModelString(modelString);
+      if (!providerName || !modelId) {
+        return Err({
+          type: "invalid_model_string",
+          message: `Invalid image model string format: "${modelString}". Expected "provider:model-id"`,
+        });
+      }
+
+      if (providerName !== "openai") {
+        return Err({
+          type: "provider_not_supported",
+          provider: providerName,
+        });
+      }
+
+      if (this.policyService?.isEnforced()) {
+        if (!this.policyService.isProviderAllowed(providerName)) {
+          return Err({
+            type: "policy_denied",
+            message: `Provider ${providerName} is not allowed by policy`,
+          });
+        }
+
+        if (!this.policyService.isModelAllowed(providerName, modelId)) {
+          return Err({
+            type: "policy_denied",
+            message: `Image model ${providerName}:${modelId} is not allowed by policy`,
+          });
+        }
+      }
+
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+      let providerConfig = providersConfig.openai ?? {};
+      if (isProviderDisabledInConfig(providerConfig as { enabled?: unknown })) {
+        return Err({ type: "provider_disabled", provider: providerName });
+      }
+
+      const { baseUrl, ...configWithoutBaseUrl } = providerConfig;
+      providerConfig = baseUrl
+        ? { ...configWithoutBaseUrl, baseURL: baseUrl }
+        : configWithoutBaseUrl;
+
+      const forcedBaseUrl = this.policyService?.isEnforced()
+        ? this.policyService.getForcedBaseUrl(providerName)
+        : undefined;
+      if (forcedBaseUrl) {
+        providerConfig = { ...providerConfig, baseURL: forcedBaseUrl };
+      }
+
+      const creds = resolveProviderCredentials("openai", providerConfig);
+      const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
+      if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
+        return Err({ type: "api_key_not_found", provider: providerName });
+      }
+      if (!creds.isConfigured) {
+        return Err({ type: "api_key_not_found", provider: providerName });
+      }
+
+      const configWithCreds = {
+        ...providerConfig,
+        apiKey: resolvedApiKey,
+        ...(creds.baseUrl && !providerConfig.baseURL ? { baseURL: creds.baseUrl } : {}),
+        ...(creds.organization ? { organization: creds.organization } : {}),
+        headers: buildAppAttributionHeaders(providerConfig.headers),
+      };
+
+      const { createOpenAI } = await PROVIDER_REGISTRY.openai();
+      const provider = createOpenAI({
+        ...configWithCreds,
+        fetch: wrapFetchWithOpenAIImageResponseNormalization(getProviderFetch(providerConfig)),
+      });
+      return Ok(provider.image(modelId));
+    } catch (error) {
+      return Err({ type: "unknown", raw: getErrorMessage(error) });
+    }
+  }
+
   /**
    * Create an AI SDK model from a model string (e.g., "anthropic:claude-opus-4-1")
    *
@@ -958,10 +1248,12 @@ export class ProviderModelFactory {
     const workspaceId = opts?.workspaceId;
     const devToolsService = this.devToolsService;
     if (workspaceId != null && devToolsService?.enabled) {
+      const innerModel = model;
       model = wrapLanguageModel({
         model,
         middleware: createDevToolsMiddleware(workspaceId, devToolsService),
       });
+      moveLanguageModelCleanup(innerModel, model);
     }
 
     return Ok(model);
@@ -1279,7 +1571,7 @@ export class ProviderModelFactory {
           if (configServiceTier && muxProviderOptions.openai?.serviceTier == null) {
             muxProviderOptions.openai = {
               ...muxProviderOptions.openai,
-              serviceTier: configServiceTier as "auto" | "default" | "flex" | "priority",
+              serviceTier: configServiceTier as ServiceTier,
             };
           }
           if (configWireFormat === "responses" || configWireFormat === "chatCompletions") {
@@ -1296,6 +1588,9 @@ export class ProviderModelFactory {
 
         const baseFetch = getProviderFetch(providerConfig);
         const codexOauthService = this.codexOauthService;
+        const webSocketTransportEnabled =
+          (providerConfig as { webSocketTransportEnabled?: unknown }).webSocketTransportEnabled ===
+          true;
 
         // Wrap fetch so Codex OAuth Responses requests are normalized before
         // they are rerouted from api.openai.com to chatgpt.com's Codex backend.
@@ -1378,9 +1673,22 @@ export class ProviderModelFactory {
             : {}
         );
 
+        const webSocketTransport = createOpenAIWebSocketTransportFetch({
+          // Codex OAuth requests must keep using the HTTP fetch wrapper above so
+          // Mux can rewrite the endpoint and attach ChatGPT OAuth headers.
+          enabled:
+            webSocketTransportEnabled &&
+            effectiveWireFormat === "responses" &&
+            !shouldRouteThroughCodexOauth,
+          baseFetch: fetchWithOpenAICodexNormalization as typeof fetch,
+          // The upstream WebSocket fetch defaults to api.openai.com. Pass Mux's
+          // resolved base URL so custom/proxied OpenAI endpoints are not bypassed.
+          webSocketUrl: resolveOpenAIWebSocketResponsesUrl(configWithCreds.baseURL),
+        });
+
         // Lazy-load OpenAI provider to reduce startup time
         const { createOpenAI } = await PROVIDER_REGISTRY.openai();
-        const providerFetch = fetchWithOpenAICodexNormalization as typeof fetch;
+        const providerFetch = webSocketTransport.fetch;
         const provider = createOpenAI({
           ...configWithCreds,
           // Cast is safe: our fetch implementation is compatible with the SDK's fetch type.
@@ -1393,6 +1701,10 @@ export class ProviderModelFactory {
           effectiveWireFormat === "chatCompletions"
             ? provider.chat(modelId)
             : provider.responses(modelId);
+        if (webSocketTransport.active) {
+          attachLanguageModelCleanup(model, webSocketTransport.close);
+        }
+
         const injectModelOpenAIStore = (storeValue: unknown, mode: "default" | "force"): void => {
           assert(typeof storeValue === "boolean", "OpenAI store override must be boolean");
           const store = storeValue;
@@ -1507,12 +1819,15 @@ export class ProviderModelFactory {
         }
         const baseFetch = getProviderFetch(providerConfig);
 
-        // Extract standard provider settings (apiKey, baseUrl, headers, fetch)
+        // Extract standard provider settings and Mux-local metadata before building extraBody.
+        // OpenRouter also has a request-level `models` fallback field capped at 3 entries; our
+        // configured `models` catalog can be longer and must not be forwarded as request input.
         const {
           apiKey: _apiKey,
           baseUrl,
           headers,
           fetch: _fetch,
+          models: _models,
           ...extraOptions
         } = providerConfig;
 

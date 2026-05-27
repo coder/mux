@@ -192,6 +192,31 @@ describe("applyWorkspaceChatEventToAggregator", () => {
     expect(hint).toBe("immediate");
     expect(aggregator.calls).toEqual(["handleRuntimeStatus:starting:ssh"]);
   });
+  test("goal-budget-limited child events dispatch a toast without mutating messages", () => {
+    withDispatchSpy((dispatched) => {
+      const aggregator = new StubAggregator();
+      const event: WorkspaceChatMessage = {
+        type: "goal-budget-limited",
+        workspaceId: "parent-1",
+        goalId: "goal-1",
+        causedByChild: true,
+        childWorkspaceId: "child-1",
+        message: "Child workspace exceeded the parent's goal budget.",
+      };
+
+      const hint = applyWorkspaceChatEventToAggregator(aggregator, event);
+
+      expect(hint).toBe("ignored");
+      expect(aggregator.calls).toEqual([]);
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]?.type).toBe(CUSTOM_EVENTS.GOAL_CHILD_BUDGET_TOAST);
+      expect((dispatched[0] as CustomEvent).detail).toEqual({
+        workspaceId: "parent-1",
+        message: "Child workspace exceeded the parent's goal budget.",
+      });
+    });
+  });
+
   test("stream-abort clears token state before calling handleStreamAbort", () => {
     const aggregator = new StubAggregator();
 

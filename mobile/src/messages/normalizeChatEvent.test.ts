@@ -91,6 +91,39 @@ describe("createChatEventExpander", () => {
     });
   });
 
+  it("strips the redundant goal-cleared label from history replay", () => {
+    const expander = createChatEventExpander();
+
+    const summary: MuxMessage = {
+      id: "goal-cleared-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "text",
+          text: 'Goal cleared: "Ship goal primitive" — spent $0.00 over 0 turns (status: active)',
+        },
+      ],
+      metadata: {
+        historySequence: 2,
+        timestamp: 1,
+        synthetic: true,
+        uiVisible: true,
+        muxMetadata: { type: "goal-cleared-summary" },
+      },
+    };
+
+    const events = expander.expand({
+      type: "message",
+      ...summary,
+    } as unknown as WorkspaceChatEvent);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "assistant",
+      content: '"Ship goal primitive" — spent $0.00 over 0 turns (status: active)',
+    });
+  });
+
   it("surfaces unsupported events as status notifications", () => {
     const expander = createChatEventExpander();
 

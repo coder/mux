@@ -42,7 +42,8 @@ describeIntegration("Plan Commands Integration", () => {
     if (env) {
       await cleanupTestEnvironment(env);
     }
-  });
+    // Windows cleanup can exceed Jest's default hook timeout when Git has just torn down worktrees.
+  }, 120000);
 
   describe("getPlanContent", () => {
     it("should return error when no plan file exists", async () => {

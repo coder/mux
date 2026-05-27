@@ -110,6 +110,35 @@ describe("SSH2Transport.spawnRemoteProcess", () => {
     acquireConnectionSpy.mockRestore();
   });
 
+  test("aborts while waiting for ssh2 exec channel", async () => {
+    acquireConnectionSpy.mockResolvedValue({
+      client: {
+        exec() {
+          // Simulate ssh2 never invoking the exec callback.
+        },
+      },
+    } as never);
+
+    const reportFailureSpy = spyOn(ssh2ConnectionPool, "reportFailure");
+    const transport = new SSH2Transport({ host: "remote.example.com" });
+    const abortController = new AbortController();
+    const spawnPromise = transport.spawnRemoteProcess("echo ok", {
+      abortSignal: abortController.signal,
+    });
+
+    abortController.abort();
+
+    try {
+      await spawnPromise;
+      throw new Error("Expected spawnRemoteProcess to reject");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("Operation aborted");
+    }
+    expect(reportFailureSpy).not.toHaveBeenCalled();
+    reportFailureSpy.mockRestore();
+  });
+
   test("forcePTY closes the synthetic stderr stream when ssh2 omits channel.stderr", async () => {
     const channel = new FakeClientChannel();
     acquireConnectionSpy.mockResolvedValue({

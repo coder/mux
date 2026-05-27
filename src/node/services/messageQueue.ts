@@ -42,6 +42,8 @@ function hasReviews(meta: unknown): meta is MetadataWithReviews {
   return Array.isArray(obj.reviews);
 }
 
+type GoalInterventionPolicy = NonNullable<SendMessageOptions["goalInterventionPolicy"]>;
+
 // Derive from the Zod schema (SendMessageOptions) to stay in sync automatically.
 type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
 
@@ -75,6 +77,7 @@ export class MessageQueue {
   private latestOptions?: SendMessageOptions;
   private accumulatedFileParts: FilePart[] = [];
   private dedupeKeys: Set<string> = new Set<string>();
+  private goalInterventionPolicy?: GoalInterventionPolicy;
   private queueDispatchMode: QueueDispatchMode = "tool-end";
   private queuedEntryCount = 0;
   private queuedSyntheticCount = 0;
@@ -178,8 +181,15 @@ export class MessageQueue {
       );
     }
 
+    const nextGoalInterventionPolicy =
+      this.goalInterventionPolicy === "pause" || options?.goalInterventionPolicy === "pause"
+        ? "pause"
+        : (options?.goalInterventionPolicy ?? this.goalInterventionPolicy);
+
     // Commit dispatch mode only after validation checks pass
     this.queueDispatchMode = nextQueueDispatchMode;
+
+    this.goalInterventionPolicy = nextGoalInterventionPolicy;
 
     // Add text message if non-empty
     if (trimmedMessage.length > 0) {
@@ -274,6 +284,9 @@ export class MessageQueue {
       ? (() => {
           const restOptions: SendMessageOptions = { ...this.latestOptions };
           delete restOptions.queueDispatchMode;
+          if (this.goalInterventionPolicy != null) {
+            restOptions.goalInterventionPolicy = this.goalInterventionPolicy;
+          }
           return {
             ...restOptions,
             muxMetadata,
@@ -306,6 +319,7 @@ export class MessageQueue {
     this.latestOptions = undefined;
     this.accumulatedFileParts = [];
     this.dedupeKeys.clear();
+    this.goalInterventionPolicy = undefined;
     this.queueDispatchMode = "tool-end";
     this.queuedEntryCount = 0;
     this.queuedSyntheticCount = 0;

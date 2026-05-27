@@ -110,14 +110,6 @@ export function extractCookieValues(
   return tokens;
 }
 
-export function extractCookieValue(
-  cookieHeader: string | string[] | undefined,
-  cookieName: string
-): string | null {
-  const values = extractCookieValues(cookieHeader, cookieName);
-  return values[0] ?? null;
-}
-
 /** Create auth middleware that validates Authorization header or session cookie from context */
 export function createAuthMiddleware(authToken?: string) {
   if (!authToken?.trim()) {

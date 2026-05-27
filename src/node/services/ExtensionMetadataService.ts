@@ -13,6 +13,7 @@ import {
 } from "@/node/utils/extensionMetadata";
 import { getMuxExtensionMetadataPath } from "@/common/constants/paths";
 import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
+import type { GoalSnapshot } from "@/common/types/goal";
 import { log } from "@/node/services/log";
 
 /**
@@ -84,6 +85,7 @@ export class ExtensionMetadataService {
       agentStatus: null,
       displayStatus: null,
       lastStatusUrl: null,
+      goal: null,
     };
     data.workspaces[workspaceId] = created;
     return created;
@@ -113,8 +115,12 @@ export class ExtensionMetadataService {
   }
 
   /**
-   * Initialize the service by ensuring directory exists and clearing stale streaming flags.
-   * Call this once on app startup.
+   * Initialize the service by ensuring directory exists and clearing stale
+   * streaming flags. Call once on app startup.
+   *
+   * Per AGENTS.md ("Startup-time initialization must never crash the app")
+   * disk failures here are logged and swallowed; save() itself throws so
+   * strict callers (e.g. AgentStatusService) can react.
    */
   async initialize(): Promise<void> {
     // Ensure directory exists
@@ -122,11 +128,20 @@ export class ExtensionMetadataService {
     try {
       await access(dir, constants.F_OK);
     } catch {
-      await mkdir(dir, { recursive: true });
+      try {
+        await mkdir(dir, { recursive: true });
+      } catch (error) {
+        log.error("ExtensionMetadataService: failed to create metadata dir at startup", { error });
+        return;
+      }
     }
 
     // Clear stale streaming flags (from crashes)
-    await this.clearStaleStreaming();
+    try {
+      await this.clearStaleStreaming();
+    } catch (error) {
+      log.error("ExtensionMetadataService: failed to clear stale streaming at startup", { error });
+    }
   }
 
   private async load(): Promise<ExtensionMetadataFile> {
@@ -154,11 +169,16 @@ export class ExtensionMetadataService {
   }
 
   private async save(data: ExtensionMetadataFile): Promise<void> {
+    // Throws on failure so callers that need to know whether the write
+    // actually happened (e.g. AgentStatusService dedup) can react.
+    // emitWorkspaceActivityUpdate (the historical wrapper used elsewhere)
+    // downgrades throws to logged warnings for log-and-continue paths.
     try {
       const content = JSON.stringify(data, null, 2);
       await writeFileAtomic(this.filePath, content, "utf-8");
     } catch (error) {
       log.error("Failed to save metadata:", error);
+      throw error;
     }
   }
 
@@ -227,6 +247,55 @@ export class ExtensionMetadataService {
   }
 
   /**
+   * AgentStatusService writes its AI-generated payload into the same
+   * `todoStatus` field used by the todo-derived path. Passing `null` clears
+   * the slot.
+   *
+   * Unlike `setTodoStatus`, this writer:
+   * - Never advances `recency`. Background regeneration must not promote
+   *   idle workspaces in the sidebar or mark them unread. Existing entries
+   *   keep their user-interaction recency; brand-new entries (rare: chat
+   *   exists but no metadata yet) are seeded with `recency=0` until the
+   *   next real user interaction.
+   * - Doesn't touch `hasTodos`. The todo-derivation path owns that flag.
+   */
+  async setSidebarStatus(
+    workspaceId: string,
+    status: ExtensionAgentStatus | null,
+    options: { skipIfRecencyAdvancedSince?: number | null } = {}
+  ): Promise<WorkspaceActivitySnapshot | null> {
+    return this.withSerializedMutation(async () => {
+      const data = await this.load();
+      const existing = coerceExtensionMetadata(data.workspaces[workspaceId]);
+      const workspace: ExtensionMetadata = existing ?? {
+        recency: 0,
+        streaming: false,
+        lastModel: null,
+        lastThinkingLevel: null,
+        agentStatus: null,
+        displayStatus: null,
+        lastStatusUrl: null,
+      };
+      if (
+        options.skipIfRecencyAdvancedSince !== undefined &&
+        existing &&
+        (options.skipIfRecencyAdvancedSince === null ||
+          existing.recency > options.skipIfRecencyAdvancedSince)
+      ) {
+        return null;
+      }
+      if (status) {
+        workspace.todoStatus = status;
+      } else {
+        delete workspace.todoStatus;
+      }
+      data.workspaces[workspaceId] = workspace;
+      await this.save(data);
+      return toWorkspaceActivitySnapshot(workspace);
+    });
+  }
+
+  /**
    * Update the latest transient non-todo status payload for a workspace.
    */
   async setAgentStatus(
@@ -258,6 +327,15 @@ export class ExtensionMetadataService {
         // can still reuse the previous deep link.
         workspace.lastStatusUrl = previousUrl;
       }
+    });
+  }
+
+  async setGoal(
+    workspaceId: string,
+    goal: GoalSnapshot | null
+  ): Promise<WorkspaceActivitySnapshot> {
+    return this.mutateWorkspaceSnapshot(workspaceId, Date.now(), (workspace) => {
+      workspace.goal = goal;
     });
   }
 

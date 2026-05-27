@@ -1,16 +1,21 @@
+interface ResponseNotificationPolicy {
+  /** Suppress notify-on-response for synthetic implementation-detail turns. */
+  suppressNotification?: boolean;
+}
+
 export type ResponseCompleteMetadata =
-  | {
+  | ({
       kind: "response";
       // Notification policy should follow the user-visible terminal turn rather than every
       // intermediate stream boundary. Another queued/auto-dispatched follow-up means this
       // completion is only a handoff, so it should not notify on its own.
       hasAutoFollowUp: boolean;
-    }
-  | {
+    } & ResponseNotificationPolicy)
+  | ({
       kind: "compaction";
-      hasAutoFollowUp: boolean;
-      isIdle?: boolean;
-    };
+      // Only used to carry synthetic follow-up suppression across background
+      // generation handoffs; compaction itself is never notify-eligible.
+    } & ResponseNotificationPolicy);
 
 export interface ResponseCompleteEvent {
   workspaceId: string;
@@ -25,32 +30,34 @@ export type ResponseCompleteHandler = (event: ResponseCompleteEvent) => void;
 
 export interface ResponseCompletionState {
   isCompacting: boolean;
-  hasCompactionContinue: boolean;
   hasQueuedFollowUp: boolean;
-  // Idle compaction is maintenance work, so downstream notification policy must
-  // be able to suppress the final completion even when the workspace is selected.
-  isIdleCompaction?: boolean;
+  /** This stream is a synthetic implementation-detail turn and should not alert. */
+  suppressNotification?: boolean;
 }
 
 export function buildResponseCompleteMetadata(
   state: ResponseCompletionState
 ): ResponseCompleteMetadata | undefined {
-  const hasAutoFollowUp = state.hasCompactionContinue || state.hasQueuedFollowUp;
-  if (!state.isCompacting && !hasAutoFollowUp) {
-    return undefined;
-  }
-
+  const suppressNotification = state.suppressNotification === true;
   if (state.isCompacting) {
+    // Compaction is context-management, not an assistant response. Treat every
+    // compaction boundary as non-notifiable so notification correctness never
+    // depends on racing follow-up/queue metadata.
     return {
       kind: "compaction",
-      hasAutoFollowUp,
-      ...(state.isIdleCompaction ? { isIdle: true } : {}),
+      ...(suppressNotification ? { suppressNotification: true } : {}),
     };
+  }
+
+  const hasAutoFollowUp = state.hasQueuedFollowUp;
+  if (!hasAutoFollowUp && !suppressNotification) {
+    return undefined;
   }
 
   return {
     kind: "response",
     hasAutoFollowUp,
+    ...(suppressNotification ? { suppressNotification: true } : {}),
   };
 }
 
@@ -58,41 +65,42 @@ export function buildAggregateResponseCompleteMetadata(
   states: Iterable<ResponseCompletionState>
 ): ResponseCompleteMetadata | undefined {
   let isCompacting = false;
-  let hasCompactionContinue = false;
   let hasQueuedFollowUp = false;
-  let isIdleCompaction = false;
+  let suppressNotification = false;
 
   for (const state of states) {
     isCompacting ||= state.isCompacting;
-    hasCompactionContinue ||= state.hasCompactionContinue;
     hasQueuedFollowUp ||= state.hasQueuedFollowUp;
-    isIdleCompaction ||= state.isIdleCompaction === true;
+    suppressNotification ||= state.suppressNotification === true;
   }
 
   return buildResponseCompleteMetadata({
     isCompacting,
-    hasCompactionContinue,
     hasQueuedFollowUp,
-    isIdleCompaction,
+    suppressNotification,
   });
 }
 
-export function createIdleCompactionCompletion(hasAutoFollowUp: boolean): ResponseCompleteMetadata {
-  return {
-    kind: "compaction",
-    hasAutoFollowUp,
-    isIdle: true,
-  };
+export function createCompactionCompletion(): ResponseCompleteMetadata {
+  return { kind: "compaction" };
 }
 
 export function shouldNotifyOnResponseComplete(
   completion: ResponseCompleteMetadata | undefined
 ): boolean {
-  if (completion?.kind === "compaction" && completion.isIdle) {
+  if (completion === undefined) {
+    return true;
+  }
+
+  if (completion.kind === "compaction") {
     return false;
   }
 
-  return completion?.hasAutoFollowUp !== true;
+  if (completion.suppressNotification === true) {
+    return false;
+  }
+
+  return !completion.hasAutoFollowUp;
 }
 
 export function getResponseCompleteNotificationBody(

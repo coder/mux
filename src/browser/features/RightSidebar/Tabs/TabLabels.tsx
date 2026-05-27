@@ -8,12 +8,31 @@
  */
 
 import React from "react";
-import { BugPlay, ExternalLink, Monitor, Globe, Terminal as TerminalIcon, X } from "lucide-react";
+import {
+  BugPlay,
+  ExternalLink,
+  Monitor,
+  Globe,
+  Sparkles,
+  Target,
+  Terminal as TerminalIcon,
+  X,
+} from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { type ReviewStats } from "./registry";
+import { useAPI } from "@/browser/contexts/API";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { useAdditionalSystemContextSnapshot } from "@/browser/utils/additionalSystemContextStore";
+import {
+  ensureWorkspaceInstructionsFetched,
+  useWorkspaceInstructionsFileCount,
+} from "@/browser/utils/workspaceInstructionsStore";
 import { cn } from "@/common/lib/utils";
-import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
+import {
+  useOptionalWorkspaceSidebarState,
+  useWorkspaceUsage,
+} from "@/browser/stores/WorkspaceStore";
+import { goalActiveMode, isGoalPendingPersistence } from "@/common/types/goal";
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 
 interface StatsTabLabelProps {
@@ -23,6 +42,9 @@ interface StatsTabLabelProps {
 /**
  * Unified Stats tab label with a session cost badge.
  * Subscribes to workspace usage directly to avoid re-rendering parent components.
+ *
+ * Accepts a context-bag prop so it can be invoked through the generic
+ * `tabRegistry` Label slot (see `Tabs/tabRegistry.tsx`).
  */
 export const StatsTabLabel: React.FC<StatsTabLabelProps> = ({ workspaceId }) => {
   const usage = useWorkspaceUsage(workspaceId);
@@ -61,22 +83,64 @@ interface ReviewTabLabelProps {
   reviewStats: ReviewStats | null;
 }
 
-/** Review tab label with read/total badge */
-export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) => (
-  <>
-    Review
-    {reviewStats !== null && reviewStats.total > 0 && (
-      <span
-        className={cn(
-          "text-[10px]",
-          reviewStats.read === reviewStats.total ? "text-muted" : "text-muted"
-        )}
-      >
-        {reviewStats.read}/{reviewStats.total}
-      </span>
-    )}
-  </>
-);
+/**
+ * Review tab label with two mutually-exclusive states:
+ *
+ *   • **Assisted-focus state** — when the agent has flagged hunks the user
+ *     hasn't acked, the entire label renders as one `inline-flex
+ *     items-center` group (Review · Sparkles · count) tinted with
+ *     `--color-review-accent`. Same composition pattern as the Goal tab's
+ *     icon-plus-text label, which guarantees the digit and the icon share
+ *     a single alignment context — three separately-baselined siblings
+ *     (the previous shape) let the digit drift off the icon center.
+ *
+ *     The `read/total` badge is suppressed in this state on purpose: two
+ *     adjacent numbers (e.g. `Review ✦ 5 4/10`) are hard to parse, and
+ *     the assisted count is the user's primary cue. The read/total
+ *     badge returns once everything assisted has been read.
+ *
+ *   • **Default state** — plain "Review" plus the `read/total` badge,
+ *     unchanged from the long-standing label.
+ *
+ * No animation in either state — pulsing was too noisy next to the other
+ * static tab labels.
+ */
+export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) => {
+  const unreadAssisted = reviewStats?.unreadAssisted ?? 0;
+  const hasUnreadAssisted = unreadAssisted > 0;
+
+  if (hasUnreadAssisted) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="text-review-accent inline-flex items-center gap-1"
+            aria-label={`Review — ${unreadAssisted} unread agent-flagged hunk${unreadAssisted === 1 ? "" : "s"}`}
+            data-testid="review-tab-assisted-pizzazz"
+          >
+            Review
+            <Sparkles className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <span className="counter-nums">{unreadAssisted}</span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          {unreadAssisted} agent-flagged hunk{unreadAssisted === 1 ? "" : "s"} pending review
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <>
+      Review
+      {reviewStats !== null && reviewStats.total > 0 && (
+        <span className="text-muted text-[10px]">
+          {reviewStats.read}/{reviewStats.total}
+        </span>
+      )}
+    </>
+  );
+};
 
 /** Desktop tab label with monitor icon */
 export const DesktopTabLabel: React.FC = () => (
@@ -102,9 +166,124 @@ export const DebugTabLabel: React.FC = () => (
   </span>
 );
 
+interface GoalTabLabelProps {
+  workspaceId: string;
+}
+
+/**
+ * Goal tab label.
+ *
+ * Subscribes directly to the workspace's sidebar state so the label can apply
+ * a semantic accent (`text-success` or `text-warning`) when the workspace
+ * has a *live* goal in chat:
+ *
+ *   • `text-success` — the goal is running (`status === "active"` &&
+ *     non-pending). Mirrors the `useActiveGoalCount` /
+ *     `ActiveGoalsWarningToast` predicate so a workspace that contributes
+ *     to the global "active goals" toast is also the one that lights up
+ *     green here.
+ *   • `text-warning` — the goal is lifecycle-active but stalled (paused
+ *     or budget-limited). Surfaces a glanceable cue that the workspace
+ *     needs the user's attention even though no agent is currently
+ *     burning turns. This mirrors the amber tinting on the Goals-tab
+ *     header band and the `GoalStatusBadge` paused/budget-limited
+ *     color.
+ *
+ * Pending-persistence goals (mid-stream / unsaved) stay unaccented so
+ * the accent doesn't flicker during a stream — same gating as before.
+ */
+export const GoalTabLabel: React.FC<GoalTabLabelProps> = ({ workspaceId }) => {
+  const sidebarState = useOptionalWorkspaceSidebarState(workspaceId);
+  const goal = sidebarState?.goal ?? null;
+  const activeMode = goal && !isGoalPendingPersistence(goal) ? goalActiveMode(goal.status) : null;
+  const isRunning = activeMode === "running";
+  const isStalled = activeMode === "paused" || activeMode === "budget_limited";
+  const ariaLabel = isRunning
+    ? "Goal (active)"
+    : activeMode === "paused"
+      ? "Goal (paused)"
+      : activeMode === "budget_limited"
+        ? "Goal (budget limited)"
+        : "Goal";
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1",
+        isRunning && "text-success",
+        isStalled && "text-warning"
+      )}
+      aria-label={ariaLabel}
+    >
+      <Target className="h-3 w-3 shrink-0" />
+      Goal
+    </span>
+  );
+};
+
 export function OutputTabLabel() {
   return <>Output</>;
 }
+
+interface InstructionsTabLabelProps {
+  workspaceId: string;
+}
+
+/**
+ * Instructions tab label with a count badge consistent with Stats/Review.
+ *
+ * Subscribes to the shared instructions store so the count stays in sync with
+ * the panel's own fetches, and triggers a one-shot IPC fetch on first mount
+ * when the count is unknown (e.g. another tab is active in the same tabset).
+ *
+ * The badge picks up the accent color when the per-workspace scratchpad has
+ * any user content — a quick visual hint that this workspace is sending
+ * additional system context to the agent.
+ */
+export const InstructionsTabLabel: React.FC<InstructionsTabLabelProps> = ({ workspaceId }) => {
+  const { api } = useAPI();
+  const fileCount = useWorkspaceInstructionsFileCount(workspaceId);
+  const scratchpad = useAdditionalSystemContextSnapshot(workspaceId);
+  const chatInstructionsActive = scratchpad.enabled && scratchpad.content.trim().length > 0;
+
+  React.useEffect(() => {
+    if (!api) return;
+    ensureWorkspaceInstructionsFetched(api, workspaceId);
+  }, [api, workspaceId]);
+
+  // Chat Instructions, when active, contribute one additional "instruction
+  // source" to the badge count. We mark them with a trailing asterisk so
+  // users can tell ephemeral chat-scoped instructions apart from on-disk
+  // AGENTS.md files at a glance.
+  const baseCount = fileCount ?? 0;
+  const displayCount = baseCount + (chatInstructionsActive ? 1 : 0);
+  const showBadge = chatInstructionsActive || (fileCount != null && fileCount > 0);
+
+  return (
+    <>
+      Instructions
+      {showBadge && (
+        <span
+          className="text-muted text-[10px] tabular-nums"
+          aria-label={
+            chatInstructionsActive
+              ? `${baseCount} instruction files plus active Chat Instructions`
+              : `${baseCount} instruction files`
+          }
+        >
+          {displayCount}
+          {chatInstructionsActive && (
+            // Orange asterisk mirrors the "dirty / has unsaved changes" cue used
+            // by the git status indicator — a glanceable signal that the agent
+            // is receiving ephemeral chat-scoped instructions in addition to
+            // whatever AGENTS.md files contribute to this workspace.
+            <span className="text-warning">*</span>
+          )}
+        </span>
+      )}
+    </>
+  );
+};
 
 interface TerminalTabLabelProps {
   /** Dynamic title from OSC sequences, if available */

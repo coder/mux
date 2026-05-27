@@ -20,7 +20,19 @@ describe("commandParser", () => {
     });
 
     it("should parse /clear command", () => {
-      expectParse("/clear", { type: "clear" });
+      expectParse("/clear", { type: "clear", mode: "hard" });
+    });
+
+    it("should parse /clear --soft command", () => {
+      expectParse("/clear --soft", { type: "clear", mode: "soft" });
+    });
+
+    it("should reject unknown /clear flags", () => {
+      expectParse("/clear --unknown", {
+        type: "unknown-command",
+        command: "clear",
+        subcommand: "--unknown",
+      });
     });
 
     it("treats removed /providers command as unknown", () => {

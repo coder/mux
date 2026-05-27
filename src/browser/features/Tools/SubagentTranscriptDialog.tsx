@@ -13,6 +13,7 @@ import {
 import { ErrorBox, LoadingDots } from "./Shared/ToolPrimitives";
 import { MessageRenderer } from "@/browser/features/Messages/MessageRenderer";
 import { ModelDisplay } from "@/browser/features/Messages/ModelDisplay";
+import { BashCollapsedSummaryModeProvider } from "./BashCollapsedSummaryModeContext";
 import { getErrorMessage } from "@/common/utils/errors";
 
 interface SubagentTranscriptDialogProps {
@@ -164,11 +165,13 @@ const SubagentTranscriptViewer: React.FC<{
           </div>
         ) : displayedMessages ? (
           displayedMessages.length > 0 ? (
-            <div className="flex flex-col gap-2">
-              {displayedMessages.map((msg) => (
-                <MessageRenderer key={msg.id} message={msg} workspaceId={workspaceId} />
-              ))}
-            </div>
+            <BashCollapsedSummaryModeProvider>
+              <div className="flex flex-col gap-2">
+                {displayedMessages.map((msg) => (
+                  <MessageRenderer key={msg.id} message={msg} workspaceId={workspaceId} />
+                ))}
+              </div>
+            </BashCollapsedSummaryModeProvider>
           ) : (
             <div className="text-muted text-[11px] italic">Transcript is empty</div>
           )

@@ -42,6 +42,7 @@ import {
 } from "@/constants/layout";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
+import { getTopLevelProjectEntries } from "@/common/utils/subProjects";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
@@ -101,6 +102,7 @@ import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProjec
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { prependInitialAppProxyBasePath } from "@/browser/utils/frontendBasePath";
+import { WorkspaceActiveGoalsWarningToast } from "@/browser/components/ActiveGoalsWarningToast/ActiveGoalsWarningToast";
 import { LoadingScreen } from "@/browser/components/LoadingScreen/LoadingScreen";
 
 function RootRouteShell(props: {
@@ -1184,7 +1186,7 @@ function AppInner() {
                         // against its latest ref, so by the time setSelectedWorkspace() returns we
                         // know whether this creation actually won and can safely mark the
                         // optimistic starting barrier outside the updater callback.
-                        if (createdSelection) {
+                        if (createdSelection && options?.markPendingInitialSend !== false) {
                           workspaceStore.markPendingInitialSend(
                             metadata.id,
                             options?.pendingStreamModel ?? null
@@ -1216,6 +1218,7 @@ function AppInner() {
             )}
           </div>
         </div>
+        <WorkspaceActiveGoalsWarningToast />
         <CommandPalette getSlashContext={() => ({ workspaceId: selectedWorkspace?.workspaceId })} />
         <ProjectCreateModal
           initialPath={projectCreateInitialPath}
@@ -1237,7 +1240,7 @@ function AppInner() {
           <MultiProjectWorkspaceCreateModal
             isOpen={isMultiProjectWorkspaceModalOpen}
             onClose={() => setMultiProjectWorkspaceModalOpen(false)}
-            projectOptions={Array.from(userProjects.keys()).map((projectPath) => ({
+            projectOptions={getTopLevelProjectEntries(userProjects).map(([projectPath]) => ({
               projectPath,
               projectName:
                 projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Unnamed Project",

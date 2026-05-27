@@ -24,6 +24,8 @@ import { useBashToolLiveOutput, useLatestStreamingBashId } from "@/browser/store
 import { useForegroundBashToolCallIds } from "@/browser/stores/BackgroundBashStore";
 import { useBackgroundBashActions } from "@/browser/contexts/BackgroundBashContext";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
+import { buildBashCollapsedSummary } from "./bashCollapsedSummary";
+import { useBashCollapsedSummaryMode } from "./BashCollapsedSummaryModeContext";
 import { BackgroundBashOutputDialog } from "@/browser/components/BackgroundBashOutputDialog/BackgroundBashOutputDialog";
 
 interface BashToolCallProps {
@@ -54,6 +56,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 }) => {
   const { expanded, setExpanded, toggleExpanded } = useToolExpansion();
   const [outputDialogOpen, setOutputDialogOpen] = useState(false);
+  const bashCollapsedSummaryMode = useBashCollapsedSummaryMode();
 
   const resultHasOutput = typeof result?.output === "string";
   const shouldTrackLiveBashState = Boolean(
@@ -107,6 +110,14 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     result && "backgroundProcessId" in result ? result.backgroundProcessId : null;
   const isBackground = args.run_in_background ?? Boolean(backgroundProcessId);
 
+  const bashCollapsedSummary = buildBashCollapsedSummary({
+    args,
+    result,
+    isBackground,
+    mode: bashCollapsedSummaryMode,
+  });
+  const showsDurationInCollapsedSummary = bashCollapsedSummary.kind === "intent-command";
+
   // Override status for backgrounded processes: the aggregator sees success=true and marks "completed",
   // but for a foreground→background migration we want to show "backgrounded"
   const effectiveStatus: ToolStatus =
@@ -149,7 +160,43 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
       <ToolHeader onClick={handleToggle}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon toolName="bash" />
-        <span className="text-text font-monospace max-w-96 truncate">{args.script}</span>
+        {bashCollapsedSummary.kind === "intent-command" ? (
+          <span className="flex min-w-0 flex-1 flex-col leading-tight">
+            <span className="text-text truncate">{bashCollapsedSummary.intent}</span>
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="text-muted font-monospace min-w-0 flex-1 truncate text-[10px]">
+                {bashCollapsedSummary.command}
+              </span>
+              {!isBackground && (
+                <span
+                  className={cn(
+                    "shrink-0 text-[10px] tabular-nums whitespace-nowrap [@container(max-width:500px)]:hidden",
+                    isPending ? "text-pending" : "text-text-secondary"
+                  )}
+                >
+                  {bashCollapsedSummary.durationLabel ? (
+                    <>for {bashCollapsedSummary.durationLabel}</>
+                  ) : (
+                    <>
+                      timeout: {args.timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS}s
+                      <ElapsedTimeDisplay
+                        startedAt={startedAt}
+                        isActive={isPending}
+                        prefix="for "
+                      />
+                    </>
+                  )}
+                </span>
+              )}
+            </span>
+          </span>
+        ) : bashCollapsedSummary.kind === "intent" ? (
+          <span className="text-text max-w-96 truncate">{bashCollapsedSummary.intent}</span>
+        ) : (
+          <span className="text-text font-monospace max-w-96 truncate">
+            {bashCollapsedSummary.command}
+          </span>
+        )}
         {isBackground && backgroundProcessId && workspaceId && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -174,22 +221,20 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
             {args.display_name}
           </span>
         )}
-        {!isBackground && (
+        {!isBackground && !showsDurationInCollapsedSummary && (
           // Normal mode: show timeout and duration
-          <>
-            <span
-              className={cn(
-                "ml-2 text-[10px] tabular-nums whitespace-nowrap [@container(max-width:500px)]:hidden",
-                isPending ? "text-pending" : "text-text-secondary"
-              )}
-            >
-              timeout: {args.timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS}s
-              {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
-              {!result && <ElapsedTimeDisplay startedAt={startedAt} isActive={isPending} />}
-            </span>
-            {result && <ExitCodeBadge exitCode={result.exitCode} className="ml-2" />}
-          </>
+          <span
+            className={cn(
+              "ml-2 text-[10px] tabular-nums whitespace-nowrap [@container(max-width:500px)]:hidden",
+              isPending ? "text-pending" : "text-text-secondary"
+            )}
+          >
+            timeout: {args.timeout_secs ?? BASH_DEFAULT_TIMEOUT_SECS}s
+            {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
+            {!result && <ElapsedTimeDisplay startedAt={startedAt} isActive={isPending} />}
+          </span>
         )}
+        {!isBackground && result && <ExitCodeBadge exitCode={result.exitCode} className="ml-2" />}
         <StatusIndicator status={effectiveStatus}>
           {getStatusDisplay(effectiveStatus)}
         </StatusIndicator>
@@ -233,6 +278,14 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
       {expanded && (
         <ToolDetails>
+          {typeof args.model_intent === "string" && args.model_intent.trim().length > 0 && (
+            <DetailSection>
+              <DetailLabel>Intent</DetailLabel>
+              <DetailContent className="px-2 py-1.5 whitespace-pre-wrap">
+                {args.model_intent}
+              </DetailContent>
+            </DetailSection>
+          )}
           <DetailSection>
             <DetailLabel>Script</DetailLabel>
             <DetailContent className="px-2 py-1.5">{args.script}</DetailContent>

@@ -1,11 +1,26 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { getErrorMessage } from "@/common/utils/errors";
-import type { AgentBrowserSessionDiscoveryService } from "./AgentBrowserSessionDiscoveryService";
 import { DisposableProcess } from "@/node/utils/disposableExec";
+import type { AgentBrowserSessionDiscoveryService } from "./AgentBrowserSessionDiscoveryService";
+import {
+  sendAgentBrowserDaemonCommand,
+  type SendAgentBrowserDaemonCommandFn,
+} from "./agentBrowserCommandClient";
 
 const CONTROL_COMMAND_TIMEOUT_MS = 15_000;
 const BROWSER_CONTROL_ACTIONS = ["open", "back", "forward", "reload"] as const;
+
+let browserControlCommandCounter = 0;
+
+function createBrowserControlCommandId(): string {
+  browserControlCommandCounter += 1;
+  return `mux-browser-control-${Date.now()}-${browserControlCommandCounter}`;
+}
+
+function isExplicitFileUrl(url: string): boolean {
+  return url.toLowerCase().startsWith("file:");
+}
 
 type SpawnFn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
 
@@ -16,6 +31,7 @@ export interface BrowserControlParams {
   sessionName: string;
   action: BrowserControlAction;
   url?: string | null;
+  allowOtherWorkspaceSession?: boolean | null;
 }
 
 export interface BrowserControlResult {
@@ -30,6 +46,7 @@ export interface BrowserGetUrlResult {
 
 export interface BrowserGetUrlOptions {
   skipSessionValidation?: boolean;
+  allowOtherWorkspaceSession?: boolean | null;
 }
 
 interface BrowserCommandExecutionResult {
@@ -42,6 +59,7 @@ interface BrowserControlServiceOptions {
   browserSessionDiscoveryService: Pick<AgentBrowserSessionDiscoveryService, "getSessionConnection">;
   resolveSessionEnvFn?: (workspaceId: string) => Promise<NodeJS.ProcessEnv>;
   spawnFn?: SpawnFn;
+  sendDaemonCommandFn?: SendAgentBrowserDaemonCommandFn;
   timeoutMs?: number;
 }
 
@@ -49,6 +67,7 @@ export class BrowserControlService {
   private readonly browserSessionDiscoveryService: BrowserControlServiceOptions["browserSessionDiscoveryService"];
   private readonly resolveSessionEnvFn: (workspaceId: string) => Promise<NodeJS.ProcessEnv>;
   private readonly spawnFn: SpawnFn;
+  private readonly sendDaemonCommandFn: SendAgentBrowserDaemonCommandFn;
   private readonly timeoutMs: number;
 
   constructor(options: BrowserControlServiceOptions) {
@@ -60,6 +79,7 @@ export class BrowserControlService {
     this.browserSessionDiscoveryService = options.browserSessionDiscoveryService;
     this.resolveSessionEnvFn = options.resolveSessionEnvFn ?? (() => Promise.resolve(process.env));
     this.spawnFn = options.spawnFn ?? spawn;
+    this.sendDaemonCommandFn = options.sendDaemonCommandFn ?? sendAgentBrowserDaemonCommand;
     this.timeoutMs = options.timeoutMs ?? CONTROL_COMMAND_TIMEOUT_MS;
     assert(this.timeoutMs > 0, "BrowserControlService timeoutMs must be positive");
   }
@@ -70,7 +90,8 @@ export class BrowserControlService {
     try {
       const connection = await this.browserSessionDiscoveryService.getSessionConnection(
         params.workspaceId,
-        params.sessionName
+        params.sessionName,
+        { allowOtherWorkspaceSession: params.allowOtherWorkspaceSession === true }
       );
       if (connection == null) {
         return {
@@ -83,6 +104,22 @@ export class BrowserControlService {
         connection.sessionName === params.sessionName,
         "BrowserControlService resolved session must match the requested session name"
       );
+
+      if (params.action === "open") {
+        const trimmedUrl = params.url!.trim();
+        if (isExplicitFileUrl(trimmedUrl)) {
+          const daemonResult = await this.navigateFileUrlViaDaemon(
+            params.workspaceId,
+            params.sessionName,
+            trimmedUrl
+          );
+          if (!daemonResult.success) {
+            return daemonResult;
+          }
+
+          return { success: true };
+        }
+      }
 
       const execution = await this.runAgentBrowserCommand(
         params.workspaceId,
@@ -119,12 +156,18 @@ export class BrowserControlService {
       options?.skipSessionValidation == null || typeof options.skipSessionValidation === "boolean",
       "BrowserControlService getUrl skipSessionValidation must be a boolean when provided"
     );
+    assert(
+      options?.allowOtherWorkspaceSession == null ||
+        typeof options.allowOtherWorkspaceSession === "boolean",
+      "BrowserControlService getUrl allowOtherWorkspaceSession must be a boolean when provided"
+    );
 
     try {
       if (!options?.skipSessionValidation) {
         const connection = await this.browserSessionDiscoveryService.getSessionConnection(
           workspaceId,
-          sessionName
+          sessionName,
+          { allowOtherWorkspaceSession: options?.allowOtherWorkspaceSession === true }
         );
         if (connection == null) {
           return {
@@ -168,6 +211,12 @@ export class BrowserControlService {
       `Unsupported browser control action: ${String(params.action)}`
     );
 
+    assert(
+      params.allowOtherWorkspaceSession == null ||
+        typeof params.allowOtherWorkspaceSession === "boolean",
+      "BrowserControlService allowOtherWorkspaceSession must be a boolean when provided"
+    );
+
     if (params.action === "open") {
       assert(typeof params.url === "string", 'BrowserControlService "open" requires a url');
       assert(params.url.trim().length > 0, 'BrowserControlService "open" requires a non-empty url');
@@ -183,6 +232,36 @@ export class BrowserControlService {
   private assertValidSessionIdentifiers(workspaceId: string, sessionName: string): void {
     assert(workspaceId.trim().length > 0, "BrowserControlService requires a non-empty workspaceId");
     assert(sessionName.trim().length > 0, "BrowserControlService requires a non-empty sessionName");
+  }
+
+  private async navigateFileUrlViaDaemon(
+    workspaceId: string,
+    sessionName: string,
+    url: string
+  ): Promise<BrowserControlResult> {
+    const env = await this.resolveSessionEnvFn(workspaceId);
+    const result = await this.sendDaemonCommandFn({
+      env,
+      sessionName,
+      timeoutMs: this.timeoutMs,
+      // Older agent-browser CLI parsers can normalize file:// into https:// before
+      // the daemon sees it. Send the navigation command directly for explicit file
+      // URLs so Mux preserves the exact local-file target the user requested.
+      command: {
+        id: createBrowserControlCommandId(),
+        action: "navigate",
+        url,
+      },
+    });
+
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error ?? `agent-browser navigate for session ${sessionName} failed`,
+      };
+    }
+
+    return { success: true };
   }
 
   private buildControlArgs(params: BrowserControlParams): string[] {

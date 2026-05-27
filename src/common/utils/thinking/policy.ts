@@ -26,6 +26,20 @@ import {
 export type ThinkingPolicy = readonly ThinkingLevel[];
 
 /**
+ * True when modelName is a bare Gemini Flash chat model ID using Google's
+ * thinkingLevel config (minimal/low/medium/high) instead of Gemini 2.x thinkingBudget.
+ * @param modelName Provider model ID without the provider prefix (e.g. "gemini-3.5-flash", not "google:gemini-3.5-flash").
+ */
+export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean {
+  const normalized = modelName.trim().toLowerCase();
+  return (
+    ((normalized === "gemini-3-flash" || normalized.startsWith("gemini-3-flash-")) &&
+      !normalized.startsWith("gemini-3-flash-lite")) ||
+    (normalized.startsWith("gemini-3.5-flash") && !normalized.startsWith("gemini-3.5-flash-lite"))
+  );
+}
+
+/**
  * Returns the thinking policy for a given model.
  *
  * Rules:
@@ -36,7 +50,8 @@ export type ThinkingPolicy = readonly ThinkingLevel[];
  * - openai:gpt-5.2 / openai:gpt-5.5 → ["off", "low", "medium", "high", "xhigh"]
  * - openai:gpt-5.2-pro / openai:gpt-5.5-pro → ["medium", "high", "xhigh"] (3 levels)
  * - openai:gpt-5-pro → ["high"] (only supported level, legacy)
- * - gemini-3 → ["low", "high"] (thinking level only)
+ * - Gemini Flash chat variants → ["off", "low", "medium", "high"]
+ * - gemini-3 Pro variants → ["low", "high"] (thinking level only)
  * - default → ["off", "low", "medium", "high"] (standard 4 levels; xhigh is opt-in per model)
  *
  * Tolerates version suffixes (e.g., gpt-5-pro-2025-10-06).
@@ -95,8 +110,8 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
     return ["high"];
   }
 
-  // Gemini 3 Flash supports 4 levels: off (minimal), low, medium, high
-  if (withoutProviderNamespace.includes("gemini-3-flash")) {
+  // Gemini Flash chat models support minimal/low/medium/high. Mux exposes minimal as "off".
+  if (isGeminiFlashThinkingLevelModelName(withoutProviderNamespace)) {
     return ["off", "low", "medium", "high"];
   }
 

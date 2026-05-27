@@ -10,6 +10,11 @@ export interface BrowserViewportMetadata {
   scrollOffsetY: number;
 }
 
+export interface BrowserFrameImageSize {
+  width: number;
+  height: number;
+}
+
 export type BrowserDiscoveredSessionStatus = "attachable" | "missing_stream";
 
 export interface BrowserDiscoveredSession {
@@ -17,7 +22,13 @@ export interface BrowserDiscoveredSession {
   status: BrowserDiscoveredSessionStatus;
 }
 
-export type PageStateSource = "bootstrap" | "command" | "poll";
+export interface BrowserDiscoveredOtherSession extends BrowserDiscoveredSession {
+  cwd: string;
+}
+
+export interface BrowserSessionAttachOptions {
+  allowOtherWorkspaceSession?: boolean;
+}
 
 export interface BrowserSession {
   id: string;

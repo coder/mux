@@ -7,6 +7,7 @@ import type { NameGenerationError, SendMessageError } from "@/common/types/error
 import { getErrorMessage } from "@/common/utils/errors";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 import { TOOL_DEFINITIONS, ProposeNameToolArgsSchema } from "@/common/utils/tools/toolDefinitions";
+import { runLanguageModelCleanup } from "./languageModelCleanup";
 import crypto from "crypto";
 
 export interface WorkspaceIdentity {
@@ -272,6 +273,8 @@ export async function generateWorkspaceIdentity(
       lastError = mapNameGenerationError(error, modelString);
       log.warn("Name generation failed, trying next candidate", { modelString, error: lastError });
       continue;
+    } finally {
+      runLanguageModelCleanup(modelResult.data);
     }
   }
 

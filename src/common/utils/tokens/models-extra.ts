@@ -9,6 +9,9 @@ interface ModelData {
   max_output_tokens?: number;
   input_cost_per_token: number;
   output_cost_per_token: number;
+  input_cost_per_image_token?: number;
+  output_cost_per_image_token?: number;
+  cache_read_input_image_token_cost?: number;
   input_cost_per_token_above_200k_tokens?: number;
   output_cost_per_token_above_200k_tokens?: number;
   cache_creation_input_token_cost?: number;
@@ -24,6 +27,8 @@ interface ModelData {
   supports_function_calling?: boolean;
   supports_vision?: boolean;
   supports_pdf_input?: boolean;
+  supports_audio_input?: boolean;
+  supports_video_input?: boolean;
   max_pdf_size_mb?: number;
   supports_reasoning?: boolean;
   supports_response_schema?: boolean;
@@ -32,6 +37,24 @@ interface ModelData {
 }
 
 export const modelsExtra: Record<string, ModelData> = {
+  // GPT Image 2 - image-generation model not yet in LiteLLM's bundled models.json.
+  // OpenAI prices text input at $5/M tokens, image input at $8/M, cached text input at
+  // $1.25/M, cached image input at $2/M, and generated image output at $30/M.
+  "gpt-image-2": {
+    max_input_tokens: 32000,
+    input_cost_per_token: 0.000005, // $5 per million text input tokens
+    cache_read_input_token_cost: 0.00000125, // $1.25 per million cached text input tokens
+    input_cost_per_image_token: 0.000008, // $8 per million image input tokens
+    cache_read_input_image_token_cost: 0.000002, // $2 per million cached image input tokens
+    output_cost_per_image_token: 0.00003, // $30 per million generated image output tokens
+    output_cost_per_token: 0.00003, // Mux maps image output tokens through outputTokens.
+    litellm_provider: "openai",
+    mode: "image_generation",
+    supported_endpoints: ["/v1/images/generations"],
+    supports_vision: true,
+    supports_pdf_input: true,
+  },
+
   // Claude Opus 4.7 - Released April 2026
   // Native 1M context at standard pricing: $5/M input, $25/M output.
   // 128K max output tokens. Supports native xhigh effort level.
@@ -110,8 +133,8 @@ export const modelsExtra: Record<string, ModelData> = {
 
   // GPT-5.5 - Released April 23, 2026
   // Public API support covers Responses, Chat Completions, and Batch with a native
-  // 1.05M context window and 128K max output. When routed through Codex OAuth, the
-  // effective per-request cap remains 400K because of a routing-layer constraint.
+  // 1.05M context window and 128K max output. When routed through Codex OAuth, Mux
+  // caps the effective window separately at 272K because the ChatGPT routing layer is lower.
   // Base pricing: $5/M input, $30/M output, $0.50/M cached input.
   // Above 272K prompt tokens: $10/M input, $45/M output, $1/M cached input.
   "gpt-5.5": {
@@ -225,6 +248,28 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_vision: true,
     supports_reasoning: true,
     supports_response_schema: true,
+  },
+
+  // Gemini 3.5 Flash - GA on May 19, 2026. Google AI docs list a stable
+  // `gemini-3.5-flash` model ID with 1M context, 65K max output, standard
+  // pricing of $1.50/M input, $9/M output, and $0.15/M cached input.
+  // Source: Google DeepMind Gemini 3.5 Flash model info and Gemini API pricing docs as of 2026-05-20.
+  "gemini-3.5-flash": {
+    max_input_tokens: 1048576,
+    max_output_tokens: 65536,
+    input_cost_per_token: 0.0000015, // $1.50 per million input tokens
+    output_cost_per_token: 0.000009, // $9 per million output tokens, including thinking tokens
+    cache_read_input_token_cost: 0.00000015, // $0.15 per million cached input tokens
+    litellm_provider: "vertex_ai-language-models",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_audio_input: true,
+    supports_video_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    knowledge_cutoff: "2025-01",
   },
 
   // Gemini 3.1 Pro Preview - Released February 19, 2026

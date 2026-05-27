@@ -86,6 +86,9 @@ class TestSSHRuntime extends SSHRuntime {
   readonly callOrder: string[] = [];
   readonly cleanupCalls: string[] = [];
   readonly backoffCalls: number[] = [];
+  /** Records `options.forceNoThin` per attempt so tests can assert the retry
+   *  loop opts the next push into `--no-thin` after a thin-pack failure. */
+  readonly forceNoThinPerAttempt: boolean[] = [];
 
   private readonly actions: SyncAction[] = [];
   private cleanupHook?: () => Promise<void>;
@@ -114,7 +117,8 @@ class TestSSHRuntime extends SSHRuntime {
     _projectPath: string,
     _layout: RemoteProjectLayout,
     _initLogger: InitLogger,
-    _abortSignal?: AbortSignal
+    _abortSignal?: AbortSignal,
+    options: { forceNoThin?: boolean } = {}
   ): Promise<void> {
     const action = this.actions.shift();
     if (!action) {
@@ -122,6 +126,7 @@ class TestSSHRuntime extends SSHRuntime {
     }
 
     this.callOrder.push(action.label);
+    this.forceNoThinPerAttempt.push(options.forceNoThin === true);
     action.abortController?.abort();
     if (action.error) {
       return Promise.reject(action.error);
@@ -206,13 +211,73 @@ class CleanupCommandSSHRuntime extends SSHRuntime {
       return Promise.resolve(createExecStream(this.promisorStdout));
     }
     if (command.includes(" gc --prune=now")) {
+      // Spawn-only call: production code returns as soon as the remote shell
+      // has detached `git gc`. The mock mirrors that shape (stdout/stderr/exit
+      // here represent the detached spawn, not gc itself).
       return Promise.resolve(createExecStream(this.gcStdout, this.gcStderr, this.gcExitCode));
     }
     return Promise.resolve(createExecStream(""));
   }
 }
 
+// Single-line shell pipeline that strips partial-clone config from a shared
+// bare base repo. The exact text is asserted in tests because order matters:
+// the strip must precede the on-disk `.promisor` marker cleanup so that even
+// a half-completed repair leaves the repo non-promisor (and therefore safe
+// from the upstream `check_connected()` sideband deadlock — see the doc
+// comment on `stripBaseRepoPromisorConfig` in SSHRuntime.ts).
+// Detached gc invocation: `setsid -f` puts gc in its own session/PGID before
+// execing git so that neither the SSH channel closing nor the `timeout -s KILL`
+// process-group kill that `RemoteRuntime.exec` wraps every command in can
+// SIGKILL gc mid-finalization. Retry cleanup uses `setsid -w` to wait for
+// the detached child; proactive preflight only waits for the detached spawn.
+function expectedGcCommand(baseRepoPathArg: string, waitForGc: boolean): string {
+  const setsidArgs = waitForGc ? "-f -w" : "-f";
+  return [
+    `base_repo=${baseRepoPathArg}`,
+    "command -v setsid >/dev/null 2>&1 || { echo 'setsid command not found; cannot detach git gc' >&2; exit 127; }",
+    `setsid ${setsidArgs} sh -c 'exec git -C "$1" gc --prune=now >>/tmp/.mux-base-repo-gc.log 2>&1' sh "$base_repo" </dev/null`,
+  ].join("\n");
+}
+
+function expectedReindexCommand(baseRepoPathArg: string): string {
+  return [
+    `pack_dir=${baseRepoPathArg}/objects/pack`,
+    'if [ ! -d "$pack_dir" ]; then exit 0; fi',
+    `for pack in "$pack_dir"/pack-*.pack; do`,
+    '  [ -e "$pack" ] || continue',
+    '  idx="${pack%.pack}.idx"',
+    '  if [ -f "$idx" ]; then continue; fi',
+    `  if git index-pack "$pack" >/dev/null 2>&1; then`,
+    '    echo "reindexed $pack"',
+    "  else",
+    '    echo "reindex-failed $pack" >&2',
+    "  fi",
+    "done",
+  ].join("\n");
+}
+
+function expectedStripPromisorCommand(baseRepoPathArg: string): string {
+  return (
+    `git -C ${baseRepoPathArg} config --unset-all remote.origin.promisor; ` +
+    `git -C ${baseRepoPathArg} config --unset-all remote.origin.partialclonefilter; ` +
+    `git -C ${baseRepoPathArg} config --unset-all extensions.partialclone; ` +
+    `true`
+  );
+}
+
 describe("SSHRuntime project sync retry orchestration", () => {
+  it("strips legacy partial-clone keys before any on-disk maintenance", async () => {
+    const runtime = new CleanupCommandSSHRuntime();
+    const baseRepoPathArg = '"/remote/src/project/.mux-base.git"';
+
+    await runtime.runCleanup(baseRepoPathArg);
+
+    // Strip must be the first remote call in repair — see comment above.
+    expect(runtime.commands[0]).toBe(expectedStripPromisorCommand(baseRepoPathArg));
+    expect(runtime.timeouts[0]).toBe(10);
+  });
+
   it("removes stale promisor markers before running git gc", async () => {
     const runtime = new CleanupCommandSSHRuntime();
     const baseRepoPathArg = '"/remote/src/project/.mux-base.git"';
@@ -220,10 +285,14 @@ describe("SSHRuntime project sync retry orchestration", () => {
     await runtime.runCleanup(baseRepoPathArg);
 
     expect(runtime.commands).toEqual([
+      expectedStripPromisorCommand(baseRepoPathArg),
       `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
-      `git -C ${baseRepoPathArg} gc --prune=now`,
+      expectedReindexCommand(baseRepoPathArg),
+      expectedGcCommand(baseRepoPathArg, true),
     ]);
-    expect(runtime.timeouts).toEqual([10, 120]);
+    // Last timeout waits for `setsid -w`. It can stop waiting without killing
+    // the detached gc process itself.
+    expect(runtime.timeouts).toEqual([10, 10, 10, 30 * 60]);
   });
 
   it("proactively repairs fragmented base repos before sync", async () => {
@@ -238,10 +307,13 @@ describe("SSHRuntime project sync retry orchestration", () => {
     ]);
     expect(runtime.commands).toEqual([
       `git -C ${baseRepoPathArg} count-objects -v`,
+      expectedStripPromisorCommand(baseRepoPathArg),
       `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
-      `git -C ${baseRepoPathArg} gc --prune=now`,
+      expectedReindexCommand(baseRepoPathArg),
+      expectedGcCommand(baseRepoPathArg, false),
     ]);
-    expect(runtime.timeouts).toEqual([10, 10, 120]);
+    // Last timeout is the SSH spawn round-trip, NOT gc itself.
+    expect(runtime.timeouts).toEqual([10, 10, 10, 10, 10]);
   });
 
   it("skips proactive maintenance for healthy base repos", async () => {
@@ -269,12 +341,12 @@ describe("SSHRuntime project sync retry orchestration", () => {
     expect(runtime.timeouts).toEqual([10]);
   });
 
-  it("keeps proactive maintenance best-effort when git gc exits non-zero", async () => {
+  it("keeps proactive maintenance best-effort when the gc spawn fails", async () => {
     const runtime = new CleanupCommandSSHRuntime();
     const baseRepoPathArg = '"/remote/src/project/.mux-base.git"';
     runtime.countObjectsStdout = "count: 0\npacks: 50\n";
     runtime.gcExitCode = 1;
-    runtime.gcStderr = "warning: gc skipped";
+    runtime.gcStderr = "setsid: command not found";
 
     await runtime.runEnsureHealthy(baseRepoPathArg);
 
@@ -283,10 +355,12 @@ describe("SSHRuntime project sync retry orchestration", () => {
     ]);
     expect(runtime.commands).toEqual([
       `git -C ${baseRepoPathArg} count-objects -v`,
+      expectedStripPromisorCommand(baseRepoPathArg),
       `find ${baseRepoPathArg}/objects/pack -name '*.promisor' -print -delete 2>/dev/null || true`,
-      `git -C ${baseRepoPathArg} gc --prune=now`,
+      expectedReindexCommand(baseRepoPathArg),
+      expectedGcCommand(baseRepoPathArg, false),
     ]);
-    expect(runtime.timeouts).toEqual([10, 10, 120]);
+    expect(runtime.timeouts).toEqual([10, 10, 10, 10, 10]);
   });
 
   it("propagates aborts during proactive maintenance preflight", async () => {
@@ -373,5 +447,59 @@ describe("SSHRuntime project sync retry orchestration", () => {
     expect(runtime.callOrder).toEqual(["first-1", "first-2", "second-1"]);
     expect(runtime.cleanupCalls).toHaveLength(1);
     expect(runtime.backoffCalls).toEqual([1000]);
+  });
+
+  it("retries thin-pack receive-pack failures with --no-thin on the next attempt", async () => {
+    // Real-world failure shape: receive-pack routes the first push through
+    // `unpack-objects` (because the object count is below
+    // `transfer.unpackLimit`), unpack-objects cannot resolve the thin pack's
+    // delta bases, and the push is rejected. The retry path runs base-repo
+    // maintenance (gc, pack reindex, receive.unpackLimit config) and the next
+    // attempt must opt out of thin-pack encoding entirely so the receiver can
+    // unpack without any cross-pack delta-base lookup.
+    const runtime = new TestSSHRuntime();
+    const projectPath = `/tmp/no-thin-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    runtime.queueActions(
+      {
+        label: "attempt-1",
+        error: new Error(
+          "Failed to push to remote: remote: fatal: unresolved deltas left after unpacking\n" +
+            "error: remote unpack failed: unpack-objects abnormal exit\n" +
+            " ! [remote rejected]     main -> refs/mux-bundle/main (unpacker error)"
+        ),
+      },
+      { label: "attempt-2" }
+    );
+
+    await runtime.runSync(projectPath);
+
+    expect(runtime.callOrder).toEqual(["attempt-1", "attempt-2"]);
+    // First attempt uses the default thin-pack push; the retry forces
+    // --no-thin so the receiver doesn't need to resolve delta bases.
+    expect(runtime.forceNoThinPerAttempt).toEqual([false, true]);
+    expect(runtime.cleanupCalls).toHaveLength(1);
+    expect(runtime.backoffCalls).toEqual([1000]);
+  });
+
+  it("does not flip --no-thin for unrelated retryable failures", async () => {
+    // Connection-reset / killed-by-signal failures benefit from the standard
+    // retry, but forcing --no-thin would needlessly enlarge a pack that was
+    // never the problem. The flag must stay off for non-unpack errors.
+    const runtime = new TestSSHRuntime();
+    const projectPath = `/tmp/thin-default-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    runtime.queueActions(
+      {
+        label: "attempt-1",
+        error: new Error("Failed to push to remote: Connection reset by peer"),
+      },
+      { label: "attempt-2" }
+    );
+
+    await runtime.runSync(projectPath);
+
+    expect(runtime.callOrder).toEqual(["attempt-1", "attempt-2"]);
+    expect(runtime.forceNoThinPerAttempt).toEqual([false, false]);
   });
 });

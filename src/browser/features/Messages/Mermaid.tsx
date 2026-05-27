@@ -95,28 +95,78 @@ function canonicalizeUrlForSchemeCheck(value: string): string {
 }
 
 export function sanitizeMermaidSvg(svg: string): string | null {
+  // Validate the SVG structure strictly so genuinely malformed input still
+  // fails closed. The complication: Mermaid embeds HTML labels inside
+  // <foreignObject> (wrap/markdownAutoWrap), and that HTML legitimately uses
+  // void elements like bare <br>. Strict image/svg+xml DOMParser rejects such
+  // SVG with a parsererror, which used to make every wrapped-label diagram
+  // surface as "Mermaid returned invalid SVG output".
+  //
+  // Approach:
+  //   1. Try strict XML parsing on the original. If it succeeds, the input is
+  //      well-formed SVG; we're done.
+  //   2. Otherwise, replace each <foreignObject>...</foreignObject> subtree
+  //      with a self-closed placeholder and re-parse strictly. If that
+  //      succeeds, the *only* XML invalidity lives inside foreignObject HTML
+  //      (the known idiom we want to tolerate); we then materialize the
+  //      original via the HTML parser, which handles SVG-plus-embedded-HTML
+  //      the same way the browser does when innerHTML'd at the render sink.
+  //   3. If stripping foreignObject doesn't make the outer structure parse,
+  //      the malformed input is outside the wrapped-label case — reject it.
+  //
+  // This keeps the original "reject malformed SVG" contract intact while
+  // accepting Mermaid's legitimate output.
   const parser = new DOMParser();
-  const doc = parser.parseFromString(svg, "image/svg+xml");
+  const xmlDoc = parser.parseFromString(svg, "image/svg+xml");
+  const xmlHasError = xmlDoc.querySelector("parsererror") !== null;
 
-  if (doc.querySelector("parsererror")) {
-    return null;
+  let svgRoot: Element | null;
+  if (!xmlHasError) {
+    svgRoot =
+      xmlDoc.documentElement.tagName.toLowerCase() === "svg" ? xmlDoc.documentElement : null;
+  } else {
+    // Strip foreignObject subtrees and validate the outer structure strictly.
+    // Non-greedy match; Mermaid does not nest foreignObject, and over-stripping
+    // would only cause us to reject more aggressively (acceptable for a
+    // validation step).
+    const strippedForValidation = svg.replace(
+      /<foreignObject\b[^>]*>[\s\S]*?<\/foreignObject\s*>/gi,
+      "<foreignObject/>"
+    );
+    if (strippedForValidation === svg) {
+      // No foreignObject in the input, so the XML error isn't the known idiom.
+      return null;
+    }
+    const revalidated = parser.parseFromString(strippedForValidation, "image/svg+xml");
+    if (revalidated.querySelector("parsererror") !== null) {
+      // Outer structure is still malformed — fail closed.
+      return null;
+    }
+    if (revalidated.documentElement.tagName.toLowerCase() !== "svg") {
+      return null;
+    }
+    // Outer SVG is well-formed XML; only foreignObject HTML was problematic.
+    // Materialize the original tree via the HTML parser so embedded labels
+    // survive intact.
+    const htmlDoc = parser.parseFromString(svg, "text/html");
+    svgRoot = htmlDoc.querySelector("svg");
   }
 
-  const svgRoot = doc.documentElement;
-  if (svgRoot.tagName.toLowerCase() !== "svg") {
+  if (!svgRoot) {
     return null;
   }
 
   // Defense in depth: remove active content containers and sanitize remaining attributes.
   // NOTE: Keep <foreignObject> because Mermaid uses it for wrapped node labels.
-  doc.querySelectorAll("script,iframe,object,embed").forEach((node) => {
+  svgRoot.querySelectorAll("script,iframe,object,embed").forEach((node) => {
     node.remove();
   });
 
   const urlAttributes = new Set(["href", "xlink:href", "src", "action", "formaction"]);
   const blockedSchemes = ["javascript:", "vbscript:", "data:text/html"];
 
-  doc.querySelectorAll("*").forEach((element) => {
+  const elementsToScan: Element[] = [svgRoot, ...Array.from(svgRoot.querySelectorAll("*"))];
+  elementsToScan.forEach((element) => {
     for (const attribute of Array.from(element.attributes)) {
       const attributeName = attribute.name.toLowerCase();
       const canonicalUrlValue = canonicalizeUrlForSchemeCheck(attribute.value.trim());
@@ -375,9 +425,9 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
             maxWidth: "70%",
             margin: "0 auto",
             ["--diagram-max-height" as string]: `${diagramMaxHeight}px`,
+            minHeight: `${MIN_HEIGHT}px`,
             ...(showPendingPlaceholder
               ? {
-                  minHeight: `${MIN_HEIGHT}px`,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",

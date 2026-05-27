@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@jest/globals";
-import type { ModelMessage } from "ai";
+import type { ModelMessage, ToolResultPart } from "ai";
 import sharp from "sharp";
 import { MAX_IMAGE_DIMENSION } from "@/common/constants/imageAttachments";
+import { expectContentOutputValue } from "./testToolOutputHelpers";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "./extractToolMediaAsUserMessagesFromModelMessages";
 
 describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
@@ -224,6 +225,54 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
         )
       : undefined;
     expect(svgTextPart).toBeDefined();
+  });
+
+  it("strips display-only file bytes without adding a synthetic user message", async () => {
+    const base64 = Buffer.from("webm bytes").toString("base64");
+    const attachFileOutput = {
+      type: "content",
+      value: [
+        { type: "text", text: "[File shown to user: clip.webm]" },
+        {
+          type: "display_file",
+          mediaType: "video/webm",
+          data: base64,
+          filename: "clip.webm",
+          providerOptions: { mux: { displayOnly: true, size: 10 } },
+        },
+      ],
+    } as const satisfies { type: "content"; value: unknown[] };
+
+    const input: ModelMessage[] = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-display",
+            toolName: "attach_file",
+            output: attachFileOutput as unknown as ToolResultPart["output"],
+          },
+        ],
+      },
+    ];
+
+    const rewritten = await extractToolMediaAsUserMessagesFromModelMessages(input);
+    expect(rewritten).toHaveLength(1);
+
+    const rewrittenTool = rewritten[0];
+    expect(rewrittenTool.role).toBe("tool");
+    const toolResultPart = (rewrittenTool as Extract<ModelMessage, { role: "tool" }>).content[0];
+    if (toolResultPart.type !== "tool-result") throw new Error("Expected tool-result part");
+    const outputText = JSON.stringify(toolResultPart.output);
+    expect(outputText).not.toContain(base64);
+    const rewrittenValue = expectContentOutputValue(toolResultPart.output);
+    const textParts = rewrittenValue.filter((part) => (part as { type?: unknown }).type === "text");
+    expect(textParts).toHaveLength(2);
+    expect(JSON.stringify(textParts)).toContain("clip.webm");
+    expect(
+      rewrittenValue.some((part) => (part as { type?: unknown }).type === "display_file")
+    ).toBe(false);
   });
 
   it("is a no-op when there is no media", async () => {

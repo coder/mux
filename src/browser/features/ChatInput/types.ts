@@ -4,6 +4,7 @@ import type { Review } from "@/common/types/review";
 import type { EditingMessageState, PendingUserMessage } from "@/browser/utils/chatEditing";
 import type { SendMessageOptions } from "@/common/orpc/types";
 
+export type GoalInterventionPolicy = NonNullable<SendMessageOptions["goalInterventionPolicy"]>;
 export type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
 
 export interface ChatInputAPI {
@@ -20,6 +21,8 @@ export interface WorkspaceCreatedOptions {
   autoNavigate?: boolean;
   /** Pending model for the optimistic startup barrier when navigation actually occurs. */
   pendingStreamModel?: string | null;
+  /** Set false when creation does not immediately enqueue an initial user send. */
+  markPendingInitialSend?: boolean;
 }
 
 // Workspace variant: full functionality for existing workspaces
@@ -31,6 +34,7 @@ export interface ChatInputWorkspaceVariant {
   /** Fires once a regular workspace send has passed validation, before IPC/streaming begins. */
   onMessageSendStarted?: (dispatchMode: QueueDispatchMode) => void;
   onMessageSent?: (dispatchMode: QueueDispatchMode) => void;
+  onResetContext: () => Promise<"reset" | "noop">;
   onTruncateHistory: (percentage?: number) => Promise<void>;
   onModelChange?: (model: string) => void;
   isCompacting?: boolean;

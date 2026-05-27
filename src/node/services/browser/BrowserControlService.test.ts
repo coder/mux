@@ -7,6 +7,7 @@ import {
   type BrowserControlAction,
   type BrowserControlParams,
 } from "./BrowserControlService";
+import type { SendAgentBrowserDaemonCommandFn } from "./agentBrowserCommandClient";
 
 const WORKSPACE_ID = "workspace-1";
 const SESSION_NAME = "session-a";
@@ -68,10 +69,12 @@ type SpawnFn = (command: string, args: string[], options: SpawnOptions) => Child
 function createService(options?: {
   getSessionConnection?: (
     workspaceId: string,
-    sessionName: string
+    sessionName: string,
+    options?: { allowOtherWorkspaceSession?: boolean }
   ) => Promise<ReturnType<typeof createAttachableSession> | null>;
   resolveSessionEnvFn?: (workspaceId: string) => Promise<NodeJS.ProcessEnv>;
   spawnFn?: SpawnFn;
+  sendDaemonCommandFn?: SendAgentBrowserDaemonCommandFn;
   timeoutMs?: number;
 }): BrowserControlService {
   return new BrowserControlService({
@@ -86,6 +89,7 @@ function createService(options?: {
       options?.resolveSessionEnvFn ??
       mock(() => Promise.resolve({ AGENT_BROWSER_SOCKET_DIR: "/tmp/socket" })),
     spawnFn: options?.spawnFn,
+    sendDaemonCommandFn: options?.sendDaemonCommandFn,
     timeoutMs: options?.timeoutMs,
   });
 }
@@ -185,6 +189,68 @@ describe("BrowserControlService", () => {
     }
   });
 
+  test("executeControl sends explicit file URLs directly to the daemon", async () => {
+    const spawnFn = mock(() => new MockChildProcess() as unknown as ChildProcess);
+    const resolveSessionEnvFn = mock(() => Promise.resolve({ TEST_ENV: "1" }));
+    const daemonCommandCalls: Array<Parameters<SendAgentBrowserDaemonCommandFn>[0]> = [];
+    const sendDaemonCommandFn = mock((options: Parameters<SendAgentBrowserDaemonCommandFn>[0]) => {
+      daemonCommandCalls.push(options);
+      return Promise.resolve({ success: true });
+    });
+    const service = createService({
+      spawnFn,
+      resolveSessionEnvFn,
+      sendDaemonCommandFn,
+    });
+
+    expect(
+      await service.executeControl({
+        workspaceId: WORKSPACE_ID,
+        sessionName: SESSION_NAME,
+        action: "open",
+        url: "file:///Users/me/report.html",
+      })
+    ).toEqual({ success: true });
+
+    expect(spawnFn).not.toHaveBeenCalled();
+    expect(resolveSessionEnvFn).toHaveBeenCalledWith(WORKSPACE_ID);
+    expect(sendDaemonCommandFn).toHaveBeenCalledTimes(1);
+    expect(daemonCommandCalls).toHaveLength(1);
+    expect(daemonCommandCalls[0]).toMatchObject({
+      env: { TEST_ENV: "1" },
+      sessionName: SESSION_NAME,
+      timeoutMs: 15_000,
+      command: {
+        action: "navigate",
+        url: "file:///Users/me/report.html",
+      },
+    });
+    expect(typeof daemonCommandCalls[0]?.command.id).toBe("string");
+  });
+
+  test("executeControl does not fall back to the CLI when file URL daemon navigation fails", async () => {
+    const spawnFn = mock(() => new MockChildProcess() as unknown as ChildProcess);
+    const sendDaemonCommandFn = mock(() =>
+      Promise.resolve({ success: false, error: "daemon rejected navigation" })
+    );
+    const service = createService({
+      spawnFn,
+      sendDaemonCommandFn,
+    });
+
+    expect(
+      await service.executeControl({
+        workspaceId: WORKSPACE_ID,
+        sessionName: SESSION_NAME,
+        action: "open",
+        url: "file:///Users/me/report.html",
+      })
+    ).toEqual({ success: false, error: "daemon rejected navigation" });
+
+    expect(sendDaemonCommandFn).toHaveBeenCalledTimes(1);
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
   test('executeControl requires a non-empty URL for "open"', async () => {
     const service = createService();
 
@@ -253,6 +319,52 @@ describe("BrowserControlService", () => {
       error: `Session "${SESSION_NAME}" not found for workspace "${WORKSPACE_ID}"`,
     });
     expect(spawnFn).not.toHaveBeenCalled();
+  });
+
+  test("executeControl validates explicitly allowed other sessions with matching scope", async () => {
+    const child = new MockChildProcess();
+    const { spawnFn, waitForSpawn } = createSpawnHarness(child);
+    const getSessionConnection = mock(() => Promise.resolve(createAttachableSession()));
+    const service = createService({
+      getSessionConnection,
+      spawnFn,
+    });
+
+    const executionPromise = service.executeControl({
+      workspaceId: WORKSPACE_ID,
+      sessionName: SESSION_NAME,
+      action: "reload",
+      allowOtherWorkspaceSession: true,
+    });
+    await waitForSpawn();
+    child.close();
+
+    expect(await executionPromise).toEqual({ success: true });
+    expect(getSessionConnection).toHaveBeenCalledWith(WORKSPACE_ID, SESSION_NAME, {
+      allowOtherWorkspaceSession: true,
+    });
+  });
+
+  test("getUrl validates explicitly allowed other sessions with matching scope", async () => {
+    const child = new MockChildProcess();
+    const { spawnFn, waitForSpawn } = createSpawnHarness(child);
+    const getSessionConnection = mock(() => Promise.resolve(createAttachableSession()));
+    const service = createService({
+      getSessionConnection,
+      spawnFn,
+    });
+
+    const resultPromise = service.getUrl(WORKSPACE_ID, SESSION_NAME, {
+      allowOtherWorkspaceSession: true,
+    });
+    await waitForSpawn();
+    child.writeStdout("https://example.com/current\n");
+    child.close();
+
+    expect(await resultPromise).toEqual({ url: "https://example.com/current" });
+    expect(getSessionConnection).toHaveBeenCalledWith(WORKSPACE_ID, SESSION_NAME, {
+      allowOtherWorkspaceSession: true,
+    });
   });
 
   test("getUrl parses stdout from the CLI", async () => {

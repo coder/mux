@@ -5,7 +5,7 @@ import * as runtimeHelpers from "@/node/utils/runtime/helpers";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => {};
-import type { RuntimeStatusEvent } from "./Runtime";
+import type { InitLogger, RuntimeStatusEvent, WorkspaceInitParams } from "./Runtime";
 
 import { CoderSSHRuntime, type CoderSSHRuntimeConfig } from "./CoderSSHRuntime";
 import { SSHRuntime } from "./SSHRuntime";
@@ -22,15 +22,7 @@ function createMockCoderService(overrides?: Partial<CoderService>): CoderService
   };
 
   return {
-    createWorkspace: mock(() =>
-      (async function* (): AsyncGenerator<string, void, unknown> {
-        await Promise.resolve();
-        // default: no output
-        for (const line of [] as string[]) {
-          yield line;
-        }
-      })()
-    ),
+    createWorkspace: mock(() => asyncLines([])),
     deleteWorkspace: mock(() => Promise.resolve()),
     deleteWorkspaceEventually: mock(() =>
       Promise.resolve({ success: true as const, data: undefined })
@@ -44,15 +36,7 @@ function createMockCoderService(overrides?: Partial<CoderService>): CoderService
       Promise.resolve({ kind: "ok" as const, status: "running" as const })
     ),
     listWorkspaces: mock(() => Promise.resolve({ ok: true, workspaces: [] })),
-    waitForStartupScripts: mock(() =>
-      (async function* (): AsyncGenerator<string, void, unknown> {
-        await Promise.resolve();
-        // default: no output (startup scripts completed)
-        for (const line of [] as string[]) {
-          yield line;
-        }
-      })()
-    ),
+    waitForStartupScripts: mock(() => asyncLines([])),
     workspaceExists: mock(() => Promise.resolve(false)),
     ...overrides,
   } as unknown as CoderService;
@@ -100,6 +84,41 @@ function createSSHCoderConfig(coder: {
       workspaceName: coder.workspaceName,
       template: "default-template",
     },
+  };
+}
+
+function asyncLines(lines: string[], error?: Error): AsyncGenerator<string, void, unknown> {
+  return (async function* (): AsyncGenerator<string, void, unknown> {
+    await Promise.resolve();
+    for (const line of lines) {
+      yield line;
+    }
+    if (error) {
+      throw error;
+    }
+  })();
+}
+
+function createInitLogger(overrides: Partial<InitLogger> = {}): InitLogger {
+  return {
+    logStep: noop,
+    logStdout: noop,
+    logStderr: noop,
+    logComplete: noop,
+    ...overrides,
+  };
+}
+
+function createPostCreateSetupParams(
+  workspaceName: string,
+  initLogger: InitLogger = createInitLogger()
+): WorkspaceInitParams {
+  return {
+    initLogger,
+    projectPath: "/project",
+    branchName: "branch",
+    trunkBranch: "main",
+    workspacePath: `/home/user/src/my-project/${workspaceName}`,
   };
 }
 
@@ -438,6 +457,23 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     expect(deleteWorkspaceEventually).not.toHaveBeenCalled();
   });
 
+  it("passes abort signal to the Coder status check during delete", async () => {
+    const getWorkspaceStatus = mock(() => Promise.resolve({ kind: "not_found" as const }));
+    const coderService = createMockCoderService({ getWorkspaceStatus });
+    const runtime = createRuntime(
+      { existingWorkspace: false, workspaceName: "my-ws" },
+      coderService
+    );
+    const abortController = new AbortController();
+
+    await runtime.deleteWorkspace("/project", "ws", false, abortController.signal);
+
+    expect(getWorkspaceStatus).toHaveBeenCalledWith(
+      "my-ws",
+      expect.objectContaining({ signal: abortController.signal })
+    );
+  });
+
   it("proceeds with SSH cleanup when status check fails with API error", async () => {
     // API error (auth, network) - should NOT treat as "already deleted"
     const getWorkspaceStatus = mock(() =>
@@ -567,13 +603,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
   });
 
   it("creates a new Coder workspace and prepares the directory", async () => {
-    const createWorkspace = mock(() =>
-      (async function* (): AsyncGenerator<string, void, unknown> {
-        await Promise.resolve();
-        yield "build line 1";
-        yield "build line 2";
-      })()
-    );
+    const createWorkspace = mock(() => asyncLines(["build line 1", "build line 2"]));
     const ensureMuxCoderSSHConfig = mock(() => Promise.resolve());
     const provisioningSession = {
       token: "token",
@@ -628,13 +658,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
       logComplete: noop,
     };
 
-    await runtime.postCreateSetup({
-      initLogger,
-      projectPath: "/project",
-      branchName: "branch",
-      trunkBranch: "main",
-      workspacePath: "/home/user/src/my-project/my-ws",
-    });
+    await runtime.postCreateSetup(createPostCreateSetupParams("my-ws", initLogger));
 
     expect(takeProvisioningSession).toHaveBeenCalledWith("my-ws");
     expect(createWorkspace).toHaveBeenCalledWith(
@@ -661,13 +685,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
   });
 
   it("disposes provisioning session when workspace creation fails", async () => {
-    const createWorkspace = mock(() =>
-      (async function* (): AsyncGenerator<string, void, unknown> {
-        yield "Starting workspace...";
-        await Promise.resolve();
-        throw new Error("boom");
-      })()
-    );
+    const createWorkspace = mock(() => asyncLines(["Starting workspace..."], new Error("boom")));
     const provisioningSession = {
       token: "token",
       dispose: mock(() => Promise.resolve()),
@@ -685,18 +703,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
 
     let caughtError: Error | undefined;
     try {
-      await runtime.postCreateSetup({
-        initLogger: {
-          logStep: noop,
-          logStdout: noop,
-          logStderr: noop,
-          logComplete: noop,
-        },
-        projectPath: "/project",
-        branchName: "branch",
-        trunkBranch: "main",
-        workspacePath: "/home/user/src/my-project/my-ws",
-      });
+      await runtime.postCreateSetup(createPostCreateSetupParams("my-ws"));
     } catch (err) {
       caughtError = err as Error;
     }
@@ -715,18 +722,8 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
   });
 
   it("skips workspace creation when existingWorkspace=true and workspace is running", async () => {
-    const createWorkspace = mock(() =>
-      (async function* (): AsyncGenerator<string, void, unknown> {
-        await Promise.resolve();
-        yield "should not happen";
-      })()
-    );
-    const waitForStartupScripts = mock(() =>
-      (async function* (): AsyncGenerator<string, void, unknown> {
-        await Promise.resolve();
-        yield "Already running";
-      })()
-    );
+    const createWorkspace = mock(() => asyncLines(["should not happen"]));
+    const waitForStartupScripts = mock(() => asyncLines(["Already running"]));
     const ensureMuxCoderSSHConfig = mock(() => Promise.resolve());
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "running" as const })
@@ -743,18 +740,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
       coderService
     );
 
-    await runtime.postCreateSetup({
-      initLogger: {
-        logStep: noop,
-        logStdout: noop,
-        logStderr: noop,
-        logComplete: noop,
-      },
-      projectPath: "/project",
-      branchName: "branch",
-      trunkBranch: "main",
-      workspacePath: "/home/user/src/my-project/existing-ws",
-    });
+    await runtime.postCreateSetup(createPostCreateSetupParams("existing-ws"));
 
     expect(createWorkspace).not.toHaveBeenCalled();
     // waitForStartupScripts is called (it handles running workspaces quickly)
@@ -764,19 +750,9 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
   });
 
   it("uses waitForStartupScripts for existing stopped workspace (auto-starts via coder ssh)", async () => {
-    const createWorkspace = mock(() =>
-      (async function* (): AsyncGenerator<string, void, unknown> {
-        await Promise.resolve();
-        yield "should not happen";
-      })()
-    );
+    const createWorkspace = mock(() => asyncLines(["should not happen"]));
     const waitForStartupScripts = mock(() =>
-      (async function* (): AsyncGenerator<string, void, unknown> {
-        await Promise.resolve();
-        yield "Starting workspace...";
-        yield "Build complete";
-        yield "Startup scripts finished";
-      })()
+      asyncLines(["Starting workspace...", "Build complete", "Startup scripts finished"])
     );
     const ensureMuxCoderSSHConfig = mock(() => Promise.resolve());
     const getWorkspaceStatus = mock(() =>
@@ -795,18 +771,12 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     );
 
     const loggedStdout: string[] = [];
-    await runtime.postCreateSetup({
-      initLogger: {
-        logStep: noop,
-        logStdout: (line) => loggedStdout.push(line),
-        logStderr: noop,
-        logComplete: noop,
-      },
-      projectPath: "/project",
-      branchName: "branch",
-      trunkBranch: "main",
-      workspacePath: "/home/user/src/my-project/existing-ws",
-    });
+    await runtime.postCreateSetup(
+      createPostCreateSetupParams(
+        "existing-ws",
+        createInitLogger({ logStdout: (line) => loggedStdout.push(line) })
+      )
+    );
 
     expect(createWorkspace).not.toHaveBeenCalled();
     expect(waitForStartupScripts).toHaveBeenCalled();
@@ -825,12 +795,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
       }
       return Promise.resolve({ kind: "ok" as const, status: "stopped" as const });
     });
-    const waitForStartupScripts = mock(() =>
-      (async function* (): AsyncGenerator<string, void, unknown> {
-        await Promise.resolve();
-        yield "Ready";
-      })()
-    );
+    const waitForStartupScripts = mock(() => asyncLines(["Ready"]));
     const ensureMuxCoderSSHConfig = mock(() => Promise.resolve());
 
     const coderService = createMockCoderService({
@@ -851,18 +816,12 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     spyOn(runtime as unknown as RuntimeWithSleep, "sleep").mockResolvedValue(undefined);
 
     const loggedSteps: string[] = [];
-    await runtime.postCreateSetup({
-      initLogger: {
-        logStep: (step) => loggedSteps.push(step),
-        logStdout: noop,
-        logStderr: noop,
-        logComplete: noop,
-      },
-      projectPath: "/project",
-      branchName: "branch",
-      trunkBranch: "main",
-      workspacePath: "/home/user/src/my-project/stopping-ws",
-    });
+    await runtime.postCreateSetup(
+      createPostCreateSetupParams(
+        "stopping-ws",
+        createInitLogger({ logStep: (step) => loggedSteps.push(step) })
+      )
+    );
 
     // Should have polled status multiple times
     expect(pollCount).toBeGreaterThan(2);
@@ -874,20 +833,9 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     const coderService = createMockCoderService();
     const runtime = createRuntime({ existingWorkspace: false, template: "tmpl" }, coderService);
 
-    return expect(
-      runtime.postCreateSetup({
-        initLogger: {
-          logStep: noop,
-          logStdout: noop,
-          logStderr: noop,
-          logComplete: noop,
-        },
-        projectPath: "/project",
-        branchName: "branch",
-        trunkBranch: "main",
-        workspacePath: "/home/user/src/my-project/ws",
-      })
-    ).rejects.toThrow("Coder workspace name is required");
+    return expect(runtime.postCreateSetup(createPostCreateSetupParams("ws"))).rejects.toThrow(
+      "Coder workspace name is required"
+    );
   });
 
   it("throws when template is missing for new workspaces", () => {
@@ -897,20 +845,9 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
       coderService
     );
 
-    return expect(
-      runtime.postCreateSetup({
-        initLogger: {
-          logStep: noop,
-          logStdout: noop,
-          logStderr: noop,
-          logComplete: noop,
-        },
-        projectPath: "/project",
-        branchName: "branch",
-        trunkBranch: "main",
-        workspacePath: "/home/user/src/my-project/ws",
-      })
-    ).rejects.toThrow("Coder template is required");
+    return expect(runtime.postCreateSetup(createPostCreateSetupParams("ws"))).rejects.toThrow(
+      "Coder template is required"
+    );
   });
 });
 
@@ -923,12 +860,7 @@ describe("CoderSSHRuntime.ensureReady", () => {
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "running" as const })
     );
-    const waitForStartupScripts = mock(() =>
-      (async function* (): AsyncGenerator<string, void, unknown> {
-        await Promise.resolve();
-        yield "should not be called";
-      })()
-    );
+    const waitForStartupScripts = mock(() => asyncLines(["should not be called"]));
     const coderService = createMockCoderService({ getWorkspaceStatus, waitForStartupScripts });
 
     const runtime = createRuntime(
@@ -1009,11 +941,7 @@ describe("CoderSSHRuntime.ensureReady", () => {
       Promise.resolve({ kind: "ok" as const, status: "stopped" as const })
     );
     const waitForStartupScripts = mock(() =>
-      (async function* (): AsyncGenerator<string, void, unknown> {
-        await Promise.resolve();
-        yield "Starting workspace...";
-        yield "Workspace started";
-      })()
+      asyncLines(["Starting workspace...", "Workspace started"])
     );
     const coderService = createMockCoderService({ getWorkspaceStatus, waitForStartupScripts });
 
@@ -1040,11 +968,7 @@ describe("CoderSSHRuntime.ensureReady", () => {
       Promise.resolve({ kind: "ok" as const, status: "stopped" as const })
     );
     const waitForStartupScripts = mock(() =>
-      (async function* (): AsyncGenerator<string, void, unknown> {
-        await Promise.resolve();
-        yield "Starting workspace...";
-        throw new Error("connection failed");
-      })()
+      asyncLines(["Starting workspace..."], new Error("connection failed"))
     );
     const coderService = createMockCoderService({ getWorkspaceStatus, waitForStartupScripts });
 

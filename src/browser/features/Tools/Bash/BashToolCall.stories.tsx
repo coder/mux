@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { waitFor } from "@storybook/test";
 import type { ReactNode } from "react";
 import { BackgroundBashProvider } from "@/browser/contexts/BackgroundBashContext";
 import { BashBackgroundListToolCall } from "@/browser/features/Tools/BashBackgroundListToolCall";
@@ -83,6 +84,123 @@ export const WithTerminal: Story = {
       />
     </ToolStoryShell>
   ),
+};
+
+/** collapsed bash header showing intent on top and command on the second line */
+export const IntentCollapsedSummary: Story = {
+  render: () => (
+    <ToolStoryShell>
+      <BashToolCall
+        workspaceId={STORYBOOK_WORKSPACE_ID}
+        toolCallId="intent-summary"
+        args={{
+          script: "sleep 30 && tail -30 /tmp/develop.log",
+          model_intent:
+            "Waiting for the dev instance to start using sleep 30 && tail -30 /tmp/develop.log for 30.1s",
+          run_in_background: false,
+          timeout_secs: 120,
+          display_name: "Dev server readiness",
+        }}
+        result={{
+          success: true,
+          output: "VITE ready on the sandbox frontend. Backend health check passed.",
+          exitCode: 0,
+          wall_duration_ms: 30_100,
+        }}
+        status="completed"
+      />
+    </ToolStoryShell>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      const textContent = canvasElement.textContent ?? "";
+      if (!textContent.includes("Waiting for the dev instance to start")) {
+        throw new Error("Intent summary text should be visible");
+      }
+      if (!textContent.includes("sleep 30 && tail -30 /tmp/develop.log")) {
+        throw new Error("Raw command should stay visible alongside intent");
+      }
+      if (!textContent.includes("for 30.1s")) {
+        throw new Error("Completed duration should be visible outside the intent text");
+      }
+      if (textContent.includes("timeout: 120s")) {
+        throw new Error("Completed intent summaries should not repeat the timeout chip");
+      }
+    });
+  },
+};
+
+export const IntentExecutingSummary: Story = {
+  render: () => (
+    <ToolStoryShell>
+      <BashToolCall
+        workspaceId={STORYBOOK_WORKSPACE_ID}
+        toolCallId="intent-executing-summary"
+        args={{
+          script: "sleep 30 && tail -30 /tmp/develop.log",
+          model_intent: "Waiting for the dev instance to start",
+          run_in_background: false,
+          timeout_secs: 120,
+          display_name: "Dev server readiness",
+        }}
+        status="executing"
+        startedAt={Date.now() - 1_000}
+      />
+    </ToolStoryShell>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      const textContent = canvasElement.textContent ?? "";
+      if (!textContent.includes("Waiting for the dev instance to start")) {
+        throw new Error("Intent summary text should be visible while executing");
+      }
+      if (!textContent.includes("timeout: 120s")) {
+        throw new Error("Executing intent summaries should keep timeout metadata visible");
+      }
+      if (textContent.includes("for 30.1s")) {
+        throw new Error("Executing intent summaries should not show completed duration metadata");
+      }
+    });
+  },
+};
+
+/** when the model omits `model_intent`, the collapsed row falls back to the bare command */
+export const NoIntentSummary: Story = {
+  render: () => (
+    <ToolStoryShell>
+      <BashToolCall
+        workspaceId={STORYBOOK_WORKSPACE_ID}
+        toolCallId="command-summary"
+        args={{
+          script: "sleep 30 && tail -30 /tmp/develop.log",
+          run_in_background: false,
+          timeout_secs: 120,
+          display_name: "Dev server readiness",
+        }}
+        result={{
+          success: true,
+          output: "VITE ready on the sandbox frontend. Backend health check passed.",
+          exitCode: 0,
+          wall_duration_ms: 30_100,
+        }}
+        status="completed"
+      />
+    </ToolStoryShell>
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      const textContent = canvasElement.textContent ?? "";
+      if (!textContent.includes("sleep 30 && tail -30 /tmp/develop.log")) {
+        throw new Error("Raw command should be visible when intent is absent");
+      }
+      if (!textContent.includes("timeout: 120s")) {
+        throw new Error("Command-only mode should keep timeout metadata visible");
+      }
+      if (!textContent.includes("took 30s")) {
+        throw new Error("Command-only mode should keep duration metadata visible");
+      }
+    });
+  },
 };
 
 /** background bash lifecycle: spawn, poll output, list, and terminate */

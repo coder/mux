@@ -1,4 +1,12 @@
-import React, { useState, useRef, useCallback, useEffect, useId, useMemo } from "react";
+import React, {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useLayoutEffect,
+} from "react";
 import {
   CommandSuggestions,
   COMMAND_SUGGESTION_KEYS,
@@ -29,7 +37,12 @@ import {
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
+import {
+  useAdditionalSystemContextHydrated,
+  useAdditionalSystemContextSnapshot,
+} from "@/browser/utils/additionalSystemContextStore";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import {
@@ -58,6 +71,7 @@ import {
 } from "@/browser/utils/chatCommands";
 import { Button } from "@/browser/components/Button/Button";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import { findInlineSkillReferenceAtCursor } from "@/browser/utils/agentSkills/inlineSkillReferences";
 import {
@@ -65,15 +79,21 @@ import {
   getInlineSkillSuggestions,
   shouldRefreshInlineSkillSuggestions,
 } from "@/browser/utils/agentSkills/inlineSkillSuggestions";
+import { resolveWorkspaceCreationScope } from "@/common/utils/subProjects";
 import { getCommandGhostHint } from "@/browser/utils/slashCommands/registry";
 import {
   getSlashCommandSuggestions,
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
+import { resolveSlashCommandExperimentValue } from "@/browser/utils/slashCommands/experimentVisibility";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { AgentModePicker } from "@/browser/components/AgentModePicker/AgentModePicker";
 import { ContextUsageIndicatorButton } from "@/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
-import { useWorkspaceUsage } from "@/browser/stores/WorkspaceStore";
+import {
+  useOptionalWorkspaceSidebarState,
+  useWorkspaceUsage,
+} from "@/browser/stores/WorkspaceStore";
+import { getPlaceholderTip } from "./placeholderTips";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
@@ -85,6 +105,11 @@ import {
   KEYBINDS,
   isEditableElement,
 } from "@/browser/utils/ui/keybinds";
+import {
+  hasBudgetedResumableGoal,
+  modelHasPricingData,
+  UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+} from "@/common/utils/goals/budgetPricing";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import {
   ModelSelector,
@@ -126,7 +151,12 @@ import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 
 import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
-import type { ChatInputProps, ChatInputAPI, QueueDispatchMode } from "./types";
+import type {
+  ChatInputProps,
+  ChatInputAPI,
+  GoalInterventionPolicy,
+  QueueDispatchMode,
+} from "./types";
 import { CreationControls } from "./CreationControls";
 import { SEND_DISPATCH_MODES } from "./sendDispatchModes";
 import { CodexOauthWarningBanner } from "./CodexOauthWarningBanner";
@@ -153,10 +183,21 @@ import {
   type SkillResolutionTarget,
 } from "./utils";
 import { normalizeAgentId } from "@/common/utils/agentIds";
+import { isGoalRunning } from "@/common/types/goal";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
+
+// Normal typing usually has no active suggestion menu. Reuse the existing empty array
+// so suggestion effects do not schedule an avoidable second render on every keypress.
+function clearSuggestions(prev: SlashSuggestion[]): SlashSuggestion[] {
+  return prev.length === 0 ? prev : [];
+}
+
+function replaceSuggestions(prev: SlashSuggestion[], next: SlashSuggestion[]): SlashSuggestion[] {
+  return prev.length === 0 && next.length === 0 ? prev : next;
+}
 
 const PDF_MEDIA_TYPE = "application/pdf";
 
@@ -192,18 +233,32 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
   const { variant } = props;
   const { userProjects } = useProjectContext();
-  const creationProject = variant === "creation" ? userProjects.get(props.projectPath) : undefined;
-  const creationParentProjectPath =
-    variant === "creation" ? (creationProject?.parentProjectPath ?? props.projectPath) : "";
-  const creationSubProjectPath =
+  const creationScope =
     variant === "creation"
-      ? (props.pendingSubProjectPath ??
-        (creationProject?.parentProjectPath ? props.projectPath : undefined))
-      : undefined;
-  const creationProjectPath = creationParentProjectPath;
+      ? resolveWorkspaceCreationScope(props.projectPath, userProjects, props.pendingSubProjectPath)
+      : null;
+  const creationParentProjectPath = creationScope?.projectPath ?? "";
+  const creationSubProjectPath = creationScope?.subProjectPath ?? undefined;
+  const creationProject =
+    variant === "creation" ? userProjects.get(creationParentProjectPath) : undefined;
   const [thinkingLevel] = useThinkingLevel();
+  const workspaceHeartbeatsExperimentEnabled = useExperimentValue(
+    EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
+  );
   const atMentionProjectPath = variant === "creation" ? props.projectPath : null;
+  const asyncCommandScopeRef = useRef<{ variant: typeof variant; workspaceId: string | null }>({
+    variant,
+    workspaceId: variant === "workspace" ? props.workspaceId : null,
+  });
+  const asyncCommandTokenRef = useRef(0);
   const workspaceId = variant === "workspace" ? props.workspaceId : null;
+
+  useEffect(() => {
+    asyncCommandScopeRef.current = { variant, workspaceId };
+  }, [variant, workspaceId]);
+
+  const workspaceSidebarState = useOptionalWorkspaceSidebarState(workspaceId);
+  const workspaceGoal = workspaceSidebarState?.goal ?? null;
 
   // Extract workspace-specific props with defaults
   const disabled = props.disabled ?? false;
@@ -309,11 +364,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [agentSkillDescriptors, setAgentSkillDescriptors] = useState<AgentSkillDescriptor[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
-  // State for destructive command confirmation modal
-  const [pendingDestructiveCommand, setPendingDestructiveCommand] = useState<{
-    type: "clear" | "truncate";
-    percentage?: number;
-  } | null>(null);
+  // State for destructive command confirmation modal (currently only /clear).
+  const [pendingDestructiveCommand, setPendingDestructiveCommand] = useState(false);
   const pushToast = useCallback(
     (nextToast: Omit<Toast, "id" | "type"> & { type: Toast["type"] | "info" }) => {
       // Keep a dedicated "info" intent for callsites while rendering with the shared non-error toast style.
@@ -398,6 +450,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [persistAttachments]
   );
   // Attached reviews come from parent via props (persisted in pendingReviews state).
+  const workspaceIdForComposerClear = variant === "workspace" ? props.workspaceId : null;
+  const onDetachAllReviewsForComposerClear =
+    variant === "workspace" ? props.onDetachAllReviews : undefined;
+
   // draftReviews takes precedence when restoring or editing message drafts.
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
   const draftReviewIdsByValueRef = useRef(new WeakMap<ReviewNoteDataForDisplay, string>());
@@ -601,7 +657,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Get current send message options from shared hook (must be at component top level)
   // For creation variant, use project-scoped key; for workspace, use workspace ID
   const sendMessageOptions = useSendMessageOptions(
-    variant === "workspace" ? props.workspaceId : getProjectScopeId(creationProjectPath)
+    variant === "workspace" ? props.workspaceId : getProjectScopeId(creationParentProjectPath)
+  );
+  const additionalSystemContext = useAdditionalSystemContextSnapshot(
+    variant === "workspace" ? props.workspaceId : ""
+  );
+  const additionalSystemContextHydrated = useAdditionalSystemContextHydrated(
+    variant === "workspace" ? props.workspaceId : ""
   );
   // Extract models for convenience (don't create separate state - use hook as single source of truth)
   // - preferredModel: selected model used for backend routing, preserving explicit gateway choices
@@ -651,6 +713,19 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       >;
 
       const selectedModel = normalizeSelectedModel(model);
+      if (
+        variant === "workspace" &&
+        hasBudgetedResumableGoal(workspaceGoal) &&
+        !modelHasPricingData(selectedModel, providersConfig)
+      ) {
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+        });
+        return;
+      }
+
       ensureModelInSettings(selectedModel); // Ensure model exists in Settings
 
       if (onModelChange) {
@@ -659,7 +734,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         onModelChange(selectedModel);
       } else {
         const scopeId =
-          variant === "creation" ? getProjectScopeId(creationProjectPath) : workspaceId;
+          variant === "creation" ? getProjectScopeId(creationParentProjectPath) : workspaceId;
         if (scopeId) {
           setWorkspaceModelWithOrigin(scopeId, selectedModel, "user");
         }
@@ -713,11 +788,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [
       api,
       agentId,
-      creationProjectPath,
+      creationParentProjectPath,
       ensureModelInSettings,
+      providersConfig,
       onModelChange,
       thinkingLevel,
       variant,
+      workspaceGoal,
       workspaceId,
     ]
   );
@@ -754,13 +831,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Creation-specific state (hook always called, but only used when variant === "creation")
   // This avoids conditional hook calls which violate React rules
+  const creationNameMessage =
+    variant === "creation"
+      ? (() => {
+          const parsedCreationCommand = parseCommand(input.trim());
+          return parsedCreationCommand?.type === "goal-set"
+            ? parsedCreationCommand.objective
+            : input;
+        })()
+      : "";
   const creationState = useCreationWorkspace(
     variant === "creation"
       ? {
           projectPath: creationParentProjectPath,
           subProjectPath: creationSubProjectPath,
           onWorkspaceCreated: props.onWorkspaceCreated,
-          message: input,
+          message: creationNameMessage,
           draftId: props.pendingDraftId,
           userModel: preferredModel,
         }
@@ -831,7 +917,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           onSelectedRuntimeChange: creationState.setSelectedRuntime,
           onSetDefaultRuntime: creationState.setDefaultRuntimeChoice,
           disabled: isSendInFlight,
-          projectPath: creationParentProjectPath || props.projectPath,
+          projectPath: creationParentProjectPath,
           // Surface the actually-targeted project (possibly a sub-project) to
           // the dropdown so the trigger label reflects what the user picked,
           // while runtime/settings scoping stays on the parent above. When
@@ -905,6 +991,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     !sendInFlightBlocksInput &&
     !coderPresetsLoading &&
     !policyBlocksCreateSend;
+  const runningGoalActive =
+    variant === "workspace" && isGoalRunning(workspaceGoal?.status ?? "paused");
+  const shouldDefaultSteerGoal = runningGoalActive && !editingMessageForUi;
+
   // Send defaults to tool-end on click; advanced dispatch modes remain available via
   // right-click and touch long-press whenever there's a sendable workspace draft.
   const canChooseDispatchMode = variant === "workspace" && canSend;
@@ -974,7 +1064,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    const scopeId = getProjectScopeId(creationProjectPath);
+    const scopeId = getProjectScopeId(creationParentProjectPath);
     const modelKey = getModelKey(scopeId);
     const thinkingKey = getThinkingLevelKey(scopeId);
 
@@ -1010,7 +1100,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (existingThinking !== resolvedThinking) {
       updatePersistedState(thinkingKey, resolvedThinking);
     }
-  }, [agentAiDefaults, agentId, creationProjectPath, defaultModel, variant]);
+  }, [agentAiDefaults, agentId, creationParentProjectPath, defaultModel, variant]);
 
   // Expose ChatInput auto-focus completion for Storybook/tests.
   const chatInputSectionRef = useRef<HTMLDivElement | null>(null);
@@ -1180,7 +1270,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       atMentionRequestIdRef.current++;
       lastAtMentionScopeIdRef.current = null;
       lastAtMentionQueryRef.current = null;
-      setAtMentionSuggestions([]);
+      setAtMentionSuggestions(clearSuggestions);
       setShowAtMentionSuggestions(false);
       return;
     }
@@ -1193,7 +1283,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       atMentionRequestIdRef.current++;
       lastAtMentionScopeIdRef.current = null;
       lastAtMentionQueryRef.current = null;
-      setAtMentionSuggestions([]);
+      setAtMentionSuggestions(clearSuggestions);
       setShowAtMentionSuggestions(false);
       return;
     }
@@ -1264,7 +1354,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           setShowAtMentionSuggestions(nextSuggestions.length > 0);
         } catch {
           if (atMentionRequestIdRef.current === requestId) {
-            setAtMentionSuggestions([]);
+            setAtMentionSuggestions(clearSuggestions);
             setShowAtMentionSuggestions(false);
           }
         }
@@ -1301,7 +1391,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const match = findInlineSkillReferenceAtCursor(input, cursor);
 
     if (!match) {
-      setSkillSuggestions([]);
+      setSkillSuggestions(clearSuggestions);
       setShowSkillSuggestions(false);
       lastSkillQueryRef.current = null;
       return;
@@ -1332,19 +1422,29 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     setShowSkillSuggestions(nextSuggestions.length > 0);
   }, [input, showAtMentionSuggestions, agentSkillDescriptors, atMentionCursorNonce]);
 
-  // Watch input for slash commands
-  useEffect(() => {
+  // Keep slash suggestions current before Enter can accept a stale item.
+  useLayoutEffect(() => {
     const suggestions = getSlashCommandSuggestions(input, {
       agentSkills: agentSkillDescriptors,
       variant,
+      isExperimentEnabled: (experimentId) =>
+        resolveSlashCommandExperimentValue(experimentId, {
+          workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
+        }),
     });
-    setCommandSuggestions(suggestions);
+    setCommandSuggestions((prev) => replaceSuggestions(prev, suggestions));
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, agentSkillDescriptors, variant]);
+  }, [input, agentSkillDescriptors, variant, workspaceHeartbeatsExperimentEnabled]);
 
   // Derive ghost hint for slash-command argument syntax.
   // Show only when suggestions are hidden and the input is exactly "/command " with no args yet.
-  const commandGhostHint = getCommandGhostHint(input, showCommandSuggestions, variant);
+  const commandGhostHint = getCommandGhostHint(input, showCommandSuggestions, {
+    variant,
+    isExperimentEnabled: (experimentId) =>
+      resolveSlashCommandExperimentValue(experimentId, {
+        workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
+      }),
+  });
 
   // Load agent skills for suggestions
   useEffect(() => {
@@ -1503,6 +1603,26 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       window.removeEventListener(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, handler as EventListener);
   }, [appendText, restoreText, restoreDraft, applyDraftFromPending, getDraft, editingMessageForUi]);
 
+  useEffect(() => {
+    const handler = (event: CustomEvent<{ workspaceId: string }>) => {
+      if (workspaceIdForComposerClear !== event.detail.workspaceId) {
+        return;
+      }
+
+      setInput("");
+      setAttachments([]);
+      setDraftReviews(null);
+      onDetachAllReviewsForComposerClear?.();
+      if (inputRef.current) {
+        inputRef.current.style.height = "";
+      }
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handler as EventListener);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handler as EventListener);
+  }, [onDetachAllReviewsForComposerClear, setAttachments, setInput, workspaceIdForComposerClear]);
+
   // Allow external components to open the Model Selector
   useEffect(() => {
     const handler = () => {
@@ -1544,6 +1664,24 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, handler as EventListener);
   }, [variant, props, pushToast]);
+
+  // Show the backend's one-shot child-budget warning on the matching parent workspace.
+  useEffect(() => {
+    if (variant !== "workspace") return;
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId: string; message: string }>).detail;
+      if (detail?.workspaceId !== workspaceId || !detail.message) {
+        return;
+      }
+
+      pushToast({ type: "error", message: detail.message });
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.GOAL_CHILD_BUDGET_TOAST, handler as EventListener);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.GOAL_CHILD_BUDGET_TOAST, handler as EventListener);
+  }, [variant, workspaceId, pushToast]);
 
   // Show toast feedback for analytics rebuild command palette action.
   useEffect(() => {
@@ -1760,7 +1898,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const executeParsedCommand = async (
     parsed: ParsedCommand | null,
     restoreInput: string,
-    options?: { skipConfirmation?: boolean; queueDispatchMode?: QueueDispatchMode }
+    options?: {
+      skipConfirmation?: boolean;
+      queueDispatchMode?: QueueDispatchMode;
+      goalInterventionPolicy?: GoalInterventionPolicy;
+    }
   ): Promise<boolean> => {
     if (!parsed) {
       return false;
@@ -1780,12 +1922,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return false;
     }
 
-    const isDestructive = parsed.type === "clear" || parsed.type === "truncate";
+    const isDestructive = parsed.type === "clear" && parsed.mode === "hard";
     if (isDestructive && variant === "workspace" && !options?.skipConfirmation) {
-      setPendingDestructiveCommand({
-        type: parsed.type,
-        percentage: parsed.type === "truncate" ? parsed.percentage : undefined,
-      });
+      setPendingDestructiveCommand(true);
       return true;
     }
 
@@ -1794,23 +1933,39 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Thread dispatch mode into send options so queued command sends stay in sync with normal sends.
     const commandSendMessageOptions: SendMessageOptions = {
       ...sendMessageOptions,
+      ...(options?.goalInterventionPolicy
+        ? { goalInterventionPolicy: options.goalInterventionPolicy }
+        : {}),
       ...(dispatchMode === "tool-end" ? {} : { queueDispatchMode: dispatchMode }),
     };
     // Prepare file parts for commands that need to send messages with attachments
     const commandFileParts = chatAttachmentsToFileParts(attachments, { validate: true });
+    const asyncCommandToken = ++asyncCommandTokenRef.current;
     const commandContext: SlashCommandContext = {
       api,
       variant,
       workspaceId: commandWorkspaceId,
       projectPath: commandProjectPath,
       openSettings: open,
+      currentModel: workspaceSidebarState?.currentModel ?? null,
       sendMessageOptions: commandSendMessageOptions,
+      getInput: () => getDraft().text,
       setInput,
       setAttachments,
       setSendingState: (increment: boolean) => setSendingCount((c) => c + (increment ? 1 : -1)),
       setToast,
       setPreferredModel,
       setVimEnabled,
+      asyncCommandToken,
+      isAsyncCommandCurrent: (token, originWorkspaceId) => {
+        const scope = asyncCommandScopeRef.current;
+        return (
+          token === asyncCommandTokenRef.current &&
+          scope.variant === "workspace" &&
+          scope.workspaceId === originWorkspaceId
+        );
+      },
+      onResetContext: variant === "workspace" ? props.onResetContext : undefined,
       onTruncateHistory: variant === "workspace" ? props.onTruncateHistory : undefined,
       resetInputHeight: () => {
         if (inputRef.current) {
@@ -1822,6 +1977,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       reviews: reviewsData,
       fileParts: commandFileParts.length > 0 ? commandFileParts : undefined,
       onMessageSent: variant === "workspace" ? props.onMessageSent : undefined,
+      onDetachAllReviews: variant === "workspace" ? props.onDetachAllReviews : undefined,
       onCheckReviews: variant === "workspace" ? props.onCheckReviews : undefined,
       attachedReviewIds: reviewIdsForCheck,
     };
@@ -1843,24 +1999,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return true;
   };
 
-  // Handle destructive command confirmation
+  // Handle destructive command confirmation (currently only /clear).
   const handleDestructiveCommandConfirm = async () => {
     if (!pendingDestructiveCommand || variant !== "workspace") return;
 
-    const parsedCommand: ParsedCommand =
-      pendingDestructiveCommand.type === "clear"
-        ? { type: "clear" }
-        : {
-            type: "truncate",
-            percentage: pendingDestructiveCommand.percentage ?? 0,
-          };
+    const parsedCommand: ParsedCommand = { type: "clear", mode: "hard" };
 
-    setPendingDestructiveCommand(null);
+    setPendingDestructiveCommand(false);
     await executeParsedCommand(parsedCommand, input, { skipConfirmation: true });
   };
 
   const handleDestructiveCommandCancel = useCallback(() => {
-    setPendingDestructiveCommand(null);
+    setPendingDestructiveCommand(false);
   }, []);
 
   // Handle drag over to allow drop
@@ -1925,7 +2075,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         input.slice(match.endIndex);
 
       setInput(next);
-      setAtMentionSuggestions([]);
+      setAtMentionSuggestions(clearSuggestions);
       setShowAtMentionSuggestions(false);
 
       requestAnimationFrame(() => {
@@ -1957,7 +2107,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const next = input.slice(0, match.startIndex) + suggestion.replacement + trailing + after;
 
       setInput(next);
-      setSkillSuggestions([]);
+      setSkillSuggestions(clearSuggestions);
       setShowSkillSuggestions(false);
       lastSkillQueryRef.current = null;
 
@@ -1985,7 +2135,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setInput]
   );
 
-  const handleSend = async (overrides?: { queueDispatchMode?: QueueDispatchMode }) => {
+  const handleSend = async (overrides?: {
+    queueDispatchMode?: QueueDispatchMode;
+    goalInterventionPolicy?: GoalInterventionPolicy;
+  }) => {
     if (!canSend) {
       return;
     }
@@ -2021,12 +2174,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
-      const commandHandled = await executeParsedCommand(parsed, input);
-      if (commandHandled) {
-        return;
+      const initialGoalCommand = parsed?.type === "goal-set" ? parsed : undefined;
+      if (!initialGoalCommand) {
+        const commandHandled = await executeParsedCommand(parsed, input);
+        if (commandHandled) {
+          return;
+        }
       }
 
-      let creationMessageTextForSend = messageText;
+      let creationMessageTextForSend = initialGoalCommand?.objective ?? messageText;
       let creationOptionsOverride: Partial<SendMessageOptions> | undefined;
 
       if (skillInvocation) {
@@ -2070,7 +2226,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const creationResult = await creationState.handleSend(
         creationMessageTextForSend,
         creationFileParts.length > 0 ? creationFileParts : undefined,
-        creationOptionsOverride
+        creationOptionsOverride,
+        initialGoalCommand
       );
 
       if (creationResult.success) {
@@ -2095,11 +2252,19 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const commandHandled = modelOneShot
         ? false
         : await executeParsedCommand(parsed, input, {
+            goalInterventionPolicy:
+              overrides?.goalInterventionPolicy ?? (shouldDefaultSteerGoal ? "steer" : undefined),
             queueDispatchMode: overrides?.queueDispatchMode,
           });
       if (commandHandled) {
         return;
       }
+
+      // A normal workspace send supersedes any pending fire-and-forget slash
+      // command completion (notably /btw). If that older async command fails
+      // after this send clears the composer, it must not restore stale command
+      // text over the newer turn.
+      asyncCommandTokenRef.current++;
 
       const modelOverride = modelOneShot?.modelString;
 
@@ -2279,14 +2444,28 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           rawThinkingOverride != null
             ? resolveThinkingInput(rawThinkingOverride, policyModel)
             : undefined;
+        const goalInterventionPolicy =
+          overrides?.goalInterventionPolicy ?? (shouldDefaultSteerGoal ? "steer" : undefined);
+
         const sendOptions = {
           ...sendMessageOptions,
           ...compactionOptions,
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
+          ...(goalInterventionPolicy ? { goalInterventionPolicy } : {}),
           ...(overrides?.queueDispatchMode
             ? { queueDispatchMode: overrides.queueDispatchMode }
+            : {}),
+          // Honor the per-workspace "Chat Instructions" toggle: when the user
+          // has disabled the scratchpad, send an empty string so the backend
+          // doesn't fall back to reading the durable content from disk.
+          ...(additionalSystemContextHydrated
+            ? {
+                additionalSystemContext: additionalSystemContext.enabled
+                  ? additionalSystemContext.content
+                  : "",
+              }
             : {}),
           additionalSystemInstructions,
           editMessageId: editMessageForSend?.id,
@@ -2515,8 +2694,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to queue)`;
     }
 
-    // Keep placeholder minimal; shortcut hints are rendered below the input.
-    return "Type a message...";
+    // Tip carousel: rotates the placeholder through a curated list of
+    // slash-command tricks on a wall-clock bucket so switching workspaces
+    // mid-bucket doesn't reroll the visible tip. See placeholderTips.ts.
+    //
+    // Mobile gets the plain placeholder because the on-screen keyboard already
+    // squeezes the input and a long English sentence in the placeholder looks
+    // like a wall of grey text instead of a hint.
+    if (isMobileTouch) {
+      return "Type a message...";
+    }
+    return getPlaceholderTip();
   })();
 
   const activeToast = toast ?? (variant === "creation" ? creationState.toast : null);
@@ -2867,6 +3055,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           <br />
                           <br />
                           <strong>Right-click or long-press for advanced send modes:</strong>
+                          {runningGoalActive && !editingMessageForUi && (
+                            <>
+                              <br />
+                              Send and pause goal: right-click menu
+                            </>
+                          )}
                           {SEND_DISPATCH_MODES.map((entry) => (
                             <React.Fragment key={entry.mode}>
                               <br />
@@ -2900,6 +3094,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           </kbd>
                         </button>
                       ))}
+                      {runningGoalActive && !editingMessageForUi && (
+                        <button
+                          type="button"
+                          className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1 text-left text-xs"
+                          onClick={() => {
+                            closeSendModeMenu();
+                            void handleSend({ goalInterventionPolicy: "pause" });
+                          }}
+                        >
+                          <span className="whitespace-nowrap">Send and pause goal</span>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2909,21 +3115,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         </div>
       </div>
 
-      {/* Confirmation modal for destructive commands */}
+      {/* Confirmation modal for destructive commands (currently only /clear). */}
       <ConfirmationModal
-        isOpen={pendingDestructiveCommand !== null}
-        title={
-          pendingDestructiveCommand?.type === "clear"
-            ? "Clear Chat History?"
-            : `Truncate ${Math.round((pendingDestructiveCommand?.percentage ?? 0) * 100)}% of Chat History?`
-        }
-        description={
-          pendingDestructiveCommand?.type === "clear"
-            ? "This will remove all messages from the conversation."
-            : `This will remove approximately ${Math.round((pendingDestructiveCommand?.percentage ?? 0) * 100)}% of the oldest messages.`
-        }
+        isOpen={pendingDestructiveCommand}
+        title="Clear Chat History?"
+        description="This will remove all messages from the conversation."
         warning="This action cannot be undone."
-        confirmLabel={pendingDestructiveCommand?.type === "clear" ? "Clear" : "Truncate"}
+        confirmLabel="Clear"
         onConfirm={handleDestructiveCommandConfirm}
         onCancel={handleDestructiveCommandCancel}
       />

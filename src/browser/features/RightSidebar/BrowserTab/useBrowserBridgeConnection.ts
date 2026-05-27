@@ -5,6 +5,7 @@ import type {
   BrowserViewportMetadata,
   BrowserInputEvent,
   BrowserSession,
+  BrowserSessionAttachOptions,
   BrowserStreamState,
 } from "./browserBridgeTypes";
 
@@ -174,7 +175,7 @@ function createSession(
 
 export function useBrowserBridgeConnection(workspaceId: string): {
   session: BrowserSession | null;
-  connect: (sessionName: string) => void;
+  connect: (sessionName: string, options?: BrowserSessionAttachOptions) => void;
   disconnect: () => void;
   sendInput: (input: BrowserInputEvent) => void;
   setPendingUrl: (url: string | null) => void;
@@ -216,11 +217,10 @@ export function useBrowserBridgeConnection(workspaceId: string): {
     disconnectSocket(null, { intentionalCloseGeneration: generation });
   };
 
-  const connect = (sessionName: string) => {
+  const connect = (sessionName: string, options?: BrowserSessionAttachOptions) => {
     if (sessionName.trim().length === 0) {
       throw new Error("Browser bridge connection requires a non-empty sessionName");
     }
-
     void (async () => {
       const generation = generationRef.current + 1;
       generationRef.current = generation;
@@ -248,6 +248,9 @@ export function useBrowserBridgeConnection(workspaceId: string): {
         const bootstrap = await api.browser.getBootstrap({
           workspaceId,
           sessionName,
+          ...(options?.allowOtherWorkspaceSession === true
+            ? { allowOtherWorkspaceSession: true }
+            : {}),
         });
         if (generationRef.current !== generation) {
           return;

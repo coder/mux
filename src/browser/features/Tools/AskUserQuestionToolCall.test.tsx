@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
+import type { ReactElement } from "react";
 
 import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
+
+// ToolIcon renders a Radix Tooltip, which requires a TooltipProvider in the
+// React tree. Wrap each render so the icon can mount without throwing.
+function renderWithProviders(ui: ReactElement) {
+  return render(<TooltipProvider>{ui}</TooltipProvider>);
+}
 
 let currentWorkspaceState: {
   autoRetryStatus: { type: "auto-retry-scheduled" | "auto-retry-starting" } | null;
@@ -108,7 +116,7 @@ describe("AskUserQuestionToolCall", () => {
   });
 
   test("rolls back temporary auto-retry enablement when component unmounts", async () => {
-    const view = render(
+    const view = renderWithProviders(
       <AskUserQuestionToolCall
         args={{ questions: [], answers: {} }}
         result={null}
@@ -145,7 +153,7 @@ describe("AskUserQuestionToolCall", () => {
   });
 
   test("restores preference when terminal update arrives without in-flight snapshots", async () => {
-    const view = render(
+    const view = renderWithProviders(
       <AskUserQuestionToolCall
         args={{ questions: [], answers: {} }}
         result={null}
@@ -171,13 +179,15 @@ describe("AskUserQuestionToolCall", () => {
       messages: [{ type: "assistant" }],
     };
     view.rerender(
-      <AskUserQuestionToolCall
-        args={{ questions: [], answers: {} }}
-        result={null}
-        status="executing"
-        toolCallId="ask-3"
-        workspaceId="ws-ask"
-      />
+      <TooltipProvider>
+        <AskUserQuestionToolCall
+          args={{ questions: [], answers: {} }}
+          result={null}
+          status="executing"
+          toolCallId="ask-3"
+          workspaceId="ws-ask"
+        />
+      </TooltipProvider>
     );
 
     await waitFor(() => {
@@ -201,7 +211,7 @@ describe("AskUserQuestionToolCall", () => {
       Promise.resolve({ success: true as const, data: { started: false } })
     );
 
-    const view = render(
+    const view = renderWithProviders(
       <AskUserQuestionToolCall
         args={{ questions: [], answers: {} }}
         result={null}
@@ -236,7 +246,7 @@ describe("AskUserQuestionToolCall", () => {
     answerAskUserQuestion.mockImplementationOnce((_input: unknown) => answerDeferred.promise);
     resumeStream.mockImplementationOnce((_input: unknown) => resumeDeferred.promise);
 
-    const view = render(
+    const view = renderWithProviders(
       <AskUserQuestionToolCall
         args={{ questions: [], answers: {} }}
         result={null}

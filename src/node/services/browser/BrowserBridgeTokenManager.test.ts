@@ -1,15 +1,14 @@
-import { afterEach, describe, expect, it, setSystemTime, vi } from "bun:test";
+import { afterEach, describe, expect, it, setSystemTime } from "bun:test";
 import { AssertionError } from "@/common/utils/assert";
 import { BrowserBridgeTokenManager } from "./BrowserBridgeTokenManager";
 
 const TOKEN_TTL_MS = 30_000;
 
-describe("BrowserBridgeTokenManager", () => {
-  afterEach(() => {
-    setSystemTime();
-    vi.useRealTimers();
-  });
+afterEach(() => {
+  setSystemTime();
+});
 
+describe("BrowserBridgeTokenManager", () => {
   it("mints a 64-character hex token", () => {
     const manager = new BrowserBridgeTokenManager();
 
@@ -42,8 +41,27 @@ describe("BrowserBridgeTokenManager", () => {
         workspaceId: "workspace-1",
         sessionName: "session-a",
         streamPort: 9222,
+        allowOtherWorkspaceSession: false,
       });
       expect(manager.validate(token)).toBeNull();
+    } finally {
+      manager.dispose();
+    }
+  });
+
+  it("preserves explicit other-workspace session scope", () => {
+    const manager = new BrowserBridgeTokenManager();
+
+    try {
+      const token = manager.mint("workspace-1", "session-a", 9222, {
+        allowOtherWorkspaceSession: true,
+      });
+      expect(manager.validate(token)).toEqual({
+        workspaceId: "workspace-1",
+        sessionName: "session-a",
+        streamPort: 9222,
+        allowOtherWorkspaceSession: true,
+      });
     } finally {
       manager.dispose();
     }

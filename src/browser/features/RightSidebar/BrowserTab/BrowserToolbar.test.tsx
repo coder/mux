@@ -135,6 +135,26 @@ describe("BrowserToolbar", () => {
     });
   });
 
+  test("preserves file URLs when submitting navigation", async () => {
+    const { onSetPendingUrl, getByLabelText } = renderToolbar({
+      pendingUrl: "file:///Users/me/report.html",
+    });
+    const input = getByLabelText("Browser URL") as HTMLInputElement;
+
+    input.focus();
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onSetPendingUrl).toHaveBeenCalledWith("file:///Users/me/report.html");
+    await waitFor(() => {
+      expect(controlMock).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        sessionName: "session-a",
+        action: "open",
+        url: "file:///Users/me/report.html",
+      });
+    });
+  });
+
   test("shows open command errors returned by the browser control API", async () => {
     controlMock.mockResolvedValueOnce({ success: false, error: "Navigation failed" });
     const { onSetPendingUrl, getByLabelText, getByText } = renderToolbar({
@@ -187,6 +207,21 @@ describe("BrowserToolbar", () => {
         workspaceId: "workspace-1",
         sessionName: "session-a",
         action: "reload",
+      });
+    });
+  });
+
+  test("sends explicit other-workspace scope with browser control commands", async () => {
+    const view = renderToolbar({ allowOtherWorkspaceSession: true });
+
+    fireEvent.click(view.getByLabelText("Reload"));
+
+    await waitFor(() => {
+      expect(controlMock).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        sessionName: "session-a",
+        action: "reload",
+        allowOtherWorkspaceSession: true,
       });
     });
   });

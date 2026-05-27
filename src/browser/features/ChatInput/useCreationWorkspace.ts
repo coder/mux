@@ -39,6 +39,9 @@ import { ConfirmationModal } from "@/browser/components/ConfirmationModal/Confir
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import type { WorkspaceCreatedOptions } from "@/browser/features/ChatInput/types";
+import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
+import { processSlashCommand, type SlashCommandContext } from "@/browser/utils/chatCommands";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
   useWorkspaceName,
   type WorkspaceNameState,
@@ -58,6 +61,7 @@ import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 export type CreationSendResult = { success: true } | { success: false; error?: SendMessageError };
+export type CreationInitialSlashCommand = Extract<ParsedCommand, { type: "goal-set" }>;
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -173,7 +177,8 @@ interface UseCreationWorkspaceReturn {
   handleSend: (
     message: string,
     fileParts?: FilePart[],
-    optionsOverride?: Partial<SendMessageOptions>
+    optionsOverride?: Partial<SendMessageOptions>,
+    initialSlashCommand?: CreationInitialSlashCommand
   ) => Promise<CreationSendResult>;
   /** Workspace name/title generation state and actions (for CreationControls) */
   nameState: WorkspaceNameState;
@@ -346,7 +351,8 @@ export function useCreationWorkspace({
     async (
       messageText: string,
       fileParts?: FilePart[],
-      optionsOverride?: Partial<SendMessageOptions>
+      optionsOverride?: Partial<SendMessageOptions>,
+      initialSlashCommand?: CreationInitialSlashCommand
     ): Promise<CreationSendResult> => {
       if (!messageText.trim() || isSending || !api) {
         return { success: false };
@@ -512,8 +518,10 @@ export function useCreationWorkspace({
         createdWorkspaceId = metadata.id;
 
         // Best-effort: persist the initial AI settings to the backend immediately so this workspace
-        // is portable across devices even before the first stream starts.
-        api.workspace
+        // is portable across devices even before the first stream starts. Initial /goal commands do
+        // not send a normal user message, so they await this write before setting the goal; that lets
+        // the backend kickoff continuation use the same model/agent selected in creation.
+        const initialAiSettingsPersisted = api.workspace
           .updateAgentAISettings({
             workspaceId: metadata.id,
             agentId: settings.agentId,
@@ -521,10 +529,9 @@ export function useCreationWorkspace({
               model: settings.model,
               thinkingLevel: settings.thinkingLevel,
             },
+            persistSelectedAgentId: true,
           })
-          .catch(() => {
-            // Ignore - sendMessage will persist AI settings as a fallback.
-          });
+          .catch(() => null);
 
         const isDraftScope = typeof draftId === "string" && draftId.trim().length > 0;
         const pendingScopeId = projectPath
@@ -566,6 +573,7 @@ export function useCreationWorkspace({
         onWorkspaceCreated(metadata, {
           autoNavigate: shouldAutoNavigate,
           pendingStreamModel: shouldAutoNavigate ? baseModel : null,
+          markPendingInitialSend: initialSlashCommand == null,
         });
 
         if (typeof draftId === "string" && draftId.trim().length > 0 && promoteWorkspaceDraft) {
@@ -576,6 +584,43 @@ export function useCreationWorkspace({
         // Persistently clear the draft as soon as the workspace exists so a refresh
         // during the initial send can't resurrect the draft entry in the sidebar.
         clearPendingDraft();
+
+        if (initialSlashCommand) {
+          await initialAiSettingsPersisted;
+          const commandContext: SlashCommandContext = {
+            api,
+            workspaceId: metadata.id,
+            variant: "workspace",
+            projectPath,
+            sendMessageOptions,
+            setInput: () => undefined,
+            setAttachments: () => undefined,
+            setSendingState: () => undefined,
+            setToast,
+            setPreferredModel: () => undefined,
+            setVimEnabled: () => undefined,
+            resetInputHeight: () => undefined,
+          };
+          const commandResult = await processSlashCommand(initialSlashCommand, commandContext);
+          setIsSending(false);
+
+          if (!commandResult.clearInput) {
+            workspaceStore.clearPendingInitialSendState(metadata.id);
+            return { success: false };
+          }
+
+          const openGoalTab = () => {
+            window.dispatchEvent(
+              createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId: metadata.id })
+            );
+          };
+          if (typeof window.requestAnimationFrame === "function") {
+            window.requestAnimationFrame(openGoalTab);
+          } else {
+            openGoalTab();
+          }
+          return { success: true };
+        }
 
         setIsSending(false);
 

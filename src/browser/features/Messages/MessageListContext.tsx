@@ -24,11 +24,3 @@ export const MessageListProvider: React.FC<MessageListProviderProps> = (props) =
 export function useOptionalMessageListContext(): MessageListContextValue | null {
   return useContext(MessageListContext);
 }
-
-export function useMessageListContext(): MessageListContextValue {
-  const context = useContext(MessageListContext);
-  if (!context) {
-    throw new Error("useMessageListContext must be used within MessageListProvider");
-  }
-  return context;
-}

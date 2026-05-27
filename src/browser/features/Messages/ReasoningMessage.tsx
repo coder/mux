@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
+import React, { useState, useRef, useLayoutEffect } from "react";
 import type { DisplayedMessage } from "@/common/types/message";
 import { TypewriterMarkdown } from "./TypewriterMarkdown";
 import { normalizeReasoningMarkdown } from "./MarkdownStyles";
@@ -52,10 +52,6 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({
   workspaceId,
 }) => {
   const [isExpanded, setIsExpanded] = useState(message.isStreaming);
-  // Track the height when expanded to reserve space during collapse transitions
-  const [expandedHeight, setExpandedHeight] = useState<number | null>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-
   const content = message.content;
   const isStreaming = message.isStreaming;
   const trimmedContent = content?.trim() ?? "";
@@ -72,15 +68,6 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({
   const isCollapsible = !isStreaming && hasContent && hasAdditionalLines;
   const showEllipsis = isCollapsible && !isExpanded;
   const showExpandedContent = isExpanded && !isSingleLineTrace;
-
-  // Capture expanded height before settled collapse/expand transitions. During live
-  // streaming the container is height:auto and doesn't use this value, so skip the
-  // synchronous scrollHeight read on every token delta.
-  useLayoutEffect(() => {
-    if (!isStreaming && contentRef.current && isExpanded && !isSingleLineTrace) {
-      setExpandedHeight(contentRef.current.scrollHeight);
-    }
-  }, [isStreaming, isExpanded, isSingleLineTrace, content]);
 
   const wasStreamingRef = useRef(isStreaming);
   const isLastPartOfMessage =
@@ -100,7 +87,7 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({
   // `isStreaming` off, which used to trigger a mid-turn 200ms height→0 animation
   // (a very visible vertical tear). Keeping the reasoning expanded in that case
   // lets the user continue reading it while the assistant moves on.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const wasStreaming = wasStreamingRef.current;
     wasStreamingRef.current = isStreaming;
 
@@ -215,24 +202,21 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({
         )}
       </div>
 
-      {/* Always render the content container to prevent layout shifts.
-          Use CSS transitions only for user-initiated collapse/expand of *settled*
-          reasoning. During live streaming we leave the container uncontrolled
-          (height: auto, no transition); otherwise each incoming delta re-targets
-          scrollHeight through a 200ms height animation, which clips newly arrived
-          tokens and produces a slow drip-in effect that reads as jitter. */}
+      {/* Always render the content container to prevent layout shifts. Keep live and
+          expanded content height uncontrolled so async markdown growth (Shiki/Mermaid)
+          cannot be clipped by a stale measured height; only collapsed settled content
+          gets height:0. */}
       <div
-        ref={contentRef}
         className={cn(
           REASONING_FONT_CLASSES,
           "italic opacity-85 [&_p]:mt-0 [&_p]:mb-1 [&_p:last-child]:mb-0",
-          !isStreaming && "overflow-hidden transition-[height,opacity] duration-200 ease-in-out"
+          !isStreaming && "overflow-hidden transition-opacity duration-200 ease-in-out"
         )}
         style={
           isStreaming
             ? undefined
             : {
-                height: showExpandedContent ? (expandedHeight ?? "auto") : 0,
+                height: showExpandedContent ? undefined : 0,
                 opacity: showExpandedContent ? 1 : 0,
               }
         }

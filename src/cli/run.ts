@@ -35,6 +35,7 @@ import {
   type SendMessageOptions,
   type WorkspaceChatMessage,
 } from "../common/orpc/types";
+import type { ServiceTier } from "../common/config/schemas/providersConfig";
 import { createDisplayUsage } from "../common/utils/tokens/displayUsage";
 import {
   getTotalCost,
@@ -70,11 +71,22 @@ import { log, type LogLevel } from "../node/services/log";
 import chalk from "chalk";
 import type { InitLogger, WorkspaceInitResult } from "../node/runtime/Runtime";
 import { DockerRuntime } from "../node/runtime/DockerRuntime";
-import { runFullInit } from "../node/runtime/runtimeFactory";
+import { createRuntime, runFullInit } from "../node/runtime/runtimeFactory";
+import type { Runtime } from "../node/runtime/Runtime";
 import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 import { EXPERIMENT_IDS } from "../common/constants/experiments";
 import { getErrorMessage } from "@/common/utils/errors";
+import { describeCliGoalStop, driveCliGoalUntilTerminal } from "./goalRunDriver";
+import {
+  parseGoalBudgetInputCents,
+  parseGoalTurnCapInput,
+} from "@/common/utils/goals/budgetParser";
+import {
+  CLI_GOAL_STREAM_START_TIMEOUT_MS,
+  GOAL_CONTINUATION_IDLE_CONSUMER_NAME,
+} from "@/constants/goals";
+import type { GoalRecordV1 } from "@/common/types/goal";
 
 // Display labels for CLI help (OFF, LOW, MED, HIGH, MAX).
 // Deduplicate because xhigh and max both display as "MAX" for default/Anthropic
@@ -102,7 +114,24 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
     case RUNTIME_MODE.WORKTREE:
       return { type: "worktree", srcBaseDir };
     case RUNTIME_MODE.SSH:
-      return { type: "ssh", host: parsed.host, srcBaseDir };
+      // STARTUP-PERF: Use a STABLE remote `srcBaseDir` (default: `~/mux`,
+      // matching the desktop app) instead of the CLI's ephemeral temp dir.
+      //
+      // The remote `baseRepoPath` is derived as
+      //     <srcBaseDir>/<projectId>/.mux-base.git
+      // where `projectId` is keyed by the *local* project path. If
+      // `srcBaseDir` is ephemeral (a fresh `mux-run-*` temp dir per
+      // invocation), every CLI run gets a brand-new remote base repo even
+      // when running back-to-back against the same SSH host + project, so
+      // every run pays the full cold-init cost (git init, push, fetch,
+      // worktree-add ~2.2s).
+      //
+      // Anchoring `srcBaseDir` to the stable `~/mux` location lets the second
+      // and subsequent `mux run` invocations reuse the existing shared base
+      // repo on the remote, hitting the warm path
+      // (`Reusing existing remote project snapshot`) — a single bounded SSH
+      // round-trip instead of a full create + sync + push.
+      return { type: "ssh", host: parsed.host, srcBaseDir: "~/mux" };
     case RUNTIME_MODE.DOCKER:
       return { type: "docker", image: parsed.image };
     default:
@@ -131,19 +160,66 @@ function parseMode(value: string | undefined): CLIMode {
   throw new Error(`Invalid mode "${value}". Expected: plan, exec`);
 }
 
+function parseGoalBudgetFlag(value: string | undefined): number | null | undefined {
+  if (value == null) return undefined;
+  const parsed = parseGoalBudgetInputCents(value);
+  if (parsed === undefined) {
+    throw new Error(
+      'Invalid --goal-budget "' + value + '". Expected dollars like 5, $5.00, or cents like 500c'
+    );
+  }
+  return parsed;
+}
+
+function parseGoalTurnsFlag(value: string | undefined): number | undefined {
+  if (value == null) return undefined;
+  const parsed = parseGoalTurnCapInput(value);
+  if (parsed == null) {
+    throw new Error('Invalid --goal-turns "' + value + '". Expected a positive integer');
+  }
+  return parsed;
+}
+
 function generateWorkspaceId(): string {
   const timestamp = Date.now();
   const random = Math.random().toString(36).substring(2, 8);
   return `run-${timestamp}-${random}`;
 }
 
-function makeCliInitLogger(writeHumanLine: (text?: string) => void): InitLogger {
+/**
+ * Init logger that prepends elapsed/delta timestamps to each step so `mux run`
+ * can double as a startup-timing harness (especially useful for SSH workspaces
+ * where the slowest phases are hidden inside multi-second remote operations).
+ *
+ * Format: `[+12.3s +4.5s] message`
+ *   - first number: ms since the timed logger was created
+ *   - second number: ms since the previous logStep call
+ */
+function makeTimedCliInitLogger(writeHumanLine: (text?: string) => void): InitLogger {
+  const start = Date.now();
+  let lastStep = start;
+  const fmt = (ms: number): string => {
+    if (ms >= 10_000) return `${(ms / 1000).toFixed(1)}s`;
+    if (ms >= 1_000) return `${(ms / 1000).toFixed(2)}s`;
+    return `${ms}ms`;
+  };
   return {
-    logStep: (msg) => writeHumanLine(`  ${msg}`),
+    logStep: (msg) => {
+      const now = Date.now();
+      const stepMs = now - lastStep;
+      const totalMs = now - start;
+      lastStep = now;
+      writeHumanLine(`  [+${fmt(totalMs)} Δ${fmt(stepMs)}] ${msg}`);
+    },
     logStdout: (line) => writeHumanLine(`  ${line}`),
     logStderr: (line) => writeHumanLine(`  [stderr] ${line}`),
     logComplete: (exitCode) => {
-      if (exitCode !== 0) writeHumanLine(`  Init completed with exit code ${exitCode}`);
+      const totalMs = Date.now() - start;
+      if (exitCode !== 0) {
+        writeHumanLine(`  [+${fmt(totalMs)}] Init completed with exit code ${exitCode}`);
+      } else {
+        writeHumanLine(`  [+${fmt(totalMs)}] Init complete`);
+      }
     },
   };
 }
@@ -259,6 +335,9 @@ program
   .option("--no-mcp-config", "ignore global + repo MCP config files (use only --mcp servers)")
   .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
   .option("-b, --budget <usd>", "stop when session cost exceeds budget (USD)", parseFloat)
+  .option("--goal <objective>", "drive an ephemeral CLI Goal Run until complete")
+  .option("--goal-budget <budget>", "goal budget, e.g. $5, 5.00, or 500c")
+  .option("--goal-turns <turns>", "maximum automatic goal continuation turns")
   .option("--service-tier <tier>", "OpenAI service tier: auto, default, flex, priority")
   .option("--use-1m", "enable 1M context window for supported Anthropic models")
   .option(
@@ -272,6 +351,8 @@ Examples:
   $ mux run "Fix the failing tests"
   $ mux run --dir /path/to/project "Add authentication"
   $ mux run --runtime "ssh user@host" "Deploy changes"
+  $ mux run --goal "Fix tests and verify they pass"
+  $ mux run --goal "Ship the refactor" --goal-budget 5.00 --goal-turns 10
   $ mux run --mode plan "Refactor the auth module"
   $ mux run --budget 1.50 "Quick code review"
   $ echo "Add logging" | mux run
@@ -298,7 +379,10 @@ interface CLIOptions {
   mcpConfig: boolean;
   experiment: string[];
   budget?: number;
-  serviceTier?: "auto" | "default" | "flex" | "priority";
+  goal?: string;
+  goalBudget?: string;
+  goalTurns?: string;
+  serviceTier?: ServiceTier;
   use1m?: boolean;
   keepBackgroundProcesses?: boolean;
 }
@@ -325,10 +409,17 @@ async function main(): Promise<number> {
 
   // Get message from arg or stdin
   const stdinMessage = await gatherMessageFromStdin();
-  const message = messageArg?.trim() || stdinMessage.trim();
+  const goalObjective = opts.goal?.trim() ?? "";
+  const hasGoal = opts.goal !== undefined;
+  if (hasGoal && goalObjective.length === 0) {
+    console.error("Error: --goal requires a non-empty objective");
+    process.exit(1);
+  }
+
+  const message = messageArg?.trim() || stdinMessage.trim() || goalObjective;
 
   if (!message) {
-    console.error("Error: No message provided. Pass as argument or pipe via stdin.");
+    console.error("Error: No message provided. Pass as argument, pipe via stdin, or use --goal.");
     console.error('Usage: mux run "Your instruction here"');
     process.exit(1);
   }
@@ -385,7 +476,7 @@ async function main(): Promise<number> {
   await ensureDirectory(projectDir);
 
   const model: string = resolveModelAlias(opts.model);
-  const runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
+  let runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
   // Resolve thinking: numeric indices map to the model's allowed levels (0 = lowest)
   const thinkingLevel = resolveThinkingInput(parseThinkingLevel(opts.thinking), model);
   const initialMode = parseMode(opts.mode);
@@ -407,6 +498,12 @@ async function main(): Promise<number> {
     }
   }
 
+  const goalBudgetCents = parseGoalBudgetFlag(opts.goalBudget);
+  const goalTurnCap = parseGoalTurnsFlag(opts.goalTurns);
+  if (!hasGoal && (goalBudgetCents !== undefined || goalTurnCap !== undefined)) {
+    console.error("Error: --goal-budget and --goal-turns require --goal");
+    process.exit(1);
+  }
   const suppressHumanOutput = emitJson || quiet;
   const stdoutIsTTY = process.stdout.isTTY === true;
   const stderrIsTTY = process.stderr.isTTY === true;
@@ -462,6 +559,8 @@ async function main(): Promise<number> {
     mcpServerManager,
     providerService,
     workspaceService,
+    workspaceGoalService,
+    idleDispatcher,
   } = createCoreServices({
     config,
     extensionMetadataPath: path.join(tempDir.path, "extensionMetadata.json"),
@@ -470,6 +569,13 @@ async function main(): Promise<number> {
       inlineServers,
       ignoreConfigFile: !opts.mcpConfig,
     },
+    goalServiceOptions: hasGoal
+      ? {
+          continuationCooldownMs: 0,
+          allowUserOriginBudgetWrapup: true,
+          suppressKickoffContinuation: true,
+        }
+      : undefined,
   });
 
   // `mux run` uses createCoreServices directly (without ServiceContainer), so wire
@@ -510,6 +616,7 @@ async function main(): Promise<number> {
     aiService,
     initStateManager,
     backgroundProcessManager,
+    workspaceGoalService,
     keepBackgroundProcesses,
   });
   // Register with WorkspaceService so TaskService operations that target the parent
@@ -517,10 +624,43 @@ async function main(): Promise<number> {
   // instead of creating a duplicate.
   workspaceService.registerSession(workspaceId, session);
 
-  // For Docker runtime, create and initialize the container first
+  // For runtimes that need an actual workspace materialized before the agent
+  // can run (Docker container, SSH remote checkout), create + init it now so
+  // the agent's first tool call doesn't fail with "runtime not ready".
+  //
+  // The init logger is timed (`makeTimedCliInitLogger`) so `mux run --verbose`
+  // doubles as a startup-timing harness: each step is annotated with elapsed
+  // total + delta-since-last-step, making it easy to see which remote phase
+  // (sync / fetch / worktree add / hook) dominates startup latency.
   let workspacePath = projectDir;
-  if (runtimeConfig.type === "docker") {
-    const runtime = new DockerRuntime(runtimeConfig);
+  if (runtimeConfig.type === "docker" || runtimeConfig.type === "ssh") {
+    // STARTUP-PERF: For SSH runtimes with a tilde-prefixed `srcBaseDir`
+    // (e.g. `~/mux`), resolve the tilde to an absolute remote path *once*
+    // up-front. This mirrors the desktop app's WORKSPACE_CREATE IPC handler
+    // (see `workspaceService.ts:2258`): persisting `~/mux/...` directly is
+    // wrong because `path.resolve()` inside `session.ensureMetadata()`
+    // expands tildes against the local cwd, producing nonsense like
+    // `/Users/.../~/mux/...` that subsequently fails SSH path validation.
+    // Resolving first makes the runtime config self-consistent and lets
+    // subsequent `mux run` invocations reuse the same stable shared base
+    // repo on the remote (warm fast-path).
+    if (runtimeConfig.type === "ssh" && runtimeConfig.srcBaseDir.startsWith("~")) {
+      const probeRuntime = createRuntime(runtimeConfig, {
+        projectPath: projectDir,
+        workspaceName: workspaceId,
+      });
+      const resolvedSrcBaseDir = await probeRuntime.resolvePath(runtimeConfig.srcBaseDir);
+      runtimeConfig = { ...runtimeConfig, srcBaseDir: resolvedSrcBaseDir };
+    }
+
+    const runtime: Runtime =
+      runtimeConfig.type === "docker"
+        ? new DockerRuntime(runtimeConfig)
+        : createRuntime(runtimeConfig, {
+            projectPath: projectDir,
+            workspaceName: workspaceId,
+          });
+
     // Use a sanitized branch name (CLI runs are typically one-off, no real branch needed)
     const branchName = `cli-${workspaceId.replace(/[^a-zA-Z0-9-]/g, "-")}`;
 
@@ -544,7 +684,10 @@ async function main(): Promise<number> {
         (entry): entry is [string, string] => typeof entry[1] === "string"
       )
     );
-    const initLogger = makeCliInitLogger(writeHumanLine);
+    // Use the timed logger so --verbose surfaces per-phase startup latency.
+    const initLogger = makeTimedCliInitLogger(writeHumanLine);
+    const overallStartedAt = Date.now();
+    const createStartedAt = Date.now();
     const createResult = await runtime.createWorkspace({
       projectPath: projectDir,
       branchName,
@@ -554,12 +697,16 @@ async function main(): Promise<number> {
       env: createEnv,
       trusted,
     });
+    log.info(`[startup-perf] createWorkspace: ${Date.now() - createStartedAt}ms`);
     if (!createResult.success) {
-      console.error(`Failed to create Docker workspace: ${createResult.error ?? "unknown error"}`);
+      console.error(
+        `Failed to create ${runtimeConfig.type} workspace: ${createResult.error ?? "unknown error"}`
+      );
       process.exit(1);
     }
 
     // Use runFullInit to ensure postCreateSetup runs before initWorkspace
+    const initStartedAt = Date.now();
     let initResult: WorkspaceInitResult;
     try {
       initResult = await runFullInit(runtime, {
@@ -577,17 +724,20 @@ async function main(): Promise<number> {
       initLogger.logComplete(-1);
       initResult = { success: false, error: errorMessage };
     }
+    log.info(`[startup-perf] runFullInit: ${Date.now() - initStartedAt}ms`);
+    log.info(`[startup-perf] total create+init: ${Date.now() - overallStartedAt}ms`);
     if (!initResult.success) {
-      // Clean up orphaned container
+      // Best-effort cleanup of any orphaned container / remote checkout so a
+      // failed run doesn't leak resources on subsequent invocations.
       // eslint-disable-next-line @typescript-eslint/no-empty-function
       await runtime.deleteWorkspace(projectDir, branchName, true).catch(() => {});
       console.error(
-        `Failed to initialize Docker workspace: ${initResult.error ?? "unknown error"}`
+        `Failed to initialize ${runtimeConfig.type} workspace: ${initResult.error ?? "unknown error"}`
       );
       process.exit(1);
     }
 
-    // Docker workspacePath is /src; projectName stays as original
+    // Docker maps to /src in-container; SSH returns the remote checkout path.
     workspacePath = createResult.workspacePath!;
   }
 
@@ -614,11 +764,13 @@ async function main(): Promise<number> {
       ...(opts.use1m && { anthropic: { use1MContext: true } }),
       ...(opts.serviceTier != null && { openai: { serviceTier: opts.serviceTier } }),
     },
-    // Disable UI-only tools that have no effect in CLI mode:
+    // Disable UI-only tools that either no-op or require UI interaction in CLI mode:
+    // - ask_user_question: waits for a desktop/mobile answer UI; headless `mux run` cannot answer it
     // - status_set: backend no-op, status indicator only visible in desktop UI
     // - todo_write/todo_read: TODO list only visible in desktop UI
     // - notify: sends OS notifications via Electron, silently swallowed in CLI
     toolPolicy: [
+      { regex_match: "ask_user_question", action: "disable" as const },
       { regex_match: "status_set", action: "disable" as const },
       { regex_match: "todo_write", action: "disable" as const },
       { regex_match: "todo_read", action: "disable" as const },
@@ -626,6 +778,37 @@ async function main(): Promise<number> {
     ],
     // Plan agent instructions are handled by the backend (has access to plan file path)
   });
+
+  let goalStopReason: string | null = null;
+  if (hasGoal) {
+    const setGoalResult = await workspaceGoalService.setGoal({
+      workspaceId,
+      objective: goalObjective,
+      budgetCents: goalBudgetCents ?? null,
+      turnCap: goalTurnCap ?? null,
+      initiator: "user",
+    });
+    if (!setGoalResult.success) {
+      throw new Error(`Failed to set CLI goal: ${setGoalResult.error.type}`);
+    }
+    const warning =
+      goalBudgetCents == null && goalTurnCap == null
+        ? "CLI Goal Run has no --goal-budget or --goal-turns limit. It will continue until the goal is complete or another stop condition occurs."
+        : null;
+    if (warning) {
+      emitJsonLine({ type: "goal-warning", workspaceId, warning });
+      writeHumanLine(`[goal] warning: ${warning}`);
+    }
+    emitJsonLine({
+      type: "goal-started",
+      workspaceId,
+      goalId: setGoalResult.data.goalId,
+      objective: goalObjective,
+      budgetCents: setGoalResult.data.budgetCents,
+      turnCap: setGoalResult.data.turnCap,
+    });
+    writeHumanLine(`[goal] started: ${goalObjective}`);
+  }
 
   const liveEvents: WorkspaceChatMessage[] = [];
   let readyForLive = false;
@@ -704,8 +887,14 @@ async function main(): Promise<number> {
   let rejectCompletion: ((reason?: unknown) => void) | null = null;
   let completionPromise: Promise<void> = Promise.resolve();
 
+  let resolveStreamStarted: (() => void) | null = null;
+  let streamStartedPromise: Promise<void> = Promise.resolve();
+
   const createCompletionPromise = (): Promise<void> => {
     streamEnded = false;
+    streamStartedPromise = new Promise<void>((resolve) => {
+      resolveStreamStarted = resolve;
+    });
     return new Promise<void>((resolve, reject) => {
       resolveCompletion = resolve;
       rejectCompletion = reject;
@@ -720,9 +909,35 @@ async function main(): Promise<number> {
     }
   };
 
+  const waitForStreamStarted = async (timeoutMs?: number): Promise<void> => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const streamFailedOrEndedBeforeStart = completionPromise.then(() => {
+      throw new Error("Goal continuation stream ended before it started");
+    });
+    const waits: Array<Promise<void>> = [streamStartedPromise, streamFailedOrEndedBeforeStart];
+    if (timeoutMs != null) {
+      waits.push(
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error("Timed out waiting for goal continuation stream to start"));
+          }, timeoutMs);
+          timer.unref?.();
+        })
+      );
+    }
+    try {
+      await Promise.race(waits);
+    } finally {
+      if (timer != null) {
+        clearTimeout(timer);
+      }
+    }
+  };
+
   const resetCompletionHandlers = () => {
     resolveCompletion = null;
     rejectCompletion = null;
+    resolveStreamStarted = null;
   };
 
   const rejectStream = (error: Error) => {
@@ -762,6 +977,11 @@ async function main(): Promise<number> {
       throw new Error(`Failed to send message: ${formattedError}`);
     }
     await waitForCompletion();
+  };
+
+  const getGoal = async (): Promise<GoalRecordV1 | null> => {
+    if (!hasGoal) return null;
+    return workspaceGoalService.getGoal(workspaceId);
   };
 
   const handleToolStart = (payload: WorkspaceChatMessage): boolean => {
@@ -850,6 +1070,7 @@ async function main(): Promise<number> {
         );
         return;
       }
+      resolveStreamStarted?.();
       activeMessageId = payload.messageId;
       return;
     }
@@ -1042,6 +1263,9 @@ async function main(): Promise<number> {
     }
   };
 
+  let finalGoalRecord: GoalRecordV1 | null = null;
+  let goalDriverError: unknown = null;
+
   const unsubscribe = await session.subscribeChat(chatListener);
 
   try {
@@ -1054,7 +1278,10 @@ async function main(): Promise<number> {
       const planWasProposed = planProposed;
       planProposed = false;
       if (initialMode === "plan" && !planWasProposed) {
-        throw new Error("Plan mode was requested, but the assistant never proposed a plan.");
+        const goalAfterFirstTurn = await getGoal();
+        if (!hasGoal || goalAfterFirstTurn?.status !== "budget_limited") {
+          throw new Error("Plan mode was requested, but the assistant never proposed a plan.");
+        }
       }
       if (planWasProposed) {
         writeHumanLineClosed(
@@ -1062,23 +1289,73 @@ async function main(): Promise<number> {
         );
         await sendAndAwait("Plan approved. Execute it.", buildSendOptions("exec"));
       }
+      if (hasGoal && !budgetExceeded) {
+        try {
+          await driveCliGoalUntilTerminal({
+            workspaceId,
+            getGoal,
+            buildExecSendOptions: () => buildSendOptions("exec"),
+            requestContinuationAfterStreamEnd: (input) =>
+              workspaceGoalService.requestContinuationAfterStreamEnd({
+                workspaceId,
+                ...input,
+              }),
+            requestDispatch: () =>
+              idleDispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME),
+            checkGoalContinuationEligibility: (nowMs) =>
+              workspaceGoalService.checkGoalContinuationEligibility(workspaceId, nowMs),
+            prepareForContinuation: () => {
+              completionPromise = createCompletionPromise();
+            },
+            waitForStreamStarted,
+            waitForCompletion,
+            streamStartTimeoutMs: CLI_GOAL_STREAM_START_TIMEOUT_MS,
+            isSessionBudgetExceeded: () => budgetExceeded,
+            nowMs: Date.now,
+            emitJsonLine,
+            writeHumanLineClosed,
+            setGoalStopReason: (reason) => {
+              goalStopReason = reason;
+            },
+            describeError: getErrorMessage,
+          });
+        } catch (error) {
+          goalDriverError = error;
+          goalStopReason = getErrorMessage(error);
+        }
+      }
+    }
+
+    finalGoalRecord = await getGoal();
+
+    if (
+      budgetExceeded &&
+      hasGoal &&
+      goalStopReason == null &&
+      finalGoalRecord?.status !== "complete"
+    ) {
+      goalStopReason = "session budget exceeded";
     }
 
     // Output final result for --quiet mode
     if (quiet) {
-      let finalEvent: WorkspaceChatMessage | undefined;
-      for (let i = liveEvents.length - 1; i >= 0; i--) {
-        if (isStreamEnd(liveEvents[i])) {
-          finalEvent = liveEvents[i];
-          break;
+      if (finalGoalRecord?.status === "complete" && finalGoalRecord.completionSummary) {
+        console.log(finalGoalRecord.completionSummary);
+      } else {
+        let finalEvent: WorkspaceChatMessage | undefined;
+        for (let i = liveEvents.length - 1; i >= 0; i--) {
+          if (isStreamEnd(liveEvents[i])) {
+            finalEvent = liveEvents[i];
+            break;
+          }
         }
-      }
-      if (finalEvent && isStreamEnd(finalEvent)) {
-        const parts = (finalEvent as unknown as { parts?: unknown[] }).parts ?? [];
-        for (const part of parts) {
-          if (part && typeof part === "object" && "type" in part && part.type === "text") {
-            const text = (part as { text?: string }).text;
-            if (text) console.log(text);
+        if (finalEvent && isStreamEnd(finalEvent)) {
+          const parts = (finalEvent as unknown as { parts?: unknown[] }).parts ?? [];
+          for (const part of parts) {
+            if (part && typeof part === "object" && "type" in part && part.type === "text") {
+              const text = (part as { text?: string }).text;
+              if (text) console.log(text);
+            }
           }
         }
       }
@@ -1103,6 +1380,16 @@ async function main(): Promise<number> {
             }
           : null,
         cost_usd: totalCost ?? null,
+        goal: finalGoalRecord
+          ? {
+              status: finalGoalRecord.status,
+              goalId: finalGoalRecord.goalId,
+              completionSummary: finalGoalRecord.completionSummary ?? null,
+              stopReason: goalStopReason,
+              costCents: finalGoalRecord.costCents,
+              turnsUsed: finalGoalRecord.turnsUsed,
+            }
+          : null,
       });
     }
 
@@ -1125,8 +1412,19 @@ async function main(): Promise<number> {
     }
   }
 
-  // Exit codes: 2 for budget exceeded, agent-specified exit code, or 0 for success
   if (budgetExceeded) return 2;
+  if (hasGoal && (goalDriverError != null || finalGoalRecord?.status !== "complete")) {
+    const reason = goalStopReason ?? describeCliGoalStop(finalGoalRecord);
+    writeHumanLineClosed(`[goal] stopped: ${reason}`);
+    emitJsonLine({
+      type: "goal-incomplete",
+      workspaceId,
+      goalId: finalGoalRecord?.goalId ?? null,
+      status: finalGoalRecord?.status ?? null,
+      stopReason: reason,
+    });
+    return 3;
+  }
   return agentExitCode ?? 0;
 }
 

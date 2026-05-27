@@ -8,7 +8,7 @@ import { BASH_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import * as path from "path";
 import * as fs from "fs";
-import { TestTempDir, createTestToolConfig, getTestDeps } from "./testHelpers";
+import { TestTempDir, createTestToolConfig, getTestDeps, mockToolCallOptions } from "./testHelpers";
 import type { createRuntime as CreateRuntimeFn } from "@/node/runtime/runtimeFactory";
 
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
@@ -17,7 +17,6 @@ const {
 }: { createRuntime: typeof CreateRuntimeFn } = require("@/node/runtime/runtimeFactory?real=1");
 /* eslint-enable @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment */
 import { sshConnectionPool } from "@/node/runtime/sshConnectionPool";
-import type { ToolExecutionOptions } from "ai";
 
 // Type guard to narrow foreground success result (has note, no backgroundProcessId)
 function isForegroundSuccess(
@@ -27,12 +26,6 @@ function isForegroundSuccess(
 }
 
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
-
-// Mock ToolCallOptions for testing
-const mockToolCallOptions: ToolExecutionOptions = {
-  toolCallId: "test-call-id",
-  messages: [],
-};
 
 // Helper to create bash tool with test configuration
 // Returns both tool and disposable temp directory

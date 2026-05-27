@@ -22,12 +22,4 @@ describe("parser multiline compatibility", () => {
       modelString: KNOWN_MODELS.OPUS.id,
     });
   });
-
-  it("allows /truncate with newlines", () => {
-    const result = parseCommand("/truncate\n50");
-    expect(result).toEqual({
-      type: "truncate",
-      percentage: 0.5,
-    });
-  });
 });

@@ -64,7 +64,12 @@ const LIVENESS_TIMEOUT_MS = 3000; // Ping must respond within 3 seconds
 const CONSECUTIVE_FAILURES_FOR_DEGRADED = 2; // Mark degraded after N failures
 const CONSECUTIVE_FAILURES_FOR_RECONNECT = 3; // Force reconnect after N failures (WS may be half-open)
 
-const APIContext = createContext<UseAPIResult | null>(null);
+// Exported so hooks that need to tolerate being mounted outside an
+// APIProvider (e.g., `useGoalDefaults`, `useGoalBoard`) can read the
+// context directly and short-circuit gracefully when it's null. The
+// canonical `useAPI()` below still throws — keep using it whenever
+// API access is required, not optional.
+export const APIContext = createContext<UseAPIResult | null>(null);
 
 interface APIProviderProps {
   children: React.ReactNode;

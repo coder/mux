@@ -45,31 +45,33 @@ function getSharp(): SharpModule {
   return sharpModule;
 }
 
-function orientationSwapsDimensions(orientation: number | undefined): boolean {
+export function orientationSwapsDimensions(orientation: number | undefined): boolean {
   return orientation != null && orientation >= 5 && orientation <= 8;
+}
+
+export function getRasterImageDimensionsFromMetadata(metadata: sharp.Metadata): {
+  width: number;
+  height: number;
+} | null {
+  if (
+    metadata.width == null ||
+    metadata.width <= 0 ||
+    metadata.height == null ||
+    metadata.height <= 0
+  ) {
+    return null;
+  }
+
+  return orientationSwapsDimensions(metadata.orientation)
+    ? { width: metadata.height, height: metadata.width }
+    : { width: metadata.width, height: metadata.height };
 }
 
 async function getImageDimensions(data: Buffer): Promise<{ width: number; height: number }> {
   const sharp = getSharp();
-  const metadata = await sharp(data).metadata();
-  assert(
-    metadata.width != null && metadata.width > 0,
-    "Failed to read image width from attachment"
-  );
-  assert(
-    metadata.height != null && metadata.height > 0,
-    "Failed to read image height from attachment"
-  );
-
-  const width = orientationSwapsDimensions(metadata.orientation) ? metadata.height : metadata.width;
-  const height = orientationSwapsDimensions(metadata.orientation)
-    ? metadata.width
-    : metadata.height;
-
-  return {
-    width,
-    height,
-  };
+  const dimensions = getRasterImageDimensionsFromMetadata(await sharp(data).metadata());
+  assert(dimensions != null, "Failed to read image dimensions from attachment");
+  return dimensions;
 }
 
 export async function resizeRasterImageAttachmentBufferIfNeeded(

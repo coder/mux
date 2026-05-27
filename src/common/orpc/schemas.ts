@@ -17,6 +17,28 @@ export {
 // Project schemas
 export { ProjectConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
 
+// Goal schemas
+export {
+  GoalBoardAddUpcomingInputSchema,
+  GoalBoardArchiveInputSchema,
+  GoalBoardEntrySchema,
+  GoalBoardGetInputSchema,
+  GoalBoardPromoteInputSchema,
+  GoalBoardReorderInputSchema,
+  GoalBoardReviveInputSchema,
+  GoalBoardUpdateUpcomingInputSchema,
+  GoalBoardSectionSchema,
+  GoalBoardSnapshotSchema,
+  GoalBoardV1Schema,
+  GoalClearInputSchema,
+  GoalGetInputSchema,
+  GoalRecordV1Schema,
+  GoalSetErrorSchema,
+  GoalSetInputSchema,
+  GoalSnapshotSchema,
+  GoalStatusSchema,
+} from "./schemas/goal";
+
 // Workspace schemas
 export { WorkspaceAISettingsSchema } from "./schemas/workspaceAiSettings";
 export {
@@ -24,6 +46,7 @@ export {
   GitStatusSchema,
   ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
+  WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
   WorkspaceMetadataSchema,
 } from "./schemas/workspace";
@@ -79,6 +102,17 @@ export {
   AgentSkillScopeSchema,
   SkillNameSchema,
 } from "./schemas/agentSkill";
+
+// Instruction context schemas (AGENTS.md, CLAUDE.md, …)
+export {
+  AdditionalSystemContextSchema,
+  INSTRUCTION_SCOPE,
+  InstructionFileSchema,
+  InstructionScopeSchema,
+  InstructionSetSchema,
+  InstructionSourcesSchema,
+  WorkspaceInstructionsSchema,
+} from "./schemas/instructions";
 
 // Error schemas
 // Agent Definition schemas
@@ -173,6 +207,7 @@ export {
   CompletedMessagePartSchema,
   DeleteMessageSchema,
   ErrorEventSchema,
+  GoalBudgetLimitedEventSchema,
   LanguageModelV2UsageSchema,
   QueuedMessageChangedEventSchema,
   ReasoningDeltaEventSchema,
@@ -194,6 +229,7 @@ export {
   ToolCallStartEventSchema,
   BashOutputEventSchema,
   TaskCreatedEventSchema,
+  AdvisorOutputEventSchema,
   AdvisorPhaseEventSchema,
   UpdateStatusSchema,
   UsageDeltaEventSchema,

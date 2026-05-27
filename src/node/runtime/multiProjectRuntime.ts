@@ -419,8 +419,8 @@ export class MultiProjectRuntime implements Runtime {
     return this.primaryRuntime.stat(filePath, abortSignal);
   }
 
-  ensureDir(dirPath: string): Promise<void> {
-    return this.primaryRuntime.ensureDir(dirPath);
+  ensureDir(dirPath: string, abortSignal?: AbortSignal): Promise<void> {
+    return this.primaryRuntime.ensureDir(dirPath, abortSignal);
   }
 
   tempDir(): Promise<string> {

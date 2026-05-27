@@ -1,146 +1,35 @@
 /**
- * Tab Registry - Centralized configuration for RightSidebar tabs.
+ * Backwards-compat shim for tab display helpers.
  *
- * Each tab type defines:
- * - name: Display name for the tab
- * - contentClassName: CSS classes for the tab panel container
- * - keepAlive: Whether the tab should remain mounted while hidden
- * - featureFlag: Optional feature flag key required to show the tab
- *
- * This keeps per-tab decisions out of RightSidebar.tsx and avoids switch statements.
+ * This file remains so legacy callers can import `getTabContentClassName`,
+ * `getTabName`, etc. without pulling in React panel renderers. New non-UI
+ * helpers should depend on the lightweight `tabConfig` directly.
  */
 
 import type { TabType } from "@/browser/types/rightSidebar";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
-import type { ReviewNoteData } from "@/common/types/review";
+import { getTabConfig, isBaseTabId } from "./tabConfig";
+import type {
+  ReviewStats as RegistryReviewStats,
+  TabLabelContext,
+  TabPanelContext,
+} from "./tabRegistry";
 
-/** Stats reported by ReviewPanel for tab display */
-export interface ReviewStats {
-  total: number;
-  read: number;
-}
+/** Re-exported review stats type (used by RightSidebar wrapper props). */
+export type ReviewStats = RegistryReviewStats;
+export type { TabPanelContext, TabLabelContext };
 
-/** Context passed to tab renderers */
-export interface TabRenderContext {
-  workspaceId: string;
-  workspacePath: string;
-  projectPath: string;
-  isCreating: boolean;
-  focusTrigger: number;
-  onReviewNote?: (data: ReviewNoteData) => void;
-  onReviewStatsChange: (stats: ReviewStats | null) => void;
-  /** Whether this tab is currently visible/active */
-  visible: boolean;
-}
+/** Configuration for a terminal tab (still special-cased outside the registry). */
+const TERMINAL_TAB_CONTENT_CLASS_NAME = "overflow-hidden p-0";
+const TERMINAL_TAB_NAME = "Terminal";
 
-/** Context for terminal tab rendering */
-export interface TerminalTabRenderContext extends TabRenderContext {
-  tabType: TabType;
-  onTitleChange: (title: string) => void;
-}
-
-/** Label props passed to label renderers */
-export interface TabLabelProps {
-  /** Cost in dollars for the current session (costs tab) */
-  sessionCost?: number | null;
-  /** Review panel stats (review tab) */
-  reviewStats?: ReviewStats | null;
-  /** Session duration in ms (stats tab) */
-  sessionDuration?: number | null;
-  /** For terminal tabs: dynamic title from OSC sequences */
-  terminalTitle?: string;
-  /** For terminal tabs: index within the tabset (for "Terminal 2" etc) */
-  terminalIndex?: number;
-  /** Callback when pop-out button clicked */
-  onPopOut?: () => void;
-  /** Callback when close button clicked */
-  onClose?: () => void;
-}
-
-/** Configuration for a single tab type */
-export interface TabConfig {
-  /** Base display name (e.g., "Costs", "Review", "Terminal") */
-  name: string;
-
-  /** CSS classes for the tab panel content area */
-  contentClassName: string;
-
-  /**
-   * Whether this tab should be rendered when hidden (keep-alive).
-   * Most tabs only render when active. Terminal tabs stay mounted to preserve state.
-   */
-  keepAlive?: boolean;
-
-  /**
-   * Whether this tab requires a feature flag to be shown.
-   * Returns the feature flag key, or undefined if always available.
-   */
-  featureFlag?: string;
-}
-
-/** Static tab configurations (non-terminal tabs) */
-export const TAB_CONFIGS: Record<
-  "costs" | "review" | "desktop" | "browser" | "output" | "debug",
-  TabConfig
-> = {
-  costs: {
-    name: "Stats", // Renamed from "Costs" — now hosts Cost/Timing/Models sub-tabs
-    contentClassName: "overflow-y-auto p-[15px]",
-  },
-  review: {
-    name: "Review",
-    contentClassName: "overflow-y-auto p-0",
-  },
-  desktop: {
-    name: "Desktop",
-    contentClassName: "overflow-hidden p-0",
-    featureFlag: EXPERIMENT_IDS.PORTABLE_DESKTOP,
-  },
-  browser: {
-    name: "Browser",
-    contentClassName: "overflow-hidden p-0",
-    keepAlive: false,
-    featureFlag: EXPERIMENT_IDS.AGENT_BROWSER,
-  },
-  output: {
-    name: "Output",
-    contentClassName: "overflow-hidden p-0",
-  },
-  debug: {
-    name: "Debug",
-    contentClassName: "overflow-y-auto p-0",
-  },
-};
-
-/** Terminal tab configuration */
-export const TERMINAL_TAB_CONFIG: TabConfig = {
-  name: "Terminal",
-  contentClassName: "overflow-hidden p-0",
-  keepAlive: true,
-};
-
-/** Get config for a tab type */
-export function getTabConfig(tab: TabType): TabConfig {
-  if (
-    tab === "costs" ||
-    tab === "review" ||
-    tab === "desktop" ||
-    tab === "browser" ||
-    tab === "output" ||
-    tab === "debug"
-  ) {
-    return TAB_CONFIGS[tab];
-  }
-  // All terminal tabs (including "terminal" placeholder)
-  return TERMINAL_TAB_CONFIG;
-}
-
-/** Get display name for a tab type */
+/** Display name for a tab id (incl. terminal). */
 export function getTabName(tab: TabType): string {
-  return getTabConfig(tab).name;
+  if (isBaseTabId(tab)) return getTabConfig(tab).name;
+  return TERMINAL_TAB_NAME;
 }
 
-/** Get content container class name for a tab type */
+/** Content container CSS classes for a tab id (incl. terminal). */
 export function getTabContentClassName(tab: TabType): string {
-  return getTabConfig(tab).contentClassName;
+  if (isBaseTabId(tab)) return getTabConfig(tab).contentClassName;
+  return TERMINAL_TAB_CONTENT_CLASS_NAME;
 }

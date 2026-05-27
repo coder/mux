@@ -201,6 +201,8 @@ describe("GitStatusStore", () => {
     mockGetProjectGitStatuses.mockResolvedValue([]);
 
     (globalThis as unknown as { window: unknown }).window = {
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
       api: {
         workspace: {
           executeBash: mockExecuteBash,

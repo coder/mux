@@ -60,6 +60,9 @@ import { AgentIdSchema } from "@/common/orpc/schemas";
 import { normalizeAgentId } from "@/common/utils/agentIds";
 import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService";
 import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
+import type { SessionUsageService } from "@/node/services/sessionUsageService";
+import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
+import { getTotalCost, sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { ErrorEvent, StreamEndEvent } from "@/common/types/stream";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
@@ -87,6 +90,17 @@ import { isWorkspaceArchived } from "@/common/utils/archive";
 export type TaskKind = "agent";
 
 export type AgentTaskStatus = NonNullable<WorkspaceConfigEntry["taskStatus"]>;
+
+/**
+ * Resolved per-agent AI settings (canonical model + optional thinking level).
+ *
+ * `thinkingLevel` is optional because internal callers read these settings off of
+ * partial workspace metadata where the field may be missing on older entries.
+ */
+interface ResolvedWorkspaceAiSettings {
+  model: string;
+  thinkingLevel?: ThinkingLevel;
+}
 
 export interface AgentTaskStatusLookup {
   exists: boolean;
@@ -123,6 +137,8 @@ export interface TaskCreateArgs {
   experiments?: {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
+    advisorTool?: boolean;
+    imageGenerationTool?: boolean;
     execSubagentHardRestart?: boolean;
   };
 }
@@ -349,7 +365,9 @@ export class TaskService {
     private readonly aiService: AIService,
     private readonly workspaceService: WorkspaceService,
     private readonly initStateManager: InitStateManager,
-    private readonly opResolver?: ExternalSecretResolver
+    private readonly opResolver?: ExternalSecretResolver,
+    private readonly sessionUsageService?: SessionUsageService,
+    private readonly workspaceGoalService?: WorkspaceGoalService
   ) {
     this.gitPatchArtifactService = new GitPatchArtifactService(config);
 
@@ -382,11 +400,11 @@ export class TaskService {
   // fall back to legacy workspace settings for older configs.
   private resolveWorkspaceAISettings(
     workspace: {
-      aiSettingsByAgent?: Record<string, { model: string; thinkingLevel?: ThinkingLevel }>;
-      aiSettings?: { model: string; thinkingLevel?: ThinkingLevel };
+      aiSettingsByAgent?: Record<string, ResolvedWorkspaceAiSettings>;
+      aiSettings?: ResolvedWorkspaceAiSettings;
     },
     agentId: string | undefined
-  ): { model: string; thinkingLevel?: ThinkingLevel } | undefined {
+  ): ResolvedWorkspaceAiSettings | undefined {
     const normalizedAgentId =
       typeof agentId === "string" && agentId.trim().length > 0
         ? normalizeAgentId(agentId, "")
@@ -400,8 +418,8 @@ export class TaskService {
   private resolveTaskAISettings(params: {
     cfg: ReturnType<Config["loadConfigOrDefault"]>;
     parentMeta: {
-      aiSettingsByAgent?: Record<string, { model: string; thinkingLevel?: ThinkingLevel }>;
-      aiSettings?: { model: string; thinkingLevel?: ThinkingLevel };
+      aiSettingsByAgent?: Record<string, ResolvedWorkspaceAiSettings>;
+      aiSettings?: ResolvedWorkspaceAiSettings;
     };
     agentId: string;
     modelString?: string;
@@ -450,8 +468,8 @@ export class TaskService {
     parentWorkspaceId: string,
     parentEntry: {
       workspace: {
-        aiSettingsByAgent?: Record<string, { model: string; thinkingLevel?: ThinkingLevel }>;
-        aiSettings?: { model: string; thinkingLevel?: ThinkingLevel };
+        aiSettingsByAgent?: Record<string, ResolvedWorkspaceAiSettings>;
+        aiSettings?: ResolvedWorkspaceAiSettings;
       };
     },
     fallbackModel: string,
@@ -3769,6 +3787,63 @@ export class TaskService {
     }
   }
 
+  private async getChildReportCostCents(childWorkspaceId: string): Promise<number> {
+    assert(childWorkspaceId.trim().length > 0, "getChildReportCostCents requires childWorkspaceId");
+    if (!this.sessionUsageService) {
+      return 0;
+    }
+
+    try {
+      const childUsage = await this.sessionUsageService.getSessionUsage(childWorkspaceId);
+      if (!childUsage) {
+        return 0;
+      }
+      return Math.max(
+        0,
+        Math.round((getTotalCost(sumUsageHistory(Object.values(childUsage.byModel))) ?? 0) * 100)
+      );
+    } catch (error) {
+      log.warn("Failed to read child usage for goal attribution", { childWorkspaceId, error });
+      return 0;
+    }
+  }
+
+  private async attributeChildReportToParentGoal(
+    parentWorkspaceId: string,
+    childWorkspaceId: string
+  ): Promise<void> {
+    assert(
+      parentWorkspaceId.trim().length > 0,
+      "attributeChildReportToParentGoal requires parentWorkspaceId"
+    );
+    assert(
+      childWorkspaceId.trim().length > 0,
+      "attributeChildReportToParentGoal requires childWorkspaceId"
+    );
+    if (!this.workspaceGoalService) {
+      return;
+    }
+
+    const childCostCents = await this.getChildReportCostCents(childWorkspaceId);
+    const attribution = await this.workspaceGoalService.attributeChildReport({
+      parentWorkspaceId,
+      childWorkspaceId,
+      childCostCents,
+    });
+    if (!attribution?.causedBudgetLimit) {
+      return;
+    }
+
+    this.workspaceService.emitChatEvent(parentWorkspaceId, {
+      type: "goal-budget-limited",
+      workspaceId: parentWorkspaceId,
+      goalId: attribution.goalAfter.goalId,
+      causedByChild: true,
+      childWorkspaceId,
+      message: "Child workspace exceeded the parent's goal budget.",
+    });
+  }
+
   private async finalizeAgentTaskReport(
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
@@ -3858,6 +3933,22 @@ export class TaskService {
           error,
         });
       }
+    }
+
+    // Goal attribution is informational; if it throws (permissions failure,
+    // disk-full, corrupted extensionMetadata.json in pushSnapshot), execution
+    // would otherwise exit before reaching deliverReportToParent / waiter
+    // resolution / queue drain — leaving the parent's task_await waiting
+    // indefinitely (Coder-agents-review P1 DEREM-14). Match the
+    // upsertSubagentReportArtifact pattern above: log and continue.
+    try {
+      await this.attributeChildReportToParentGoal(parentWorkspaceId, childWorkspaceId);
+    } catch (error: unknown) {
+      log.error("Failed to attribute child report to parent goal", {
+        parentWorkspaceId,
+        childWorkspaceId,
+        error,
+      });
     }
 
     await this.maybeStartPatchGenerationForReportedTask(childWorkspaceId);

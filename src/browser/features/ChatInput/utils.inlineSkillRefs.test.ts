@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import {
   hasProjectScopedSkillRef,
+  parseCommandWithSkillInvocation,
   resolveInlineSkillRefsForSend,
   type SkillInvocation,
 } from "./utils";
@@ -19,6 +20,23 @@ function slashInvocation(skill: AgentSkillDescriptor): SkillInvocation {
     userText: `Using skill ${skill.name}: message`,
   };
 }
+
+describe("parseCommandWithSkillInvocation", () => {
+  test("does not treat known-command goal text as slash skill invocation", async () => {
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "/goal --bogus\nBody",
+      agentSkillDescriptors: [descriptor("goal")],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.skillInvocation).toBeNull();
+    expect(result.parsed).toEqual({
+      type: "goal-set",
+      objective: "--bogus\nBody",
+    });
+  });
+});
 
 describe("resolveInlineSkillRefsForSend", () => {
   test("returns an empty array for no slash and no inline refs", async () => {

@@ -17,6 +17,8 @@ import {
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { PlanAnnotationView } from "./PlanAnnotationView";
+import { extractPlanHeadings } from "./ProposePlan/extractPlanHeadings";
+import { PlanTableOfContents } from "./ProposePlan/PlanTableOfContents";
 import { Button } from "@/browser/components/Button/Button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { IconActionButton, type ButtonConfig } from "../Messages/MessageWindow";
@@ -178,6 +180,10 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const isImplementingRef = useRef(false);
   const isContinuingInAutoRef = useRef(false);
   const isMountedRef = useRef(true);
+  // Anchors the plan body so PlanTableOfContents can `querySelectorAll("h1,h2,h3...")`
+  // and `scrollIntoView` the matching rendered heading. Pointing at `plan-surface`
+  // also implicitly scopes lookups away from neighbouring tool calls/transcripts.
+  const planContentRef = useRef<HTMLDivElement>(null);
   const { api } = useAPI();
   const { agentId: currentAgentId } = useAgent();
   const isAutoMode = currentAgentId === "auto";
@@ -796,9 +802,16 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     <div className={planBodyClassName}>{planContentBody}</div>
   );
 
+  // Show the table of contents only for normal markdown content. Annotate mode,
+  // raw text, and error states either have no headings or use a custom renderer,
+  // so a TOC there would be either empty or misleading.
+  const showToc = !errorMessage && !annotateMode && !showRaw && hasPlanContentInChat;
+  const tocEntries = showToc ? extractPlanHeadings(planContent) : [];
+
   // Shared plan UI content (used in both tool call and ephemeral preview modes)
   const planUI = (
     <div
+      ref={planContentRef}
       className={cn(
         "plan-surface rounded-md p-3 shadow-md",
         annotateMode && "ring-accent/30 ring-1"
@@ -902,11 +915,24 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     </div>
   );
 
+  // Layout container that positions the TOC affordances alongside the plan. The
+  // `plan-toc-layout` class establishes `position: relative` so CSS can place a
+  // compact hint or sticky TOC in the left gutter when the transcript container
+  // has enough horizontal room.
+  const planLayout = (
+    <div className="plan-toc-layout">
+      {planUI}
+      {showToc && (
+        <PlanTableOfContents entries={tocEntries} contentRef={planContentRef} title={planTitle} />
+      )}
+    </div>
+  );
+
   // Ephemeral preview mode: simple wrapper without tool container
   if (isEphemeralPreview) {
     return (
       <>
-        <div className={cn("px-4 py-2", className)}>{planUI}</div>
+        <div className={cn("px-4 py-2", className)}>{planLayout}</div>
         <PopoverError error={editorError.error} prefix="Failed to open editor" />
       </>
     );
@@ -922,7 +948,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
           <StatusIndicator status={status}>{statusDisplay}</StatusIndicator>
         </ToolHeader>
 
-        {expanded && <ToolDetails text={errorMessage ?? planContent}>{planUI}</ToolDetails>}
+        {expanded && <ToolDetails text={errorMessage ?? planContent}>{planLayout}</ToolDetails>}
 
         {modal}
       </ToolContainer>

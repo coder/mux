@@ -710,8 +710,19 @@ export class TerminalService {
 
     // Note: The attach stream yields screenState first, then live output.
     // This subscription only provides live output from the point of subscription onward.
-
-    const handler = (data: string) => callback(data);
+    //
+    // Wrap the user callback in a per-listener try/catch so a single bad subscriber
+    // (e.g., a stale orpc stream still wired to a closed terminal window) cannot abort
+    // EventEmitter's synchronous dispatch loop and starve healthy subscribers of output.
+    // Without this, a crashy listener would also crash the Electron main process via
+    // process.uncaughtException (see emitOutput's defense-in-depth notes).
+    const handler = (data: string) => {
+      try {
+        callback(data);
+      } catch (err) {
+        log.warn(`[TerminalService] output listener threw for session ${sessionId}:`, err);
+      }
+    };
     emitter.on("data", handler);
 
     return () => {
@@ -859,13 +870,32 @@ export class TerminalService {
   }
 
   private emitOutput(sessionId: string, data: string) {
-    // Write to headless terminal to maintain parsed state (and generate device-query responses)
+    // Write to headless terminal to maintain parsed state (and generate device-query responses).
+    // SAFETY: xterm-headless (like the renderer's xterm WASM build) can throw intermittently on
+    // malformed escape sequences. This handler is invoked from a node-pty `onData` callback that
+    // runs on the libuv tick, so an uncaught throw here propagates to `process.uncaughtException`
+    // in the Electron main process, which turns it into a blocking "Application Error" dialog
+    // (see desktop/main.ts). Mirror the renderer-side defense in TerminalView.tsx.
     const headless = this.headlessTerminals.get(sessionId);
-    headless?.write(data);
+    if (headless) {
+      try {
+        headless.write(data);
+      } catch (err) {
+        log.warn(`[TerminalService] headless.write threw for session ${sessionId}:`, err);
+      }
+    }
 
+    // Listener isolation lives inside onOutput's per-callback wrapper so a throwing subscriber
+    // does not abort EventEmitter's synchronous dispatch and starve later listeners of output.
+    // The try/catch here is defense-in-depth for any future emit-time error path (e.g.,
+    // EventEmitter internals): it must never let an exception escape the libuv tick.
     const emitter = this.outputEmitters.get(sessionId);
     if (emitter) {
-      emitter.emit("data", data);
+      try {
+        emitter.emit("data", data);
+      } catch (err) {
+        log.warn(`[TerminalService] output emitter threw for session ${sessionId}:`, err);
+      }
     }
   }
 

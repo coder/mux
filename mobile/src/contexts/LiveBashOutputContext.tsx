@@ -7,7 +7,7 @@ import {
   type LiveBashOutputInternal,
   type LiveBashOutputView,
 } from "@/browser/utils/messages/liveBashOutputBuffer";
-import { assert } from "../utils/assert";
+import { assert } from "@/common/utils/assert";
 
 type Listener = () => void;
 

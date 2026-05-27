@@ -55,6 +55,7 @@ import {
 } from "@/common/config/worktreeArchiveBehavior";
 import { PlatformPaths } from "@/common/utils/paths";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
+import { normalizeGoalDefaults } from "@/constants/goals";
 import {
   isValidModelFormat,
   normalizeSelectedModel,
@@ -66,6 +67,7 @@ import { isProviderAutoRouteEligible } from "@/node/utils/providerRequirements";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 import { deriveProjectHierarchy } from "@/common/utils/subProjects";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { normalizeImageGenerationConfig } from "@/common/types/imageGeneration";
 
 // Re-export project/provider types from dedicated schema/types files (for preload usage)
 export type { Workspace, ProjectConfig, ProjectsConfig, ProviderConfig, CanonicalProvidersConfig };
@@ -769,6 +771,7 @@ export class Config {
             ? null
             : parseOptionalPositiveInteger(parsed.advisorMaxOutputTokens);
         const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
+        const imageGeneration = normalizeImageGenerationConfig(parsed.imageGeneration);
         let legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
         const agentAiDefaults =
           parsed.agentAiDefaults !== undefined
@@ -875,12 +878,14 @@ export class Config {
           viewedSplashScreens: parsed.viewedSplashScreens,
           layoutPresets,
           taskSettings,
+          chatTranscriptFullWidth: parseOptionalBoolean(parsed.chatTranscriptFullWidth),
           muxGatewayEnabled,
           llmDebugLogs: parseOptionalBoolean(parsed.llmDebugLogs),
           heartbeatDefaultPrompt: parseOptionalNonEmptyString(parsed.heartbeatDefaultPrompt),
           heartbeatDefaultIntervalMs: parseOptionalHeartbeatIntervalMs(
             parsed.heartbeatDefaultIntervalMs
           ),
+          goalDefaults: normalizeGoalDefaults(parsed.goalDefaults),
           muxGatewayModels,
           routePriority,
           routeOverrides,
@@ -890,6 +895,7 @@ export class Config {
           advisorMaxUsesPerTurn,
           advisorMaxOutputTokens,
           hiddenModels,
+          imageGeneration,
           agentAiDefaults,
           // Subagent defaults: exec is canonical active storage, non-exec entries
           // support legacy mirror compatibility.
@@ -920,6 +926,7 @@ export class Config {
       taskSettings: DEFAULT_TASK_SETTINGS,
       agentAiDefaults: {},
       subagentAiDefaults: {},
+      imageGeneration: normalizeImageGenerationConfig(undefined),
       routePriority: this.seedRoutePriorityFromProviders(),
       coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
       worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
@@ -948,6 +955,11 @@ export class Config {
         data.muxGatewayEnabled = muxGatewayEnabled;
       }
 
+      const chatTranscriptFullWidth = parseOptionalBoolean(config.chatTranscriptFullWidth);
+      if (chatTranscriptFullWidth === true) {
+        data.chatTranscriptFullWidth = true;
+      }
+
       const llmDebugLogs = parseOptionalBoolean(config.llmDebugLogs);
       if (llmDebugLogs !== undefined) {
         data.llmDebugLogs = llmDebugLogs;
@@ -963,6 +975,10 @@ export class Config {
       );
       if (heartbeatDefaultIntervalMs !== undefined) {
         data.heartbeatDefaultIntervalMs = heartbeatDefaultIntervalMs;
+      }
+
+      if (config.goalDefaults) {
+        data.goalDefaults = normalizeGoalDefaults(config.goalDefaults);
       }
 
       const muxGatewayModels = parseOptionalStringArray(config.muxGatewayModels);
@@ -1007,6 +1023,8 @@ export class Config {
       if (hiddenModels !== undefined) {
         data.hiddenModels = hiddenModels;
       }
+
+      data.imageGeneration = normalizeImageGenerationConfig(config.imageGeneration);
 
       const routePriority = parseOptionalStringArray(config.routePriority);
       if (routePriority !== undefined) {
@@ -1494,6 +1512,7 @@ export class Config {
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
               heartbeat: workspace.heartbeat,
+              goalDefaults: workspace.goalDefaults,
               aiSettingsByAgent:
                 workspace.aiSettingsByAgent ??
                 (workspace.aiSettings
@@ -1660,6 +1679,7 @@ export class Config {
               runtimeConfig: DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
               heartbeat: workspace.heartbeat,
+              goalDefaults: workspace.goalDefaults,
               aiSettingsByAgent:
                 workspace.aiSettingsByAgent ??
                 (workspace.aiSettings
@@ -1710,6 +1730,7 @@ export class Config {
             runtimeConfig: DEFAULT_RUNTIME_CONFIG,
             aiSettings: workspace.aiSettings,
             heartbeat: workspace.heartbeat,
+            goalDefaults: workspace.goalDefaults,
             aiSettingsByAgent:
               workspace.aiSettingsByAgent ??
               (workspace.aiSettings
@@ -1786,6 +1807,7 @@ export class Config {
         runtimeConfig: metadata.runtimeConfig,
         aiSettings: metadata.aiSettings,
         heartbeat: metadata.heartbeat,
+        goalDefaults: metadata.goalDefaults,
         parentWorkspaceId: metadata.parentWorkspaceId,
         agentType: metadata.agentType,
         agentId: metadata.agentId,
@@ -1876,6 +1898,115 @@ export class Config {
     }
 
     return null;
+  }
+
+  /**
+   * Return a content fingerprint (sha256) of providers.jsonc, or null if
+   * the file doesn't exist or can't be read. Used by callers to
+   * distinguish between watcher events triggered by their own saves
+   * versus genuine external edits.
+   *
+   * We hash the file contents rather than comparing mtime: filesystems
+   * with coarse timestamp granularity (FAT, some network mounts) can
+   * bucket two distinct writes into the same `mtimeMs`, which would let
+   * a real external edit be silently suppressed. If two writes happen
+   * to produce byte-identical content, suppressing the refresh is a
+   * no-op anyway, so content equality is the safest possible self-
+   * write signal.
+   */
+  getProvidersFileFingerprint(): string | null {
+    try {
+      const contents = fs.readFileSync(this.providersFile);
+      return crypto.createHash("sha256").update(contents).digest("hex");
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Watch providers.jsonc for external edits. Fires callback (debounced 300 ms)
+   * on any create/modify/delete event. Returns a cleanup function.
+   *
+   * We watch the parent directory rather than the file directly so that
+   * creates (first-time manual edit) are also detected on all platforms.
+   */
+  watchProvidersFile(callback: () => void): () => void {
+    const filename = path.basename(this.providersFile);
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const fire = (): void => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        callback();
+      }, 300);
+    };
+
+    // Anything inside this block can fail in restricted environments:
+    //   - ensurePrivateDirSync: read-only filesystem, unwritable MUX_ROOT
+    //   - fs.watch: ENOENT, network filesystems (NFS/SMB), watch-limit
+    //     exhaustion (ENOSPC on Linux), unsupported virtualized mounts.
+    // We degrade gracefully in every case: log once, return a no-op
+    // cleanup, and let the rest of provider config keep working. The UI
+    // just won't auto-refresh on manual edits in that environment (same
+    // as the pre-PR behaviour).
+    let watcher: fs.FSWatcher;
+    try {
+      // The mux home directory may not exist on a fresh install. Create it
+      // so fs.watch doesn't throw ENOENT; the directory being empty is fine.
+      if (!fs.existsSync(this.rootDir)) {
+        ensurePrivateDirSync(this.rootDir);
+      }
+
+      // persistent: false so the watcher doesn't prevent the process (or
+      // Jest) from exiting when nothing else is keeping the event loop alive.
+      watcher = fs.watch(this.rootDir, { persistent: false }, (_eventType, changedFilename) => {
+        // changedFilename can be null on some platforms/kernels (notably
+        // older macOS FSEvents). When we can't tell which file changed,
+        // assume providers.jsonc might have and let the consumer re-fetch
+        // — better an extra refresh than a missed one, since this is the
+        // exact scenario the feature is meant to fix.
+        if (changedFilename != null && changedFilename !== filename) return;
+        fire();
+      });
+
+      // Without an 'error' listener, FSWatcher errors emit on the global
+      // 'uncaughtException' path and can terminate the process (e.g. if the
+      // mux home directory is removed or unmounted after startup). Handle
+      // it locally: degrade to "no live refresh" the same way we do when
+      // setup itself fails. The watcher is dead after an error, so we
+      // close it defensively and clear any pending debounce so the
+      // cleanup function returned below remains a safe no-op.
+      watcher.on("error", (error) => {
+        log.warn(
+          `providers.jsonc watcher error (${this.rootDir}); live refresh disabled until restart:`,
+          error
+        );
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
+        }
+        try {
+          watcher.close();
+        } catch {
+          // Watcher may already be torn down by the OS — nothing to do.
+        }
+      });
+    } catch (error) {
+      log.warn(
+        `Could not watch providers.jsonc for external edits (${this.rootDir}); manual edits will require a restart to take effect:`,
+        error
+      );
+      const noop = (): void => {
+        // Nothing to clean up — watcher setup never completed.
+      };
+      return noop;
+    }
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      watcher.close();
+    };
   }
 
   /**

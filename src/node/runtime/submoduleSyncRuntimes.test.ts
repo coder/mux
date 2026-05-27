@@ -170,7 +170,7 @@ describe("workspace checkout orchestration", () => {
         return Promise.resolve(createExecStream({ stdout: "true\n", exitCode: 0 }));
       }
 
-      if (command.includes("git fetch origin main")) {
+      if (command.includes("git fetch origin") && command.includes("refs/remotes/origin/main")) {
         return Promise.resolve(createExecStream({ exitCode: 0 }));
       }
 

@@ -47,6 +47,11 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import { TASK_VARIANT_PLACEHOLDER, TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
 
+import {
+  IMAGE_GENERATION_OUTPUT_FORMAT_VALUES,
+  IMAGE_GENERATION_QUALITY_VALUES,
+} from "@/common/types/imageGeneration";
+
 // -----------------------------------------------------------------------------
 // ask_user_question (plan-mode interactive questions)
 // -----------------------------------------------------------------------------
@@ -831,13 +836,112 @@ export const ProposeNameToolArgsSchema = z.object({
     .describe("Human-readable title (2-5 words): verb-noun format like 'Fix plan mode'"),
 });
 
+// -----------------------------------------------------------------------------
+// propose_status (sidebar agent status generation)
+// -----------------------------------------------------------------------------
+
+export const ProposeStatusToolArgsSchema = z.object({
+  emoji: z
+    .string()
+    .min(1)
+    .max(8)
+    .describe(
+      "A single emoji that represents the agent's current activity (e.g. '🔍', '🛠️', '🧪', '📝')"
+    ),
+  message: z
+    .string()
+    .min(2)
+    .max(60)
+    .describe(
+      "A short verb-led phrase (2-6 words) describing what the agent is currently working on, in sentence case, no punctuation, no quotes (e.g. 'Investigating crash', 'Implementing sidebar status')"
+    ),
+});
+
 const MuxConfigFileSchema = z.enum(["providers", "config"]);
+
+/**
+ * Rename a string-typed alias field to its canonical name on a plain object,
+ * dropping the alias to keep downstream tool args canonical. No-op if the
+ * canonical field is already a string or the alias is missing/non-string.
+ *
+ * Used by the bash tool's `preprocess` to normalize quirky model emissions
+ * (e.g. `command` → `script`, `description` → `display_name`) without
+ * duplicating the same destructure/spread shape per alias.
+ */
+function renameAliasField(
+  obj: Record<string, unknown>,
+  alias: string,
+  canonical: string
+): Record<string, unknown> {
+  if (typeof obj[canonical] === "string") return obj;
+  if (typeof obj[alias] !== "string") return obj;
+  const { [alias]: aliasValue, ...rest } = obj;
+  return { ...rest, [canonical]: aliasValue };
+}
 
 /**
  * Tool definitions: single source of truth
  * Key = tool name, Value = { description, schema }
  */
 export const TOOL_DEFINITIONS = {
+  image_generate: {
+    description:
+      "Generate raster image artifacts using Mux's experimental Image Tools configuration. " +
+      "Use only when the user explicitly asks to generate or create image artifacts. " +
+      "Do not call for ordinary code, design discussion, or prompt brainstorming. " +
+      "Generated full-resolution images are saved as runtime artifacts; copy selected final assets into the workspace when needed.",
+    schema: z
+      .object({
+        prompt: z.string().min(1).describe("Prompt describing the image(s) to generate"),
+        n: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe(
+            "Number of images to generate. Defaults to 1 and must not exceed the user's configured Image Tools maximum."
+          ),
+        quality: z
+          .enum(IMAGE_GENERATION_QUALITY_VALUES)
+          .nullish()
+          .describe("Optional generation quality. Defaults to the provider/model default."),
+        outputFormat: z
+          .enum(IMAGE_GENERATION_OUTPUT_FORMAT_VALUES)
+          .nullish()
+          .describe("Optional output format. Defaults to png."),
+      })
+      .strict(),
+  },
+  image_edit: {
+    description:
+      "Edit one existing local PNG, JPEG, or WebP image using Mux's experimental Image Tools configuration. " +
+      "Use only when image editing is requested or clearly required by the current task; do not upload incidental image files. " +
+      "The source image is uploaded as-is, including embedded metadata, to the configured image provider. " +
+      "Do not edit images containing secrets or sensitive visual/metadata content. " +
+      "Edited full-resolution images are saved as runtime artifacts; copy selected final assets into the workspace when needed.",
+    schema: z
+      .object({
+        sourcePath: z.string().min(1).describe("Path to the existing source image to edit"),
+        prompt: z.string().min(1).describe("Edit prompt describing the desired image changes"),
+        n: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe(
+            "Number of edited variants to create. Defaults to 1; request multiple variants only when the user asks or variants are clearly useful."
+          ),
+        quality: z
+          .enum(IMAGE_GENERATION_QUALITY_VALUES)
+          .nullish()
+          .describe("Optional edit quality. Defaults to the provider/model default."),
+        outputFormat: z
+          .enum(IMAGE_GENERATION_OUTPUT_FORMAT_VALUES)
+          .nullish()
+          .describe("Optional output format. Defaults to png."),
+      })
+      .strict(),
+  },
   bash: {
     description:
       "Execute a bash command with a configurable timeout. " +
@@ -848,23 +952,30 @@ export const TOOL_DEFINITIONS = {
       "On Windows this runs in Git Bash; to discard output use `>/dev/null` (not `>nul`).",
     schema: z.preprocess(
       (value) => {
-        // Compatibility: some models emit { command: "..." } instead of { script: "..." }.
-        // Normalize to `script` so downstream code (tool runner + UI) stays consistent.
+        // Compatibility shims for models that emit alias fields:
+        // - some models emit `command` instead of `script`
+        // - DeepSeek v4 emits `description` instead of `display_name`
+        // Normalize both so downstream code (tool runner + UI) sees canonical args.
+        // Aliases are intentionally undocumented in the public schema; we don't
+        // want to invite other models to use the wrong field.
         if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
 
-        const obj = value as Record<string, unknown>;
-        if (typeof obj.script === "string") return value;
-
-        if (typeof obj.command === "string") {
-          // Drop the legacy field to keep tool args canonical (and avoid confusing downstream consumers).
-          const { command, ...rest } = obj as Record<string, unknown> & { command: string };
-          return { ...rest, script: command };
-        }
-
-        return value;
+        let obj = value as Record<string, unknown>;
+        obj = renameAliasField(obj, "command", "script");
+        obj = renameAliasField(obj, "description", "display_name");
+        return obj;
       },
       z.object({
         script: z.string().describe("The bash script/command to execute"),
+        model_intent: z
+          .string()
+          .nullish()
+          .describe(
+            "Optional. Short user-facing purpose for this command, shown next to the command in collapsed chat. " +
+              "Use a present-participle phrase in plain English, under 100 characters. " +
+              "Do not repeat the command or include duration, because Mux appends those. " +
+              "Examples: 'Running the unit tests', 'Checking repository state', 'Inspecting build output'."
+          ),
         timeout_secs: z
           .number()
           .positive()
@@ -929,7 +1040,7 @@ export const TOOL_DEFINITIONS = {
     description:
       "Attach a supported file from the filesystem so later model steps receive it as a real attachment instead of a huge base64 JSON blob. " +
       "Accepts absolute or relative paths, including files outside the workspace. " +
-      "Currently supports raster images, SVG, and PDF.",
+      "Currently supports raster images, SVG, and PDF as model attachments. Markdown files are shown to the user for preview/download only. Unsupported file types are shown to the user in chat when possible, but only a notice is sent to the model.",
     schema: z.preprocess(
       normalizeFilePath,
       z
@@ -1314,11 +1425,23 @@ export const TOOL_DEFINITIONS = {
       "Each question must include 2–4 options; an 'Other' choice is provided automatically.",
     schema: AskUserQuestionToolArgsSchema,
   },
+  // `internal` tools are excluded from user-facing tool docs (hooks/tools.mdx
+  // env-var tables) because users can't write hooks for them — they run via
+  // bespoke streamText paths in their own services, not the standard tool
+  // execution pipeline. See gen_docs.ts.
   propose_name: {
     description:
       "Propose a workspace name and title. You MUST call this tool exactly once with your chosen name and title. " +
       "Do not emit a text response; call this tool immediately.",
     schema: ProposeNameToolArgsSchema,
+    internal: true,
+  },
+  propose_status: {
+    description:
+      "Propose a short sidebar status (emoji + 2-6 word verb-led phrase) summarizing what the agent is currently doing. " +
+      "You MUST call this tool exactly once. Do not emit a text response; call this tool immediately.",
+    schema: ProposeStatusToolArgsSchema,
+    internal: true,
   },
   propose_plan: {
     description:
@@ -1387,6 +1510,37 @@ export const TOOL_DEFINITIONS = {
     schema: SwitchAgentToolArgsSchema,
   },
 
+  get_goal: {
+    description:
+      "Read the current workspace goal. Returns null when no goal is available in this turn.",
+    schema: z.object({}).strict(),
+  },
+  complete_goal: {
+    description:
+      "Mark the current workspace goal complete with a concise 1-2 sentence summary of why the goal is done. " +
+      "This tool only completes goals; it cannot pause, resume, replace, or change goal budgets. " +
+      "Pass the `goalId` returned by `get_goal` so the completion is rejected with a typed conflict " +
+      "error if the user clears or replaces the goal mid-stream rather than throwing a confusing " +
+      "validation error.",
+    schema: z
+      .object({
+        summary: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("Required 1-2 sentence justification for completing the current goal."),
+        goalId: z
+          .string()
+          .nullish()
+          .describe(
+            "Optional optimistic-concurrency token. Pass the `goalId` returned by `get_goal` to " +
+              "ensure the completion is rejected with a typed conflict error if the user clears " +
+              "or replaces the goal mid-stream."
+          ),
+      })
+      .strict(),
+  },
+
   todo_write: {
     description:
       "Create or update the todo list for tracking multi-step tasks (limit: 7 items). " +
@@ -1420,6 +1574,55 @@ export const TOOL_DEFINITIONS = {
   todo_read: {
     description: "Read the current todo list",
     schema: z.object({}),
+  },
+  review_pane_update: {
+    description:
+      "Flag specific code regions in the Review pane for the user to review next. " +
+      "Use this to draw the user's attention to critical changes you want reviewed first. " +
+      "Each hunk references a project-relative file path with an optional inclusive line " +
+      'range using familiar syntax: "src/foo.ts" (whole file), "src/foo.ts:42" (single line), ' +
+      'or "src/foo.ts:42-58" (range, new-file line numbers). Project-relative paths are ' +
+      "preferred; use './' or '../' for paths that must resolve from the current tool cwd. " +
+      "Attach a short comment to each " +
+      "hunk explaining what to look at and why.\n\n" +
+      "operation:\n" +
+      "  - 'replace' (default): overwrite the current assisted set\n" +
+      "  - 'add': append to the existing set, deduplicating exact path:range matches\n\n" +
+      "Flagged hunks appear pinned at the top of the Review pane; the user can toggle " +
+      "'Assisted' to hide everything else. Pass an empty hunks array with operation='replace' " +
+      "to clear the set when review is no longer needed.",
+    schema: z
+      .object({
+        operation: z
+          .enum(["add", "replace"])
+          .describe("'replace' overwrites the assisted set; 'add' appends to it."),
+        hunks: z
+          .array(
+            z
+              .object({
+                path: z
+                  .string()
+                  .min(1)
+                  .describe(
+                    'Filter in `path[:range]` form, e.g. "src/foo.ts" or "src/foo.ts:42-58". ' +
+                      "Path is project-relative; use './' or '../' when the path must resolve from the current tool working directory. Range uses new-file line numbers (inclusive)."
+                  ),
+                comment: z
+                  .string()
+                  .nullish()
+                  .describe("Short note (~1 sentence) telling the user what to look at and why."),
+              })
+              .strict()
+          )
+          .describe("List of hunks to flag for review."),
+      })
+      .strict(),
+  },
+  review_pane_get: {
+    description:
+      "Return the current set of agent-flagged hunks in the Review pane, in declared order. " +
+      "Use this to inspect what you've already pinned before adding more.",
+    schema: z.object({}).strict(),
   },
   bash_output: {
     description:
@@ -1618,6 +1821,70 @@ const TruncatedInfoSchema = z.object({
   reason: z.string(),
   totalLines: z.number(),
 });
+
+const ImageToolThumbnailSchema = z.object({
+  data: z.string(),
+  mediaType: z.string(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+
+const ImageToolDimensionsSchema = z.object({
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+
+const ImageToolImageSchema = z.object({
+  path: z.string(),
+  filename: z.string(),
+  mediaType: z.string(),
+  thumbnail: ImageToolThumbnailSchema.optional(),
+  revisedPrompt: z.string().optional(),
+});
+
+const ImageEditImageSchema = ImageToolImageSchema.extend({
+  outputDimensions: ImageToolDimensionsSchema,
+});
+
+const ImageEditSourceSchema = z.object({
+  path: z.string(),
+  resolvedPath: z.string(),
+  sizeBytes: z.number().int().nonnegative(),
+  dimensions: ImageToolDimensionsSchema,
+});
+
+export const ImageGenerateToolResultSchema = z.discriminatedUnion("success", [
+  z.object({
+    success: z.literal(true),
+    model: z.string(),
+    prompt: z.string(),
+    requestedCount: z.number().int().positive(),
+    images: z.array(ImageToolImageSchema).min(1),
+    warnings: z.array(z.string()).optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    setupHint: z.string().optional(),
+  }),
+]);
+
+export const ImageEditToolResultSchema = z.discriminatedUnion("success", [
+  z.object({
+    success: z.literal(true),
+    model: z.string(),
+    prompt: z.string(),
+    requestedCount: z.number().int().positive(),
+    source: ImageEditSourceSchema,
+    images: z.array(ImageEditImageSchema).min(1),
+    warnings: z.array(z.string()).optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    setupHint: z.string().optional(),
+  }),
+]);
 
 /**
  * Bash tool result - success, background spawn, or failure.
@@ -1829,10 +2096,34 @@ const AttachFileToolMediaPartSchema = z
   })
   .strict();
 
+const AttachFileToolDisplayFilePartSchema = z
+  .object({
+    type: z.literal("display_file"),
+    data: z.string(),
+    mediaType: z.string(),
+    filename: z.string().optional(),
+    providerOptions: z
+      .object({
+        mux: z
+          .object({
+            displayOnly: z.literal(true),
+            size: z.number().int().nonnegative(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 const AttachFileToolSuccessResultSchema = z
   .object({
     type: z.literal("content"),
-    value: z.tuple([AttachFileToolTextPartSchema, AttachFileToolMediaPartSchema]),
+    value: z.union([
+      z.tuple([AttachFileToolTextPartSchema, AttachFileToolMediaPartSchema]),
+      z.tuple([AttachFileToolTextPartSchema, AttachFileToolDisplayFilePartSchema]),
+    ]),
   })
   .strict();
 
@@ -2007,6 +2298,8 @@ export function getAvailableTools(
     enableAgentReport?: boolean;
     enableAnalyticsQuery?: boolean;
     enableAdvisor?: boolean;
+    enableImageGeneration?: boolean;
+    enableImageEditing?: boolean;
     /** @deprecated Mux global tools are always included. */
     enableMuxGlobalAgentsTools?: boolean;
   }
@@ -2015,6 +2308,8 @@ export function getAvailableTools(
   const enableAgentReport = options?.enableAgentReport ?? true;
   const enableAnalyticsQuery = options?.enableAnalyticsQuery ?? true;
   const enableAdvisor = options?.enableAdvisor ?? false;
+  const enableImageGeneration = options?.enableImageGeneration ?? false;
+  const enableImageEditing = enableImageGeneration && (options?.enableImageEditing ?? false);
 
   // Base tools available for all models
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
@@ -2044,6 +2339,8 @@ export function getAvailableTools(
     // "file_edit_replace_lines", // DISABLED: causes models to break repo state
     "file_edit_insert",
     ...(enableAdvisor ? ["advisor"] : []),
+    ...(enableImageGeneration ? ["image_generate"] : []),
+    ...(enableImageEditing ? ["image_edit"] : []),
     "ask_user_question",
     "propose_plan",
     "bash",
@@ -2054,8 +2351,12 @@ export function getAvailableTools(
     "task_list",
     ...(enableAgentReport ? ["agent_report"] : []),
     "switch_agent",
+    "get_goal",
+    "complete_goal",
     "todo_write",
     "todo_read",
+    "review_pane_update",
+    "review_pane_get",
     "notify",
     ...(enableAnalyticsQuery ? ["analytics_query"] : []),
     "web_fetch",

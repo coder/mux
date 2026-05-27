@@ -157,6 +157,9 @@ describe("mux CLI", () => {
       expect(result.stdout).toContain("--mode");
       expect(result.stdout).toContain("--thinking");
       expect(result.stdout).toContain("--hide-costs");
+      expect(result.stdout).toContain("--goal");
+      expect(result.stdout).toContain("--goal-budget");
+      expect(result.stdout).toContain("--goal-turns");
       expect(result.stdout).toContain("--json");
       expect(result.stdout).toContain("--quiet");
     });
@@ -179,6 +182,42 @@ describe("mux CLI", () => {
       const result = await runRunDirect([]);
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain("No message provided");
+    });
+
+    test("empty --goal shows a goal-specific error", async () => {
+      const result = await runRunDirect(["--goal", ""]);
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("--goal requires a non-empty objective");
+    });
+
+    test("--goal supplies the initial message when no message or stdin is provided", async () => {
+      const result = await runRunDirect([
+        "--goal",
+        "finish the objective",
+        "--dir",
+        "/nonexistent/path/for/goal/test",
+      ]);
+      expect(result.output).not.toContain("No message provided");
+      expect(result.output).not.toContain("--goal requires a non-empty objective");
+      expect(result.exitCode).toBe(1);
+    });
+
+    test("--goal-budget and --goal-turns require --goal", async () => {
+      const result = await runRunDirect(["--goal-budget", "5", "test message"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("--goal-budget and --goal-turns require --goal");
+    });
+
+    test("invalid --goal-budget shows error", async () => {
+      const result = await runRunDirect(["--goal", "ship", "--goal-budget", "five"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("Invalid --goal-budget");
+    });
+
+    test("invalid --goal-turns shows error", async () => {
+      const result = await runRunDirect(["--goal", "ship", "--goal-turns", "0"]);
+      expect(result.exitCode).toBe(1);
+      expect(result.output).toContain("Invalid --goal-turns");
     });
 
     test("xhigh thinking level is accepted", async () => {

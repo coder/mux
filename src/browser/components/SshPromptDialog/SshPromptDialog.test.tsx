@@ -3,6 +3,10 @@ import "../../../../tests/ui/dom";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type { SshPromptEvent, SshPromptRequest } from "@/common/orpc/schemas/ssh";
+import {
+  createControllableAsyncIterable,
+  type ControllableAsyncIterable,
+} from "@/browser/testUtils";
 import type { ReactNode } from "react";
 import { installDom } from "../../../../tests/ui/dom";
 
@@ -25,79 +29,15 @@ void mock.module("@/browser/components/Dialog/Dialog", () => ({
 
 import { SshPromptDialog } from "../SshPromptDialog/SshPromptDialog";
 
-interface ControlledSubscription<T> {
-  iterable: AsyncIterable<T>;
-  push: (value: T) => void;
-  close: () => void;
+interface ControlledSubscription<T> extends ControllableAsyncIterable<T> {
   returnSpy: ReturnType<typeof mock>;
 }
 
 function createMockIterableSubscription<T>(): ControlledSubscription<T> {
-  const buffered: T[] = [];
-  const pending: Array<(result: IteratorResult<T>) => void> = [];
-  let closed = false;
-
-  const doneResult = (): IteratorResult<T> => ({
-    value: undefined as unknown as T,
-    done: true,
-  });
-
-  const flushDone = () => {
-    while (pending.length > 0) {
-      const resolve = pending.shift();
-      resolve?.(doneResult());
-    }
-  };
-
-  const returnSpy = mock((_value?: unknown) => {
-    closed = true;
-    flushDone();
-    return Promise.resolve(doneResult());
-  });
-
-  const iterator: AsyncIterator<T> = {
-    next() {
-      if (closed) {
-        return Promise.resolve(doneResult());
-      }
-
-      if (buffered.length > 0) {
-        return Promise.resolve({ value: buffered.shift()!, done: false });
-      }
-
-      return new Promise((resolve) => {
-        pending.push(resolve);
-      });
-    },
-    return: returnSpy,
-  };
-
+  const returnSpy = mock(() => undefined);
   return {
-    iterable: {
-      [Symbol.asyncIterator]: () => iterator,
-    },
+    ...createControllableAsyncIterable<T>({ onReturn: returnSpy }),
     returnSpy,
-    push(value: T) {
-      if (closed) {
-        return;
-      }
-
-      const resolve = pending.shift();
-      if (resolve) {
-        resolve({ value, done: false });
-        return;
-      }
-
-      buffered.push(value);
-    },
-    close() {
-      if (closed) {
-        return;
-      }
-
-      closed = true;
-      flushDone();
-    },
   };
 }
 

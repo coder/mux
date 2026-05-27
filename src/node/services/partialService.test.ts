@@ -262,6 +262,53 @@ describe("HistoryService partial persistence - Error Recovery", () => {
     }
     expect(historyResult.data).toEqual([]);
   });
+  test("commitPartial deletes stale pre-boundary partial instead of appending it", async () => {
+    const workspaceId = "test-workspace-stale-partial";
+    const rows = [
+      createMuxMessage("user-before", "user", "before", { historySequence: 0 }),
+      createMuxMessage("assistant-before", "assistant", "before reply", { historySequence: 1 }),
+      createMuxMessage("summary", "assistant", "summary", {
+        historySequence: 2,
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+        muxMetadata: { type: "compaction-summary" },
+      }),
+      createMuxMessage("user-after", "user", "after", { historySequence: 3 }),
+    ];
+
+    for (const row of rows) {
+      const appendResult = await partialService.appendToHistory(workspaceId, row);
+      expect(appendResult.success).toBe(true);
+    }
+
+    const stalePartial = createMuxMessage("assistant-before", "assistant", "stale partial", {
+      historySequence: 1,
+      partial: true,
+    });
+    const writePartialResult = await partialService.writePartial(workspaceId, stalePartial);
+    expect(writePartialResult.success).toBe(true);
+
+    const commitResult = await partialService.commitPartial(workspaceId);
+    expect(commitResult.success).toBe(true);
+
+    const partialAfterCommit = await partialService.readPartial(workspaceId);
+    expect(partialAfterCommit).toBeNull();
+
+    const historyResult = await partialService.getHistoryFromLatestBoundary(workspaceId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) {
+      throw new Error(historyResult.error);
+    }
+
+    expect(historyResult.data.map((message) => message.id)).toEqual(["summary", "user-after"]);
+    expect(historyResult.data.at(-1)?.metadata?.historySequence).toBe(3);
+
+    const nextMessage = createMuxMessage("next-user", "user", "next");
+    const appendNextResult = await partialService.appendToHistory(workspaceId, nextMessage);
+    expect(appendNextResult.success).toBe(true);
+    expect(nextMessage.metadata?.historySequence).toBe(4);
+  });
 });
 
 describe("HistoryService partial persistence - Legacy compatibility", () => {

@@ -15,9 +15,21 @@ import {
 import { getErrorMessage } from "@/common/utils/errors";
 import {
   ForegroundWaitBackgroundedError,
+  type AgentTaskStatus,
   type AgentTaskStatusLookup,
   type AgentTaskTimestamps,
 } from "@/node/services/taskService";
+
+// Status values for which task_await still treats an agent task as live and
+// should surface the live status (plus an `elapsed_ms` field) instead of
+// awaiting a report. Centralised here so the timeout=0 and "timed out" error
+// branches below stay in lockstep when shared fields are added — see #3234,
+// which extended both branches symmetrically with `getAgentTaskElapsedField`.
+type AgentTaskActiveStatus = "queued" | "running" | "awaiting_report";
+
+function isAgentTaskActiveStatus(status: AgentTaskStatus | null): status is AgentTaskActiveStatus {
+  return status === "queued" || status === "running" || status === "awaiting_report";
+}
 
 function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
   if (typeof timeoutSecs !== "number" || !Number.isFinite(timeoutSecs)) return undefined;
@@ -247,7 +259,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           // current task status instead of awaiting.
           if (timeoutMs === 0) {
             const status = taskService.getAgentTaskStatus(taskId);
-            if (status === "queued" || status === "running" || status === "awaiting_report") {
+            if (isAgentTaskActiveStatus(status)) {
               return { status, taskId, ...getAgentTaskElapsedField(taskId) };
             }
 
@@ -299,12 +311,9 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           } catch (error: unknown) {
             if (error instanceof ForegroundWaitBackgroundedError) {
               const currentStatus = taskService.getAgentTaskStatus(taskId);
-              const normalizedStatus =
-                currentStatus === "queued" ||
-                currentStatus === "running" ||
-                currentStatus === "awaiting_report"
-                  ? currentStatus
-                  : ("running" as const);
+              const normalizedStatus = isAgentTaskActiveStatus(currentStatus)
+                ? currentStatus
+                : ("running" as const);
               return {
                 status: normalizedStatus,
                 taskId,
@@ -323,7 +332,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             }
             if (/timed out/i.test(message)) {
               const status = taskService.getAgentTaskStatus(taskId);
-              if (status === "queued" || status === "running" || status === "awaiting_report") {
+              if (isAgentTaskActiveStatus(status)) {
                 return { status, taskId, ...getAgentTaskElapsedField(taskId) };
               }
               if (!status) {

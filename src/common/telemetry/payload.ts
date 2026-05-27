@@ -289,6 +289,8 @@ export interface ProviderConfiguredPayload {
  */
 export type TelemetryCommandType =
   | "clear"
+  | "clear:hard"
+  | "clear:soft"
   | "compact"
   | "new"
   | "fork"
@@ -296,7 +298,9 @@ export type TelemetryCommandType =
   | "model"
   | "mode"
   | "plan"
-  | "providers";
+  | "providers"
+  | "goal"
+  | "btw";
 
 /**
  * Command usage event - tracks slash command usage patterns

@@ -1,31 +1,37 @@
-export const RIGHT_SIDEBAR_TABS = [
-  "costs",
-  "review",
-  "terminal",
-  "desktop",
-  "browser",
-  // "stats" removed — absorbed into "costs" as sub-tabs
-  "output",
-  "debug",
-] as const;
+/**
+ * Right-sidebar tab types.
+ *
+ * Static (non-terminal) tab ids are derived from the lightweight tab config
+ * (`@/browser/features/RightSidebar/Tabs/tabConfig`) so type-only consumers do
+ * not import panel renderers. This file just lifts those ids to the
+ * shared type space so other modules don't have to import the registry just
+ * to pattern-match on tab ids.
+ */
 
-/** Base tab types that are always valid */
-export type BaseTabType = (typeof RIGHT_SIDEBAR_TABS)[number];
+import {
+  BASE_TAB_IDS,
+  isBaseTabId,
+  type BaseTabType,
+} from "@/browser/features/RightSidebar/Tabs/tabConfig";
+
+/** Runtime list of static (non-terminal) tab ids — useful for iteration. */
+export const RIGHT_SIDEBAR_TABS = BASE_TAB_IDS;
+export type { BaseTabType };
 
 /**
  * Extended tab type that supports multiple terminal instances.
  * - Terminal tabs: "terminal" (placeholder for new) or "terminal:<sessionId>" for real sessions
  */
-export type TabType = BaseTabType | `terminal:${string}`;
+export type TabType = BaseTabType | `terminal:${string}` | "terminal";
 
-/** Check if a value is a valid tab type (base tab or terminal instance) */
+/** Check if a value is a valid tab type (base tab or terminal instance). */
 export function isTabType(value: unknown): value is TabType {
   if (typeof value !== "string") return false;
-  if ((RIGHT_SIDEBAR_TABS as readonly string[]).includes(value)) return true;
-  return value.startsWith("terminal:");
+  if (isBaseTabId(value)) return true;
+  return value === "terminal" || value.startsWith("terminal:");
 }
 
-/** Check if a tab type represents a terminal (either base "terminal" or "terminal:<sessionId>") */
+/** Check if a tab type represents a terminal (either base "terminal" or "terminal:<sessionId>"). */
 export function isTerminalTab(tab: TabType): boolean {
   return tab === "terminal" || tab.startsWith("terminal:");
 }
@@ -40,7 +46,7 @@ export function getTerminalSessionId(tab: TabType): string | undefined {
   return undefined;
 }
 
-/** Create a terminal tab type for a given session ID */
+/** Create a terminal tab type for a given session ID. */
 export function makeTerminalTabType(sessionId?: string): TabType {
   return sessionId ? `terminal:${sessionId}` : "terminal";
 }

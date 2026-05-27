@@ -1,11 +1,8 @@
 import React, { useState } from "react";
+import { isValidBase64AttachmentData } from "@/common/utils/attachments/base64";
+import { isToolContentResult } from "@/common/utils/tools/toolContentResult";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
-import {
-  Dialog,
-  DialogContent,
-  DialogTitle,
-  VisuallyHidden,
-} from "@/browser/components/Dialog/Dialog";
+import { ImageLightbox } from "@/browser/components/ImageLightbox";
 
 /**
  * Image content from MCP tool results (transformed from MCP's image type to AI SDK's media type)
@@ -16,12 +13,17 @@ interface MediaContent {
   mediaType: string;
 }
 
-/**
- * Structure of transformed MCP results that contain images
- */
-interface ContentResult {
-  type: "content";
-  value: Array<{ type: string; text?: string; data?: string; mediaType?: string }>;
+function isMediaContent(value: unknown): value is MediaContent {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    record.type === "media" &&
+    typeof record.data === "string" &&
+    typeof record.mediaType === "string"
+  );
 }
 
 /**
@@ -39,17 +41,6 @@ const ALLOWED_IMAGE_TYPES = new Set([
 ]);
 
 /**
- * Validate base64 string contains only valid characters.
- * Prevents injection of malicious content through invalid base64.
- */
-function isValidBase64(str: string): boolean {
-  // Base64 should only contain alphanumeric, +, /, and = for padding
-  // Also allow reasonable length (up to ~10MB decoded = ~13MB base64)
-  if (str.length > 15_000_000) return false;
-  return /^[A-Za-z0-9+/]*={0,2}$/.test(str);
-}
-
-/**
  * Sanitize and validate image data from MCP tool results.
  * Returns a safe data URL or null if validation fails.
  */
@@ -61,7 +52,7 @@ export function sanitizeImageData(mediaType: string, data: string): string | nul
   }
 
   // Validate base64 data
-  if (!isValidBase64(data)) {
+  if (!isValidBase64AttachmentData(data)) {
     return null;
   }
 
@@ -73,15 +64,9 @@ export function sanitizeImageData(mediaType: string, data: string): string | nul
  * Handles the transformed MCP result format: { type: "content", value: [...] }
  */
 export function extractImagesFromToolResult(result: unknown): MediaContent[] {
-  if (typeof result !== "object" || result === null) return [];
+  if (!isToolContentResult(result)) return [];
 
-  const contentResult = result as ContentResult;
-  if (contentResult.type !== "content" || !Array.isArray(contentResult.value)) return [];
-
-  return contentResult.value.filter(
-    (item): item is MediaContent =>
-      item.type === "media" && typeof item.data === "string" && typeof item.mediaType === "string"
-  );
+  return result.value.filter(isMediaContent);
 }
 
 interface ToolResultImagesProps {
@@ -121,25 +106,12 @@ export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) =>
         ))}
       </div>
 
-      {/* Lightbox modal for full-size image viewing */}
-      <Dialog open={selectedImage !== null} onOpenChange={() => setSelectedImage(null)}>
-        <DialogContent
-          maxWidth="90vw"
-          maxHeight="90vh"
-          className="flex items-center justify-center bg-black/90 p-2"
-        >
-          <VisuallyHidden>
-            <DialogTitle>Image Preview</DialogTitle>
-          </VisuallyHidden>
-          {selectedImage && (
-            <img
-              src={selectedImage}
-              alt="Full size preview"
-              className="max-h-[85vh] max-w-full object-contain"
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      <ImageLightbox
+        src={selectedImage}
+        title="Image Preview"
+        alt="Full size preview"
+        onClose={() => setSelectedImage(null)}
+      />
     </>
   );
 };

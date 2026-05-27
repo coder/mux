@@ -1,3 +1,8 @@
+import {
+  getDisplayOnlyFileMetadata,
+  isDisplayOnlyFilePart,
+  type DisplayOnlyFilePart,
+} from "@/common/utils/attachments/displayOnlyFileParts";
 import { MAX_SVG_TEXT_CHARS, SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 import {
   isSupportedAttachmentMediaType,
@@ -26,7 +31,11 @@ interface AISDKTextPart {
   text: string;
 }
 
-type AISDKContent = AISDKMediaPart | AISDKTextPart | { type: string; [key: string]: unknown };
+type AISDKContent =
+  | AISDKMediaPart
+  | AISDKTextPart
+  | DisplayOnlyFilePart
+  | { type: string; [key: string]: unknown };
 
 interface AISDKContentContainer {
   type: "content";
@@ -85,6 +94,18 @@ function buildAttachmentPlaceholder(item: AISDKMediaPart): AISDKTextPart {
   };
 }
 
+function buildDisplayOnlyFilePlaceholder(item: DisplayOnlyFilePart): AISDKTextPart {
+  const normalizedMediaType = normalizeAttachmentMediaType(item.mediaType);
+  const filename = normalizeOptionalFilename(item.filename);
+  const label = filename != null ? `${filename} (${normalizedMediaType})` : normalizedMediaType;
+  const sizeValue = getDisplayOnlyFileMetadata(item.providerOptions)?.size;
+  const size = typeof sizeValue === "number" ? `, size=${sizeValue} bytes` : "";
+  return {
+    type: "text",
+    text: `[File shown to user only: ${label}${size}. This file type is not supported as a model attachment, so no file bytes were sent to the model.]`,
+  };
+}
+
 export function extractAttachmentsFromToolOutput(
   output: unknown
 ): { newOutput: unknown; attachments: ExtractedToolAttachment[] } | null {
@@ -106,9 +127,11 @@ export function extractAttachmentsFromToolOutput(
 
   const attachments: ExtractedToolAttachment[] = [];
   const newValue: AISDKContent[] = [];
+  let didChange = false;
 
   for (const item of output.value) {
     if (isMediaPart(item) && isSupportedAttachmentMediaType(item.mediaType)) {
+      didChange = true;
       attachments.push({
         data: item.data,
         mediaType: normalizeAttachmentMediaType(item.mediaType),
@@ -120,10 +143,16 @@ export function extractAttachmentsFromToolOutput(
       continue;
     }
 
+    if (isDisplayOnlyFilePart(item)) {
+      didChange = true;
+      newValue.push(buildDisplayOnlyFilePlaceholder(item));
+      continue;
+    }
+
     newValue.push(item);
   }
 
-  if (attachments.length === 0) {
+  if (!didChange) {
     return null;
   }
 

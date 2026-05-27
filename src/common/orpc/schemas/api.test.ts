@@ -116,6 +116,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
       models: ["claude-3-opus", "claude-3-sonnet"],
       serviceTier: "flex",
       store: false,
+      webSocketTransportEnabled: true,
       cacheTtl: "1h",
       disableBetaFeatures: true,
       codexOauthSet: true,
@@ -150,6 +151,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
     expect(parsed.models).toEqual(full.models);
     expect(parsed.serviceTier).toBe(full.serviceTier);
     expect(parsed.store).toBe(full.store);
+    expect(parsed.webSocketTransportEnabled).toBe(full.webSocketTransportEnabled);
     expect(parsed.cacheTtl).toBe(full.cacheTtl);
     expect(parsed.disableBetaFeatures).toBe(full.disableBetaFeatures);
     expect(parsed.codexOauthSet).toBe(full.codexOauthSet);
@@ -201,6 +203,21 @@ describe("ProviderConfigInfoSchema conformance", () => {
 
     expect(parsed).toEqual(full);
     expect(Object.keys(parsed)).toEqual(Object.keys(full));
+  });
+});
+
+describe("config imageGeneration schema", () => {
+  it("preserves image upload consent across get and update payloads", () => {
+    const full = {
+      modelString: "openai:gpt-image-1.5",
+      maxImagesPerCall: 2,
+      allowImageUploadsForEditing: true,
+    };
+
+    expect(config.getConfig.output.shape.imageGeneration.parse(full)).toEqual(full);
+    expect(config.updateImageGenerationConfig.input.parse({ imageGeneration: full })).toEqual({
+      imageGeneration: full,
+    });
   });
 });
 

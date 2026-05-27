@@ -20,6 +20,12 @@ import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
 import type { SSHConnectionConfig, ConnectionHealth } from "./sshConnectionPool";
 import { resolveSSHConfig, type ResolvedSSHConfig } from "./sshConfigParser";
 import type { SshPromptService } from "@/node/services/sshPromptService";
+import {
+  DEFAULT_SSH_MAX_WAIT_MS,
+  SSH_BACKOFF_SCHEDULE_SECONDS,
+  type BaseSshAcquireConnectionOptions,
+  withSshBackoffJitter,
+} from "./sshBackoff";
 
 let sshPromptService: SshPromptService | undefined;
 
@@ -30,13 +36,8 @@ export function setSshPromptService(svc: SshPromptService): void {
 // ConnectionStatus and ConnectionHealth are shared with the OpenSSH pool —
 // imported from sshConnectionPool.ts to avoid duplication.
 
-/**
- * Backoff schedule in seconds: 1s → 2s → 4s → 7s → 10s (cap)
- */
-const BACKOFF_SCHEDULE = [1, 2, 4, 7, 10];
-
+const SSH2_OPERATION_ABORTED_ERROR = "Operation aborted";
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
-const DEFAULT_MAX_WAIT_MS = 2 * 60 * 1000;
 
 /**
  * Close idle connections after 60 seconds (matches ControlPersist=60).
@@ -44,26 +45,7 @@ const DEFAULT_MAX_WAIT_MS = 2 * 60 * 1000;
  */
 const IDLE_TIMEOUT_MS = 60 * 1000;
 
-export interface AcquireConnectionOptions {
-  /** Timeout for the connection attempt. */
-  timeoutMs?: number;
-
-  /**
-   * Max time to wait (ms) for a host to become healthy (waits + retries).
-   *
-   * - Omit to use the default (waits through backoff).
-   * - Set to 0 to fail fast.
-   */
-  maxWaitMs?: number;
-
-  /** Optional abort signal to cancel any waiting. */
-  abortSignal?: AbortSignal;
-
-  /**
-   * Called when acquireConnection is waiting due to backoff.
-   */
-  onWait?: (waitMs: number) => void;
-
+export interface AcquireConnectionOptions extends BaseSshAcquireConnectionOptions {
   /**
    * Test seam.
    *
@@ -80,9 +62,27 @@ interface SSH2ConnectionEntry {
   idleTimer?: ReturnType<typeof setTimeout>;
 }
 
-function withJitter(seconds: number): number {
-  const jitterFactor = 0.8 + Math.random() * 0.4;
-  return seconds * jitterFactor;
+function waitForAbortable<T>(promise: Promise<T>, abortSignal?: AbortSignal): Promise<T> {
+  if (!abortSignal) return promise;
+  if (abortSignal.aborted) return Promise.reject(new Error(SSH2_OPERATION_ABORTED_ERROR));
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      abortSignal.removeEventListener("abort", onAbort);
+      reject(new Error(SSH2_OPERATION_ABORTED_ERROR));
+    };
+    abortSignal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(
+      (value) => {
+        abortSignal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        abortSignal.removeEventListener("abort", onAbort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    );
+  });
 }
 
 function getAgentConfig(): string | undefined {
@@ -275,13 +275,13 @@ export class SSH2ConnectionPool {
     const key = makeConnectionKey(config);
     const timeoutMs = options.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     const sleep = options.sleep ?? sleepWithAbort;
-    const maxWaitMs = options.maxWaitMs ?? DEFAULT_MAX_WAIT_MS;
+    const maxWaitMs = options.maxWaitMs ?? DEFAULT_SSH_MAX_WAIT_MS;
     const shouldWait = maxWaitMs > 0;
     const startTime = Date.now();
 
     while (true) {
       if (options.abortSignal?.aborted) {
-        throw new Error("Operation aborted");
+        throw new Error(SSH2_OPERATION_ABORTED_ERROR);
       }
 
       const existing = this.connections.get(key);
@@ -330,7 +330,7 @@ export class SSH2ConnectionPool {
       }
 
       try {
-        const entry = await inflight;
+        const entry = await waitForAbortable(inflight, options.abortSignal);
         return entry;
       } catch (error) {
         if (!shouldWait) {
@@ -362,8 +362,8 @@ export class SSH2ConnectionPool {
     const now = new Date();
     const current = this.health.get(key);
     const failures = (current?.consecutiveFailures ?? 0) + 1;
-    const backoffIndex = Math.min(failures - 1, BACKOFF_SCHEDULE.length - 1);
-    const backoffSeconds = withJitter(BACKOFF_SCHEDULE[backoffIndex]);
+    const backoffIndex = Math.min(failures - 1, SSH_BACKOFF_SCHEDULE_SECONDS.length - 1);
+    const backoffSeconds = withSshBackoffJitter(SSH_BACKOFF_SCHEDULE_SECONDS[backoffIndex]);
 
     this.health.set(key, {
       status: "unhealthy",
@@ -467,6 +467,9 @@ export class SSH2ConnectionPool {
         };
 
         const readableKeys = await resolvePrivateKeys(resolvedConfigWithIdentities.identityFiles);
+        if (abortSignal?.aborted) {
+          throw new Error(SSH2_OPERATION_ABORTED_ERROR);
+        }
         const keysToTry: Array<Buffer | undefined> =
           readableKeys.length > 0 ? readableKeys : [undefined];
         // Keep the sshPromptService wiring in place so known_hosts-backed
@@ -530,6 +533,8 @@ export class SSH2ConnectionPool {
             }
           }
 
+          let aborted = false;
+
           const onClose = () => {
             if (entry.idleTimer) {
               clearTimeout(entry.idleTimer);
@@ -544,7 +549,7 @@ export class SSH2ConnectionPool {
             if (entry.idleTimer) {
               clearTimeout(entry.idleTimer);
             }
-            if (!isAuthFailure(err) || reportAuthFailure) {
+            if (!aborted && (!isAuthFailure(err) || reportAuthFailure)) {
               this.reportFailure(config, getErrorMessage(err));
             }
             this.connections.delete(key);
@@ -563,10 +568,11 @@ export class SSH2ConnectionPool {
             };
 
             const onAbort = () => {
+              aborted = true;
               cleanup();
               client.end();
               cleanupProxy();
-              reject(new Error("Operation aborted"));
+              reject(new Error(SSH2_OPERATION_ABORTED_ERROR));
             };
 
             const cleanup = () => {
@@ -578,6 +584,11 @@ export class SSH2ConnectionPool {
             client.on("ready", onReady);
             client.on("error", onError);
             abortSignal?.addEventListener("abort", onAbort, { once: true });
+
+            if (abortSignal?.aborted) {
+              onAbort();
+              return;
+            }
 
             const connectOptions = {
               host: resolvedConfig.hostName,
@@ -599,8 +610,9 @@ export class SSH2ConnectionPool {
           });
 
           if (abortSignal?.aborted) {
+            aborted = true;
             client.end();
-            throw new Error("Operation aborted");
+            throw new Error(SSH2_OPERATION_ABORTED_ERROR);
           }
 
           this.markHealthy(config);
@@ -640,7 +652,12 @@ export class SSH2ConnectionPool {
       const agentForFallback = shouldTryAgentOnly ? undefined : agent;
       return await attemptConnection(fallbackIdentityFiles, agentForFallback);
     } catch (error) {
-      this.reportFailure(config, getErrorMessage(error));
+      const errorMessage = getErrorMessage(error);
+      const wasAborted =
+        (abortSignal?.aborted ?? false) || errorMessage === SSH2_OPERATION_ABORTED_ERROR;
+      if (!wasAborted) {
+        this.reportFailure(config, errorMessage);
+      }
       throw error;
     }
   }

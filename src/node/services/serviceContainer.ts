@@ -17,6 +17,7 @@ import { EditorService } from "@/node/services/editorService";
 import { WindowService } from "@/node/services/windowService";
 import { UpdateService } from "@/node/services/updateService";
 import { TokenizerService } from "@/node/services/tokenizerService";
+import { InstructionsService } from "@/node/services/instructionsService";
 import { ServerService } from "@/node/services/serverService";
 import { MenuEventService } from "@/node/services/menuEventService";
 import { VoiceService } from "@/node/services/voiceService";
@@ -43,7 +44,9 @@ import { ExperimentsService } from "@/node/services/experimentsService";
 import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { McpOauthService } from "@/node/services/mcpOauthService";
 import { HeartbeatService } from "@/node/services/heartbeatService";
+import { AgentStatusService } from "@/node/services/agentStatusService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
+import type { IdleDispatcher } from "@/node/services/idleDispatcher";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
 import { SshPromptService } from "@/node/services/sshPromptService";
@@ -86,6 +89,7 @@ export class ServiceContainer {
   public readonly mcpConfigService: CoreServices["mcpConfigService"];
   public readonly mcpServerManager: CoreServices["mcpServerManager"];
   public readonly sessionUsageService: CoreServices["sessionUsageService"];
+  public readonly workspaceGoalService: CoreServices["workspaceGoalService"];
   private readonly extensionMetadata: CoreServices["extensionMetadata"];
   private readonly backgroundProcessManager: CoreServices["backgroundProcessManager"];
   // Desktop-only services
@@ -101,6 +105,7 @@ export class ServiceContainer {
   public readonly windowService: WindowService;
   public readonly updateService: UpdateService;
   public readonly tokenizerService: TokenizerService;
+  public readonly instructionsService: InstructionsService;
   public readonly serverService: ServerService;
   public readonly menuEventService: MenuEventService;
   public readonly voiceService: VoiceService;
@@ -126,7 +131,9 @@ export class ServiceContainer {
   public readonly sshPromptService = new SshPromptService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
+  public readonly idleDispatcher: IdleDispatcher;
   public readonly heartbeatService: HeartbeatService;
+  public readonly agentStatusService: AgentStatusService;
 
   constructor(config: Config) {
     this.config = config;
@@ -165,6 +172,7 @@ export class ServiceContainer {
       workspaceMcpOverridesService: this.workspaceMcpOverridesService,
       policyService: this.policyService,
       telemetryService: this.telemetryService,
+      analyticsService: this.analyticsService,
       experimentsService: this.experimentsService,
       sessionTimingService: this.sessionTimingService,
       devToolsService: this.devToolsService,
@@ -209,6 +217,7 @@ export class ServiceContainer {
     this.mcpConfigService = core.mcpConfigService;
     this.mcpServerManager = core.mcpServerManager;
     this.sessionUsageService = core.sessionUsageService;
+    this.workspaceGoalService = core.workspaceGoalService;
     this.extensionMetadata = core.extensionMetadata;
     this.backgroundProcessManager = core.backgroundProcessManager;
 
@@ -233,12 +242,17 @@ export class ServiceContainer {
       this.extensionMetadata,
       (workspaceId) => this.workspaceService.executeIdleCompaction(workspaceId)
     );
-    // Heartbeat service - periodically sends heartbeat turns to eligible idle workspaces
+    // IdleDispatcher + goal continuation bridge are owned by createCoreServices
+    // so the wiring works for `mux run` too. Share the same dispatcher with
+    // HeartbeatService — its priority ordering ensures an active goal
+    // suppresses background heartbeats.
+    this.idleDispatcher = core.idleDispatcher;
     this.heartbeatService = new HeartbeatService(
       config,
       this.extensionMetadata,
       this.workspaceService,
-      this.taskService
+      this.taskService,
+      this.idleDispatcher
     );
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(
@@ -275,6 +289,23 @@ export class ServiceContainer {
     this.editorService = new EditorService(config);
     this.updateService = new UpdateService(this.config);
     this.tokenizerService = new TokenizerService(this.sessionUsageService);
+    this.instructionsService = new InstructionsService(
+      config,
+      this.aiService,
+      this.tokenizerService
+    );
+    // AgentStatusService depends on tokenizer + window focus state; instantiate
+    // after both are constructed so the small-model status loop can run with
+    // accurate token budgeting and focus-aware cadence.
+    this.agentStatusService = new AgentStatusService(
+      config,
+      this.historyService,
+      this.tokenizerService,
+      this.extensionMetadata,
+      this.workspaceService,
+      this.windowService,
+      this.aiService
+    );
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(
@@ -428,6 +459,10 @@ export class ServiceContainer {
     this.heartbeatService.start();
     stepDurationsMs["heartbeatService.start"] = Date.now() - heartbeatStartedAt;
 
+    const agentStatusStartedAt = Date.now();
+    this.agentStatusService.start();
+    stepDurationsMs["agentStatusService.start"] = Date.now() - agentStatusStartedAt;
+
     // Refresh mux-owned Coder SSH config in background (handles binary path changes on restart)
     // Skip getCoderInfo() to avoid caching "unavailable" if coder isn't installed yet
     void this.coderService.ensureMuxCoderSSHConfig().catch((error: unknown) => {
@@ -467,6 +502,7 @@ export class ServiceContainer {
       windowService: this.windowService,
       updateService: this.updateService,
       tokenizerService: this.tokenizerService,
+      instructionsService: this.instructionsService,
       serverService: this.serverService,
       menuEventService: this.menuEventService,
       voiceService: this.voiceService,
@@ -476,8 +512,10 @@ export class ServiceContainer {
       mcpServerManager: this.mcpServerManager,
       sessionTimingService: this.sessionTimingService,
       telemetryService: this.telemetryService,
+      analyticsService: this.analyticsService,
       experimentsService: this.experimentsService,
       sessionUsageService: this.sessionUsageService,
+      workspaceGoalService: this.workspaceGoalService,
       devToolsService: this.devToolsService,
       browserSessionDiscoveryService: this.browserSessionDiscoveryService,
       browserBridgeTokenManager: this.browserBridgeTokenManager,
@@ -489,7 +527,6 @@ export class ServiceContainer {
       coderService: this.coderService,
       serverAuthService: this.serverAuthService,
       sshPromptService: this.sshPromptService,
-      analyticsService: this.analyticsService,
       desktopSessionManager: this.desktopSessionManager,
       desktopTokenManager: this.desktopTokenManager,
       desktopBridgeServer: this.desktopBridgeServer,
@@ -505,6 +542,7 @@ export class ServiceContainer {
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
     this.heartbeatService.stop();
+    this.agentStatusService.stop();
     this.idleCompactionService.stop();
     await this.browserBridgeServer.stop();
     this.browserSessionStateHub.dispose();
@@ -530,6 +568,13 @@ export class ServiceContainer {
     await this.desktopBridgeServer.stop();
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
+    // Stop the periodic AgentStatusService loop here too (not just in
+    // shutdown()): dispose() is the path used by the desktop before-quit
+    // and ACP in-process close handlers, and the ref'd setInterval would
+    // otherwise keep the process alive and continue calling
+    // generateWorkspaceStatus against services that are about to be torn
+    // down below.
+    this.agentStatusService.stop();
     await this.browserBridgeServer.stop();
     this.browserSessionStateHub.dispose();
     this.browserBridgeTokenManager.dispose();
@@ -543,6 +588,7 @@ export class ServiceContainer {
 
     this.copilotOauthService.dispose();
     this.serverAuthService.dispose();
+    this.providerService.dispose();
     await this.backgroundProcessManager.terminateAll();
   }
 }

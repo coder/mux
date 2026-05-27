@@ -1,6 +1,7 @@
 import assert from "@/common/utils/assert";
 import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { isGoalPendingPersistence, type GoalSnapshot } from "@/common/types/goal";
 import type {
   WorkspaceActivitySnapshot,
   WorkspaceChatMessage,
@@ -11,6 +12,10 @@ import type {
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
+import type { AssistedReviewHunk } from "@/common/types/review";
+
+/** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
+const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
 import { applyWorkspaceChatEventToAggregator } from "@/browser/utils/messages/applyWorkspaceChatEventToAggregator";
 import {
   StreamingMessageAggregator,
@@ -18,12 +23,15 @@ import {
   type SkillLoadError,
 } from "@/browser/utils/messages/StreamingMessageAggregator";
 import {
-  createIdleCompactionCompletion,
+  createCompactionCompletion,
   type ResponseCompleteEvent,
   type ResponseCompleteHandler,
 } from "@/browser/utils/messages/responseCompletionMetadata";
 import { isAbortError } from "@/browser/utils/isAbortError";
-import { BASH_TRUNCATE_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
+import {
+  ADVISOR_LIVE_OUTPUT_MAX_CHARS,
+  BASH_TRUNCATE_MAX_TOTAL_BYTES,
+} from "@/common/constants/toolLimits";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { useCallback, useSyncExternalStore } from "react";
 import {
@@ -35,6 +43,7 @@ import {
   isInitEnd,
   isInitOutput,
   isInitStart,
+  isAdvisorOutputEvent,
   isAdvisorPhaseEvent,
   isBashOutputEvent,
   isTaskCreatedEvent,
@@ -58,6 +67,7 @@ import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { computeProvidersConfigFingerprint } from "@/common/utils/providers/configFingerprint";
 import { isDurableCompactionBoundaryMarker } from "@/common/utils/messages/compactionBoundary";
+import { isSideQuestionAnswerMessage as isSideQuestionAnswerMuxMessage } from "@/common/utils/messages/sideQuestion";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
@@ -115,6 +125,13 @@ export interface WorkspaceState {
   // Current pre-stream startup breadcrumb (runtime readiness, tool loading, etc.)
   runtimeStatus: RuntimeStatusEvent | null;
   autoRetryStatus: AutoRetryStatus | null;
+  goal?: GoalSnapshot | null;
+}
+
+export interface WorkspaceShellStatus {
+  loading: boolean;
+  isHydratingTranscript: boolean;
+  isStreamStarting: boolean;
 }
 
 /**
@@ -161,6 +178,7 @@ export interface WorkspaceSidebarState {
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
   terminalActiveCount: number;
   terminalSessionCount: number;
+  goal?: GoalSnapshot | null;
 }
 
 /**
@@ -213,6 +231,11 @@ export interface AdvisorLivePhaseState {
   timestamp: number;
 }
 
+export interface AdvisorLiveOutputState {
+  text: string;
+  timestamp: number;
+}
+
 interface WorkspaceChatTransientState {
   caughtUp: boolean;
   isHydratingTranscript: boolean;
@@ -221,6 +244,7 @@ interface WorkspaceChatTransientState {
   replayingHistory: boolean;
   queuedMessage: QueuedMessage | null;
   liveBashOutput: Map<string, LiveBashOutputInternal>;
+  liveAdvisorOutput: Map<string, AdvisorLiveOutputState>;
   liveAdvisorPhase: Map<string, AdvisorLivePhaseState>;
   liveTaskIds: Map<string, string[]>;
   autoRetryStatus: AutoRetryStatus | null;
@@ -264,16 +288,35 @@ function createInitialHistoryPaginationState(): WorkspaceHistoryPaginationState 
 }
 
 function getBufferedActiveStreamStart(
-  events: WorkspaceChatMessage[]
+  events: WorkspaceChatMessage[],
+  historicalMessages: readonly MuxMessage[],
+  isSideQuestionAnswerMessageId: (messageId: string) => boolean
 ): Pick<StreamStartEvent, "model" | "thinkingLevel"> | null {
   let activeStreamStart: StreamStartEvent | null = null;
+  const sideQuestionAnswerMessageIds = new Set<string>();
+
+  for (const message of historicalMessages) {
+    if (isSideQuestionAnswerMuxMessage(message)) {
+      sideQuestionAnswerMessageIds.add(message.id);
+    }
+  }
 
   for (const event of events) {
+    if (isMuxMessage(event) && isSideQuestionAnswerMuxMessage(event)) {
+      sideQuestionAnswerMessageIds.add(event.id);
+    }
+
     if (!("type" in event)) {
       continue;
     }
 
     if (event.type === "stream-start") {
+      if (
+        sideQuestionAnswerMessageIds.has(event.messageId) ||
+        isSideQuestionAnswerMessageId(event.messageId)
+      ) {
+        continue;
+      }
       activeStreamStart = event;
       continue;
     }
@@ -308,6 +351,7 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
     replayingHistory: false,
     queuedMessage: null,
     liveBashOutput: new Map(),
+    liveAdvisorOutput: new Map(),
     liveAdvisorPhase: new Map(),
     liveTaskIds: new Map(),
     autoRetryStatus: null,
@@ -528,6 +572,9 @@ export class WorkspaceStore {
   // Per-workspace state (lazy computed on get)
   private states = new MapStore<string, WorkspaceState>();
 
+  // Stable subset for WorkspaceShell so message deltas do not re-render shell chrome.
+  private workspaceShellStatusCache = new Map<string, WorkspaceShellStatus>();
+
   // Derived aggregate state (computed from multiple workspaces)
   private derived = new MapStore<string, DerivedState>();
 
@@ -578,6 +625,9 @@ export class WorkspaceStore {
   // abort/error transitions (streaming=false without recency advance).
   private activityStreamingStartRecency = new Map<string, number>();
   private activityAbortController: AbortController | null = null;
+
+  private activeGoalCount = 0;
+  private activeGoalCountStore = new MapStore<string, void>();
 
   // Per-workspace terminal activity aggregates (from terminal.activity.subscribe).
   private workspaceTerminalActivity = new Map<
@@ -737,7 +787,12 @@ export class WorkspaceStore {
         }
       }
 
-      collapsePinnedTodoOnStreamStop(workspaceId, aggregator.getCurrentTodos().length > 0);
+      const isSideQuestionAnswerStream = aggregator.isSideQuestionAnswerMessage(
+        streamEndData.messageId
+      );
+      if (!isSideQuestionAnswerStream) {
+        collapsePinnedTodoOnStreamStop(workspaceId, aggregator.getCurrentTodos().length > 0);
+      }
 
       // Flush any pending debounced bump before final bump to avoid double-bump
       this.cancelPendingIdleBump(workspaceId);
@@ -798,6 +853,7 @@ export class WorkspaceStore {
 
       // Cleanup ephemeral advisor/task state once the actual tool result is available.
       if (toolCallEnd.toolName === "advisor") {
+        transient?.liveAdvisorOutput.delete(toolCallEnd.toolCallId);
         transient?.liveAdvisorPhase.delete(toolCallEnd.toolCallId);
       }
       if (toolCallEnd.toolName === "task") {
@@ -1538,23 +1594,36 @@ export class WorkspaceStore {
     }
   }
 
-  private cleanupStaleLiveBashOutput(
+  private cleanupStaleLiveToolState(
     workspaceId: string,
     aggregator: StreamingMessageAggregator
   ): void {
-    const perWorkspace = this.chatTransientState.get(workspaceId)?.liveBashOutput;
-    if (!perWorkspace || perWorkspace.size === 0) return;
+    const transient = this.chatTransientState.get(workspaceId);
+    if (!transient) return;
+    if (transient.liveBashOutput.size === 0 && transient.liveAdvisorOutput.size === 0) return;
 
-    const activeToolCallIds = new Set<string>();
+    const activeBashToolCallIds = new Set<string>();
+    const activeAdvisorToolCallIds = new Set<string>();
     for (const msg of aggregator.getDisplayedMessages()) {
-      if (msg.type === "tool" && msg.toolName === "bash") {
-        activeToolCallIds.add(msg.toolCallId);
+      if (msg.type !== "tool") continue;
+
+      if (msg.toolName === "bash") {
+        activeBashToolCallIds.add(msg.toolCallId);
+      }
+      if (msg.toolName === "advisor") {
+        activeAdvisorToolCallIds.add(msg.toolCallId);
       }
     }
 
-    for (const toolCallId of Array.from(perWorkspace.keys())) {
-      if (!activeToolCallIds.has(toolCallId)) {
-        perWorkspace.delete(toolCallId);
+    for (const toolCallId of Array.from(transient.liveBashOutput.keys())) {
+      if (!activeBashToolCallIds.has(toolCallId)) {
+        transient.liveBashOutput.delete(toolCallId);
+      }
+    }
+
+    for (const toolCallId of Array.from(transient.liveAdvisorOutput.keys())) {
+      if (!activeAdvisorToolCallIds.has(toolCallId)) {
+        transient.liveAdvisorOutput.delete(toolCallId);
       }
     }
   }
@@ -1584,6 +1653,12 @@ export class WorkspaceStore {
 
     // Important: return the stored object reference so useSyncExternalStore sees a stable snapshot.
     // (Returning a fresh object every call can trigger an infinite re-render loop.)
+    return state ?? null;
+  }
+
+  getAdvisorToolLiveOutput(workspaceId: string, toolCallId: string): AdvisorLiveOutputState | null {
+    const state = this.chatTransientState.get(workspaceId)?.liveAdvisorOutput.get(toolCallId);
+
     return state ?? null;
   }
 
@@ -1677,7 +1752,7 @@ export class WorkspaceStore {
       const transient = this.assertChatTransientState(workspaceId);
       const historyPagination =
         this.historyPagination.get(workspaceId) ?? createInitialHistoryPaginationState();
-      const activeStreams = aggregator.getActiveStreams();
+      const hasInterruptibleActiveStream = aggregator.hasInterruptibleActiveStream();
       const activity = this.workspaceActivity.get(workspaceId);
       const isActiveWorkspace = this.activeOnChatWorkspaceId === workspaceId;
       const messages = aggregator.getAllMessages();
@@ -1686,7 +1761,11 @@ export class WorkspaceStore {
       const streamLifecycle = aggregator.getStreamLifecycle();
       const bufferedActiveStreamStart =
         isActiveWorkspace && !transient.caughtUp
-          ? getBufferedActiveStreamStart(transient.pendingStreamEvents)
+          ? getBufferedActiveStreamStart(
+              transient.pendingStreamEvents,
+              transient.historicalMessages,
+              (messageId) => aggregator.isSideQuestionAnswerMessage(messageId)
+            )
           : null;
       // Trust the live aggregator only when it is both active AND has finished
       // replaying historical events (caughtUp). During the replay window after a
@@ -1703,10 +1782,10 @@ export class WorkspaceStore {
       // subscription for all workspaces.
       const useAggregatorState = isActiveWorkspace && transient.caughtUp;
       const canInterrupt = useAggregatorState
-        ? activeStreams.length > 0
+        ? hasInterruptibleActiveStream
         : bufferedActiveStreamStart !== null
           ? true
-          : (activity?.streaming ?? activeStreams.length > 0);
+          : (activity?.streaming ?? hasInterruptibleActiveStream);
       const currentModel = useAggregatorState
         ? (aggregator.getCurrentModel() ?? null)
         : (bufferedActiveStreamStart?.model ??
@@ -1745,13 +1824,41 @@ export class WorkspaceStore {
         !transient.caughtUp &&
         !hasRunningInitMessage;
       const aggregatorTodos = aggregator.getCurrentTodos();
+      // Sidebar status precedence, split into four tiers so each signal
+      // wins exactly when it should. Active and inactive workspaces draw
+      // from different sources but resolve through the same priority.
+      //
+      //   1. displayStatus (inactive only): system-driven transient status
+      //      from disk, e.g. "Compacting idle workspace…". Always wins.
+      //   2. liveTodoStatus (active only): the agent's most recent
+      //      `todo_write`, processed synchronously by the aggregator.
+      //      Beats the aggregator's persisted status_set value because
+      //      todo_write is the freshest explicit signal; beats persisted
+      //      todoStatus because the live aggregator state is ahead of
+      //      the async setTodoStatus + activity-emit round-trip.
+      //   3. fallbackAgentStatus (active only): aggregator.getAgentStatus()
+      //      — a blend of heartbeat / idle-compaction / background-turn
+      //      `displayStatus` events (genuinely transient) and the agent's
+      //      own `status_set` tool result (a pinned high-level intent).
+      //      Wins over persisted todoStatus so an AI-generated summary
+      //      doesn't mask an explicit system or agent-set message.
+      //   4. persistedTodoStatus: activity.todoStatus from disk. Either
+      //      a stale todo derivation or an AgentStatusService AI summary —
+      //      both writers target the same slot, last write wins. The
+      //      lowest tier so a newer in-memory signal always preempts.
+      //      For inactive workspaces, `hasTodos === false` blocks the
+      //      legacy aggregator-derive fallback so a freshly cleared todo
+      //      list doesn't briefly resurrect the stale derivation.
       const displayStatus = useAggregatorState ? undefined : (activity?.displayStatus ?? undefined);
-      const todoStatus = useAggregatorState
-        ? (deriveTodoStatus(aggregatorTodos) ?? activity?.todoStatus ?? undefined)
+      const liveTodoStatus = useAggregatorState ? deriveTodoStatus(aggregatorTodos) : undefined;
+      const fallbackAgentStatus = useAggregatorState ? aggregator.getAgentStatus() : undefined;
+      const persistedTodoStatus = useAggregatorState
+        ? (activity?.todoStatus ?? undefined)
         : (activity?.todoStatus ??
           (activity?.hasTodos === false ? undefined : deriveTodoStatus(aggregatorTodos)));
-      const fallbackAgentStatus = useAggregatorState ? aggregator.getAgentStatus() : undefined;
-      const agentStatus = displayStatus ?? todoStatus ?? fallbackAgentStatus;
+      const agentStatus =
+        displayStatus ?? liveTodoStatus ?? fallbackAgentStatus ?? persistedTodoStatus;
+      const goal = activity?.goal ?? null;
 
       return {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
@@ -1778,8 +1885,72 @@ export class WorkspaceStore {
         pendingStreamModel: aggregator.getPendingStreamModel(),
         autoRetryStatus: transient.autoRetryStatus,
         runtimeStatus: aggregator.getRuntimeStatus(),
+        goal,
       };
     });
+  }
+
+  getWorkspaceShellStatus(workspaceId: string): WorkspaceShellStatus {
+    const aggregator = this.assertGet(workspaceId);
+    const transient = this.assertChatTransientState(workspaceId);
+    const hasMessages = aggregator.hasMessages();
+    const isActiveWorkspace = this.activeOnChatWorkspaceId === workspaceId;
+
+    // Keep this selector lighter than getWorkspaceState(): the shell only needs enough
+    // state to decide placeholder vs mounted chat. Avoid rebuilding the full displayed
+    // transcript on every streaming delta unless init/hydration placeholder behavior needs it.
+    const hasRunningInitMessage =
+      !hasMessages || (isActiveWorkspace && transient.isHydratingTranscript && !transient.caughtUp)
+        ? aggregator
+            .getDisplayedMessages()
+            .some((message) => message.type === "workspace-init" && message.status === "running")
+        : false;
+
+    const activity = this.workspaceActivity.get(workspaceId);
+    const hasInterruptibleActiveStream = aggregator.hasInterruptibleActiveStream();
+    const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
+    const streamLifecycle = aggregator.getStreamLifecycle();
+    const bufferedActiveStreamStart =
+      isActiveWorkspace && !transient.caughtUp
+        ? getBufferedActiveStreamStart(
+            transient.pendingStreamEvents,
+            transient.historicalMessages,
+            (messageId) => aggregator.isSideQuestionAnswerMessage(messageId)
+          )
+        : null;
+    const useAggregatorState = isActiveWorkspace && transient.caughtUp;
+    const canInterrupt = useAggregatorState
+      ? hasInterruptibleActiveStream
+      : bufferedActiveStreamStart !== null
+        ? true
+        : (activity?.streaming ?? hasInterruptibleActiveStream);
+    const hasAuthoritativeStreamLifecycle =
+      streamLifecycle !== null && streamLifecycle.phase !== "idle";
+    const activePendingStreamStartTime = isActiveWorkspace ? pendingStreamStartTime : null;
+    const isStreamStarting =
+      isActiveWorkspace &&
+      !canInterrupt &&
+      (streamLifecycle?.phase === "preparing" ||
+        (!hasAuthoritativeStreamLifecycle && activePendingStreamStartTime !== null));
+    const isHydratingTranscript =
+      isActiveWorkspace &&
+      transient.isHydratingTranscript &&
+      !transient.caughtUp &&
+      !hasRunningInitMessage;
+    const loading = !hasMessages && !hasRunningInitMessage && !transient.caughtUp;
+
+    const cached = this.workspaceShellStatusCache.get(workspaceId);
+    if (
+      cached?.loading === loading &&
+      cached.isHydratingTranscript === isHydratingTranscript &&
+      cached.isStreamStarting === isStreamStarting
+    ) {
+      return cached;
+    }
+
+    const next = { loading, isHydratingTranscript, isStreamStarting };
+    this.workspaceShellStatusCache.set(workspaceId, next);
+    return next;
   }
 
   // Cache sidebar state objects to return stable references
@@ -1823,7 +1994,8 @@ export class WorkspaceStore {
       cached.skillLoadErrors === fullState.skillLoadErrors &&
       cached.agentStatus === fullState.agentStatus &&
       cached.terminalActiveCount === terminalActiveCount &&
-      cached.terminalSessionCount === terminalSessionCount
+      cached.terminalSessionCount === terminalSessionCount &&
+      cached.goal === fullState.goal
     ) {
       // Even if we re-use the cached object, mark it as derived from the current
       // WorkspaceState so repeated getSnapshot() reads during this render are stable.
@@ -1845,6 +2017,7 @@ export class WorkspaceStore {
       agentStatus: fullState.agentStatus,
       terminalActiveCount,
       terminalSessionCount,
+      goal: fullState.goal,
     };
     this.sidebarStateCache.set(workspaceId, newState);
     this.sidebarStateSourceState.set(workspaceId, fullState);
@@ -1911,6 +2084,14 @@ export class WorkspaceStore {
       return timestamps;
     }) as Record<string, number>;
   }
+
+  getActiveGoalCount(): number {
+    return this.activeGoalCount;
+  }
+
+  subscribeActiveGoalCount = (listener: () => void) => {
+    return this.activeGoalCountStore.subscribeKey("count", listener);
+  };
 
   /**
    * Get aggregator for a workspace (used by components that need direct access).
@@ -2073,6 +2254,25 @@ export class WorkspaceStore {
   getTodos(workspaceId: string): TodoItem[] {
     const aggregator = this.aggregators.get(workspaceId);
     return aggregator ? aggregator.getCurrentTodos() : [];
+  }
+
+  /**
+   * Get current Assisted Review hunks (agent-flagged) for a workspace.
+   * Updated when `review_pane_update` tool succeeds; consumed by the
+   * Review pane and ReviewControls to power the Assisted toggle.
+   */
+  getAssistedReviewHunks(workspaceId: string): AssistedReviewHunk[] {
+    const aggregator = this.aggregators.get(workspaceId);
+    return aggregator ? aggregator.getAssistedReviewHunks() : EMPTY_ASSISTED_REVIEW;
+  }
+
+  /**
+   * Whether the active transcript replay has reached its authoritative caught-up marker.
+   * Consumers use this to distinguish a still-hydrating empty derived list from an
+   * intentionally empty persisted transcript state.
+   */
+  isWorkspaceTranscriptCaughtUp(workspaceId: string): boolean {
+    return this.chatTransientState.get(workspaceId)?.caughtUp ?? false;
   }
 
   /**
@@ -2429,17 +2629,41 @@ export class WorkspaceStore {
     return this.workspaceMetadata.has(workspaceId);
   }
 
+  hasRegisteredWorkspace(workspaceId: string): boolean {
+    return workspaceId.length > 0 && this.aggregators.has(workspaceId);
+  }
+
+  private refreshActiveGoalCount(): void {
+    const nextCount = Array.from(this.workspaceActivity.values()).filter(
+      (snapshot) => snapshot.goal?.status === "active" && !isGoalPendingPersistence(snapshot.goal)
+    ).length;
+    if (nextCount === this.activeGoalCount) {
+      return;
+    }
+
+    this.activeGoalCount = nextCount;
+    this.activeGoalCountStore.bump("count");
+  }
+
   private applyWorkspaceActivitySnapshot(
     workspaceId: string,
     snapshot: WorkspaceActivitySnapshot | null
   ): void {
     const previous = this.workspaceActivity.get(workspaceId) ?? null;
 
+    if (snapshot?.transientGoalOnly === true) {
+      const snapshotWithoutHint: WorkspaceActivitySnapshot = { ...snapshot };
+      delete snapshotWithoutHint.transientGoalOnly;
+      snapshot = previous ? { ...previous, goal: snapshot.goal } : snapshotWithoutHint;
+    }
+
     if (snapshot) {
       this.workspaceActivity.set(workspaceId, snapshot);
     } else {
       this.workspaceActivity.delete(workspaceId);
     }
+
+    this.refreshActiveGoalCount();
 
     const changed =
       previous?.streaming !== snapshot?.streaming ||
@@ -2449,7 +2673,15 @@ export class WorkspaceStore {
       previous?.recency !== snapshot?.recency ||
       previous?.hasTodos !== snapshot?.hasTodos ||
       !areAgentStatusesEqual(previous?.displayStatus, snapshot?.displayStatus) ||
-      !areAgentStatusesEqual(previous?.todoStatus, snapshot?.todoStatus);
+      !areAgentStatusesEqual(previous?.todoStatus, snapshot?.todoStatus) ||
+      previous?.goal?.goalId !== snapshot?.goal?.goalId ||
+      previous?.goal?.status !== snapshot?.goal?.status ||
+      previous?.goal?.objective !== snapshot?.goal?.objective ||
+      previous?.goal?.costCents !== snapshot?.goal?.costCents ||
+      previous?.goal?.turnsUsed !== snapshot?.goal?.turnsUsed ||
+      previous?.goal?.budgetCents !== snapshot?.goal?.budgetCents ||
+      previous?.goal?.turnCap !== snapshot?.goal?.turnCap ||
+      previous?.goal?.pendingPersistence !== snapshot?.goal?.pendingPersistence;
 
     if (!changed) {
       return;
@@ -2474,9 +2706,9 @@ export class WorkspaceStore {
       previous.streamingGeneration !== snapshot.streamingGeneration;
     if (didBackgroundStreamingGenerationAdvance) {
       // Background activity snapshots continue across handoffs even after onChat unsubscribes.
-      // Once a newer stream generation appears, any cached live stream contexts are stale and
-      // must not suppress the terminal notification for the new background turn.
-      this.aggregators.get(workspaceId)?.clearActiveStreams();
+      // Let the aggregator decide whether any stream-scoped completion metadata should
+      // survive the handoff before clearing stale live stream contexts.
+      this.aggregators.get(workspaceId)?.handleBackgroundStreamingGenerationAdvance();
     }
 
     const stoppedStreamingSnapshot =
@@ -2497,12 +2729,16 @@ export class WorkspaceStore {
     const backgroundCompletion = isBackgroundStreamingStop
       ? this.aggregators.get(workspaceId)?.getActiveResponseCompleteMetadata()
       : undefined;
-    // The backend tags the streaming=false (stop) snapshot with isIdleCompaction.
-    // The idle marker is added after sendMessage returns (to avoid races with
-    // concurrent user streams), so only the stop snapshot carries the flag.
-    // Check both previous and current as defense-in-depth.
-    const wasIdleCompaction =
-      previous?.isIdleCompaction === true || snapshot?.isIdleCompaction === true;
+    // The backend tags compaction stop snapshots with an authoritative stream
+    // classification. Compaction is context-management rather than a response,
+    // so background notification policy must not fall back to "normal" if the
+    // frontend missed live compaction/follow-up events while unsubscribed.
+    // Check both previous and current as defense-in-depth against update ordering.
+    const wasCompaction =
+      previous?.isCompaction === true ||
+      snapshot?.isCompaction === true ||
+      previous?.isIdleCompaction === true ||
+      snapshot?.isIdleCompaction === true;
 
     // Trigger response completion notifications for background workspaces only when
     // activity indicates a true completion (streaming true -> false WITH recency advance).
@@ -2512,12 +2748,11 @@ export class WorkspaceStore {
       // Activity snapshots don't include message/content metadata. Reuse any
       // still-active stream context captured before this workspace was backgrounded
       // so queued follow-up handoffs remain suppressible in App notifications.
+      const completion = wasCompaction ? createCompactionCompletion() : backgroundCompletion;
       this.emitResponseComplete({
         workspaceId,
         isFinal: true,
-        completion: wasIdleCompaction
-          ? createIdleCompactionCompletion(backgroundCompletion?.hasAutoFollowUp ?? false)
-          : backgroundCompletion,
+        completion,
         completedAt: stoppedStreamingSnapshot.recency,
       });
     }
@@ -2526,6 +2761,7 @@ export class WorkspaceStore {
       // Inactive workspaces do not receive stream-end events via onChat. Once
       // activity confirms streaming stopped, clear stale stream contexts so they
       // cannot leak compaction metadata into future completion callbacks.
+      this.aggregators.get(workspaceId)?.clearBackgroundHandoffCompletion();
       this.aggregators.get(workspaceId)?.clearActiveStreams();
       this.aggregators.get(workspaceId)?.clearPendingStreamStart();
     }
@@ -3413,9 +3649,11 @@ export class WorkspaceStore {
     this.chatTransientState.delete(workspaceId);
     this.workspaceMetadata.delete(workspaceId);
     this.workspaceActivity.delete(workspaceId);
+    this.refreshActiveGoalCount();
     this.workspaceTerminalActivity.delete(workspaceId);
     this.activityStreamingStartRecency.delete(workspaceId);
     this.recencyCache.delete(workspaceId);
+    this.workspaceShellStatusCache.delete(workspaceId);
     this.sidebarStateCache.delete(workspaceId);
     this.sidebarStateSourceState.delete(workspaceId);
     this.workspaceCreatedAt.delete(workspaceId);
@@ -3503,6 +3741,8 @@ export class WorkspaceStore {
     this.chatTransientState.clear();
     this.workspaceMetadata.clear();
     this.workspaceActivity.clear();
+    this.activeGoalCount = 0;
+    this.activeGoalCountStore.clear();
     this.workspaceTerminalActivity.clear();
     this.activityStreamingStartRecency.clear();
     this.workspaceStats.clear();
@@ -3623,6 +3863,7 @@ export class WorkspaceStore {
     return (
       data.type in this.bufferedEventHandlers ||
       data.type === "bash-output" ||
+      data.type === "advisor-output" ||
       data.type === "advisor-phase" ||
       data.type === "task-created"
     );
@@ -3637,11 +3878,15 @@ export class WorkspaceStore {
     if (isCaughtUpMessage(data)) {
       const replay = data.replay ?? "full";
 
-      // Check if there's an active stream in buffered events (reconnection scenario)
+      // Check if there's an active main-agent stream in buffered events
+      // (reconnection scenario). Side-answer markers may still be buffered in
+      // historicalMessages at this point, before loadHistoricalMessages teaches
+      // the aggregator about them, so use the historical-aware classifier.
       const pendingEvents = transient.pendingStreamEvents;
-      const hasActiveStream = pendingEvents.some(
-        (event) => "type" in event && event.type === "stream-start"
-      );
+      const hasActiveStream =
+        getBufferedActiveStreamStart(pendingEvents, transient.historicalMessages, (messageId) =>
+          aggregator.isSideQuestionAnswerMessage(messageId)
+        ) !== null;
 
       const serverActiveStreamMessageId = data.cursor?.stream?.messageId;
       const localActiveStreamMessageId = aggregator.getActiveStreamMessageId();
@@ -3698,6 +3943,7 @@ export class WorkspaceStore {
         // Live tool-call UI is tied to the active stream context; clear it when replay
         // replaces history, reports no active stream, or reports a different stream ID.
         transient.liveBashOutput.clear();
+        transient.liveAdvisorOutput.clear();
         transient.liveAdvisorPhase.clear();
         transient.liveTaskIds.clear();
       }
@@ -3829,7 +4075,7 @@ export class WorkspaceStore {
     aggregator: StreamingMessageAggregator,
     data: WorkspaceChatMessage
   ): void {
-    // Handle non-buffered special events first
+    // Handle special events first
     if (isStreamError(data)) {
       const transient = this.assertChatTransientState(workspaceId);
 
@@ -3855,7 +4101,7 @@ export class WorkspaceStore {
 
     if (isDeleteMessage(data)) {
       applyWorkspaceChatEventToAggregator(aggregator, data);
-      this.cleanupStaleLiveBashOutput(workspaceId, aggregator);
+      this.cleanupStaleLiveToolState(workspaceId, aggregator);
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged();
       this.usageStore.bump(workspaceId);
@@ -3882,6 +4128,28 @@ export class WorkspaceStore {
 
       // High-frequency: throttle UI updates like other delta-style events.
       this.scheduleIdleStateBump(workspaceId);
+      return;
+    }
+
+    if (isAdvisorOutputEvent(data)) {
+      if (data.text.length === 0) return;
+
+      const transient = this.assertChatTransientState(workspaceId);
+      const prev = transient.liveAdvisorOutput.get(data.toolCallId);
+      const appendedText = `${prev?.text ?? ""}${data.text}`;
+      const text =
+        appendedText.length > ADVISOR_LIVE_OUTPUT_MAX_CHARS
+          ? appendedText.slice(-ADVISOR_LIVE_OUTPUT_MAX_CHARS)
+          : appendedText;
+
+      if (prev?.text === text && prev.timestamp === data.timestamp) return;
+
+      transient.liveAdvisorOutput.set(data.toolCallId, {
+        text,
+        timestamp: data.timestamp,
+      });
+
+      this.scheduleStreamingStateBump(workspaceId);
       return;
     }
 
@@ -4042,6 +4310,21 @@ export function useWorkspaceState(workspaceId: string): WorkspaceState {
 }
 
 /**
+ * Hook to get the shell-only workspace status.
+ *
+ * WorkspaceShell only needs placeholder/hydration gates; subscribing to the full
+ * WorkspaceState would cascade every transcript delta through the shell and sidebars.
+ */
+export function useWorkspaceShellStatus(workspaceId: string): WorkspaceShellStatus {
+  const store = getStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => store.subscribeKey(workspaceId, listener),
+    () => store.getWorkspaceShellStatus(workspaceId)
+  );
+}
+
+/**
  * Hook to access the raw store for imperative operations.
  */
 export function useWorkspaceStoreRaw(): WorkspaceStore {
@@ -4058,6 +4341,16 @@ export function useWorkspaceRecency(): Record<string, number> {
   return useSyncExternalStore(store.subscribeDerived, () => store.getWorkspaceRecency());
 }
 
+export function useActiveGoalCount(): number {
+  const store = getStoreInstance();
+
+  return useSyncExternalStore(
+    store.subscribeActiveGoalCount,
+    () => store.getActiveGoalCount(),
+    () => 0
+  );
+}
+
 /**
  * Hook to get sidebar-specific state for a workspace.
  * Only re-renders when sidebar-relevant fields change (not on every message).
@@ -4071,6 +4364,28 @@ export function useWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarS
   return useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getWorkspaceSidebarState(workspaceId)
+  );
+}
+
+export function useOptionalWorkspaceSidebarState(
+  workspaceId: string | null | undefined
+): WorkspaceSidebarState | null {
+  const store = getStoreInstance();
+  const id = workspaceId ?? "";
+
+  return useSyncExternalStore(
+    (listener) => {
+      if (!store.hasRegisteredWorkspace(id)) {
+        return () => undefined;
+      }
+      return store.subscribeKey(id, listener);
+    },
+    () => {
+      if (!store.hasRegisteredWorkspace(id)) {
+        return null;
+      }
+      return store.getWorkspaceSidebarState(id);
+    }
   );
 }
 
@@ -4091,6 +4406,27 @@ export function useBashToolLiveOutput(
     () => {
       if (!workspaceId || !toolCallId) return null;
       return store.getBashToolLiveOutput(workspaceId, toolCallId);
+    }
+  );
+}
+
+/**
+ * Hook to get UI-only live output for a running advisor tool call.
+ */
+export function useAdvisorToolLiveOutput(
+  workspaceId: string | undefined,
+  toolCallId: string | undefined
+): AdvisorLiveOutputState | null {
+  const store = getStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => {
+      if (!workspaceId) return () => undefined;
+      return store.subscribeKey(workspaceId, listener);
+    },
+    () => {
+      if (!workspaceId || !toolCallId) return null;
+      return store.getAdvisorToolLiveOutput(workspaceId, toolCallId);
     }
   );
 }

@@ -5,7 +5,14 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamManager, stripEncryptedContent } from "./streamManager";
 import * as aiSdk from "ai";
-import { APICallError, RetryError, tool, type ModelMessage, type Tool } from "ai";
+import {
+  APICallError,
+  RetryError,
+  tool,
+  type LanguageModel,
+  type ModelMessage,
+  type Tool,
+} from "ai";
 import { z } from "zod";
 import * as modelStatsModule from "@/common/utils/tokens/modelStats";
 import type { HistoryService } from "./historyService";
@@ -17,7 +24,19 @@ import { shouldRunIntegrationTests, validateApiKeys } from "../../../tests/testU
 import { DisposableTempDir } from "@/node/services/tempDir";
 import type { ExecOptions, ExecStream, Runtime } from "@/node/runtime/Runtime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { attachLanguageModelCleanup } from "./languageModelCleanup";
 import { shellQuote } from "@/common/utils/shell";
+
+function createTestLanguageModel(modelId = "cleanup-model"): LanguageModel {
+  return {
+    specificationVersion: "v3",
+    provider: "test",
+    modelId,
+    supportedUrls: {},
+    doGenerate: () => Promise.reject(new Error("doGenerate is unused in StreamManager tests")),
+    doStream: () => Promise.reject(new Error("doStream is unused in StreamManager tests")),
+  };
+}
 
 // Skip integration tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -61,6 +80,138 @@ function createExecStreamForTests(): ExecStream {
     }),
     exitCode: Promise.resolve(0),
     duration: Promise.resolve(0),
+  };
+}
+
+const TEST_STREAM_MODEL_ID = KNOWN_MODELS.SONNET.id;
+const TEST_USAGE = { inputTokens: 1, outputTokens: 1, totalTokens: 2 };
+const LOCAL_TEST_RUNTIME = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+
+type ProcessStreamWithCleanupForTests = (
+  workspaceId: string,
+  streamInfo: unknown,
+  historySequence: number
+) => Promise<void>;
+
+function getPrivateMethodForTests<T extends (...args: never[]) => unknown>(
+  streamManager: StreamManager,
+  name: string
+): T {
+  const method: unknown = Reflect.get(streamManager, name);
+  expect(typeof method).toBe("function");
+  if (typeof method !== "function") {
+    throw new Error(`Expected StreamManager.${name} to exist`);
+  }
+  return method as T;
+}
+
+function getProcessStreamWithCleanupForTests(
+  streamManager: StreamManager
+): ProcessStreamWithCleanupForTests {
+  return getPrivateMethodForTests<ProcessStreamWithCleanupForTests>(
+    streamManager,
+    "processStreamWithCleanup"
+  );
+}
+
+function getWorkspaceStreamsForTests(streamManager: StreamManager): Map<string, unknown> {
+  const workspaceStreams: unknown = Reflect.get(streamManager, "workspaceStreams");
+  expect(workspaceStreams instanceof Map).toBe(true);
+  if (!(workspaceStreams instanceof Map)) {
+    throw new Error("Expected StreamManager.workspaceStreams to be a Map");
+  }
+  return workspaceStreams as Map<string, unknown>;
+}
+
+async function appendPartialAssistantForTests(
+  workspaceId: string,
+  messageId: string,
+  historySequence: number
+): Promise<void> {
+  const appendResult = await historyService.appendToHistory(workspaceId, {
+    id: messageId,
+    role: "assistant",
+    metadata: { historySequence, partial: true },
+    parts: [],
+  });
+  expect(appendResult.success).toBe(true);
+  if (!appendResult.success) {
+    throw new Error(appendResult.error);
+  }
+}
+
+function createStreamResultForTests(
+  fullStream: AsyncGenerator<unknown, void, unknown>,
+  usage: unknown = TEST_USAGE,
+  providerMetadata: unknown = undefined
+): Record<string, unknown> {
+  return {
+    fullStream,
+    totalUsage: Promise.resolve(usage),
+    usage: Promise.resolve(usage),
+    providerMetadata: Promise.resolve(providerMetadata),
+    steps: Promise.resolve([]),
+  };
+}
+
+function createApiCallErrorForTests(overrides: {
+  message: string;
+  statusCode: number;
+  responseBody: string;
+  isRetryable: boolean;
+  data?: unknown;
+  url?: string;
+}): APICallError {
+  return new APICallError({
+    message: overrides.message,
+    url: overrides.url ?? "https://api.openai.com/v1/responses",
+    requestBodyValues: {},
+    statusCode: overrides.statusCode,
+    responseHeaders: {},
+    responseBody: overrides.responseBody,
+    isRetryable: overrides.isRetryable,
+    ...(overrides.data !== undefined ? { data: overrides.data } : {}),
+  });
+}
+
+function createStreamInfoForTests(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  const now = Date.now();
+  const model = overrides.model ?? TEST_STREAM_MODEL_ID;
+  return {
+    state: "streaming",
+    streamResult: createStreamResultForTests(
+      (async function* emptyStream() {
+        await Promise.resolve();
+        yield* [];
+      })()
+    ),
+    abortController: new AbortController(),
+    messageId: "test-message",
+    token: "test-token",
+    startTime: now,
+    lastPartTimestamp: now,
+    toolCompletionTimestamps: new Map<string, number>(),
+    model,
+    metadataModel: overrides.metadataModel ?? model,
+    historySequence: 1,
+    request: { model: createTestLanguageModel(), messages: [], providerOptions: undefined },
+    toolModelUsages: [],
+    parts: [],
+    lastPartialWriteTime: 0,
+    partialWriteTimer: undefined,
+    partialWritePromise: undefined,
+    processingPromise: Promise.resolve(),
+    softInterrupt: { pending: false as const },
+    runtimeTempDir: "",
+    runtime: LOCAL_TEST_RUNTIME,
+    cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    cumulativeProviderMetadata: undefined,
+    didRetryPreviousResponseIdAtStep: false,
+    currentStepStartIndex: 0,
+    stepTracker: {},
+    ...overrides,
   };
 }
 
@@ -137,15 +288,28 @@ describe("StreamManager - stopWhen configuration", () => {
     toolPolicy?: ToolPolicy;
   }) => StopWhenCondition[];
 
-  test("returns step-cap and queued-message conditions with no policy", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
+  function buildStopWhenForTests(streamManager = new StreamManager(historyService)) {
+    return getPrivateMethodForTests<BuildStopWhenCondition>(
+      streamManager,
+      "createStopWhenCondition"
+    );
+  }
 
+  function requiredToolConditionForTests(toolPolicy: ToolPolicy): StopWhenCondition {
+    const [, , requiredToolCondition] = buildStopWhenForTests()({
+      hasQueuedMessage: () => false,
+      toolPolicy,
+    });
+    return requiredToolCondition;
+  }
+
+  function stepsWithToolResult(toolName: string, output: unknown): { steps: unknown[] } {
+    return { steps: [{ toolResults: [{ toolName, output }] }] };
+  }
+
+  test("returns step-cap and queued-message conditions with no policy", () => {
     let queued = false;
-    const stopWhen = buildStopWhen!({ hasQueuedMessage: () => queued });
+    const stopWhen = buildStopWhenForTests()({ hasQueuedMessage: () => queued });
     expect(stopWhen).toHaveLength(3);
 
     const [maxStepCondition, queuedMessageCondition, requiredToolCondition] = stopWhen;
@@ -155,204 +319,103 @@ describe("StreamManager - stopWhen configuration", () => {
     expect(queuedMessageCondition({ steps: [] })).toBe(false);
     queued = true;
     expect(queuedMessageCondition({ steps: [] })).toBe(true);
-
-    expect(
-      requiredToolCondition({
-        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
-      })
-    ).toBe(false);
+    expect(requiredToolCondition(stepsWithToolResult("agent_report", { success: true }))).toBe(
+      false
+    );
   });
 
-  test("stops on successful required tool result matching policy", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
-
-    const stopWhen = buildStopWhen!({
-      hasQueuedMessage: () => false,
+  const requiredToolCases: Array<{
+    name: string;
+    toolPolicy: ToolPolicy;
+    assertions: Array<{ toolName: string; output: unknown; expected: boolean }>;
+    emptyStepsExpected?: boolean;
+  }> = [
+    {
+      name: "stops on successful required tool result matching policy",
       toolPolicy: [{ regex_match: "agent_report", action: "require" }],
-    });
-
-    const [, , requiredToolCondition] = stopWhen;
-
-    expect(
-      requiredToolCondition({
-        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
-      })
-    ).toBe(true);
-
-    expect(
-      requiredToolCondition({
-        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: false } }] }],
-      })
-    ).toBe(false);
-
-    expect(
-      requiredToolCondition({
-        steps: [{ toolResults: [{ toolName: "bash", output: { success: true } }] }],
-      })
-    ).toBe(false);
-
-    expect(requiredToolCondition({ steps: [] })).toBe(false);
-  });
-
-  test("stops on required tool result without success/ok markers (e.g. MCP tools)", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
-
-    const stopWhen = buildStopWhen!({
-      hasQueuedMessage: () => false,
+      assertions: [
+        { toolName: "agent_report", output: { success: true }, expected: true },
+        { toolName: "agent_report", output: { success: false }, expected: false },
+        { toolName: "bash", output: { success: true }, expected: false },
+      ],
+      emptyStepsExpected: false,
+    },
+    {
+      name: "stops on required tool result without success/ok markers (e.g. MCP tools)",
       toolPolicy: [{ regex_match: "chrome_take_screenshot", action: "require" }],
-    });
-
-    const [, , requiredToolCondition] = stopWhen;
-
-    expect(
-      requiredToolCondition({
-        steps: [
-          {
-            toolResults: [
-              {
-                toolName: "chrome_take_screenshot",
-                output: { content: [{ type: "image", data: "..." }] },
-              },
-            ],
-          },
-        ],
-      })
-    ).toBe(true);
-  });
-
-  test("does not stop when required tool returns error-shaped output", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
-
-    const stopWhen = buildStopWhen!({
-      hasQueuedMessage: () => false,
+      assertions: [
+        {
+          toolName: "chrome_take_screenshot",
+          output: { content: [{ type: "image", data: "..." }] },
+          expected: true,
+        },
+      ],
+    },
+    {
+      name: "does not stop when required tool returns error-shaped output",
       toolPolicy: [{ regex_match: "chrome_take_screenshot", action: "require" }],
-    });
-
-    const [, , requiredToolCondition] = stopWhen;
-
-    expect(
-      requiredToolCondition({
-        steps: [
-          {
-            toolResults: [
-              {
-                toolName: "chrome_take_screenshot",
-                output: { error: "connection refused" },
-              },
-            ],
-          },
-        ],
-      })
-    ).toBe(false);
-
-    expect(
-      requiredToolCondition({
-        steps: [
-          {
-            toolResults: [
-              {
-                toolName: "chrome_take_screenshot",
-                output: {
-                  isError: true,
-                  content: [{ type: "text", text: "failed" }],
-                },
-              },
-            ],
-          },
-        ],
-      })
-    ).toBe(false);
-  });
-
-  test("does not stop when required tool explicitly returns success: false", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
-
-    const stopWhen = buildStopWhen!({
-      hasQueuedMessage: () => false,
+      assertions: [
+        {
+          toolName: "chrome_take_screenshot",
+          output: { error: "connection refused" },
+          expected: false,
+        },
+        {
+          toolName: "chrome_take_screenshot",
+          output: { isError: true, content: [{ type: "text", text: "failed" }] },
+          expected: false,
+        },
+      ],
+    },
+    {
+      name: "does not stop when required tool explicitly returns success: false",
       toolPolicy: [{ regex_match: "propose_plan", action: "require" }],
-    });
-
-    const [, , requiredToolCondition] = stopWhen;
-
-    expect(
-      requiredToolCondition({
-        steps: [
-          {
-            toolResults: [
-              {
-                toolName: "propose_plan",
-                output: { success: false, error: "plan file missing" },
-              },
-            ],
-          },
-        ],
-      })
-    ).toBe(false);
-  });
-
-  test("handles pre-anchored require patterns from recovery paths", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
-
-    const stopWhen = buildStopWhen!({
-      hasQueuedMessage: () => false,
+      assertions: [
+        {
+          toolName: "propose_plan",
+          output: { success: false, error: "plan file missing" },
+          expected: false,
+        },
+      ],
+    },
+    {
+      name: "handles pre-anchored require patterns from recovery paths",
       toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-    });
-
-    const [, , requiredToolCondition] = stopWhen;
-
-    expect(
-      requiredToolCondition({
-        steps: [{ toolResults: [{ toolName: "agent_report", output: { success: true } }] }],
-      })
-    ).toBe(true);
-  });
-
-  test("stops on successful switch_agent when required by policy", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
-
-    const stopWhen = buildStopWhen!({
-      hasQueuedMessage: () => false,
+      assertions: [{ toolName: "agent_report", output: { success: true }, expected: true }],
+    },
+    {
+      name: "stops on successful switch_agent when required by policy",
       toolPolicy: [{ regex_match: "switch_agent", action: "require" }],
+      assertions: [
+        { toolName: "switch_agent", output: { ok: true }, expected: true },
+        { toolName: "switch_agent", output: { ok: false }, expected: false },
+      ],
+    },
+    {
+      name: "stops on successful propose_plan when required by policy",
+      toolPolicy: [{ regex_match: "propose_plan", action: "require" }],
+      assertions: [{ toolName: "propose_plan", output: { success: true }, expected: true }],
+    },
+    {
+      name: "does not stop on tool results when no tools are required",
+      toolPolicy: [{ regex_match: "bash", action: "enable" }],
+      assertions: [{ toolName: "bash", output: { success: true }, expected: false }],
+    },
+  ];
+
+  for (const requiredToolCase of requiredToolCases) {
+    test(requiredToolCase.name, () => {
+      const requiredToolCondition = requiredToolConditionForTests(requiredToolCase.toolPolicy);
+      for (const assertion of requiredToolCase.assertions) {
+        expect(
+          requiredToolCondition(stepsWithToolResult(assertion.toolName, assertion.output))
+        ).toBe(assertion.expected);
+      }
+      if (requiredToolCase.emptyStepsExpected != null) {
+        expect(requiredToolCondition({ steps: [] })).toBe(requiredToolCase.emptyStepsExpected);
+      }
     });
-
-    const [, , requiredToolCondition] = stopWhen;
-
-    expect(
-      requiredToolCondition({
-        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
-      })
-    ).toBe(true);
-
-    expect(
-      requiredToolCondition({
-        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: false } }] }],
-      })
-    ).toBe(false);
-  });
+  }
 
   test("sets toolChoice for required literal tool when forced and still uses stopWhen", () => {
     const streamManager = new StreamManager(historyService);
@@ -363,11 +426,7 @@ describe("StreamManager - stopWhen configuration", () => {
           toolPolicy?: ToolPolicy;
         })
       | undefined;
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
     expect(typeof buildRequestConfig).toBe("function");
-    expect(typeof buildStopWhen).toBe("function");
 
     const model = createAnthropic({ apiKey: "test" })("claude-sonnet-4-5");
     const request = buildRequestConfig!(
@@ -387,62 +446,13 @@ describe("StreamManager - stopWhen configuration", () => {
     );
 
     expect(request.toolChoice).toEqual({ type: "tool", toolName: "switch_agent" });
-
-    const [, , requiredToolCondition] = buildStopWhen!({
+    const [, , requiredToolCondition] = buildStopWhenForTests(streamManager)({
       hasQueuedMessage: request.hasQueuedMessage,
       toolPolicy: request.toolPolicy,
     });
-
-    expect(
-      requiredToolCondition({
-        steps: [{ toolResults: [{ toolName: "switch_agent", output: { ok: true } }] }],
-      })
-    ).toBe(true);
-  });
-
-  test("stops on successful propose_plan when required by policy", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
-
-    const stopWhen = buildStopWhen!({
-      hasQueuedMessage: () => false,
-      toolPolicy: [{ regex_match: "propose_plan", action: "require" }],
-    });
-
-    const [, , requiredToolCondition] = stopWhen;
-
-    expect(
-      requiredToolCondition({
-        steps: [{ toolResults: [{ toolName: "propose_plan", output: { success: true } }] }],
-      })
-    ).toBe(true);
-  });
-
-  test("does not stop on tool results when no tools are required", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
-      | BuildStopWhenCondition
-      | undefined;
-    expect(typeof buildStopWhen).toBe("function");
-
-    const stopWhen = buildStopWhen!({
-      hasQueuedMessage: () => false,
-      toolPolicy: [{ regex_match: "bash", action: "enable" }],
-    });
-
-    const [, , requiredToolCondition] = stopWhen;
-
-    expect(
-      requiredToolCondition({
-        steps: [{ toolResults: [{ toolName: "bash", output: { success: true } }] }],
-      })
-    ).toBe(false);
+    expect(requiredToolCondition(stepsWithToolResult("switch_agent", { ok: true }))).toBe(true);
   });
 });
-
 describe("StreamManager - Anthropic cache TTL overrides", () => {
   interface StreamRequestConfigForTests {
     messages: ModelMessage[];
@@ -918,6 +928,197 @@ describe("StreamManager - call settings overrides", () => {
   });
 });
 
+describe("StreamManager - language model cleanup", () => {
+  const runtime = LOCAL_TEST_RUNTIME;
+
+  function createCleanupModel(modelId: string): {
+    model: LanguageModel;
+    getCleanupCalls: () => number;
+  } {
+    let cleanupCalls = 0;
+    const model = createTestLanguageModel(modelId);
+    attachLanguageModelCleanup(model, () => {
+      cleanupCalls += 1;
+    });
+    return { model, getCleanupCalls: () => cleanupCalls };
+  }
+
+  async function processCleanupStream(params: {
+    workspaceId: string;
+    messageId: string;
+    model: LanguageModel;
+    streamInfoOverrides?: Record<string, unknown>;
+  }): Promise<void> {
+    const streamManager = new StreamManager(historyService);
+    streamManager.on("error", () => undefined);
+    const historySequence = 1;
+
+    await appendPartialAssistantForTests(params.workspaceId, params.messageId, historySequence);
+
+    const streamInfo = createStreamInfoForTests({
+      messageId: params.messageId,
+      token: `${params.messageId}-token`,
+      model: "openai:gpt-4.1-mini",
+      metadataModel: "openai:gpt-4.1-mini",
+      historySequence,
+      request: { model: params.model, messages: [], providerOptions: undefined },
+      runtime,
+      ...params.streamInfoOverrides,
+    });
+    getWorkspaceStreamsForTests(streamManager).set(params.workspaceId, streamInfo);
+
+    await getProcessStreamWithCleanupForTests(streamManager).call(
+      streamManager,
+      params.workspaceId,
+      streamInfo,
+      historySequence
+    );
+  }
+
+  const cleanupLifecycleCases: Array<{
+    name: string;
+    modelId: string;
+    workspaceId: string;
+    messageId: string;
+    streamInfoOverrides: (getCleanupCalls: () => number) => Record<string, unknown>;
+  }> = [
+    {
+      name: "runs model cleanup when stream processing finishes",
+      modelId: "cleanup-model",
+      workspaceId: "cleanup-workspace",
+      messageId: "cleanup-message",
+      streamInfoOverrides: () => ({
+        parts: [{ type: "text" as const, text: "done", timestamp: Date.now() }],
+      }),
+    },
+    {
+      name: "keeps model cleanup until a multi-step tool stream finishes",
+      modelId: "cleanup-multistep-model",
+      workspaceId: "cleanup-multistep-workspace",
+      messageId: "cleanup-multistep-message",
+      streamInfoOverrides: (getCleanupCalls) => ({
+        streamResult: createStreamResultForTests(
+          (async function* () {
+            await Promise.resolve();
+            yield {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "test_tool",
+              input: { value: 1 },
+            };
+            expect(getCleanupCalls()).toBe(0);
+            yield {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "test_tool",
+              output: { ok: true },
+            };
+            expect(getCleanupCalls()).toBe(0);
+            yield { type: "text-delta", text: "done" };
+            expect(getCleanupCalls()).toBe(0);
+            yield { type: "finish", finishReason: "stop" };
+          })()
+        ),
+      }),
+    },
+    {
+      name: "runs model cleanup when stream processing fails",
+      modelId: "cleanup-error-model",
+      workspaceId: "cleanup-error-workspace",
+      messageId: "cleanup-error-message",
+      streamInfoOverrides: () => ({
+        streamResult: createStreamResultForTests(
+          (async function* () {
+            await Promise.resolve();
+            throw new Error("stream failed before output");
+            yield* [] as unknown[];
+          })(),
+          { inputTokens: 1, outputTokens: 0, totalTokens: 1 }
+        ),
+      }),
+    },
+    {
+      name: "runs model cleanup when stream processing is aborted",
+      modelId: "cleanup-abort-model",
+      workspaceId: "cleanup-abort-workspace",
+      messageId: "cleanup-abort-message",
+      streamInfoOverrides: () => {
+        const abortController = new AbortController();
+        abortController.abort(new Error("test abort"));
+        return {
+          abortController,
+          streamResult: createStreamResultForTests(
+            (async function* () {
+              await Promise.resolve();
+              yield* [];
+            })(),
+            { inputTokens: 1, outputTokens: 0, totalTokens: 1 }
+          ),
+        };
+      },
+    },
+  ];
+
+  for (const cleanupCase of cleanupLifecycleCases) {
+    test(cleanupCase.name, async () => {
+      const { model, getCleanupCalls } = createCleanupModel(cleanupCase.modelId);
+
+      await processCleanupStream({
+        workspaceId: cleanupCase.workspaceId,
+        messageId: cleanupCase.messageId,
+        model,
+        streamInfoOverrides: cleanupCase.streamInfoOverrides(getCleanupCalls),
+      });
+
+      expect(getCleanupCalls()).toBe(1);
+    });
+  }
+
+  test("runs model cleanup when startStream exits before processing after abort", async () => {
+    const streamManager = new StreamManager(historyService);
+    const { model, getCleanupCalls } = createCleanupModel("cleanup-preabort-model");
+    const abortController = new AbortController();
+    abortController.abort(new Error("pre-abort"));
+
+    const result = await streamManager.startStream(
+      "cleanup-preabort-workspace",
+      [{ role: "user", content: "hello" }],
+      model,
+      "openai:gpt-4.1-mini",
+      1,
+      "system",
+      runtime,
+      "cleanup-preabort-message",
+      abortController.signal
+    );
+
+    expect(result.success).toBe(true);
+    expect(getCleanupCalls()).toBe(1);
+  });
+
+  test("runs model cleanup when stream creation throws before processing", async () => {
+    const streamManager = new StreamManager(historyService);
+    const { model, getCleanupCalls } = createCleanupModel("cleanup-create-throw-model");
+    const replaceCreateStreamResult = Reflect.set(streamManager, "createStreamResult", () => {
+      throw new Error("create stream failed");
+    });
+    expect(replaceCreateStreamResult).toBe(true);
+
+    const result = await streamManager.startStream(
+      "cleanup-create-throw-workspace",
+      [{ role: "user", content: "hello" }],
+      model,
+      "openai:gpt-4.1-mini",
+      1,
+      "system",
+      runtime,
+      "cleanup-create-throw-message"
+    );
+
+    expect(result.success).toBe(false);
+    expect(getCleanupCalls()).toBe(1);
+  });
+});
 describe("StreamManager - stripEncryptedContent", () => {
   test("strips encryptedContent from array output shape", () => {
     const output = [
@@ -1216,44 +1417,20 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
     // Start three streams rapidly
     // Without mutex, these would interleave (ensure-start, ensure-start, ensure-start, ensure-end, ensure-end, ensure-end)
     // With mutex, they should be serialized (ensure-start, ensure-end, ensure-start, ensure-end, ensure-start, ensure-end)
-    const promises = [
+    const promises = [1, 2, 3].map((sequence) =>
       streamManager.startStream(
         workspaceId,
-        [{ role: "user", content: "test 1" }],
+        [{ role: "user", content: `test ${sequence}` }],
         model,
         KNOWN_MODELS.SONNET.id,
-        1,
+        sequence,
         "system",
         runtime,
-        "test-msg-1",
+        `test-msg-${sequence}`,
         undefined,
         {}
-      ),
-      streamManager.startStream(
-        workspaceId,
-        [{ role: "user", content: "test 2" }],
-        model,
-        KNOWN_MODELS.SONNET.id,
-        2,
-        "system",
-        runtime,
-        "test-msg-2",
-        undefined,
-        {}
-      ),
-      streamManager.startStream(
-        workspaceId,
-        [{ role: "user", content: "test 3" }],
-        model,
-        KNOWN_MODELS.SONNET.id,
-        3,
-        "system",
-        runtime,
-        "test-msg-3",
-        undefined,
-        {}
-      ),
-    ];
+      )
+    );
 
     // Wait for all to complete (they will fail due to dummy API key, but that's ok)
     await Promise.allSettled(promises);
@@ -1370,93 +1547,6 @@ describe("StreamManager - Concurrent Stream Prevention", () => {
   });
 });
 
-describe("StreamManager - Unavailable Tool Handling", () => {
-  let streamManager: StreamManager;
-
-  beforeEach(() => {
-    streamManager = new StreamManager(historyService);
-    // Suppress error events - processStreamWithCleanup may throw due to tokenizer worker issues in test env
-    streamManager.on("error", () => undefined);
-  });
-
-  test.skip("should handle tool-error events from SDK", async () => {
-    const workspaceId = "test-workspace-tool-error";
-
-    // Track emitted events
-    interface ToolEvent {
-      type: string;
-      toolName?: string;
-      result?: unknown;
-    }
-    const events: ToolEvent[] = [];
-
-    streamManager.on("tool-call-start", (data: { toolName: string }) => {
-      events.push({ type: "tool-call-start", toolName: data.toolName });
-    });
-
-    streamManager.on("tool-call-end", (data: { toolName: string; result: unknown }) => {
-      events.push({ type: "tool-call-end", toolName: data.toolName, result: data.result });
-    });
-
-    // Mock a stream that emits tool-error event (AI SDK 5.0 behavior)
-    const mockStreamResult = {
-      // eslint-disable-next-line @typescript-eslint/require-await
-      fullStream: (async function* () {
-        // SDK emits tool-call when model requests a tool
-        yield {
-          type: "tool-call",
-          toolCallId: "test-call-1",
-          toolName: "file_edit_replace",
-          input: { path: "/test", old_string: "foo", new_string: "bar" },
-        };
-        // SDK emits tool-error when tool execution fails
-        yield {
-          type: "tool-error",
-          toolCallId: "test-call-1",
-          toolName: "file_edit_replace",
-          error: "Tool not found",
-        };
-      })(),
-      usage: Promise.resolve(undefined),
-      providerMetadata: Promise.resolve({}),
-    };
-
-    // Create streamInfo for testing
-    const streamInfo = {
-      state: 2, // STREAMING
-      streamResult: mockStreamResult,
-      abortController: new AbortController(),
-      messageId: "test-message-1",
-      token: "test-token",
-      startTime: Date.now(),
-      model: KNOWN_MODELS.SONNET.id,
-      historySequence: 1,
-      parts: [],
-      lastPartialWriteTime: 0,
-      processingPromise: Promise.resolve(),
-    };
-
-    // Access private method for testing
-    // @ts-expect-error - accessing private method for testing
-    await streamManager.processStreamWithCleanup(workspaceId, streamInfo, 1);
-
-    // Verify events were emitted correctly
-    expect(events.length).toBeGreaterThanOrEqual(2);
-    expect(events[0]).toMatchObject({
-      type: "tool-call-start",
-      toolName: "file_edit_replace",
-    });
-    expect(events[1]).toMatchObject({
-      type: "tool-call-end",
-      toolName: "file_edit_replace",
-    });
-
-    // Verify error result
-    const errorResult = events[1].result as { error?: string };
-    expect(errorResult?.error).toBe("Tool not found");
-  });
-});
-
 describe("StreamManager - empty stream completions", () => {
   const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
 
@@ -1482,81 +1572,41 @@ describe("StreamManager - empty stream completions", () => {
     const messageId = "empty-output-message";
     const historySequence = 1;
 
-    const appendResult = await historyService.appendToHistory(workspaceId, {
-      id: messageId,
-      role: "assistant",
-      metadata: {
-        historySequence,
-        partial: true,
-      },
-      parts: [],
-    });
-    expect(appendResult.success).toBe(true);
-    if (!appendResult.success) {
-      throw new Error(appendResult.error);
-    }
-
-    const processStreamWithCleanup = Reflect.get(streamManager, "processStreamWithCleanup") as (
-      workspaceId: string,
-      streamInfo: unknown,
-      historySequence: number
-    ) => Promise<void>;
-    expect(typeof processStreamWithCleanup).toBe("function");
-
-    const createStreamResult = mock(() => ({
-      fullStream: (async function* () {
-        // Retry path also returns no output so the empty-output error still surfaces.
-      })(),
-      totalUsage: Promise.resolve({ inputTokens: 3, outputTokens: 0, totalTokens: 3 }),
-      usage: Promise.resolve({ inputTokens: 3, outputTokens: 0, totalTokens: 3 }),
-      providerMetadata: Promise.resolve(undefined),
-      steps: Promise.resolve([]),
-    }));
-    const replaceCreateStreamResult = Reflect.set(
-      streamManager,
-      "createStreamResult",
-      createStreamResult
+    await appendPartialAssistantForTests(workspaceId, messageId, historySequence);
+    const processStreamWithCleanup = getProcessStreamWithCleanupForTests(streamManager);
+    const emptyUsage = { inputTokens: 3, outputTokens: 0, totalTokens: 3 };
+    const createStreamResult = mock(() =>
+      createStreamResultForTests(
+        (async function* () {
+          // Retry path also returns no output so the empty-output error still surfaces.
+        })(),
+        emptyUsage
+      )
     );
-    expect(replaceCreateStreamResult).toBe(true);
+    expect(Reflect.set(streamManager, "createStreamResult", createStreamResult)).toBe(true);
 
-    const streamInfo = {
-      state: "streaming",
-      streamResult: {
-        fullStream: (async function* () {
+    const startTime = Date.now() - 250;
+    const streamInfo = createStreamInfoForTests({
+      streamResult: createStreamResultForTests(
+        (async function* () {
           // No-op stream: this reproduces the silent placeholder case we saw in debug logs.
         })(),
-        totalUsage: Promise.resolve({ inputTokens: 3, outputTokens: 0, totalTokens: 3 }),
-        usage: Promise.resolve({ inputTokens: 3, outputTokens: 0, totalTokens: 3 }),
-        providerMetadata: Promise.resolve(undefined),
-        steps: Promise.resolve([]),
-      },
-      abortController: new AbortController(),
+        emptyUsage
+      ),
       messageId,
-      token: "test-token",
-      startTime: Date.now() - 250,
-      lastPartTimestamp: Date.now() - 250,
-      toolCompletionTimestamps: new Map<string, number>(),
+      startTime,
+      lastPartTimestamp: startTime,
       model: KNOWN_MODELS.SONNET.id,
       metadataModel: KNOWN_MODELS.SONNET.id,
       historySequence,
       initialMetadata: { agentId: "plan" },
       request: { model: "ignored-model", messages: [], providerOptions: undefined },
-      stepTracker: {},
-      didRetryPreviousResponseIdAtStep: false,
-      currentStepStartIndex: 0,
-      parts: [],
-      lastPartialWriteTime: 0,
-      partialWriteTimer: undefined,
-      partialWritePromise: undefined,
-      processingPromise: Promise.resolve(),
-      softInterrupt: { pending: false as const },
-      runtimeTempDir: "",
       runtime,
       cumulativeUsage: { inputTokens: 7, outputTokens: 0, totalTokens: 7 },
       cumulativeProviderMetadata: { openai: { cached_tokens: 2 } },
       lastStepUsage: { inputTokens: 7, outputTokens: 0, totalTokens: 7 },
       lastStepProviderMetadata: { openai: { cached_tokens: 2 } },
-    };
+    });
 
     await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
 
@@ -1688,73 +1738,32 @@ describe("StreamManager - TTFT metadata persistence", () => {
       throw new Error("Failed to mock StreamManager.tokenTracker");
     }
 
-    const appendResult = await historyService.appendToHistory(params.workspaceId, {
-      id: params.messageId,
-      role: "assistant",
-      metadata: {
-        historySequence: params.historySequence,
-        partial: true,
-      },
-      parts: [],
-    });
-    expect(appendResult.success).toBe(true);
-    if (!appendResult.success) {
-      throw new Error(appendResult.error);
-    }
+    await appendPartialAssistantForTests(
+      params.workspaceId,
+      params.messageId,
+      params.historySequence
+    );
 
-    const processStreamWithCleanup = Reflect.get(streamManager, "processStreamWithCleanup") as (
-      workspaceId: string,
-      streamInfo: unknown,
-      historySequence: number
-    ) => Promise<void>;
-    expect(typeof processStreamWithCleanup).toBe("function");
-
+    const processStreamWithCleanup = getProcessStreamWithCleanupForTests(streamManager);
     const usage = params.usage ?? { inputTokens: 4, outputTokens: 6, totalTokens: 10 };
-
-    const streamInfo = {
-      state: "streaming",
-      streamResult: {
-        fullStream: (async function* () {
+    const streamInfo = createStreamInfoForTests({
+      streamResult: createStreamResultForTests(
+        (async function* () {
           // No-op stream: tests verify stream-end finalization behavior from pre-populated parts.
         })(),
-        totalUsage: Promise.resolve(usage),
-        usage: Promise.resolve(usage),
-        providerMetadata: Promise.resolve(undefined),
-        steps: Promise.resolve([]),
-      },
-      abortController: new AbortController(),
+        usage
+      ),
       messageId: params.messageId,
-      token: "test-token",
       startTime: params.startTime,
       lastPartTimestamp: params.startTime,
-      toolCompletionTimestamps: new Map<string, number>(),
       model: params.model ?? KNOWN_MODELS.SONNET.id,
       metadataModel: params.metadataModel ?? params.model ?? KNOWN_MODELS.SONNET.id,
       historySequence: params.historySequence,
       initialMetadata: params.initialMetadata,
-      toolModelUsages: [],
       parts: params.parts,
-      lastPartialWriteTime: 0,
-      partialWriteTimer: undefined,
-      partialWritePromise: undefined,
-      processingPromise: Promise.resolve(),
-      softInterrupt: { pending: false as const },
-      runtimeTempDir: "",
       runtime,
-      cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-      cumulativeProviderMetadata: undefined,
-      didRetryPreviousResponseIdAtStep: false,
-      currentStepStartIndex: 0,
-      stepTracker: {},
-    };
-
-    const workspaceStreamsValue: unknown = Reflect.get(streamManager, "workspaceStreams");
-    expect(workspaceStreamsValue instanceof Map).toBe(true);
-    if (!(workspaceStreamsValue instanceof Map)) {
-      throw new Error("Expected StreamManager.workspaceStreams to be a Map");
-    }
-    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
-    workspaceStreams.set(params.workspaceId, streamInfo);
+    });
+    getWorkspaceStreamsForTests(streamManager).set(params.workspaceId, streamInfo);
 
     if (params.beforeProcess) {
       await params.beforeProcess({
@@ -1765,12 +1774,9 @@ describe("StreamManager - TTFT metadata persistence", () => {
     }
 
     if (params.emitStartEvent) {
-      const emitStreamStart = Reflect.get(streamManager, "emitStreamStart") as (
-        workspaceId: string,
-        streamInfo: unknown,
-        historySequence: number
-      ) => void;
-      expect(typeof emitStreamStart).toBe("function");
+      const emitStreamStart = getPrivateMethodForTests<
+        (workspaceId: string, streamInfo: unknown, historySequence: number) => void
+      >(streamManager, "emitStreamStart");
       emitStreamStart.call(streamManager, params.workspaceId, streamInfo, params.historySequence);
     }
 
@@ -2179,63 +2185,50 @@ describe("StreamManager - previousResponseId recovery", () => {
     expect(extractMethod.call(streamManager, errorWithoutId)).toBeUndefined();
   });
 
-  test("recordLostResponseIdIfApplicable records IDs for explicit OpenAI errors", () => {
-    const streamManager = new StreamManager(historyService);
-
-    const recordMethod = Reflect.get(streamManager, "recordLostResponseIdIfApplicable") as (
-      workspaceId: string,
-      error: unknown,
-      streamInfo: unknown
-    ) => void;
-    expect(typeof recordMethod).toBe("function");
-
-    const apiError = new APICallError({
-      message: "Previous response with id 'resp_deadbeef' not found.",
-      url: "https://api.openai.com/v1/responses",
-      requestBodyValues: {},
-      statusCode: 400,
-      responseHeaders: {},
-      responseBody: "Previous response with id 'resp_deadbeef' not found.",
-      isRetryable: false,
-      data: { error: { code: "previous_response_not_found" } },
-    });
-
-    recordMethod.call(streamManager, "workspace-1", apiError, {
+  const lostResponseIdCases = [
+    {
+      name: "explicit OpenAI errors",
+      workspaceId: "workspace-1",
       messageId: "msg-1",
-      model: "openai:gpt-mini",
-    });
-
-    expect(streamManager.isResponseIdLost("resp_deadbeef")).toBe(true);
-  });
-
-  test("recordLostResponseIdIfApplicable records IDs for 500 errors referencing previous responses", () => {
-    const streamManager = new StreamManager(historyService);
-
-    const recordMethod = Reflect.get(streamManager, "recordLostResponseIdIfApplicable") as (
-      workspaceId: string,
-      error: unknown,
-      streamInfo: unknown
-    ) => void;
-    expect(typeof recordMethod).toBe("function");
-
-    const apiError = new APICallError({
-      message: "Internal error: Previous response with id 'resp_cafebabe' not found.",
-      url: "https://api.openai.com/v1/responses",
-      requestBodyValues: {},
-      statusCode: 500,
-      responseHeaders: {},
-      responseBody: "Internal error: Previous response with id 'resp_cafebabe' not found.",
-      isRetryable: false,
-      data: { error: { code: "server_error" } },
-    });
-
-    recordMethod.call(streamManager, "workspace-2", apiError, {
+      lostId: "resp_deadbeef",
+      error: createApiCallErrorForTests({
+        message: "Previous response with id 'resp_deadbeef' not found.",
+        statusCode: 400,
+        responseBody: "Previous response with id 'resp_deadbeef' not found.",
+        isRetryable: false,
+        data: { error: { code: "previous_response_not_found" } },
+      }),
+    },
+    {
+      name: "500 errors referencing previous responses",
+      workspaceId: "workspace-2",
       messageId: "msg-2",
-      model: "openai:gpt-mini",
-    });
+      lostId: "resp_cafebabe",
+      error: createApiCallErrorForTests({
+        message: "Internal error: Previous response with id 'resp_cafebabe' not found.",
+        statusCode: 500,
+        responseBody: "Internal error: Previous response with id 'resp_cafebabe' not found.",
+        isRetryable: false,
+        data: { error: { code: "server_error" } },
+      }),
+    },
+  ];
 
-    expect(streamManager.isResponseIdLost("resp_cafebabe")).toBe(true);
-  });
+  for (const lostResponseIdCase of lostResponseIdCases) {
+    test(`recordLostResponseIdIfApplicable records IDs for ${lostResponseIdCase.name}`, () => {
+      const streamManager = new StreamManager(historyService);
+      const recordMethod = getPrivateMethodForTests<
+        (workspaceId: string, error: unknown, streamInfo: unknown) => void
+      >(streamManager, "recordLostResponseIdIfApplicable");
+
+      recordMethod.call(streamManager, lostResponseIdCase.workspaceId, lostResponseIdCase.error, {
+        messageId: lostResponseIdCase.messageId,
+        model: "openai:gpt-mini",
+      });
+
+      expect(streamManager.isResponseIdLost(lostResponseIdCase.lostId)).toBe(true);
+    });
+  }
 
   test("retryStreamWithoutPreviousResponseId retries at step boundary with existing parts", async () => {
     const streamManager = new StreamManager(historyService);
@@ -2300,12 +2293,9 @@ describe("StreamManager - previousResponseId recovery", () => {
         steps: Promise.resolve([]),
       });
 
-    const apiError = new APICallError({
+    const apiError = createApiCallErrorForTests({
       message: "Previous response with id 'resp_abc123' not found.",
-      url: "https://api.openai.com/v1/responses",
-      requestBodyValues: {},
       statusCode: 400,
-      responseHeaders: {},
       responseBody: "Previous response with id 'resp_abc123' not found.",
       isRetryable: false,
       data: { error: { code: "previous_response_not_found" } },
@@ -2323,97 +2313,95 @@ describe("StreamManager - previousResponseId recovery", () => {
     expect(openaiOptions.openai?.previousResponseId).toBeUndefined();
   });
 
-  test("resolveTotalUsageForStreamEnd prefers cumulative usage after step retry", () => {
-    const streamManager = new StreamManager(historyService);
+  const totalUsageCases: Array<{
+    name: string;
+    streamInfo: Record<string, unknown>;
+    totalUsage: Record<string, number>;
+    expected: Record<string, number>;
+  }> = [
+    {
+      name: "prefers cumulative usage after step retry",
+      streamInfo: {
+        didRetryPreviousResponseIdAtStep: true,
+        cumulativeUsage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 },
+      },
+      totalUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      expected: { inputTokens: 4, outputTokens: 5, totalTokens: 9 },
+    },
+    {
+      name: "prefers cumulative usage after empty-output retry",
+      streamInfo: {
+        didRetryPreviousResponseIdAtStep: false,
+        didRetryAfterEmptyOutput: true,
+        cumulativeUsage: { inputTokens: 6, outputTokens: 5, totalTokens: 11 },
+      },
+      totalUsage: { inputTokens: 2, outputTokens: 2, totalTokens: 4 },
+      expected: { inputTokens: 6, outputTokens: 5, totalTokens: 11 },
+    },
+    {
+      name: "treats non-zero fields as valid usage",
+      streamInfo: {
+        didRetryPreviousResponseIdAtStep: true,
+        cumulativeUsage: { inputTokens: 4, outputTokens: 1, totalTokens: 0 },
+      },
+      totalUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      expected: { inputTokens: 4, outputTokens: 1, totalTokens: 0 },
+    },
+    {
+      name: "keeps stream total without step retry",
+      streamInfo: {
+        didRetryPreviousResponseIdAtStep: false,
+        cumulativeUsage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 },
+      },
+      totalUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      expected: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+    },
+  ];
 
-    const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
-      streamInfo: unknown,
-      totalUsage: unknown
-    ) => unknown;
-    expect(typeof resolveMethod).toBe("function");
+  for (const usageCase of totalUsageCases) {
+    test(`resolveTotalUsageForStreamEnd ${usageCase.name}`, () => {
+      const streamManager = new StreamManager(historyService);
+      const resolveMethod = getPrivateMethodForTests<
+        (streamInfo: unknown, totalUsage: unknown) => unknown
+      >(streamManager, "resolveTotalUsageForStreamEnd");
 
-    const cumulativeUsage = { inputTokens: 4, outputTokens: 5, totalTokens: 9 };
-    const totalUsage = { inputTokens: 1, outputTokens: 2, totalTokens: 3 };
-
-    const result = resolveMethod.call(
-      streamManager,
-      { didRetryPreviousResponseIdAtStep: true, cumulativeUsage },
-      totalUsage
-    );
-
-    expect(result).toEqual(cumulativeUsage);
-  });
-
-  test("resolveTotalUsageForStreamEnd prefers cumulative usage after empty-output retry", () => {
-    const streamManager = new StreamManager(historyService);
-
-    const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
-      streamInfo: unknown,
-      totalUsage: unknown
-    ) => unknown;
-    expect(typeof resolveMethod).toBe("function");
-
-    const cumulativeUsage = { inputTokens: 6, outputTokens: 5, totalTokens: 11 };
-    const totalUsage = { inputTokens: 2, outputTokens: 2, totalTokens: 4 };
-
-    const result = resolveMethod.call(
-      streamManager,
-      { didRetryPreviousResponseIdAtStep: false, didRetryAfterEmptyOutput: true, cumulativeUsage },
-      totalUsage
-    );
-
-    expect(result).toEqual(cumulativeUsage);
-  });
-
-  test("resolveTotalUsageForStreamEnd treats non-zero fields as valid usage", () => {
-    const streamManager = new StreamManager(historyService);
-
-    const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
-      streamInfo: unknown,
-      totalUsage: unknown
-    ) => unknown;
-    expect(typeof resolveMethod).toBe("function");
-
-    const cumulativeUsage = { inputTokens: 4, outputTokens: 1, totalTokens: 0 };
-    const totalUsage = { inputTokens: 1, outputTokens: 2, totalTokens: 3 };
-
-    const result = resolveMethod.call(
-      streamManager,
-      { didRetryPreviousResponseIdAtStep: true, cumulativeUsage },
-      totalUsage
-    );
-
-    expect(result).toEqual(cumulativeUsage);
-  });
-
-  test("resolveTotalUsageForStreamEnd keeps stream total without step retry", () => {
-    const streamManager = new StreamManager(historyService);
-
-    const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
-      streamInfo: unknown,
-      totalUsage: unknown
-    ) => unknown;
-    expect(typeof resolveMethod).toBe("function");
-
-    const cumulativeUsage = { inputTokens: 4, outputTokens: 5, totalTokens: 9 };
-    const totalUsage = { inputTokens: 1, outputTokens: 2, totalTokens: 3 };
-
-    const result = resolveMethod.call(
-      streamManager,
-      { didRetryPreviousResponseIdAtStep: false, cumulativeUsage },
-      totalUsage
-    );
-
-    expect(result).toEqual(totalUsage);
-  });
+      expect(resolveMethod.call(streamManager, usageCase.streamInfo, usageCase.totalUsage)).toEqual(
+        usageCase.expected
+      );
+    });
+  }
 });
 
 describe("StreamManager - replayStream", () => {
-  test("replayStream snapshots parts so reconnect doesn't block until stream ends", async () => {
+  function createReplayStreamManager(): StreamManager {
     const streamManager = new StreamManager(historyService);
-
-    // Suppress error events from bubbling up as uncaught exceptions during tests
+    // Suppress error events from bubbling up as uncaught exceptions during tests.
     streamManager.on("error", () => undefined);
+    return streamManager;
+  }
+
+  function setReplayStreamInfo(
+    streamManager: StreamManager,
+    workspaceId: string,
+    streamInfo: Record<string, unknown>
+  ): void {
+    getWorkspaceStreamsForTests(streamManager).set(workspaceId, streamInfo);
+  }
+
+  function stubReplayTokenTracker(
+    streamManager: StreamManager,
+    countTokens: (text: string) => Promise<number> = () => Promise.resolve(1)
+  ): void {
+    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
+      setModel: (model: string) => Promise<void>;
+      countTokens: (text: string) => Promise<number>;
+    };
+    tokenTracker.setModel = () => Promise.resolve();
+    tokenTracker.countTokens = countTokens;
+  }
+
+  test("replayStream snapshots parts so reconnect doesn't block until stream ends", async () => {
+    const streamManager = createReplayStreamManager();
 
     let sawStreamStart = false;
     streamManager.on("stream-start", (event: { replay?: boolean | undefined }) => {
@@ -2428,14 +2416,6 @@ describe("StreamManager - replayStream", () => {
       deltas.push(event.delta);
     });
 
-    // Inject an active stream into the private workspaceStreams map.
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
-    if (!(workspaceStreamsValue instanceof Map)) {
-      throw new Error("StreamManager.workspaceStreams is not a Map");
-    }
-    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
-
     const streamInfo = {
       state: "streaming",
       messageId: "msg-1",
@@ -2446,18 +2426,10 @@ describe("StreamManager - replayStream", () => {
       parts: [{ type: "text", text: "a", timestamp: 10 }],
     };
 
-    workspaceStreams.set(workspaceId, streamInfo);
-
-    // Patch the private tokenTracker to (a) avoid worker setup and (b) mutate parts during replay.
-    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
-      setModel: (model: string) => Promise<void>;
-      countTokens: (text: string) => Promise<number>;
-    };
-
-    tokenTracker.setModel = () => Promise.resolve();
+    setReplayStreamInfo(streamManager, workspaceId, streamInfo);
 
     let pushed = false;
-    tokenTracker.countTokens = async () => {
+    stubReplayTokenTracker(streamManager, async () => {
       if (!pushed) {
         pushed = true;
         // While replay is mid-await, simulate the running stream appending more parts.
@@ -2470,7 +2442,7 @@ describe("StreamManager - replayStream", () => {
       // Force an await boundary so the mutation happens during replay.
       await new Promise((resolve) => setTimeout(resolve, 0));
       return 1;
-    };
+    });
 
     await streamManager.replayStream(workspaceId);
     expect(sawStreamStart).toBe(true);
@@ -2480,10 +2452,7 @@ describe("StreamManager - replayStream", () => {
   });
 
   test("replayStream filters output-available tool parts using completion timestamps", async () => {
-    const streamManager = new StreamManager(historyService);
-
-    // Suppress error events from bubbling up as uncaught exceptions during tests
-    streamManager.on("error", () => undefined);
+    const streamManager = createReplayStreamManager();
 
     const workspaceId = "ws-replay-tool-filter";
 
@@ -2495,13 +2464,6 @@ describe("StreamManager - replayStream", () => {
         replayedToolEnds.push(event.toolCallId);
       }
     );
-
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
-    if (!(workspaceStreamsValue instanceof Map)) {
-      throw new Error("StreamManager.workspaceStreams is not a Map");
-    }
-    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
 
     const streamInfo = {
       state: "streaming",
@@ -2536,25 +2498,16 @@ describe("StreamManager - replayStream", () => {
       ],
     };
 
-    workspaceStreams.set(workspaceId, streamInfo);
+    setReplayStreamInfo(streamManager, workspaceId, streamInfo);
 
-    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
-      setModel: (model: string) => Promise<void>;
-      countTokens: (text: string) => Promise<number>;
-    };
-
-    tokenTracker.setModel = () => Promise.resolve();
-    tokenTracker.countTokens = () => Promise.resolve(1);
+    stubReplayTokenTracker(streamManager);
 
     await streamManager.replayStream(workspaceId, { afterTimestamp: 20 });
 
     expect(replayedToolEnds).toEqual(["tool-new"]);
   });
   test("replayStream emits replay usage-delta from tracked step/cumulative usage", async () => {
-    const streamManager = new StreamManager(historyService);
-
-    // Suppress error events from bubbling up as uncaught exceptions during tests
-    streamManager.on("error", () => undefined);
+    const streamManager = createReplayStreamManager();
 
     const workspaceId = "ws-replay-usage";
     const usageEvents: Array<{
@@ -2578,14 +2531,7 @@ describe("StreamManager - replayStream", () => {
       }
     );
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
-    if (!(workspaceStreamsValue instanceof Map)) {
-      throw new Error("StreamManager.workspaceStreams is not a Map");
-    }
-    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
-
-    workspaceStreams.set(workspaceId, {
+    setReplayStreamInfo(streamManager, workspaceId, {
       state: "streaming",
       messageId: "msg-usage",
       model: "claude-sonnet-4",
@@ -2601,13 +2547,7 @@ describe("StreamManager - replayStream", () => {
       cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 9 } },
     });
 
-    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
-      setModel: (model: string) => Promise<void>;
-      countTokens: (text: string) => Promise<number>;
-    };
-
-    tokenTracker.setModel = () => Promise.resolve();
-    tokenTracker.countTokens = () => Promise.resolve(1);
+    stubReplayTokenTracker(streamManager);
 
     await streamManager.replayStream(workspaceId);
 
@@ -2628,10 +2568,7 @@ describe("StreamManager - replayStream", () => {
     });
   });
   test("replayStream skips replay usage-delta for incremental afterTimestamp replays", async () => {
-    const streamManager = new StreamManager(historyService);
-
-    // Suppress error events from bubbling up as uncaught exceptions during tests
-    streamManager.on("error", () => undefined);
+    const streamManager = createReplayStreamManager();
 
     const workspaceId = "ws-replay-usage-incremental";
     const usageEvents: Array<{ replay?: boolean }> = [];
@@ -2640,14 +2577,7 @@ describe("StreamManager - replayStream", () => {
       usageEvents.push(event);
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
-    if (!(workspaceStreamsValue instanceof Map)) {
-      throw new Error("StreamManager.workspaceStreams is not a Map");
-    }
-    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
-
-    workspaceStreams.set(workspaceId, {
+    setReplayStreamInfo(streamManager, workspaceId, {
       state: "streaming",
       messageId: "msg-usage-incremental",
       model: "claude-sonnet-4",
@@ -2663,13 +2593,7 @@ describe("StreamManager - replayStream", () => {
       cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 9 } },
     });
 
-    const tokenTracker = Reflect.get(streamManager, "tokenTracker") as {
-      setModel: (model: string) => Promise<void>;
-      countTokens: (text: string) => Promise<number>;
-    };
-
-    tokenTracker.setModel = () => Promise.resolve();
-    tokenTracker.countTokens = () => Promise.resolve(1);
+    stubReplayTokenTracker(streamManager);
 
     await streamManager.replayStream(workspaceId, { afterTimestamp: 999 });
 
@@ -2682,14 +2606,7 @@ describe("StreamManager - getStreamInfo", () => {
     const streamManager = new StreamManager(historyService);
     const workspaceId = "ws-get-stream-info";
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const workspaceStreamsValue = Reflect.get(streamManager, "workspaceStreams");
-    if (!(workspaceStreamsValue instanceof Map)) {
-      throw new Error("StreamManager.workspaceStreams is not a Map");
-    }
-    const workspaceStreams = workspaceStreamsValue as Map<string, unknown>;
-
-    workspaceStreams.set(workspaceId, {
+    getWorkspaceStreamsForTests(streamManager).set(workspaceId, {
       state: "starting",
       messageId: "msg-starting",
       model: "claude-sonnet-4",
@@ -2708,143 +2625,94 @@ describe("StreamManager - getStreamInfo", () => {
 });
 
 describe("StreamManager - categorizeError", () => {
-  test("unwraps RetryError.lastError to classify model_not_found", () => {
+  function categorizeErrorForTests(error: unknown): unknown {
     const streamManager = new StreamManager(historyService);
+    const categorizeMethod = getPrivateMethodForTests<(error: unknown) => unknown>(
+      streamManager,
+      "categorizeError"
+    );
+    return categorizeMethod.call(streamManager, error);
+  }
 
-    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
-      error: unknown
-    ) => unknown;
-    expect(typeof categorizeMethod).toBe("function");
-
-    const apiError = new APICallError({
+  test("unwraps RetryError.lastError to classify model_not_found", () => {
+    const apiError = createApiCallErrorForTests({
       message: "The model `gpt-5.2-codex` does not exist or you do not have access to it.",
-      url: "https://api.openai.com/v1/responses",
-      requestBodyValues: {},
       statusCode: 400,
-      responseHeaders: {},
       responseBody:
         '{"error":{"message":"The model `gpt-5.2-codex` does not exist or you do not have access to it.","code":"model_not_found"}}',
       isRetryable: false,
       data: { error: { code: "model_not_found" } },
     });
-
     const retryError = new RetryError({
       message: "AI SDK retry exhausted",
       reason: "maxRetriesExceeded",
       errors: [apiError],
     });
 
-    expect(categorizeMethod.call(streamManager, retryError)).toBe("model_not_found");
+    expect(categorizeErrorForTests(retryError)).toBe("model_not_found");
   });
 
-  test("classifies model_not_found via message fallback", () => {
-    const streamManager = new StreamManager(historyService);
+  const categorizeCases: Array<{ name: string; error: unknown; expected: string }> = [
+    {
+      name: "classifies model_not_found via message fallback",
+      error: new Error("The model `gpt-5.2-codex` does not exist or you do not have access to it."),
+      expected: "model_not_found",
+    },
+    {
+      name: "classifies 402 payment required as quota (avoid auto-retry)",
+      error: createApiCallErrorForTests({
+        message: "Insufficient balance. Please add credits to continue.",
+        url: "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai/language-model",
+        statusCode: 402,
+        responseBody:
+          '{"error":{"message":"Insufficient balance. Please add credits to continue.","type":"invalid_request_error"}}',
+        isRetryable: false,
+        data: { error: { message: "Insufficient balance. Please add credits to continue." } },
+      }),
+      expected: "quota",
+    },
+    {
+      name: "classifies 429 insufficient_quota responses as quota",
+      error: createApiCallErrorForTests({
+        message: "Request failed",
+        statusCode: 429,
+        responseBody:
+          '{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}',
+        isRetryable: false,
+        data: {
+          error: { code: "insufficient_quota", message: "You exceeded your current quota" },
+        },
+      }),
+      expected: "quota",
+    },
+    {
+      name: "classifies generic 429 throttling as rate_limit",
+      error: createApiCallErrorForTests({
+        message: "Too many requests, please retry shortly",
+        statusCode: 429,
+        responseBody: '{"error":{"message":"Too many requests"}}',
+        isRetryable: true,
+      }),
+      expected: "rate_limit",
+    },
+    {
+      name: "classifies 429 mentioning quota limits as rate_limit (not billing)",
+      error: createApiCallErrorForTests({
+        message: "Per-minute quota limit reached. Retry in 10s.",
+        statusCode: 429,
+        responseBody: '{"error":{"message":"Per-minute quota limit reached"}}',
+        isRetryable: true,
+      }),
+      expected: "rate_limit",
+    },
+  ];
 
-    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
-      error: unknown
-    ) => unknown;
-    expect(typeof categorizeMethod).toBe("function");
-
-    const error = new Error(
-      "The model `gpt-5.2-codex` does not exist or you do not have access to it."
-    );
-
-    expect(categorizeMethod.call(streamManager, error)).toBe("model_not_found");
-  });
-
-  test("classifies 402 payment required as quota (avoid auto-retry)", () => {
-    const streamManager = new StreamManager(historyService);
-
-    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
-      error: unknown
-    ) => unknown;
-    expect(typeof categorizeMethod).toBe("function");
-
-    const apiError = new APICallError({
-      message: "Insufficient balance. Please add credits to continue.",
-      url: "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai/language-model",
-      requestBodyValues: {},
-      statusCode: 402,
-      responseHeaders: {},
-      responseBody:
-        '{"error":{"message":"Insufficient balance. Please add credits to continue.","type":"invalid_request_error"}}',
-      isRetryable: false,
-      data: {
-        error: { message: "Insufficient balance. Please add credits to continue." },
-      },
+  for (const categorizeCase of categorizeCases) {
+    test(categorizeCase.name, () => {
+      expect(categorizeErrorForTests(categorizeCase.error)).toBe(categorizeCase.expected);
     });
-
-    expect(categorizeMethod.call(streamManager, apiError)).toBe("quota");
-  });
-
-  test("classifies 429 insufficient_quota responses as quota", () => {
-    const streamManager = new StreamManager(historyService);
-
-    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
-      error: unknown
-    ) => unknown;
-    expect(typeof categorizeMethod).toBe("function");
-
-    const apiError = new APICallError({
-      message: "Request failed",
-      url: "https://api.openai.com/v1/responses",
-      requestBodyValues: {},
-      statusCode: 429,
-      responseHeaders: {},
-      responseBody:
-        '{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}',
-      isRetryable: false,
-      data: {
-        error: { code: "insufficient_quota", message: "You exceeded your current quota" },
-      },
-    });
-
-    expect(categorizeMethod.call(streamManager, apiError)).toBe("quota");
-  });
-
-  test("classifies generic 429 throttling as rate_limit", () => {
-    const streamManager = new StreamManager(historyService);
-
-    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
-      error: unknown
-    ) => unknown;
-    expect(typeof categorizeMethod).toBe("function");
-
-    const apiError = new APICallError({
-      message: "Too many requests, please retry shortly",
-      url: "https://api.openai.com/v1/responses",
-      requestBodyValues: {},
-      statusCode: 429,
-      responseHeaders: {},
-      responseBody: '{"error":{"message":"Too many requests"}}',
-      isRetryable: true,
-    });
-
-    expect(categorizeMethod.call(streamManager, apiError)).toBe("rate_limit");
-  });
-
-  test("classifies 429 mentioning quota limits as rate_limit (not billing)", () => {
-    const streamManager = new StreamManager(historyService);
-
-    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
-      error: unknown
-    ) => unknown;
-    expect(typeof categorizeMethod).toBe("function");
-
-    const apiError = new APICallError({
-      message: "Per-minute quota limit reached. Retry in 10s.",
-      url: "https://api.openai.com/v1/responses",
-      requestBodyValues: {},
-      statusCode: 429,
-      responseHeaders: {},
-      responseBody: '{"error":{"message":"Per-minute quota limit reached"}}',
-      isRetryable: true,
-    });
-
-    expect(categorizeMethod.call(streamManager, apiError)).toBe("rate_limit");
-  });
+  }
 });
-
 describe("StreamManager - ask_user_question Partial Persistence", () => {
   // Note: The ask_user_question tool blocks waiting for user input.
   // If the app restarts during that wait, the partial must be persisted.

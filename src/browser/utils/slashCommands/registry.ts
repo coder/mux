@@ -8,16 +8,24 @@ import type {
   SlashSuggestion,
   SuggestionDefinition,
   SlashSuggestionContext,
+  SlashCommandVisibilityContext,
 } from "./types";
 import minimist from "minimist";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
 import { assert } from "@/common/utils/assert";
-import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
+import { isExperimentEnabled as readExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
+import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { WORKSPACE_ONLY_COMMAND_KEYS } from "@/constants/slashCommands";
+
+function tokenizeCommandLine(input: string): string[] {
+  return (input.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []).map((token) =>
+    token.replace(/^"(.*)"$/, "$1")
+  );
+}
 
 /**
  * Parse multiline command input into first-line tokens and remaining message.
@@ -34,16 +42,36 @@ function parseMultilineCommand(rawInput: string): {
   const firstLine = lines[0];
   const remainingLines = lines.slice(1).join("\n").trim();
 
-  // Tokenize first line only (preserving quotes)
-  const tokens = (firstLine.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []).map((token) =>
-    token.replace(/^"(.*)"$/, "$1")
-  );
+  const tokens = tokenizeCommandLine(firstLine);
 
   return {
     firstLine,
     tokens,
     message: remainingLines.length > 0 ? remainingLines : undefined,
     hasMultiline,
+  };
+}
+
+interface CommandHeaderBody {
+  headerTokens: string[];
+  body: string | undefined;
+  bodyHadLeadingBlankLine: boolean;
+}
+
+function trimOuterBlankLines(value: string): string {
+  return value.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/(?:\r?\n[ \t]*)+$/, "");
+}
+
+function parseCommandHeaderBody(rawInput: string): CommandHeaderBody {
+  const newlineIndex = rawInput.indexOf("\n");
+  const header = newlineIndex === -1 ? rawInput : rawInput.slice(0, newlineIndex);
+  const rawBody = newlineIndex === -1 ? "" : rawInput.slice(newlineIndex + 1);
+  const body = trimOuterBlankLines(rawBody);
+
+  return {
+    headerTokens: tokenizeCommandLine(header),
+    body: body.trim().length > 0 ? body : undefined,
+    bodyHadLeadingBlankLine: /^\s*\r?\n/.test(rawBody),
   };
 }
 
@@ -67,60 +95,22 @@ function filterAndMapSuggestions<T extends SuggestionDefinition>(
 
 const clearCommandDefinition: SlashCommandDefinition = {
   key: "clear",
-  description: "Clear conversation history",
+  description: "Clear history, or use --soft to reset context while preserving history",
   appendSpace: false,
   handler: ({ cleanRemainingTokens }) => {
-    if (cleanRemainingTokens.length > 0) {
-      return {
-        type: "unknown-command",
-        command: "clear",
-        subcommand: cleanRemainingTokens[0],
-      };
-    }
-
-    return { type: "clear" };
-  },
-};
-
-const TRUNCATE_USAGE = `/truncate ${SLASH_COMMAND_HINTS.truncate} (percentage to remove)`;
-
-const truncateCommandDefinition: SlashCommandDefinition = {
-  key: "truncate",
-  description: "Truncate conversation history by percentage (0-100)",
-  inputHint: SLASH_COMMAND_HINTS.truncate,
-  handler: ({ cleanRemainingTokens }): ParsedCommand => {
     if (cleanRemainingTokens.length === 0) {
-      return {
-        type: "command-missing-args",
-        command: "truncate",
-        usage: TRUNCATE_USAGE,
-      };
+      return { type: "clear", mode: "hard" };
     }
 
-    if (cleanRemainingTokens.length > 1) {
-      return {
-        type: "command-invalid-args",
-        command: "truncate",
-        input: cleanRemainingTokens.join(" "),
-        usage: TRUNCATE_USAGE,
-      };
+    if (cleanRemainingTokens.length === 1 && cleanRemainingTokens[0] === "--soft") {
+      return { type: "clear", mode: "soft" };
     }
 
-    // Parse percentage (0-100)
-    const pctStr = cleanRemainingTokens[0];
-    const pct = parseFloat(pctStr);
-
-    if (isNaN(pct) || pct < 0 || pct > 100) {
-      return {
-        type: "command-invalid-args",
-        command: "truncate",
-        input: pctStr,
-        usage: TRUNCATE_USAGE,
-      };
-    }
-
-    // Convert to 0.0-1.0
-    return { type: "truncate", percentage: pct / 100 };
+    return {
+      type: "unknown-command",
+      command: "clear",
+      subcommand: cleanRemainingTokens[0],
+    };
   },
 };
 
@@ -387,6 +377,7 @@ const idleCommandDefinition: SlashCommandDefinition = {
 
 const heartbeatCommandDefinition: SlashCommandDefinition = {
   key: "heartbeat",
+  experimentGate: EXPERIMENT_IDS.WORKSPACE_HEARTBEATS,
   description: `Configure workspace heartbeats. Usage: ${HEARTBEAT_USAGE}`,
   inputHint: SLASH_COMMAND_HINTS.heartbeat,
   appendSpace: false,
@@ -441,6 +432,231 @@ const heartbeatCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+/**
+ * Slash-command-shaped wrapper around the canonical
+ * `parseGoalBudgetInputCents` parser. Returns `null` for both "no budget"
+ * (empty) and "invalid input" — slash command callers do not need to
+ * distinguish between those cases.
+ *
+ * Pre-DEREM-21 (Coder-agents-review P3) this had a stricter regex that
+ * required a `$` prefix; that has been unified with the GoalTab editor.
+ */
+export function parseGoalBudgetCents(value: unknown): number | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const parsed = parseGoalBudgetInputCents(value);
+  return typeof parsed === "number" ? parsed : null;
+}
+
+function parseGoalTurnCap(value: unknown): number | null {
+  if (typeof value !== "string" && typeof value !== "number") {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+const GOAL_USAGE = `/goal ${SLASH_COMMAND_HINTS.goal}`;
+const GOAL_BUDGET_USAGE = "/goal budget <amount>";
+
+function invalidGoalBodyArgs(
+  body: string
+): Extract<ParsedCommand, { type: "command-invalid-args" }> {
+  return { type: "command-invalid-args", command: "goal", input: body, usage: GOAL_USAGE };
+}
+
+function unknownGoalFlag(flag: string): Extract<ParsedCommand, { type: "command-unknown-flag" }> {
+  return { type: "command-unknown-flag", command: "goal", flag, usage: GOAL_USAGE };
+}
+
+// Goal subcommands whose only behavior is to emit a single typed lifecycle
+// event with no arguments. Centralizing the action→type mapping keeps the
+// handler from repeating identical three-line `if (action === "...")` blocks
+// (each with the same `if (body) return invalidGoalBodyArgs(body)` guard)
+// for every new lifecycle verb.
+type SimpleGoalLifecycleType = Extract<
+  ParsedCommand,
+  { type: "goal-clear" | "goal-pause" | "goal-resume" }
+>["type"];
+const SIMPLE_GOAL_LIFECYCLE_TYPES: Record<string, SimpleGoalLifecycleType> = {
+  clear: "goal-clear",
+  pause: "goal-pause",
+  resume: "goal-resume",
+};
+
+const goalCommandDefinition: SlashCommandDefinition = {
+  key: "goal",
+  description: `Create, view, or clear a workspace goal. Usage: ${GOAL_USAGE}`,
+  inputHint: SLASH_COMMAND_HINTS.goal,
+  appendSpace: false,
+  handler: ({ rawInput }): ParsedCommand => {
+    const { headerTokens, body, bodyHadLeadingBlankLine } = parseCommandHeaderBody(rawInput);
+
+    if (headerTokens.length === 0 && !body) {
+      return { type: "goal-show" };
+    }
+
+    const action = headerTokens[0]?.toLowerCase();
+    if (action != null && action in SIMPLE_GOAL_LIFECYCLE_TYPES) {
+      if (body) {
+        return invalidGoalBodyArgs(body);
+      }
+      return { type: SIMPLE_GOAL_LIFECYCLE_TYPES[action] };
+    }
+
+    if (action === "complete") {
+      if (body) {
+        return invalidGoalBodyArgs(body);
+      }
+      const parsed = minimist(headerTokens.slice(1), {
+        string: ["summary"],
+        unknown: (arg: string) => !arg.startsWith("-"),
+      });
+      const unknownFlag = headerTokens.slice(1).find((token) => {
+        return token.startsWith("-") && token !== "--summary";
+      });
+      if (unknownFlag) {
+        return unknownGoalFlag(unknownFlag);
+      }
+      if (parsed._.length > 0) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: parsed._.join(" "),
+          usage: `/goal complete --summary "<summary>"`,
+        };
+      }
+      const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : undefined;
+      return summary ? { type: "goal-complete", summary } : { type: "goal-complete" };
+    }
+
+    if (action === "budget") {
+      if (body) {
+        return invalidGoalBodyArgs(body);
+      }
+      const budgetTokens = headerTokens.slice(1);
+      if (budgetTokens.length === 0) {
+        return {
+          type: "command-missing-args",
+          command: "goal",
+          usage: GOAL_BUDGET_USAGE,
+        };
+      }
+      if (budgetTokens.length > 1) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: budgetTokens.join(" "),
+          usage: GOAL_BUDGET_USAGE,
+        };
+      }
+      const budgetCents = parseGoalBudgetCents(budgetTokens[0]);
+      if (budgetCents == null) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: budgetTokens[0],
+          usage: GOAL_BUDGET_USAGE,
+        };
+      }
+      return { type: "goal-budget", budgetCents };
+    }
+
+    let budgetCents: number | undefined;
+    let turnCap: number | undefined;
+    let objectiveStartIndex = 0;
+
+    if (headerTokens[0] === "-b") {
+      const budgetInput = headerTokens[1];
+      if (budgetInput == null) {
+        return {
+          type: "command-missing-args",
+          command: "goal",
+          usage: GOAL_USAGE,
+        };
+      }
+
+      const parsedBudgetCents = parseGoalBudgetCents(budgetInput);
+      if (parsedBudgetCents == null) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: budgetInput,
+          usage: GOAL_USAGE,
+        };
+      }
+
+      budgetCents = parsedBudgetCents;
+      objectiveStartIndex = 2;
+    }
+
+    if (headerTokens[objectiveStartIndex] === "--turns") {
+      const turnInput = headerTokens[objectiveStartIndex + 1];
+      const parsedTurnCap = parseGoalTurnCap(turnInput);
+      if (parsedTurnCap == null) {
+        return {
+          type: "command-invalid-args",
+          command: "goal",
+          input: String(turnInput),
+          usage: GOAL_USAGE,
+        };
+      }
+
+      turnCap = parsedTurnCap;
+      objectiveStartIndex += 2;
+    }
+
+    // Only a leading budget/turn flag prefix is command syntax; everything
+    // after that is user-authored goal text so objectives can mention
+    // flag-looking strings (including deprecated-looking budget flags).
+    const objectiveTokens = headerTokens.slice(objectiveStartIndex);
+    const headerObjective = objectiveTokens.join(" ").trim();
+    const objective = [headerObjective, body]
+      .filter((part): part is string => part != null && part.length > 0)
+      .join(headerObjective && bodyHadLeadingBlankLine ? "\n\n" : "\n");
+    if (objective.length === 0) {
+      return {
+        type: "command-missing-args",
+        command: "goal",
+        usage: GOAL_USAGE,
+      };
+    }
+
+    const result: Extract<ParsedCommand, { type: "goal-set" }> = { type: "goal-set", objective };
+    if (budgetCents !== undefined) {
+      result.budgetCents = budgetCents;
+    }
+    if (turnCap !== undefined) {
+      result.turnCap = turnCap;
+    }
+
+    return result;
+  },
+};
+
+const BTW_USAGE = `/btw ${SLASH_COMMAND_HINTS.btw}`;
+
+const btwCommandDefinition: SlashCommandDefinition = {
+  key: "btw",
+  description:
+    "Ask a quick side question about the current conversation. The inline answer is saved in chat but kept out of future agent context.",
+  inputHint: SLASH_COMMAND_HINTS.btw,
+  appendSpace: true,
+  handler: ({ rawInput }): ParsedCommand => {
+    const trimmed = rawInput.trim();
+    if (trimmed.length === 0) {
+      return {
+        type: "command-missing-args",
+        command: "btw",
+        usage: BTW_USAGE,
+      };
+    }
+    return { type: "side-question", question: trimmed };
+  },
+};
+
 const debugLlmRequestCommandDefinition: SlashCommandDefinition = {
   key: "debug-llm-request",
   description: "Show the last LLM request sent (debug)",
@@ -450,7 +666,6 @@ const debugLlmRequestCommandDefinition: SlashCommandDefinition = {
 
 export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   clearCommandDefinition,
-  truncateCommandDefinition,
   compactCommandDefinition,
   modelCommandDefinition,
   planCommandDefinition,
@@ -460,6 +675,8 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   vimCommandDefinition,
   idleCommandDefinition,
   heartbeatCommandDefinition,
+  goalCommandDefinition,
+  btwCommandDefinition,
   debugLlmRequestCommandDefinition,
 ];
 
@@ -469,10 +686,44 @@ export const SLASH_COMMAND_DEFINITION_MAP = new Map(
 
 const COMMAND_GHOST_HINT_PATTERN = /^\/(\S+) +$/;
 
+function normalizeVisibilityContext(
+  contextOrVariant?: SlashCommandVisibilityContext | SlashSuggestionContext["variant"]
+): SlashCommandVisibilityContext {
+  return typeof contextOrVariant === "string"
+    ? { variant: contextOrVariant }
+    : (contextOrVariant ?? {});
+}
+
+/**
+ * Single visibility gate for every slash-command discovery surface. Keeping the
+ * experiment on the command definition prevents one surface from forgetting to
+ * hide a gated command when another surface already does.
+ */
+export function isSlashCommandVisible(
+  definition: SlashCommandDefinition,
+  context: SlashCommandVisibilityContext = {}
+): boolean {
+  if (context.variant === "creation" && WORKSPACE_ONLY_COMMAND_KEYS.has(definition.key)) {
+    return false;
+  }
+
+  if (definition.experimentGate == null) {
+    return true;
+  }
+
+  try {
+    const resolveExperiment = context.isExperimentEnabled ?? readExperimentEnabled;
+    return resolveExperiment(definition.experimentGate) === true;
+  } catch {
+    // Experiment check unavailable (e.g., test environments without window) — hide by default.
+    return false;
+  }
+}
+
 export function getCommandGhostHint(
   input: string,
   showCommandSuggestions: boolean,
-  variant?: SlashSuggestionContext["variant"]
+  contextOrVariant?: SlashCommandVisibilityContext | SlashSuggestionContext["variant"]
 ): string | null {
   if (showCommandSuggestions) {
     return null;
@@ -484,20 +735,13 @@ export function getCommandGhostHint(
   }
 
   const commandKey = match[1];
-  if (variant === "creation" && WORKSPACE_ONLY_COMMAND_KEYS.has(commandKey)) {
+  const definition = SLASH_COMMAND_DEFINITION_MAP.get(commandKey);
+  if (
+    !definition ||
+    !isSlashCommandVisible(definition, normalizeVisibilityContext(contextOrVariant))
+  ) {
     return null;
   }
 
-  if (commandKey === "heartbeat") {
-    try {
-      if (!isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS)) {
-        return null;
-      }
-    } catch {
-      // Experiment check unavailable (e.g., test environment) — hide by default.
-      return null;
-    }
-  }
-
-  return SLASH_COMMAND_DEFINITION_MAP.get(commandKey)?.inputHint ?? null;
+  return definition.inputHint ?? null;
 }

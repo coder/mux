@@ -151,20 +151,6 @@ export interface DevcontainerUpOptions {
   timeoutMs?: number;
 }
 
-/** devcontainer exec options */
-export interface DevcontainerExecOptions {
-  workspaceFolder: string;
-  configPath?: string;
-  command: string;
-  /** Working directory inside container */
-  cwd?: string;
-  /** Environment variables to pass */
-  env?: Record<string, string>;
-  abortSignal?: AbortSignal;
-  /** Timeout in milliseconds */
-  timeoutMs?: number;
-}
-
 const DEFAULT_UP_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const MAX_STDERR_BUFFER_LENGTH = 8_000; // 8KB cap for error summaries
 const DEFAULT_CLEANUP_TIMEOUT_MS = 60_000; // 1 minute
@@ -259,6 +245,11 @@ export async function devcontainerUp(
     initLogger.logStep(`Running: devcontainer ${logArgs.join(" ")}`);
 
     return new Promise((resolve, reject) => {
+      if (abortSignal?.aborted) {
+        reject(new Error("devcontainer up aborted"));
+        return;
+      }
+
       const proc = spawn("devcontainer", args, {
         stdio: ["ignore", "pipe", "pipe"],
         timeout: timeoutMs,
@@ -334,7 +325,10 @@ export async function devcontainerUp(
           settleError(new Error(`devcontainer up timed out after ${timeoutMs}ms`));
         }, timeoutMs);
       }
-      abortSignal?.addEventListener("abort", abortHandler);
+      abortSignal?.addEventListener("abort", abortHandler, { once: true });
+      if (abortSignal?.aborted) {
+        abortHandler();
+      }
 
       const finalizeError = async (message: string, result?: DevcontainerUpResultLine | null) => {
         if (result && shouldCleanupDevcontainer(result)) {
@@ -414,146 +408,6 @@ export async function devcontainerUp(
   return runUp(baseArgs);
 }
 
-/**
- * Execute a command inside the devcontainer.
- * Returns stdout as a string.
- */
-export async function devcontainerExec(
-  options: DevcontainerExecOptions
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const { workspaceFolder, configPath, command, cwd, env, abortSignal, timeoutMs } = options;
-
-  const args = ["exec", "--workspace-folder", workspaceFolder];
-
-  if (configPath) {
-    args.push("--config", configPath);
-  }
-
-  // Add environment variables
-  if (env) {
-    for (const [key, value] of Object.entries(env)) {
-      args.push("--remote-env", `${key}=${value}`);
-    }
-  }
-
-  // Build the command with cd if cwd specified
-  let fullCommand = command;
-  if (cwd) {
-    // Use bash -c to handle cd + command
-    fullCommand = `cd ${JSON.stringify(cwd)} && ${command}`;
-  }
-
-  // The command goes after --
-  args.push("--", "bash", "-c", fullCommand);
-
-  return new Promise((resolve, reject) => {
-    const proc = spawn("devcontainer", args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: timeoutMs,
-      cwd: workspaceFolder,
-    });
-
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-    const abortHandler = () => {
-      proc.kill("SIGTERM");
-      settleReject(new Error("devcontainer exec aborted"));
-    };
-
-    const clearAbortHandler = () => {
-      abortSignal?.removeEventListener("abort", abortHandler);
-    };
-
-    const settleResolve = (exitCode: number) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutId) clearTimeout(timeoutId);
-      clearAbortHandler();
-      resolve({ stdout, stderr, exitCode });
-    };
-
-    const settleReject = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutId) clearTimeout(timeoutId);
-      clearAbortHandler();
-      reject(error);
-    };
-
-    proc.stdout?.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    proc.stderr?.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    abortSignal?.addEventListener("abort", abortHandler);
-
-    if (timeoutMs && timeoutMs > 0) {
-      timeoutId = setTimeout(() => {
-        proc.kill("SIGTERM");
-        settleReject(new Error(`devcontainer exec timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-    }
-
-    proc.on("error", (err) => {
-      settleReject(new Error(`devcontainer exec failed: ${getErrorMessage(err)}`));
-    });
-
-    proc.on("close", (code) => {
-      settleResolve(code ?? -1);
-    });
-  });
-}
-
-/**
- * Get the container ID for a devcontainer workspace.
- * Returns null if no container exists.
- */
-export async function getDevcontainerContainerId(
-  workspaceFolder: string,
-  _configPath?: string,
-  timeoutMs = 10_000
-): Promise<string | null> {
-  // The devcontainer CLI labels containers with the workspace folder path
-  // We can use `devcontainer read-configuration` or docker labels to find it
-  // For now, use docker ps with label filter
-  const labelValue = workspaceFolder;
-
-  return new Promise((resolve) => {
-    const proc = spawn(
-      "docker",
-      ["ps", "-q", "--filter", `label=devcontainer.local_folder=${labelValue}`],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: timeoutMs,
-      }
-    );
-
-    let stdout = "";
-    proc.stdout?.on("data", (data: Buffer) => {
-      stdout += data.toString();
-    });
-
-    proc.on("error", () => {
-      resolve(null);
-    });
-
-    proc.on("close", (code) => {
-      if (code === 0 && stdout.trim()) {
-        // Return first container ID (there should only be one)
-        resolve(stdout.trim().split("\n")[0]);
-      } else {
-        resolve(null);
-      }
-    });
-  });
-}
-
 export type DevcontainerProbeResult =
   | { kind: "found"; containerId: string }
   | { kind: "absent" }
@@ -564,16 +418,31 @@ export type DevcontainerStopResult =
   | { kind: "absent" }
   | { kind: "error"; message: string };
 
-export async function probeDevcontainerStatus(
-  workspacePath: string,
+export async function probeDevcontainerStatuses(
+  workspacePaths: string[],
   timeoutMs = 10_000
-): Promise<DevcontainerProbeResult> {
-  const labelValue = workspacePath;
+): Promise<Record<string, DevcontainerProbeResult>> {
+  const results: Record<string, DevcontainerProbeResult> = {};
+  for (const workspacePath of workspacePaths) {
+    results[workspacePath] = { kind: "absent" };
+  }
 
-  return new Promise((resolve) => {
+  if (workspacePaths.length === 0) {
+    return results;
+  }
+
+  const requestedPaths = new Set(workspacePaths);
+
+  return await new Promise((resolve) => {
     const proc = spawn(
       "docker",
-      ["ps", "-q", "--filter", `label=devcontainer.local_folder=${labelValue}`],
+      [
+        "ps",
+        "--filter",
+        "label=devcontainer.local_folder",
+        "--format",
+        '{{.ID}}\t{{.Label "devcontainer.local_folder"}}',
+      ],
       {
         stdio: ["ignore", "pipe", "pipe"],
         timeout: timeoutMs,
@@ -589,31 +458,46 @@ export async function probeDevcontainerStatus(
       stderr += data.toString();
     });
 
+    const resolveAllError = (message: string) => {
+      for (const workspacePath of workspacePaths) {
+        results[workspacePath] = { kind: "error", message };
+      }
+      resolve(results);
+    };
+
     proc.on("error", (error) => {
-      resolve({ kind: "error", message: getErrorMessage(error) });
+      resolveAllError(getErrorMessage(error));
     });
 
     proc.on("close", (code, signal) => {
-      const containerId = stdout.trim().split("\n")[0];
-      if (code === 0 && containerId) {
-        resolve({ kind: "found", containerId });
-        return;
-      }
-      if (code === 0) {
-        resolve({ kind: "absent" });
+      if (code !== 0) {
+        const stderrMessage = stderr.trim();
+        const exitMessage = signal
+          ? `docker ps exited with signal ${signal}`
+          : `docker ps exited with code ${code ?? "null"}`;
+        resolveAllError(stderrMessage ? `${exitMessage}: ${stderrMessage}` : exitMessage);
         return;
       }
 
-      const stderrMessage = stderr.trim();
-      const exitMessage = signal
-        ? `docker ps exited with signal ${signal}`
-        : `docker ps exited with code ${code ?? "null"}`;
-      resolve({
-        kind: "error",
-        message: stderrMessage ? `${exitMessage}: ${stderrMessage}` : exitMessage,
-      });
+      for (const line of stdout.split("\n")) {
+        const [containerId, workspacePath] = line.split("\t");
+        if (!containerId || !workspacePath || !requestedPaths.has(workspacePath)) {
+          continue;
+        }
+        results[workspacePath] = { kind: "found", containerId };
+      }
+
+      resolve(results);
     });
   });
+}
+
+export async function probeDevcontainerStatus(
+  workspacePath: string,
+  timeoutMs = 10_000
+): Promise<DevcontainerProbeResult> {
+  const results = await probeDevcontainerStatuses([workspacePath], timeoutMs);
+  return results[workspacePath] ?? { kind: "absent" };
 }
 /**
  * Get the container name for a devcontainer workspace.
