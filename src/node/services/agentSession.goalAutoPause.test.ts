@@ -118,19 +118,19 @@ describe("AgentSession goal safety hooks", () => {
     }
   });
 
-  test("manual user messages steer active goals by default", async () => {
-    const workspaceId = "manual-steers-active-goal";
+  test("manual user messages pause active goals by default", async () => {
+    const workspaceId = "manual-pauses-active-goal-by-default";
     const { session, goalService, analytics, cleanup } = await createSessionHarness(workspaceId);
     cleanups.push(cleanup);
     await setGoalOk(goalService, { workspaceId, objective: "Keep working" });
 
-    const result = await session.sendMessage("I need to steer this goal", SEND_OPTIONS);
+    const result = await session.sendMessage("I need to pause this goal with a note", SEND_OPTIONS);
 
     expect(result.success).toBe(true);
-    expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "active" });
-    expect(analytics.recordGoalLifecycleEvent).not.toHaveBeenCalledWith(
+    expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "paused" });
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
       "goal_paused",
-      expect.anything()
+      expect.objectContaining({ initiator: "auto" })
     );
     session.dispose();
   });
@@ -216,7 +216,7 @@ describe("AgentSession goal safety hooks", () => {
     session.dispose();
   });
 
-  test("manual user messages clear acknowledgment flags while steering by default", async () => {
+  test("manual user messages clear acknowledgment flags while pausing by default", async () => {
     const workspaceId = "manual-clears-ack";
     const { session, goalService, cleanup } = await createSessionHarness(workspaceId);
     cleanups.push(cleanup);
@@ -227,7 +227,7 @@ describe("AgentSession goal safety hooks", () => {
 
     expect(result.success).toBe(true);
     expect(await goalService.getGoal(workspaceId)).toMatchObject({
-      status: "active",
+      status: "paused",
       requireUserAcknowledgmentSinceMs: null,
     });
     session.dispose();
@@ -436,7 +436,7 @@ describe("AgentSession goal safety hooks", () => {
     const manualResult = await session.sendMessage("I saw the recovered response", SEND_OPTIONS);
     expect(manualResult.success).toBe(true);
     expect(await goalService.getGoal(workspaceId)).toMatchObject({
-      status: "active",
+      status: "paused",
       requireUserAcknowledgmentSinceMs: null,
     });
 
@@ -563,20 +563,19 @@ describe("AgentSession goal safety hooks", () => {
       return Promise.resolve(Ok(undefined));
     }) as unknown as AIService["streamMessage"];
 
-    // Manual user messages steer active goals by default (#3319), so the
-    // goal stays `active` rather than auto-pausing. The point of this test
-    // is that the silent-continuation auto-completion does NOT fire on
-    // manual turns — `activeStreamContext.goalKind` is undefined on a
-    // manual send, so the silent-completion gate
-    // (`goalKind === GOAL_CONTINUATION_KIND`) short-circuits and status
-    // stays `active`, not `complete`.
+    // Manual user messages now pause active goals because the goal mode is
+    // locked to the latest user message kind. The point of this test is that
+    // silent-continuation auto-completion still does NOT fire on manual turns:
+    // `activeStreamContext.goalKind` is undefined on a manual send, so the
+    // silent-completion gate (`goalKind === GOAL_CONTINUATION_KIND`)
+    // short-circuits and status stays `paused`, not `complete`.
     const result = await session.sendMessage("Manual question", SEND_OPTIONS);
     expect(result.success).toBe(true);
 
     // Give the async stream-end handler a tick to run so any stray
-    // auto-completion would have a chance to corrupt the steering state.
+    // auto-completion would have a chance to corrupt the paused state.
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "active" });
+    expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "paused" });
     session.dispose();
   });
 
@@ -613,7 +612,7 @@ describe("AgentSession goal safety hooks", () => {
     session.dispose();
   });
 
-  test("text-only stream-end during a goal_continuation turn does not affect paused goals", async () => {
+  test("text-only goal_continuation turn can complete a resumed paused goal", async () => {
     const workspaceId = "silent-continuation-paused";
     const { session, goalService, aiService, cleanup } = await createSessionHarness(workspaceId);
     cleanups.push(cleanup);
@@ -641,7 +640,10 @@ describe("AgentSession goal safety hooks", () => {
     expect(result.success).toBe(true);
 
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(await goalService.getGoal(workspaceId)).toMatchObject({ status: "paused" });
+    expect(await goalService.getGoal(workspaceId)).toMatchObject({
+      status: "complete",
+      completionSummary: "All wrapped up.",
+    });
     session.dispose();
   });
 });

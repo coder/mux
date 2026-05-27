@@ -152,7 +152,11 @@ import {
   type HeartbeatContextMode,
 } from "@/constants/heartbeat";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
-import { GOAL_CONTINUATION_KIND, type GoalSyntheticMessageKind } from "@/constants/goals";
+import {
+  GOAL_BUDGET_LIMIT_KIND,
+  GOAL_CONTINUATION_KIND,
+  type GoalSyntheticMessageKind,
+} from "@/constants/goals";
 import type {
   StreamStartEvent,
   StreamEndEvent,
@@ -5785,6 +5789,9 @@ export class WorkspaceService extends EventEmitter {
       goalKind?: GoalSyntheticMessageKind;
       /** Force Copilot billing classification to "agent" for internal sends. */
       agentInitiated?: boolean;
+      onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+      /** Return once the user message is accepted; stream startup continues asynchronously. */
+      startStreamInBackground?: boolean;
       /** When true, reject instead of queueing if the workspace is busy. */
       requireIdle?: boolean;
     }
@@ -5890,6 +5897,8 @@ export class WorkspaceService extends EventEmitter {
             synthetic: internal?.synthetic,
             agentInitiated: internal?.agentInitiated,
             goalKind: internal?.goalKind,
+            onAcceptedPreStreamFailure: internal?.onAcceptedPreStreamFailure,
+            startStreamInBackground: internal?.startStreamInBackground,
             goalContinuation: internal?.goalContinuation,
           });
         }
@@ -5967,23 +5976,23 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
-      const restoreInterruptedTaskAfterAcceptedEditFailure =
-        resumedInterruptedTask && normalizedOptions?.editMessageId
-          ? async (error: SendMessageError) => {
-              try {
-                await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
-              } catch (restoreError: unknown) {
-                log.error(
-                  "Failed to restore interrupted task status after accepted edit startup failure",
-                  {
-                    workspaceId,
-                    error,
-                    restoreError,
-                  }
-                );
+      const onAcceptedPreStreamFailure = async (error: SendMessageError) => {
+        if (resumedInterruptedTask && normalizedOptions?.editMessageId) {
+          try {
+            await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+          } catch (restoreError: unknown) {
+            log.error(
+              "Failed to restore interrupted task status after accepted edit startup failure",
+              {
+                workspaceId,
+                error,
+                restoreError,
               }
-            }
-          : undefined;
+            );
+          }
+        }
+        await internal?.onAcceptedPreStreamFailure?.(error);
+      };
 
       const shouldRunPendingAutoTitle =
         internal?.synthetic !== true &&
@@ -6000,7 +6009,8 @@ export class WorkspaceService extends EventEmitter {
         agentInitiated: internal?.agentInitiated,
         goalKind: internal?.goalKind,
         goalContinuation: internal?.goalContinuation,
-        onAcceptedPreStreamFailure: restoreInterruptedTaskAfterAcceptedEditFailure,
+        startStreamInBackground: internal?.startStreamInBackground,
+        onAcceptedPreStreamFailure,
       });
       if (!result.success) {
         log.error("sendMessage handler: session returned error", {
@@ -7598,12 +7608,16 @@ export class WorkspaceService extends EventEmitter {
   async executeGoalContinuation(input: {
     workspaceId: string;
     message: string;
+    startStreamInBackground?: boolean;
     kind?: GoalSyntheticMessageKind;
     options: SendMessageOptions;
   }): Promise<boolean> {
     assert(input.workspaceId.trim().length > 0, "executeGoalContinuation requires workspaceId");
     assert(input.message.trim().length > 0, "executeGoalContinuation requires message");
 
+    const goalKind = input.kind ?? GOAL_CONTINUATION_KIND;
+    const startStreamInBackground =
+      input.startStreamInBackground === true && goalKind !== GOAL_BUDGET_LIMIT_KIND;
     const sendResult = await this.sendMessage(
       input.workspaceId,
       input.message,
@@ -7615,8 +7629,13 @@ export class WorkspaceService extends EventEmitter {
         skipAutoResumeReset: true,
         synthetic: true,
         agentInitiated: true,
+        startStreamInBackground,
+        onAcceptedPreStreamFailure: startStreamInBackground
+          ? () =>
+              this.workspaceGoalService?.requestPendingGoalContinuationDispatch(input.workspaceId)
+          : undefined,
         requireIdle: true,
-        goalKind: input.kind ?? GOAL_CONTINUATION_KIND,
+        goalKind,
         goalContinuation: true,
       }
     );

@@ -1125,10 +1125,21 @@ export class AgentSession {
     );
   }
 
+  private isSyntheticGoalPauseBoundaryMessage(message: MuxMessage): boolean {
+    return (
+      message.role === "user" &&
+      message.metadata?.synthetic === true &&
+      message.metadata.muxMetadata?.type === "goal-pause-boundary"
+    );
+  }
+
   private getLastNonSystemHistoryMessage(historyTail: MuxMessage[]): MuxMessage | undefined {
     for (let index = historyTail.length - 1; index >= 0; index -= 1) {
       const candidate = historyTail[index];
       if (candidate.role === "system") {
+        continue;
+      }
+      if (this.isSyntheticGoalPauseBoundaryMessage(candidate)) {
         continue;
       }
       if (this.isSyntheticSnapshotUserMessage(candidate)) {
@@ -1184,13 +1195,15 @@ export class AgentSession {
       `invalid goal intervention policy: ${input.policy}`
     );
 
-    // Accepted manual user turns acknowledge /clear or crash-recovery gates. Steering
-    // is the default for normal sends: the agent should see the user's intervention
-    // and the active goal may continue afterward. Rejected sends use "pause" below
-    // because the model never saw the steering content.
+    // Accepted manual user turns acknowledge / clear crash-recovery gates, but
+    // they are no longer goal-continuation turns. The goal mode is locked to the
+    // chat tail: a real `goal_continuation` user message means running;
+    // anything manually typed by the user pauses until Resume appends a fresh
+    // continuation. Legacy clients may still send the old "steer" policy; treat
+    // it as pause so the invariant holds at this backend boundary.
     goalService.clearPendingContinuationForManualUserMessage(this.workspaceId);
     const goal = await goalService.acknowledgeUser(this.workspaceId);
-    if (goal?.status !== "active" || input.policy !== "pause") {
+    if (goal?.status !== "active") {
       return;
     }
 
@@ -1233,6 +1246,9 @@ export class AgentSession {
       return false;
     }
 
+    if (this.isSyntheticGoalPauseBoundaryMessage(message)) {
+      return false;
+    }
     if (this.isSyntheticSnapshotUserMessage(message)) {
       return false;
     }
@@ -2172,6 +2188,7 @@ export class AgentSession {
       agentInitiated?: boolean;
       goalContinuation?: boolean;
       goalKind?: GoalSyntheticMessageKind;
+      startStreamInBackground?: boolean;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
     }
   ): Promise<Result<void, SendMessageError>> {
@@ -2238,7 +2255,7 @@ export class AgentSession {
     const editMessageId = options?.editMessageId;
 
     const manualGoalInterventionPolicy: GoalInterventionPolicy | undefined = isManualUserMessage
-      ? (options?.goalInterventionPolicy ?? (editMessageId ? "pause" : "steer"))
+      ? (options?.goalInterventionPolicy ?? "pause")
       : undefined;
 
     // Edits are implemented as truncate+replace. If the frontend omits fileParts,
@@ -2667,6 +2684,8 @@ export class AgentSession {
       }
     }
 
+    await this.workspaceGoalService?.syncGoalModeWithChatTail(this.workspaceId);
+
     if (manualGoalInterventionPolicy != null) {
       await this.applyManualUserMessageGoalSafety({ policy: manualGoalInterventionPolicy });
     }
@@ -2767,19 +2786,22 @@ export class AgentSession {
       }
     };
 
-    if (editMessageId) {
-      // The edit is already persisted + emitted above, so let callers unblock immediately instead of
-      // waiting for runtime warmup / stream-start to finish before they can clear edit state.
-      void startPreparedStream()
+    if (editMessageId || internal?.startStreamInBackground === true) {
+      // The user turn is already persisted + emitted above. Edits and backend
+      // goal continuations should unblock once the user message exists: for
+      // Resume, that makes chat history the durable source of truth for the
+      // running goal before runtime warmup or streaming can race/fail.
+      startPreparedStream()
         .then(async (result) => {
           if (!result.success) {
             await internal?.onAcceptedPreStreamFailure?.(result.error);
           }
         })
         .catch((error: unknown) => {
-          log.error("Accepted edit stream failed before startup completed", {
+          log.error("Accepted background stream failed before startup completed", {
             workspaceId: this.workspaceId,
             editMessageId,
+            goalKind,
             error: getErrorMessage(error),
           });
         });

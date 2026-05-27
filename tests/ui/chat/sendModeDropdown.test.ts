@@ -132,7 +132,7 @@ describe("Send dispatch modes (mock AI router)", () => {
     }
   }, 60_000);
 
-  test("running goals steer by default and expose an explicit pause send action", async () => {
+  test("running goals pause on manual sends and omit a redundant pause send action", async () => {
     const app = await createAppHarness({ branchPrefix: "send-mode-goal-policy" });
 
     try {
@@ -149,27 +149,19 @@ describe("Send dispatch modes (mock AI router)", () => {
         );
       });
 
-      await app.chat.typeWithoutSending("Steer without pausing");
-      const sendButton = await waitForSendModeMenuTrigger(app.view.container);
-      fireEvent.click(sendButton);
-      await app.chat.expectStreamComplete();
-
-      await waitFor(async () => {
-        const { goal } = await app.env.orpc.workspace.getGoal({ workspaceId: app.workspaceId });
-        expect(goal?.status).toBe("active");
-      });
-
-      await app.chat.typeWithoutSending("Pause after this steering note");
+      await app.chat.typeWithoutSending("Manual note pauses the goal");
       await openSendModeMenu(app.view.container);
-      const pauseRow = await waitFor(() => {
-        const rows = Array.from(app.view.container.querySelectorAll("button"));
-        const row = rows.find((button) => button.textContent?.includes("Send and pause goal"));
-        if (!row) {
-          throw new Error("Send and pause goal row not found");
-        }
-        return row;
-      });
-      fireEvent.click(pauseRow);
+      const rows = Array.from(app.view.container.querySelectorAll("button"));
+      expect(rows.some((button) => button.textContent?.includes("Send and pause goal"))).toBe(
+        false
+      );
+      const sendAfterTurnRow = rows.find((button) =>
+        button.textContent?.includes("Send after turn")
+      );
+      if (!sendAfterTurnRow) {
+        throw new Error("Send after turn row not found");
+      }
+      fireEvent.click(sendAfterTurnRow);
       await app.chat.expectStreamComplete();
 
       await waitFor(async () => {

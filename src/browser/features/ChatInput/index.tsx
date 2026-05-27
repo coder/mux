@@ -993,7 +993,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     !policyBlocksCreateSend;
   const runningGoalActive =
     variant === "workspace" && isGoalRunning(workspaceGoal?.status ?? "paused");
-  const shouldDefaultSteerGoal = runningGoalActive && !editingMessageForUi;
 
   // Send defaults to tool-end on click; advanced dispatch modes remain available via
   // right-click and touch long-press whenever there's a sendable workspace draft.
@@ -2252,8 +2251,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const commandHandled = modelOneShot
         ? false
         : await executeParsedCommand(parsed, input, {
-            goalInterventionPolicy:
-              overrides?.goalInterventionPolicy ?? (shouldDefaultSteerGoal ? "steer" : undefined),
+            goalInterventionPolicy: overrides?.goalInterventionPolicy,
             queueDispatchMode: overrides?.queueDispatchMode,
           });
       if (commandHandled) {
@@ -2444,8 +2442,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           rawThinkingOverride != null
             ? resolveThinkingInput(rawThinkingOverride, policyModel)
             : undefined;
-        const goalInterventionPolicy =
-          overrides?.goalInterventionPolicy ?? (shouldDefaultSteerGoal ? "steer" : undefined);
+        const goalInterventionPolicy = overrides?.goalInterventionPolicy;
 
         const sendOptions = {
           ...sendMessageOptions,
@@ -3058,7 +3055,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           {runningGoalActive && !editingMessageForUi && (
                             <>
                               <br />
-                              Send and pause goal: right-click menu
+                              Manual sends pause the current goal; use Resume to continue it.
                             </>
                           )}
                           {SEND_DISPATCH_MODES.map((entry) => (
@@ -3094,18 +3091,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           </kbd>
                         </button>
                       ))}
-                      {runningGoalActive && !editingMessageForUi && (
-                        <button
-                          type="button"
-                          className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1 text-left text-xs"
-                          onClick={() => {
-                            closeSendModeMenu();
-                            void handleSend({ goalInterventionPolicy: "pause" });
-                          }}
-                        >
-                          <span className="whitespace-nowrap">Send and pause goal</span>
-                        </button>
-                      )}
                     </div>
                   )}
                 </div>

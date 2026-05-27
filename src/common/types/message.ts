@@ -359,6 +359,9 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         type: "goal-cleared-summary";
       }
     | {
+        type: "goal-pause-boundary";
+      }
+    | {
         type: "heartbeat-request";
         /** Synthetic heartbeat follow-ups use an explicit marker so future backend dispatch stays inspectable. */
         source?: "heartbeat";
