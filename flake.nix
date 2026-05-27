@@ -206,8 +206,11 @@
               # Documentation
               mdbook
               mdbook-mermaid
-              mdbook-linkcheck
+              mdbook-linkcheck2
               mdbook-pagetoc
+
+              # Browser automation
+              agent-browser
 
               # Terminal bench + browser recording
               uv
