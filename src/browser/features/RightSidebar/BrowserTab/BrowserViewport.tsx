@@ -719,9 +719,18 @@ export function mapDomPointToViewport(
 
   const normalizedX = clamp(relativeX, 0, renderedFrameRect.width) / renderedFrameRect.width;
   const normalizedY = clamp(relativeY, 0, renderedFrameRect.height) / renderedFrameRect.height;
+  const coordinateWidth = metadata.deviceWidth;
+  // agent-browser reports Chrome's outer viewport height in metadata, but the
+  // screencast JPEG can be the page viewport. Derive the Y coordinate space from
+  // the decoded frame aspect so clicks land under the visible cursor.
+  const coordinateHeight =
+    options?.frameImageSize == null
+      ? metadata.deviceHeight
+      : coordinateWidth * (options.frameImageSize.height / options.frameImageSize.width);
+
   return {
-    x: Math.round(clamp(normalizedX * metadata.deviceWidth, 0, metadata.deviceWidth)),
-    y: Math.round(clamp(normalizedY * metadata.deviceHeight, 0, metadata.deviceHeight)),
+    x: Math.round(clamp(normalizedX * coordinateWidth, 0, coordinateWidth)),
+    y: Math.round(clamp(normalizedY * coordinateHeight, 0, coordinateHeight)),
   };
 }
 
