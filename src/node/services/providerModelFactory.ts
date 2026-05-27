@@ -1819,12 +1819,15 @@ export class ProviderModelFactory {
         }
         const baseFetch = getProviderFetch(providerConfig);
 
-        // Extract standard provider settings (apiKey, baseUrl, headers, fetch)
+        // Extract standard provider settings and Mux-local metadata before building extraBody.
+        // OpenRouter also has a request-level `models` fallback field capped at 3 entries; our
+        // configured `models` catalog can be longer and must not be forwarded as request input.
         const {
           apiKey: _apiKey,
           baseUrl,
           headers,
           fetch: _fetch,
+          models: _models,
           ...extraOptions
         } = providerConfig;
 

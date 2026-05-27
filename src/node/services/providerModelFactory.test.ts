@@ -1225,6 +1225,45 @@ describe("ProviderModelFactory routing", () => {
     });
   });
 
+  it("omits configured model catalog from OpenRouter request body", async () => {
+    await withTempConfig(async (config, factory) => {
+      const originalOpenRouterRegistry = PROVIDER_REGISTRY.openrouter;
+      let capturedExtraBody: unknown;
+
+      config.saveProvidersConfig({
+        openrouter: {
+          apiKey: "or-test",
+          models: [
+            "openai/gpt-5",
+            "anthropic/claude-sonnet-4.6",
+            "google/gemini-3-pro",
+            "x-ai/grok-4",
+          ],
+          allow_fallbacks: false,
+        },
+      });
+
+      PROVIDER_REGISTRY.openrouter = async () => {
+        const module = await originalOpenRouterRegistry();
+        return {
+          ...module,
+          createOpenRouter: (options) => {
+            capturedExtraBody = options?.extraBody;
+            return module.createOpenRouter(options);
+          },
+        };
+      };
+
+      try {
+        const result = await factory.createModel("openrouter:openai/gpt-5");
+        expect(result.success).toBe(true);
+        expect(capturedExtraBody).toEqual({ provider: { allow_fallbacks: false } });
+      } finally {
+        PROVIDER_REGISTRY.openrouter = originalOpenRouterRegistry;
+      }
+    });
+  });
+
   it("routes Anthropic models through Bedrock when Bedrock is configured and prioritized", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
