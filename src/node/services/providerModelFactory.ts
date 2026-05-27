@@ -885,6 +885,22 @@ const CODEX_ALLOWED_PARAMS = new Set([
   "text", // structured output via Output.object -> text.format
 ]);
 
+// OpenRouter routing options that need to be nested under "provider" in API request
+// See: https://openrouter.ai/docs/features/provider-routing
+//
+// Hoisted to module scope so we don't reallocate the lookup set on every
+// `createModel` call — the contents are static and shared across all callers.
+const OPENROUTER_ROUTING_OPTIONS = new Set([
+  "order",
+  "allow_fallbacks",
+  "only",
+  "ignore",
+  "require_parameters",
+  "data_collection",
+  "sort",
+  "quantizations",
+]);
+
 // ---------------------------------------------------------------------------
 // Fetch input helpers
 // ---------------------------------------------------------------------------
@@ -1828,25 +1844,12 @@ export class ProviderModelFactory {
           ...extraOptions
         } = providerConfig;
 
-        // OpenRouter routing options that need to be nested under "provider" in API request
-        // See: https://openrouter.ai/docs/features/provider-routing
-        const OPENROUTER_ROUTING_OPTIONS = [
-          "order",
-          "allow_fallbacks",
-          "only",
-          "ignore",
-          "require_parameters",
-          "data_collection",
-          "sort",
-          "quantizations",
-        ];
-
         // Build extraBody: routing options go under "provider", others stay at root
         const routingOptions: Record<string, unknown> = {};
         const otherOptions: Record<string, unknown> = {};
 
         for (const [key, value] of Object.entries(extraOptions)) {
-          if (OPENROUTER_ROUTING_OPTIONS.includes(key)) {
+          if (OPENROUTER_ROUTING_OPTIONS.has(key)) {
             routingOptions[key] = value;
           } else {
             otherOptions[key] = value;
