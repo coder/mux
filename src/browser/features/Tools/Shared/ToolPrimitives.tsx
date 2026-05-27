@@ -48,11 +48,8 @@ interface ToolContainerProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export const ToolContainer: React.FC<ToolContainerProps> = ({ expanded, className, ...props }) => (
   <div
-    data-transcript-row-surface="tool"
     className={cn(
-      // Transcript scroll pinning depends on row size settling before paint. Never animate
-      // layout-affecting properties here; coalescing swaps one tool row for another in-place.
-      "my-2 rounded font-mono text-[11px] transition-colors duration-200",
+      "my-2 rounded font-mono text-[11px] transition-all duration-200",
       "[container-type:inline-size]",
       expanded ? "py-2 px-3" : "py-1 px-3",
       className

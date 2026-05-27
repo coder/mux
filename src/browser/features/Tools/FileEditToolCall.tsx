@@ -23,7 +23,7 @@ import {
   ToolIcon,
   ErrorBox,
 } from "./Shared/ToolPrimitives";
-import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
+import { getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { DiffContainer, DiffRenderer, SelectableDiffRenderer } from "../Shared/DiffRenderer";
 import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu/KebabMenu";
@@ -90,8 +90,6 @@ interface FileEditToolCallProps {
   args: FileEditOperationArgs;
   result?: FileEditToolResult;
   status?: ToolStatus;
-  /** Story/test escape hatch for cases that intentionally inspect the rendered diff. */
-  initialExpanded?: boolean;
   onReviewNote?: (data: ReviewNoteData) => void;
 }
 
@@ -155,13 +153,15 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
   args,
   result,
   status = "pending",
-  initialExpanded = false,
   onReviewNote,
 }) => {
-  // File edits share the collapsed one-line baseline used by coalesced file-tool summaries.
-  // If the first edit in a burst expanded by default, the second edit would shrink it into
-  // a summary row and cause a visible transcript layout flash.
-  const { expanded, toggleExpanded } = useToolExpansion(initialExpanded);
+  // Collapse failed edits by default since they're common and expected. While a tool is
+  // streaming, result is undefined; derive the default from the latest result so a later
+  // failure still collapses unless the user already chose an expansion state.
+  const isFailed = result?.success === false;
+  const [userExpanded, setUserExpanded] = React.useState<boolean | undefined>(undefined);
+  const expanded = userExpanded ?? !isFailed;
+  const toggleExpanded = () => setUserExpanded((current) => !(current ?? !isFailed));
   const [showRaw, setShowRaw] = React.useState(false);
   const [showInvocation, setShowInvocation] = React.useState(false);
   const [showFullDiff, setShowFullDiff] = React.useState(false);

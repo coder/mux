@@ -84,7 +84,6 @@ function FileEditCard(props: { path: string; diff: string }) {
       toolName="file_edit_replace_string"
       args={{ path: props.path, old_string: "...", new_string: "..." }}
       result={{ success: true, diff: props.diff, edits_applied: 1 }}
-      initialExpanded={true}
       status="completed"
     />
   );
