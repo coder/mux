@@ -10,6 +10,11 @@ export interface BrowserViewportMetadata {
   scrollOffsetY: number;
 }
 
+export interface BrowserFrameImageSize {
+  width: number;
+  height: number;
+}
+
 export type BrowserDiscoveredSessionStatus = "attachable" | "missing_stream";
 
 export interface BrowserDiscoveredSession {
