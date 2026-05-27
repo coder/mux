@@ -104,7 +104,6 @@ const EXEC_AGENT: AgentDefinitionDescriptor = {
   scope: "built-in",
   name: "Exec",
   uiSelectable: true,
-  uiRoutable: true,
   subagentRunnable: false,
 };
 
@@ -113,7 +112,6 @@ const PLAN_AGENT: AgentDefinitionDescriptor = {
   scope: "built-in",
   name: "Plan",
   uiSelectable: true,
-  uiRoutable: true,
   subagentRunnable: false,
 };
 
@@ -122,7 +120,6 @@ const AUTO_PROJECT_AGENT: AgentDefinitionDescriptor = {
   scope: "project",
   name: "Auto",
   uiSelectable: true,
-  uiRoutable: true,
   subagentRunnable: false,
 };
 
@@ -131,7 +128,6 @@ const REVIEW_PROJECT_AGENT: AgentDefinitionDescriptor = {
   scope: "project",
   name: "Review",
   uiSelectable: true,
-  uiRoutable: true,
   subagentRunnable: false,
 };
 
@@ -140,7 +136,6 @@ const LOCKED_AGENT: AgentDefinitionDescriptor = {
   scope: "built-in",
   name: "Locked Agent",
   uiSelectable: false,
-  uiRoutable: true,
   subagentRunnable: false,
 };
 

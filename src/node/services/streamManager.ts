@@ -63,7 +63,6 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { runLanguageModelCleanup } from "./languageModelCleanup";
 import { shellQuote } from "@/common/utils/shell";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
-import { normalizeLiteralRequiredToolPattern } from "@/common/utils/agentTools";
 import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 
 // Disable noisy AI SDK warning logging.
@@ -130,10 +129,6 @@ interface StreamRequestConfig {
   /** Optional hook for callers that need the live prepared step transcript. */
   onStepMessages?: (messages: ModelMessage[]) => void;
   toolPolicy?: ToolPolicy;
-  // Belt-and-suspenders for top-level agents: force the model to call the
-  // required tool immediately (for example, switch_agent in auto mode).
-  // Sub-agents rely on taskService.ts post-stream recovery instead.
-  toolChoice?: { type: "tool"; toolName: string };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1152,14 +1147,13 @@ export class StreamManager extends EventEmitter {
     maxOutputTokens?: number,
     callSettingsOverrides?: ResolvedCallSettingsOverrides,
     toolPolicy?: ToolPolicy,
-    forceToolChoice?: boolean,
     hasQueuedMessage?: () => boolean,
     headers?: Record<string, string | undefined>,
     anthropicCacheTtlOverride?: AnthropicCacheTtl,
     onChunk?: StreamTextOnChunk,
     onStepMessages?: (messages: ModelMessage[]) => void
   ): StreamRequestConfig {
-    let finalProviderOptions = providerOptions;
+    const finalProviderOptions = providerOptions;
 
     // Apply cache control for Anthropic models
     let finalMessages = messages;
@@ -1198,50 +1192,6 @@ export class StreamManager extends EventEmitter {
     const effectiveMaxOutputTokens =
       maxOutputTokens ?? configMaxOutputTokens ?? resolvedModelStats?.max_output_tokens;
 
-    let toolChoice: StreamRequestConfig["toolChoice"] | undefined;
-    if (forceToolChoice && toolPolicy && finalTools) {
-      // Only force toolChoice for routing tools that need immediate execution
-      // (e.g., switch_agent in auto mode). Investigation-then-complete tools
-      // (propose_plan, agent_report) must NOT be forced — those agents need to
-      // read files, run commands, etc. before calling the completion tool.
-      // Sub-agents rely on taskService.ts post-stream recovery instead of forcing.
-      // Scan all require entries for switch_agent — it may not be the first
-      // required tool if the agent inherits other require rules.
-      const hasSwitchAgentRequire = toolPolicy.some(
-        (filter) =>
-          filter.action === "require" &&
-          normalizeLiteralRequiredToolPattern(filter.regex_match) === "switch_agent"
-      );
-      if (hasSwitchAgentRequire && "switch_agent" in finalTools) {
-        toolChoice = { type: "tool", toolName: "switch_agent" };
-      }
-    }
-
-    // Anthropic Extended Thinking is incompatible with forced tool choice.
-    // If a tool is forced, disable thinking for this request to avoid API errors.
-    if (toolChoice) {
-      const [provider] = normalizeToCanonical(modelString).split(":", 2);
-      if (
-        provider === "anthropic" &&
-        providerOptions &&
-        typeof providerOptions === "object" &&
-        "anthropic" in providerOptions
-      ) {
-        const anthropicOptions = (providerOptions as { anthropic?: unknown }).anthropic;
-        if (
-          anthropicOptions &&
-          typeof anthropicOptions === "object" &&
-          "thinking" in anthropicOptions
-        ) {
-          const { thinking: _thinking, ...rest } = anthropicOptions as Record<string, unknown>;
-          finalProviderOptions = {
-            ...providerOptions,
-            anthropic: rest,
-          };
-        }
-      }
-    }
-
     return {
       model,
       messages: finalMessages,
@@ -1258,7 +1208,6 @@ export class StreamManager extends EventEmitter {
       onChunk,
       onStepMessages,
       toolPolicy,
-      toolChoice,
     };
   }
 
@@ -1266,7 +1215,7 @@ export class StreamManager extends EventEmitter {
     request: Pick<StreamRequestConfig, "hasQueuedMessage" | "toolPolicy">
   ): Array<ReturnType<typeof stepCountIs>> {
     // Completion-tool stop check: completion/routing tools use explicit
-    // success/ok markers (agent_report, propose_plan, switch_agent).
+    // success/ok markers (agent_report, propose_plan).
     // When a marker is present, respect it — success:false means the tool
     // should be retried, so don't stop. When no marker is present (e.g.,
     // MCP tools, arbitrary required tools), treat non-null object results
@@ -1342,9 +1291,6 @@ export class StreamManager extends EventEmitter {
       },
       onChunk: request.onChunk,
       tools: request.tools,
-      // When set (top-level agents), force the model to call the required tool.
-      // stopWhen still runs and ends the stream once a successful result appears.
-      toolChoice: request.toolChoice,
       stopWhen: this.createStopWhenCondition(request),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
       providerOptions: request.providerOptions as any, // Pass provider-specific options (thinking/reasoning config)
@@ -1374,7 +1320,6 @@ export class StreamManager extends EventEmitter {
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
-    forceToolChoice?: boolean,
     callSettingsOverrides?: ResolvedCallSettingsOverrides,
     hasQueuedMessage?: () => boolean,
     workspaceName?: string,
@@ -1398,7 +1343,6 @@ export class StreamManager extends EventEmitter {
       maxOutputTokens,
       callSettingsOverrides,
       toolPolicy,
-      forceToolChoice,
       hasQueuedMessage,
       headers,
       anthropicCacheTtlOverride,
@@ -2893,7 +2837,6 @@ export class StreamManager extends EventEmitter {
     thinkingLevel?: string,
     headers?: Record<string, string | undefined>,
     anthropicCacheTtlOverride?: AnthropicCacheTtl,
-    forceToolChoice?: boolean,
     callSettingsOverrides?: ResolvedCallSettingsOverrides,
     onChunk?: StreamTextOnChunk,
     onStepMessages?: (messages: ModelMessage[]) => void,
@@ -2972,7 +2915,6 @@ export class StreamManager extends EventEmitter {
           providerOptions,
           maxOutputTokens,
           toolPolicy,
-          forceToolChoice,
           callSettingsOverrides,
           hasQueuedMessage,
           workspaceName,

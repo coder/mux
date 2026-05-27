@@ -43,7 +43,6 @@ import { createMuxAgentsWriteTool } from "@/node/services/tools/mux_agents_write
 import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
 import { createMuxConfigWriteTool } from "@/node/services/tools/mux_config_write";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
-import { createSwitchAgentTool } from "@/node/services/tools/switch_agent";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
 import { log } from "@/node/services/log";
@@ -485,7 +484,6 @@ export async function getToolsForModel(
     ...(config.goalService && config.enableGoalTools?.completeGoal
       ? { complete_goal: createCompleteGoalTool(config) }
       : {}),
-    switch_agent: createSwitchAgentTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
     review_pane_update: createReviewPaneUpdateTool(config),

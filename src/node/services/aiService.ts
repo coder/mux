@@ -1982,10 +1982,6 @@ export class AIService extends EventEmitter {
         workspaceLog.warn("Failed to capture debug LLM request snapshot", { error: errMsg });
       }
       const toolsForStream = tools;
-      // Top-level agents need a belt-and-suspenders toolChoice safety net for
-      // required routing/completion tools. Sub-agents rely on taskService.ts
-      // post-stream recovery when a required tool is skipped.
-      const forceToolChoice = !isSubagentWorkspace;
 
       const canQueueDevToolsRunMetadata =
         this.devToolsService?.enabled === true &&
@@ -2044,7 +2040,6 @@ export class AIService extends EventEmitter {
         effectiveThinkingLevel,
         requestHeaders,
         effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
-        forceToolChoice,
         resolvedOverrides.standard,
         advisorToolEligible ? onAdvisorChunk : undefined,
         advisorToolEligible

@@ -770,18 +770,6 @@ export const AgentReportToolArgsSchema = z
   })
   .strict();
 
-// -----------------------------------------------------------------------------
-// switch_agent (agent switching for Auto agent)
-// -----------------------------------------------------------------------------
-
-export const SwitchAgentToolArgsSchema = z
-  .object({
-    agentId: AgentIdSchema,
-    reason: z.string().max(512).nullish(),
-    followUp: z.string().nullish(),
-  })
-  .strict();
-
 export const AgentReportToolResultSchema = z.object({ success: z.literal(true) }).strict();
 const FILE_TOOL_PATH = z
   .string()
@@ -1502,14 +1490,6 @@ export const TOOL_DEFINITIONS = {
       "Call this exactly once when you have a final answer (after any spawned sub-tasks complete).",
     schema: AgentReportToolArgsSchema,
   },
-  switch_agent: {
-    description:
-      "Switch to a different agent and restart the stream. " +
-      "Only agents listed below can be targeted. " +
-      "The current stream will end and a new stream will start with the selected agent.",
-    schema: SwitchAgentToolArgsSchema,
-  },
-
   get_goal: {
     description:
       "Read the current workspace goal. Returns null when no goal is available in this turn.",
@@ -2350,7 +2330,6 @@ export function getAvailableTools(
     "task_terminate",
     "task_list",
     ...(enableAgentReport ? ["agent_report"] : []),
-    "switch_agent",
     "get_goal",
     "complete_goal",
     "todo_write",

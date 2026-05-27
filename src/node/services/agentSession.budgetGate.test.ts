@@ -109,7 +109,7 @@ async function createSessionHarness(workspaceId: string): Promise<SessionHarness
 // (PRRT_kwDOPxxmWM5_stnS): the WorkspaceService-level gate is only checked on
 // the initial sendMessage/resumeStream entry. Queued messages dispatched
 // later via AgentSession.sendQueuedMessages() (and every other internal
-// re-entry: dispatchPendingFollowUp, dispatchAgentSwitch, post-compaction
+// re-entry: dispatchPendingFollowUp, post-compaction
 // retries) skip that path, so a budgeted goal that became resumable while a
 // queued unpriced-model message waited would otherwise bypass enforcement
 // and stream with 0-cost accounting.

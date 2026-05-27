@@ -25,7 +25,6 @@ import { AskUserQuestionToolCall } from "../AskUserQuestionToolCall";
 import { ProposePlanToolCall } from "../ProposePlanToolCall";
 import { TodoToolCall } from "../TodoToolCall";
 import { StatusSetToolCall } from "../StatusSetToolCall";
-import { SwitchAgentToolCall } from "../SwitchAgentToolCall";
 import { NotifyToolCall } from "../NotifyToolCall";
 import { ReviewPaneUpdateToolCall } from "../ReviewPaneUpdateToolCall";
 import { ReviewPaneGetToolCall } from "../ReviewPaneGetToolCall";
@@ -134,10 +133,6 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   todo_write: { component: TodoToolCall, schema: TOOL_DEFINITIONS.todo_write.schema },
   // Legacy-only transcript renderer for historical status_set calls.
   status_set: { component: StatusSetToolCall, schema: legacyStatusSetSchema },
-  switch_agent: {
-    component: SwitchAgentToolCall,
-    schema: TOOL_DEFINITIONS.switch_agent.schema,
-  },
   notify: { component: NotifyToolCall, schema: TOOL_DEFINITIONS.notify.schema },
   analytics_query: {
     component: AnalyticsQueryToolCall,

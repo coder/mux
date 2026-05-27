@@ -4,7 +4,6 @@ description: Visual desktop automation agent for GUI-heavy, screenshot-intensive
 base: exec
 ui:
   hidden: true
-  routable: true
   requires:
     - desktop
 subagent:

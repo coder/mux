@@ -177,7 +177,6 @@ function createTestAgent(
     name,
     scope: "built-in",
     uiSelectable: true,
-    uiRoutable: true,
     subagentRunnable: true,
     aiDefaults: { model, thinkingLevel },
   };

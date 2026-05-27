@@ -223,7 +223,7 @@ describe("DevToolsService", () => {
     it("stores pending metadata per metadata id for overlapping requests", async () => {
       const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
       const policyA = [{ regex_match: "propose_plan", action: "require" as const }];
-      const policyB = [{ regex_match: "switch_agent", action: "disable" as const }];
+      const policyB = [{ regex_match: "task_.*", action: "disable" as const }];
 
       service.setPendingRunMetadata("ws-1", "metadata-a", { toolPolicy: policyA });
       service.setPendingRunMetadata("ws-1", "metadata-b", { toolPolicy: policyB });

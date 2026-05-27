@@ -44,7 +44,6 @@ import {
   type StreamErrorPayload,
 } from "@/node/services/utils/sendMessageError";
 import {
-  createAssistantMessageId,
   createUserMessageId,
   createFileSnapshotMessageId,
   createAgentSkillSnapshotMessageId,
@@ -77,14 +76,8 @@ import {
   createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
 } from "@/node/runtime/runtimeHelpers";
-import { hasNonEmptyPlanFile } from "@/node/utils/runtime/helpers";
 import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
-import {
-  readAgentDefinition,
-  resolveAgentFrontmatter,
-} from "@/node/services/agentDefinitions/agentDefinitionsService";
-import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
-import { resolveAgentVisibility } from "@/node/services/agentDefinitions/agentVisibility";
+import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { MessageQueue } from "./messageQueue";
 import {
@@ -125,10 +118,7 @@ import {
   isValidModelFormat,
   supports1MContext,
 } from "@/common/utils/ai/models";
-import {
-  isAnthropic1MEffectivelyEnabled,
-  preserveAnthropic1MContextForFollowUp,
-} from "@/common/utils/ai/providerOptions";
+import { isAnthropic1MEffectivelyEnabled } from "@/common/utils/ai/providerOptions";
 import {
   isNonRetryableSendError,
   isNonRetryableStreamError,
@@ -149,7 +139,6 @@ import { renderAgentSkillSnapshotText } from "@/common/utils/agentSkills/skillSn
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
 import { getErrorMessage } from "@/common/utils/errors";
 import { CompactionMonitor, type CompactionStatusEvent } from "./compactionMonitor";
-import { coerceNonEmptyString } from "@/node/services/taskUtils";
 
 /**
  * Tracked file state for detecting external edits.
@@ -189,12 +178,6 @@ interface AutoRetryResumeRequest {
   goalKind?: GoalSyntheticMessageKind;
 }
 
-interface SwitchAgentResult {
-  agentId: string;
-  reason?: string;
-  followUp?: string;
-}
-
 function stripGoalInterventionPolicy(options: SendMessageOptions): SendMessageOptions {
   const streamOptions: SendMessageOptions = { ...options };
   delete streamOptions.goalInterventionPolicy;
@@ -219,12 +202,6 @@ function coerceGoalSyntheticMessageKind(value: unknown): GoalSyntheticMessageKin
   }
   return undefined;
 }
-
-const MAX_CONSECUTIVE_AGENT_SWITCHES = 3;
-
-const SAFE_AGENT_SWITCH_FALLBACK_CANDIDATES = ["exec", "plan"] as const;
-const SWITCH_AGENT_TARGET_UNAVAILABLE_ERROR =
-  "Agent handoff failed because the requested target is unavailable. Please retry or choose a different mode.";
 
 const PDF_MEDIA_TYPE = "application/pdf";
 const ACP_PROMPT_ID_METADATA_KEY = "acpPromptId";
@@ -379,8 +356,6 @@ export class AgentSession {
   private activePreparedTurnAbortController: AbortController | null = null;
   // When true, stream-end skips auto-flushing queued messages so an edit can truncate first.
   private deferQueuedFlushUntilAfterEdit = false;
-  /** Guardrail against synthetic switch_agent ping-pong loops. */
-  private consecutiveAgentSwitches = 0;
 
   private idleWaiters: Array<() => void> = [];
   private readonly messageQueue = new MessageQueue();
@@ -2200,7 +2175,7 @@ export class AgentSession {
     const isManualUserMessage = internal?.synthetic !== true;
 
     // Last-line-of-defence pricing gate: every dispatch path (initial sends,
-    // sendQueuedMessages, dispatchPendingFollowUp, dispatchAgentSwitch,
+    // sendQueuedMessages, dispatchPendingFollowUp,
     // post-compaction follow-ups) lands here, so a budgeted goal that became
     // resumable while a queued unpriced-model message waited cannot bypass
     // enforcement. The WorkspaceService-level gate already runs first for
@@ -2241,10 +2216,6 @@ export class AgentSession {
         }
         return Err(pricingGate.error);
       }
-    }
-
-    if (isManualUserMessage) {
-      this.consecutiveAgentSwitches = 0;
     }
 
     const goalKind =
@@ -4558,7 +4529,7 @@ export class AgentSession {
         streamEndedAtMs: number;
       } | null = null;
       let emittedStreamEnd = false;
-      let handoffFailureMessage: string | undefined;
+
       try {
         const completedCompactionRequest = this.activeCompactionRequest;
         this.activeCompactionRequest = undefined;
@@ -4629,24 +4600,6 @@ export class AgentSession {
           await this.dispatchPendingFollowUp();
         }
 
-        const switchResult = this.extractSwitchAgentResult(streamEndPayload);
-        if (switchResult) {
-          try {
-            const dispatchedSwitchFollowUp = await this.dispatchAgentSwitch(
-              switchResult,
-              activeStreamOptions,
-              streamEndPayload.metadata.model,
-              activeStreamGoalKind
-            );
-            if (dispatchedSwitchFollowUp) {
-              return;
-            }
-          } catch (error) {
-            handoffFailureMessage = getErrorMessage(error);
-            throw error;
-          }
-        }
-
         // Stream end: auto-send queued messages (for user messages typed during streaming)
         // P2: if an edit is waiting, skip the queue flush so the edit truncates first.
         const hadQueuedMessages = this.hasQueuedMessages();
@@ -4693,16 +4646,6 @@ export class AgentSession {
           error: streamEndCleanupError,
         });
 
-        if (handoffFailureMessage != null) {
-          this.emitChatEvent(
-            createStreamErrorMessage({
-              messageId: createAssistantMessageId(),
-              error: `An unexpected error occurred during agent handoff: ${handoffFailureMessage}`,
-              errorType: "unknown",
-            })
-          );
-        }
-
         // Defense-in-depth: unblock renderer if compaction handler threw before we emitted.
         if (!emittedStreamEnd) {
           try {
@@ -4713,7 +4656,7 @@ export class AgentSession {
         }
       } finally {
         // Only clean up if we're still in COMPLETING — a new turn started by
-        // dispatchPendingFollowUp(), dispatchAgentSwitch(), or sendQueuedMessages()
+        // dispatchPendingFollowUp() or sendQueuedMessages()
         // owns the stream state now.
         if (this.turnPhase === TurnPhase.COMPLETING) {
           this.resetActiveStreamState();
@@ -5004,407 +4947,6 @@ export class AgentSession {
       return `${trimmed.slice(0, SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH - 1)}…`;
     }
     return SILENT_CONTINUATION_COMPLETION_SUMMARY_FALLBACK;
-  }
-
-  /** Extract a successful switch_agent tool result from stream-end parts (latest wins). */
-  private extractSwitchAgentResult(payload: StreamEndEvent): SwitchAgentResult | undefined {
-    for (let index = payload.parts.length - 1; index >= 0; index -= 1) {
-      const part = payload.parts[index];
-      if (part.type !== "dynamic-tool") {
-        continue;
-      }
-      if (part.state !== "output-available" || part.toolName !== "switch_agent") {
-        continue;
-      }
-
-      // Verify the tool succeeded.
-      if (!this.isOkSwitchAgentOutput(part.output)) {
-        continue;
-      }
-
-      // Primary path: read switch details from tool input args.
-      const parsedInput = this.parseSwitchAgentInput(part.input);
-      if (parsedInput) {
-        return parsedInput;
-      }
-
-      // Defensive fallback: degraded streams can lose input metadata (input=null)
-      // when tool-call correlation fails. Recover from output if possible.
-      const parsedOutput = this.parseSwitchAgentOutput(part.output);
-      if (parsedOutput) {
-        return parsedOutput;
-      }
-    }
-
-    return undefined;
-  }
-
-  private isOkSwitchAgentOutput(output: unknown): boolean {
-    if (typeof output !== "object" || output === null) {
-      return false;
-    }
-
-    const candidate = output as Record<string, unknown>;
-    return candidate.ok === true;
-  }
-
-  private parseSwitchAgentInput(input: unknown): SwitchAgentResult | undefined {
-    return this.parseSwitchAgentCandidate(input);
-  }
-
-  private parseSwitchAgentOutput(output: unknown): SwitchAgentResult | undefined {
-    return this.parseSwitchAgentCandidate(output);
-  }
-
-  private parseSwitchAgentCandidate(value: unknown): SwitchAgentResult | undefined {
-    if (typeof value !== "object" || value === null) {
-      return undefined;
-    }
-
-    const candidate = value as Record<string, unknown>;
-    if (typeof candidate.agentId !== "string") {
-      return undefined;
-    }
-
-    const agentId = candidate.agentId.trim();
-    if (agentId.length === 0) {
-      return undefined;
-    }
-
-    return {
-      agentId,
-      reason: typeof candidate.reason === "string" ? candidate.reason : undefined,
-      followUp: typeof candidate.followUp === "string" ? candidate.followUp : undefined,
-    };
-  }
-
-  private async isAgentSwitchTargetValid(
-    agentId: string,
-    disableWorkspaceAgents?: boolean
-  ): Promise<boolean> {
-    assert(
-      typeof agentId === "string" && agentId.trim().length > 0,
-      "isAgentSwitchTargetValid requires a non-empty agentId"
-    );
-
-    const normalizedAgentId = agentId.trim();
-    const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
-    if (!parsedAgentId.success) {
-      log.warn("switch_agent target has invalid agentId format; skipping synthetic follow-up", {
-        workspaceId: this.workspaceId,
-        targetAgentId: normalizedAgentId,
-      });
-      return false;
-    }
-
-    if (typeof this.aiService.getWorkspaceMetadata !== "function") {
-      log.warn("Cannot validate switch_agent target: workspace metadata API unavailable", {
-        workspaceId: this.workspaceId,
-        targetAgentId: parsedAgentId.data,
-      });
-      return false;
-    }
-
-    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
-    if (!metadataResult.success) {
-      log.warn("Cannot validate switch_agent target: workspace metadata unavailable", {
-        workspaceId: this.workspaceId,
-        targetAgentId: parsedAgentId.data,
-        error: metadataResult.error,
-      });
-      return false;
-    }
-
-    const metadata = metadataResult.data;
-    const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
-
-    // When disableWorkspaceAgents is active, use project path for discovery
-    // (only built-in/global agents). Mirrors resolveAgentForStream behavior.
-    const discoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
-
-    try {
-      const resolvedFrontmatter = await resolveAgentFrontmatter(
-        runtime,
-        discoveryPath,
-        parsedAgentId.data
-      );
-      const cfg = this.config.loadConfigOrDefault();
-      const effectivelyDisabled = isAgentEffectivelyDisabled({
-        cfg,
-        agentId: parsedAgentId.data,
-        resolvedFrontmatter,
-      });
-
-      if (effectivelyDisabled) {
-        log.warn("switch_agent target is disabled; skipping synthetic follow-up", {
-          workspaceId: this.workspaceId,
-          targetAgentId: parsedAgentId.data,
-        });
-        return false;
-      }
-
-      const { routable } = resolveAgentVisibility(resolvedFrontmatter.ui);
-
-      if (!routable) {
-        log.warn("switch_agent target is not routable; skipping synthetic follow-up", {
-          workspaceId: this.workspaceId,
-          targetAgentId: parsedAgentId.data,
-        });
-        return false;
-      }
-
-      // Check ui.requires gating (e.g., a custom agent that requires a plan file).
-      // This matches the router's `requiresPlan && !planReady` check.
-      const requiresPlan = resolvedFrontmatter.ui?.requires?.includes("plan") ?? false;
-      if (requiresPlan) {
-        // Fail closed: if plan state cannot be determined, treat as not ready.
-        let planReady = false;
-        try {
-          planReady = await hasNonEmptyPlanFile(
-            runtime,
-            metadata.name,
-            metadata.projectName,
-            this.workspaceId
-          );
-        } catch {
-          planReady = false;
-        }
-        if (!planReady) {
-          log.warn(
-            "switch_agent target requires a plan but no plan file exists; skipping synthetic follow-up",
-            {
-              workspaceId: this.workspaceId,
-              targetAgentId: parsedAgentId.data,
-            }
-          );
-          return false;
-        }
-      }
-
-      return true;
-    } catch (error) {
-      log.warn("switch_agent target could not be resolved; skipping synthetic follow-up", {
-        workspaceId: this.workspaceId,
-        targetAgentId: parsedAgentId.data,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return false;
-    }
-  }
-
-  private async resolveAgentSwitchFallbackTarget(
-    currentOptions: SendMessageOptions | undefined
-  ): Promise<string | undefined> {
-    const preferredAgentId = currentOptions?.agentId?.trim();
-    const disableWorkspaceAgents = currentOptions?.disableWorkspaceAgents;
-
-    const candidates: string[] = [];
-    // Prefer returning to the caller's previous non-auto agent when possible.
-    // Legacy sessions and custom project agents can still use the reserved
-    // `auto` id, and immediately falling back to that router risks re-entering
-    // the same switch loop instead of degrading to a safe built-in agent.
-    if (preferredAgentId != null && preferredAgentId.length > 0 && preferredAgentId !== "auto") {
-      candidates.push(preferredAgentId);
-    }
-
-    for (const candidate of SAFE_AGENT_SWITCH_FALLBACK_CANDIDATES) {
-      candidates.push(candidate);
-    }
-
-    const seen = new Set<string>();
-    for (const candidate of candidates) {
-      assert(candidate.trim().length > 0, "Fallback candidate agent IDs must be non-empty");
-      if (seen.has(candidate)) {
-        continue;
-      }
-      seen.add(candidate);
-
-      if (await this.isAgentSwitchTargetValid(candidate, disableWorkspaceAgents)) {
-        return candidate;
-      }
-    }
-
-    return undefined;
-  }
-
-  private buildAgentSwitchFallbackFollowUp(switchResult: SwitchAgentResult): string {
-    const normalizedReason = switchResult.reason?.trim();
-    const lines = [
-      `Agent handoff failed: target "${switchResult.agentId}" is unavailable in this workspace.`,
-      "Continue assisting the user's latest request using this mode.",
-    ];
-
-    if (normalizedReason != null && normalizedReason.length > 0) {
-      lines.splice(1, 0, `Router rationale: ${normalizedReason}`);
-    }
-
-    return lines.join("\n");
-  }
-
-  /** Dispatch follow-up message after switch_agent and guard against ping-pong loops. */
-  private async dispatchAgentSwitch(
-    switchResult: SwitchAgentResult,
-    currentOptions: SendMessageOptions | undefined,
-    fallbackModel: string,
-    goalKind?: GoalSyntheticMessageKind
-  ): Promise<boolean> {
-    assert(
-      typeof switchResult.agentId === "string" && switchResult.agentId.trim().length > 0,
-      "dispatchAgentSwitch requires a non-empty switchResult.agentId"
-    );
-    assert(
-      typeof fallbackModel === "string" && fallbackModel.trim().length > 0,
-      "dispatchAgentSwitch requires a non-empty fallbackModel"
-    );
-
-    this.consecutiveAgentSwitches += 1;
-    if (this.consecutiveAgentSwitches > MAX_CONSECUTIVE_AGENT_SWITCHES) {
-      log.warn("switch_agent loop guard triggered; skipping synthetic follow-up", {
-        workspaceId: this.workspaceId,
-        count: this.consecutiveAgentSwitches,
-        limit: MAX_CONSECUTIVE_AGENT_SWITCHES,
-        targetAgentId: switchResult.agentId,
-      });
-      this.emitChatEvent(
-        createStreamErrorMessage({
-          messageId: createAssistantMessageId(),
-          error: `Agent switch loop detected (${this.consecutiveAgentSwitches} consecutive switches). The agent was stopped to prevent an infinite loop.`,
-          errorType: "unknown",
-        })
-      );
-      return false;
-    }
-
-    let targetAgentId = switchResult.agentId;
-
-    const targetValid = await this.isAgentSwitchTargetValid(
-      targetAgentId,
-      currentOptions?.disableWorkspaceAgents
-    );
-    if (!targetValid) {
-      const fallbackAgentId = await this.resolveAgentSwitchFallbackTarget(currentOptions);
-      if (fallbackAgentId == null) {
-        log.warn("switch_agent target invalid and no safe fallback agent is available", {
-          workspaceId: this.workspaceId,
-          requestedTargetAgentId: switchResult.agentId,
-        });
-        this.emitChatEvent(
-          createStreamErrorMessage({
-            messageId: createAssistantMessageId(),
-            error: `${SWITCH_AGENT_TARGET_UNAVAILABLE_ERROR} Requested target: "${switchResult.agentId}".`,
-            errorType: "unknown",
-          })
-        );
-        return false;
-      }
-
-      log.warn("switch_agent target invalid; routing synthetic follow-up to fallback agent", {
-        workspaceId: this.workspaceId,
-        requestedTargetAgentId: switchResult.agentId,
-        fallbackAgentId,
-      });
-      targetAgentId = fallbackAgentId;
-    }
-
-    // Fall back to "Continue." for nullish, empty, or whitespace-only followUp strings.
-    const trimmedFollowUp = switchResult.followUp?.trim();
-    const followUpText =
-      targetAgentId === switchResult.agentId
-        ? trimmedFollowUp != null && trimmedFollowUp.length > 0
-          ? trimmedFollowUp
-          : "Continue."
-        : this.buildAgentSwitchFallbackFollowUp(switchResult);
-    // switch_agent hands off execution to a different agent, so prefer that
-    // agent's persisted model/thinking settings. If no per-agent override
-    // exists, inherit from the outgoing stream options.
-    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
-    // If we had to reroute to a safe fallback target (hidden/disabled/missing
-    // requested target), keep recovery in the current stream settings instead of
-    // applying persisted per-agent overrides for the fallback agent.
-    const usedFallbackTarget = targetAgentId !== switchResult.agentId;
-    const targetAgentSettings =
-      metadataResult.success === true && !usedFallbackTarget
-        ? metadataResult.data.aiSettingsByAgent?.[targetAgentId]
-        : undefined;
-    const workspaceAiSettings =
-      metadataResult.success === true ? metadataResult.data.aiSettings : undefined;
-
-    const effectiveModel =
-      coerceNonEmptyString(targetAgentSettings?.model) ??
-      coerceNonEmptyString(currentOptions?.model) ??
-      coerceNonEmptyString(workspaceAiSettings?.model) ??
-      fallbackModel.trim();
-
-    const effectiveThinkingLevel =
-      targetAgentSettings?.thinkingLevel ??
-      currentOptions?.thinkingLevel ??
-      workspaceAiSettings?.thinkingLevel;
-
-    const sourceModel = coerceNonEmptyString(currentOptions?.model) ?? fallbackModel.trim();
-    const followUpProviderOptions = preserveAnthropic1MContextForFollowUp(
-      sourceModel,
-      effectiveModel,
-      currentOptions?.providerOptions,
-      this.aiService.getProvidersConfig()
-    );
-
-    // Build follow-up options from an explicit allowlist.
-    // Exclude edit-only fields (editMessageId) to prevent the synthetic
-    // follow-up from entering edit/truncation logic.
-    const followUpOptions: SendMessageOptions = {
-      model: effectiveModel,
-      agentId: targetAgentId,
-      // Preserve relevant settings from the original request
-      ...(effectiveThinkingLevel != null && { thinkingLevel: effectiveThinkingLevel }),
-      ...(followUpProviderOptions != null && {
-        providerOptions: followUpProviderOptions,
-      }),
-      ...(currentOptions?.experiments != null && { experiments: currentOptions.experiments }),
-      ...(currentOptions?.maxOutputTokens != null && {
-        maxOutputTokens: currentOptions.maxOutputTokens,
-      }),
-      ...(currentOptions?.disableWorkspaceAgents != null && {
-        disableWorkspaceAgents: currentOptions.disableWorkspaceAgents,
-      }),
-      ...(currentOptions?.toolPolicy != null && { toolPolicy: currentOptions.toolPolicy }),
-      ...(currentOptions?.additionalSystemInstructions != null && {
-        additionalSystemInstructions: currentOptions.additionalSystemInstructions,
-      }),
-      skipAiSettingsPersistence: true,
-    };
-
-    const sendResult = await this.sendMessage(followUpText, followUpOptions, {
-      synthetic: true,
-      goalKind,
-    });
-
-    if (!sendResult.success) {
-      log.warn("Failed to dispatch switch_agent follow-up", {
-        workspaceId: this.workspaceId,
-        requestedTargetAgentId: switchResult.agentId,
-        dispatchedTargetAgentId: targetAgentId,
-        error: sendResult.error,
-      });
-      const dispatchStreamError = buildStreamErrorEventData(sendResult.error);
-      const nestedSendAlreadyReportedError =
-        this.activeStreamFailureHandled &&
-        (this.activeStreamErrorEventReceived ||
-          (sendResult.error.type !== "runtime_not_ready" &&
-            sendResult.error.type !== "runtime_start_failed"));
-
-      if (!nestedSendAlreadyReportedError) {
-        this.emitChatEvent(
-          createStreamErrorMessage({
-            messageId: dispatchStreamError.messageId,
-            error: `Failed to switch to agent "${targetAgentId}": ${dispatchStreamError.error}`,
-            errorType: dispatchStreamError.errorType,
-          })
-        );
-      }
-      return false;
-    }
-
-    return true;
   }
 
   /**

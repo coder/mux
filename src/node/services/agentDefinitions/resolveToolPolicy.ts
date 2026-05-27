@@ -28,7 +28,7 @@ export interface ResolveToolPolicyOptions {
 
 // Tools that are never allowed in autonomous sub-agent flows.
 // Single source of truth: SUBAGENT_HARD_DENY is derived from this list.
-const SUBAGENT_HARD_DENIED_TOOLS = ["ask_user_question", "switch_agent"] as const;
+const SUBAGENT_HARD_DENIED_TOOLS = ["ask_user_question"] as const;
 
 const SUBAGENT_HARD_DENY: ToolPolicy = SUBAGENT_HARD_DENIED_TOOLS.map((tool) => ({
   regex_match: tool,
@@ -47,26 +47,6 @@ function matchesToolPattern(pattern: string, toolName: string): boolean {
   } catch {
     return false;
   }
-}
-
-function matchesSwitchAgentPattern(pattern: string): boolean {
-  const trimmed = pattern.trim();
-  if (trimmed.length === 0) {
-    return false;
-  }
-
-  return matchesToolPattern(trimmed, "switch_agent");
-}
-
-function isExplicitSwitchAgentEnablePattern(pattern: string): boolean {
-  const trimmed = pattern.trim();
-  if (trimmed.length === 0) {
-    return false;
-  }
-
-  // switch_agent opt-in must be explicit and literal; broad or alternate regexes
-  // should not implicitly unlock autonomous handoff behavior.
-  return trimmed === "switch_agent";
 }
 
 function matchesSubagentHardDeniedTool(pattern: string): boolean {
@@ -100,7 +80,6 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
 
   // Process inheritance chain: base → child
   const configs = collectToolConfigsFromResolvedChain(agents);
-  let switchAgentEnabledByConfig = false;
   let effectiveRequirePattern: string | undefined;
   for (const config of configs) {
     // Enable tools from add list (treated as regex patterns)
@@ -109,9 +88,6 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
         const trimmed = pattern.trim();
         if (trimmed.length > 0) {
           agentPolicy.push({ regex_match: trimmed, action: "enable" });
-          if (isExplicitSwitchAgentEnablePattern(trimmed)) {
-            switchAgentEnabledByConfig = true;
-          }
         }
       }
     }
@@ -122,9 +98,6 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
         const trimmed = pattern.trim();
         if (trimmed.length > 0) {
           agentPolicy.push({ regex_match: trimmed, action: "disable" });
-          if (matchesSwitchAgentPattern(trimmed)) {
-            switchAgentEnabledByConfig = false;
-          }
         }
       }
     }
@@ -145,9 +118,6 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
     // required tool can collapse the entire toolset.
     if (!(isSubagent && matchesSubagentHardDeniedTool(effectiveRequirePattern))) {
       agentPolicy.push({ regex_match: effectiveRequirePattern, action: "require" });
-      if (!isSubagent && isExplicitSwitchAgentEnablePattern(effectiveRequirePattern)) {
-        switchAgentEnabledByConfig = true;
-      }
     }
   }
 
@@ -156,13 +126,6 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
 
   if (disableTaskToolsForDepth) {
     runtimePolicy.push(...DEPTH_HARD_DENY);
-  }
-
-  // switch_agent is disabled by default and only re-enabled when the resolved
-  // agent chain explicitly requests it (e.g. tools.require: ["switch_agent"]).
-  runtimePolicy.push({ regex_match: "switch_agent", action: "disable" });
-  if (!isSubagent && switchAgentEnabledByConfig) {
-    runtimePolicy.push({ regex_match: "switch_agent", action: "require" });
   }
 
   if (isSubagent) {

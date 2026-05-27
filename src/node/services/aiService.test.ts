@@ -1165,9 +1165,9 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     };
   }
 
-  const START_STREAM_ON_CHUNK_INDEX = 22;
-  const START_STREAM_ON_STEP_MESSAGES_INDEX = 23;
-  const START_STREAM_RUNTIME_TEMP_DIR_INDEX = 24;
+  const START_STREAM_ON_CHUNK_INDEX = 21;
+  const START_STREAM_ON_STEP_MESSAGES_INDEX = 22;
+  const START_STREAM_RUNTIME_TEMP_DIR_INDEX = 23;
 
   interface AdvisorRuntimeForTests {
     createModel: (modelString: string) => Promise<LanguageModel>;
@@ -2343,7 +2343,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
   function callSettingsOverridesFromStartStreamCall(
     startStreamArgs: unknown[]
   ): Record<string, unknown> {
-    const callSettingsOverrides = startStreamArgs[21];
+    const callSettingsOverrides = startStreamArgs[20];
     if (
       !callSettingsOverrides ||
       typeof callSettingsOverrides !== "object" ||
@@ -2542,7 +2542,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     spyOn(harness.config, "loadProvidersConfig").mockReturnValue({});
 
     const startStreamArgs = await streamAndGetStartStreamArgs(harness, workspaceId);
-    expect(startStreamArgs[21]).toEqual({});
+    expect(startStreamArgs[20]).toEqual({});
   });
 
   it("preserves Mux-built provider options when provider extras conflict", async () => {

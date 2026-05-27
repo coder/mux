@@ -104,7 +104,7 @@ tools:
   remove:
     - task
   require:
-    - switch_agent
+    - propose_plan
 ---
 Body
 `;
@@ -117,7 +117,7 @@ Body
     expect(result.frontmatter.tools).toEqual({
       add: ["file_read", "bash.*", "task_.*"],
       remove: ["task"],
-      require: ["switch_agent"],
+      require: ["propose_plan"],
     });
   });
 });

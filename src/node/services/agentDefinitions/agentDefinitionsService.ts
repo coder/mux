@@ -224,7 +224,7 @@ async function readAgentDescriptorFromFile(
   try {
     const parsed = parseAgentDefinitionMarkdown({ content, byteSize: stat.size });
 
-    const { selectable, routable } = resolveAgentVisibility(parsed.frontmatter.ui);
+    const { selectable } = resolveAgentVisibility(parsed.frontmatter.ui);
 
     const descriptor: AgentDefinitionDescriptor = {
       id: agentId,
@@ -232,7 +232,6 @@ async function readAgentDescriptorFromFile(
       name: parsed.frontmatter.name,
       description: parsed.frontmatter.description,
       uiSelectable: selectable,
-      uiRoutable: routable,
       uiColor: parsed.frontmatter.ui?.color,
       subagentRunnable: parsed.frontmatter.subagent?.runnable ?? false,
       base: parsed.frontmatter.base,
@@ -269,7 +268,7 @@ export async function discoverAgentDefinitions(
 
   // Seed built-ins (lowest precedence).
   for (const pkg of getBuiltInAgentDefinitions()) {
-    const { selectable, routable } = resolveAgentVisibility(pkg.frontmatter.ui);
+    const { selectable } = resolveAgentVisibility(pkg.frontmatter.ui);
 
     byId.set(pkg.id, {
       id: pkg.id,
@@ -277,7 +276,6 @@ export async function discoverAgentDefinitions(
       name: pkg.frontmatter.name,
       description: pkg.frontmatter.description,
       uiSelectable: selectable,
-      uiRoutable: routable,
       uiColor: pkg.frontmatter.ui?.color,
       subagentRunnable: pkg.frontmatter.subagent?.runnable ?? false,
       base: pkg.frontmatter.base,

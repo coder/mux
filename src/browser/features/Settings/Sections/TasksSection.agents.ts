@@ -11,7 +11,6 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Plan",
     description: "Create a plan before coding",
     uiSelectable: true,
-    uiRoutable: true,
     subagentRunnable: true,
     base: "plan",
   },
@@ -21,7 +20,6 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Exec",
     description: "Implement changes in the repository",
     uiSelectable: true,
-    uiRoutable: true,
     subagentRunnable: true,
   },
   {
@@ -30,7 +28,6 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Compact",
     description: "History compaction (internal)",
     uiSelectable: false,
-    uiRoutable: false,
     subagentRunnable: false,
   },
   {
@@ -39,7 +36,6 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Desktop",
     description: "Visual desktop automation agent for GUI-heavy, screenshot-intensive workflows",
     uiSelectable: false,
-    uiRoutable: true,
     subagentRunnable: true,
     base: "exec",
     aiDefaults: {
@@ -75,7 +71,6 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Explore",
     description: "Read-only repository exploration",
     uiSelectable: false,
-    uiRoutable: false,
     subagentRunnable: true,
     base: "exec",
   },
@@ -85,7 +80,6 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     name: "Name Workspace",
     description: "Generate workspace name and title from user message",
     uiSelectable: false,
-    uiRoutable: false,
     subagentRunnable: false,
     tools: {
       require: ["propose_name"],

@@ -686,7 +686,7 @@ tools:
   remove:
     - b
   require:
-    - switch_agent
+    - propose_plan
 ---
 `,
       "utf-8"

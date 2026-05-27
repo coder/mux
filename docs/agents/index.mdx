@@ -76,7 +76,6 @@ disabled: false # Optional. When true, fully excludes this definition.
 # UI
 ui:
   hidden: false # Hide from the agent picker.
-  routable: false # Allow switch_agent to route here even when hidden.
   requires: # Capability gates: omit unless needed.
     - desktop # "desktop" | "plan"
   color: "var(--color-exec-mode)" # CSS color or var; inherited from base if unset.
@@ -160,21 +159,16 @@ Later rules win, so a child's `remove` can drop something the base enabled, and 
 
 These rules are applied last and cannot be overridden by frontmatter:
 
-| Condition                           | Effect                                                                  |
-| ----------------------------------- | ----------------------------------------------------------------------- |
-| Always                              | `switch_agent` is disabled unless the chain explicitly opts in (below). |
-| Subagent workspace                  | `ask_user_question` and `switch_agent` are disabled.                    |
-| Subagent + plan-like chain          | `propose_plan` is required, `agent_report` is disabled.                 |
-| Subagent + non-plan chain           | `agent_report` is required, `propose_plan` is disabled.                 |
-| Task depth ≥ Max Task Nesting Depth | `task` and `task_.*` are disabled.                                      |
-| Plan agent calling `task`           | Only `agentId: "explore"` may be spawned.                               |
-| Plan agent editing files            | `file_edit_*` is restricted to the plan file path.                      |
+| Condition                           | Effect                                                  |
+| ----------------------------------- | ------------------------------------------------------- |
+| Subagent workspace                  | `ask_user_question` is disabled.                        |
+| Subagent + plan-like chain          | `propose_plan` is required, `agent_report` is disabled. |
+| Subagent + non-plan chain           | `agent_report` is required, `propose_plan` is disabled. |
+| Task depth ≥ Max Task Nesting Depth | `task` and `task_.*` are disabled.                      |
+| Plan agent calling `task`           | Only `agentId: "explore"` may be spawned.               |
+| Plan agent editing files            | `file_edit_*` is restricted to the plan file path.      |
 
 A chain is "plan-like" when the resolved tool policy enables `propose_plan`.
-
-### Enabling `switch_agent`
-
-`switch_agent` is opt-in even when allowed by a broad pattern. The top-level (non-subagent) chain must contain the **literal** string `"switch_agent"` in `tools.add` or `tools.require`, and must not remove it later. Broad patterns like `.*` do not count as opt-in.
 
 ## Disabling and Extending Built-ins
 
@@ -479,7 +473,6 @@ description: Visual desktop automation agent for GUI-heavy, screenshot-intensive
 base: exec
 ui:
   hidden: true
-  routable: true
   requires:
     - desktop
 subagent:

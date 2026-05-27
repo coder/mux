@@ -24,7 +24,6 @@ describe("built-in agent definitions", () => {
     expect(desktop).toBeTruthy();
     expect(desktop?.frontmatter.base).toBe("exec");
     expect(desktop?.frontmatter.ui?.hidden).toBe(true);
-    expect(desktop?.frontmatter.ui?.routable).toBe(true);
     expect(desktop?.frontmatter.ui?.requires).toContain("desktop");
     expect(desktop?.frontmatter.subagent?.runnable).toBe(true);
     expect(desktop?.frontmatter.ai?.thinkingLevel).toBe("medium");

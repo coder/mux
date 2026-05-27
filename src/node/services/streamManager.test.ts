@@ -384,14 +384,6 @@ describe("StreamManager - stopWhen configuration", () => {
       assertions: [{ toolName: "agent_report", output: { success: true }, expected: true }],
     },
     {
-      name: "stops on successful switch_agent when required by policy",
-      toolPolicy: [{ regex_match: "switch_agent", action: "require" }],
-      assertions: [
-        { toolName: "switch_agent", output: { ok: true }, expected: true },
-        { toolName: "switch_agent", output: { ok: false }, expected: false },
-      ],
-    },
-    {
       name: "stops on successful propose_plan when required by policy",
       toolPolicy: [{ regex_match: "propose_plan", action: "require" }],
       assertions: [{ toolName: "propose_plan", output: { success: true }, expected: true }],
@@ -416,42 +408,6 @@ describe("StreamManager - stopWhen configuration", () => {
       }
     });
   }
-
-  test("sets toolChoice for required literal tool when forced and still uses stopWhen", () => {
-    const streamManager = new StreamManager(historyService);
-    const buildRequestConfig = Reflect.get(streamManager, "buildStreamRequestConfig") as
-      | ((...args: unknown[]) => {
-          toolChoice?: { type: "tool"; toolName: string };
-          hasQueuedMessage?: () => boolean;
-          toolPolicy?: ToolPolicy;
-        })
-      | undefined;
-    expect(typeof buildRequestConfig).toBe("function");
-
-    const model = createAnthropic({ apiKey: "test" })("claude-sonnet-4-5");
-    const request = buildRequestConfig!(
-      model,
-      "claude-sonnet-4-5",
-      [{ role: "user", content: "route this" }],
-      "system",
-      { switch_agent: {} },
-      undefined,
-      undefined,
-      undefined,
-      [{ regex_match: "switch_agent", action: "require" }],
-      true,
-      () => false,
-      undefined,
-      undefined
-    );
-
-    expect(request.toolChoice).toEqual({ type: "tool", toolName: "switch_agent" });
-    const [, , requiredToolCondition] = buildStopWhenForTests(streamManager)({
-      hasQueuedMessage: request.hasQueuedMessage,
-      toolPolicy: request.toolPolicy,
-    });
-    expect(requiredToolCondition(stepsWithToolResult("switch_agent", { ok: true }))).toBe(true);
-  });
 });
 describe("StreamManager - Anthropic cache TTL overrides", () => {
   interface StreamRequestConfigForTests {
@@ -506,7 +462,6 @@ describe("StreamManager - Anthropic cache TTL overrides", () => {
       undefined,
       undefined,
       undefined,
-      false,
       undefined,
       undefined,
       "1h"
@@ -797,7 +752,6 @@ describe("StreamManager - call settings overrides", () => {
       options.maxOutputTokens,
       options.callSettingsOverrides,
       undefined,
-      false,
       undefined,
       undefined,
       undefined
@@ -899,7 +853,6 @@ describe("StreamManager - call settings overrides", () => {
       undefined,
       undefined,
       undefined,
-      false,
       undefined,
       undefined,
       undefined,
