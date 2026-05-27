@@ -36,7 +36,7 @@ interface NormalizedResult {
 }
 
 /**
- * Only allow http/https URLs as clickable hrefs to prevent javascript: XSS.
+ * Allowlist http/https for clickable hrefs. Blocks javascript:, data:, vbscript:, etc.
  */
 function isSafeHref(url: string): boolean {
   try {
