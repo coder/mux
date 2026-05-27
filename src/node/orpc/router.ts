@@ -431,6 +431,70 @@ async function withGoalErrorTranslation<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+interface BrowserCommandLoadingParams<T extends { success: boolean }> {
+  context: ORPCContext;
+  workspaceId: string;
+  sessionName: string;
+  run: () => Promise<T>;
+}
+
+// Browser commands mark the preview loading before they run; callers validate the session
+// before invoking this helper, so the URL refresh can skip the duplicate discovery pass.
+async function markBrowserCommandLoadedFromCurrentUrl(params: {
+  context: ORPCContext;
+  workspaceId: string;
+  sessionName: string;
+  commandToken: number;
+}): Promise<void> {
+  try {
+    const urlResult = await params.context.browserControlService.getUrl(
+      params.workspaceId,
+      params.sessionName,
+      { skipSessionValidation: true }
+    );
+    params.context.browserSessionStateHub.markLoaded(
+      params.workspaceId,
+      params.sessionName,
+      urlResult.error == null ? urlResult.url : undefined,
+      params.commandToken
+    );
+  } catch {
+    params.context.browserSessionStateHub.markLoaded(
+      params.workspaceId,
+      params.sessionName,
+      undefined,
+      params.commandToken
+    );
+  }
+}
+
+async function runBrowserCommandWithLoadingState<T extends { success: boolean }>(
+  params: BrowserCommandLoadingParams<T>
+): Promise<T> {
+  const commandToken = params.context.browserSessionStateHub.markLoading(
+    params.workspaceId,
+    params.sessionName
+  );
+
+  try {
+    const result = await params.run();
+    if (result.success) {
+      await markBrowserCommandLoadedFromCurrentUrl({ ...params, commandToken });
+    } else {
+      params.context.browserSessionStateHub.markLoaded(
+        params.workspaceId,
+        params.sessionName,
+        undefined,
+        commandToken
+      );
+    }
+    return result;
+  } catch (error) {
+    await markBrowserCommandLoadedFromCurrentUrl({ ...params, commandToken });
+    throw error;
+  }
+}
+
 export const router = (authToken?: string) => {
   const t = os.$context<ORPCContext>().use(createAuthMiddleware(authToken));
 
@@ -1300,6 +1364,12 @@ export const router = (authToken?: string) => {
             })),
           };
         }),
+      listTabs: t
+        .input(schemas.browser.listTabs.input)
+        .output(schemas.browser.listTabs.output)
+        .handler(async ({ context, input }) => {
+          return await context.browserControlService.listTabs(input);
+        }),
       getBootstrap: t
         .input(schemas.browser.getBootstrap.input)
         .output(schemas.browser.getBootstrap.output)
@@ -1333,59 +1403,23 @@ export const router = (authToken?: string) => {
         .input(schemas.browser.control.input)
         .output(schemas.browser.control.output)
         .handler(async ({ context, input }) => {
-          const commandToken = context.browserSessionStateHub.markLoading(
-            input.workspaceId,
-            input.sessionName
-          );
-
-          try {
-            const result = await context.browserControlService.executeControl(input);
-            if (result.success) {
-              // executeControl already validated the selected session with the explicit scope flag.
-              const urlResult = await context.browserControlService.getUrl(
-                input.workspaceId,
-                input.sessionName,
-                { skipSessionValidation: true }
-              );
-              context.browserSessionStateHub.markLoaded(
-                input.workspaceId,
-                input.sessionName,
-                urlResult.error == null ? urlResult.url : undefined,
-                commandToken
-              );
-            } else {
-              context.browserSessionStateHub.markLoaded(
-                input.workspaceId,
-                input.sessionName,
-                undefined,
-                commandToken
-              );
-            }
-            return result;
-          } catch (error) {
-            try {
-              // executeControl already validated the selected session with the explicit scope flag.
-              const urlResult = await context.browserControlService.getUrl(
-                input.workspaceId,
-                input.sessionName,
-                { skipSessionValidation: true }
-              );
-              context.browserSessionStateHub.markLoaded(
-                input.workspaceId,
-                input.sessionName,
-                urlResult.error == null ? urlResult.url : undefined,
-                commandToken
-              );
-            } catch {
-              context.browserSessionStateHub.markLoaded(
-                input.workspaceId,
-                input.sessionName,
-                undefined,
-                commandToken
-              );
-            }
-            throw error;
-          }
+          return await runBrowserCommandWithLoadingState({
+            context,
+            workspaceId: input.workspaceId,
+            sessionName: input.sessionName,
+            run: () => context.browserControlService.executeControl(input),
+          });
+        }),
+      selectTab: t
+        .input(schemas.browser.selectTab.input)
+        .output(schemas.browser.selectTab.output)
+        .handler(async ({ context, input }) => {
+          return await runBrowserCommandWithLoadingState({
+            context,
+            workspaceId: input.workspaceId,
+            sessionName: input.sessionName,
+            run: () => context.browserControlService.selectTab(input),
+          });
         }),
       getUrl: t
         .input(schemas.browser.getUrl.input)

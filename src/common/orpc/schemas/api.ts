@@ -2269,6 +2269,22 @@ const BrowserDiscoveredOtherSessionSchema = BrowserDiscoveredSessionSchema.exten
   cwd: z.string(),
 });
 
+export const BrowserPageTabSchema = z.object({
+  tabId: z.string(),
+  label: z.string().nullable(),
+  title: z.string(),
+  url: z.string(),
+  active: z.boolean(),
+  type: z.enum(["page", "webview"]),
+});
+
+export type BrowserPageTab = z.infer<typeof BrowserPageTabSchema>;
+
+const BrowserCommandResultSchema = z.object({
+  success: z.boolean(),
+  error: z.string().nullish(),
+});
+
 const BrowserControlActionSchema = z.enum(["open", "back", "forward", "reload"]);
 
 export const browser = {
@@ -2281,6 +2297,19 @@ export const browser = {
     output: z.object({
       sessions: z.array(BrowserDiscoveredSessionSchema),
       otherSessions: z.array(BrowserDiscoveredOtherSessionSchema),
+    }),
+  },
+  listTabs: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        sessionName: z.string(),
+        allowOtherWorkspaceSession: z.boolean().nullish(),
+      })
+      .strict(),
+    output: z.object({
+      tabs: z.array(BrowserPageTabSchema),
+      error: z.string().nullish(),
     }),
   },
   getBootstrap: {
@@ -2307,10 +2336,18 @@ export const browser = {
         allowOtherWorkspaceSession: z.boolean().nullish(),
       })
       .strict(),
-    output: z.object({
-      success: z.boolean(),
-      error: z.string().nullish(),
-    }),
+    output: BrowserCommandResultSchema,
+  },
+  selectTab: {
+    input: z
+      .object({
+        workspaceId: z.string(),
+        sessionName: z.string(),
+        tabRef: z.string(),
+        allowOtherWorkspaceSession: z.boolean().nullish(),
+      })
+      .strict(),
+    output: BrowserCommandResultSchema,
   },
   getUrl: {
     input: z

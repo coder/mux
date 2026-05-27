@@ -26,6 +26,8 @@ export interface BrowserDiscoveredOtherSession extends BrowserDiscoveredSession 
   cwd: string;
 }
 
+export type { BrowserPageTab } from "@/common/orpc/schemas/api";
+
 export interface BrowserSessionAttachOptions {
   allowOtherWorkspaceSession?: boolean;
 }

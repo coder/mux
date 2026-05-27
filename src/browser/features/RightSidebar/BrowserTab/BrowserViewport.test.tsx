@@ -36,6 +36,7 @@ function createSession(overrides: Partial<BrowserSession> = {}): BrowserSession 
 function renderViewport(session: BrowserSession, overrides?: { screenshotSrc?: string | null }) {
   return render(
     <BrowserViewport
+      panelId="browser-preview-viewport"
       workspaceId="workspace-1"
       session={session}
       screenshotSrc={overrides?.screenshotSrc ?? "data:image/jpeg;base64,frame-data"}

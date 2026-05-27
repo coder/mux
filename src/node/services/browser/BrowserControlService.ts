@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { BrowserPageTabSchema, type BrowserPageTab } from "@/common/orpc/schemas/api";
 import { getErrorMessage } from "@/common/utils/errors";
+import { isPlainObject } from "@/common/utils/isPlainObject";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 import type { AgentBrowserSessionDiscoveryService } from "./AgentBrowserSessionDiscoveryService";
 import {
@@ -49,6 +51,24 @@ export interface BrowserGetUrlOptions {
   allowOtherWorkspaceSession?: boolean | null;
 }
 
+export interface BrowserListTabsParams {
+  workspaceId: string;
+  sessionName: string;
+  allowOtherWorkspaceSession?: boolean | null;
+}
+
+export interface BrowserListTabsResult {
+  tabs: BrowserPageTab[];
+  error?: string;
+}
+
+export interface BrowserSelectTabParams {
+  workspaceId: string;
+  sessionName: string;
+  tabRef: string;
+  allowOtherWorkspaceSession?: boolean | null;
+}
+
 interface BrowserCommandExecutionResult {
   success: boolean;
   stdout: string;
@@ -61,6 +81,57 @@ interface BrowserControlServiceOptions {
   spawnFn?: SpawnFn;
   sendDaemonCommandFn?: SendAgentBrowserDaemonCommandFn;
   timeoutMs?: number;
+}
+
+const BrowserPageTabsSchema = BrowserPageTabSchema.array();
+
+type BrowserPageTabsParseResult =
+  | { success: true; tabs: BrowserPageTab[] }
+  | { success: false; error: string | null };
+
+function parseBrowserPageTabsJson(stdout: string): BrowserPageTabsParseResult {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(stdout.trim());
+  } catch {
+    return { success: false, error: "invalid JSON" };
+  }
+
+  if (!isPlainObject(payload)) {
+    return { success: false, error: "unexpected JSON payload" };
+  }
+
+  if (payload.success === false) {
+    return {
+      success: false,
+      error:
+        typeof payload.error === "string" && payload.error.trim().length > 0 ? payload.error : null,
+    };
+  }
+
+  if (payload.success != null && payload.success !== true) {
+    return { success: false, error: "unexpected JSON payload" };
+  }
+
+  const rawTabs = isPlainObject(payload.data) ? payload.data.tabs : null;
+  if (!Array.isArray(rawTabs)) {
+    return { success: false, error: "unexpected JSON payload" };
+  }
+
+  const pageTabs: unknown[] = [];
+  for (const rawTab of rawTabs) {
+    if (!isPlainObject(rawTab)) {
+      continue;
+    }
+    if (rawTab.type === "page" || rawTab.type === "webview") {
+      pageTabs.push(rawTab);
+    }
+  }
+
+  const parsedTabs = BrowserPageTabsSchema.safeParse(pageTabs);
+  return parsedTabs.success
+    ? { success: true, tabs: parsedTabs.data }
+    : { success: false, error: "unexpected JSON payload" };
 }
 
 export class BrowserControlService {
@@ -88,22 +159,10 @@ export class BrowserControlService {
     this.assertValidControlParams(params);
 
     try {
-      const connection = await this.browserSessionDiscoveryService.getSessionConnection(
-        params.workspaceId,
-        params.sessionName,
-        { allowOtherWorkspaceSession: params.allowOtherWorkspaceSession === true }
-      );
-      if (connection == null) {
-        return {
-          success: false,
-          error: `Session "${params.sessionName}" not found for workspace "${params.workspaceId}"`,
-        };
+      const sessionError = await this.validateSessionConnection(params);
+      if (sessionError != null) {
+        return { success: false, error: sessionError };
       }
-
-      assert(
-        connection.sessionName === params.sessionName,
-        "BrowserControlService resolved session must match the requested session name"
-      );
 
       if (params.action === "open") {
         const trimmedUrl = params.url!.trim();
@@ -142,6 +201,65 @@ export class BrowserControlService {
     }
   }
 
+  async listTabs(params: BrowserListTabsParams): Promise<BrowserListTabsResult> {
+    this.assertValidSessionIdentifiers(params.workspaceId, params.sessionName);
+    this.assertValidOtherWorkspaceFlag(params.allowOtherWorkspaceSession);
+
+    try {
+      const sessionError = await this.validateSessionConnection(params);
+      if (sessionError != null) {
+        return { tabs: [], error: sessionError };
+      }
+
+      const execution = await this.runAgentBrowserCommand(
+        params.workspaceId,
+        ["--json", "--session", params.sessionName, "tab"],
+        `agent-browser tab list for session ${params.sessionName}`
+      );
+      if (!execution.success) {
+        return { tabs: [], error: execution.error };
+      }
+
+      const parsedTabs = parseBrowserPageTabsJson(execution.stdout);
+      if (!parsedTabs.success) {
+        return {
+          tabs: [],
+          error:
+            parsedTabs.error ??
+            `agent-browser tab list for session ${params.sessionName} returned invalid JSON`,
+        };
+      }
+
+      return { tabs: parsedTabs.tabs };
+    } catch (error) {
+      return { tabs: [], error: getErrorMessage(error) };
+    }
+  }
+
+  async selectTab(params: BrowserSelectTabParams): Promise<BrowserControlResult> {
+    this.assertValidSelectTabParams(params);
+
+    try {
+      const sessionError = await this.validateSessionConnection(params);
+      if (sessionError != null) {
+        return { success: false, error: sessionError };
+      }
+
+      const execution = await this.runAgentBrowserCommand(
+        params.workspaceId,
+        ["--session", params.sessionName, "tab", "--", params.tabRef.trim()],
+        `agent-browser tab switch for session ${params.sessionName}`
+      );
+      if (!execution.success) {
+        return { success: false, error: execution.error };
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: getErrorMessage(error) };
+    }
+  }
+
   async getUrl(
     workspaceId: string,
     sessionName: string,
@@ -156,30 +274,18 @@ export class BrowserControlService {
       options?.skipSessionValidation == null || typeof options.skipSessionValidation === "boolean",
       "BrowserControlService getUrl skipSessionValidation must be a boolean when provided"
     );
-    assert(
-      options?.allowOtherWorkspaceSession == null ||
-        typeof options.allowOtherWorkspaceSession === "boolean",
-      "BrowserControlService getUrl allowOtherWorkspaceSession must be a boolean when provided"
-    );
+    this.assertValidOtherWorkspaceFlag(options?.allowOtherWorkspaceSession);
 
     try {
       if (!options?.skipSessionValidation) {
-        const connection = await this.browserSessionDiscoveryService.getSessionConnection(
+        const sessionError = await this.validateSessionConnection({
           workspaceId,
           sessionName,
-          { allowOtherWorkspaceSession: options?.allowOtherWorkspaceSession === true }
-        );
-        if (connection == null) {
-          return {
-            url: null,
-            error: `Session "${sessionName}" not found for workspace "${workspaceId}"`,
-          };
+          allowOtherWorkspaceSession: options?.allowOtherWorkspaceSession,
+        });
+        if (sessionError != null) {
+          return { url: null, error: sessionError };
         }
-
-        assert(
-          connection.sessionName === sessionName,
-          "BrowserControlService resolved session must match the requested session name"
-        );
       }
 
       const execution = await this.runAgentBrowserCommand(
@@ -204,6 +310,27 @@ export class BrowserControlService {
     }
   }
 
+  private async validateSessionConnection(params: {
+    workspaceId: string;
+    sessionName: string;
+    allowOtherWorkspaceSession?: boolean | null;
+  }): Promise<string | null> {
+    const connection = await this.browserSessionDiscoveryService.getSessionConnection(
+      params.workspaceId,
+      params.sessionName,
+      { allowOtherWorkspaceSession: params.allowOtherWorkspaceSession === true }
+    );
+    if (connection == null) {
+      return `Session "${params.sessionName}" not found for workspace "${params.workspaceId}"`;
+    }
+
+    assert(
+      connection.sessionName === params.sessionName,
+      "BrowserControlService resolved session must match the requested session name"
+    );
+    return null;
+  }
+
   private assertValidControlParams(params: BrowserControlParams): void {
     this.assertValidSessionIdentifiers(params.workspaceId, params.sessionName);
     assert(
@@ -211,11 +338,7 @@ export class BrowserControlService {
       `Unsupported browser control action: ${String(params.action)}`
     );
 
-    assert(
-      params.allowOtherWorkspaceSession == null ||
-        typeof params.allowOtherWorkspaceSession === "boolean",
-      "BrowserControlService allowOtherWorkspaceSession must be a boolean when provided"
-    );
+    this.assertValidOtherWorkspaceFlag(params.allowOtherWorkspaceSession);
 
     if (params.action === "open") {
       assert(typeof params.url === "string", 'BrowserControlService "open" requires a url');
@@ -226,6 +349,25 @@ export class BrowserControlService {
     assert(
       params.url == null,
       `BrowserControlService action "${params.action}" does not accept a url`
+    );
+  }
+
+  private assertValidSelectTabParams(params: BrowserSelectTabParams): void {
+    this.assertValidSessionIdentifiers(params.workspaceId, params.sessionName);
+    this.assertValidOtherWorkspaceFlag(params.allowOtherWorkspaceSession);
+    assert(typeof params.tabRef === "string", "BrowserControlService selectTab requires a tab ref");
+    assert(
+      params.tabRef.trim().length > 0,
+      "BrowserControlService selectTab requires a non-empty tab ref"
+    );
+  }
+
+  private assertValidOtherWorkspaceFlag(
+    allowOtherWorkspaceSession: boolean | null | undefined
+  ): void {
+    assert(
+      allowOtherWorkspaceSession == null || typeof allowOtherWorkspaceSession === "boolean",
+      "BrowserControlService allowOtherWorkspaceSession must be a boolean when provided"
     );
   }
 
