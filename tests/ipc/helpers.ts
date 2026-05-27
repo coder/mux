@@ -620,21 +620,36 @@ export async function addFakeOrigin(repoPath: string): Promise<void> {
 }
 
 /**
- * Add a git submodule to a repository
+ * Add a git submodule to a repository.
  * @param repoPath - Path to the repository to add the submodule to
- * @param submoduleUrl - URL of the submodule repository (defaults to leftpad)
+ * @param submoduleUrl - URL of the submodule repository; defaults to a local fixture repo
  * @param submoduleName - Name/path for the submodule
  */
 export async function addSubmodule(
   repoPath: string,
-  submoduleUrl: string = "https://github.com/left-pad/left-pad.git",
+  submoduleUrl?: string,
   submoduleName: string = "vendor/left-pad"
 ): Promise<void> {
-  await execAsync(`git submodule add "${submoduleUrl}" "${submoduleName}"`, { cwd: repoPath });
+  const resolvedSubmoduleUrl = submoduleUrl ?? (await createLocalSubmoduleRepo());
+  await execAsync(
+    `git -c protocol.file.allow=always submodule add "${resolvedSubmoduleUrl}" "${submoduleName}"`,
+    { cwd: repoPath }
+  );
   // Use -c to ensure no GPG signing in case repo config doesn't have it set
   await execAsync(`git -c commit.gpgsign=false commit -m "Add submodule ${submoduleName}"`, {
     cwd: repoPath,
   });
+}
+
+async function createLocalSubmoduleRepo(): Promise<string> {
+  const submoduleRepoPath = await fs.mkdtemp(path.join(os.tmpdir(), "mux-test-submodule-"));
+  await execAsync("git init -b main", { cwd: submoduleRepoPath });
+  await fs.writeFile(path.join(submoduleRepoPath, "README.md"), "# Test submodule\n");
+  await execAsync("git add README.md", { cwd: submoduleRepoPath });
+  await execAsync('git -c commit.gpgsign=false commit -m "Initial submodule commit"', {
+    cwd: submoduleRepoPath,
+  });
+  return submoduleRepoPath;
 }
 
 /**
