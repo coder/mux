@@ -578,7 +578,7 @@ describe("BrowserControlService", () => {
     });
   });
 
-  test("listTabs returns no error when every page tab entry is malformed", async () => {
+  test("listTabs reports when every page tab entry is malformed", async () => {
     const child = new MockChildProcess();
     const { spawnFn, waitForSpawn } = createSpawnHarness(child);
     const service = createService({ spawnFn });
@@ -606,7 +606,7 @@ describe("BrowserControlService", () => {
     );
     child.close();
 
-    expect(await resultPromise).toEqual({ tabs: [] });
+    expect(await resultPromise).toEqual({ tabs: [], error: "all tab entries failed validation" });
   });
 
   test("selectTab switches the active browser tab", async () => {

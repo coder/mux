@@ -114,6 +114,7 @@ function parseBrowserPageTabsJson(stdout: string): BrowserPageTabsParseResult {
   }
 
   const pageTabs: BrowserPageTab[] = [];
+  let pageTargetCount = 0;
   for (const rawTab of rawTabs) {
     if (!isPlainObject(rawTab)) {
       continue;
@@ -122,10 +123,15 @@ function parseBrowserPageTabsJson(stdout: string): BrowserPageTabsParseResult {
       continue;
     }
 
+    pageTargetCount += 1;
     const parsedTab = BrowserPageTabSchema.safeParse(rawTab);
     if (parsedTab.success) {
       pageTabs.push(parsedTab.data);
     }
+  }
+
+  if (pageTargetCount > 0 && pageTabs.length === 0) {
+    return { success: false, error: "all tab entries failed validation" };
   }
 
   return { success: true, tabs: pageTabs };

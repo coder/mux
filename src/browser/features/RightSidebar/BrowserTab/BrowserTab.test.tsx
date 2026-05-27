@@ -407,6 +407,25 @@ describe("BrowserTab", () => {
     });
   });
 
+  test("hides the page tab strip for a single page tab", async () => {
+    listSessionsMock.mockResolvedValue({
+      sessions: [createDiscoveredSession()],
+      otherSessions: [],
+    });
+    listTabsMock.mockResolvedValue({ tabs: [createPageTab()], error: undefined });
+
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
+
+    await waitFor(() => {
+      expect(listTabsMock).toHaveBeenCalledWith({
+        workspaceId: "workspace-1",
+        sessionName: "alpha",
+      });
+    });
+    expect(view.queryByRole("tablist", { name: "Browser tabs" })).toBeNull();
+    expect(view.queryByRole("tabpanel")).toBeNull();
+  });
+
   test("shows tab listing errors", async () => {
     listSessionsMock.mockResolvedValue({
       sessions: [createDiscoveredSession()],
@@ -469,6 +488,12 @@ describe("BrowserTab", () => {
           url: "data:text/html,<title>Docs</title>",
           active: false,
         }),
+        createPageTab({
+          tabId: "t3",
+          title: "Plain title",
+          url: "https://plain.example.com/",
+          active: false,
+        }),
       ],
       error: undefined,
     });
@@ -484,6 +509,9 @@ describe("BrowserTab", () => {
       "Browser tab: docs"
     );
     expect(view.getByTestId("browser-page-tab-t2").textContent).toContain("t2");
+    expect(view.getByTestId("browser-page-tab-t3").getAttribute("aria-label")).toBe(
+      "Browser tab: Plain title"
+    );
   });
 
   test("can switch from an explicitly selected other session back to a current session", async () => {
