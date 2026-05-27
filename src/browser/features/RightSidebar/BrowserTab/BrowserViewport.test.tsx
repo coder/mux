@@ -74,6 +74,33 @@ describe("BrowserViewport", () => {
     ).toBeNull();
   });
 
+  test("maps intrinsic frame size so capped streams are not stretched into gutters", () => {
+    const highResolutionMetadata = {
+      ...FRAME_METADATA,
+      deviceWidth: 2160,
+      deviceHeight: 2160,
+    };
+
+    expect(
+      mapDomPointToViewport(
+        500,
+        500,
+        { left: 0, top: 0, width: 1000, height: 1000 },
+        highResolutionMetadata,
+        { frameImageSize: { width: 720, height: 720 } }
+      )
+    ).toEqual({ x: 1080, y: 1080 });
+    expect(
+      mapDomPointToViewport(
+        100,
+        500,
+        { left: 0, top: 0, width: 1000, height: 1000 },
+        highResolutionMetadata,
+        { frameImageSize: { width: 720, height: 720 } }
+      )
+    ).toBeNull();
+  });
+
   test("forwards mapped click and wheel input for interactive sessions", () => {
     const view = renderViewport(createSession());
     const viewport = view.getByRole("region", { name: "Browser viewport" });
@@ -153,6 +180,73 @@ describe("BrowserViewport", () => {
       y: 50,
       deltaX: 4,
       deltaY: 12,
+      modifiers: 0,
+    });
+  });
+
+  test("uses loaded screenshot dimensions for pointer hit testing", () => {
+    const view = renderViewport(
+      createSession({
+        frameMetadata: {
+          ...FRAME_METADATA,
+          deviceWidth: 2160,
+          deviceHeight: 2160,
+        },
+      })
+    );
+    const image = view.getByAltText("Browser session screenshot");
+    Object.defineProperties(image, {
+      naturalWidth: { configurable: true, value: 720 },
+      naturalHeight: { configurable: true, value: 720 },
+    });
+    fireEvent.load(image);
+
+    const viewport = view.getByRole("region", { name: "Browser viewport" });
+    Object.assign(viewport, {
+      setPointerCapture: () => undefined,
+      releasePointerCapture: () => undefined,
+      hasPointerCapture: () => true,
+    });
+    Object.defineProperty(viewport, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        left: 0,
+        top: 0,
+        width: 1000,
+        height: 1000,
+        right: 1000,
+        bottom: 1000,
+        x: 0,
+        y: 0,
+        toJSON: () => undefined,
+      }),
+    });
+
+    fireEvent.pointerDown(viewport, {
+      pointerId: 7,
+      button: 0,
+      buttons: 1,
+      clientX: 100,
+      clientY: 500,
+      detail: 1,
+    });
+    fireEvent.pointerDown(viewport, {
+      pointerId: 8,
+      button: 0,
+      buttons: 1,
+      clientX: 500,
+      clientY: 500,
+      detail: 1,
+    });
+
+    expect(sendInputMock).toHaveBeenCalledTimes(1);
+    expect(sendInputMock).toHaveBeenCalledWith({
+      type: "input_mouse",
+      eventType: "mousePressed",
+      x: 1080,
+      y: 1080,
+      button: "left",
+      clickCount: 1,
       modifiers: 0,
     });
   });
