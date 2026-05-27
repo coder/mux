@@ -467,6 +467,8 @@ describe("BrowserTab", () => {
     await waitFor(() => {
       expect(view.getByRole("alert").textContent).toContain("tab switch failed");
     });
+    expect(view.getByTestId("browser-page-tab-t1").getAttribute("aria-selected")).toBe("true");
+    expect(view.getByTestId("browser-page-tab-t2").getAttribute("aria-selected")).toBe("false");
     expect(view.getByTestId("browser-page-tab-t2").getAttribute("aria-busy")).toBeNull();
   });
 
