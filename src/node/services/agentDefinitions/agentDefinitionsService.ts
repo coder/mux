@@ -24,6 +24,7 @@ import { log } from "@/node/services/log";
 import { validateFileSize } from "@/node/services/tools/fileCommon";
 
 import { getBuiltInAgentDefinitions } from "./builtInAgentDefinitions";
+import { resolveAgentVisibility } from "./agentVisibility";
 import {
   AgentDefinitionParseError,
   parseAgentDefinitionMarkdown,
@@ -80,65 +81,6 @@ export function computeBaseSkipScope(
 }
 
 const GLOBAL_AGENTS_ROOT = "~/.mux/agents";
-
-interface AgentDefinitionUiFlags {
-  hidden?: boolean;
-  selectable?: boolean;
-  disabled?: boolean;
-  routable?: boolean;
-}
-
-// TODO: The visibility/routability resolution logic (hidden → selectable, routable)
-// is duplicated across agentDefinitionsService.ts, agentSession.ts,
-// streamContextBuilder.ts, and orpc/router.ts. Consider extracting a single
-// resolveAgentVisibility(ui) → { selectable, routable, disabled } helper.
-function resolveUiSelectable(ui: AgentDefinitionUiFlags | undefined): boolean {
-  if (!ui) {
-    return true;
-  }
-
-  if (typeof ui.hidden === "boolean") {
-    return !ui.hidden;
-  }
-
-  if (typeof ui.selectable === "boolean") {
-    return ui.selectable;
-  }
-
-  return true;
-}
-
-/**
- * Resolve whether an agent can be targeted by switch_agent.
- *
- * Defaults to the same value as uiSelectable: visible agents are routable by
- * default (a human-pickable agent should also be agent-pickable). This differs
- * from subagentRunnable which defaults to false, because routing via
- * switch_agent has lower impact than spawning a task sub-agent.
- *
- * Hidden agents must explicitly set `ui.routable: true` to be switch targets.
- */
-function resolveUiRoutable(ui: AgentDefinitionUiFlags | undefined): boolean {
-  if (typeof ui?.routable === "boolean") {
-    return ui.routable;
-  }
-
-  return resolveUiSelectable(ui);
-}
-
-function resolveUiDisabled(ui: AgentDefinitionUiFlags | undefined): boolean {
-  return ui?.disabled === true;
-}
-
-/**
- * Internal type for tracking agent definitions during discovery.
- * Includes a legacy `disabled` flag (from ui.disabled) for debugging/logging only.
- * Filtering is applied at higher layers so Settings can surface opt-in agents.
- */
-interface AgentDiscoveryEntry {
-  descriptor: AgentDefinitionDescriptor;
-  disabled: boolean;
-}
 
 export interface AgentDefinitionsRoots {
   projectRoot: string;
@@ -248,12 +190,12 @@ function getAgentIdFromFilename(filename: string): AgentId | null {
   return idParsed.data;
 }
 
-async function readAgentDescriptorFromFileWithDisabled(
+async function readAgentDescriptorFromFile(
   runtime: Runtime,
   filePath: string,
   agentId: AgentId,
   scope: Exclude<AgentDefinitionScope, "built-in">
-): Promise<AgentDiscoveryEntry | null> {
+): Promise<AgentDefinitionDescriptor | null> {
   let stat;
   try {
     stat = await runtime.stat(filePath);
@@ -282,21 +224,17 @@ async function readAgentDescriptorFromFileWithDisabled(
   try {
     const parsed = parseAgentDefinitionMarkdown({ content, byteSize: stat.size });
 
-    const uiSelectable = resolveUiSelectable(parsed.frontmatter.ui);
-    const uiRoutable = resolveUiRoutable(parsed.frontmatter.ui);
-    const uiColor = parsed.frontmatter.ui?.color;
-    const subagentRunnable = parsed.frontmatter.subagent?.runnable ?? false;
-    const disabled = resolveUiDisabled(parsed.frontmatter.ui);
+    const { selectable, routable } = resolveAgentVisibility(parsed.frontmatter.ui);
 
     const descriptor: AgentDefinitionDescriptor = {
       id: agentId,
       scope,
       name: parsed.frontmatter.name,
       description: parsed.frontmatter.description,
-      uiSelectable,
-      uiRoutable,
-      uiColor,
-      subagentRunnable,
+      uiSelectable: selectable,
+      uiRoutable: routable,
+      uiColor: parsed.frontmatter.ui?.color,
+      subagentRunnable: parsed.frontmatter.subagent?.runnable ?? false,
       base: parsed.frontmatter.base,
       aiDefaults: parsed.frontmatter.ai,
       tools: parsed.frontmatter.tools,
@@ -308,7 +246,7 @@ async function readAgentDescriptorFromFileWithDisabled(
       return null;
     }
 
-    return { descriptor: validated.data, disabled };
+    return validated.data;
   } catch (err) {
     const message = err instanceof AgentDefinitionParseError ? err.message : getErrorMessage(err);
     log.warn(`Skipping invalid agent definition '${agentId}' (${scope}): ${message}`);
@@ -327,31 +265,24 @@ export async function discoverAgentDefinitions(
 
   const roots = options?.roots ?? getDefaultAgentDefinitionsRoots(runtime, workspacePath);
 
-  const byId = new Map<AgentId, AgentDiscoveryEntry>();
+  const byId = new Map<AgentId, AgentDefinitionDescriptor>();
 
   // Seed built-ins (lowest precedence).
   for (const pkg of getBuiltInAgentDefinitions()) {
-    const uiSelectable = resolveUiSelectable(pkg.frontmatter.ui);
-    const uiRoutable = resolveUiRoutable(pkg.frontmatter.ui);
-    const uiColor = pkg.frontmatter.ui?.color;
-    const subagentRunnable = pkg.frontmatter.subagent?.runnable ?? false;
-    const disabled = resolveUiDisabled(pkg.frontmatter.ui);
+    const { selectable, routable } = resolveAgentVisibility(pkg.frontmatter.ui);
 
     byId.set(pkg.id, {
-      descriptor: {
-        id: pkg.id,
-        scope: "built-in",
-        name: pkg.frontmatter.name,
-        description: pkg.frontmatter.description,
-        uiSelectable,
-        uiRoutable,
-        uiColor,
-        subagentRunnable,
-        base: pkg.frontmatter.base,
-        aiDefaults: pkg.frontmatter.ai,
-        tools: pkg.frontmatter.tools,
-      },
-      disabled,
+      id: pkg.id,
+      scope: "built-in",
+      name: pkg.frontmatter.name,
+      description: pkg.frontmatter.description,
+      uiSelectable: selectable,
+      uiRoutable: routable,
+      uiColor: pkg.frontmatter.ui?.color,
+      subagentRunnable: pkg.frontmatter.subagent?.runnable ?? false,
+      base: pkg.frontmatter.base,
+      aiDefaults: pkg.frontmatter.ai,
+      tools: pkg.frontmatter.tools,
     });
   }
 
@@ -379,23 +310,21 @@ export async function discoverAgentDefinitions(
       }
 
       const filePath = scan.runtime.normalizePath(filename, resolvedRoot);
-      const result = await readAgentDescriptorFromFileWithDisabled(
+      const descriptor = await readAgentDescriptorFromFile(
         scan.runtime,
         filePath,
         agentId,
         scan.scope
       );
-      if (!result) continue;
+      if (!descriptor) continue;
 
-      byId.set(agentId, result);
+      byId.set(agentId, descriptor);
     }
   }
 
   // Return all discovered agents (including those disabled by front-matter).
   // Filtering is applied at higher layers (e.g., agents.list) so Settings can still surface opt-in agents.
-  return Array.from(byId.values())
-    .map((entry) => entry.descriptor)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export interface ReadAgentDefinitionOptions {

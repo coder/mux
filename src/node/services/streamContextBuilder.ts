@@ -40,6 +40,7 @@ import {
   type AgentDefinitionsRoots,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
+import { resolveAgentVisibility } from "@/node/services/agentDefinitions/agentVisibility";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import {
   discoverAgentSkills,
@@ -668,19 +669,13 @@ export async function discoverAvailableSubagentsForToolContext(args: {
           return null;
         }
 
+        const { routable } = resolveAgentVisibility(resolvedFrontmatter.ui);
         return {
           ...descriptor,
           // Important: descriptor.subagentRunnable comes from the agent's own frontmatter only.
           // Re-resolve with inheritance so derived agents inherit runnable: true from their base.
           subagentRunnable: resolvedFrontmatter.subagent?.runnable ?? false,
-          uiRoutable:
-            typeof resolvedFrontmatter.ui?.routable === "boolean"
-              ? resolvedFrontmatter.ui.routable
-              : typeof resolvedFrontmatter.ui?.hidden === "boolean"
-                ? !resolvedFrontmatter.ui.hidden
-                : typeof resolvedFrontmatter.ui?.selectable === "boolean"
-                  ? resolvedFrontmatter.ui.selectable
-                  : true,
+          uiRoutable: routable,
         };
       } catch {
         // Best-effort: keep the descriptor if enablement or inheritance can't be resolved.

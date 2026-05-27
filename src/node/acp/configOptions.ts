@@ -6,6 +6,7 @@ import { getThinkingOptionLabel, isThinkingLevel } from "@/common/types/thinking
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import { resolveRemovedBuiltinAgentId } from "@/common/utils/agentIds";
 import { getBuiltInAgentDefinitions } from "@/node/services/agentDefinitions/builtInAgentDefinitions";
+import { resolveAgentVisibility } from "@/node/services/agentDefinitions/agentVisibility";
 import type { ORPCClient } from "./serverConnection";
 import { resolveAgentAiSettings, type ResolvedAiSettings } from "./resolveAgentAiSettings";
 
@@ -25,19 +26,10 @@ interface ExposedAgentMode {
 }
 
 function isUiSelectableAgentMode(frontmatter: AgentDefinitionFrontmatter): boolean {
-  if (frontmatter.disabled === true || frontmatter.ui?.disabled === true) {
+  if (frontmatter.disabled === true) {
     return false;
   }
-
-  if (frontmatter.ui?.hidden != null) {
-    return !frontmatter.ui.hidden;
-  }
-
-  if (frontmatter.ui?.selectable != null) {
-    return frontmatter.ui.selectable;
-  }
-
-  return true;
+  return resolveAgentVisibility(frontmatter.ui).selectable;
 }
 
 const BUILTIN_AGENT_MODE_ORDER = getBuiltInAgentDefinitions()

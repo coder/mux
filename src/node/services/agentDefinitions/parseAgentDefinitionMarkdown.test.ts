@@ -47,23 +47,6 @@ Do the thing.
     expect(result.body).toContain("# Instructions");
   });
 
-  test("accepts legacy ui.selectable", () => {
-    const content = `---
-name: Legacy UI
-ui:
-  selectable: false
----
-Body
-`;
-
-    const result = parseAgentDefinitionMarkdown({
-      content,
-      byteSize: Buffer.byteLength(content, "utf-8"),
-    });
-
-    expect(result.frontmatter.ui?.selectable).toBe(false);
-  });
-
   test("parses ui.requires", () => {
     const content = `---
 name: Requires Capabilities

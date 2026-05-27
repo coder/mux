@@ -84,6 +84,7 @@ import {
   resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
+import { resolveAgentVisibility } from "@/node/services/agentDefinitions/agentVisibility";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { MessageQueue } from "./messageQueue";
 import {
@@ -5142,21 +5143,9 @@ export class AgentSession {
         return false;
       }
 
-      // NOTE: hidden is opt-out. selectable is legacy opt-in.
-      // Mirrors the same logic in agents.list (src/node/orpc/router.ts).
-      const uiSelectableBase =
-        typeof resolvedFrontmatter.ui?.hidden === "boolean"
-          ? !resolvedFrontmatter.ui.hidden
-          : typeof resolvedFrontmatter.ui?.selectable === "boolean"
-            ? resolvedFrontmatter.ui.selectable
-            : true;
-      // An agent is routable if explicitly opted in via ui.routable,
-      // or if ui.routable is unset and the agent is UI-selectable.
-      // This means explicit ui.routable: false blocks routing even for
-      // visible agents.
-      const isRoutable = resolvedFrontmatter.ui?.routable ?? uiSelectableBase;
+      const { routable } = resolveAgentVisibility(resolvedFrontmatter.ui);
 
-      if (!isRoutable) {
+      if (!routable) {
         log.warn("switch_agent target is not routable; skipping synthetic follow-up", {
           workspaceId: this.workspaceId,
           targetAgentId: parsedAgentId.data,

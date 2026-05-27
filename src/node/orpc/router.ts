@@ -80,6 +80,7 @@ import {
   resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
+import { resolveAgentVisibility } from "@/node/services/agentDefinitions/agentVisibility";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
@@ -1480,13 +1481,9 @@ export const router = (authToken?: string) => {
                   return null;
                 }
 
-                // NOTE: hidden is opt-out. selectable is legacy opt-in.
-                const uiSelectableBase =
-                  typeof resolvedFrontmatter.ui?.hidden === "boolean"
-                    ? !resolvedFrontmatter.ui.hidden
-                    : typeof resolvedFrontmatter.ui?.selectable === "boolean"
-                      ? resolvedFrontmatter.ui.selectable
-                      : true;
+                const { selectable: uiSelectableBase } = resolveAgentVisibility(
+                  resolvedFrontmatter.ui
+                );
 
                 return {
                   kind: "resolved" as const,

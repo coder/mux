@@ -931,7 +931,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
             name: descriptor.name,
             description: descriptor.description,
             base: descriptor.base,
-            ui: { selectable: descriptor.uiSelectable },
+            ui: { hidden: !descriptor.uiSelectable },
             subagent: { runnable: descriptor.subagentRunnable },
             ai: descriptor.aiDefaults,
             tools: descriptor.tools,
