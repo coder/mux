@@ -644,6 +644,10 @@ export async function addSubmodule(
 async function createLocalSubmoduleRepo(): Promise<string> {
   const submoduleRepoPath = await fs.mkdtemp(path.join(os.tmpdir(), "mux-test-submodule-"));
   await execAsync("git init -b main", { cwd: submoduleRepoPath });
+  await execAsync(
+    `git config user.email "test@example.com" && git config user.name "Test User" && git config commit.gpgsign false`,
+    { cwd: submoduleRepoPath }
+  );
   await fs.writeFile(path.join(submoduleRepoPath, "README.md"), "# Test submodule\n");
   await execAsync("git add README.md", { cwd: submoduleRepoPath });
   await execAsync('git -c commit.gpgsign=false commit -m "Initial submodule commit"', {
