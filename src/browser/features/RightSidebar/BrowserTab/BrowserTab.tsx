@@ -182,6 +182,7 @@ export function BrowserTab(props: BrowserTabProps) {
         ? DISCOVERY_BADGES[selectedDiscoveredSession.status]
         : null;
   const headerTitle = "Browser preview";
+  const shouldShowPageTabStrip = pageTabs.length > 1 || pageTabsError != null;
 
   useEffect(() => {
     if (api == null) {
@@ -279,6 +280,10 @@ export function BrowserTab(props: BrowserTabProps) {
           ...(isOtherSessionSelected ? { allowOtherWorkspaceSession: true } : {}),
         });
         if (cancelled || refreshGeneration !== tabRefreshGenerationRef.current) {
+          return;
+        }
+
+        if (pendingTabIdRef.current != null) {
           return;
         }
 
@@ -470,7 +475,7 @@ export function BrowserTab(props: BrowserTabProps) {
         )}
       </div>
 
-      {(pageTabs.length > 1 || pageTabsError != null) && (
+      {shouldShowPageTabStrip && (
         <BrowserPageTabStrip
           tabs={pageTabs}
           error={pageTabsError}
@@ -506,7 +511,7 @@ export function BrowserTab(props: BrowserTabProps) {
 
       <div className="flex min-h-0 flex-1 flex-col">
         <BrowserViewport
-          panelId={BROWSER_VIEWPORT_PANEL_ID}
+          panelId={shouldShowPageTabStrip ? BROWSER_VIEWPORT_PANEL_ID : undefined}
           workspaceId={props.workspaceId}
           session={session}
           screenshotSrc={screenshotSrc}

@@ -237,6 +237,9 @@ describe("BrowserTab", () => {
     await waitFor(() => {
       expect(view.getByRole("tablist", { name: "Browser tabs" })).toBeTruthy();
     });
+    expect(view.getByRole("tabpanel", { name: "Browser viewport" }).id).toBe(
+      "browser-preview-viewport"
+    );
     expect(listTabsMock).toHaveBeenCalledWith({
       workspaceId: "workspace-1",
       sessionName: "alpha",
@@ -272,6 +275,12 @@ describe("BrowserTab", () => {
           url: "https://second.example.com/",
           active: false,
         }),
+        createPageTab({
+          tabId: "t3",
+          title: "Third tab",
+          url: "https://third.example.com/",
+          active: false,
+        }),
       ],
       error: undefined,
     });
@@ -289,10 +298,16 @@ describe("BrowserTab", () => {
     fireEvent.keyDown(view.getByTestId("browser-page-tab-t2"), { key: "ArrowLeft" });
     expect(globalThis.document.activeElement).toBe(view.getByTestId("browser-page-tab-t1"));
 
-    fireEvent.keyDown(view.getByTestId("browser-page-tab-t1"), { key: "End" });
-    expect(globalThis.document.activeElement).toBe(view.getByTestId("browser-page-tab-t2"));
+    fireEvent.keyDown(view.getByTestId("browser-page-tab-t1"), { key: "ArrowLeft" });
+    expect(globalThis.document.activeElement).toBe(view.getByTestId("browser-page-tab-t3"));
 
-    fireEvent.keyDown(view.getByTestId("browser-page-tab-t2"), { key: "Home" });
+    fireEvent.keyDown(view.getByTestId("browser-page-tab-t3"), { key: "ArrowRight" });
+    expect(globalThis.document.activeElement).toBe(view.getByTestId("browser-page-tab-t1"));
+
+    fireEvent.keyDown(view.getByTestId("browser-page-tab-t1"), { key: "End" });
+    expect(globalThis.document.activeElement).toBe(view.getByTestId("browser-page-tab-t3"));
+
+    fireEvent.keyDown(view.getByTestId("browser-page-tab-t3"), { key: "Home" });
     expect(globalThis.document.activeElement).toBe(view.getByTestId("browser-page-tab-t1"));
   });
 
@@ -392,44 +407,42 @@ describe("BrowserTab", () => {
     });
   });
 
-  test("shows tab listing and switching errors", async () => {
+  test("shows tab listing errors", async () => {
     listSessionsMock.mockResolvedValue({
       sessions: [createDiscoveredSession()],
       otherSessions: [],
     });
-    const visibleTabs = [
-      createPageTab(),
-      createPageTab({
-        tabId: "t2",
-        title: "Second tab",
-        url: "https://second.example.com/",
-        active: false,
-      }),
-    ];
-    let listTabsCallCount = 0;
-    listTabsMock.mockImplementation(() => {
-      listTabsCallCount += 1;
-      return Promise.resolve(
-        listTabsCallCount === 1
-          ? { tabs: [], error: "tab list failed" }
-          : { tabs: visibleTabs, error: undefined }
-      );
-    });
+    listTabsMock.mockResolvedValue({ tabs: [], error: "tab list failed" });
 
     const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
 
     await waitFor(() => {
       expect(view.getByRole("alert").textContent).toContain("tab list failed");
     });
+  });
 
+  test("shows tab switching errors", async () => {
+    listSessionsMock.mockResolvedValue({
+      sessions: [createDiscoveredSession()],
+      otherSessions: [],
+    });
+    listTabsMock.mockResolvedValue({
+      tabs: [
+        createPageTab(),
+        createPageTab({
+          tabId: "t2",
+          title: "Second tab",
+          url: "https://second.example.com/",
+          active: false,
+        }),
+      ],
+      error: undefined,
+    });
     selectTabMock.mockResolvedValueOnce({ success: false, error: "tab switch failed" });
 
-    await waitFor(
-      () => {
-        expect(view.getByTestId("browser-page-tab-t2")).toBeTruthy();
-      },
-      { timeout: BROWSER_PREVIEW_RETRY_INTERVAL_MS + 1_000 }
-    );
+    const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
+
+    await view.findByTestId("browser-page-tab-t2");
     fireEvent.click(view.getByTestId("browser-page-tab-t2"));
 
     await waitFor(() => {
@@ -463,8 +476,14 @@ describe("BrowserTab", () => {
     const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
 
     await view.findByRole("tablist", { name: "Browser tabs" });
-    expect(view.getByText("first.example.com")).toBeTruthy();
-    expect(view.getByText("docs")).toBeTruthy();
+    expect(view.getByTestId("browser-page-tab-t1").getAttribute("aria-label")).toBe(
+      "Browser tab: first.example.com"
+    );
+    expect(view.getByTestId("browser-page-tab-t1").textContent).toContain("t1");
+    expect(view.getByTestId("browser-page-tab-t2").getAttribute("aria-label")).toBe(
+      "Browser tab: docs"
+    );
+    expect(view.getByTestId("browser-page-tab-t2").textContent).toContain("t2");
   });
 
   test("can switch from an explicitly selected other session back to a current session", async () => {
@@ -553,6 +572,7 @@ describe("BrowserTab", () => {
       );
     });
 
+    expect(view.queryByRole("tabpanel")).toBeNull();
     expect((view.getByLabelText("Back") as HTMLButtonElement).disabled).toBe(false);
     expect((view.getByLabelText("Forward") as HTMLButtonElement).disabled).toBe(false);
     expect((view.getByLabelText("Reload") as HTMLButtonElement).disabled).toBe(false);

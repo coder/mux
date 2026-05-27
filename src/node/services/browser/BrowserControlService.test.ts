@@ -471,27 +471,52 @@ describe("BrowserControlService", () => {
     expect(await resultPromise).toEqual({ tabs: [], error: "tab list failed" });
   });
 
-  test("listTabs reports malformed CLI output", async () => {
-    const cases = [
-      { stdout: "not-json", error: "invalid JSON" },
-      { stdout: JSON.stringify({ success: true, data: {} }), error: "unexpected JSON payload" },
-    ];
+  test("listTabs reports structured CLI failures without details", async () => {
+    const child = new MockChildProcess();
+    const { spawnFn, waitForSpawn } = createSpawnHarness(child);
+    const service = createService({ spawnFn });
 
-    for (const testCase of cases) {
-      const child = new MockChildProcess();
-      const { spawnFn, waitForSpawn } = createSpawnHarness(child);
-      const service = createService({ spawnFn });
+    const resultPromise = service.listTabs({
+      workspaceId: WORKSPACE_ID,
+      sessionName: SESSION_NAME,
+    });
+    await waitForSpawn();
+    child.writeStdout(JSON.stringify({ success: false, data: null, error: "" }));
+    child.close();
 
-      const resultPromise = service.listTabs({
-        workspaceId: WORKSPACE_ID,
-        sessionName: SESSION_NAME,
-      });
-      await waitForSpawn();
-      child.writeStdout(testCase.stdout);
-      child.close();
+    expect(await resultPromise).toEqual({ tabs: [], error: "failed without details" });
+  });
 
-      expect(await resultPromise).toEqual({ tabs: [], error: testCase.error });
-    }
+  test("listTabs reports invalid JSON from the CLI", async () => {
+    const child = new MockChildProcess();
+    const { spawnFn, waitForSpawn } = createSpawnHarness(child);
+    const service = createService({ spawnFn });
+
+    const resultPromise = service.listTabs({
+      workspaceId: WORKSPACE_ID,
+      sessionName: SESSION_NAME,
+    });
+    await waitForSpawn();
+    child.writeStdout("not-json");
+    child.close();
+
+    expect(await resultPromise).toEqual({ tabs: [], error: "invalid JSON" });
+  });
+
+  test("listTabs reports unexpected CLI payloads", async () => {
+    const child = new MockChildProcess();
+    const { spawnFn, waitForSpawn } = createSpawnHarness(child);
+    const service = createService({ spawnFn });
+
+    const resultPromise = service.listTabs({
+      workspaceId: WORKSPACE_ID,
+      sessionName: SESSION_NAME,
+    });
+    await waitForSpawn();
+    child.writeStdout(JSON.stringify({ success: true, data: {} }));
+    child.close();
+
+    expect(await resultPromise).toEqual({ tabs: [], error: "unexpected JSON payload" });
   });
 
   test("listTabs filters non-page targets and malformed entries", async () => {
@@ -521,6 +546,13 @@ describe("BrowserControlService", () => {
             {
               active: false,
               label: null,
+              tabId: "malformed-page",
+              type: "page",
+              url: "https://example.com/malformed",
+            },
+            {
+              active: false,
+              label: null,
               tabId: "worker-1",
               title: "Worker",
               type: "service_worker",
@@ -546,7 +578,7 @@ describe("BrowserControlService", () => {
     });
   });
 
-  test("listTabs rejects malformed page tab entries", async () => {
+  test("listTabs returns no error when every page tab entry is malformed", async () => {
     const child = new MockChildProcess();
     const { spawnFn, waitForSpawn } = createSpawnHarness(child);
     const service = createService({ spawnFn });
@@ -574,7 +606,7 @@ describe("BrowserControlService", () => {
     );
     child.close();
 
-    expect(await resultPromise).toEqual({ tabs: [], error: "unexpected JSON payload" });
+    expect(await resultPromise).toEqual({ tabs: [] });
   });
 
   test("selectTab switches the active browser tab", async () => {

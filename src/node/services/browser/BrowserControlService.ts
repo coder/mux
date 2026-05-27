@@ -83,8 +83,6 @@ interface BrowserControlServiceOptions {
   timeoutMs?: number;
 }
 
-const BrowserPageTabsSchema = BrowserPageTabSchema.array();
-
 type BrowserPageTabsParseResult =
   | { success: true; tabs: BrowserPageTab[] }
   | { success: false; error: string | null };
@@ -102,11 +100,8 @@ function parseBrowserPageTabsJson(stdout: string): BrowserPageTabsParseResult {
   }
 
   if (payload.success === false) {
-    return {
-      success: false,
-      error:
-        typeof payload.error === "string" && payload.error.trim().length > 0 ? payload.error : null,
-    };
+    const error = typeof payload.error === "string" ? payload.error.trim() : "";
+    return { success: false, error: error.length > 0 ? error : "failed without details" };
   }
 
   if (payload.success != null && payload.success !== true) {
@@ -118,20 +113,22 @@ function parseBrowserPageTabsJson(stdout: string): BrowserPageTabsParseResult {
     return { success: false, error: "unexpected JSON payload" };
   }
 
-  const pageTabs: unknown[] = [];
+  const pageTabs: BrowserPageTab[] = [];
   for (const rawTab of rawTabs) {
     if (!isPlainObject(rawTab)) {
       continue;
     }
-    if (rawTab.type === "page" || rawTab.type === "webview") {
-      pageTabs.push(rawTab);
+    if (rawTab.type !== "page" && rawTab.type !== "webview") {
+      continue;
+    }
+
+    const parsedTab = BrowserPageTabSchema.safeParse(rawTab);
+    if (parsedTab.success) {
+      pageTabs.push(parsedTab.data);
     }
   }
 
-  const parsedTabs = BrowserPageTabsSchema.safeParse(pageTabs);
-  return parsedTabs.success
-    ? { success: true, tabs: parsedTabs.data }
-    : { success: false, error: "unexpected JSON payload" };
+  return { success: true, tabs: pageTabs };
 }
 
 export class BrowserControlService {
