@@ -674,6 +674,11 @@ export const ExperimentsSchema = z.object({
   imageGenerationTool: z.boolean().optional(),
 });
 
+/**
+ * `steer` is accepted for older clients, but the backend treats every manual
+ * user message as a pause because active goal mode is derived from the latest
+ * `goal_continuation` user turn.
+ */
 export const GoalInterventionPolicySchema = z.enum(["steer", "pause"]);
 
 // SendMessage options

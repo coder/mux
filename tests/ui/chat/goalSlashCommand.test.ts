@@ -21,16 +21,12 @@ describe("Goal slash command", () => {
     });
 
     try {
-      const created = await app.env.orpc.workspace.setGoal({
-        workspaceId: app.workspaceId,
-        objective: "old completed goal",
-        budgetCents: null,
-      });
-      expect(created.success).toBe(true);
       const completed = await app.env.orpc.workspace.setGoal({
         workspaceId: app.workspaceId,
+        objective: "old completed goal",
         status: "complete",
         completionSummary: "Done.",
+        budgetCents: null,
       });
       expect(completed.success).toBe(true);
 

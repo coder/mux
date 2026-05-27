@@ -8,7 +8,12 @@ import { IdleDispatcher } from "./idleDispatcher";
 import { createTestHistoryService } from "./testHistoryService";
 import type { HistoryService } from "./historyService";
 import type { GoalRecordV1, GoalStatus } from "@/common/types/goal";
-import { GOAL_BUDGET_LIMIT_KIND, GOAL_CONTINUATION_IDLE_CONSUMER_NAME } from "@/constants/goals";
+import {
+  GOAL_BUDGET_LIMIT_KIND,
+  GOAL_CONTINUATION_IDLE_CONSUMER_NAME,
+  GOAL_CONTINUATION_KIND,
+} from "@/constants/goals";
+import { createMuxMessage } from "@/common/types/message";
 // Shared dispatch helpers live in `./testDispatchHelpers` instead of local
 // copies so future callers cannot drift.
 import { drainPendingDispatches, waitForCondition } from "./testDispatchHelpers";
@@ -31,6 +36,28 @@ async function setGoalOk(
     throw new Error(`Expected goal set to succeed, got ${JSON.stringify(result.error)}`);
   }
   return result.data;
+}
+
+async function appendUserHistoryMessage(
+  historyService: HistoryService,
+  workspaceId: string,
+  text: string,
+  metadata: Parameters<typeof createMuxMessage>[3] = { timestamp: Date.now() }
+): Promise<void> {
+  const result = await historyService.appendToHistory(
+    workspaceId,
+    createMuxMessage(`goal-test-user-${crypto.randomUUID()}`, "user", text, metadata)
+  );
+  expect(result.success).toBe(true);
+}
+
+async function getLastUserHistoryMessage(historyService: HistoryService, workspaceId: string) {
+  const history = await historyService.getLastMessages(workspaceId, 20);
+  expect(history.success).toBe(true);
+  if (!history.success) {
+    throw new Error(history.error);
+  }
+  return [...history.data].reverse().find((message) => message.role === "user");
 }
 
 const PROJECT_PATH = "/tmp/mux-goal-service-test-project";
@@ -359,6 +386,101 @@ describe("WorkspaceGoalService", () => {
     expect(executed[0]?.message).toContain("<untrusted_objective>");
   });
 
+  test("getGoal reconciles active goals to paused when the latest user turn is not a continuation", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Follow chat tail" });
+    await appendUserHistoryMessage(historyService, workspaceId, "Manual interruption");
+
+    const reconciled = await service.getGoal(workspaceId);
+
+    expect(reconciled).toMatchObject({ status: "paused" });
+  });
+
+  test("chat-tail reconciliation ignores synthetic maintenance user rows", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Ignore maintenance rows" });
+    await appendUserHistoryMessage(historyService, workspaceId, "Continue goal", {
+      timestamp: Date.now(),
+      synthetic: true,
+      uiVisible: true,
+      kind: GOAL_CONTINUATION_KIND,
+    });
+    await appendUserHistoryMessage(historyService, workspaceId, "Synthetic heartbeat", {
+      timestamp: Date.now(),
+      synthetic: true,
+      muxMetadata: { type: "heartbeat-request", source: "heartbeat" },
+    });
+
+    const reconciled = await service.getGoal(workspaceId);
+
+    expect(reconciled).toMatchObject({ status: "active" });
+  });
+
+  test("pause appends a hidden user boundary so the chat tail no longer marks the goal active", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Pause from continuation" });
+    await appendUserHistoryMessage(historyService, workspaceId, "Continue goal", {
+      timestamp: Date.now(),
+      synthetic: true,
+      uiVisible: true,
+      kind: GOAL_CONTINUATION_KIND,
+    });
+
+    const paused = await setGoalOk(service, { workspaceId, status: "paused" });
+    const lastUserMessage = await getLastUserHistoryMessage(historyService, workspaceId);
+
+    expect(paused).toMatchObject({ status: "paused" });
+    expect(lastUserMessage?.metadata?.synthetic).toBe(true);
+    expect(lastUserMessage?.metadata?.muxMetadata).toMatchObject({ type: "goal-pause-boundary" });
+    expect(lastUserMessage?.metadata?.kind).toBeUndefined();
+    expect(await service.getGoal(workspaceId)).toMatchObject({ status: "paused" });
+  });
+
+  test("resume appends a goal continuation before reporting the goal active", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Resume via chat tail", status: "paused" });
+    await appendUserHistoryMessage(historyService, workspaceId, "Manual pause reason");
+    const dispatcher = new IdleDispatcher();
+    service.registerGoalContinuationConsumer(dispatcher, {
+      hasActiveDescendantTasks: () => false,
+      getRuntimeState: () => ({ isRuntimeCompatible: true }),
+      executeGoalContinuation: async (input) => {
+        await appendUserHistoryMessage(historyService, input.workspaceId, input.message, {
+          timestamp: Date.now(),
+          synthetic: true,
+          uiVisible: true,
+          kind: input.kind ?? GOAL_CONTINUATION_KIND,
+        });
+        return true;
+      },
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    const resumed = await setGoalOk(service, { workspaceId, status: "active" });
+    const lastUserMessage = await getLastUserHistoryMessage(historyService, workspaceId);
+
+    expect(resumed).toMatchObject({ status: "active" });
+    expect(lastUserMessage?.metadata?.kind).toBe(GOAL_CONTINUATION_KIND);
+  });
+
+  test("pause clears a deferred kickoff continuation candidate", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Deferred resume", status: "paused" });
+    let busy = true;
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(execute),
+      getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    await setGoalOk(service, { workspaceId, status: "active" });
+    await drainPendingDispatches();
+    expect(execute).not.toHaveBeenCalled();
+
+    await setGoalOk(service, { workspaceId, status: "paused" });
+    busy = false;
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   test("skips the kickoff arm when no kickoff send options are available", async () => {
     const dispatcher = new IdleDispatcher();
     const executed: Array<{ message: string }> = [];
@@ -467,7 +589,6 @@ describe("WorkspaceGoalService", () => {
       sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
       streamEndedAtMs: 10_001,
     });
-    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
 
     expect(execute).toHaveBeenCalledTimes(2);
   });

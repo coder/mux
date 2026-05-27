@@ -22,7 +22,11 @@ import {
   GoalRecordV1Schema,
 } from "@/common/orpc/schemas/goal";
 import type { GoalBoardEntry, GoalBoardSnapshot, GoalBoardV1 } from "@/common/types/goal";
-import { createMuxMessage, pickStartupRetrySendOptions } from "@/common/types/message";
+import {
+  createMuxMessage,
+  pickStartupRetrySendOptions,
+  type MuxMessage,
+} from "@/common/types/message";
 import type { ProvidersConfigMap, SendMessageOptions } from "@/common/orpc/types";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import {
@@ -153,6 +157,7 @@ export interface GoalContinuationRuntimeBridge {
     workspaceId: string;
     message: string;
     options: SendMessageOptions;
+    startStreamInBackground?: boolean;
     kind?: GoalSyntheticMessageKind;
   }): Promise<boolean>;
   /**
@@ -163,11 +168,18 @@ export interface GoalContinuationRuntimeBridge {
   getKickoffSendOptions?(workspaceId: string): SendMessageOptions | null;
 }
 
+type PendingGoalContinuationSource = "stream_end" | "kickoff" | "budget_wrapup";
+
 interface PendingGoalContinuationCandidate {
   goalId: string;
   requestedAtMs: number;
   streamEndedAtMs: number;
+  source: PendingGoalContinuationSource;
   sendOptions: SendMessageOptions;
+}
+
+interface ChatTailGoalModeResult {
+  mode: "active" | "paused" | null;
 }
 
 interface GoalContinuationEligibilityResult {
@@ -401,6 +413,128 @@ export class WorkspaceGoalService {
 
   setStreamInterrupter(interrupter: (workspaceId: string) => Promise<void>): void {
     this.streamInterrupter = interrupter;
+  }
+
+  private isSyntheticSnapshotUserMessage(message: MuxMessage): boolean {
+    return (
+      message.role === "user" &&
+      message.metadata?.synthetic === true &&
+      (message.metadata.fileAtMentionSnapshot !== undefined ||
+        message.metadata.agentSkillSnapshot !== undefined)
+    );
+  }
+
+  private async readChatTailGoalMode(workspaceId: string): Promise<ChatTailGoalModeResult> {
+    const historyResult = await this.historyService.getLastMessages(workspaceId, 100);
+    if (!historyResult.success) {
+      log.warn("Failed to read chat tail for goal mode reconciliation", {
+        workspaceId,
+        error: historyResult.error,
+      });
+      return { mode: null };
+    }
+
+    if (historyResult.data.length === 0) {
+      return { mode: null };
+    }
+
+    for (let index = historyResult.data.length - 1; index >= 0; index -= 1) {
+      const message = historyResult.data[index];
+      if (message.role !== "user" || this.isSyntheticSnapshotUserMessage(message)) {
+        continue;
+      }
+
+      if (message.metadata?.kind === GOAL_CONTINUATION_KIND) {
+        return { mode: "active" };
+      }
+      if (message.metadata?.muxMetadata?.type === "goal-pause-boundary") {
+        return { mode: "paused" };
+      }
+      if (message.metadata?.synthetic === true) {
+        continue;
+      }
+      return { mode: "paused" };
+    }
+
+    return { mode: null };
+  }
+
+  private applyChatTailGoalMode(
+    goal: GoalRecordV1,
+    chatTailMode: ChatTailGoalModeResult
+  ): GoalRecordV1 {
+    if (chatTailMode.mode == null || (goal.status !== "active" && goal.status !== "paused")) {
+      return goal;
+    }
+
+    const desiredStatus = chatTailMode.mode;
+    if (goal.status === desiredStatus) {
+      return goal;
+    }
+
+    // User rationale: goal running/paused mode is locked to the chat tail by
+    // construction. A goal-continuation user turn is the only durable proof that
+    // the model has been asked to keep driving the goal; any other latest user
+    // turn leaves the goal paused until Resume appends a fresh continuation.
+    const next = GoalRecordV1Schema.parse({
+      ...goal,
+      status: desiredStatus,
+      updatedAtMs: Date.now(),
+    });
+    return this.applyBudgetDrivenStatus(next);
+  }
+
+  private async syncGoalStatusToChatTail(workspaceId: string): Promise<GoalRecordV1 | null> {
+    const chatTailMode = await this.readChatTailGoalMode(workspaceId);
+    return this.fileLocks.withLock(workspaceId, async () => {
+      const current = await this.readGoalFile(workspaceId);
+      if (!current) {
+        await this.pushGoalReadSnapshot(workspaceId, null);
+        return null;
+      }
+
+      const next = this.applyChatTailGoalMode(current, chatTailMode);
+      if (next === current) {
+        return current;
+      }
+
+      await this.writeGoal(workspaceId, next);
+      await this.pushGoalReadSnapshot(workspaceId, next);
+      this.emitBudgetLimited(next, current.status);
+      this.emitStatusLifecycle(next, current.status, "auto");
+      return next;
+    });
+  }
+
+  private async appendGoalPauseBoundaryIfNeeded(workspaceId: string): Promise<boolean> {
+    const chatTailMode = await this.readChatTailGoalMode(workspaceId);
+    if (chatTailMode.mode !== "active") {
+      return true;
+    }
+
+    // Hidden synthetic user boundary: it makes Pause durable in the same
+    // declarative state model as Resume without rewriting prior continuation
+    // history. The row is model-visible but not rendered unless synthetic debug
+    // messages are enabled, matching other context-only system breadcrumbs.
+    const message = createMuxMessage(
+      `goal-paused-${Date.now()}-${crypto.randomUUID()}`,
+      "user",
+      "Goal paused by the user. Do not continue the goal until a later goal continuation message.",
+      {
+        timestamp: Date.now(),
+        synthetic: true,
+        muxMetadata: { type: "goal-pause-boundary" },
+      }
+    );
+    const appendResult = await this.historyService.appendToHistory(workspaceId, message);
+    if (!appendResult.success) {
+      log.warn("Failed to append goal pause boundary", {
+        workspaceId,
+        error: appendResult.error,
+      });
+      return false;
+    }
+    return true;
   }
 
   private getFilePath(workspaceId: string): string {
@@ -740,6 +874,7 @@ export class WorkspaceGoalService {
       goalId: goal.goalId,
       requestedAtMs: Date.now(),
       streamEndedAtMs,
+      source: "stream_end",
       sendOptions,
     });
     await this.goalContinuationDispatcher.requestDispatch(
@@ -907,6 +1042,7 @@ export class WorkspaceGoalService {
             workspaceId,
             message,
             options: candidate.sendOptions,
+            startStreamInBackground: false,
             kind: GOAL_BUDGET_LIMIT_KIND,
           });
           if (accepted !== true) {
@@ -926,14 +1062,22 @@ export class WorkspaceGoalService {
       };
     }
 
-    assert(goal.status === "active", "goal idle payload requires active or budget-limited goal");
-    const message = buildGoalContinuationMessage(goal);
+    const continuationGoal =
+      goal.status === "paused" && candidate.source === "kickoff"
+        ? GoalRecordV1Schema.parse({ ...goal, status: "active" })
+        : goal;
+    assert(
+      continuationGoal.status === "active",
+      "goal idle payload requires active, paused-kickoff, or budget-limited goal"
+    );
+    const message = buildGoalContinuationMessage(continuationGoal);
     return {
       dispatch: async () => {
         const accepted = await this.goalContinuationBridge?.executeGoalContinuation({
           workspaceId,
           message,
           options: candidate.sendOptions,
+          startStreamInBackground: candidate.source === "kickoff",
           kind: GOAL_CONTINUATION_KIND,
         });
         if (accepted !== true) {
@@ -941,7 +1085,14 @@ export class WorkspaceGoalService {
           return;
         }
         await this.recordContinuationFired(workspaceId, goal.goalId, Date.now());
-        this.deletePendingCandidateIfStillSame(workspaceId, candidate);
+        if (candidate.source !== "kickoff") {
+          this.deletePendingCandidateIfStillSame(workspaceId, candidate);
+          return;
+        }
+        // Keep kickoff candidates until the stream-end path replaces or clears
+        // them. Background startup failures happen after the synthetic user row
+        // is accepted; retaining the candidate lets the failure hook re-request
+        // dispatch instead of stranding the active goal.
       },
     };
   }
@@ -1047,7 +1198,9 @@ export class WorkspaceGoalService {
       }
     }
 
-    const goal = await this.normalizeGoalLimits(workspaceId);
+    const goal = await this.normalizeGoalLimits(workspaceId, {
+      syncChatTail: candidate.source !== "kickoff",
+    });
     if (!goal) {
       this.pendingContinuationCandidates.delete(workspaceId);
       return { eligible: false, reason: "goal_missing" };
@@ -1057,8 +1210,10 @@ export class WorkspaceGoalService {
       return { eligible: false, reason: "goal_mismatch" };
     }
     if (goal.status !== "active" && goal.status !== "budget_limited") {
-      this.pendingContinuationCandidates.delete(workspaceId);
-      return { eligible: false, reason: "goal_not_active" };
+      if (goal.status !== "paused" || candidate.source !== "kickoff") {
+        this.pendingContinuationCandidates.delete(workspaceId);
+        return { eligible: false, reason: "goal_not_active" };
+      }
     }
     if (goal.requireUserAcknowledgmentSinceMs != null) {
       return { eligible: false, reason: "requires_ack" };
@@ -1129,18 +1284,27 @@ export class WorkspaceGoalService {
     return null;
   }
 
-  private async normalizeGoalLimits(workspaceId: string): Promise<GoalRecordV1 | null> {
+  private async normalizeGoalLimits(
+    workspaceId: string,
+    options: { syncChatTail?: boolean } = {}
+  ): Promise<GoalRecordV1 | null> {
+    const chatTailMode =
+      options.syncChatTail === true ? await this.readChatTailGoalMode(workspaceId) : null;
     return this.fileLocks.withLock(workspaceId, async () => {
       const current = await this.readGoalFile(workspaceId);
       if (!current) {
         await this.pushGoalReadSnapshot(workspaceId, null);
         return null;
       }
-      const next = this.applyBudgetDrivenStatus(current);
+      const budgetNormalized = this.applyBudgetDrivenStatus(current);
+      const next = chatTailMode
+        ? this.applyChatTailGoalMode(budgetNormalized, chatTailMode)
+        : budgetNormalized;
       if (next !== current) {
         await this.writeGoal(workspaceId, next);
         await this.pushGoalReadSnapshot(workspaceId, next);
         this.emitBudgetLimited(next, current.status);
+        this.emitStatusLifecycle(next, current.status, "auto");
         return next;
       }
       await this.pushGoalReadSnapshot(workspaceId, current);
@@ -1153,18 +1317,27 @@ export class WorkspaceGoalService {
     expectedGoalId: string,
     firedAtMs: number
   ): Promise<void> {
+    const chatTailMode = await this.readChatTailGoalMode(workspaceId);
     await this.fileLocks.withLock(workspaceId, async () => {
       const current = await this.readGoalFile(workspaceId);
-      if (current?.goalId !== expectedGoalId || current.status !== "active") {
+      if (current?.goalId !== expectedGoalId) {
+        return;
+      }
+      const continuationAccepted =
+        current.status === "active" ||
+        (current.status === "paused" && chatTailMode.mode === "active");
+      if (!continuationAccepted) {
         return;
       }
       const next = GoalRecordV1Schema.parse({
         ...current,
+        status: "active",
         lastContinuationFiredAtMs: firedAtMs,
         updatedAtMs: firedAtMs,
       });
       await this.writeGoal(workspaceId, next);
       await this.pushSnapshot(workspaceId, next);
+      this.emitStatusLifecycle(next, current.status, "auto");
       this.emitContinuationFired(next, firedAtMs);
     });
   }
@@ -1508,8 +1681,27 @@ export class WorkspaceGoalService {
     return maybeConfig.loadProvidersConfig() as unknown as ProvidersConfigMap | null;
   }
 
+  async requestPendingGoalContinuationDispatch(workspaceId: string): Promise<void> {
+    assert(
+      workspaceId.trim().length > 0,
+      "requestPendingGoalContinuationDispatch requires workspaceId"
+    );
+    if (!this.pendingContinuationCandidates.has(workspaceId)) {
+      return;
+    }
+    await this.goalContinuationDispatcher?.requestDispatch(
+      workspaceId,
+      GOAL_CONTINUATION_IDLE_CONSUMER_NAME
+    );
+  }
+
+  async syncGoalModeWithChatTail(workspaceId: string): Promise<GoalRecordV1 | null> {
+    assert(workspaceId.trim().length > 0, "syncGoalModeWithChatTail requires workspaceId");
+    return this.syncGoalStatusToChatTail(workspaceId);
+  }
+
   async getGoal(workspaceId: string): Promise<GoalRecordV1 | null> {
-    return this.normalizeGoalLimits(workspaceId);
+    return this.normalizeGoalLimits(workspaceId, { syncChatTail: true });
   }
 
   /**
@@ -1899,17 +2091,35 @@ export class WorkspaceGoalService {
       return Ok(next);
     });
 
-    if (result.success) {
-      if (result.data.status === "active") {
-        this.armKickoffContinuationIfIdle(input.workspaceId, result.data);
-      } else if (result.data.status === "budget_limited") {
-        this.armBudgetWrapupForBudgetLimitedGoal(input.workspaceId, result.data);
+    if (!result.success) {
+      return result;
+    }
+
+    if (input.status === "paused" && result.data.status === "paused") {
+      this.pendingContinuationCandidates.delete(input.workspaceId);
+      const pauseBoundaryReady = await this.appendGoalPauseBoundaryIfNeeded(input.workspaceId);
+      if (!pauseBoundaryReady) {
+        return result;
       }
+      const synced = await this.syncGoalStatusToChatTail(input.workspaceId);
+      return Ok(synced ?? result.data);
+    }
+
+    if (result.data.status === "active") {
+      await this.armKickoffContinuationIfIdle(input.workspaceId, result.data);
+      const synced = await this.syncGoalStatusToChatTail(input.workspaceId);
+      return Ok(synced ?? result.data);
+    }
+    if (result.data.status === "budget_limited") {
+      this.armBudgetWrapupForBudgetLimitedGoal(input.workspaceId, result.data);
     }
     return result;
   }
 
-  private armKickoffContinuationIfIdle(workspaceId: string, goal: GoalRecordV1): void {
+  private async armKickoffContinuationIfIdle(
+    workspaceId: string,
+    goal: GoalRecordV1
+  ): Promise<void> {
     if (this.suppressKickoffContinuation) {
       return;
     }
@@ -1923,14 +2133,17 @@ export class WorkspaceGoalService {
     if (existingCandidate?.goalId === goal.goalId) {
       // A real stream-end already armed this goal; re-request dispatch in case
       // the previous request was consumed while an acknowledgment gate was set.
-      this.goalContinuationDispatcher
-        .requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME)
-        .catch((error: unknown) => {
-          log.warn("Failed to re-request kickoff goal continuation dispatch", {
-            workspaceId,
-            error,
-          });
+      try {
+        await this.goalContinuationDispatcher.requestDispatch(
+          workspaceId,
+          GOAL_CONTINUATION_IDLE_CONSUMER_NAME
+        );
+      } catch (error: unknown) {
+        log.warn("Failed to re-request kickoff goal continuation dispatch", {
+          workspaceId,
+          error,
         });
+      }
       return;
     }
     const sendOptions = this.goalContinuationBridge.getKickoffSendOptions?.(workspaceId);
@@ -1946,13 +2159,17 @@ export class WorkspaceGoalService {
       goalId: goal.goalId,
       requestedAtMs: nowMs,
       streamEndedAtMs: nowMs,
+      source: "kickoff",
       sendOptions: continuationSendOptions(sendOptions),
     });
-    this.goalContinuationDispatcher
-      .requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME)
-      .catch((error: unknown) => {
-        log.warn("Failed to request kickoff goal continuation dispatch", { workspaceId, error });
-      });
+    try {
+      await this.goalContinuationDispatcher.requestDispatch(
+        workspaceId,
+        GOAL_CONTINUATION_IDLE_CONSUMER_NAME
+      );
+    } catch (error: unknown) {
+      log.warn("Failed to request kickoff goal continuation dispatch", { workspaceId, error });
+    }
   }
 
   private armContinuationForPromotedGoal(workspaceId: string, goal: GoalRecordV1): void {
@@ -1961,7 +2178,9 @@ export class WorkspaceGoalService {
     // promoted goal until the user pause/unpauses it.
     this.lastUserStopAtMsByWorkspace.delete(workspaceId);
     if (goal.status === "active") {
-      this.armKickoffContinuationIfIdle(workspaceId, goal);
+      this.armKickoffContinuationIfIdle(workspaceId, goal).catch((error: unknown) => {
+        log.warn("Failed to arm promoted goal continuation", { workspaceId, error });
+      });
     } else if (goal.status === "budget_limited") {
       this.armBudgetWrapupForBudgetLimitedGoal(workspaceId, goal);
     }
@@ -1992,12 +2211,13 @@ export class WorkspaceGoalService {
       workspaceId.trim().length > 0,
       "recoverPendingDispatchAfterRestart requires workspaceId"
     );
-    const goal = await this.normalizeGoalLimits(workspaceId);
+    const goal = await this.normalizeGoalLimits(workspaceId, { syncChatTail: true });
     if (!goal) {
       return;
     }
     if (goal.status === "active") {
-      this.armKickoffContinuationIfIdle(workspaceId, goal);
+      await this.armKickoffContinuationIfIdle(workspaceId, goal);
+      await this.syncGoalStatusToChatTail(workspaceId);
       return;
     }
     if (goal.status === "budget_limited" && goal.budgetLimitInjectedForGoalId === null) {
@@ -2050,6 +2270,7 @@ export class WorkspaceGoalService {
       goalId: goal.goalId,
       requestedAtMs: nowMs,
       streamEndedAtMs: nowMs,
+      source: "budget_wrapup",
       sendOptions: continuationSendOptions(sendOptions),
     });
     this.goalContinuationDispatcher
@@ -2326,7 +2547,12 @@ export class WorkspaceGoalService {
       if (causedLimit) {
         this.armBudgetWrapupForBudgetLimitedGoal(input.parentWorkspaceId, next);
       } else if (next.status === "active") {
-        this.armKickoffContinuationIfIdle(input.parentWorkspaceId, next);
+        this.armKickoffContinuationIfIdle(input.parentWorkspaceId, next).catch((error: unknown) => {
+          log.warn("Failed to arm parent goal continuation after child attribution", {
+            workspaceId: input.parentWorkspaceId,
+            error,
+          });
+        });
       }
       return {
         goalBefore: current,

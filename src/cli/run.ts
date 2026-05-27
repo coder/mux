@@ -84,6 +84,7 @@ import {
 } from "@/common/utils/goals/budgetParser";
 import {
   CLI_GOAL_STREAM_START_TIMEOUT_MS,
+  GOAL_CONTINUATION_KIND,
   GOAL_CONTINUATION_IDLE_CONSUMER_NAME,
 } from "@/constants/goals";
 import type { GoalRecordV1 } from "@/common/types/goal";
@@ -960,7 +961,21 @@ async function main(): Promise<number> {
 
   const sendAndAwait = async (msg: string, options: SendMessageOptions): Promise<void> => {
     completionPromise = createCompletionPromise();
-    const sendResult = await session.sendMessage(msg, options);
+    const sendResult = await session.sendMessage(
+      msg,
+      options,
+      hasGoal
+        ? {
+            // CLI goal runs suppress the desktop kickoff dispatcher and drive
+            // their own user turns, so mark them as the durable goal
+            // continuations that keep goal mode active.
+            synthetic: true,
+            agentInitiated: true,
+            goalKind: GOAL_CONTINUATION_KIND,
+            goalContinuation: true,
+          }
+        : undefined
+    );
     if (!sendResult.success) {
       const errorValue = sendResult.error;
       let formattedError = "unknown error";
