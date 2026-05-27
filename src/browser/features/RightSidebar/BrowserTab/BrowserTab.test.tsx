@@ -31,20 +31,23 @@ const sendInputMock = mock(() => undefined);
 const setPendingUrlMock = mock(() => undefined);
 let mockSession: BrowserSession | null = null;
 
+const apiMock = {
+  browser: {
+    listTabs: listTabsMock,
+    selectTab: selectTabMock,
+    listSessions: listSessionsMock,
+  },
+};
+const apiResultMock = {
+  api: apiMock,
+  status: "connected" as const,
+  error: null,
+  authenticate: () => undefined,
+  retry: () => undefined,
+};
+
 void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: {
-      browser: {
-        listTabs: listTabsMock,
-        selectTab: selectTabMock,
-        listSessions: listSessionsMock,
-      },
-    },
-    status: "connected" as const,
-    error: null,
-    authenticate: () => undefined,
-    retry: () => undefined,
-  }),
+  useAPI: () => apiResultMock,
 }));
 
 void mock.module("@/browser/hooks/usePersistedState", () => ({
@@ -394,7 +397,24 @@ describe("BrowserTab", () => {
       sessions: [createDiscoveredSession()],
       otherSessions: [],
     });
-    listTabsMock.mockResolvedValueOnce({ tabs: [], error: "tab list failed" });
+    const visibleTabs = [
+      createPageTab(),
+      createPageTab({
+        tabId: "t2",
+        title: "Second tab",
+        url: "https://second.example.com/",
+        active: false,
+      }),
+    ];
+    let listTabsCallCount = 0;
+    listTabsMock.mockImplementation(() => {
+      listTabsCallCount += 1;
+      return Promise.resolve(
+        listTabsCallCount === 1
+          ? { tabs: [], error: "tab list failed" }
+          : { tabs: visibleTabs, error: undefined }
+      );
+    });
 
     const view = render(<BrowserTab workspaceId="workspace-1" projectPath="/project" />);
 
@@ -402,18 +422,6 @@ describe("BrowserTab", () => {
       expect(view.getByRole("alert").textContent).toContain("tab list failed");
     });
 
-    listTabsMock.mockResolvedValue({
-      tabs: [
-        createPageTab(),
-        createPageTab({
-          tabId: "t2",
-          title: "Second tab",
-          url: "https://second.example.com/",
-          active: false,
-        }),
-      ],
-      error: undefined,
-    });
     selectTabMock.mockResolvedValueOnce({ success: false, error: "tab switch failed" });
 
     await waitFor(
