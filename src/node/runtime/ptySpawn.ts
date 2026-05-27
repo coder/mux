@@ -1,4 +1,5 @@
-import type { IPty } from "node-pty";
+import type * as NodePty from "@lydell/node-pty";
+import type { IPty } from "@lydell/node-pty";
 import { log } from "@/node/services/log";
 import { getErrorMessage } from "@/common/utils/errors";
 import { sanitizeMuxChildEnv, sanitizeMuxChildPath } from "./childProcessEnv";
@@ -16,23 +17,20 @@ interface PtySpawnRequest {
   logLocalEnv?: boolean;
 }
 
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports
-function loadNodePty(runtimeType: string, preferElectronBuild: boolean): typeof import("node-pty") {
+function loadNodePty(runtimeType: string, preferElectronBuild: boolean): typeof NodePty {
   const first = preferElectronBuild ? "node-pty" : "@lydell/node-pty";
   const second = preferElectronBuild ? "@lydell/node-pty" : "node-pty";
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-    const pty = require(first);
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pty = require(first) as typeof NodePty;
     log.debug(`Using ${first} for ${runtimeType}`);
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return pty;
   } catch {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-      const pty = require(second);
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const pty = require(second) as typeof NodePty;
       log.debug(`Using ${second} for ${runtimeType} (fallback)`);
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
       return pty;
     } catch (err) {
       log.error("Neither @lydell/node-pty nor node-pty available:", err);
