@@ -623,7 +623,21 @@ describe("BrowserControlService", () => {
     child.close();
 
     expect(await executionPromise).toEqual({ success: true });
-    expect(spawnCalls[0]?.args).toEqual(["--session", SESSION_NAME, "tab", "--", "t2"]);
+    expect(spawnCalls[0]?.args).toEqual(["--session", SESSION_NAME, "tab", "t2"]);
+  });
+
+  test("selectTab rejects flag-like tab refs before spawning the CLI", async () => {
+    const spawnFn = mock(() => new MockChildProcess() as unknown as ChildProcess);
+    const service = createService({ spawnFn });
+
+    expect(
+      await service.selectTab({
+        workspaceId: WORKSPACE_ID,
+        sessionName: SESSION_NAME,
+        tabRef: " --help ",
+      })
+    ).toEqual({ success: false, error: "Browser tab ref must not start with '-'" });
+    expect(spawnFn).not.toHaveBeenCalled();
   });
 
   test("selectTab validates the session before spawning the CLI", async () => {

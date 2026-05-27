@@ -241,6 +241,10 @@ export class BrowserControlService {
 
   async selectTab(params: BrowserSelectTabParams): Promise<BrowserControlResult> {
     this.assertValidSelectTabParams(params);
+    const trimmedTabRef = params.tabRef.trim();
+    if (trimmedTabRef.startsWith("-")) {
+      return { success: false, error: "Browser tab ref must not start with '-'" };
+    }
 
     try {
       const sessionError = await this.validateSessionConnection(params);
@@ -250,7 +254,7 @@ export class BrowserControlService {
 
       const execution = await this.runAgentBrowserCommand(
         params.workspaceId,
-        ["--session", params.sessionName, "tab", "--", params.tabRef.trim()],
+        ["--session", params.sessionName, "tab", trimmedTabRef],
         `agent-browser tab switch for session ${params.sessionName}`
       );
       if (!execution.success) {
