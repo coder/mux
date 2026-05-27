@@ -1,30 +1,25 @@
 ---
 title: Agents
-description: Define custom agents (modes + subagents) with Markdown files
+description: Define custom agents (modes + subagents) as Markdown files
 ---
 
 ## Overview
 
-Mux uses **agents** to control the model's:
+An **agent** in Mux owns two things for a given turn:
 
-- **System prompt** (what the assistant "is")
-- **Tool access policy** (which tools it can call)
+- **System prompt** — what the assistant is and how it should behave
+- **Tool policy** — which tools it can call (and which it must call)
 
-This unifies two older concepts:
+The same definition can be used in two places:
 
-- **UI modes** (Plan/Exec/Compact)
-- **Subagents** (the presets used by the `task` tool)
+- **Selected in the UI** as the workspace's current mode (Exec, Plan, or your own)
+- **Spawned via the `task` tool** as a subagent in a child workspace
 
-An **Agent Definition** is a Markdown file:
-
-- The **YAML frontmatter** defines metadata + policy.
-- The **Markdown body** becomes the agent's system prompt (layered with Mux's base prelude).
+An agent definition is a Markdown file: YAML frontmatter declares metadata, policy, and AI defaults; the body becomes the agent's instruction prompt.
 
 ## Quick Start
 
-**Switch agents:** Press `Cmd+Shift+M` (Mac) or `Ctrl+Shift+M` (Windows/Linux), or use the agent selector in the chat input.
-
-**Create a custom agent:** Add a markdown file with YAML frontmatter to `.mux/agents/` in your project:
+Drop a Markdown file in `.mux/agents/` (project) or `~/.mux/agents/` (global):
 
 ```md
 ---
@@ -32,7 +27,6 @@ name: Review
 description: Terse reviewer-style feedback
 base: exec
 tools:
-  # Remove editing tools from exec base (this is a read-only reviewer)
   remove:
     - file_edit_.*
     - task
@@ -45,9 +39,13 @@ You are a code reviewer.
 - Prefer short, actionable comments.
 ```
 
-## Discovery + Precedence
+The filename (without `.md`) is the **agent id**, used by `base:` and `task({ agentId })`. IDs must match `^[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$` (1–64 chars, lowercase).
 
-Mux discovers agent definitions from (non-recursive):
+**Switch agents in the UI:** `Cmd/Ctrl+Shift+A` opens the agent picker; `Cmd/Ctrl+.` cycles through visible agents.
+
+## Discovery and Precedence
+
+Mux scans three roots, **non-recursive** (only direct `.md` children):
 
 | Location             | Scope   | Priority |
 | -------------------- | ------- | -------- |
@@ -55,83 +53,143 @@ Mux discovers agent definitions from (non-recursive):
 | `~/.mux/agents/*.md` | Global  | Medium   |
 | Built-in             | System  | Lowest   |
 
-Higher-priority definitions override lower-priority ones with the same **agent id**.
+Higher-priority definitions **override** lower-priority ones with the same id.
 
-### Agent IDs
-
-The **agent id** is derived from the filename:
-
-- `review.md` → `agentId = "review"`
-
-Agent ids are lowercase and should be simple (letters/numbers with `-`/`_`).
+Definitions larger than 1 MB are rejected at parse time. Filenames that don't match the id schema are skipped with a warning.
 
 ## File Format
 
-### Frontmatter Schema
+### Frontmatter
 
 ```yaml
 ---
-# Required
-name: My Agent # Display name in UI
+# Identity
+name: My Agent # Required. Display name.
+description: What this does # Optional. Shown in tooltips and tool descriptions.
 
-# Optional
-description: What this agent does # Shown in tooltips
-base: exec # Inherit from another agent (exec, plan, or custom agent id)
+# Inheritance
+base: exec # Optional. Inherit from another agent (built-in or custom).
 
-# UI settings
+# Kill switch
+disabled: false # Optional. When true, fully excludes this definition.
+
+# UI
 ui:
-  hidden: false # Set true to hide from agent selector
-  disabled: false # Set true to completely disable (useful to hide built-ins)
-  color: "#6b5bff" # UI accent color (inherited from base if not set)
+  hidden: false # Hide from the agent picker.
+  routable: false # Allow switch_agent to route here even when hidden.
+  requires: # Capability gates: omit unless needed.
+    - desktop # "desktop" | "plan"
+  color: "var(--color-exec-mode)" # CSS color or var; inherited from base if unset.
 
-# Prompt behavior
+# System prompt.
+# When prompt.append is false, the child body REPLACES the base body
+# (tools, AI defaults, and other frontmatter still inherit).
 prompt:
-  append: true # Append body to base agent's body (default); set false to replace
+  append: true # Default.
 
-# Subagent configuration
+# Subagent behavior (consulted only when spawned via the task tool).
+# skip_init_hook only skips the .mux/init hook; runtime provisioning
+# (SSH sync, Docker setup) still runs.
 subagent:
-  runnable: false # Allow spawning via task({ agentId: ... })
-  skip_init_hook: false # When true, skip the project's .mux/init hook for this sub-agent
+  runnable: false # Required for task({ agentId: ... }) to spawn this.
+  skip_init_hook: false
+  append_prompt: | # Appended to the prompt ONLY when running as a subagent.
+    Extra instructions only the subagent should see.
 
-# AI defaults (override user settings)
+# Per-agent AI defaults (overridable by user settings)
 ai:
-  model: sonnet # Or full ID like "anthropic:claude-sonnet-4-5"
-  thinkingLevel: medium
+  model: sonnet # Abbreviation or full ID like "anthropic:claude-sonnet-4-5".
+  thinkingLevel: medium # "off" | "low" | "medium" | "high"
 
-# Tool configuration (regex patterns, processed in order during inheritance)
+# Tool policy
 tools:
-  add: # Patterns to add/enable
+  add: # Regex patterns to enable.
     - file_read
     - file_edit_.*
-    - bash
-  remove: # Patterns to remove/disable (applied after add)
+  remove: # Regex patterns to disable. Applied after add in the same layer.
     - task_.*
+  require: # Literal tool name (no regex). Forces the model to call it this turn.
+    - propose_plan # Last entry wins; child overrides base.
 ---
 ```
 
-### Markdown Body (Instructions)
+### Markdown body
 
-The markdown body after the frontmatter becomes the agent's system prompt, layered with Mux's base prelude.
+The body becomes the agent's instruction prompt, layered with Mux's base prelude, the workspace environment context, and `AGENTS.md`.
 
-**Inheritance behavior:** By default, when an agent has a `base`, the child's body is **appended** to the base agent's body. Set `prompt.append: false` to **replace** the base body entirely—useful when you want to completely override the base agent's instructions while keeping its tool policies or AI defaults.
+- With `prompt.append: true` (default), a child's body is **appended** to its base's body, separated by a blank line.
+- With `prompt.append: false`, the child's body **replaces** the base's body. Tool policy, AI defaults, and other frontmatter still inherit normally.
 
-## Disabling Built-in Agents
+## Inheritance and Tool Policy
 
-To hide a built-in agent, create a file with the same name and `ui.disabled: true`:
+### Base resolution
+
+`base: <id>` walks the same discovery roots, with two non-obvious rules:
+
+- **Same name as the current file** — Mux skips the current file's scope, so a project `exec.md` with `base: exec` resolves to the global or built-in `exec` (not itself).
+- **Different name** — Mux anchors the lookup at the current scope or lower. A built-in's `base: foo` cannot pull in a project-level `foo.md`.
+
+The chain is followed up to 10 levels deep. Cycles are detected and logged.
+
+### Tool patterns are anchored regex
+
+Patterns in `tools.add` and `tools.remove` are regular expressions implicitly anchored as `^pattern$`. `task_.*` matches `task_await` but **not** `task` — list `task` separately if you need both.
+
+If no agent in the resolved chain declares any `tools`, the agent has no tools.
+
+### Layer ordering
+
+For each layer in the chain, from **base → child**:
+
+1. Apply every `tools.add` pattern as enable.
+2. Apply every `tools.remove` pattern as disable.
+3. If `tools.require` is present, the **last literal entry** becomes that layer's effective required tool; child layers fully replace base layers.
+
+Later rules win, so a child's `remove` can drop something the base enabled, and a child's `add` can re-enable something the base removed.
+
+### `tools.require` semantics
+
+`require` is not the same as `add`:
+
+- It enables the tool **and forces the model to emit a call** to it this turn.
+- The value must be a literal tool name. Regex metacharacters cause the entry to be dropped silently.
+- Only one tool can be required per turn. Multiple entries collapse to the last one; child layers fully override the base layer.
+- The required tool must be one the agent is otherwise allowed to call — subagent hard-denies still apply.
+
+### Runtime restrictions
+
+These rules are applied last and cannot be overridden by frontmatter:
+
+| Condition                           | Effect                                                                  |
+| ----------------------------------- | ----------------------------------------------------------------------- |
+| Always                              | `switch_agent` is disabled unless the chain explicitly opts in (below). |
+| Subagent workspace                  | `ask_user_question` and `switch_agent` are disabled.                    |
+| Subagent + plan-like chain          | `propose_plan` is required, `agent_report` is disabled.                 |
+| Subagent + non-plan chain           | `agent_report` is required, `propose_plan` is disabled.                 |
+| Task depth ≥ Max Task Nesting Depth | `task` and `task_.*` are disabled.                                      |
+| Plan agent calling `task`           | Only `agentId: "explore"` may be spawned.                               |
+| Plan agent editing files            | `file_edit_*` is restricted to the plan file path.                      |
+
+A chain is "plan-like" when the resolved tool policy enables `propose_plan`.
+
+### Enabling `switch_agent`
+
+`switch_agent` is opt-in even when allowed by a broad pattern. The top-level (non-subagent) chain must contain the **literal** string `"switch_agent"` in `tools.add` or `tools.require`, and must not remove it later. Broad patterns like `.*` do not count as opt-in.
+
+## Disabling and Extending Built-ins
+
+**Disable** a built-in by creating a same-name file with `disabled: true`:
 
 ```md
 ---
 name: Plan
-ui:
-  disabled: true
+disabled: true
 ---
 ```
 
-This completely removes the agent from discovery. To override (replace) a built-in instead, omit `disabled` and provide your own configuration.
+`exec`, `plan`, and `compact` are always enabled and cannot be disabled this way.
 
-## Extending Built-in Agents
-
-You can extend a built-in agent by creating a file with the **same name** and using `base` to inherit from it:
+**Extend** a built-in by giving your file the same id and using `base`:
 
 ```md
 ---
@@ -139,41 +197,20 @@ name: Exec
 base: exec
 ---
 
-Additional project-specific instructions that append to built-in exec.
+Additional project-specific instructions appended to built-in exec.
 ```
 
-This works because when resolving `base: exec`, Mux skips the current scope (project) and looks for `exec` in lower-priority scopes (global, then built-in). Your project-local `exec.md` extends the built-in exec, not itself.
-
-**Common pattern:** Add repo-specific guidance (CI commands, test patterns) without duplicating the built-in instructions.
-
-## Tool Policy Semantics
-
-Tools are controlled via an explicit **whitelist**. The `tools` array lists patterns (exact names or regex) that the agent can use. If `tools` is omitted or empty, no tools are available.
-
-**Inheritance:** Use `base` to inherit behavior from another agent:
-
-- `base: plan` — Plan-mode behaviors and built-in planning guidance (enables `ask_user_question`, `propose_plan`)
-- `base: exec` — Exec-mode behaviors (standard coding workflow)
-- `base: <custom-agent-id>` — Inherit from any custom agent
-
-Inheritance is multi-level: if `my-agent` has `base: plan`, agents inheriting from `my-agent` also get plan-like behavior.
-
-**Hard denies in subagents:** Even if an agent definition allows them, Mux blocks these tools in child workspaces:
-
-- `task`, `task_await`, `task_list`, `task_terminate` (no recursive spawning)
-- `propose_plan`, `ask_user_question` (UI-only tools)
+This works because same-name `base` resolution skips the current scope. Use it to add repo-specific guidance (CI commands, test patterns) without copying the built-in body.
 
 ## Using Agents
 
-### Main Agent
+### As the workspace agent
 
-Use the agent selector in the chat input to switch agents.
+Switch via the agent picker in the chat input, `Cmd/Ctrl+Shift+A`, or `Cmd/Ctrl+.` to cycle.
 
-Keyboard: `Cmd+Shift+M` (mac) / `Ctrl+Shift+M` (win/linux) cycles between agents.
+If a workspace's stored agent has been disabled or deleted, top-level workspaces silently fall back to `exec`; subagent workspaces error out instead.
 
-### Subagents (task tool)
-
-Spawn a subagent workspace with:
+### As a subagent via the `task` tool
 
 ```ts
 task({
@@ -183,22 +220,22 @@ task({
 });
 ```
 
-Only agents with `subagent.runnable: true` can be used this way.
+The agent must have `subagent.runnable: true`. Subagents see the body **plus** `subagent.append_prompt`, and must complete via `agent_report` (or `propose_plan` for plan-like chains).
 
 ### Run-context AI defaults
 
-The same agent identity can use different default model and thinking settings depending on how it runs:
+Each agent has two independent default slots, configured in **Settings → Agents**:
 
-- **UI defaults** (`agentAiDefaults`) apply when you select the agent directly in the UI, such as choosing Exec in the chat input.
-- **Subagent defaults** (`subagentAiDefaults`) apply when that agent is spawned through the `task` tool.
+- **UI defaults** (`agentAiDefaults`) — used when you select the agent in the workspace.
+- **Subagent defaults** (`subagentAiDefaults`) — used when the agent is spawned via `task`.
 
-Subagent defaults inherit from UI defaults per field. If the subagent model is unset, Mux uses the matching UI agent model; if subagent thinking is unset, Mux uses the matching UI agent thinking level. You can override one subagent field and keep the other inherited.
+Subagent defaults inherit per field from UI defaults; UI defaults inherit per field from the agent's frontmatter `ai` block. You can override one field (e.g. only `thinkingLevel`) and leave the other inherited.
 
-Mux resolves the subagent model and thinking level when the `task` call creates the child workspace. Those resolved values are stored with that child workspace, so changing defaults later affects future subagent tasks only.
+Subagent settings are resolved at task creation and frozen on the child workspace. Changing defaults later only affects future spawns.
 
 ## Examples
 
-### Security Audit Agent
+### Security audit (read-only)
 
 ```md
 ---
@@ -206,24 +243,18 @@ name: Security Audit
 description: Security-focused code review
 base: exec
 tools:
-  # Remove editing/task tools - this is read-only analysis
   remove:
     - file_edit_.*
     - task
     - task_.*
 ---
 
-You are a security auditor. Analyze the codebase for:
-
-- Authentication/authorization issues
-- Injection vulnerabilities
-- Data exposure risks
-- Insecure dependencies
-
-Provide a structured report with severity levels. Do not make changes.
+You are a security auditor. Analyze the codebase for authentication,
+injection, data exposure, and dependency risks. Provide a structured
+report with severity levels. Do not make changes.
 ```
 
-### Documentation Agent
+### Documentation-only
 
 ```md
 ---
@@ -231,15 +262,13 @@ name: Docs
 description: Focus on documentation tasks
 base: exec
 tools:
-  # Remove task delegation - keep it simple for doc tasks
   remove:
     - task
     - task_.*
 ---
 
-You are in Documentation mode. Focus on improving documentation:
-README files, code comments, API docs, and guides. Avoid
-refactoring code unless it's purely for documentation purposes.
+You are in Documentation mode. Improve READMEs, code comments, API
+docs, and guides. Avoid code refactors unless purely for documentation.
 ```
 
 ## Built-in Agents
