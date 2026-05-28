@@ -3999,12 +3999,7 @@ export class AgentSession {
     // Include any synthetic snapshots that were persisted immediately before the task prompt.
     let seedStartIndex = firstPromptIndex;
     for (let i = firstPromptIndex - 1; i >= 0; i -= 1) {
-      const msg = messages[i];
-      const isSnapshot =
-        msg.role === "user" &&
-        msg.metadata?.synthetic === true &&
-        (msg.metadata?.fileAtMentionSnapshot ?? msg.metadata?.agentSkillSnapshot);
-      if (!isSnapshot) {
+      if (!this.isSyntheticSnapshotUserMessage(messages[i])) {
         break;
       }
       seedStartIndex = i;
