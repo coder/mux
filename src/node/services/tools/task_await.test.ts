@@ -977,4 +977,38 @@ describe("task_await tool", () => {
     });
     expect(waitForAgentReport).toHaveBeenCalledTimes(0);
   });
+
+  it("surfaces a waiter that rejects outside its internal catches without stalling", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-min-completed-reject");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock(() =>
+      Promise.resolve({ reportMarkdown: "report:t1", title: "title:t1" })
+    );
+    // A bash read whose getProcess rejects escapes awaitOne's per-path catches; the call must
+    // still settle that task as an error so min_completed=2 can fall back to "all settled".
+    const backgroundProcessManager = {
+      list: mock(() => Promise.resolve([])),
+      getProcess: mock(() => Promise.reject(new Error("proc boom"))),
+    } as unknown as BackgroundProcessManager;
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["t1"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, backgroundProcessManager, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1", "bash:p1"], min_completed: 2 }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
+        { status: "error", taskId: "bash:p1", error: "proc boom" },
+      ],
+    });
+  });
 });

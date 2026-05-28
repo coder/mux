@@ -391,7 +391,17 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
       const resultsByTaskId = new Map<string, Awaited<ReturnType<typeof awaitOne>>>();
       let completedCount = 0;
       const taskPromises = uniqueTaskIds.map((taskId) => {
-        const promise = awaitOne(taskId, taskControllers.get(taskId)!.signal);
+        // awaitOne resolves to a result object for every documented path, but a few calls (e.g. the
+        // bash getProcess/getOutput reads) run outside its internal try/catch and could reject.
+        // Convert any stray rejection into an `error` result so the task still counts as settled —
+        // otherwise the gate below could never reach `wantCount` or "all settled" and would stall.
+        const promise = awaitOne(taskId, taskControllers.get(taskId)!.signal).catch(
+          (error: unknown): Awaited<ReturnType<typeof awaitOne>> => ({
+            status: "error",
+            taskId,
+            error: getErrorMessage(error),
+          })
+        );
         // Record results as they settle so we can both count completions and assemble the final
         // array. Registered before the gate listener below, so recording always runs first for a
         // given promise.
