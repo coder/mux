@@ -7,6 +7,7 @@ import type {
 } from "@/common/types/message";
 import { getCompactionFollowUpContent } from "@/common/types/message";
 import type { StreamErrorType } from "@/common/types/errors";
+import { extractHookOutput } from "@/common/utils/tools/hookOutput";
 import type { ImageEditToolResult, ImageGenerateToolResult } from "@/common/types/tools";
 import {
   ImageEditToolResultSchema,
@@ -41,11 +42,7 @@ function isSuccessfulImageEditResult(
 }
 
 function hasVisibleHookOutput(result: unknown): boolean {
-  if (typeof result !== "object" || result === null || Array.isArray(result)) {
-    return false;
-  }
-  const hookOutput = (result as Record<string, unknown>).hook_output;
-  return typeof hookOutput === "string" && hookOutput.length > 0;
+  return extractHookOutput(result) !== null;
 }
 
 function appendGeneratedImageMessage(

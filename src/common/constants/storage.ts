@@ -381,6 +381,26 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
 };
 
 /**
+ * Transcript density display preference (global)
+ * Stores: "normal" | "hyper"
+ */
+export const TRANSCRIPT_DENSITY_KEY = "transcriptDensity";
+
+export const TRANSCRIPT_DENSITIES = ["normal", "hyper"] as const;
+
+export type TranscriptDensity = (typeof TRANSCRIPT_DENSITIES)[number];
+
+export const DEFAULT_TRANSCRIPT_DENSITY: TranscriptDensity = "normal";
+
+function isTranscriptDensity(value: unknown): value is TranscriptDensity {
+  return typeof value === "string" && TRANSCRIPT_DENSITIES.includes(value as TranscriptDensity);
+}
+
+export function normalizeTranscriptDensity(value: unknown): TranscriptDensity {
+  return isTranscriptDensity(value) ? value : DEFAULT_TRANSCRIPT_DENSITY;
+}
+
+/**
  * Collapsed bash tool summary display mode (global)
  * Stores: "command" | "intent-command" | "intent"
  */
