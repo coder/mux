@@ -25,6 +25,10 @@ process.umask(0o077);
  */
 import { Command } from "commander";
 import { VERSION } from "../version";
+import type {
+  extensionsCommandMain as importedExtensionsCommandMain,
+  installAliasCommandMain as importedInstallAliasCommandMain,
+} from "./extensions";
 import {
   CLI_GLOBAL_FLAGS,
   detectCliEnvironment,
@@ -68,6 +72,26 @@ if (subcommand === "run") {
   // The .mjs extension is critical for Node.js to treat it as ESM.
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, @typescript-eslint/no-unsafe-call
   void new Function("return import('./api.mjs')")();
+} else if (subcommand === "install") {
+  process.argv.splice(env.firstArgIndex, 1);
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { installAliasCommandMain } = require("./extensions") as {
+    installAliasCommandMain: typeof importedInstallAliasCommandMain;
+  };
+  Promise.resolve(installAliasCommandMain()).catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+} else if (subcommand === "extensions") {
+  process.argv.splice(env.firstArgIndex, 1);
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { extensionsCommandMain } = require("./extensions") as {
+    extensionsCommandMain: typeof importedExtensionsCommandMain;
+  };
+  Promise.resolve(extensionsCommandMain()).catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
 } else if (
   subcommand === "desktop" ||
   (env.isElectron && (subcommand === undefined || isElectronLaunchArg(subcommand, env)))
@@ -115,9 +139,11 @@ if (subcommand === "run") {
   if (isCommandAvailable("run", env)) {
     program.command("run").description("Run a one-off agent task");
   }
+  program.command("install <coordinate>").description("Install a Mux Extension Module");
   program.command("server").description("Start the HTTP/WebSocket ORPC server");
   program.command("acp").description("ACP stdio interface for editor integration");
   program.command("api").description("Interact with the mux API via a running server");
+  program.command("extensions").description("Manage Mux Extension Modules");
   if (isCommandAvailable("desktop", env)) {
     program
       .command("desktop")

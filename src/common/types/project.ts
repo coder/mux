@@ -193,4 +193,12 @@ export interface ProjectsConfig {
 
   /** Optional 1Password account name used for desktop SDK account selection. */
   onePasswordAccountName?: string;
+
+  /**
+   * Raw extensions block of ~/.mux/config.json. Owned by the Global Extension
+   * State Store (US-008): validation, self-healing, and schemaVersion
+   * handling all live there. Config simply round-trips this value so unknown
+   * future schemaVersions stay on disk untouched.
+   */
+  extensions?: unknown;
 }

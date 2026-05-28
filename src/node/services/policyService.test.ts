@@ -418,4 +418,26 @@ describe("PolicyService", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  test("policy with unknown top-level fields blocks startup", async () => {
+    await writeFile(
+      policyPath,
+      JSON.stringify({
+        policy_format_version: "0.1",
+        extensionPlatfrom: false,
+      }),
+      "utf-8"
+    );
+    process.env.MUX_POLICY_FILE = policyPath;
+
+    const service = new PolicyService(config);
+    await service.initialize();
+
+    const status = service.getStatus();
+    expect(status.state).toBe("blocked");
+    if (status.state === "blocked") {
+      expect(status.reason).toContain("Unrecognized key");
+    }
+    service.dispose();
+  });
 });

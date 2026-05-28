@@ -914,6 +914,7 @@ export class Config {
           defaultRuntime,
           runtimeEnablement,
           onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
+          extensions: parsed.extensions,
         };
       }
     } catch (error) {
@@ -1165,6 +1166,14 @@ export class Config {
       const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);
       if (onePasswordAccountName) {
         data.onePasswordAccountName = onePasswordAccountName;
+      }
+
+      // Round-trip the extensions block verbatim. The Global Extension State
+      // Store (US-008) owns shape validation and self-healing; persisting
+      // unknown future schemaVersions on disk is a hard requirement so older
+      // builds never destroy decisions made by newer builds.
+      if (config.extensions !== undefined) {
+        data.extensions = config.extensions;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");

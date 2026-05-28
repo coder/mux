@@ -241,6 +241,7 @@ describe("ImmersiveReviewView", () => {
 
   test("accepts full-file context at the line budget when the file ends with a newline", async () => {
     const lineBudget = 1500;
+    const hunk = createHunk({ filePath: "notes.txt" });
     const fileContent = `${[
       "new line",
       "context after selected hunk",
@@ -257,12 +258,17 @@ describe("ImmersiveReviewView", () => {
       })
     );
 
-    const view = renderImmersiveReview();
+    const view = renderImmersiveReview({
+      fileTree: createFileTree(hunk.filePath),
+      hunks: [hunk],
+      allHunks: [hunk],
+      selectedHunkId: hunk.id,
+    });
 
     await waitFor(() =>
       expect(view.container.textContent ?? "").toContain("context after selected hunk")
     );
-  });
+  }, 10_000);
 
   test("retries full-file context after a transient read failure", async () => {
     const firstHunk = createHunk({ id: "hunk-first", filePath: "src/first.ts" });

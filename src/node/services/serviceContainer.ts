@@ -69,6 +69,19 @@ import { ServerAuthService } from "@/node/services/serverAuthService";
 import { DesktopBridgeServer } from "@/node/services/desktop/DesktopBridgeServer";
 import { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import { DesktopTokenManager } from "@/node/services/desktop/DesktopTokenManager";
+import {
+  createExtensionRootsProvider,
+  projectPathFromProjectLocalRootId,
+} from "@/node/extensions/extensionRoots";
+import { ExtensionRootWatcher } from "@/node/extensions/extensionRootWatcher";
+import { ExtensionRegistry } from "@/node/extensions/extensionRegistryService";
+import { SnapshotCacheService } from "@/node/extensions/snapshotCacheService";
+import { GlobalExtensionStateService } from "@/node/extensions/globalExtensionStateService";
+import {
+  getProjectExtensionStateRoot,
+  ProjectExtensionStateService,
+} from "@/node/extensions/projectExtensionStateService";
+import { VERSION } from "@/version";
 import type { ORPCContext } from "@/node/orpc/context";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
 
@@ -128,6 +141,9 @@ export class ServiceContainer {
   public readonly desktopSessionManager: DesktopSessionManager;
   public readonly desktopTokenManager: DesktopTokenManager;
   public readonly desktopBridgeServer: DesktopBridgeServer;
+  private readonly extensionRootWatcher: ExtensionRootWatcher;
+  private readonly refreshExtensionRootWatcher: () => Promise<void>;
+  public readonly extensionRegistry: ExtensionRegistry;
   public readonly sshPromptService = new SshPromptService();
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
@@ -319,6 +335,63 @@ export class ServiceContainer {
 
     this.serverAuthService = new ServerAuthService(config);
 
+    const globalExtensionState = new GlobalExtensionStateService(config);
+    const projectExtensionState = new ProjectExtensionStateService(
+      getProjectExtensionStateRoot(config.rootDir)
+    );
+    const getExtensionRoots = createExtensionRootsProvider({
+      config,
+      projectState: projectExtensionState,
+    });
+
+    const snapshotCache = new SnapshotCacheService({
+      cacheFilePath: path.join(config.rootDir, "extension-snapshot.cache.json"),
+      appVersion: VERSION.git_describe,
+    });
+
+    this.extensionRegistry = new ExtensionRegistry({
+      roots: getExtensionRoots,
+      globalState: globalExtensionState,
+      projectState: projectExtensionState,
+      snapshotCache,
+      stateFilePaths: async () => {
+        const roots = await getExtensionRoots();
+        return [
+          path.join(config.rootDir, "config.json"),
+          ...roots
+            .map((root) => projectPathFromProjectLocalRootId(root.rootId))
+            .filter((projectPath): projectPath is string => projectPath !== null)
+            .map((projectPath) => projectExtensionState.filePathFor(projectPath)),
+        ];
+      },
+    });
+    this.extensionRootWatcher = new ExtensionRootWatcher({
+      onChange: () => {
+        void this.extensionRegistry.reload().catch((error: unknown) => {
+          log.warn("Extension root watcher reload failed", { error });
+        });
+      },
+    });
+    this.refreshExtensionRootWatcher = async () => {
+      // Extensions are always initialized: built-in skills may migrate onto this
+      // platform, so hiding the platform would remove core functionality.
+      await this.extensionRootWatcher.setRoots(await getExtensionRoots());
+    };
+    this.extensionRegistry.onChanged(() => {
+      void this.refreshExtensionRootWatcher().catch((error: unknown) => {
+        log.warn("Extension root watcher refresh failed", { error });
+      });
+    });
+
+    // Wire the live registry into AgentSession's slash-skill dispatch and
+    // the model's tool layer (agent_skill_read / agent_skill_read_file).
+    // Re-evaluated per call so extension reload events take effect immediately
+    // without rebuilding sessions.
+    const getExtensionSkillSources = (projectPath: string) =>
+      this.extensionRegistry.getSkillSources(projectPath);
+    this.workspaceService.setExtensionSkillSourcesProvider(getExtensionSkillSources);
+    this.aiService.setExtensionSkillSourcesProvider(getExtensionSkillSources);
+
     const workspaceLifecycleHooks = new WorkspaceLifecycleHooks();
     const worktreeArchiveSnapshotService = new WorktreeArchiveSnapshotService(this.config);
     this.workspaceService.setWorktreeArchiveSnapshotService(worktreeArchiveSnapshotService);
@@ -446,9 +519,27 @@ export class ServiceContainer {
     await recordStep("policyService.initialize", () => this.policyService.initialize());
 
     await recordStep("experimentsService.initialize", () => this.experimentsService.initialize());
+
+    const refreshExtensionsAfterCoreServices = (): void => {
+      // Extension root enumeration can sync project source locks and clone git
+      // sources. Keep that optional work out of the startup critical path.
+      void (async () => {
+        await recordStep("extensionRootWatcher.refresh", () => this.refreshExtensionRootWatcher());
+        await recordStep("extensionRegistry.loadFromCache", () =>
+          this.extensionRegistry.loadFromCache()
+        );
+        // Trigger an initial Extension discovery so the Settings UI renders the
+        // bundled root + demo extension instead of hanging on "Loading…".
+        await recordStep("extensionRegistry.reload", () => this.extensionRegistry.reload());
+      })().catch((error: unknown) => {
+        log.warn("Initial extension refresh failed", { error });
+      });
+    };
+
     // Kick off non-task chat restart recovery eagerly; task workspaces recover in TaskService.initialize().
     await recordStep("workspaceService.initialize", () => this.workspaceService.initialize());
     await recordStep("taskService.initialize", () => this.taskService.initialize());
+    refreshExtensionsAfterCoreServices();
 
     const idleCompactionStartedAt = Date.now();
     // Start idle compaction checker
@@ -530,6 +621,7 @@ export class ServiceContainer {
       desktopSessionManager: this.desktopSessionManager,
       desktopTokenManager: this.desktopTokenManager,
       desktopBridgeServer: this.desktopBridgeServer,
+      extensionRegistry: this.extensionRegistry,
     };
   }
 
@@ -547,6 +639,8 @@ export class ServiceContainer {
     await this.browserBridgeServer.stop();
     this.browserSessionStateHub.dispose();
     this.browserBridgeTokenManager.dispose();
+    this.extensionRootWatcher.close();
+    this.extensionRegistry.dispose();
     await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
   }
@@ -578,6 +672,8 @@ export class ServiceContainer {
     await this.browserBridgeServer.stop();
     this.browserSessionStateHub.dispose();
     this.browserBridgeTokenManager.dispose();
+    this.extensionRootWatcher.close();
+    this.extensionRegistry.dispose();
     await this.analyticsService.dispose();
     this.policyService.dispose();
     this.mcpServerManager.dispose();

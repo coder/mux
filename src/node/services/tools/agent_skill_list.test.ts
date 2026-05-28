@@ -161,6 +161,77 @@ describe("agent_skill_list", () => {
     });
   });
 
+  // Regression: agent_skill_list's local-host branch hand-walks the
+  // ~/.mux/skills + ~/.agents/skills + project skills filesystem, so
+  // extension-contributed skills (which live inside Extension package
+  // directories, not under any of those roots) were invisible to the
+  // model even with `includeUnadvertised: true`. The tool now appends
+  // extension skills from ToolConfiguration.extensionSkills with
+  // scope: "extension".
+  it("includes extension-contributed skills when extensionSkills is provided", async () => {
+    using project = new TestTempDir("test-agent-skill-list-ext-project");
+    using muxHome = new TestTempDir("test-agent-skill-list-ext-home");
+    using extPkg = new TestTempDir("test-agent-skill-list-ext-pkg");
+
+    await withMuxRoot(muxHome.path, async () => {
+      await writeSkill(path.join(project.path, ".mux", "skills"), "project-only", {
+        description: "from project",
+      });
+
+      const tool = createAgentSkillListTool(
+        createTestToolConfig(project.path, {
+          muxScope: {
+            type: "project",
+            muxHome: muxHome.path,
+            projectRoot: project.path,
+            projectStorageAuthority: "host-local",
+          },
+          extensionSkills: [
+            {
+              name: "mux-extensions",
+              displayName: "Mux Extensions",
+              description: "Demo extension skill",
+              advertise: true,
+              bodyAbsolutePath: path.join(extPkg.path, "SKILL.md"),
+              extensionId: "mux.platformdemo",
+            },
+            {
+              name: "secret-extension-skill",
+              displayName: "Secret Extension Skill",
+              description: "Hidden by default",
+              advertise: false,
+              bodyAbsolutePath: path.join(extPkg.path, "secret.md"),
+              extensionId: "publisher.hidden",
+            },
+          ],
+        })
+      );
+      const advertised = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+      expect(advertised.success).toBe(true);
+      if (!advertised.success) return;
+      expect(getSkill(advertised.skills, "mux-extensions")).toMatchObject({
+        name: "mux-extensions",
+        description: "Demo extension skill",
+        scope: "extension",
+      });
+      // Unadvertised extension skills are hidden by default, just like
+      // unadvertised project / global skills.
+      expect(advertised.skills.find((s) => s.name === "secret-extension-skill")).toBeUndefined();
+
+      const everything = (await tool.execute!(
+        { includeUnadvertised: true },
+        mockToolCallOptions
+      )) as AgentSkillListToolResult;
+      expect(everything.success).toBe(true);
+      if (!everything.success) return;
+      expect(getSkill(everything.skills, "secret-extension-skill")).toMatchObject({
+        name: "secret-extension-skill",
+        scope: "extension",
+        advertise: false,
+      });
+    });
+  });
+
   it("returns only the winning descriptor when project skills shadow global skills", async () => {
     using project = new TestTempDir("test-agent-skill-list-shadow-project");
     using muxHome = new TestTempDir("test-agent-skill-list-shadow-home");

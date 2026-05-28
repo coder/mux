@@ -349,7 +349,7 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         /** The original /{skillName} invocation as typed by user (for display) */
         rawCommand: string;
         skillName: string;
-        scope: "project" | "global" | "built-in";
+        scope: "project" | "global" | "extension" | "built-in";
       }
     | {
         type: "plan-display"; // Ephemeral plan display from /plan command

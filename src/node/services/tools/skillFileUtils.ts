@@ -63,7 +63,7 @@ function resolveSkillFilePath(
   };
 }
 
-async function lstatIfExists(targetPath: string): Promise<Stats | null> {
+export async function lstatIfExists(targetPath: string): Promise<Stats | null> {
   try {
     return await fsPromises.lstat(targetPath);
   } catch (error) {

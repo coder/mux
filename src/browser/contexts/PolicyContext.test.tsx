@@ -79,6 +79,7 @@ const buildEnforcedResponse = (): PolicyGetResponse => ({
     providerAccess: null,
     mcp: { allowUserDefined: { stdio: true, remote: true } },
     runtimes: null,
+    extensionPlatform: null,
   },
 });
 

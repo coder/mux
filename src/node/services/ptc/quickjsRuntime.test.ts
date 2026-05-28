@@ -51,6 +51,19 @@ describe("QuickJSRuntime", () => {
       expect(result.result).toBeNull();
     });
 
+    it("resolves promises returned by guest async functions", async () => {
+      const result = await runtime.eval(`
+        async function loadValue() {
+          await Promise.resolve();
+          return "ready";
+        }
+        return loadValue();
+      `);
+
+      expect(result.success).toBe(true);
+      expect(result.result).toBe("ready");
+    });
+
     it("handles syntax errors", async () => {
       const result = await runtime.eval("return {{{;");
       expect(result.success).toBe(false);
@@ -290,6 +303,32 @@ describe("QuickJSRuntime", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("timeout");
+    });
+
+    it("includes queue wait in timeout limits", async () => {
+      const otherRuntime = await QuickJSRuntime.create();
+      try {
+        runtime.registerFunction("slowOp", async () => {
+          await new Promise((resolve) => setTimeout(resolve, 120));
+          return "done";
+        });
+        runtime.setLimits({ timeoutMs: 500 });
+        otherRuntime.setLimits({ timeoutMs: 20 });
+
+        const firstEval = runtime.eval(`
+          slowOp();
+          return "first";
+        `);
+        const queuedAt = Date.now();
+        const secondResult = await otherRuntime.eval(`return "second";`);
+
+        expect(secondResult.success).toBe(false);
+        expect(secondResult.error).toContain("timeout");
+        expect(Date.now() - queuedAt).toBeLessThan(100);
+        await firstEval;
+      } finally {
+        otherRuntime.dispose();
+      }
     });
 
     it("aborts signal when timeout fires during async host function", async () => {

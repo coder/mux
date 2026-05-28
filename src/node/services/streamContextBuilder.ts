@@ -25,6 +25,7 @@ import type { AgentDefinitionScope } from "@/common/types/agentDefinition";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { TaskSettings } from "@/common/types/tasks";
+import type { ExtensionSkillSource } from "@/common/extensions/extensionSkillSource";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { getPlanFilePath } from "@/common/utils/planStorage";
@@ -244,6 +245,7 @@ export interface BuildStreamSystemContextOptions {
   mcpServers: Parameters<typeof buildSystemMessage>[5];
   muxScope?: MuxToolScope;
   loadDesktopCapability?: () => Promise<DesktopCapability>;
+  extensionSkills?: readonly ExtensionSkillSource[];
   /** Whether the advisor tool is available for the current agent */
   advisorToolAvailable?: boolean;
   /** Whether the image_generate tool is available as a direct tool for the current agent. */
@@ -470,6 +472,7 @@ export async function buildStreamSystemContext(
     mcpServers,
     muxScope,
     loadDesktopCapability,
+    extensionSkills,
     advisorToolAvailable,
     imageGenerationToolAvailable,
   } = opts;
@@ -538,6 +541,7 @@ export async function buildStreamSystemContext(
     availableSkills = await discoverAgentSkills(skillCtx.runtime, skillCtx.workspacePath, {
       roots: skillCtx.roots,
       containment: skillCtx.containment,
+      extensionSkills,
     });
   } catch (error) {
     workspaceLog.warn("Failed to discover agent skills for tool description", { error });

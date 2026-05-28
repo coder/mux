@@ -79,6 +79,7 @@ import {
 } from "@/node/runtime/runtimeHelpers";
 import { hasNonEmptyPlanFile } from "@/node/utils/runtime/helpers";
 import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
+import type { ExtensionSkillSource } from "@/common/extensions/extensionSkillSource";
 import {
   readAgentDefinition,
   resolveAgentFrontmatter,
@@ -345,6 +346,12 @@ interface AgentSessionOptions {
   onCompactionComplete?: () => void;
   /** Called when post-compaction context state may have changed (plan/file edits) */
   onPostCompactionStateChange?: () => void;
+  /**
+   * Resolves the live Extension Snapshot's skill contributions so slash-skill
+   * dispatch can read extension-provided SKILL.md bodies. Re-evaluated on every
+   * lookup so extension reload events take effect immediately.
+   */
+  getExtensionSkillSources?: (projectPath: string) => readonly ExtensionSkillSource[];
 }
 
 enum TurnPhase {
@@ -368,6 +375,9 @@ export class AgentSession {
   private readonly keepBackgroundProcesses: boolean;
   private readonly onCompactionComplete?: () => void;
   private readonly onPostCompactionStateChange?: () => void;
+  private readonly getExtensionSkillSources?: (
+    projectPath: string
+  ) => readonly ExtensionSkillSource[];
   private readonly emitter = new EventEmitter();
   private readonly aiListeners: Array<{ event: string; handler: (...args: unknown[]) => void }> =
     [];
@@ -531,6 +541,7 @@ export class AgentSession {
       keepBackgroundProcesses,
       onCompactionComplete,
       onPostCompactionStateChange,
+      getExtensionSkillSources,
     } = options;
 
     assert(typeof workspaceId === "string", "workspaceId must be a string");
@@ -548,6 +559,7 @@ export class AgentSession {
     this.keepBackgroundProcesses = keepBackgroundProcesses ?? false;
     this.onCompactionComplete = onCompactionComplete;
     this.onPostCompactionStateChange = onPostCompactionStateChange;
+    this.getExtensionSkillSources = getExtensionSkillSources;
 
     this.compactionHandler = new CompactionHandler({
       workspaceId: this.workspaceId,
@@ -5914,7 +5926,13 @@ export class AgentSession {
 
       let resolved: Awaited<ReturnType<typeof readAgentSkill>>;
       try {
-        resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data);
+        // Inject the live extension skill sources so /skill-name dispatch
+        // resolves bundled / user-global / project-local extension skills,
+        // not just project + global + built-in. The list is re-evaluated on
+        // every call so extension reloads take effect immediately.
+        resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data, {
+          extensionSkills: this.getExtensionSkillSources?.(metadata.projectPath),
+        });
       } catch (error) {
         if (ref.source === "slash") {
           throw error;

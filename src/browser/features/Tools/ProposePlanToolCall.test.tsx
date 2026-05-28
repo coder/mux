@@ -1,6 +1,7 @@
 import type { ComponentProps } from "react";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { installDom } from "../../../../tests/ui/dom";
+import * as DiffRendererModule from "@/browser/features/Shared/DiffRenderer";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 import type { SendMessageOptions } from "@/common/orpc/types";
@@ -18,6 +19,12 @@ import {
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 
 import { ProposePlanToolCall } from "./ProposePlanToolCall";
+
+const actualDiffRendererModule = { ...DiffRendererModule };
+
+afterAll(async () => {
+  await mock.module("@/browser/features/Shared/DiffRenderer", () => actualDiffRendererModule);
+});
 
 interface SendMessageArgs {
   workspaceId: string;
@@ -137,6 +144,7 @@ void mock.module("@/browser/hooks/useReviews", () => ({
 }));
 
 void mock.module("@/browser/features/Shared/DiffRenderer", () => ({
+  ...actualDiffRendererModule,
   SelectableDiffRenderer: (props: { filePath?: string }) => {
     selectableDiffRendererCalls.push({ filePath: props.filePath });
     return <div data-testid="selectable-diff-renderer" data-filepath={props.filePath ?? ""} />;

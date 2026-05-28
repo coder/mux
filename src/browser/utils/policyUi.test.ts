@@ -15,6 +15,7 @@ function buildPolicy(overrides: Partial<EffectivePolicy>): EffectivePolicy {
     providerAccess: null,
     mcp: { allowUserDefined: { stdio: true, remote: true } },
     runtimes: null,
+    extensionPlatform: null,
     ...overrides,
   };
 }

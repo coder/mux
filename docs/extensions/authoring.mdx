@@ -1,0 +1,136 @@
+---
+title: Authoring an Extension Module
+description: Quickstart for authoring a Mux Extension Module with a static manifest and skill registration.
+---
+
+A Mux **Extension Module** is a folder whose basename is the **Extension Name** and
+which contains an `extension.ts` entrypoint. Extension Modules do not need
+`package.json`, npm publishing, or install scripts. Source/version metadata lives
+in Extension Source Locks; trust, enablement, and capability approvals live in
+Mux-controlled state outside project repositories.
+
+## Quickstart: a single-skill Extension Module
+
+This walkthrough produces an Extension Module with one advertised skill.
+
+### 1. Lay out the module
+
+```text
+acme-review/
+├── extension.ts
+└── skills/
+    └── review/
+        └── SKILL.md
+```
+
+For local authoring, scaffold the folder under Mux's local extension area:
+
+```sh
+mux extensions create acme-review
+```
+
+You can also create the same layout manually under `~/.mux/extensions/local/`.
+
+Project repositories may vendor source under
+`<project>/.mux/extensions/<name>/`, but project-local source remains
+existence-only until the project/root is trusted.
+
+### 2. Write `extension.ts`
+
+```ts
+import { defineManifest } from "mux:extensions";
+
+export const manifest = defineManifest({
+  name: "acme-review",
+  displayName: "Acme Review",
+  description: "Review helpers for Acme.",
+  capabilities: {
+    skills: true,
+  },
+});
+
+export function activate(ctx) {
+  ctx.skills.register({
+    name: "review",
+    bodyPath: "./skills/review/SKILL.md",
+  });
+}
+```
+
+Key constraints surface as diagnostics on the Extension Card:
+
+- `manifest.name` must match the Extension Module folder basename.
+- The Extension Name must satisfy the Extension Name schema.
+- `manifest.capabilities.skills === true` is required before
+  `ctx.skills.register` can succeed.
+- Static Manifest extraction does not execute extension code.
+- Extension code may import only contained relative modules or `mux:*` virtual
+  modules; npm and other bare imports are rejected in v1.
+
+### 3. Write the skill body
+
+```markdown
+---
+name: review
+description: Review the current changes
+---
+
+# Review
+
+Instructions for the agent.
+```
+
+The registered skill `name` must match the `SKILL.md` frontmatter name.
+`bodyPath` is resolved inside the Extension Module realpath. Absolute paths,
+`..` traversal, and symlink escapes are rejected.
+
+### 4. Reload and approve
+
+Run **Reload Extensions** from the command palette. The new Extension appears in
+**Settings → Extensions** under the matching root.
+
+Project-local roots require trust before Mux fetches, parses, transpiles, or
+executes repo-controlled extension source. After trust, Mux runs Registration
+Discovery to preview requested registrations. Enable the extension and approve
+its requested capabilities before Full Activation publishes live skills.
+
+## Static Manifest reference
+
+| Field          | Type                  | Required | Notes                                              |
+| -------------- | --------------------- | -------- | -------------------------------------------------- |
+| `name`         | Extension Name string | yes      | Must match the containing folder basename.         |
+| `displayName`  | string                | no       | User-facing name on the Extension Card.            |
+| `description`  | string                | no       | User-facing description on the Extension Card.     |
+| `capabilities` | object                | no       | V1 supports `skills: true` for skill registration. |
+
+Unknown static manifest fields produce diagnostics. They do not grant authority.
+
+## Capabilities and approvals
+
+V1 exposes one registration capability: `skills`. Declaring
+`capabilities.skills: true` allows `activate(ctx)` to call
+`ctx.skills.register` during Registration Discovery and Full Activation.
+
+Effective Capabilities = `requested ∩ approved`. New requested capabilities are
+never auto-approved; they surface as `Pending re-approval` on the card. Source
+coordinates, content hashes, and vendored paths do not cause approval drift.
+
+## Discovery and activation
+
+Mux runs `activate(ctx)` in two modes:
+
+1. **Registration Discovery** after root trust. `ctx.mode === "discover"`,
+   `ctx.skills.register` records intended skills, and returned disposables are
+   no-ops.
+2. **Full Activation** after trust, enablement, and capability approval.
+   Activation may publish only skills observed during Registration Discovery.
+
+Discovery or activation failures surface diagnostics and do not crash startup.
+
+## Source locks
+
+Global installs write source metadata under `~/.mux/extensions/lock.json`.
+Project repositories may commit `<project>/.mux/extensions.lock.json` and may
+vendor sources under `<project>/.mux/extensions/<name>/`. Lockfiles are
+reproducibility metadata only: they cannot inject trust, enablement, or approval
+state.

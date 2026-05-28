@@ -1,8 +1,15 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, render } from "@testing-library/react";
+import * as DiffRendererModule from "@/browser/features/Shared/DiffRenderer";
 import type { ReviewActionCallbacks } from "@/browser/features/Shared/InlineReviewNote";
 import type { Review, ReviewNoteData } from "@/common/types/review";
+
+const actualDiffRendererModule = { ...DiffRendererModule };
+
+afterAll(async () => {
+  await mock.module("@/browser/features/Shared/DiffRenderer", () => actualDiffRendererModule);
+});
 
 interface MockSelectableDiffRendererProps {
   content: string;
@@ -26,6 +33,7 @@ const selectableDiffRendererMock = mock((props: MockSelectableDiffRendererProps)
 ));
 
 void mock.module("@/browser/features/Shared/DiffRenderer", () => ({
+  ...actualDiffRendererModule,
   SelectableDiffRenderer: (props: MockSelectableDiffRendererProps) =>
     selectableDiffRendererMock(props),
 }));

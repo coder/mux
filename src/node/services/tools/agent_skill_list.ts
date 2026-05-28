@@ -172,6 +172,7 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
             roots,
             containment: skillCtx.containment,
             dedupeByName: false,
+            extensionSkills: config.extensionSkills,
           });
           const skills = discovered
             .filter((skill) => skill.scope !== "built-in")
@@ -271,6 +272,25 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
             }
 
             skills.push(descriptor);
+          }
+        }
+
+        // Extension skills live in packages, not under the hand-walked roots above.
+        // Append them after project/global skills so local customizations win.
+        if (config.extensionSkills) {
+          const knownNames = new Set(skills.map((s) => s.name));
+          for (const ext of config.extensionSkills) {
+            if (knownNames.has(ext.name)) continue;
+            const descriptorResult = AgentSkillDescriptorSchema.safeParse({
+              name: ext.name,
+              description: ext.description || ext.name,
+              scope: "extension",
+              advertise: ext.advertise,
+            });
+            if (descriptorResult.success) {
+              skills.push(descriptorResult.data);
+              knownNames.add(ext.name);
+            }
           }
         }
 

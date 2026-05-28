@@ -58,6 +58,46 @@ async function importIsolatedExperimentModules() {
   return tempDir;
 }
 
+function createManualAsyncIterable<T>(): {
+  iterable: AsyncIterable<T>;
+  push: (value: T) => void;
+  close: () => void;
+} {
+  const queue: T[] = [];
+  const waiters: Array<() => void> = [];
+  let closed = false;
+
+  const wake = () => {
+    waiters.shift()?.();
+  };
+
+  return {
+    iterable: {
+      async *[Symbol.asyncIterator]() {
+        while (!closed) {
+          if (queue.length === 0) {
+            await new Promise<void>((resolve) => waiters.push(resolve));
+          }
+          while (queue.length > 0) {
+            const value = queue.shift();
+            if (value !== undefined) {
+              yield value;
+            }
+          }
+        }
+      },
+    },
+    push(value: T) {
+      queue.push(value);
+      wake();
+    },
+    close() {
+      closed = true;
+      while (waiters.length > 0) wake();
+    },
+  };
+}
+
 let originalWindow: typeof globalThis.window;
 let originalDocument: typeof globalThis.document;
 let originalLocalStorage: typeof globalThis.localStorage;
@@ -214,6 +254,59 @@ describe("ExperimentsProvider", () => {
     });
 
     expect(getAllMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("refreshes remote experiments when the backend emits a change", async () => {
+    let callCount = 0;
+    const changes = createManualAsyncIterable<string>();
+    const getAllMock = mock(() => {
+      callCount += 1;
+      return Promise.resolve({
+        [EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES]: {
+          value: callCount === 1,
+          source: "posthog",
+        },
+      } satisfies Record<string, ExperimentValue>);
+    });
+    const onChangedMock = mock(() => Promise.resolve(changes.iterable));
+
+    currentClientMock = {
+      experiments: {
+        getAll: getAllMock,
+        onChanged: onChangedMock as unknown as APIClient["experiments"]["onChanged"],
+        reload: mock(() => Promise.resolve()),
+      },
+    };
+
+    function Observer() {
+      const enabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
+      return <div data-testid="enabled">{String(enabled)}</div>;
+    }
+
+    const { getByTestId } = render(
+      <APIProvider client={currentClientMock as APIClient}>
+        <ExperimentsProvider>
+          <Observer />
+        </ExperimentsProvider>
+      </APIProvider>
+    );
+
+    await waitFor(() => {
+      expect(onChangedMock).toHaveBeenCalled();
+      expect(getAllMock).toHaveBeenCalledTimes(1);
+      expect(getByTestId("enabled").textContent).toBe("true");
+    });
+
+    act(() => {
+      changes.push(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
+    });
+
+    await waitFor(() => {
+      expect(getAllMock).toHaveBeenCalledTimes(2);
+      expect(getByTestId("enabled").textContent).toBe("false");
+    });
+
+    changes.close();
   });
 
   test("syncs existing local overrides to the backend on connect", async () => {

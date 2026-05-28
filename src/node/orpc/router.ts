@@ -1,7 +1,7 @@
 import { os, ORPCError } from "@orpc/server";
 import { DEFAULT_CODER_ARCHIVE_BEHAVIOR } from "@/common/config/coderArchiveBehavior";
 import * as schemas from "@/common/orpc/schemas";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { EXPERIMENT_IDS, type ExperimentId } from "@/common/constants/experiments";
 import type { ORPCContext } from "./context";
 import { OnePasswordService } from "@/node/services/onePasswordService";
 import {
@@ -99,6 +99,8 @@ import {
 } from "@/node/services/subagentTranscriptArtifacts";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
+import { installGitExtensionSource } from "@/node/extensions/gitExtensionSourceInstaller";
+import type { ExtensionScope } from "@/node/extensions/extensionRegistryService";
 
 const RAW_QUERY_USER_ERROR_PATTERNS = [
   /^parser error:/i,
@@ -117,6 +119,29 @@ function shouldExposeRawQueryError(error: unknown): boolean {
   return RAW_QUERY_USER_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
 
+function resolveExtensionScopeOrThrow(context: ORPCContext, rootId: string): ExtensionScope {
+  const scope = context.extensionRegistry.resolveScopeByRootId(rootId);
+  if (!scope) {
+    throw new ORPCError("NOT_FOUND", {
+      message: `rootId ${JSON.stringify(rootId)} does not match any Extension Root or Stale Record.`,
+    });
+  }
+  return scope;
+}
+
+function resolveProjectLocalExtensionScopeOrThrow(
+  context: ORPCContext,
+  rootId: string
+): Extract<ExtensionScope, { kind: "project-local" }> {
+  const scope = resolveExtensionScopeOrThrow(context, rootId);
+  if (scope.kind !== "project-local") {
+    throw new ORPCError("NOT_FOUND", {
+      message: `rootId ${JSON.stringify(rootId)} does not resolve to a project-local Extension Root.`,
+    });
+  }
+  return scope;
+}
+
 /**
  * Resolves runtime and discovery path for agent operations.
  * - When workspaceId is provided: uses workspace's runtime config (SSH, local, worktree)
@@ -129,6 +154,7 @@ async function resolveAgentDiscoveryContext(
 ): Promise<{
   runtime: ReturnType<typeof createRuntime>;
   discoveryPath: string;
+  projectPath: string;
   metadata?: WorkspaceMetadata;
 }> {
   if (!input.projectPath && !input.workspaceId) {
@@ -147,7 +173,7 @@ async function resolveAgentDiscoveryContext(
     const discoveryPath = input.disableWorkspaceAgents
       ? metadata.projectPath
       : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
-    return { runtime, discoveryPath, metadata };
+    return { runtime, discoveryPath, projectPath: metadata.projectPath, metadata };
   }
 
   // No workspace - use local runtime with project path
@@ -155,7 +181,24 @@ async function resolveAgentDiscoveryContext(
     { type: "local", srcBaseDir: context.config.srcDir },
     { projectPath: input.projectPath! }
   );
-  return { runtime, discoveryPath: input.projectPath! };
+  return { runtime, discoveryPath: input.projectPath!, projectPath: input.projectPath! };
+}
+
+async function setProjectTrustForExtensionRoot(
+  context: ORPCContext,
+  projectPath: string,
+  trusted: boolean
+): Promise<void> {
+  await context.config.editConfig((config) => {
+    const normalizedPath = stripTrailingSlashes(projectPath);
+    let project = config.projects.get(normalizedPath);
+    if (!project) {
+      project = { workspaces: [] };
+      config.projects.set(normalizedPath, project);
+    }
+    project.trusted = trusted;
+    return config;
+  });
 }
 
 function isImageGenerationToolExperimentEnabled(context: ORPCContext): boolean {
@@ -1606,8 +1649,13 @@ export const router = (authToken?: string) => {
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
           }
-          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          const skills = await discoverAgentSkills(runtime, discoveryPath);
+          const { runtime, discoveryPath, projectPath } = await resolveAgentDiscoveryContext(
+            context,
+            input
+          );
+          const skills = await discoverAgentSkills(runtime, discoveryPath, {
+            extensionSkills: context.extensionRegistry.getSkillSources(projectPath),
+          });
           return filterUnavailableImagegenSkills(
             skills,
             isImageGenerationToolExperimentEnabled(context)
@@ -1621,8 +1669,13 @@ export const router = (authToken?: string) => {
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
           }
-          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          const diagnostics = await discoverAgentSkillsDiagnostics(runtime, discoveryPath);
+          const { runtime, discoveryPath, projectPath } = await resolveAgentDiscoveryContext(
+            context,
+            input
+          );
+          const diagnostics = await discoverAgentSkillsDiagnostics(runtime, discoveryPath, {
+            extensionSkills: context.extensionRegistry.getSkillSources(projectPath),
+          });
           return {
             ...diagnostics,
             skills: filterUnavailableImagegenSkills(
@@ -1639,8 +1692,13 @@ export const router = (authToken?: string) => {
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
           }
-          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          const result = await readAgentSkill(runtime, discoveryPath, input.skillName);
+          const { runtime, discoveryPath, projectPath } = await resolveAgentDiscoveryContext(
+            context,
+            input
+          );
+          const result = await readAgentSkill(runtime, discoveryPath, input.skillName, {
+            extensionSkills: context.extensionRegistry.getSkillSources(projectPath),
+          });
           assertImagegenSkillAvailable(context, result);
           return result.package;
         }),
@@ -5084,6 +5142,62 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           await context.experimentsService.setOverride(input.experimentId, input.enabled);
         }),
+      onChanged: t
+        .input(schemas.experiments.onChanged.input)
+        .output(schemas.experiments.onChanged.output)
+        .handler(async function* ({ context, signal }) {
+          let resolveNext: (() => void) | null = null;
+          const pendingExperimentIds: ExperimentId[] = [];
+          let ended = false;
+
+          const push = (experimentId: ExperimentId) => {
+            if (ended) return;
+            pendingExperimentIds.push(experimentId);
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve();
+            }
+          };
+
+          const unsubscribe = context.experimentsService.onExperimentChanged(push);
+
+          const onAbort = () => {
+            if (ended) return;
+            ended = true;
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve();
+            }
+          };
+
+          if (signal) {
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
+
+          try {
+            while (!ended) {
+              if (pendingExperimentIds.length > 0) {
+                const experimentId = pendingExperimentIds.shift();
+                if (experimentId) yield experimentId;
+                continue;
+              }
+
+              await new Promise<void>((resolve) => {
+                resolveNext = resolve;
+              });
+            }
+          } finally {
+            ended = true;
+            signal?.removeEventListener("abort", onAbort);
+            unsubscribe();
+          }
+        }),
       reload: t
         .input(schemas.experiments.reload.input)
         .output(schemas.experiments.reload.output)
@@ -5322,6 +5436,129 @@ export const router = (authToken?: string) => {
             input.sectionTitle ?? input.sectionId ?? undefined
           ),
         })),
+    },
+    extensions: {
+      list: t
+        .input(schemas.extensions.list.input)
+        .output(schemas.extensions.list.output)
+        .handler(
+          ({ context }) =>
+            context.extensionRegistry.getSnapshot() ?? context.extensionRegistry.getCachedSnapshot()
+        ),
+      onChanged: t
+        .input(schemas.extensions.onChanged.input)
+        .output(schemas.extensions.onChanged.output)
+        .handler(async function* ({ context, signal }) {
+          const queue = createAsyncEventQueue<void>();
+          const unsubscribe = context.extensionRegistry.onChanged(() => queue.push(undefined));
+          const onAbort = () => queue.end();
+          signal?.addEventListener("abort", onAbort, { once: true });
+          try {
+            yield* queue.iterate();
+          } finally {
+            signal?.removeEventListener("abort", onAbort);
+            unsubscribe();
+            queue.end();
+          }
+        }),
+      installGitSource: t
+        .input(schemas.extensions.installGitSource.input)
+        .output(schemas.extensions.installGitSource.output)
+        .handler(async ({ context, input }) => {
+          const result = await installGitExtensionSource({
+            coordinate: input.coordinate,
+            muxRootDir: context.config.rootDir,
+          });
+          // Git installs mutate the fetched global active view, so refresh the
+          // registry immediately instead of waiting for a watcher tick.
+          await context.extensionRegistry.reload();
+          return result;
+        }),
+      initializeUserRoot: t
+        .input(schemas.extensions.initializeUserRoot.input)
+        .output(schemas.extensions.initializeUserRoot.output)
+        .handler(async ({ context }) => {
+          const rootPath = path.join(context.config.rootDir, "extensions", "local");
+          await fsPromises.mkdir(rootPath, { recursive: true });
+          await context.extensionRegistry.reloadRoot("user-global");
+        }),
+      reload: t
+        .input(schemas.extensions.reload.input)
+        .output(schemas.extensions.reload.output)
+        .handler(async ({ context, input }) => {
+          if (input.rootId != null) {
+            await context.extensionRegistry.reloadRoot(input.rootId);
+          } else {
+            await context.extensionRegistry.reload();
+          }
+        }),
+      trustRoot: t
+        .input(schemas.extensions.trustRoot.input)
+        .output(schemas.extensions.trustRoot.output)
+        .handler(async ({ context, input }) => {
+          const scope = resolveProjectLocalExtensionScopeOrThrow(context, input.rootId);
+          const previousProjectTrust =
+            context.config
+              .loadConfigOrDefault()
+              .projects.get(stripTrailingSlashes(scope.projectPath))?.trusted === true;
+          const previousExtensionRootTrust = await context.extensionRegistry.isProjectRootTrusted(
+            scope.projectPath
+          );
+          await setProjectTrustForExtensionRoot(context, scope.projectPath, true);
+          try {
+            await context.extensionRegistry.trustRoot(scope.projectPath);
+          } catch (error) {
+            await setProjectTrustForExtensionRoot(context, scope.projectPath, previousProjectTrust);
+            await context.extensionRegistry.setProjectRootTrusted(
+              scope.projectPath,
+              previousExtensionRootTrust
+            );
+            throw error;
+          }
+        }),
+      untrustRoot: t
+        .input(schemas.extensions.untrustRoot.input)
+        .output(schemas.extensions.untrustRoot.output)
+        .handler(async ({ context, input }) => {
+          const scope = resolveProjectLocalExtensionScopeOrThrow(context, input.rootId);
+          await setProjectTrustForExtensionRoot(context, scope.projectPath, false);
+          await context.extensionRegistry.untrustRoot(scope.projectPath);
+        }),
+      enable: t
+        .input(schemas.extensions.enable.input)
+        .output(schemas.extensions.enable.output)
+        .handler(async ({ context, input }) => {
+          const scope = resolveExtensionScopeOrThrow(context, input.rootId);
+          await context.extensionRegistry.setEnabled(scope, input.extensionId, true);
+        }),
+      disable: t
+        .input(schemas.extensions.disable.input)
+        .output(schemas.extensions.disable.output)
+        .handler(async ({ context, input }) => {
+          const scope = resolveExtensionScopeOrThrow(context, input.rootId);
+          await context.extensionRegistry.setEnabled(scope, input.extensionId, false);
+        }),
+      approve: t
+        .input(schemas.extensions.approve.input)
+        .output(schemas.extensions.approve.output)
+        .handler(async ({ context, input }) => {
+          const scope = resolveExtensionScopeOrThrow(context, input.rootId);
+          await context.extensionRegistry.setApproval(scope, input.extensionId);
+        }),
+      revokeApproval: t
+        .input(schemas.extensions.revokeApproval.input)
+        .output(schemas.extensions.revokeApproval.output)
+        .handler(async ({ context, input }) => {
+          const scope = resolveExtensionScopeOrThrow(context, input.rootId);
+          await context.extensionRegistry.removeApproval(scope, input.extensionId);
+        }),
+      forgetStale: t
+        .input(schemas.extensions.forgetStale.input)
+        .output(schemas.extensions.forgetStale.output)
+        .handler(async ({ context, input }) => {
+          const scope = resolveExtensionScopeOrThrow(context, input.rootId);
+          await context.extensionRegistry.forgetStale(scope, input.extensionId);
+        }),
     },
     ssh: {
       prompt: {

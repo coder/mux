@@ -1,13 +1,14 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { RemoteRuntime, type SpawnResult } from "@/node/runtime/RemoteRuntime";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
+import { MAX_FILE_SIZE } from "@/node/services/tools/fileCommon";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import {
   discoverAgentSkills,
@@ -589,6 +590,385 @@ describe("agentSkillsService", () => {
     expect(resolved.package.scope).toBe("built-in");
     expect(resolved.package.frontmatter.name).toBe("mux-docs");
     expect(resolved.skillDir).toBe("<built-in:mux-docs>");
+  });
+
+  test("extension-contributed skills appear in discovery and resolve via readAgentSkill", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+    using extPkg = new DisposableTempDir("agent-skills-ext");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const globalSkillsRoot = global.path;
+    const roots = { projectRoot: projectSkillsRoot, globalRoot: globalSkillsRoot };
+    const runtime = new LocalRuntime(project.path);
+
+    // The body lives at packagePath/SKILL.md — exactly what
+    // ExtensionRegistry.getSkillSources() returns.
+    const bodyPath = path.join(extPkg.path, "SKILL.md");
+    await fs.writeFile(
+      bodyPath,
+      `---
+name: mux-extensions
+description: Demo extension skill
+---
+Body content from extension
+`,
+      "utf-8"
+    );
+
+    const extensionSkills = [
+      {
+        name: "mux-extensions",
+        displayName: "Mux Extensions",
+        description: "Demo extension skill",
+        advertise: true,
+        bodyAbsolutePath: bodyPath,
+        extensionId: "mux.platformdemo",
+      },
+    ];
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots, extensionSkills });
+    const found = skills.find((s) => s.name === "mux-extensions");
+    expect(found).toBeDefined();
+    expect(found!.scope).toBe("extension");
+
+    const name = SkillNameSchema.parse("mux-extensions");
+    const resolved = await readAgentSkill(runtime, project.path, name, { roots, extensionSkills });
+    expect(resolved.package.scope).toBe("extension");
+    expect(resolved.package.frontmatter.name).toBe("mux-extensions");
+    expect(resolved.package.body).toContain("Body content from extension");
+  });
+
+  test("readAgentSkill synthesizes frontmatter for manifest-backed extension bodies", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+    using extPkg = new DisposableTempDir("agent-skills-ext");
+
+    const roots = {
+      projectRoot: path.join(project.path, ".mux", "skills"),
+      globalRoot: global.path,
+    };
+    const bodyPath = path.join(extPkg.path, "SKILL.md");
+    await fs.writeFile(bodyPath, "Plain manifest-backed body", "utf-8");
+
+    const runtime = new LocalRuntime(project.path);
+    const name = SkillNameSchema.parse("mux-extensions");
+    const resolved = await readAgentSkill(runtime, project.path, name, {
+      roots,
+      extensionSkills: [
+        {
+          name,
+          displayName: "Mux Extensions",
+          description: "Demo extension skill",
+          advertise: true,
+          bodyAbsolutePath: bodyPath,
+          extensionId: "mux.platformdemo",
+        },
+      ],
+    });
+
+    expect(resolved.package.scope).toBe("extension");
+    expect(resolved.package.frontmatter).toMatchObject({
+      name: "mux-extensions",
+      description: "Demo extension skill",
+      advertise: true,
+    });
+    expect(resolved.package.body).toBe("Plain manifest-backed body");
+  });
+
+  test("readAgentSkill falls back when an extension skill body disappears", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+
+    const roots = {
+      projectRoot: path.join(project.path, ".mux", "skills"),
+      globalRoot: global.path,
+    };
+    const runtime = new LocalRuntime(project.path);
+    const name = SkillNameSchema.parse("mux-docs");
+
+    const resolved = await readAgentSkill(runtime, project.path, name, {
+      roots,
+      extensionSkills: [
+        {
+          name,
+          displayName: "Mux Docs",
+          description: "stale extension descriptor",
+          advertise: true,
+          bodyAbsolutePath: path.join(project.path, "missing-extension-skill.md"),
+          extensionId: "publisher.docs",
+        },
+      ],
+    });
+
+    expect(resolved.package.scope).toBe("built-in");
+  });
+
+  test("readAgentSkill falls back when an extension skill body becomes a symlink", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+    using extPkg = new DisposableTempDir("agent-skills-ext");
+
+    const roots = {
+      projectRoot: path.join(project.path, ".mux", "skills"),
+      globalRoot: global.path,
+    };
+    const bodyPath = path.join(extPkg.path, "SKILL.md");
+    const outsidePath = path.join(project.path, "outside.md");
+    await fs.writeFile(bodyPath, "Plain manifest-backed body", "utf-8");
+    await fs.writeFile(outsidePath, "outside content", "utf-8");
+    await fs.unlink(bodyPath);
+    await fs.symlink(outsidePath, bodyPath);
+
+    const runtime = new LocalRuntime(project.path);
+    const name = SkillNameSchema.parse("mux-docs");
+    const resolved = await readAgentSkill(runtime, project.path, name, {
+      roots,
+      extensionSkills: [
+        {
+          name,
+          displayName: "Mux Docs",
+          description: "symlinked extension descriptor",
+          advertise: true,
+          bodyAbsolutePath: bodyPath,
+          extensionId: "publisher.docs",
+        },
+      ],
+    });
+
+    expect(resolved.package.scope).toBe("built-in");
+  });
+
+  test("readAgentSkill falls back when an extension skill body is non-regular before opening", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+    using extPkg = new DisposableTempDir("agent-skills-ext");
+
+    const roots = {
+      projectRoot: path.join(project.path, ".mux", "skills"),
+      globalRoot: global.path,
+    };
+    const bodyPath = path.join(extPkg.path, "SKILL.md");
+    await fs.mkdir(bodyPath, { recursive: true });
+
+    const originalOpen = fs.open;
+    const openSpy = spyOn(fs, "open");
+    let openedBodyPath = false;
+    openSpy.mockImplementation(((
+      target: Parameters<typeof fs.open>[0],
+      flags?: Parameters<typeof fs.open>[1],
+      mode?: Parameters<typeof fs.open>[2]
+    ) => {
+      if (String(target) === bodyPath) openedBodyPath = true;
+      return originalOpen(target, flags, mode);
+    }) as typeof fs.open);
+
+    try {
+      const runtime = new LocalRuntime(project.path);
+      const name = SkillNameSchema.parse("mux-docs");
+      const resolved = await readAgentSkill(runtime, project.path, name, {
+        roots,
+        extensionSkills: [
+          {
+            name,
+            displayName: "Mux Docs",
+            description: "non-regular extension descriptor",
+            advertise: true,
+            bodyAbsolutePath: bodyPath,
+            extensionId: "publisher.docs",
+          },
+        ],
+      });
+
+      expect(resolved.package.scope).toBe("built-in");
+      expect(openedBodyPath).toBe(false);
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
+  test("readAgentSkill falls back when an extension skill body becomes a directory after preflight", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+    using extPkg = new DisposableTempDir("agent-skills-ext");
+
+    const roots = {
+      projectRoot: path.join(project.path, ".mux", "skills"),
+      globalRoot: global.path,
+    };
+    const bodyPath = path.join(extPkg.path, "SKILL.md");
+    await fs.writeFile(bodyPath, "Plain manifest-backed body", "utf-8");
+
+    const originalOpen = fs.open;
+    const openSpy = spyOn(fs, "open");
+    let swapped = false;
+    openSpy.mockImplementation((async (
+      target: Parameters<typeof fs.open>[0],
+      flags?: Parameters<typeof fs.open>[1],
+      mode?: Parameters<typeof fs.open>[2]
+    ) => {
+      if (!swapped && String(target) === bodyPath) {
+        swapped = true;
+        await fs.rm(bodyPath, { force: true });
+        await fs.mkdir(bodyPath, { recursive: true });
+      }
+      return originalOpen(target, flags, mode);
+    }) as typeof fs.open);
+
+    try {
+      const runtime = new LocalRuntime(project.path);
+      const name = SkillNameSchema.parse("mux-docs");
+      const resolved = await readAgentSkill(runtime, project.path, name, {
+        roots,
+        extensionSkills: [
+          {
+            name,
+            displayName: "Mux Docs",
+            description: "racy extension descriptor",
+            advertise: true,
+            bodyAbsolutePath: bodyPath,
+            extensionId: "publisher.docs",
+          },
+        ],
+      });
+
+      expect(resolved.package.scope).toBe("built-in");
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
+  test("readAgentSkill falls back when an opened extension skill body resolves elsewhere", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+    using extPkg = new DisposableTempDir("agent-skills-ext");
+
+    const roots = {
+      projectRoot: path.join(project.path, ".mux", "skills"),
+      globalRoot: global.path,
+    };
+    const bodyPath = path.join(extPkg.path, "SKILL.md");
+    const outsidePath = path.join(project.path, "outside.md");
+    await fs.writeFile(
+      bodyPath,
+      "---\nname: mux-docs\ndescription: Extension docs\n---\ntrusted extension body",
+      "utf-8"
+    );
+    await fs.writeFile(
+      outsidePath,
+      "---\nname: mux-docs\ndescription: Outside docs\n---\noutside secret",
+      "utf-8"
+    );
+
+    const originalOpen = fs.open;
+    const openSpy = spyOn(fs, "open");
+    openSpy.mockImplementation(((
+      target: Parameters<typeof fs.open>[0],
+      flags?: Parameters<typeof fs.open>[1],
+      mode?: Parameters<typeof fs.open>[2]
+    ) =>
+      originalOpen(
+        String(target) === bodyPath ? outsidePath : target,
+        flags,
+        mode
+      )) as typeof fs.open);
+
+    try {
+      const runtime = new LocalRuntime(project.path);
+      const name = SkillNameSchema.parse("mux-docs");
+      const resolved = await readAgentSkill(runtime, project.path, name, {
+        roots,
+        extensionSkills: [
+          {
+            name,
+            displayName: "Mux Docs",
+            description: "body opened outside the validated path",
+            advertise: true,
+            bodyAbsolutePath: bodyPath,
+            extensionId: "publisher.docs",
+          },
+        ],
+      });
+
+      expect(resolved.package.scope).toBe("built-in");
+      expect(resolved.package.body).not.toContain("outside secret");
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
+  test("readAgentSkill falls back when an extension skill body becomes oversized", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+    using extPkg = new DisposableTempDir("agent-skills-ext");
+
+    const roots = {
+      projectRoot: path.join(project.path, ".mux", "skills"),
+      globalRoot: global.path,
+    };
+    const bodyPath = path.join(extPkg.path, "SKILL.md");
+    await fs.writeFile(bodyPath, "x".repeat(MAX_FILE_SIZE + 1), "utf-8");
+
+    const runtime = new LocalRuntime(project.path);
+    const name = SkillNameSchema.parse("mux-docs");
+    const resolved = await readAgentSkill(runtime, project.path, name, {
+      roots,
+      extensionSkills: [
+        {
+          name,
+          displayName: "Mux Docs",
+          description: "oversized extension descriptor",
+          advertise: true,
+          bodyAbsolutePath: bodyPath,
+          extensionId: "publisher.docs",
+        },
+      ],
+    });
+
+    expect(resolved.package.scope).toBe("built-in");
+  });
+
+  test("project skills shadow extension skills of the same name", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+    using extPkg = new DisposableTempDir("agent-skills-ext");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const globalSkillsRoot = global.path;
+    const roots = { projectRoot: projectSkillsRoot, globalRoot: globalSkillsRoot };
+    const runtime = new LocalRuntime(project.path);
+
+    await writeSkill(projectSkillsRoot, "shared-name", "from project");
+    const bodyPath = path.join(extPkg.path, "SKILL.md");
+    await fs.writeFile(
+      bodyPath,
+      `---
+name: shared-name
+description: from extension
+---
+ext body
+`,
+      "utf-8"
+    );
+
+    const extensionSkills = [
+      {
+        name: "shared-name",
+        displayName: "Shared Name",
+        description: "from extension",
+        advertise: true,
+        bodyAbsolutePath: bodyPath,
+        extensionId: "publisher.skills",
+      },
+    ];
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots, extensionSkills });
+    const sharedName = skills.find((s) => s.name === "shared-name");
+    // Project precedence > extension precedence (PRD: project > global >
+    // extension > built-in). The user's own `<workspace>/.mux/skills` always
+    // wins so installing an extension can't silently rewrite a hand-edited
+    // skill.
+    expect(sharedName?.scope).toBe("project");
   });
 
   test("project/global skills override built-in skills", async () => {

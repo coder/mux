@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Server,
   Lock,
+  Puzzle,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useOnboardingPause } from "@/browser/features/SplashScreens/SplashScreenProvider";
@@ -35,6 +36,7 @@ import { ExperimentsSection } from "./Sections/ExperimentsSection";
 import { ServerAccessSection } from "./Sections/ServerAccessSection";
 import { KeybindsSection } from "./Sections/KeybindsSection";
 import { SecuritySection } from "./Sections/SecuritySection";
+import { ExtensionsSection } from "./Sections/ExtensionsSection";
 import type { SettingsSection } from "./types";
 
 const LEGACY_EXPERIMENT_SETTINGS_SECTION_IDS = new Set(["goals", "heartbeat"]);
@@ -120,19 +122,32 @@ interface SettingsSectionRedirect {
 }
 
 export function getSettingsSections(governorEnabled: boolean): SettingsSection[] {
-  if (!governorEnabled) {
-    return BASE_SECTIONS;
+  const mcpIndex = BASE_SECTIONS.findIndex((s) => s.id === "mcp");
+  const insertAt = mcpIndex >= 0 ? mcpIndex + 1 : BASE_SECTIONS.length;
+  let sections: SettingsSection[] = [
+    ...BASE_SECTIONS.slice(0, insertAt),
+    {
+      id: "extensions",
+      label: "Extensions",
+      icon: <Puzzle className="h-4 w-4" />,
+      component: ExtensionsSection,
+    },
+    ...BASE_SECTIONS.slice(insertAt),
+  ];
+
+  if (governorEnabled) {
+    sections = [
+      ...sections,
+      {
+        id: "governor",
+        label: "Governor",
+        icon: <ShieldCheck className="h-4 w-4" />,
+        component: GovernorSection,
+      },
+    ];
   }
 
-  return [
-    ...BASE_SECTIONS,
-    {
-      id: "governor",
-      label: "Governor",
-      icon: <ShieldCheck className="h-4 w-4" />,
-      component: GovernorSection,
-    },
-  ];
+  return sections;
 }
 
 export function getSettingsSectionRedirect(
@@ -192,6 +207,7 @@ export function SettingsPage(props: SettingsPageProps) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [close]);
+
   const sections = getSettingsSections(governorEnabled);
   const currentSection = sections.find((section) => section.id === activeSection) ?? sections[0];
   const SectionComponent = currentSection.component;

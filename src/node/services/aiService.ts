@@ -11,6 +11,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SendMessageOptions, ProvidersConfigMap } from "@/common/orpc/types";
 
+import type { ExtensionSkillSource } from "@/common/extensions/extensionSkillSource";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import {
   ADVISOR_DEFAULT_MAX_USES_PER_TURN,
@@ -410,6 +411,18 @@ export class AIService extends EventEmitter {
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
     this.streamManager.setMCPServerManager(manager);
+  }
+
+  // Resolves the live Extension Snapshot's skill contributions for the
+  // tool layer (agent_skill_read / agent_skill_read_file). Set after
+  // construction by ServiceContainer; re-evaluated per stream so extension
+  // reload events take effect immediately.
+  private getExtensionSkillSources?: (projectPath: string) => readonly ExtensionSkillSource[];
+
+  setExtensionSkillSourcesProvider(
+    provider: ((projectPath: string) => readonly ExtensionSkillSource[]) | undefined
+  ): void {
+    this.getExtensionSkillSources = provider;
   }
 
   setTaskService(taskService: TaskService): void {
@@ -1279,6 +1292,9 @@ export class AIService extends EventEmitter {
               return desktopCapabilityPromise;
             };
 
+      const extensionSkills = this.getExtensionSkillSources
+        ? Array.from(this.getExtensionSkillSources(metadata.projectPath))
+        : undefined;
       const imageGenerationDirectToolAvailable =
         imageGenerationExperimentEnabled &&
         experiments?.programmaticToolCallingExclusive !== true &&
@@ -1304,6 +1320,7 @@ export class AIService extends EventEmitter {
           mcpServers,
           muxScope,
           loadDesktopCapability,
+          extensionSkills,
           advisorToolAvailable,
           imageGenerationToolAvailable: imageGenerationDirectToolAvailable,
         });
@@ -1686,6 +1703,10 @@ export class AIService extends EventEmitter {
           // Dynamic context for tool descriptions (moved from system prompt for better model attention)
           availableSubagents: agentDefinitions,
           availableSkills,
+          // Mirrors agentSession's slash-skill dispatch: the model's
+          // agent_skill_read tool needs the same extension-skill list so
+          // /skill-name and tool-call resolution stay in sync.
+          extensionSkills,
           // Trust gating: only run hooks/scripts when the full shared workspace runtime is trusted.
           trusted: sharedExecutionTrusted,
         },

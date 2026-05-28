@@ -129,6 +129,10 @@ export const experiments = {
     }),
     output: z.void(),
   },
+  onChanged: {
+    input: z.void(),
+    output: eventIterator(z.enum(EXPERIMENT_IDS)),
+  },
   reload: {
     input: z.void(),
     output: z.void(),
@@ -2640,3 +2644,6 @@ export const ssh = {
     },
   },
 };
+
+// Re-export the extensions registry namespace from the dedicated schema file.
+export { extensions } from "./extensionRegistry";

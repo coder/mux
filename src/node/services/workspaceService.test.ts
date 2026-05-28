@@ -7218,8 +7218,8 @@ describe("WorkspaceService fork", () => {
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
       {} as ReturnType<typeof runtimeFactory.createRuntime>
     );
-    const orchestrateForkSpy = spyOn(forkOrchestratorModule, "orchestrateFork").mockRejectedValue(
-      new Error("runtime explosion")
+    const orchestrateForkSpy = spyOn(forkOrchestratorModule, "orchestrateFork").mockImplementation(
+      () => Promise.reject(new Error("runtime explosion"))
     );
 
     try {

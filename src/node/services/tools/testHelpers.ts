@@ -387,6 +387,7 @@ export function createTestToolConfig(
     sessionsDir?: string;
     runtime?: Runtime;
     muxScope?: MuxToolScope;
+    extensionSkills?: ToolConfiguration["extensionSkills"];
   }
 ): ToolConfiguration {
   return {
@@ -399,6 +400,7 @@ export function createTestToolConfig(
       type: "global",
       muxHome: tempDir,
     },
+    extensionSkills: options?.extensionSkills,
   };
 }
 

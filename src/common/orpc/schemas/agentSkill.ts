@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-export const AgentSkillScopeSchema = z.enum(["project", "global", "built-in"]);
+// Extension-contributed skills sit below project/global custom skills and above built-ins.
+export const AgentSkillScopeSchema = z.enum(["project", "global", "extension", "built-in"]);
 
 /**
  * Skill name per agentskills.io
