@@ -1453,7 +1453,7 @@ export class ProviderModelFactory {
         // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
         const baseFetch = getProviderFetch(providerConfig);
         const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
-        // Always wrap to apply Opus 4.7 wire-level transforms (display + effort
+        // Always wrap to apply Opus 4.7+ wire-level transforms (display + effort
         // override); skip cache_control injection when beta features are off.
         const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(
           baseFetch,
@@ -1965,7 +1965,7 @@ export class ProviderModelFactory {
         const baseFetch = getProviderFetch(providerConfig);
         const isAnthropicModel = modelId.startsWith("anthropic/");
         const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
-        // For Anthropic models via gateway, always wrap to apply Opus 4.7 wire
+        // For Anthropic models via gateway, always wrap to apply Opus 4.7+ wire
         // transforms; skip cache_control injection when beta features are off.
         const fetchWithCacheControl = isAnthropicModel
           ? wrapFetchWithAnthropicCacheControl(baseFetch, effectiveAnthropicCacheTtl, {

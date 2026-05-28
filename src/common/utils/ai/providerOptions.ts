@@ -32,7 +32,7 @@ import { normalizeToCanonical, supports1MContext } from "./models";
 /**
  * Request header used to override Anthropic's `output_config.effort` at the
  * wire level. The @ai-sdk/anthropic Zod schema rejects "xhigh", so for
- * Opus 4.7 + xhigh ThinkingLevel we send "max" through the SDK and ask the
+ * Opus 4.7+ with xhigh ThinkingLevel we send "max" through the SDK and ask the
  * fetch wrapper to rewrite it to "xhigh" via this header (which is then stripped
  * before the request reaches Anthropic).
  */
@@ -283,7 +283,7 @@ export function buildProviderOptions(
     const usesAdaptiveThinking = isOpus46 || isOpus47Plus || isSonnet46;
 
     if (isOpus45 || usesAdaptiveThinking) {
-      // Map to SDK-accepted effort. For Opus 4.7 + xhigh ThinkingLevel, the SDK
+      // Map to SDK-accepted effort. For Opus 4.7+ with xhigh ThinkingLevel, the SDK
       // gets "max" as a placeholder and the Anthropic fetch wrapper rewrites
       // `output_config.effort` to "xhigh" via the X-Mux-Anthropic-Effort header
       // (added in buildRequestHeaders).
@@ -305,10 +305,10 @@ export function buildProviderOptions(
         thinkingLevel: effectiveThinking,
       });
 
-      // Note: Opus 4.7 requires `thinking.display: "summarized"` to receive
+      // Note: Opus 4.7+ requires `thinking.display: "summarized"` to receive
       // thinking content, but the SDK's Zod schema strips unknown keys so we
       // can't add it here. The Anthropic fetch wrapper injects `display` on the
-      // wire for Opus 4.7 + adaptive thinking requests.
+      // wire for Opus 4.7+ adaptive thinking requests.
       const anthropicOptions: AnthropicProviderOptions = {
         disableParallelToolUse: false,
         sendReasoning: true,

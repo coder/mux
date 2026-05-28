@@ -122,7 +122,9 @@ describe("Anthropic 1M context classification", () => {
     expect(hasNative1MContext("anthropic:claude-sonnet-4-5")).toBe(false);
   });
 
-  it("treats Opus 4.6 and Sonnet 4.6 as native 1M models", () => {
+  it("treats Opus 4.6 through 4.8 and Sonnet 4.6 as native 1M models", () => {
+    expect(getAnthropic1MContextMode("anthropic:claude-opus-4-8")).toBe("native");
+    expect(getAnthropic1MContextMode("anthropic:claude-opus-4-8-20260528")).toBe("native");
     expect(getAnthropic1MContextMode("anthropic:claude-opus-4-6")).toBe("native");
     expect(getAnthropic1MContextMode("anthropic:claude-opus-4-6-20260201")).toBe("native");
     expect(getAnthropic1MContextMode("anthropic:claude-sonnet-4-6")).toBe("native");

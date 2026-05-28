@@ -342,8 +342,8 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
-  test("returns all 6 levels for future Opus versions (4.8+, 5+)", () => {
-    // Detection should extend forward so future models don't regress to the default policy.
+  test("returns all 6 levels for Opus 4.8 and future Opus versions", () => {
+    // Detection should extend forward so new Opus models don't regress to the default policy.
     expect(getThinkingPolicyForModel("anthropic:claude-opus-4-8")).toEqual([
       "off",
       "low",

@@ -1746,20 +1746,22 @@ function parseSentBody(call: CapturedFetchCall): Record<string, unknown> {
   return JSON.parse(call.init.body as string) as Record<string, unknown>;
 }
 
-describe("wrapFetchWithAnthropicCacheControl — Opus 4.7 wire transforms", () => {
-  it("injects thinking.display=summarized for Opus 4.7 adaptive thinking", async () => {
-    const { calls, fakeFetch } = createCapturingFetch();
-    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);
-    const body = JSON.stringify({
-      model: "claude-opus-4-7",
-      thinking: { type: "adaptive" },
-      output_config: { effort: "medium" },
+describe("wrapFetchWithAnthropicCacheControl — Opus 4.7+ wire transforms", () => {
+  for (const model of ["claude-opus-4-7", "claude-opus-4-8"] as const) {
+    it(`injects thinking.display=summarized for ${model} adaptive thinking`, async () => {
+      const { calls, fakeFetch } = createCapturingFetch();
+      const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);
+      const body = JSON.stringify({
+        model,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "medium" },
+      });
+      await wrapped("https://api.anthropic.com/v1/messages", { method: "POST", body });
+      expect(calls.length).toBe(1);
+      const sent = parseSentBody(calls[0]);
+      expect(sent.thinking).toEqual({ type: "adaptive", display: "summarized" });
     });
-    await wrapped("https://api.anthropic.com/v1/messages", { method: "POST", body });
-    expect(calls.length).toBe(1);
-    const sent = parseSentBody(calls[0]);
-    expect(sent.thinking).toEqual({ type: "adaptive", display: "summarized" });
-  });
+  }
 
   it("preserves a user-supplied display value on Opus 4.7", async () => {
     const { calls, fakeFetch } = createCapturingFetch();

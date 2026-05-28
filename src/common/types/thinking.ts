@@ -167,7 +167,7 @@ export const ANTHROPIC_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
  * Note: Opus 4.7 introduced a native "xhigh" effort level in the API, but the
  * SDK's Zod validator still rejects "xhigh". Mux handles this by sending "max"
  * through the SDK and rewriting `output_config.effort` to "xhigh" in a fetch
- * wrapper for Opus 4.7 when the user selected the xhigh ThinkingLevel.
+ * wrapper for Opus 4.7+ when the user selected the xhigh ThinkingLevel.
  * See `wrapFetchWithAnthropicCacheControl` and `buildRequestHeaders`.
  */
 export type AnthropicEffortLevel = "low" | "medium" | "high" | "max";
@@ -189,7 +189,7 @@ const ANTHROPIC_EFFORT: Record<ThinkingLevel, AnthropicEffortLevel> = {
   low: "low",
   medium: "medium",
   high: "high",
-  xhigh: "max", // SDK placeholder; fetch wrapper rewrites to "xhigh" on Opus 4.7
+  xhigh: "max", // SDK placeholder; fetch wrapper rewrites to "xhigh" on Opus 4.7+
   max: "max",
 };
 

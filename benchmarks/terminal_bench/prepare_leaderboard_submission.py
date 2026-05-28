@@ -109,6 +109,13 @@ MODEL_METADATA = {
         "model_org_display_name": "Anthropic",
         "folder_name": "Claude-Opus-4.7",
     },
+    "anthropic/claude-opus-4-8": {
+        "model_name": "claude-opus-4-8",
+        "model_provider": "anthropic",
+        "model_display_name": "Claude Opus 4.8",
+        "model_org_display_name": "Anthropic",
+        "folder_name": "Claude-Opus-4.8",
+    },
     # Keep historical GPT metadata alongside the current GPT-5.5 bench target
     # so mixed or older artifact sets still map to the canonical leaderboard names.
     "openai/gpt-5.2": {
@@ -442,7 +449,7 @@ def main():
     parser.add_argument(
         "--models",
         nargs="+",
-        help="Only process specific models (e.g., anthropic/claude-opus-4-7, openai/gpt-5.5)",
+        help="Only process specific models (e.g., anthropic/claude-opus-4-8, openai/gpt-5.5)",
     )
     args = parser.parse_args()
 

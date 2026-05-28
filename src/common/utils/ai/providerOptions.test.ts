@@ -962,7 +962,7 @@ describe("buildRequestHeaders", () => {
     });
   }
 
-  describe("Opus 4.7 xhigh effort override", () => {
+  describe("Opus 4.7+ xhigh effort override", () => {
     for (const { name, model, routeProvider, thinkingLevel, expected } of [
       {
         name: "emits override header when thinkingLevel=xhigh for Opus 4.7",
@@ -979,8 +979,7 @@ describe("buildRequestHeaders", () => {
         expected: { [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" },
       },
       {
-        name: "emits override header for hypothetical Opus 4.8",
-        // Detection should match future versions so xhigh doesn't silently collapse to max.
+        name: "emits override header for Opus 4.8",
         model: "anthropic:claude-opus-4-8",
         routeProvider: undefined,
         thinkingLevel: "xhigh",
