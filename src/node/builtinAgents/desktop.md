@@ -4,8 +4,6 @@ description: Visual desktop automation agent for GUI-heavy, screenshot-intensive
 base: exec
 ui:
   hidden: true
-  requires:
-    - desktop
 subagent:
   runnable: true
   append_prompt: |

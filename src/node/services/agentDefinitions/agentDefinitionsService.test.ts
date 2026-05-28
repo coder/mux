@@ -576,8 +576,6 @@ description: Base description
 ui:
   hidden: true
   color: red
-  requires:
-    - plan
 subagent:
   runnable: true
   append_prompt: Base subagent prompt
@@ -617,7 +615,6 @@ Project body.
     expect(frontmatter.description).toBe("Base description");
     expect(frontmatter.ui?.hidden).toBe(true);
     expect(frontmatter.ui?.color).toBe("blue");
-    expect(frontmatter.ui?.requires).toEqual(["plan"]);
     expect(frontmatter.subagent?.runnable).toBe(true);
     expect(frontmatter.subagent?.append_prompt).toBe("Base subagent prompt");
     expect(frontmatter.subagent?.skip_init_hook).toBe(true);

@@ -76,8 +76,6 @@ disabled: false # Optional. When true, fully excludes this definition.
 # UI
 ui:
   hidden: false # Hide from the agent picker.
-  requires: # Capability gates: omit unless needed.
-    - desktop # "desktop" | "plan"
   color: "var(--color-exec-mode)" # CSS color or var; inherited from base if unset.
 
 # System prompt.
@@ -473,8 +471,6 @@ description: Visual desktop automation agent for GUI-heavy, screenshot-intensive
 base: exec
 ui:
   hidden: true
-  requires:
-    - desktop
 subagent:
   runnable: true
   append_prompt: |

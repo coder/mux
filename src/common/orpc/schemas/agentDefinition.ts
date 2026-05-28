@@ -6,8 +6,6 @@ export const AgentDefinitionScopeSchema = z.enum(["built-in", "project", "global
 
 export { AgentIdSchema } from "@/common/schemas/ids";
 
-const AgentDefinitionUiRequirementSchema = z.enum(["plan", "desktop"]);
-
 const AgentDefinitionUiSchema = z
   .object({
     // Opt out of the agent picker. Hidden agents can still run as subagents
@@ -16,10 +14,6 @@ const AgentDefinitionUiSchema = z
 
     // UI color (CSS color value). Inherited from base agent if not specified.
     color: z.string().min(1).optional(),
-
-    // Capability requirements. Enforced by `agents.list` (toggles uiSelectable)
-    // and by the task tool's subagent discovery (filters out unavailable agents).
-    requires: z.array(AgentDefinitionUiRequirementSchema).min(1).optional(),
   })
   .strip();
 

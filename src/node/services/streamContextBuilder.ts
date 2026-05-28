@@ -663,8 +663,9 @@ export async function discoverAvailableSubagentsForToolContext(args: {
           return null;
         }
 
-        const requiresDesktop = resolvedFrontmatter.ui?.requires?.includes("desktop") ?? false;
-        if (requiresDesktop && !(await isDesktopAvailable())) {
+        // Desktop is the only built-in that depends on runtime capability. Hide it from
+        // the task tool's subagent menu when the active workspace has no desktop session.
+        if (descriptor.id === "desktop" && !(await isDesktopAvailable())) {
           return null;
         }
 

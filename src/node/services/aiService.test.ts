@@ -2847,23 +2847,12 @@ describe("discoverAvailableSubagentsForToolContext", () => {
     }
   });
 
-  it("filters desktop-only agents with a single capability probe", async () => {
+  it("filters the desktop agent when capability is unavailable", async () => {
     using project = new DisposableTempDir("available-subagents-desktop");
     using muxHome = new DisposableTempDir("available-subagents-desktop-home");
 
     const agentsRoot = path.join(project.path, ".mux", "agents");
     await fs.mkdir(agentsRoot, { recursive: true });
-
-    await fs.writeFile(
-      path.join(agentsRoot, "desktop-one.md"),
-      `---\nname: Desktop One\nbase: exec\nui:\n  requires:\n    - desktop\n---\nBody\n`,
-      "utf-8"
-    );
-    await fs.writeFile(
-      path.join(agentsRoot, "desktop-two.md"),
-      `---\nname: Desktop Two\nbase: exec\nui:\n  requires:\n    - desktop\n---\nBody\n`,
-      "utf-8"
-    );
     await fs.writeFile(
       path.join(agentsRoot, "plain.md"),
       `---\nname: Plain Agent\nbase: exec\n---\nBody\n`,
@@ -2890,24 +2879,14 @@ describe("discoverAvailableSubagentsForToolContext", () => {
       loadDesktopCapability,
     });
 
-    expect(loadDesktopCapability).toHaveBeenCalledTimes(1);
-    expect(availableSubagents.find((agent) => agent.id === "desktop-one")).toBeUndefined();
-    expect(availableSubagents.find((agent) => agent.id === "desktop-two")).toBeUndefined();
+    // The built-in `desktop` agent should be filtered out when capability is unavailable.
+    expect(availableSubagents.find((agent) => agent.id === "desktop")).toBeUndefined();
     expect(availableSubagents.find((agent) => agent.id === "plain")?.subagentRunnable).toBe(true);
   });
 
-  it("keeps desktop-only agents when desktop capability is available", async () => {
+  it("keeps the desktop agent when capability is available", async () => {
     using project = new DisposableTempDir("available-subagents-desktop-enabled");
     using muxHome = new DisposableTempDir("available-subagents-desktop-enabled-home");
-
-    const agentsRoot = path.join(project.path, ".mux", "agents");
-    await fs.mkdir(agentsRoot, { recursive: true });
-
-    await fs.writeFile(
-      path.join(agentsRoot, "desktop-enabled.md"),
-      `---\nname: Desktop Enabled\nbase: exec\nui:\n  requires:\n    - desktop\n---\nBody\n`,
-      "utf-8"
-    );
 
     const runtime = new LocalRuntime(project.path);
     const cfg = new Config(muxHome.path).loadConfigOrDefault();
@@ -2925,15 +2904,12 @@ describe("discoverAvailableSubagentsForToolContext", () => {
       workspacePath: project.path,
       cfg,
       roots: {
-        projectRoot: agentsRoot,
+        projectRoot: path.join(project.path, "empty-project-agents"),
         globalRoot: path.join(project.path, "empty-global-agents"),
       },
       loadDesktopCapability,
     });
 
-    expect(loadDesktopCapability).toHaveBeenCalledTimes(1);
-    expect(
-      availableSubagents.find((agent) => agent.id === "desktop-enabled")?.subagentRunnable
-    ).toBe(true);
+    expect(availableSubagents.find((agent) => agent.id === "desktop")?.subagentRunnable).toBe(true);
   });
 });
