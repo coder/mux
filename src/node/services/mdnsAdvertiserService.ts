@@ -17,6 +17,23 @@ export const MUX_MDNS_SERVICE_TYPE = "mux-api";
 
 type NetworkInterfaces = NodeJS.Dict<os.NetworkInterfaceInfo[]>;
 
+/**
+ * True when `address` is a link-local address of the given family. Link-local
+ * addresses are filtered out of LAN/discovery/bind-host listings because they
+ * are rarely what users want to connect to or copy/paste.
+ *
+ * Exported so other network-facing services (e.g. `serverService`) can share
+ * the same predicate instead of re-encoding the IPv4 169.254/16 and IPv6
+ * fe80::/10 checks inline.
+ */
+export function isLinkLocalAddress(address: string, family: "IPv4" | "IPv6"): boolean {
+  if (family === "IPv4") {
+    return address.startsWith("169.254.");
+  }
+
+  return address.toLowerCase().startsWith("fe80:");
+}
+
 function getNonInternalInterfaceNames(
   networkInterfaces: NetworkInterfaces,
   family?: "IPv4" | "IPv6"
@@ -37,13 +54,7 @@ function getNonInternalInterfaceNames(
         continue;
       }
 
-      const address = info.address;
-
-      // Filter out link-local addresses (they are rarely what users want to connect to).
-      if (infoFamily === "IPv4" && address.startsWith("169.254.")) {
-        continue;
-      }
-      if (infoFamily === "IPv6" && address.toLowerCase().startsWith("fe80:")) {
+      if (isLinkLocalAddress(info.address, infoFamily)) {
         continue;
       }
 

@@ -6,7 +6,11 @@ import * as path from "path";
 import { log } from "./log";
 import * as os from "os";
 import { VERSION } from "@/version";
-import { buildMuxMdnsServiceOptions, MdnsAdvertiserService } from "./mdnsAdvertiserService";
+import {
+  buildMuxMdnsServiceOptions,
+  isLinkLocalAddress,
+  MdnsAdvertiserService,
+} from "./mdnsAdvertiserService";
 import type { AppRouter } from "@/node/orpc/router";
 
 export interface ServerInfo {
@@ -110,10 +114,7 @@ function getNonInternalInterfaceAddresses(
       const address = info.address;
 
       // Filter out link-local addresses (they are rarely what users want to copy/paste).
-      if (family === "IPv4" && address.startsWith("169.254.")) {
-        continue;
-      }
-      if (family === "IPv6" && address.toLowerCase().startsWith("fe80:")) {
+      if (isLinkLocalAddress(address, family)) {
         continue;
       }
 
