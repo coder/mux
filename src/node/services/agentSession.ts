@@ -1133,6 +1133,54 @@ export class AgentSession {
     );
   }
 
+  private getEditTruncateTargetFromMessages(
+    messages: readonly MuxMessage[],
+    editMessageId: string
+  ): string | undefined {
+    const editIndex = messages.findIndex((message) => message.id === editMessageId);
+    if (editIndex === -1) {
+      return undefined;
+    }
+
+    let truncateTargetId = editMessageId;
+    for (let i = editIndex - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (!this.isSyntheticSnapshotUserMessage(message)) {
+        break;
+      }
+      truncateTargetId = message.id;
+    }
+
+    return truncateTargetId;
+  }
+
+  private async getEditTruncateTargetId(editMessageId: string): Promise<string> {
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
+    if (historyResult.success) {
+      const truncateTargetId = this.getEditTruncateTargetFromMessages(
+        historyResult.data,
+        editMessageId
+      );
+      if (truncateTargetId !== undefined) {
+        return truncateTargetId;
+      }
+    }
+
+    const fullHistory: MuxMessage[] = [];
+    const fullHistoryResult = await this.historyService.iterateFullHistory(
+      this.workspaceId,
+      "forward",
+      (messages) => {
+        fullHistory.push(...messages);
+      }
+    );
+    if (!fullHistoryResult.success) {
+      return editMessageId;
+    }
+
+    return this.getEditTruncateTargetFromMessages(fullHistory, editMessageId) ?? editMessageId;
+  }
+
   private getLastNonSystemHistoryMessage(historyTail: MuxMessage[]): MuxMessage | undefined {
     for (let index = historyTail.length - 1; index >= 0; index -= 1) {
       const candidate = historyTail[index];
@@ -2414,27 +2462,9 @@ export class AgentSession {
 
       // Find the truncation target: the edited message or any immediately-preceding snapshots.
       // (snapshots are persisted immediately before their corresponding user message)
-      // Only search the current compaction epoch — truncating past a compaction boundary
-      // would destroy the summary. The frontend only shows post-boundary messages.
-      let truncateTargetId = editMessageId;
-      const historyResult = await this.historyService.getHistoryFromLatestBoundary(
-        this.workspaceId
-      );
-      if (historyResult.success) {
-        const messages = historyResult.data;
-        const editIndex = messages.findIndex((m) => m.id === editMessageId);
-        if (editIndex > 0) {
-          // Walk backwards over contiguous synthetic snapshots so we don't orphan them.
-          for (let i = editIndex - 1; i >= 0; i--) {
-            const msg = messages[i];
-            const isSnapshot =
-              msg.metadata?.synthetic &&
-              (msg.metadata?.fileAtMentionSnapshot ?? msg.metadata?.agentSkillSnapshot);
-            if (!isSnapshot) break;
-            truncateTargetId = msg.id;
-          }
-        }
-      }
+      // Pre-boundary edits are user-confirmed by the composer, so fall back to full-history lookup
+      // when the edit target is outside the active context window.
+      const truncateTargetId = await this.getEditTruncateTargetId(editMessageId);
 
       const truncateResult = await this.historyService.truncateAfterMessage(
         this.workspaceId,

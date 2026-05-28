@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DisplayedUserMessage } from "@/common/types/message";
-import { canEditDisplayedUserMessage } from "./chatEditing";
+import { buildEditingStateFromDisplayed, canEditDisplayedUserMessage } from "./chatEditing";
 
 function userMessage(overrides: Partial<DisplayedUserMessage> = {}): DisplayedUserMessage {
   return {
@@ -27,10 +27,17 @@ describe("canEditDisplayedUserMessage", () => {
     ).toBe(false);
   });
 
-  test("excludes messages before the latest context boundary", () => {
+  test("allows messages before the latest context boundary", () => {
     expect(canEditDisplayedUserMessage(userMessage({ isBeforeLatestContextBoundary: true }))).toBe(
-      false
+      true
     );
+  });
+
+  test("marks pre-boundary edits so the send flow can confirm destructive rewind", () => {
+    expect(
+      buildEditingStateFromDisplayed(userMessage({ isBeforeLatestContextBoundary: true }))
+        .isBeforeLatestContextBoundary
+    ).toBe(true);
   });
 
   test("excludes side-question rows from edit paths", () => {

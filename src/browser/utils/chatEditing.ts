@@ -19,6 +19,11 @@ export interface PendingUserMessage extends Omit<
 export interface EditingMessageState {
   id: string;
   pending: PendingUserMessage;
+  /**
+   * Sending this edit will truncate across the latest context boundary, so the
+   * composer must confirm before discarding the compaction/reset summary.
+   */
+  isBeforeLatestContextBoundary?: boolean;
 }
 
 export const normalizeQueuedMessage = (queued: QueuedMessage): PendingUserMessage => ({
@@ -31,7 +36,6 @@ const LOCAL_COMMAND_STDOUT_OPEN_TAG = "<local-command-stdout>";
 const LOCAL_COMMAND_STDOUT_CLOSE_TAG = "</local-command-stdout>";
 
 export const canEditDisplayedUserMessage = (message: DisplayedUserMessage): boolean => {
-  if (message.isBeforeLatestContextBoundary === true) return false;
   // /btw rows are persisted read-only side branches. Editing one would route the
   // edited text through the normal main-thread send path and truncate history
   // from the aside instead of re-running the side-question flow.
@@ -54,6 +58,9 @@ export const buildEditingStateFromDisplayed = (
 ): EditingMessageState => ({
   id: message.historyId,
   pending: buildPendingFromDisplayed(message),
+  ...(message.isBeforeLatestContextBoundary === true
+    ? { isBeforeLatestContextBoundary: true }
+    : {}),
 });
 
 /**

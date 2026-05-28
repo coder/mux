@@ -196,6 +196,68 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     expect(appendedFileParts[0].mediaType).toBe("image/png");
   });
 
+  it("removes snapshots when editing before the latest context boundary", async () => {
+    const workspaceId = "ws-edit-before-boundary-snapshot";
+    const { session, historyService } = await createSessionHarness(workspaceId);
+
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("snapshot-original", "user", "snapshot", {
+        historySequence: 0,
+        synthetic: true,
+        fileAtMentionSnapshot: ["@src/foo.ts"],
+      })
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-original", "user", "original @src/foo.ts", {
+        historySequence: 1,
+      })
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-original", "assistant", "reply", { historySequence: 2 })
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("boundary", "assistant", "summary", {
+        historySequence: 3,
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      })
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-after-boundary", "assistant", "after", { historySequence: 4 })
+    );
+    const activeWindow = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    expect(activeWindow.success).toBe(true);
+    if (activeWindow.success) {
+      expect(activeWindow.data.map((message) => message.id)).toEqual([
+        "boundary",
+        "assistant-after-boundary",
+      ]);
+    }
+    const truncateAfterMessage = spyOn(historyService, "truncateAfterMessage");
+
+    const result = await session.sendMessage("edited without mention", {
+      model: TEST_MODEL,
+      agentId: "exec",
+      editMessageId: "user-original",
+    });
+
+    expect(result.success).toBe(true);
+    expect(truncateAfterMessage.mock.calls[0]?.[1]).toBe("snapshot-original");
+
+    const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    expect(history.success).toBe(true);
+    if (history.success) {
+      expect(history.data.map((message) => message.id)).not.toContain("snapshot-original");
+      expect(history.data.map((message) => message.id)).toHaveLength(1);
+    }
+  });
+
   it("preempts a still-preparing turn when editing its last user message", async () => {
     const workspaceId = "ws-edit-preparing";
     const streamResolves: Array<() => void> = [];

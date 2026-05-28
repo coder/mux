@@ -222,6 +222,15 @@ const MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS = 4_000_000;
 
 export type { ChatInputProps, ChatInputAPI };
 
+interface SendOverrides {
+  queueDispatchMode?: QueueDispatchMode;
+  goalInterventionPolicy?: GoalInterventionPolicy;
+}
+
+interface InternalSendOverrides extends SendOverrides {
+  skipBoundaryEditConfirmation?: boolean;
+}
+
 const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { api } = useAPI();
   const policyState = usePolicy();
@@ -263,6 +272,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Extract workspace-specific props with defaults
   const disabled = props.disabled ?? false;
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
+  const [pendingBoundaryEditConfirmation, setPendingBoundaryEditConfirmation] =
+    useState<SendOverrides | null>(null);
   // Hide edit-mode chrome as soon as an edit send starts so the input doesn't sit blank
   // while the backend acknowledges the edit and begins the replacement stream.
   const [optimisticallyDismissedEditId, setOptimisticallyDismissedEditId] = useState<string | null>(
@@ -2134,10 +2145,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setInput]
   );
 
-  const handleSend = async (overrides?: {
-    queueDispatchMode?: QueueDispatchMode;
-    goalInterventionPolicy?: GoalInterventionPolicy;
-  }) => {
+  const handleSend = async (overrides?: InternalSendOverrides) => {
     if (!canSend) {
       return;
     }
@@ -2245,6 +2253,21 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Workspace variant: full command handling + message send
     if (variant !== "workspace") return; // Type guard
+
+    if (
+      editingMessageForUi?.isBeforeLatestContextBoundary === true &&
+      overrides?.skipBoundaryEditConfirmation !== true
+    ) {
+      // Re-enable the old pre-compaction edit flow, but confirm at send time because
+      // the backend truncates through the context boundary and discards its summary.
+      setPendingBoundaryEditConfirmation({
+        ...(overrides?.queueDispatchMode ? { queueDispatchMode: overrides.queueDispatchMode } : {}),
+        ...(overrides?.goalInterventionPolicy
+          ? { goalInterventionPolicy: overrides.goalInterventionPolicy }
+          : {}),
+      });
+      return;
+    }
 
     try {
       const modelOneShot = parsed?.type === "model-oneshot" ? parsed : null;
@@ -2544,6 +2567,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         inputRef.current?.focus();
       }, 0);
     }
+  };
+
+  const handleBoundaryEditConfirm = async () => {
+    const pendingOverrides = pendingBoundaryEditConfirmation;
+    const pendingEdit = editingMessageForUi;
+    if (!pendingOverrides || variant !== "workspace" || !pendingEdit) {
+      setPendingBoundaryEditConfirmation(null);
+      return;
+    }
+
+    setPendingBoundaryEditConfirmation(null);
+    await handleSend({ ...pendingOverrides, skipBoundaryEditConfirmation: true });
+  };
+
+  const handleBoundaryEditCancel = () => {
+    setPendingBoundaryEditConfirmation(null);
   };
 
   // Keep the imperative API pointing at the latest send handler.
@@ -3099,6 +3138,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           </div>
         </div>
       </div>
+
+      <ConfirmationModal
+        isOpen={pendingBoundaryEditConfirmation !== null}
+        title="Edit Message Before Context Boundary?"
+        description="Sending this edit will discard the latest compaction or reset summary and every message after the edited one, then continue from the rewritten history."
+        warning="This action cannot be undone."
+        confirmLabel="Edit and Send"
+        onConfirm={handleBoundaryEditConfirm}
+        onCancel={handleBoundaryEditCancel}
+      />
 
       {/* Confirmation modal for destructive commands (currently only /clear). */}
       <ConfirmationModal
