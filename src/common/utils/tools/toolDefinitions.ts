@@ -1408,7 +1408,10 @@ export const TOOL_DEFINITIONS = {
   ask_user_question: {
     description:
       "Ask 1–4 multiple-choice questions (with optional multi-select) and wait for the user's answers. " +
-      "This tool is intended for plan mode and MUST be used when you need user clarification to complete the plan. " +
+      "This tool is intended for plan mode. " +
+      "Use it ONLY for genuinely balanced decisions that hinge on user-specific context, preference, or information not present in the conversation or repo. " +
+      "Do NOT use it when you already have a reasonable recommendation: if one option is clearly best, proceed with it (stating the assumption) instead of asking — surfacing a question you can answer yourself defeats the purpose. " +
+      "When you do ask, keep the options genuinely open; do not steer toward a single 'recommended' choice. " +
       "Do not output a list of open questions; ask them via this tool instead. " +
       "Each question must include 2–4 options; an 'Other' choice is provided automatically.",
     schema: AskUserQuestionToolArgsSchema,
