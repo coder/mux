@@ -1239,7 +1239,13 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                         ? (workBundleOverride ?? workBundle.defaultExpanded)
                         : false;
 
-                      if (workBundle?.position === "member") {
+                      const keepCollapsedWorkBundleMemberVisible =
+                        msg.type === "user" ||
+                        (msg.type === "assistant" && msg.isSideAnswer === true);
+                      if (
+                        workBundle?.position === "member" &&
+                        (isWorkBundleExpanded || !keepCollapsedWorkBundleMemberVisible)
+                      ) {
                         return null;
                       }
 

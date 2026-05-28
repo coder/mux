@@ -36,6 +36,7 @@ function setupTranscriptDensityStory(density: TranscriptDensity) {
       createAssistantMessage("density-assistant-1", "I'll gather context first.", {
         historySequence: 2,
         timestamp: STABLE_TIMESTAMP - 55_000,
+        partial: true,
         reasoning:
           "Need to inspect auth code, search related validation guidance, and then make a minimal patch.",
         toolCalls: [
@@ -43,38 +44,56 @@ function setupTranscriptDensityStory(density: TranscriptDensity) {
           createWebSearchTool("density-search-1", "JWT validation best practices", 3),
           createAgentSkillReadTool("density-skill-1", "react-effects", { scope: "global" }),
           createBashTool("density-rg-1", 'rg "verify" src', "src/auth.ts:1:verify"),
-          {
-            type: "text",
-            text: "I found the relevant code and will patch it.",
-            timestamp: STABLE_TIMESTAMP - 35_000,
-          },
-          createFileEditTool(
-            "density-edit-1",
-            "src/auth.ts",
-            [
-              "--- src/auth.ts",
-              "+++ src/auth.ts",
-              "@@ -1,3 +1,4 @@",
-              "+import { timingSafeEqual } from 'crypto';",
-              " export function verify() {}",
-            ].join("\n")
-          ),
-          createBashTool(
-            "density-test-1",
-            "make test",
-            "42 tests passed",
-            0,
-            30,
-            500,
-            "Running tests"
-          ),
-          {
-            type: "text",
-            text: "Implemented the auth audit fix and validated it.",
-            timestamp: STABLE_TIMESTAMP - 15_000,
-          },
         ],
       }),
+      createUserMessage("density-user-2", "Please validate with typecheck too", {
+        historySequence: 3,
+        timestamp: STABLE_TIMESTAMP - 40_000,
+      }),
+      createAssistantMessage(
+        "density-assistant-2",
+        "I found the relevant code and will patch it.",
+        {
+          historySequence: 4,
+          timestamp: STABLE_TIMESTAMP - 35_000,
+          toolCalls: [
+            createFileEditTool(
+              "density-edit-1",
+              "src/auth.ts",
+              [
+                "--- src/auth.ts",
+                "+++ src/auth.ts",
+                "@@ -1,3 +1,4 @@",
+                "+import { timingSafeEqual } from 'crypto';",
+                " export function verify() {}",
+              ].join("\n")
+            ),
+            createBashTool(
+              "density-test-1",
+              "make test",
+              "42 tests passed",
+              0,
+              30,
+              500,
+              "Running tests"
+            ),
+            createBashTool(
+              "density-fail-1",
+              "make typecheck",
+              "Type error in src/auth.ts",
+              1,
+              30,
+              500,
+              "Failing validation"
+            ),
+            {
+              type: "text",
+              text: "Implemented the auth audit fix and validated it.",
+              timestamp: STABLE_TIMESTAMP - 15_000,
+            },
+          ],
+        }
+      ),
     ],
   });
 }

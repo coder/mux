@@ -116,25 +116,15 @@ export function computeWorkBundleInfos(
   let index = 0;
 
   while (index < messages.length) {
-    const historyId = getWorkBundleHistoryId(messages[index]);
-    if (historyId === undefined) {
+    if (!isWorkBundleStart(messages, index)) {
       index += 1;
       continue;
     }
 
     const startIndex = index;
-    while (getWorkBundleHistoryId(messages[index + 1]) === historyId) {
+    const finalIndex = findWorkBundleFinalIndex(messages, startIndex);
+    if (finalIndex === undefined) {
       index += 1;
-    }
-
-    const finalIndex = index;
-    index += 1;
-
-    if (finalIndex <= startIndex) {
-      continue;
-    }
-
-    if (messages[finalIndex]?.type !== "assistant") {
       continue;
     }
 
@@ -143,8 +133,15 @@ export function computeWorkBundleInfos(
       entries.push({ message: messages[entryIndex], originalIndex: entryIndex });
     }
 
-    const groupMessages = [...entries.map((entry) => entry.message), messages[finalIndex]];
+    const finalMessage = messages[finalIndex];
+    if (finalMessage?.type !== "assistant") {
+      index = finalIndex + 1;
+      continue;
+    }
+
+    const groupMessages = [...entries.map((entry) => entry.message), finalMessage];
     if (groupMessages.some(isActiveWorkBundleMessage)) {
+      index = finalIndex + 1;
       continue;
     }
 
@@ -155,7 +152,7 @@ export function computeWorkBundleInfos(
       position: "head",
       headIndex: startIndex,
       entries: frozenEntries,
-      durationMs: computeWorkBundleDurationMs(frozenEntries, messages[finalIndex]),
+      durationMs: computeWorkBundleDurationMs(frozenEntries, finalMessage),
       defaultExpanded: false,
     };
 
@@ -166,6 +163,7 @@ export function computeWorkBundleInfos(
       };
     }
     infos[finalIndex] = { ...info, position: "final" };
+    index = finalIndex + 1;
   }
 
   return infos;
@@ -241,16 +239,156 @@ export function computeOperationalBundleInfos(
   return infos;
 }
 
-function getWorkBundleHistoryId(message: DisplayedMessage | undefined): string | undefined {
-  switch (message?.type) {
-    case "assistant":
-    case "reasoning":
-      return message.historyId;
-    case "tool":
-      return isBundleableToolMessage(message) ? message.historyId : undefined;
-    default:
-      return undefined;
+function isWorkBundleStart(messages: DisplayedMessage[], index: number): boolean {
+  const message = messages[index];
+  const historyId = getWorkBundleAgentHistoryId(message);
+  if (historyId === undefined) {
+    return false;
   }
+  if (message.type !== "assistant") {
+    return true;
+  }
+  if (message.isPartial) {
+    return true;
+  }
+
+  for (let nextIndex = index + 1; nextIndex < messages.length; nextIndex++) {
+    const next = messages[nextIndex];
+    if (!isWorkBundleTimelineMessage(next)) {
+      return false;
+    }
+    if (isWorkBundleVisibleConversationMessage(next)) {
+      if (!hasFutureAgentMessageWithHistoryId(messages, nextIndex + 1, historyId)) {
+        return false;
+      }
+      continue;
+    }
+
+    const nextHistoryId = getWorkBundleAgentHistoryId(next);
+    if (nextHistoryId !== historyId) {
+      return false;
+    }
+    if (isWorkBundleOperationalMessage(next)) {
+      return true;
+    }
+    if (next.type === "assistant" && !next.isPartial) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function findWorkBundleFinalIndex(
+  messages: DisplayedMessage[],
+  startIndex: number
+): number | undefined {
+  const historyId = getWorkBundleAgentHistoryId(messages[startIndex]);
+  if (historyId === undefined) {
+    return undefined;
+  }
+
+  let sawOperationalMessage = isWorkBundleOperationalMessage(messages[startIndex]);
+  let finalIndex: number | undefined;
+
+  for (let index = startIndex + 1; index < messages.length; index++) {
+    const message = messages[index];
+    if (!isWorkBundleTimelineMessage(message)) {
+      break;
+    }
+
+    if (isWorkBundleVisibleConversationMessage(message)) {
+      if (!hasFutureAgentMessageWithHistoryId(messages, index + 1, historyId)) {
+        break;
+      }
+      continue;
+    }
+
+    const messageHistoryId = getWorkBundleAgentHistoryId(message);
+    if (messageHistoryId !== historyId) {
+      break;
+    }
+
+    if (isWorkBundleOperationalMessage(message)) {
+      sawOperationalMessage = true;
+    }
+
+    if (message.type !== "assistant" || message.isPartial) {
+      continue;
+    }
+
+    finalIndex = index;
+    const next = messages[index + 1];
+    if (next === undefined || !isWorkBundleTimelineMessage(next)) {
+      break;
+    }
+    if (!isWorkBundleVisibleConversationMessage(next)) {
+      const nextHistoryId = getWorkBundleAgentHistoryId(next);
+      if (nextHistoryId !== historyId) {
+        break;
+      }
+    }
+  }
+
+  if (!sawOperationalMessage || finalIndex === undefined || finalIndex <= startIndex) {
+    return undefined;
+  }
+
+  return finalIndex;
+}
+
+function hasFutureAgentMessageWithHistoryId(
+  messages: DisplayedMessage[],
+  startIndex: number,
+  historyId: string
+): boolean {
+  for (let index = startIndex; index < messages.length; index++) {
+    const message = messages[index];
+    if (!isWorkBundleTimelineMessage(message)) {
+      return false;
+    }
+    if (isWorkBundleVisibleConversationMessage(message)) {
+      continue;
+    }
+
+    return getWorkBundleAgentHistoryId(message) === historyId;
+  }
+
+  return false;
+}
+
+function getWorkBundleAgentHistoryId(message: DisplayedMessage | undefined): string | undefined {
+  if (!isWorkBundleAgentMessage(message) || isWorkBundleVisibleConversationMessage(message)) {
+    return undefined;
+  }
+  return message.historyId;
+}
+
+function isWorkBundleTimelineMessage(
+  message: DisplayedMessage | undefined
+): message is DisplayedMessage & { type: "assistant" | "reasoning" | "tool" | "user" } {
+  return (
+    message?.type === "assistant" ||
+    message?.type === "reasoning" ||
+    message?.type === "tool" ||
+    message?.type === "user"
+  );
+}
+
+function isWorkBundleAgentMessage(
+  message: DisplayedMessage | undefined
+): message is DisplayedMessage & { type: "assistant" | "reasoning" | "tool" } {
+  return message?.type === "assistant" || message?.type === "reasoning" || message?.type === "tool";
+}
+
+function isWorkBundleVisibleConversationMessage(message: DisplayedMessage | undefined): boolean {
+  return (
+    message?.type === "user" || (message?.type === "assistant" && message.isSideAnswer === true)
+  );
+}
+
+function isWorkBundleOperationalMessage(message: DisplayedMessage | undefined): boolean {
+  return message?.type === "reasoning" || message?.type === "tool";
 }
 
 function isActiveWorkBundleMessage(message: DisplayedMessage): boolean {
@@ -323,15 +461,6 @@ export function summarizeOperationalBundle(
   };
 }
 
-function isBundleableToolMessage(message: DisplayedMessage & { type: "tool" }): boolean {
-  if (message.isPartial) {
-    return false;
-  }
-  return (
-    message.status === "completed" || message.status === "pending" || message.status === "executing"
-  );
-}
-
 function isEmptyCompletedWebSearch(message: OperationalBundleMemberMessage): boolean {
   return (
     message.type === "tool" &&
@@ -366,7 +495,7 @@ function isOperationalBundleMemberMessage(
     return message.isOnlyMessageContent !== true;
   }
   if (message?.type === "tool") {
-    return isBundleableToolMessage(message);
+    return true;
   }
   return false;
 }

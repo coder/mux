@@ -15,11 +15,27 @@ import { installDom } from "../dom";
 import { cleanupView, setupWorkspaceView } from "../helpers";
 import { renderApp } from "../renderReviewPanel";
 
+function queryButtons(container: HTMLElement, testId: string): HTMLButtonElement[] {
+  const HTMLButton = container.ownerDocument.defaultView?.HTMLButtonElement;
+  if (!HTMLButton) {
+    throw new Error("Expected test DOM to provide HTMLButtonElement");
+  }
+  return Array.from(container.querySelectorAll(`[data-testid="${testId}"]`)).flatMap((element) => {
+    if (element instanceof HTMLButton) {
+      return [element];
+    }
+    const button = element.querySelector("button");
+    return button ? [button] : [];
+  });
+}
+
 function queryButton(container: HTMLElement, testId: string): HTMLButtonElement | null {
   const element = container.querySelector(`[data-testid="${testId}"]`);
-  return element instanceof HTMLButtonElement
-    ? element
-    : (element?.querySelector("button") ?? null);
+  const HTMLButton = container.ownerDocument.defaultView?.HTMLButtonElement;
+  if (!HTMLButton) {
+    throw new Error("Expected test DOM to provide HTMLButtonElement");
+  }
+  return element instanceof HTMLButton ? element : (element?.querySelector("button") ?? null);
 }
 
 describe("Hyper transcript density", () => {
@@ -42,12 +58,30 @@ describe("Hyper transcript density", () => {
         createUserMessage("density-user-1", "Audit the auth module", { historySequence: 1 }),
         createAssistantMessage("density-assistant-1", "I'll gather context first.", {
           historySequence: 2,
+          partial: true,
           reasoning: "Need to inspect auth code before changing it.",
           toolCalls: [
             createFileReadTool("density-read-1", "src/auth.ts", "export function verify() {}"),
             createWebSearchTool("density-search-1", "JWT validation best practices", 1),
             createAgentSkillReadTool("density-skill-1", "react-effects", { scope: "global" }),
             createBashTool("density-rg-1", 'rg "verify" src', "src/auth.ts:1:verify"),
+          ],
+        }),
+        createUserMessage("density-user-2", "Please validate with typecheck too", {
+          historySequence: 3,
+        }),
+        createAssistantMessage("density-assistant-2", "I'll patch and validate now.", {
+          historySequence: 4,
+          toolCalls: [
+            createBashTool(
+              "density-fail-1",
+              "make typecheck",
+              "Type error in src/auth.ts",
+              1,
+              30,
+              500,
+              "Failing validation"
+            ),
             { type: "text", text: "Implemented the auth audit fix." },
           ],
         }),
@@ -66,19 +100,39 @@ describe("Hyper transcript density", () => {
         return button;
       });
       expect(workButton.getAttribute("aria-expanded")).toBe("false");
+      expect(view.container.textContent).toContain("Please validate with typecheck too");
+      expect(view.container.textContent).not.toContain("make typecheck");
       fireEvent.click(workButton);
 
-      const operationalButton = await waitFor(() => {
+      const firstOperationalButton = await waitFor(() => {
         const button = queryButton(view.container, "operational-bundle");
         if (!button) {
           throw new Error("Operational bundle button not found");
         }
         return button;
       });
-      fireEvent.click(operationalButton);
+      expect(firstOperationalButton.textContent).toContain("Ran 5 operations");
+      expect(view.container.textContent).toContain("Please validate with typecheck too");
+      expect(view.container.textContent).not.toContain("make typecheck");
+      fireEvent.click(firstOperationalButton);
 
       await waitFor(() => {
         expect(view.container.textContent).toContain("src/auth.ts");
+      });
+
+      const failedOperationalButton = await waitFor(() => {
+        const button = queryButtons(view.container, "operational-bundle").find((candidate) =>
+          candidate.textContent?.includes("Ran 1 shell command")
+        );
+        if (!button) {
+          throw new Error("Failed operational bundle button not found");
+        }
+        return button;
+      });
+      fireEvent.click(failedOperationalButton);
+
+      await waitFor(() => {
+        expect(view.container.textContent).toContain("make typecheck");
       });
     } finally {
       await cleanupView(view, cleanupDom);

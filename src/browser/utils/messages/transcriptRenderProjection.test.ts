@@ -75,6 +75,7 @@ function assistant(
     isLastPartOfMessage: overrides.isLastPartOfMessage,
     isCompacted: overrides.isCompacted ?? false,
     isIdleCompacted: overrides.isIdleCompacted ?? false,
+    isSideAnswer: overrides.isSideAnswer,
     timestamp: overrides.timestamp,
   };
 }
@@ -217,6 +218,122 @@ describe("work bundle coalescing", () => {
     });
   });
 
+  test("spans steering user messages until the turn final assistant row", () => {
+    const messages = [
+      user("u1"),
+      tool({ id: "read-1", historyId: "history-a1", timestamp: 1_000 }),
+      user("steer-1"),
+      tool({ id: "bash-1", historyId: "history-a1", toolName: "bash", timestamp: 31_000 }),
+      assistant("final-1", { historyId: "history-a1", timestamp: 61_000 }),
+    ];
+
+    const infos = computeWorkBundleInfos(messages);
+
+    expect(infos[1]).toMatchObject({
+      key: "work:read-1",
+      position: "head",
+      durationMs: 60_000,
+      entries: [
+        { message: messages[1], originalIndex: 1 },
+        { message: messages[2], originalIndex: 2 },
+        { message: messages[3], originalIndex: 3 },
+      ],
+    });
+    expect(infos[2]).toMatchObject({ key: "work:read-1", position: "member" });
+    expect(infos[3]).toMatchObject({ key: "work:read-1", position: "member" });
+    expect(infos[4]).toMatchObject({ key: "work:read-1", position: "final" });
+  });
+
+  test("keeps side-question answers visible while bundling surrounding agent work", () => {
+    const messages = [
+      user("u1"),
+      tool({ id: "read-1", historyId: "history-a1" }),
+      user("side-question-1"),
+      assistant("side-answer-1", { isSideAnswer: true }),
+      tool({ id: "bash-1", historyId: "history-a1", toolName: "bash" }),
+      assistant("final-1", { historyId: "history-a1" }),
+    ];
+
+    const infos = computeWorkBundleInfos(messages);
+
+    expect(infos[1]).toMatchObject({
+      key: "work:read-1",
+      entries: [
+        { message: messages[1], originalIndex: 1 },
+        { message: messages[2], originalIndex: 2 },
+        { message: messages[3], originalIndex: 3 },
+        { message: messages[4], originalIndex: 4 },
+      ],
+    });
+    expect(infos[2]).toMatchObject({ key: "work:read-1", position: "member" });
+    expect(infos[3]).toMatchObject({ key: "work:read-1", position: "member" });
+    expect(infos[4]).toMatchObject({ key: "work:read-1", position: "member" });
+    expect(infos[5]).toMatchObject({ key: "work:read-1", position: "final" });
+  });
+
+  test("does not start a work bundle at a side-question answer", () => {
+    const messages = [
+      user("u1"),
+      assistant("side-answer-1", { isSideAnswer: true }),
+      tool({ id: "bash-1", historyId: "history-a1", toolName: "bash" }),
+      assistant("final-1", { historyId: "history-a1" }),
+    ];
+
+    const infos = computeWorkBundleInfos(messages);
+
+    expect(infos[1]).toBeUndefined();
+    expect(infos[2]).toMatchObject({
+      key: "work:bash-1",
+      entries: [{ message: messages[2], originalIndex: 2 }],
+    });
+    expect(infos[3]).toMatchObject({ key: "work:bash-1", position: "final" });
+  });
+
+  test("does not merge interrupted work across the next user prompt", () => {
+    const messages = [
+      user("u1"),
+      tool({ id: "interrupted-1", historyId: "history-a1", status: "interrupted" }),
+      user("u2"),
+      tool({ id: "bash-1", historyId: "history-a2", toolName: "bash" }),
+      assistant("final-2", { historyId: "history-a2" }),
+    ];
+
+    const infos = computeWorkBundleInfos(messages);
+
+    expect(infos[1]).toBeUndefined();
+    expect(infos[2]).toBeUndefined();
+    expect(infos[3]).toMatchObject({
+      key: "work:bash-1",
+      entries: [{ message: messages[3], originalIndex: 3 }],
+    });
+    expect(infos[4]).toMatchObject({ key: "work:bash-1", position: "final" });
+  });
+
+  test("does not merge completed turns across the next user message", () => {
+    const messages = [
+      user("u1"),
+      tool({ id: "read-1", historyId: "history-a1" }),
+      assistant("final-1", { historyId: "history-a1" }),
+      user("u2"),
+      tool({ id: "bash-1", historyId: "history-a2", toolName: "bash" }),
+      assistant("final-2", { historyId: "history-a2" }),
+    ];
+
+    const infos = computeWorkBundleInfos(messages);
+
+    expect(infos[1]).toMatchObject({
+      key: "work:read-1",
+      entries: [{ message: messages[1], originalIndex: 1 }],
+    });
+    expect(infos[2]).toMatchObject({ key: "work:read-1", position: "final" });
+    expect(infos[3]).toBeUndefined();
+    expect(infos[4]).toMatchObject({
+      key: "work:bash-1",
+      entries: [{ message: messages[4], originalIndex: 4 }],
+    });
+    expect(infos[5]).toMatchObject({ key: "work:bash-1", position: "final" });
+  });
+
   test("leaves active work visible", () => {
     const messages = [
       reasoning({ id: "think-1", historyId: "history-a1" }),
@@ -229,7 +346,7 @@ describe("work bundle coalescing", () => {
     expect(infos.every((info) => info === undefined)).toBe(true);
   });
 
-  test("keeps non-success tools visible before a final assistant row", () => {
+  test("collapses non-success tools before a final assistant row", () => {
     const historyId = "history-a1";
     const failedSearch = tool({
       id: "search-1",
@@ -274,7 +391,22 @@ describe("work bundle coalescing", () => {
 
     const infos = computeWorkBundleInfos(messages);
 
-    expect(infos.every((info) => info === undefined)).toBe(true);
+    expect(infos[0]).toMatchObject({
+      key: "work:search-1",
+      position: "head",
+      entries: [
+        { message: failedSearch, originalIndex: 0 },
+        { message: failedBash, originalIndex: 1 },
+        { message: interruptedRead, originalIndex: 2 },
+        { message: redactedRead, originalIndex: 3 },
+        { message: partialRead, originalIndex: 4 },
+      ],
+    });
+    expect(infos[1]).toMatchObject({ key: "work:search-1", position: "member" });
+    expect(infos[2]).toMatchObject({ key: "work:search-1", position: "member" });
+    expect(infos[3]).toMatchObject({ key: "work:search-1", position: "member" });
+    expect(infos[4]).toMatchObject({ key: "work:search-1", position: "member" });
+    expect(infos[5]).toMatchObject({ key: "work:search-1", position: "final" });
   });
 
   test("keeps visible artifacts and stream errors out of work bundles", () => {
@@ -342,6 +474,28 @@ describe("operational bundle coalescing", () => {
     expect(infos[4]).toMatchObject({ position: "head" });
   });
 
+  test("assistant rows split non-success operational bundles", () => {
+    const first = tool({ id: "bash-1", toolName: "bash", status: "failed" });
+    const middle = assistant("a1");
+    const second = tool({ id: "bash-2", toolName: "bash", status: "failed" });
+
+    const infos = computeOperationalBundleInfos([first, middle, second], {
+      isTurnActive: false,
+    });
+
+    expect(infos[0]).toMatchObject({
+      key: "bundle:bash-1",
+      position: "head",
+      entries: [{ message: first, originalIndex: 0 }],
+    });
+    expect(infos[1]).toBeUndefined();
+    expect(infos[2]).toMatchObject({
+      key: "bundle:bash-2",
+      position: "head",
+      entries: [{ message: second, originalIndex: 2 }],
+    });
+  });
+
   test("leaves reasoning-only turns visible", () => {
     const message = reasoning({ id: "think-only", isOnlyMessageContent: true });
 
@@ -368,7 +522,7 @@ describe("operational bundle coalescing", () => {
     expect(reasoningThenTool[0]?.summary.title).toBe("Ran 2 operations");
   });
 
-  test("leaves non-success tools visible", () => {
+  test("groups non-success tools into operational bundles", () => {
     const failedSearch = tool({
       id: "search-1",
       toolName: "web_search",
@@ -402,7 +556,27 @@ describe("operational bundle coalescing", () => {
       { isTurnActive: false }
     );
 
-    expect(infos.every((info) => info === undefined)).toBe(true);
+    expect(infos[0]).toMatchObject({
+      key: "bundle:search-1",
+      position: "head",
+      state: "settled",
+      defaultExpanded: false,
+      entries: [
+        { message: failedSearch, originalIndex: 0 },
+        { message: failedBash, originalIndex: 1 },
+        { message: interruptedRead, originalIndex: 2 },
+        { message: redactedRead, originalIndex: 3 },
+        { message: partialRead, originalIndex: 4 },
+      ],
+      summary: {
+        title: "Ran 5 operations",
+        details: "1 search · 1 shell command · 3 reads",
+      },
+    });
+    expect(infos[1]).toMatchObject({ key: "bundle:search-1", position: "member" });
+    expect(infos[2]).toMatchObject({ key: "bundle:search-1", position: "member" });
+    expect(infos[3]).toMatchObject({ key: "bundle:search-1", position: "member" });
+    expect(infos[4]).toMatchObject({ key: "bundle:search-1", position: "member" });
   });
 
   test("active and just-settled tail bundles stay expanded until a visible event or turn end", () => {
