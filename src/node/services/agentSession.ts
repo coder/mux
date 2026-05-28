@@ -2595,6 +2595,12 @@ export class AgentSession {
       await this.seedUsageStateFromHistory();
 
       const providersConfigForCompaction = this.getProvidersConfigForCompaction();
+      // Pick up the active goal's per-goal auto-compact override (if any)
+      // so a goal explicitly tuned for aggressive cost control or for
+      // "no compaction, full fidelity" beats the workspace-level slider
+      // for *this* send. Falls back to `null` (no override) when there's
+      // no active goal or the goal didn't set the field.
+      const goalThresholdOverride = await this.resolveGoalAutoCompactionThresholdOverride();
       const compactionResult = this.compactionMonitor.checkBeforeSend({
         model: modelForStream,
         usage: this.getUsageState(),
@@ -2604,6 +2610,7 @@ export class AgentSession {
           providersConfigForCompaction
         ),
         providersConfig: providersConfigForCompaction,
+        thresholdOverride: goalThresholdOverride,
       });
 
       // On-send compaction uses the configured threshold directly so we compact
@@ -2925,6 +2932,36 @@ export class AgentSession {
   setAutoCompactionThreshold(threshold: number): void {
     this.assertNotDisposed("setAutoCompactionThreshold");
     this.compactionMonitor.setThreshold(threshold);
+  }
+
+  /**
+   * Look up the active goal's per-goal auto-compact threshold and return
+   * it as a decimal 0–1 suitable for passing to `CompactionMonitor`'s
+   * `thresholdOverride`, or `null` when there is no override.
+   *
+   * Failure modes are intentionally silent: the goal file might be
+   * missing, corrupt, or the service might not be wired up for a test
+   * harness. In every such case we fall back to "no override" so the
+   * workspace-level threshold continues to govern. Compaction is on the
+   * hot path for every send + every usage delta; a thrown error here
+   * would interrupt the stream pipeline.
+   */
+  private async resolveGoalAutoCompactionThresholdOverride(): Promise<number | null> {
+    const goalService = this.workspaceGoalService;
+    if (!goalService) return null;
+    try {
+      const goal = await goalService.getGoal(this.workspaceId);
+      const pct = goal?.autoCompactionThresholdPct;
+      if (pct == null) return null;
+      if (!Number.isFinite(pct)) return null;
+      // Schema already pins this into [0, 100], but defend against a
+      // legacy/corrupt record bypassing parse by clamping again before
+      // converting to the decimal scale the monitor consumes.
+      const clampedPct = Math.max(0, Math.min(100, pct));
+      return clampedPct / 100;
+    } catch {
+      return null;
+    }
   }
 
   private getUsageState(): AutoCompactionUsageState | undefined {
@@ -4455,6 +4492,13 @@ export class AgentSession {
 
       const streamContext = this.activeStreamContext;
       const streamOptions = streamContext?.options;
+      // Same per-goal override as `checkBeforeSend`. Reading the goal on
+      // every usage-delta event is cheap (a single in-memory file read
+      // in the common case) and avoids racing the renderer's perception
+      // of the threshold: if the user edited the override mid-stream,
+      // the next usage delta will already see it.
+      const midStreamGoalThresholdOverride =
+        await this.resolveGoalAutoCompactionThresholdOverride();
       const shouldInterruptForCompaction = this.compactionMonitor.checkMidStream({
         model: modelForUsage,
         usage: payload.usage,
@@ -4464,6 +4508,7 @@ export class AgentSession {
           streamContext?.providersConfig ?? null
         ),
         providersConfig: streamContext?.providersConfig ?? null,
+        thresholdOverride: midStreamGoalThresholdOverride,
       });
 
       if (shouldInterruptForCompaction) {

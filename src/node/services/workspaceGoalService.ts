@@ -105,6 +105,14 @@ export interface SetGoalInput {
   status?: GoalStatus | null;
   budgetCents?: number | null;
   turnCap?: number | null;
+  /**
+   * Per-goal auto-compaction threshold override (integer percent 0–100).
+   * Tri-state matching `budgetCents` / `turnCap`:
+   *   - `undefined` (key omitted) → no change.
+   *   - `null` → clear the override; model-level slider applies again.
+   *   - explicit number → set the per-goal threshold percent (100 = disabled).
+   */
+  autoCompactionThresholdPct?: number | null;
   completionSummary?: string | null;
   expectedGoalId?: string | null;
   requireUserAcknowledgmentSinceMs?: number | null;
@@ -195,6 +203,10 @@ interface PendingGoalMutation {
   objective: string;
   budgetCents?: number | null;
   turnCap?: number | null;
+  // Mirrors `SetGoalInput.autoCompactionThresholdPct`. Queued so a mid-stream
+  // edit of the per-goal threshold rides through `applyPendingAfterStreamEnd`
+  // → `setGoalImmediately` and lands on the persisted record.
+  autoCompactionThresholdPct?: number | null;
   status?: GoalStatus | null;
   completionSummary?: string | null;
   expectedGoalId?: string | null;
@@ -582,6 +594,11 @@ export class WorkspaceGoalService {
     objective: string;
     budgetCents: number | null;
     turnCap: number | null;
+    // Per-goal auto-compact override (percent, 0–100). `undefined` =
+    // no override, fall back to model-level setting. Lifted to a creation
+    // arg so the slash command, sidebar create form, and palette can all
+    // seed it on first set without a follow-up edit round-trip.
+    autoCompactionThresholdPct?: number | null;
     status?: GoalStatus | null;
     completionSummary?: string | null;
   }): GoalRecordV1 {
@@ -601,6 +618,12 @@ export class WorkspaceGoalService {
       budgetLimitInjectedForGoalId: null,
       requireUserAcknowledgmentSinceMs: null,
       lastContinuationFiredAtMs: null,
+      // Persist `null` explicitly when the caller asked to clear the
+      // override on creation; omit when undefined so the schema's
+      // optional/nullable contract treats the goal as "no override".
+      ...(input.autoCompactionThresholdPct !== undefined
+        ? { autoCompactionThresholdPct: input.autoCompactionThresholdPct }
+        : {}),
       ...(input.completionSummary != null
         ? { completionSummary: input.completionSummary.trim() }
         : {}),
@@ -1496,6 +1519,12 @@ export class WorkspaceGoalService {
         ? { budgetCents: normalizeGoalBudgetCents(input.budgetCents) }
         : {}),
       ...(Object.hasOwn(input, "turnCap") ? { turnCap: input.turnCap ?? null } : {}),
+      // `Object.hasOwn` rather than truthy-check so `null` (explicit
+      // clear of the override) survives the patch — matches how budget
+      // and turnCap distinguish "omitted" from "clear me".
+      ...(Object.hasOwn(input, "autoCompactionThresholdPct")
+        ? { autoCompactionThresholdPct: input.autoCompactionThresholdPct ?? null }
+        : {}),
       ...(Object.hasOwn(input, "requireUserAcknowledgmentSinceMs")
         ? { requireUserAcknowledgmentSinceMs: input.requireUserAcknowledgmentSinceMs ?? null }
         : {}),
@@ -1854,6 +1883,13 @@ export class WorkspaceGoalService {
             objective,
             budgetCents: input.budgetCents ?? null,
             turnCap: input.turnCap ?? null,
+            // Mirror createGoal's tri-state: only forward the override
+            // key when the caller actually set it (including explicit
+            // null = clear), so the optimistic record matches what the
+            // pending mutation will persist.
+            ...(Object.hasOwn(input, "autoCompactionThresholdPct")
+              ? { autoCompactionThresholdPct: input.autoCompactionThresholdPct ?? null }
+              : {}),
             status: input.status,
             completionSummary: input.completionSummary,
           });
@@ -1873,6 +1909,13 @@ export class WorkspaceGoalService {
             ? { budgetCents: input.budgetCents ?? null }
             : {}),
           ...(Object.hasOwn(input, "turnCap") ? { turnCap: input.turnCap ?? null } : {}),
+          // Round-trip the per-goal auto-compact override through the
+          // mid-stream queue so a deferred drain in
+          // `applyPendingAfterStreamEnd` writes the threshold the user
+          // requested. `null` = clear; omitted = no change.
+          ...(Object.hasOwn(input, "autoCompactionThresholdPct")
+            ? { autoCompactionThresholdPct: input.autoCompactionThresholdPct ?? null }
+            : {}),
           ...(input.status != null ? { status: input.status } : {}),
           ...(input.completionSummary != null
             ? { completionSummary: input.completionSummary }
@@ -2003,6 +2046,10 @@ export class WorkspaceGoalService {
           input.completionSummary != null ||
           Object.hasOwn(input, "budgetCents") ||
           Object.hasOwn(input, "turnCap") ||
+          // Per-goal auto-compact override is a mutable field too — a
+          // same-objective setGoal that only changes the threshold must
+          // trip the "apply" branch instead of being treated as a no-op.
+          Object.hasOwn(input, "autoCompactionThresholdPct") ||
           Object.hasOwn(input, "requireUserAcknowledgmentSinceMs");
         const previousStatus = current.status;
         let updated = hasMutableChange ? this.applyMutableFields(current, input) : current;
@@ -2054,6 +2101,12 @@ export class WorkspaceGoalService {
         objective,
         budgetCents: input.budgetCents ?? null,
         turnCap: input.turnCap ?? null,
+        // Forward the per-goal auto-compact override on replace too so a
+        // /goal command (or palette create) that includes `--compact N`
+        // lands the value on the fresh record. `null` = explicit clear.
+        ...(Object.hasOwn(input, "autoCompactionThresholdPct")
+          ? { autoCompactionThresholdPct: input.autoCompactionThresholdPct ?? null }
+          : {}),
         status: input.status,
         completionSummary: input.completionSummary,
       });
@@ -2938,6 +2991,7 @@ export class WorkspaceGoalService {
     objective: string;
     budgetCents?: number | null;
     turnCap?: number | null;
+    autoCompactionThresholdPct?: number | null;
   }): Promise<GoalRecordV1> {
     this.assertParentWorkspace(input.workspaceId);
     const objective = input.objective.trim();
@@ -2949,6 +3003,12 @@ export class WorkspaceGoalService {
         objective,
         budgetCents: input.budgetCents ?? null,
         turnCap: input.turnCap ?? null,
+        // Carry the per-goal auto-compact override onto the upcoming
+        // record so it survives the eventual `promoteUpcomingGoal` →
+        // `setGoal` path without forcing the renderer to re-submit it.
+        ...(Object.hasOwn(input, "autoCompactionThresholdPct")
+          ? { autoCompactionThresholdPct: input.autoCompactionThresholdPct ?? null }
+          : {}),
         // `paused` is the placeholder status for upcoming goals — they
         // are not actively running and not yet acknowledged by the
         // agent. The promote path replaces this with `active` after a
@@ -2984,6 +3044,7 @@ export class WorkspaceGoalService {
     objective?: string;
     budgetCents?: number | null;
     turnCap?: number | null;
+    autoCompactionThresholdPct?: number | null;
   }): Promise<GoalRecordV1 | null> {
     this.assertParentWorkspace(input.workspaceId);
     if (input.objective?.trim().length === 0) {
@@ -2999,6 +3060,12 @@ export class WorkspaceGoalService {
         objective: input.objective === undefined ? existing.objective : input.objective.trim(),
         budgetCents: input.budgetCents === undefined ? existing.budgetCents : input.budgetCents,
         turnCap: input.turnCap === undefined ? existing.turnCap : input.turnCap,
+        // Tri-state matches the rest of the patch fields: `undefined` =
+        // preserve, explicit `null` = clear, number = set.
+        autoCompactionThresholdPct:
+          input.autoCompactionThresholdPct === undefined
+            ? existing.autoCompactionThresholdPct
+            : input.autoCompactionThresholdPct,
         updatedAtMs: Date.now(),
       });
       const nextUpcoming = [...board.upcoming];

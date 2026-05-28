@@ -94,6 +94,7 @@ export interface TabPanelContext {
     onUpdateObjective: (objective: string) => Promise<void>;
     onUpdateBudget: (budgetCents: number | null) => Promise<void>;
     onUpdateTurnCap: (turnCap: number | null) => Promise<void>;
+    onUpdateAutoCompactionThresholdPct: (pct: number | null) => Promise<void>;
     onClear: () => Promise<void>;
     onCreate: (intent: GoalCreateIntent) => Promise<void>;
   };
@@ -151,6 +152,7 @@ const TAB_RENDERERS = {
           onUpdateObjective={ctx.goal.onUpdateObjective}
           onUpdateBudget={ctx.goal.onUpdateBudget}
           onUpdateTurnCap={ctx.goal.onUpdateTurnCap}
+          onUpdateAutoCompactionThresholdPct={ctx.goal.onUpdateAutoCompactionThresholdPct}
           onClear={ctx.goal.onClear}
           onCreate={ctx.goal.onCreate}
         />

@@ -657,6 +657,10 @@ interface GoalSetCommandIntent {
   status?: PublicSetGoalStatus | null;
   budgetCents?: number | null;
   turnCap?: number | null;
+  // Per-goal auto-compact override forwarded verbatim to `setGoal`.
+  // Same tri-state as `budgetCents` / `turnCap`: omitted = no change,
+  // `null` = clear override, number = set explicit percent.
+  autoCompactionThresholdPct?: number | null;
   completionSummary?: string | null;
 }
 
@@ -699,6 +703,12 @@ function resolveSlashGoalSetIntent(
       objective: parsed.objective,
       ...(Object.hasOwn(parsed, "budgetCents") ? { budgetCents: parsed.budgetCents ?? null } : {}),
       ...(Object.hasOwn(parsed, "turnCap") ? { turnCap: parsed.turnCap ?? null } : {}),
+      // Forward the per-goal auto-compact override only when the
+      // slash command actually included `--compact`. `Object.hasOwn`
+      // is the precision the rest of the tri-state pipeline uses.
+      ...(Object.hasOwn(parsed, "autoCompactionThresholdPct")
+        ? { autoCompactionThresholdPct: parsed.autoCompactionThresholdPct ?? null }
+        : {}),
     },
     defaults
   );

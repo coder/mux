@@ -434,17 +434,28 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     [deferredMessages]
   );
 
+  // Resolve the effective threshold for the warning banner: a per-goal
+  // override (set on the active goal's `autoCompactionThresholdPct`)
+  // wins over the workspace-level slider for both the backend and the
+  // renderer. Keeping the two in lockstep matters because the banner
+  // says "compaction is imminent" — if the renderer used the slider
+  // value but the backend used the goal override, the user would see
+  // either spurious or missing warnings around the threshold boundary.
+  const effectiveAutoCompactionThreshold =
+    workspaceState.goal?.autoCompactionThresholdPct != null
+      ? workspaceState.goal.autoCompactionThresholdPct / 100
+      : autoCompactionThreshold / 100;
   const autoCompactionResult = useMemo(
     () =>
       checkAutoCompaction(
         workspaceUsage,
         pendingModel,
         use1M,
-        autoCompactionThreshold / 100,
+        effectiveAutoCompactionThreshold,
         undefined,
         providersConfig
       ),
-    [workspaceUsage, pendingModel, use1M, providersConfig, autoCompactionThreshold]
+    [workspaceUsage, pendingModel, use1M, providersConfig, effectiveAutoCompactionThreshold]
   );
 
   // Show warning when: shouldShowWarning flag is true AND not currently compacting.

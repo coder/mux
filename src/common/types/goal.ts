@@ -125,6 +125,13 @@ export function toGoalSnapshot(goal: GoalRecordV1): GoalSnapshot {
     costCents: goal.costCents,
     turnsUsed: goal.turnsUsed,
     turnCap: goal.turnCap,
+    // Carry the per-goal auto-compact override through to the renderer
+    // so the ChatPane warning banner and the GoalTab tile see the same
+    // effective threshold. Only include the key when set; `null` is
+    // meaningful (explicit clear) so it must round-trip when present.
+    ...(goal.autoCompactionThresholdPct !== undefined
+      ? { autoCompactionThresholdPct: goal.autoCompactionThresholdPct }
+      : {}),
     ...(goal.completionSummary != null ? { completionSummary: goal.completionSummary } : {}),
     startedAtMs: goal.createdAtMs,
   };

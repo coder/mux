@@ -199,4 +199,170 @@ describe("CompactionMonitor", () => {
     monitor.setThreshold(0.55);
     expect(monitor.getThreshold()).toBe(0.55);
   });
+
+  // ────────────────────────────────────────────────────────────────
+  // thresholdOverride lane (per-goal auto-compact override).
+  //
+  // Behavioral contract these tests pin down:
+  //   1. A finite, in-range override replaces this.threshold for the
+  //      single call. The monitor's own threshold is untouched.
+  //   2. Override `>= 1` (per-goal disabled / clamp) suppresses
+  //      compaction for that call, even if the monitor's own threshold
+  //      would normally fire.
+  //   3. `null` / `undefined` / non-finite / non-positive override
+  //      falls back to `this.threshold` so a stale or corrupt persisted
+  //      goal record cannot brick the compaction loop.
+  //   4. `checkBeforeSend` surfaces the effective threshold via
+  //      `thresholdPercentage` so the on-send branch in `AgentSession`
+  //      reads the right number.
+  // ────────────────────────────────────────────────────────────────
+  test("checkBeforeSend honors a per-call thresholdOverride for the active goal", () => {
+    const { monitor } = createMonitor();
+
+    // 75% usage with a 0.5 (=50%) override should force-compact even
+    // though the monitor's own default (70%) would not yet have hit
+    // the buffer-driven force threshold.
+    const result = monitor.checkBeforeSend({
+      model: BETA_SONNET_MODEL,
+      usage: { lastContextUsage: createUsageDisplay(150_000) },
+      use1MContext: false,
+      providersConfig: null,
+      thresholdOverride: 0.5,
+    });
+    expect(result.thresholdPercentage).toBe(50);
+    expect(result.shouldForceCompact).toBe(true);
+
+    // The monitor's own threshold must NOT have been mutated by the
+    // override — it stays at the default 70% for subsequent calls
+    // without an override.
+    expect(monitor.getThreshold()).toBe(DEFAULT_THRESHOLD);
+    const followUp = monitor.checkBeforeSend({
+      model: BETA_SONNET_MODEL,
+      usage: { lastContextUsage: createUsageDisplay(150_000) },
+      use1MContext: false,
+      providersConfig: null,
+    });
+    expect(followUp.thresholdPercentage).toBe(70);
+  });
+
+  test("checkBeforeSend treats an override of 1.0 as disabled for that call", () => {
+    const { monitor } = createMonitor();
+
+    // 90% usage would force-compact under the default 70% threshold,
+    // but an override of 1.0 (per-goal disabled) must zero out the
+    // result and skip the compaction signal entirely.
+    const result = monitor.checkBeforeSend({
+      model: BETA_SONNET_MODEL,
+      usage: { lastContextUsage: createUsageDisplay(180_000) },
+      use1MContext: false,
+      providersConfig: null,
+      thresholdOverride: 1,
+    });
+    expect(result.shouldForceCompact).toBe(false);
+    expect(result.shouldShowWarning).toBe(false);
+  });
+
+  test("checkMidStream honors per-call thresholdOverride", () => {
+    const { monitor, statusEvents } = createMonitor();
+
+    // 100k / 200k = 50%. Under the monitor's default (70% + 5% buffer
+    // = 75% force), this would NOT fire. With an override of 0.4
+    // (40% + 5% buffer = 45% force), 50% must trigger.
+    expect(
+      monitor.checkMidStream({
+        model: BETA_SONNET_MODEL,
+        usage: createMidStreamUsage(100_000),
+        use1MContext: false,
+        providersConfig: null,
+        thresholdOverride: 0.4,
+      })
+    ).toBe(true);
+    expect(statusEvents).toHaveLength(1);
+    expect(statusEvents[0]).toMatchObject({ usagePercent: 50 });
+  });
+
+  test("checkMidStream override of 1.0 short-circuits even when usage is high", () => {
+    const { monitor, statusEvents } = createMonitor();
+
+    // 95% usage would normally force-compact (under the 70% default
+    // threshold the force point is 75%). Override 1 = per-goal off.
+    expect(
+      monitor.checkMidStream({
+        model: BETA_SONNET_MODEL,
+        usage: createMidStreamUsage(190_000),
+        use1MContext: false,
+        providersConfig: null,
+        thresholdOverride: 1,
+      })
+    ).toBe(false);
+    expect(statusEvents).toHaveLength(0);
+  });
+
+  test("invalid threshold overrides fall back to the monitor's own threshold", () => {
+    const { monitor } = createMonitor();
+
+    // null, NaN, ±Infinity, and negatives must all degrade gracefully
+    // to the monitor's own threshold rather than throwing — these can
+    // come from a corrupt persisted goal record and must not interrupt
+    // the on-send / mid-stream pipelines. `0` is intentionally NOT in
+    // this list — see the dedicated "0% override compacts on every
+    // check" test below. The schema admits 0 as the aggressive extreme,
+    // so treating it as invalid would create a renderer/backend
+    // mismatch (the UI shows "0%" but the backend would behave like
+    // the override was absent).
+    for (const bad of [null, Number.NaN, Number.POSITIVE_INFINITY, -0.1]) {
+      const result = monitor.checkBeforeSend({
+        model: BETA_SONNET_MODEL,
+        usage: { lastContextUsage: createUsageDisplay(150_000) },
+        use1MContext: false,
+        providersConfig: null,
+        thresholdOverride: bad,
+      });
+      expect(result.thresholdPercentage).toBe(70);
+    }
+  });
+
+  test("override of 0% is honored (Codex P2: renderer/backend must agree)", () => {
+    const { monitor, statusEvents } = createMonitor();
+
+    // Codex review on PR #3357 caught that `resolveEffectiveThreshold`
+    // was rejecting `override <= 0`, but the schema admits `0` as a
+    // valid per-goal value (the aggressive extreme of the slider). The
+    // contract is: if the UI lets the user set 0 and persist it, the
+    // backend must honor it. A silent fallback to the workspace setting
+    // creates a renderer/backend mismatch the user has no way to
+    // diagnose. This test pins both code paths.
+    const beforeSend = monitor.checkBeforeSend({
+      model: BETA_SONNET_MODEL,
+      usage: { lastContextUsage: createUsageDisplay(20_000) },
+      use1MContext: false,
+      providersConfig: null,
+      thresholdOverride: 0,
+    });
+    // The critical assertion: the effective threshold is 0%, not the
+    // workspace default (70%). 10% usage is above the 0% + 5% buffer
+    // force point so shouldForceCompact must trip too.
+    expect(beforeSend.thresholdPercentage).toBe(0);
+    expect(beforeSend.usagePercentage).toBe(10);
+    expect(beforeSend.shouldForceCompact).toBe(true);
+
+    // Mid-stream: 20k tokens = 10% of the 200k context, above the
+    // 0% + 5% buffer force point. Without the fix this would be false
+    // (override <= 0 was treated as invalid and the monitor's default
+    // 70% threshold would govern).
+    expect(
+      monitor.checkMidStream({
+        model: BETA_SONNET_MODEL,
+        usage: createMidStreamUsage(20_000),
+        use1MContext: false,
+        providersConfig: null,
+        thresholdOverride: 0,
+      })
+    ).toBe(true);
+    expect(statusEvents).toHaveLength(1);
+  });
 });
+
+// Pulled out as a constant for readability in the override-vs-default
+// assertions; matches the monitor's initial value.
+const DEFAULT_THRESHOLD = 0.7;

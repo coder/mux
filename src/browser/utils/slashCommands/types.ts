@@ -39,7 +39,17 @@ export type ParsedCommand =
   | { type: "idle-compaction"; hours: number | null }
   | { type: "heartbeat-set"; minutes: number | null }
   | { type: "goal-show" }
-  | { type: "goal-set"; objective: string; budgetCents?: number | null; turnCap?: number | null }
+  | {
+      type: "goal-set";
+      objective: string;
+      budgetCents?: number | null;
+      turnCap?: number | null;
+      // Per-goal auto-compaction threshold override, mirroring the
+      // create-form/inline editor semantics. `null` = clear override,
+      // 0–100 = explicit percent (100 disables for this goal), omitted
+      // = no opinion (workspace setting applies).
+      autoCompactionThresholdPct?: number | null;
+    }
   | { type: "goal-budget"; budgetCents: number | null }
   | { type: "goal-pause" }
   | { type: "goal-resume" }
