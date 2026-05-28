@@ -22,7 +22,10 @@ function isLoopbackHost(hostname: string): hostname is LocalhostLoopbackHost {
   return LOOPBACK_HOSTS.has(normalizedHost);
 }
 
-function isHttpProtocol(protocol: string): protocol is "http:" | "https:" {
+// Exported so browser-mode proxy template resolution can share a single
+// definition instead of redeclaring the identical guard (see
+// browserLocalhostProxyTemplate.ts).
+export function isHttpProtocol(protocol: string): protocol is "http:" | "https:" {
   return protocol === "http:" || protocol === "https:";
 }
 

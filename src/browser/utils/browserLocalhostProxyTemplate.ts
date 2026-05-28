@@ -1,3 +1,5 @@
+import { isHttpProtocol } from "@/common/utils/localhostProxyUrl";
+
 const CODER_PORT_PREFIX_PATTERN = /^\d+$/;
 
 interface ResolveBrowserLocalhostProxyTemplateOptions {
@@ -10,10 +12,6 @@ interface ResolveBrowserLocalhostProxyTemplateOptions {
 function normalizeInjectedTemplate(injectedTemplate?: string | null): string | null {
   const normalizedTemplate = injectedTemplate?.trim();
   return normalizedTemplate && normalizedTemplate.length > 0 ? normalizedTemplate : null;
-}
-
-function isHttpProtocol(protocol: string): protocol is "http:" | "https:" {
-  return protocol === "http:" || protocol === "https:";
 }
 
 function deriveCoderTemplateFromBrowserHost(
