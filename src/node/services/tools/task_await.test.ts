@@ -713,4 +713,268 @@ describe("task_await tool", () => {
       })
     );
   });
+
+  it("returns after the first completion by default, leaving the rest running", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-min-completed-default");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    let t1Signal: AbortSignal | undefined;
+    let t2Signal: AbortSignal | undefined;
+    const waitForAgentReport = mock((taskId: string, opts: { abortSignal?: AbortSignal }) => {
+      if (taskId === "t1") {
+        t1Signal = opts.abortSignal;
+        return Promise.resolve({ reportMarkdown: "report:t1", title: "title:t1" });
+      }
+      // t2 stays pending until its per-task signal is aborted (the early-stop detach), mirroring
+      // how the real waitForAgentReport rejects with "Interrupted" when its waiter is removed.
+      t2Signal = opts.abortSignal;
+      return new Promise((_resolve, reject) => {
+        opts.abortSignal?.addEventListener("abort", () => reject(new Error("Interrupted")), {
+          once: true,
+        });
+      });
+    });
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["t1", "t2"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      getAgentTaskStatus: mock(() => "running" as const),
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1", "t2"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
+        { status: "running", taskId: "t2" },
+      ],
+    });
+    // The loser's wait is detached (so TaskService can drop its waiter) without terminating it,
+    // while the winner's wait is left untouched.
+    expect(t2Signal?.aborted).toBe(true);
+    expect(t1Signal?.aborted).toBe(false);
+  });
+
+  it("waits for every task when min_completed equals the batch size", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-min-completed-total");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock((taskId: string) => {
+      if (taskId === "t1") {
+        return Promise.resolve({ reportMarkdown: "report:t1", title: "title:t1" });
+      }
+      // t2 finishes on a later macrotask; min_completed=2 must keep waiting for it rather than
+      // returning early after t1.
+      return new Promise((resolve) =>
+        setTimeout(() => resolve({ reportMarkdown: "report:t2", title: "title:t2" }), 5)
+      );
+    });
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["t1", "t2"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1", "t2"], min_completed: 2 }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
+        { status: "completed", taskId: "t2", reportMarkdown: "report:t2", title: "title:t2" },
+      ],
+    });
+  });
+
+  it("returns after the k-th completion when min_completed=k", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-min-completed-k");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock((taskId: string, opts: { abortSignal?: AbortSignal }) => {
+      if (taskId === "t1" || taskId === "t2") {
+        return Promise.resolve({ reportMarkdown: `report:${taskId}`, title: `title:${taskId}` });
+      }
+      return new Promise((_resolve, reject) => {
+        opts.abortSignal?.addEventListener("abort", () => reject(new Error("Interrupted")), {
+          once: true,
+        });
+      });
+    });
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["t1", "t2", "t3"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      getAgentTaskStatus: mock(() => "running" as const),
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1", "t2", "t3"], min_completed: 2 }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
+        { status: "completed", taskId: "t2", reportMarkdown: "report:t2", title: "title:t2" },
+        { status: "running", taskId: "t3" },
+      ],
+    });
+  });
+
+  it("clamps min_completed above the awaited count to wait for all", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-min-completed-clamp");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock((taskId: string) =>
+      Promise.resolve({ reportMarkdown: `report:${taskId}`, title: `title:${taskId}` })
+    );
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["t1", "t2"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1", "t2"], min_completed: 50 }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
+        { status: "completed", taskId: "t2", reportMarkdown: "report:t2", title: "title:t2" },
+      ],
+    });
+  });
+
+  it("returns promptly when min_completed can no longer be reached", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-min-completed-unreachable");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock((taskId: string) => {
+      if (taskId === "t1") {
+        return Promise.resolve({ reportMarkdown: "report:t1", title: "title:t1" });
+      }
+      // t2 fails outright, so two completions are impossible — the call must still return once
+      // every task has settled rather than blocking forever.
+      return Promise.reject(new Error("Boom"));
+    });
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["t1", "t2"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      getAgentTaskStatus: mock(() => null),
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1", "t2"], min_completed: 2 }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
+        { status: "error", taskId: "t2", error: "Boom" },
+      ],
+    });
+  });
+
+  it("keeps a previously-running task awaitable on a later call", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-min-completed-reawait");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    let t2Ready = false;
+    const waitForAgentReport = mock((taskId: string, opts: { abortSignal?: AbortSignal }) => {
+      if (taskId === "t1") {
+        return Promise.resolve({ reportMarkdown: "report:t1", title: "title:t1" });
+      }
+      if (t2Ready) {
+        // Simulates the cached report becoming available after the child finishes.
+        return Promise.resolve({ reportMarkdown: "report:t2", title: "title:t2" });
+      }
+      return new Promise((_resolve, reject) => {
+        opts.abortSignal?.addEventListener("abort", () => reject(new Error("Interrupted")), {
+          once: true,
+        });
+      });
+    });
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["t1", "t2"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      getAgentTaskStatus: mock(() => "running" as const),
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const firstResult: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1", "t2"] }, mockToolCallOptions)
+    );
+    expect(firstResult).toEqual({
+      results: [
+        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
+        { status: "running", taskId: "t2" },
+      ],
+    });
+
+    t2Ready = true;
+    const secondResult: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t2"] }, mockToolCallOptions)
+    );
+    expect(secondResult).toEqual({
+      results: [
+        { status: "completed", taskId: "t2", reportMarkdown: "report:t2", title: "title:t2" },
+      ],
+    });
+  });
+
+  it("treats timeout_secs=0 as non-blocking regardless of min_completed", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-min-completed-timeout-zero");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock(() => {
+      throw new Error("waitForAgentReport should not be called for timeout_secs=0");
+    });
+    const getAgentTaskStatus = mock(() => "running" as const);
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["t1", "t2"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      getAgentTaskStatus,
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        { task_ids: ["t1", "t2"], timeout_secs: 0, min_completed: 5 },
+        mockToolCallOptions
+      )
+    );
+
+    expect(result).toEqual({
+      results: [
+        { status: "running", taskId: "t1" },
+        { status: "running", taskId: "t2" },
+      ],
+    });
+    expect(waitForAgentReport).toHaveBeenCalledTimes(0);
+  });
 });
