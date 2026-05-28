@@ -883,6 +883,9 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, "../preload.js"),
+      // Disable the native spellchecker: mux is a coding tool where inputs are
+      // full of code, paths, and identifiers that trigger noisy red squiggles.
+      spellcheck: false,
     },
     title: "mux - coder multiplexer",
     // Hide menu bar on Linux by default (like VS Code)

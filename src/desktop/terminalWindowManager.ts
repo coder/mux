@@ -55,6 +55,8 @@ export class TerminalWindowManager {
         contextIsolation: true,
         // __dirname is dist/services/ but preload.js is in dist/
         preload: path.join(__dirname, "../preload.js"),
+        // Disable spellcheck to match the main window; terminal content is code.
+        spellcheck: false,
       },
       backgroundColor: "#1e1e1e",
     });
