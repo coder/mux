@@ -625,6 +625,12 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       }
 
       if (abortSignal?.aborted || (workspaceId && this.hasQueuedMessage(workspaceId))) {
+        // We already advanced outputBytesRead while reading this iteration, so any bytes consumed
+        // so far live only in accumulatedRaw. The interrupted path returns without flushing them,
+        // so preserve them in the line buffer; otherwise the next getOutput() would resume past
+        // this content and silently drop it. This matters now that task_await aborts a still-
+        // pending bash read once min_completed is satisfied (not just on user interrupt).
+        proc.incompleteLineBuffer = previousBuffer + accumulatedRaw;
         const elapsed_ms = Date.now() - startTime;
         return {
           success: true,

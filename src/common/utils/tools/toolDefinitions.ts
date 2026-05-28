@@ -228,14 +228,15 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "n and variants are mutually exclusive; omit both for a single task. Leave n and variants unset unless the developer explicitly asks for parallel sibling tasks, and prefer non-interfering sub-agents for grouped runs (for example read-only agents like explore). " +
     "\n\nWhen the user explicitly asks for best-of-n work, the parent should begin with light preliminary analysis to extract shared context, constraints, or evaluation criteria that would otherwise be duplicated across children. " +
     "Keep that pre-work lightweight: frame the task and provide useful starting points, but do not pre-solve the problem or over-constrain how the children reason about it. Then delegate the substantive analysis to the spawned sub-agents. " +
-    "Do not also do a full parallel analysis in the parent. When you are ready to synthesize the child reports, call task_await; do not await reflexively just because tasks are running. " +
+    "Do not also do a full parallel analysis in the parent. Call task_await when you are ready to act on child output; do not await reflexively just because tasks are running. " +
+    "task_await returns as soon as the first awaited task completes by default (min_completed), so you can start dependent work on each result as it lands instead of blocking on the whole batch; for best-of-N synthesis that must compare every candidate, pass min_completed equal to the batch size (or use a foreground grouped spawn, below). " +
     "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
     "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
     "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When grouped sibling tasks are requested via n or variants, the completed result includes one report per spawned task. " +
     "If the foreground wait times out, returns queued/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
     "If run_in_background is true, returns immediately with queued/running task metadata; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
     "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
-    "Use run_in_background: true when launching multiple tasks in parallel so you can await them as a batch. " +
+    "Use run_in_background: true when launching multiple tasks in parallel so you can act on each as it completes via task_await (which returns on the first completion by default); a foreground grouped spawn (run_in_background: false) instead blocks until every sibling finishes and returns all reports at once. " +
     "Do not call task_await in the same parallel tool-call batch; wait for the returned task metadata first. " +
     "Use the bash tool to run shell commands."
   );
@@ -452,6 +453,21 @@ export const TaskAwaitToolArgsSchema = z
           "If exceeded, the result returns status=queued|running|awaiting_report (task is still active). " +
           "Defaults to 600 seconds (10 minutes) if not specified. " +
           "Set to 0 for a non-blocking status check."
+      ),
+    min_completed: z
+      .number()
+      .int()
+      .min(1)
+      .nullish()
+      .describe(
+        "Number of awaited tasks that must complete before this call returns. " +
+          "Defaults to 1, so by default task_await returns as soon as the FIRST awaited task completes, " +
+          "letting you act on it while the rest keep running. " +
+          "The result still includes every task complete at that moment plus current status (running/queued) for the rest. " +
+          "Tasks that have not yet completed keep running and remain re-awaitable on a later task_await call. " +
+          "Raise this (e.g. set it to the total number of awaited tasks) when you genuinely need more before proceeding — " +
+          "for example best-of-N synthesis that must compare every candidate. " +
+          "Clamped to the number of awaited tasks; values above that behave like 'wait for all'."
       ),
   })
   .strict()
@@ -1466,7 +1482,11 @@ export const TOOL_DEFINITIONS = {
       "For bash tasks, you may optionally pass filter/filter_exclude to include/exclude output lines by regex. " +
       "WARNING: when using filter, non-matching lines are permanently discarded. " +
       "Use this tool to WAIT; do not poll task_list in a loop to wait for task completion (that is misuse and wastes tool calls). " +
-      "This is similar to Promise.allSettled(): you always get per-task results. " +
+      "\n\nBy default (min_completed=1) this returns as soon as the FIRST awaited task completes, so you can begin dependent work on that result while the rest keep running — then call task_await again for the remainder. " +
+      "This is ideal for independent lanes (variants) or any case where per-result work exists. " +
+      "Set min_completed higher (up to the number of awaited tasks) when you genuinely need more before proceeding — e.g. best-of-N synthesis that must compare every candidate should pass min_completed equal to the batch size. " +
+      "The result always includes every task complete at the moment it returns, plus current status for the rest; not-yet-completed tasks keep running and stay re-awaitable on a later call. " +
+      "You always get per-task results (like Promise.allSettled), just possibly before every task has finished. " +
       "Possible statuses: completed, queued, running, awaiting_report, not_found, invalid_scope, error. " +
       "Bash task outputs may be automatically filtered; when this happens, check each result's note for details and (if available) where the full output was saved.",
     schema: TaskAwaitToolArgsSchema,

@@ -491,6 +491,43 @@ describe("BackgroundProcessManager", () => {
       expect(output2.output).not.toContain("line 1");
     });
 
+    it("preserves buffered output when a read is interrupted before a newline arrives", async () => {
+      // Regression: aborting a pending getOutput (e.g. task_await returning early once
+      // min_completed is satisfied) must not drop bytes already consumed from the log. We append
+      // to the log directly so the scenario is deterministic and not dependent on stdio flushing.
+      const result = await manager.spawn(runtime, testWorkspaceId, "sleep 60", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const outputPath = path.join(result.outputDir, "output.log");
+      // A line fragment with no trailing newline yields no "meaningful" (complete) line, so the
+      // read falls through to the interrupt check after consuming (and advancing past) the bytes.
+      await fs.appendFile(outputPath, "partial", "utf-8");
+
+      const controller = new AbortController();
+      controller.abort();
+      const interrupted = await manager.getOutput(
+        result.processId,
+        undefined,
+        undefined,
+        2,
+        controller.signal
+      );
+      expect(interrupted.success).toBe(true);
+      if (!interrupted.success) return;
+      expect(interrupted.status).toBe("interrupted");
+
+      // Complete the line; the next read must include the previously-consumed fragment.
+      await fs.appendFile(outputPath, "done\n", "utf-8");
+      const resumed = await manager.getOutput(result.processId, undefined, undefined, 1);
+      expect(resumed.success).toBe(true);
+      if (!resumed.success) return;
+      expect(resumed.output).toContain("partialdone");
+    });
+
     it("should return stderr from a running process", async () => {
       const result = await manager.spawn(runtime, testWorkspaceId, "echo 'error message' >&2", {
         cwd: process.cwd(),
