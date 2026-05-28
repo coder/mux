@@ -1169,7 +1169,7 @@ describe("ProviderService.setConfig", () => {
       const providersConfig = config.loadProvidersConfig();
       expect(providersConfig?.["mux-gateway"]?.models).toEqual([
         "anthropic/claude-sonnet-4-6",
-        "anthropic/claude-opus-4-7",
+        "anthropic/claude-opus-4-8",
         "openai/gpt-5.5",
       ]);
       expect(providersConfig?.["mux-gateway"]?.models).not.toContain("openai/gpt-5.2-codex");
