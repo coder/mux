@@ -4,6 +4,7 @@ import {
   deleteWorkspaceStorage,
   getDraftScopeId,
   getInputAttachmentsKey,
+  normalizeTranscriptDensity,
 } from "@/common/constants/storage";
 
 class MemoryStorage implements Storage {
@@ -61,6 +62,12 @@ describe("storage workspace-scoped keys", () => {
 
   test("getInputAttachmentsKey formats key", () => {
     expect(getInputAttachmentsKey("ws-123")).toBe("inputAttachments:ws-123");
+  });
+
+  test("normalizeTranscriptDensity falls back for corrupt values", () => {
+    expect(normalizeTranscriptDensity("hyper")).toBe("hyper");
+    expect(normalizeTranscriptDensity("compact")).toBe("normal");
+    expect(normalizeTranscriptDensity(null)).toBe("normal");
   });
 
   test("copyWorkspaceStorage copies inputAttachments key", () => {

@@ -10,6 +10,7 @@ import {
 import { Input } from "@/browser/components/Input/Input";
 import { Switch } from "@/browser/components/Switch/Switch";
 import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useTranscriptDensity } from "@/browser/hooks/useTranscriptDensity";
 import { useAPI } from "@/browser/contexts/API";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
@@ -22,8 +23,11 @@ import {
   BASH_COLLAPSED_SUMMARY_MODES,
   CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
   DEFAULT_BASH_COLLAPSED_SUMMARY_MODE,
+  TRANSCRIPT_DENSITIES,
   normalizeBashCollapsedSummaryMode,
+  normalizeTranscriptDensity,
   type BashCollapsedSummaryMode,
+  type TranscriptDensity,
   type EditorConfig,
   type EditorType,
   type LaunchBehavior,
@@ -158,6 +162,14 @@ const BASH_COLLAPSED_SUMMARY_MODE_OPTIONS = BASH_COLLAPSED_SUMMARY_MODES.map((va
   value,
   label: BASH_COLLAPSED_SUMMARY_MODE_LABELS[value],
 }));
+const TRANSCRIPT_DENSITY_LABELS: Record<TranscriptDensity, string> = {
+  normal: "Normal",
+  hyper: "Hyper",
+};
+const TRANSCRIPT_DENSITY_OPTIONS = TRANSCRIPT_DENSITIES.map((value) => ({
+  value,
+  label: TRANSCRIPT_DENSITY_LABELS[value],
+}));
 const ARCHIVE_BEHAVIOR_OPTIONS = [
   { value: "keep", label: "Keep running" },
   { value: "stop", label: "Stop workspace" },
@@ -187,6 +199,7 @@ export function GeneralSection() {
     DEFAULT_BASH_COLLAPSED_SUMMARY_MODE
   );
   const bashCollapsedSummaryMode = normalizeBashCollapsedSummaryMode(rawBashCollapsedSummaryMode);
+  const [transcriptDensity, setTranscriptDensity] = useTranscriptDensity();
   const [rawTerminalFontConfig, setTerminalFontConfig] = usePersistedState<TerminalFontConfig>(
     TERMINAL_FONT_CONFIG_KEY,
     DEFAULT_TERMINAL_FONT_CONFIG
@@ -570,6 +583,31 @@ export function GeneralSection() {
               onCheckedChange={handleChatTranscriptFullWidthChange}
               aria-label="Toggle full-width chat transcript"
             />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Transcript density</div>
+              <div className="text-muted text-xs">
+                Control how much detail the transcript shows. Hyper collapses completed work into
+                expandable summaries.
+              </div>
+            </div>
+            <Select
+              value={transcriptDensity}
+              onValueChange={(value) => setTranscriptDensity(normalizeTranscriptDensity(value))}
+            >
+              <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TRANSCRIPT_DENSITY_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="flex items-center justify-between gap-4">
