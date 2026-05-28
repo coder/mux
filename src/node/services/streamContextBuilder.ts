@@ -663,9 +663,16 @@ export async function discoverAvailableSubagentsForToolContext(args: {
           return null;
         }
 
-        // Desktop is the only built-in that depends on runtime capability. Hide it from
-        // the task tool's subagent menu when the active workspace has no desktop session.
-        if (descriptor.id === "desktop" && !(await isDesktopAvailable())) {
+        // The built-in `desktop` agent is the only definition whose subagent menu visibility
+        // depends on runtime capability. Limit the gate to the built-in scope so a user
+        // override at `.mux/agents/desktop.md` (or the global equivalent) replaces the built-in
+        // semantics entirely and is not silently hidden when the workspace lacks a desktop
+        // session.
+        if (
+          descriptor.id === "desktop" &&
+          descriptor.scope === "built-in" &&
+          !(await isDesktopAvailable())
+        ) {
           return null;
         }
 

@@ -2912,4 +2912,45 @@ describe("discoverAvailableSubagentsForToolContext", () => {
 
     expect(availableSubagents.find((agent) => agent.id === "desktop")?.subagentRunnable).toBe(true);
   });
+
+  it("keeps a project-scope `desktop.md` override even when capability is unavailable", async () => {
+    using project = new DisposableTempDir("available-subagents-desktop-override");
+    using muxHome = new DisposableTempDir("available-subagents-desktop-override-home");
+
+    const agentsRoot = path.join(project.path, ".mux", "agents");
+    await fs.mkdir(agentsRoot, { recursive: true });
+    // A user-defined `desktop` agent that does not need real desktop capability.
+    // The built-in same-name agent should be shadowed by this project-scope override;
+    // the runtime gate must not hide the override just because it shares the `desktop` id.
+    await fs.writeFile(
+      path.join(agentsRoot, "desktop.md"),
+      `---\nname: Custom Desktop\nbase: exec\nsubagent:\n  runnable: true\n---\nBody\n`,
+      "utf-8"
+    );
+
+    const runtime = new LocalRuntime(project.path);
+    const cfg = new Config(muxHome.path).loadConfigOrDefault();
+    const loadDesktopCapability = mock(() =>
+      Promise.resolve({
+        available: false as const,
+        reason: "unsupported_runtime" as const,
+      })
+    );
+
+    const availableSubagents = await discoverAvailableSubagentsForToolContext({
+      runtime,
+      workspacePath: project.path,
+      cfg,
+      roots: {
+        projectRoot: agentsRoot,
+        globalRoot: path.join(project.path, "empty-global-agents"),
+      },
+      loadDesktopCapability,
+    });
+
+    const desktop = availableSubagents.find((agent) => agent.id === "desktop");
+    expect(desktop).toBeDefined();
+    expect(desktop?.scope).toBe("project");
+    expect(desktop?.subagentRunnable).toBe(true);
+  });
 });
