@@ -3,6 +3,15 @@
  */
 
 /**
+ * Lowercased env values treated as boolean true ("1" / "true" / "yes",
+ * case-insensitive). Shared by parseBoolEnv and parseDebugUpdater so both
+ * affirmative checks stay in sync.
+ */
+function isAffirmativeEnvValue(normalized: string): boolean {
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+/**
  * Parse environment variable as boolean
  * Accepts: "1", "true", "TRUE", "yes", "YES" as true
  * Everything else (including undefined, "0", "false", "FALSE") as false
@@ -10,7 +19,7 @@
 export function parseBoolEnv(value: string | undefined): boolean {
   if (!value) return false;
   const normalized = value.toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes";
+  return isAffirmativeEnvValue(normalized);
 }
 
 /**
@@ -48,7 +57,7 @@ export function parseDebugUpdater(
   }
 
   const normalized = value.toLowerCase();
-  if (normalized === "1" || normalized === "true" || normalized === "yes") {
+  if (isAffirmativeEnvValue(normalized)) {
     result.enabled = true;
   } else {
     // Not a bool, treat as version string
