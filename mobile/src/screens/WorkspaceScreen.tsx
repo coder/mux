@@ -43,6 +43,7 @@ import { executeSlashCommand } from "../utils/slashCommandRunner";
 import { createCompactedMessage } from "../utils/messageHelpers";
 import type { RuntimeConfig, RuntimeMode } from "@/common/types/runtime";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import { useMinThinkingLevels } from "../hooks/useMinThinkingLevels";
 import { supports1MContext } from "@/common/utils/ai/models";
 import { isThinkingLevel } from "@/common/types/thinking";
 import { RUNTIME_MODE, parseRuntimeModeAndHost, buildRuntimeString } from "@/common/types/runtime";
@@ -198,11 +199,14 @@ function WorkspaceScreenInner({
     isLoading: settingsLoading,
   } = useWorkspaceSettings(workspaceId ?? "");
   const { recentModels, addRecentModel } = useModelHistory();
+  // Per-model minimum thinking floor (matches the backend clamp) so mobile doesn't show
+  // Off/Low levels the backend would silently raise to the floor.
+  const { getMinimum } = useMinThinkingLevels();
   const [isRunSettingsVisible, setRunSettingsVisible] = useState(false);
   const selectedModelEntry = useMemo(() => assertKnownModelId(model), [model]);
   const effectiveThinkingLevel = useMemo(
-    () => enforceThinkingPolicy(model, thinkingLevel),
-    [model, thinkingLevel]
+    () => enforceThinkingPolicy(model, thinkingLevel, getMinimum(model)),
+    [model, thinkingLevel, getMinimum]
   );
   const supportsBeta1MContext = supports1MContext(model);
   const modelPickerRecents = useMemo(
@@ -505,7 +509,7 @@ function WorkspaceScreenInner({
 
     const modelForThinking = nextModel ?? model;
     const effectiveThinking = nextThinking
-      ? enforceThinkingPolicy(modelForThinking, nextThinking)
+      ? enforceThinkingPolicy(modelForThinking, nextThinking, getMinimum(modelForThinking))
       : null;
 
     if (nextModel && nextModel !== model) {
@@ -525,6 +529,7 @@ function WorkspaceScreenInner({
     thinkingLevel,
     setModel,
     setThinkingLevel,
+    getMinimum,
   ]);
 
   useEffect(() => {
@@ -757,7 +762,7 @@ function WorkspaceScreenInner({
         return;
       }
 
-      const nextThinkingLevel = enforceThinkingPolicy(modelId, thinkingLevel);
+      const nextThinkingLevel = enforceThinkingPolicy(modelId, thinkingLevel, getMinimum(modelId));
 
       try {
         await setModel(modelId);
@@ -784,7 +789,17 @@ function WorkspaceScreenInner({
         }
       }
     },
-    [addRecentModel, client, model, mode, setModel, setThinkingLevel, thinkingLevel, workspaceId]
+    [
+      addRecentModel,
+      client,
+      getMinimum,
+      model,
+      mode,
+      setModel,
+      setThinkingLevel,
+      thinkingLevel,
+      workspaceId,
+    ]
   );
 
   const handleSelectMode = useCallback(
@@ -799,7 +814,7 @@ function WorkspaceScreenInner({
 
   const handleSelectThinkingLevel = useCallback(
     (level: ThinkingLevel) => {
-      const effective = enforceThinkingPolicy(model, level);
+      const effective = enforceThinkingPolicy(model, level, getMinimum(model));
       if (effective === thinkingLevel) {
         return;
       }
@@ -820,7 +835,7 @@ function WorkspaceScreenInner({
           });
       });
     },
-    [client, model, mode, thinkingLevel, setThinkingLevel, workspaceId]
+    [client, getMinimum, model, mode, thinkingLevel, setThinkingLevel, workspaceId]
   );
 
   const handleToggle1MContext = useCallback(() => {
@@ -1623,6 +1638,7 @@ function WorkspaceScreenInner({
         onSelectMode={handleSelectMode}
         thinkingLevel={thinkingLevel}
         onSelectThinkingLevel={handleSelectThinkingLevel}
+        minThinkingLevel={getMinimum(model)}
         use1MContext={use1MContext}
         onToggle1MContext={handleToggle1MContext}
         supportsBeta1MContext={supportsBeta1MContext}

@@ -4,7 +4,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Switch, TextInput, View } fro
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme";
 import { ThemedText } from "./ThemedText";
-import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import { getAvailableThinkingLevels } from "@/common/utils/thinking/policy";
 import type { ThinkingLevel, WorkspaceMode } from "../types/settings";
 import {
   formatModelSummary,
@@ -25,6 +25,8 @@ interface RunSettingsSheetProps {
   onSelectMode: (mode: WorkspaceMode) => void;
   thinkingLevel: ThinkingLevel;
   onSelectThinkingLevel: (level: ThinkingLevel) => void;
+  /** Effective minimum thinking floor for the selected model (matches the backend clamp). */
+  minThinkingLevel: ThinkingLevel;
   use1MContext: boolean;
   onToggle1MContext: (enabled: boolean) => void;
   supportsBeta1MContext: boolean;
@@ -53,8 +55,9 @@ export function RunSettingsSheet(props: RunSettingsSheetProps): JSX.Element {
   }, [query]);
 
   const allowedThinkingLevels = useMemo(() => {
-    return getThinkingPolicyForModel(props.selectedModel);
-  }, [props.selectedModel]);
+    // Hide levels below the model's minimum floor so the picker matches the backend clamp.
+    return getAvailableThinkingLevels(props.selectedModel, props.minThinkingLevel);
+  }, [props.selectedModel, props.minThinkingLevel]);
   const recentModels = useMemo(() => {
     return props.recentModels.filter(isKnownModelId);
   }, [props.recentModels]);
