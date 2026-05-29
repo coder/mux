@@ -559,10 +559,10 @@ describe("ThinkingContext", () => {
       );
     });
 
-    // gpt-4.1 defaults to a "medium" minimum-thinking floor, so cycling from the stored
-    // "off" starts at the floored "medium" and advances to "high" (off/low are hidden).
+    // gpt-4.1 is not an explicitly-recognized reasoning model, so it keeps the legacy
+    // off-default floor and cycles off → low.
     await waitFor(() => {
-      expect(view.getByTestId("thinking-project").textContent).toBe("high");
+      expect(view.getByTestId("thinking-project").textContent).toBe("low");
     });
   });
 });

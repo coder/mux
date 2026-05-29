@@ -649,8 +649,8 @@ describe("resolveThinkingInput", () => {
 });
 
 describe("getDefaultMinimumThinkingLevel", () => {
-  test("defaults to medium for reasoning-capable models", () => {
-    expect(getDefaultMinimumThinkingLevel("anthropic:claude-sonnet-4-5")).toBe("medium");
+  test("defaults to medium for explicitly-recognized reasoning models", () => {
+    expect(getDefaultMinimumThinkingLevel("anthropic:claude-sonnet-4-6")).toBe("medium");
     expect(getDefaultMinimumThinkingLevel("openai:gpt-5.2")).toBe("medium");
   });
 
@@ -661,17 +661,28 @@ describe("getDefaultMinimumThinkingLevel", () => {
     // gpt-5-pro is fixed to ["high"] but still supports reasoning.
     expect(getDefaultMinimumThinkingLevel("openai:gpt-5-pro")).toBe("medium");
   });
+
+  test("keeps off for the shared fallback policy (non-reasoning / unrecognized models)", () => {
+    // The fallback policy is shared by non-reasoning models (gpt-4o, claude-3.5) where a
+    // non-off default would send unsupported reasoning params, so they stay "off".
+    expect(getDefaultMinimumThinkingLevel("openai:gpt-4o")).toBe("off");
+    expect(getDefaultMinimumThinkingLevel("anthropic:claude-3-5-sonnet-latest")).toBe("off");
+    expect(getDefaultMinimumThinkingLevel("anthropic:claude-sonnet-4-5")).toBe("off");
+  });
 });
 
 describe("resolveMinimumThinkingLevel", () => {
   test("prefers the explicit override", () => {
-    expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-5", "off")).toBe("off");
-    expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-5", "high")).toBe("high");
+    expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-6", "off")).toBe("off");
+    expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-6", "high")).toBe("high");
   });
 
   test("falls back to the model default when override is null/undefined", () => {
-    expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-5", null)).toBe("medium");
-    expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-5")).toBe("medium");
+    // Recognized reasoning model → medium default.
+    expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-6", null)).toBe("medium");
+    expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-6")).toBe("medium");
+    // Fallback policy → off default.
+    expect(resolveMinimumThinkingLevel("openai:gpt-4o")).toBe("off");
   });
 });
 

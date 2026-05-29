@@ -60,6 +60,24 @@ export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean 
  * Does NOT match gpt-5-pro-mini (uses negative lookahead).
  */
 export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
+  return getExplicitThinkingPolicy(modelString) ?? DEFAULT_THINKING_POLICY;
+}
+
+/**
+ * Standard fallback policy for models without an explicitly-recognized reasoning rule.
+ * Shared by both standard reasoning models and non-reasoning models, so it is NOT a
+ * reliable "supports reasoning" signal on its own (see getDefaultMinimumThinkingLevel).
+ */
+const DEFAULT_THINKING_POLICY: ThinkingPolicy = ["off", "low", "medium", "high"];
+
+/**
+ * Returns the policy for a model that matches an explicit reasoning rule, or `null`
+ * when the model falls through to {@link DEFAULT_THINKING_POLICY}.
+ *
+ * A non-null result means Mux explicitly recognizes the model as a reasoning model,
+ * which is the signal used to decide whether to apply a default thinking floor.
+ */
+function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
   // Normalize to be robust to provider prefixes, whitespace, gateway wrappers, and version suffixes
   const normalized = modelString.trim().toLowerCase();
   const withoutPrefix = normalized.replace(/^[a-z0-9_-]+:\s*/, "");
@@ -122,8 +140,8 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
     return ["low", "high"];
   }
 
-  // Default policy: standard 4 levels (off/low/medium/high). Models with xhigh must opt in above.
-  return ["off", "low", "medium", "high"];
+  // No explicit reasoning rule matched.
+  return null;
 }
 
 /** Canonical ordering index for a level (off=0 … max=5). */
@@ -134,16 +152,32 @@ function thinkingLevelIndex(level: ThinkingLevel): number {
 /**
  * Default *minimum* thinking level (floor) for a model.
  *
- * Most users never want off/low thinking, so any model that supports reasoning
- * defaults to a "medium" floor — hiding off/low in the thinking slider so cycling
- * is more efficient. Models that don't support reasoning at all keep "off" (no floor).
+ * Most users never want off/low thinking, so models Mux explicitly recognizes as
+ * reasoning models default to a "medium" floor — hiding off/low in the thinking slider
+ * so cycling is more efficient.
+ *
+ * Models that fall through to the shared default policy keep an "off" floor. That policy
+ * is also used by non-reasoning models (e.g. gpt-4o, claude-3.5), and defaulting them to
+ * medium would send unsupported reasoning params (buildProviderOptions emits reasoning
+ * config whenever the level is non-off). Such models can still be raised per-model on the
+ * Models settings page.
  *
  * This is only a default; users can override it per-model on the Models settings page.
  */
 export function getDefaultMinimumThinkingLevel(modelString: string): ThinkingLevel {
-  const capability = getThinkingPolicyForModel(modelString);
-  const supportsThinking = capability.some((level) => level !== "off");
-  return supportsThinking ? DEFAULT_THINKING_LEVEL : THINKING_LEVEL_OFF;
+  return hasExplicitThinkingPolicy(modelString) ? DEFAULT_THINKING_LEVEL : THINKING_LEVEL_OFF;
+}
+
+/**
+ * True when Mux explicitly recognizes the model's reasoning levels (i.e. it matches a
+ * specific rule rather than falling through to the shared default policy).
+ *
+ * Used to gate the per-model minimum-thinking control: only recognized reasoning models
+ * expose a floor selector and default to medium. Unrecognized / non-reasoning models keep
+ * the legacy off-default behavior.
+ */
+export function hasExplicitThinkingPolicy(modelString: string): boolean {
+  return getExplicitThinkingPolicy(modelString) !== null;
 }
 
 /**

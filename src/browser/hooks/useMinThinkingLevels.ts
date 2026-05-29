@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import {
+  getAvailableThinkingLevels,
   getDefaultMinimumThinkingLevel,
   resolveMinimumThinkingLevel,
 } from "@/common/utils/thinking/policy";
@@ -109,9 +110,16 @@ export function useMinThinkingLevels(): MinThinkingLevelsState {
     (modelString: string, level: ThinkingLevel | null) => {
       const key = normalizeToCanonical(modelString);
       const next = { ...minThinkingLevelByModel };
-      // Storing the default-equal floor would be redundant; treat it like clearing the
-      // override so the persisted map stays sparse.
-      if (level == null || level === getDefaultMinimumThinkingLevel(modelString)) {
+      // Keep the persisted map sparse: clear the override when it has the same effect as the
+      // built-in default floor. We compare effective lowest-available levels so models whose
+      // default floor isn't a native level still collapse correctly (e.g. gemini-3, where the
+      // medium default and an explicit "high" both yield ["high"]).
+      const defaultFloor = getAvailableThinkingLevels(
+        modelString,
+        getDefaultMinimumThinkingLevel(modelString)
+      )[0];
+      const pickedFloor = level == null ? null : getAvailableThinkingLevels(modelString, level)[0];
+      if (level == null || pickedFloor === defaultFloor) {
         delete next[key];
       } else {
         next[key] = level;
