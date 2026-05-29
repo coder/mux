@@ -9,6 +9,7 @@ import {
   createAgentSkillReadTool,
   createBashTool,
   createFileReadTool,
+  createGenericTool,
   createWebSearchTool,
 } from "@/browser/stories/mocks/tools";
 import { installDom } from "../dom";
@@ -81,7 +82,12 @@ describe("Hyper transcript density", () => {
             createFileReadTool("density-read-1", "src/auth.ts", "export function verify() {}"),
             createWebSearchTool("density-search-1", "JWT validation best practices", 1),
             createAgentSkillReadTool("density-skill-1", "react-effects", { scope: "global" }),
-            createBashTool("density-rg-1", 'rg "verify" src', "src/auth.ts:1:verify"),
+            createGenericTool(
+              "density-question-1",
+              "ask_user_question",
+              { question: "Any additional validation needed?" },
+              { answer: "Please validate with typecheck too" }
+            ),
           ],
         }),
         createUserMessage("density-user-2", "Please validate with typecheck too", {

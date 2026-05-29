@@ -222,7 +222,13 @@ describe("work bundle coalescing", () => {
   test("spans steering user messages until the turn final assistant row", () => {
     const messages = [
       user("u1"),
-      tool({ id: "read-1", historyId: "history-a1", isPartial: true, timestamp: 1_000 }),
+      tool({
+        id: "read-1",
+        historyId: "history-a1",
+        isPartial: true,
+        status: "executing",
+        timestamp: 1_000,
+      }),
       user("steer-1"),
       tool({ id: "bash-1", historyId: "history-a1", toolName: "bash", timestamp: 31_000 }),
       assistant("final-1", { historyId: "history-a1", timestamp: 61_000 }),
@@ -310,6 +316,24 @@ describe("work bundle coalescing", () => {
     const infos = computeWorkBundleInfos(messages);
 
     expect(infos.every((info) => info === undefined)).toBe(true);
+  });
+
+  test("does not merge completed partial tools into a tool-using next prompt", () => {
+    const messages = [
+      user("u1"),
+      tool({ id: "read-1", historyId: "history-a1", isPartial: true, status: "completed" }),
+      user("u2"),
+      tool({ id: "bash-1", historyId: "history-a2", toolName: "bash" }),
+      assistant("final-2", { historyId: "history-a2" }),
+    ];
+
+    const infos = computeWorkBundleInfos(messages);
+
+    expect(infos[0]).toBeUndefined();
+    expect(infos[1]).toBeUndefined();
+    expect(infos[2]).toMatchObject({ key: "work:bash-1", position: "head", headIndex: 2 });
+    expect(infos[3]).toMatchObject({ key: "work:bash-1", position: "member" });
+    expect(infos[4]).toMatchObject({ key: "work:bash-1", position: "final" });
   });
 
   test("does not merge interrupted partial tools into a text-only next prompt", () => {

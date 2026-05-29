@@ -135,14 +135,6 @@ export function computeWorkBundleInfos(
       continue;
     }
 
-    if (
-      span.state === "settled" &&
-      entries.some((entry) => isActiveWorkBundleMessage(entry.message))
-    ) {
-      index = span.finalIndex + 1;
-      continue;
-    }
-
     const frozenEntries = Object.freeze(entries);
     const firstAgentMessage = frozenEntries.find((entry) =>
       isWorkBundleAgentMessage(entry.message)
@@ -401,7 +393,13 @@ function canContinueWorkBundleAcrossConversation(message: DisplayedMessage): boo
   // Only partial tool rows prove the agent was still doing operational work when
   // the user spoke. Partial reasoning/text alone can also be an interrupted turn;
   // do not anchor the next prompt under that old turn's work bundle.
-  return message.type === "tool" && message.isPartial === true && message.status !== "interrupted";
+  return (
+    message.type === "tool" &&
+    message.isPartial === true &&
+    (message.status === "pending" ||
+      message.status === "executing" ||
+      message.toolName === "ask_user_question")
+  );
 }
 
 function getWorkBundleAgentHistoryId(message: DisplayedMessage | undefined): string | undefined {
