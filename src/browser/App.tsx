@@ -105,6 +105,15 @@ import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { prependInitialAppProxyBasePath } from "@/browser/utils/frontendBasePath";
 import { WorkspaceActiveGoalsWarningToast } from "@/browser/components/ActiveGoalsWarningToast/ActiveGoalsWarningToast";
 import { LoadingScreen } from "@/browser/components/LoadingScreen/LoadingScreen";
+import { AgentProvider } from "@/browser/contexts/AgentContext";
+import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
+import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
+import { canUseScheduledPromptsInWorkspace } from "@/browser/features/ScheduledPrompts/scheduledPromptAvailability";
+import { useScheduledPromptDispatcher } from "@/browser/features/ScheduledPrompts/useScheduledPromptDispatcher";
+import {
+  useAdditionalSystemContextHydrated,
+  useAdditionalSystemContextSnapshot,
+} from "@/browser/utils/additionalSystemContextStore";
 
 function RootRouteShell(props: {
   leftSidebarCollapsed: boolean;
@@ -131,6 +140,56 @@ function RootRouteShell(props: {
       </div>
     </div>
   );
+}
+
+function ActiveWorkspaceScheduledPromptDispatcher(props: {
+  workspaceId: string;
+  projectPath: string;
+  enabled: boolean;
+}) {
+  return (
+    <AgentProvider
+      workspaceId={props.workspaceId}
+      projectPath={props.projectPath}
+      enableGlobalListeners={false}
+    >
+      <ThinkingProvider
+        workspaceId={props.workspaceId}
+        projectPath={props.projectPath}
+        enableGlobalListeners={false}
+      >
+        <ActiveWorkspaceScheduledPromptDispatcherInner
+          workspaceId={props.workspaceId}
+          enabled={props.enabled}
+        />
+      </ThinkingProvider>
+    </AgentProvider>
+  );
+}
+
+function ActiveWorkspaceScheduledPromptDispatcherInner(props: {
+  workspaceId: string;
+  enabled: boolean;
+}) {
+  const { api } = useAPI();
+  const sendMessageOptions = useSendMessageOptions(props.workspaceId);
+  const additionalSystemContext = useAdditionalSystemContextSnapshot(props.workspaceId);
+  const additionalSystemContextHydrated = useAdditionalSystemContextHydrated(props.workspaceId);
+  const scheduledAdditionalSystemContext = additionalSystemContextHydrated
+    ? additionalSystemContext.enabled
+      ? additionalSystemContext.content
+      : ""
+    : undefined;
+
+  useScheduledPromptDispatcher({
+    api,
+    workspaceId: props.workspaceId,
+    sendMessageOptions,
+    additionalSystemContext: scheduledAdditionalSystemContext,
+    enabled: props.enabled,
+  });
+
+  return null;
 }
 
 function AppInner() {
@@ -226,6 +285,17 @@ function AppInner() {
   }, [sidebarCollapsed]);
   const creationProjectPath =
     !selectedWorkspace && !currentWorkspaceId ? pendingNewWorkspaceProject : null;
+  const scheduledPromptWorkspaceId = selectedWorkspace?.workspaceId ?? currentWorkspaceId;
+  const scheduledPromptWorkspaceMeta = scheduledPromptWorkspaceId
+    ? workspaceMetadata.get(scheduledPromptWorkspaceId)
+    : undefined;
+  const scheduledPromptProjectPath =
+    selectedWorkspace?.workspaceId === scheduledPromptWorkspaceId
+      ? selectedWorkspace.projectPath
+      : scheduledPromptWorkspaceMeta?.projectPath;
+  const scheduledPromptDispatcherEnabled = canUseScheduledPromptsInWorkspace(
+    scheduledPromptWorkspaceMeta
+  );
 
   // History navigation (back/forward)
   const navigate = useNavigate();
@@ -1071,6 +1141,13 @@ function AppInner() {
 
   return (
     <>
+      {scheduledPromptWorkspaceId && scheduledPromptProjectPath ? (
+        <ActiveWorkspaceScheduledPromptDispatcher
+          workspaceId={scheduledPromptWorkspaceId}
+          projectPath={scheduledPromptProjectPath}
+          enabled={scheduledPromptDispatcherEnabled}
+        />
+      ) : null}
       <div className="bg-surface-primary mobile-layout flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[min(env(safe-area-inset-bottom,0px),40px)] pl-[env(safe-area-inset-left)]">
         <LeftSidebar
           collapsed={sidebarCollapsed}
