@@ -1807,6 +1807,49 @@ describe("WorkspaceStore", () => {
       expect(store.getWorkspaceState(workspaceId).isStreamStarting).toBe(false);
     });
 
+    it("stays in starting state when a streaming lifecycle event lands before the stream is interruptible", async () => {
+      // Regression guard for the starting -> streaming flash: the backend can emit a
+      // "streaming" lifecycle event a frame before stream-start makes the stream
+      // interruptible. In that window canInterrupt is still false, so isStreamStarting
+      // must remain true (keyed off the pending start, not the lifecycle phase).
+      // Otherwise shouldShowStreamingBarrier (isStreamStarting || canInterrupt) drops
+      // to false for a frame and the streaming barrier unmounts then remounts.
+      const workspaceId = "stream-starting-lifecycle-gap";
+
+      mockChatStreamFor(workspaceId, async function* () {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        // Trailing user message with no assistant reply -> optimistic pending start.
+        yield createUserMessageEvent("lifecycle-gap-user", "hello", 1, 1_000);
+        await Promise.resolve();
+        // Stream reports "streaming" but stream-start (which populates the
+        // interruptible active stream) has not been applied yet.
+        yield {
+          type: "stream-lifecycle",
+          workspaceId,
+          phase: "streaming",
+          hadAnyOutput: false,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const reachedGap = await waitUntil(() => {
+        const state = store.getWorkspaceState(workspaceId);
+        return (
+          state.pendingStreamStartTime !== null &&
+          !state.canInterrupt &&
+          store.getAggregator(workspaceId)?.getStreamLifecycle()?.phase === "streaming"
+        );
+      });
+      expect(reachedGap).toBe(true);
+
+      const state = store.getWorkspaceState(workspaceId);
+      expect(state.canInterrupt).toBe(false);
+      // The key assertion: the barrier-visibility flag stays true across the gap.
+      expect(state.isStreamStarting).toBe(true);
+    });
+
     it("clears optimistic starting state on pre-stream abort", async () => {
       const workspaceId = "optimistic-pending-start-stream-abort";
       const requestedModel = "openai:gpt-4o-mini";

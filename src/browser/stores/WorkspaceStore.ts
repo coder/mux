@@ -1798,8 +1798,6 @@ export class WorkspaceStore {
           activity?.lastThinkingLevel ??
           aggregator.getCurrentThinkingLevel() ??
           null);
-      const hasAuthoritativeStreamLifecycle =
-        streamLifecycle !== null && streamLifecycle.phase !== "idle";
       const activePendingStreamStartTime = isActiveWorkspace ? pendingStreamStartTime : null;
       const aggregatorRecency = aggregator.getRecencyTimestamp();
       const recencyTimestamp =
@@ -1810,11 +1808,18 @@ export class WorkspaceStore {
       // flashing "Catching up"/"No Messages Yet" while the very first send is still in flight.
       // The aggregator owns both normal user-message startup and the optimistic new-chat handoff,
       // so the workspace only needs to ask whether the active transcript still has a pending start.
+      // A turn is "starting" from the optimistic pending-start until the stream
+      // becomes interruptible. Keying off pendingStreamStartTime — which every
+      // terminal handler (end/abort/error) clears — keeps the streaming barrier
+      // continuously mounted across the starting -> streaming handoff with no gap.
+      // Keying off streamLifecycle.phase instead would risk both a flash (a
+      // "streaming" lifecycle event can land a frame before stream-start populates
+      // the active stream, leaving neither flag set) and a stuck barrier
+      // (handleStreamEnd leaves the lifecycle snapshot non-idle).
       const isStreamStarting =
         isActiveWorkspace &&
         !canInterrupt &&
-        (streamLifecycle?.phase === "preparing" ||
-          (!hasAuthoritativeStreamLifecycle && activePendingStreamStartTime !== null));
+        (streamLifecycle?.phase === "preparing" || activePendingStreamStartTime !== null);
       // Only actively running init output should bypass transcript hydration. Completed init
       // rows are still replayed, but they should not suppress the normal catch-up placeholder
       // for stale cached transcript content on reconnect.
@@ -1924,14 +1929,14 @@ export class WorkspaceStore {
       : bufferedActiveStreamStart !== null
         ? true
         : (activity?.streaming ?? hasInterruptibleActiveStream);
-    const hasAuthoritativeStreamLifecycle =
-      streamLifecycle !== null && streamLifecycle.phase !== "idle";
     const activePendingStreamStartTime = isActiveWorkspace ? pendingStreamStartTime : null;
+    // Mirror getWorkspaceState's starting derivation: pendingStreamStartTime is the
+    // gap-free, terminal-cleared signal that a turn is in flight but not yet
+    // interruptible. See the rationale in getWorkspaceState above.
     const isStreamStarting =
       isActiveWorkspace &&
       !canInterrupt &&
-      (streamLifecycle?.phase === "preparing" ||
-        (!hasAuthoritativeStreamLifecycle && activePendingStreamStartTime !== null));
+      (streamLifecycle?.phase === "preparing" || activePendingStreamStartTime !== null);
     const isHydratingTranscript =
       isActiveWorkspace &&
       transient.isHydratingTranscript &&

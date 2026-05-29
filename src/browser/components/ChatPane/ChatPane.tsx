@@ -23,6 +23,7 @@ import { StreamingBarrier } from "@/browser/features/Messages/ChatBarrier/Stream
 import { RetryBarrier } from "@/browser/features/Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "../PinnedTodoList/PinnedTodoList";
 import { ChatInputDecorationStackLane, TranscriptTailStackLane } from "./LayoutStackLane";
+import { TranscriptHydrationSkeleton } from "./TranscriptHydrationSkeleton";
 import {
   createChatInputDecorationStackItem,
   createTranscriptTailStackItem,
@@ -1246,17 +1247,14 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                 // already fills the available width, so the TOC would either
                 // overlap content or get clipped by `overflow-x-hidden`.
                 chatTranscriptFullWidth ? "w-full" : "plan-toc-aware max-w-4xl mx-auto",
-                (showTranscriptHydrationPlaceholder || showEmptyTranscriptPlaceholder) && "h-full"
+                // Only the empty/centered placeholder fills height. The hydration
+                // skeleton renders in normal top-aligned transcript flow so it sits
+                // where real messages will, avoiding a jump when hydration completes.
+                showEmptyTranscriptPlaceholder && "h-full"
               )}
             >
               {showTranscriptHydrationPlaceholder ? (
-                <div
-                  data-testid="transcript-hydration-placeholder"
-                  className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]"
-                >
-                  <h3>Loading transcript...</h3>
-                  <p>Syncing recent messages for this workspace</p>
-                </div>
+                <TranscriptHydrationSkeleton />
               ) : showEmptyTranscriptPlaceholder ? (
                 <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
                   <h3>No Messages Yet</h3>

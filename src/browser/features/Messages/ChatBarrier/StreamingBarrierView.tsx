@@ -1,6 +1,7 @@
 import React from "react";
 import { CircleStopIcon } from "lucide-react";
 
+import { cn } from "@/common/lib/utils";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { BaseBarrier } from "./BaseBarrier";
 
@@ -30,16 +31,25 @@ export const StreamingBarrierView: React.FC<StreamingBarrierViewProps> = (props)
       <div className="flex flex-1 items-center gap-2">
         <BaseBarrier text={props.statusText} color="var(--color-assistant-border)" animate />
         {props.hintElement}
-        {props.tokenCount !== undefined && (
-          <span className="text-assistant-border counter-nums-mono inline-flex min-w-[14ch] items-baseline justify-end text-[11px] whitespace-nowrap select-none">
-            <span>~{props.tokenCount.toLocaleString()} tokens</span>
-            <span className="text-dim ml-1 inline-flex min-w-[7ch] items-baseline justify-end gap-1">
-              <span>@</span>
-              <span>{props.tps !== undefined && props.tps > 0 ? props.tps : "--"}</span>
-              <span>t/s</span>
-            </span>
+        {/* Always render the stats slot so the row geometry is identical across the
+            starting -> streaming transition; only its visibility toggles. Previously
+            this slot mounted exactly when streaming began, reflowing the row (layout
+            flash). Reserving it (with placeholder values) keeps the layout stable. */}
+        <span
+          data-testid="streaming-barrier-stats"
+          aria-hidden={props.tokenCount === undefined}
+          className={cn(
+            "text-assistant-border counter-nums-mono inline-flex min-w-[14ch] items-baseline justify-end text-[11px] whitespace-nowrap select-none",
+            props.tokenCount === undefined && "invisible"
+          )}
+        >
+          <span>~{(props.tokenCount ?? 0).toLocaleString()} tokens</span>
+          <span className="text-dim ml-1 inline-flex min-w-[7ch] items-baseline justify-end gap-1">
+            <span>@</span>
+            <span>{props.tps !== undefined && props.tps > 0 ? props.tps : "--"}</span>
+            <span>t/s</span>
           </span>
-        )}
+        </span>
       </div>
       <div className="ml-auto">
         {props.onCancel && props.cancelText.length > 0 ? (

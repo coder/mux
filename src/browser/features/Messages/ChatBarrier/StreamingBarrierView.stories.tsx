@@ -61,3 +61,20 @@ export const LoadingToolsDiagnostic: Story = {
     },
   },
 };
+
+/**
+ * Active streaming state with the token-stats slot revealed. The slot is reserved
+ * (rendered but hidden) during startup, so the row geometry is identical across the
+ * starting -> streaming transition — compare against the startup stories above to
+ * confirm the status text and stop control do not shift when stats appear.
+ */
+export const Streaming: Story = {
+  args: {
+    statusText: "claude-opus-4 streaming...",
+    cancelText: "hit Esc to cancel",
+    cancelShortcutText: "Esc",
+    onCancel: fn(),
+    tokenCount: 12_840,
+    tps: 73,
+  },
+};

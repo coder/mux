@@ -61,4 +61,35 @@ describe("StreamingBarrierView", () => {
     expect(view.getByText("hit Esc to cancel")).toBeTruthy();
     expect(view.queryByRole("button", { name: "Stop streaming" })).toBeNull();
   });
+
+  // The token-stats slot must stay mounted across the starting -> streaming
+  // transition (only its visibility toggles), otherwise mounting it on transition
+  // reflows the row -> a layout flash. These two cases assert the slot is present
+  // in both phases and is merely hidden when no stats are available yet.
+  test("reserves the stats slot but hides it when token count is unavailable (starting)", () => {
+    const view = render(
+      <StreamingBarrierView statusText="starting..." cancelText="hit Esc to cancel" />
+    );
+
+    const stats = view.getByTestId("streaming-barrier-stats");
+    expect(stats.className).toContain("invisible");
+    expect(stats.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  test("reveals the same stats slot with values once streaming", () => {
+    const view = render(
+      <StreamingBarrierView
+        statusText="streaming..."
+        cancelText="hit Esc to cancel"
+        tokenCount={1234}
+        tps={45}
+      />
+    );
+
+    const stats = view.getByTestId("streaming-barrier-stats");
+    expect(stats.className).not.toContain("invisible");
+    expect(stats.getAttribute("aria-hidden")).toBe("false");
+    expect(stats.textContent).toContain("1,234");
+    expect(stats.textContent).toContain("45");
+  });
 });
