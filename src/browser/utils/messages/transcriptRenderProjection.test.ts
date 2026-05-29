@@ -300,6 +300,18 @@ describe("work bundle coalescing", () => {
     expect(infos[3]).toMatchObject({ key: "work:bash-1", position: "final" });
   });
 
+  test("does not finalize work bundles before the first operation", () => {
+    const messages = [
+      user("u1"),
+      assistant("draft-1", { historyId: "history-a1", content: "I'll inspect first." }),
+      tool({ id: "read-1", historyId: "history-a1" }),
+    ];
+
+    const infos = computeWorkBundleInfos(messages);
+
+    expect(infos.every((info) => info === undefined)).toBe(true);
+  });
+
   test("does not merge mixed partial tool and text interruptions across the next user prompt", () => {
     const messages = [
       user("u1"),

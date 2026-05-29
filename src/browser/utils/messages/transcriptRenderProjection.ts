@@ -329,7 +329,7 @@ function findWorkBundleFinalIndex(
     }
     canCrossVisibleConversation = canContinueWorkBundleAcrossConversation(message);
 
-    if (message.type !== "assistant" || message.isPartial) {
+    if (message.type !== "assistant" || message.isPartial || !sawOperationalMessage) {
       continue;
     }
 
