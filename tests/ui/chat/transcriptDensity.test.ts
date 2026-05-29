@@ -10,6 +10,7 @@ import {
   createBashTool,
   createFileReadTool,
   createGenericTool,
+  createProposePlanTool,
   createWebSearchTool,
 } from "@/browser/stories/mocks/tools";
 import { installDom } from "../dom";
@@ -177,6 +178,159 @@ describe("Hyper transcript density", () => {
 
       await waitFor(() => {
         expect(view.container.textContent).toContain("make typecheck");
+      });
+    } finally {
+      await cleanupView(view, cleanupDom);
+    }
+  }, 30_000);
+
+  test("reveals a tail propose_plan through collapsed hyper-density bundles", async () => {
+    const cleanupDom = installDom();
+    updatePersistedState<TranscriptDensity>(TRANSCRIPT_DENSITY_KEY, "hyper");
+
+    const metadata = createWorkspace({
+      id: "ws-tail-plan",
+      name: "tail-plan",
+      projectName: "my-app",
+      projectPath: "/home/user/projects/my-app",
+    });
+    const client = setupSimpleChatStory({
+      workspaceId: metadata.id,
+      workspaceName: metadata.name,
+      projectName: metadata.projectName,
+      projectPath: metadata.projectPath,
+      messages: [
+        createUserMessage("tail-plan-user-1", "Plan the transcript density fix", {
+          historySequence: 1,
+          timestamp: 0,
+        }),
+        createAssistantMessage("tail-plan-assistant-1", "I'll draft the implementation plan.", {
+          historySequence: 2,
+          timestamp: 1_000,
+          toolCalls: [
+            createProposePlanTool(
+              "tail-plan-tool-1",
+              "# Tail Plan\n\n- Reveal the tail propose_plan without a click."
+            ),
+            { type: "text", text: "Plan ready for review." },
+          ],
+        }),
+      ],
+    });
+    const view = renderApp({ apiClient: client, metadata });
+
+    try {
+      await setupWorkspaceView(view, metadata, metadata.id);
+
+      const workButton = await waitFor(() => {
+        const button = queryButton(view.container, "work-bundle");
+        if (!button) {
+          throw new Error("Tail plan work bundle button not found");
+        }
+        return button;
+      });
+      expect(workButton.getAttribute("aria-expanded")).toBe("true");
+
+      const operationalButton = await waitFor(() => {
+        const button = queryButton(view.container, "operational-bundle");
+        if (!button) {
+          throw new Error("Tail plan operational bundle button not found");
+        }
+        return button;
+      });
+      expect(operationalButton.getAttribute("aria-expanded")).toBe("true");
+      expect(view.container.textContent).toContain("Tail Plan");
+      expect(view.container.textContent).toContain("Reveal the tail propose_plan without a click.");
+
+      fireEvent.click(workButton);
+      await waitFor(() => {
+        expect(workButton.getAttribute("aria-expanded")).toBe("false");
+      });
+      expect(view.container.textContent).not.toContain("Tail Plan");
+    } finally {
+      await cleanupView(view, cleanupDom);
+    }
+  }, 30_000);
+
+  test("keeps historical propose_plan collapsed when a later image tool call exists", async () => {
+    const cleanupDom = installDom();
+    updatePersistedState<TranscriptDensity>(TRANSCRIPT_DENSITY_KEY, "hyper");
+
+    const metadata = createWorkspace({
+      id: "ws-historical-plan",
+      name: "historical-plan",
+      projectName: "my-app",
+      projectPath: "/home/user/projects/my-app",
+    });
+    const client = setupSimpleChatStory({
+      workspaceId: metadata.id,
+      workspaceName: metadata.name,
+      projectName: metadata.projectName,
+      projectPath: metadata.projectPath,
+      messages: [
+        createUserMessage("historical-plan-user-1", "Plan then validate", {
+          historySequence: 1,
+          timestamp: 0,
+        }),
+        createAssistantMessage("historical-plan-assistant-1", "I'll plan and then validate.", {
+          historySequence: 2,
+          timestamp: 1_000,
+          toolCalls: [
+            createProposePlanTool(
+              "historical-plan-tool-1",
+              "# Historical Plan\n\n- This older plan should stay hidden."
+            ),
+            createGenericTool(
+              "historical-plan-image-1",
+              "image_generate",
+              { prompt: "Create a validation image" },
+              {
+                success: true,
+                model: "gpt-image-1",
+                prompt: "Create a validation image",
+                requestedCount: 1,
+                images: [
+                  {
+                    path: "/tmp/generated.png",
+                    filename: "generated.png",
+                    mediaType: "image/png",
+                  },
+                ],
+              }
+            ),
+            { type: "text", text: "Validation finished." },
+          ],
+        }),
+      ],
+    });
+    const view = renderApp({ apiClient: client, metadata });
+
+    try {
+      await setupWorkspaceView(view, metadata, metadata.id);
+      await waitFor(() => {
+        expect(view.container.textContent).toContain("Validation finished.");
+      });
+      expect(view.container.textContent).not.toContain("Historical Plan");
+
+      const workButton = queryButton(view.container, "work-bundle");
+      if (workButton) {
+        expect(workButton.getAttribute("aria-expanded")).toBe("false");
+        fireEvent.click(workButton);
+      }
+
+      const operationalButton = await waitFor(() => {
+        const button = queryButton(view.container, "operational-bundle");
+        if (!button) {
+          throw new Error("Historical plan operational bundle button not found");
+        }
+        return button;
+      });
+      expect(operationalButton.getAttribute("aria-expanded")).toBe("false");
+      expect(view.container.textContent).not.toContain("Historical Plan");
+
+      fireEvent.click(operationalButton);
+      await waitFor(() => {
+        expect(view.container.textContent).toContain("Historical Plan");
       });
     } finally {
       await cleanupView(view, cleanupDom);

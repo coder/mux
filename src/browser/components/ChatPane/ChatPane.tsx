@@ -113,6 +113,18 @@ import { recordSyntheticReactRenderSample } from "@/browser/utils/perf/reactProf
 const TRANSCRIPT_ONLY_NOTICE =
   "This workspace's worktree is no longer available. This is a read-only chat transcript kept for historical and usage-tracking reasons.";
 
+function findTailProposePlanToolId(messages: readonly DisplayedMessage[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.type !== "tool") {
+      continue;
+    }
+    return message.toolName === "propose_plan" ? message.id : null;
+  }
+
+  return null;
+}
+
 function PerfRenderMarker(props: { id: string; children: React.ReactNode }): React.ReactElement {
   const renderStartTimeRef = useRef(performance.now());
   renderStartTimeRef.current = performance.now();
@@ -462,6 +474,21 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
         : undefined,
     [canInterrupt, deferredMessages, isStreamStarting, transcriptDensity]
   );
+
+  // A tail propose_plan usually means the agent paused for user review; reveal only the
+  // containing hyper-density bundles by default so historical plans stay collapsed.
+  const tailProposePlanToolId =
+    transcriptDensity === "hyper" ? findTailProposePlanToolId(deferredMessages) : null;
+  const tailProposePlanIndex =
+    tailProposePlanToolId === null
+      ? -1
+      : deferredMessages.findIndex((message) => message.id === tailProposePlanToolId);
+  const tailProposePlanWorkBundleKey =
+    tailProposePlanIndex === -1 ? null : (workBundleInfos?.[tailProposePlanIndex]?.key ?? null);
+  const tailProposePlanOperationalBundleKey =
+    tailProposePlanIndex === -1
+      ? null
+      : (operationalBundleInfos?.[tailProposePlanIndex]?.key ?? null);
 
   const autoCompactionResult = useMemo(
     () =>
@@ -1235,8 +1262,12 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                       const workBundleOverride = workBundle
                         ? workBundleExpansionOverrides.get(workBundle.key)
                         : undefined;
+                      const defaultRevealTailPlanWorkBundle =
+                        tailProposePlanWorkBundleKey !== null &&
+                        workBundle?.key === tailProposePlanWorkBundleKey;
                       const isWorkBundleExpanded = workBundle
-                        ? (workBundleOverride ?? workBundle.defaultExpanded)
+                        ? (workBundleOverride ??
+                          (defaultRevealTailPlanWorkBundle || workBundle.defaultExpanded))
                         : false;
 
                       const keepCollapsedWorkBundleMemberVisible =
@@ -1259,8 +1290,13 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                       const operationalBundleOverride = operationalBundle
                         ? operationalBundleExpansionOverrides.get(operationalBundle.key)
                         : undefined;
+                      const defaultRevealTailPlanOperationalBundle =
+                        tailProposePlanOperationalBundleKey !== null &&
+                        operationalBundle?.key === tailProposePlanOperationalBundleKey;
                       const isOperationalBundleExpanded = operationalBundle
-                        ? (operationalBundleOverride ?? operationalBundle.defaultExpanded)
+                        ? (operationalBundleOverride ??
+                          (defaultRevealTailPlanOperationalBundle ||
+                            operationalBundle.defaultExpanded))
                         : false;
 
                       if (
@@ -1301,8 +1337,14 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                                     nestedOperationalBundle.key
                                   )
                                 : undefined;
+                              const defaultRevealTailPlanNestedBundle =
+                                tailProposePlanOperationalBundleKey !== null &&
+                                nestedOperationalBundle?.key ===
+                                  tailProposePlanOperationalBundleKey;
                               const isNestedExpanded = nestedOperationalBundle
-                                ? (nestedOverride ?? nestedOperationalBundle.defaultExpanded)
+                                ? (nestedOverride ??
+                                  (defaultRevealTailPlanNestedBundle ||
+                                    nestedOperationalBundle.defaultExpanded))
                                 : false;
 
                               if (
