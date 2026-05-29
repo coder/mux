@@ -64,6 +64,7 @@ import { runLanguageModelCleanup } from "./languageModelCleanup";
 import { shellQuote } from "@/common/utils/shell";
 import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
+import { PROVIDER_DEFINITIONS } from "@/common/constants/providers";
 
 // Disable noisy AI SDK warning logging.
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -74,11 +75,23 @@ const EMPTY_STREAM_OUTPUT_ERROR_MESSAGE =
   "The model ended the stream before producing any assistant-visible output. This usually means the upstream stream was dropped rather than completed normally. Mux will retry automatically when possible, and if retries keep failing you should try again or switch models.";
 
 const MAX_EMPTY_STREAM_RECOVERY_ATTEMPTS = 1;
+const STREAM_TRUNCATED_MESSAGE_SUFFIX =
+  "stream closed unexpectedly before the response completed. Mux will retry automatically when possible, and if retries keep failing you should try again or switch models.";
 
 class EmptyStreamOutputError extends Error {
   constructor() {
     super(EMPTY_STREAM_OUTPUT_ERROR_MESSAGE);
     this.name = "EmptyStreamOutputError";
+  }
+}
+
+class StreamTruncatedError extends Error {
+  readonly providerDisplayName: string;
+
+  constructor(providerDisplayName: string) {
+    super(`${providerDisplayName} ${STREAM_TRUNCATED_MESSAGE_SUFFIX}`);
+    this.name = "StreamTruncatedError";
+    this.providerDisplayName = providerDisplayName;
   }
 }
 
@@ -129,6 +142,31 @@ interface StreamRequestConfig {
   /** Optional hook for callers that need the live prepared step transcript. */
   onStepMessages?: (messages: ModelMessage[]) => void;
   toolPolicy?: ToolPolicy;
+}
+
+function isKnownProviderName(provider: string): provider is keyof typeof PROVIDER_DEFINITIONS {
+  return Object.hasOwn(PROVIDER_DEFINITIONS, provider);
+}
+
+function getStreamProviderDisplayName(model: string): string {
+  const canonicalModel = normalizeToCanonical(model);
+  const providerSeparatorIndex = canonicalModel.indexOf(":");
+  const provider =
+    providerSeparatorIndex > 0 ? canonicalModel.slice(0, providerSeparatorIndex) : undefined;
+  if (provider && isKnownProviderName(provider)) {
+    return PROVIDER_DEFINITIONS[provider].displayName;
+  }
+
+  return "The model";
+}
+
+function isStreamTruncatedMessage(message: string): boolean {
+  const lowerMessage = message.toLowerCase();
+  return (
+    lowerMessage.includes("stream closed before message_stop") ||
+    lowerMessage.includes("stream closed before terminal event") ||
+    lowerMessage.includes("stream closed unexpectedly before the response completed")
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -370,6 +408,10 @@ interface WorkspaceStreamInfo {
   // stream-end prefers cumulative usage across attempts instead of the final
   // attempt's totalUsage only.
   didRetryAfterEmptyOutput?: boolean;
+  // Provider streams must prove semantic completion with a terminal SDK finish part.
+  // A clean EOF can be a proxy/provider drop and must not finalize partial assistant text.
+  receivedTerminalEvent: boolean;
+  terminalFinishReason?: string;
   // Index into parts where the current step started (used to ensure safe retries)
   currentStepStartIndex: number;
   historySequence: number;
@@ -1380,6 +1422,7 @@ export class StreamManager extends EventEmitter {
       didRetryPreviousResponseIdAtStep: false,
       didRetryAfterEmptyOutput: false,
       stepTracker,
+      receivedTerminalEvent: false,
       currentStepStartIndex: 0,
       request,
       historySequence,
@@ -1684,6 +1727,39 @@ export class StreamManager extends EventEmitter {
     });
 
     await this.handleStreamFailure(workspaceId, streamInfo, new EmptyStreamOutputError());
+  }
+
+  private async handleTruncatedStreamCompletion(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo
+  ): Promise<void> {
+    const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
+    const streamMeta = await this.getStreamMetadata(streamInfo);
+    const totalUsage = this.resolveTotalUsageForStreamEnd(streamInfo, streamMeta.totalUsage);
+    const contextUsage = streamMeta.contextUsage ?? streamInfo.lastStepUsage;
+    const previousResponseId = this.getOpenAIPreviousResponseId(streamInfo.request.providerOptions);
+    const providerDisplayName = getStreamProviderDisplayName(streamInfo.model);
+
+    // Do not treat iterator EOF as success. Anthropic and OpenAI Responses both
+    // have semantic terminal events; without the SDK finish part, this may be a
+    // clean proxy/provider drop after partial text was already streamed.
+    workspaceLog.error("Stream ended without a terminal finish event", {
+      messageId: streamInfo.messageId,
+      model: streamInfo.model,
+      providerDisplayName,
+      durationMs: streamMeta.duration,
+      totalUsage,
+      contextUsage,
+      cumulativeUsage: streamInfo.cumulativeUsage,
+      previousResponseId,
+      partsCount: streamInfo.parts.length,
+    });
+
+    await this.handleStreamFailure(
+      workspaceId,
+      streamInfo,
+      new StreamTruncatedError(providerDisplayName)
+    );
   }
 
   private async retryEmptyStreamBeforeFailure(
@@ -2038,9 +2114,17 @@ export class StreamManager extends EventEmitter {
               // Handle other event types as needed
               case "start":
               case "text-start":
-              case "finish":
                 // These events can be logged or handled if needed
                 break;
+
+              case "finish": {
+                const finishPart = part as { finishReason?: unknown };
+                streamInfo.receivedTerminalEvent = true;
+                if (typeof finishPart.finishReason === "string") {
+                  streamInfo.terminalFinishReason = finishPart.finishReason;
+                }
+                break;
+              }
 
               case "finish-step": {
                 // Emit usage-delta event with usage from this step
@@ -2115,6 +2199,11 @@ export class StreamManager extends EventEmitter {
               break;
             }
 
+            if (!streamInfo.receivedTerminalEvent) {
+              await this.handleTruncatedStreamCompletion(workspaceId, streamInfo);
+              break;
+            }
+
             // Get all metadata from stream result in one call
             // - totalUsage: sum of all steps (for cost calculation)
             // - contextUsage: last step only (for context window display)
@@ -2130,7 +2219,7 @@ export class StreamManager extends EventEmitter {
             const contextUsage = streamMeta.contextUsage ?? streamInfo.lastStepUsage;
             const contextProviderMetadata =
               streamMeta.contextProviderMetadata ?? streamInfo.lastStepProviderMetadata;
-            const finishReason = streamMeta.finishReason;
+            const finishReason = streamInfo.terminalFinishReason ?? streamMeta.finishReason;
             const duration = streamMeta.duration;
             const ttftMs = this.resolveTtftMsForStreamEnd(streamInfo);
             // Aggregated provider metadata across all steps (for cost calculation with cache tokens)
@@ -2323,6 +2412,15 @@ export class StreamManager extends EventEmitter {
       };
     }
 
+    if (error instanceof StreamTruncatedError) {
+      return {
+        messageId: streamInfo.messageId,
+        error: error.message,
+        errorType: "stream_truncated",
+        acpPromptId: streamInfo.initialMetadata?.acpPromptId,
+      };
+    }
+
     // Extract error message (errors thrown from 'error' parts already have the correct message)
     // Apply prefix stripping to remove noisy "undefined: " prefixes from provider errors
     let errorMessage: string = stripNoisyErrorPrefix(getErrorMessage(error));
@@ -2508,6 +2606,8 @@ export class StreamManager extends EventEmitter {
     if (!preserveParts) {
       streamInfo.parts = [];
     }
+    streamInfo.receivedTerminalEvent = false;
+    streamInfo.terminalFinishReason = undefined;
     streamInfo.lastPartialWriteTime = 0;
 
     if (!preserveUsage) {
@@ -2651,6 +2751,10 @@ export class StreamManager extends EventEmitter {
    * Categorizes errors for better error handling (used for event emission)
    */
   private categorizeError(error: unknown): StreamErrorType {
+    if (error instanceof StreamTruncatedError) {
+      return "stream_truncated";
+    }
+
     // Use AI SDK error type guards first
     if (LoadAPIKeyError.isInstance(error)) {
       return "authentication";
@@ -2768,6 +2872,10 @@ export class StreamManager extends EventEmitter {
     // Fall back to string matching for other errors
     if (error instanceof Error) {
       const message = error.message.toLowerCase();
+
+      if (isStreamTruncatedMessage(message)) {
+        return "stream_truncated";
+      }
 
       if (error.name === "AbortError" || message.includes("abort")) {
         return "aborted";

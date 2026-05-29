@@ -378,6 +378,98 @@ describe("CopilotResponsesLanguageModel", () => {
     });
   });
 
+  it("emits an error when the SSE stream closes before a terminal event", async () => {
+    restoreFetchers.push(
+      mockFetch(() =>
+        Promise.resolve(
+          createSseResponse([
+            {
+              event: "response.output_item.added",
+              data: {
+                type: "response.output_item.added",
+                output_index: 0,
+                content_index: 0,
+                item: { type: "message", id: "msg_1" },
+              },
+            },
+            {
+              event: "response.output_text.delta",
+              data: {
+                type: "response.output_text.delta",
+                output_index: 0,
+                content_index: 0,
+                item_id: "msg_1",
+                delta: "partial",
+              },
+            },
+          ])
+        )
+      )
+    );
+
+    const model = createModel();
+    const result = await model.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Stream please" }] }],
+    });
+    const parts = await collectStreamParts(result.stream);
+
+    expect(parts.map((part) => part.type)).toEqual([
+      "stream-start",
+      "text-start",
+      "text-delta",
+      "error",
+    ]);
+    const errorPart = parts.find(
+      (part): part is Extract<LanguageModelV2StreamPart, { type: "error" }> => part.type === "error"
+    );
+    expect(errorPart?.error).toBeInstanceOf(Error);
+    expect(errorPart?.error instanceof Error ? errorPart.error.message : "").toContain(
+      "stream closed before terminal event"
+    );
+  });
+
+  it("treats response.incomplete as a terminal finish event", async () => {
+    restoreFetchers.push(
+      mockFetch(() =>
+        Promise.resolve(
+          createSseResponse([
+            {
+              event: "response.incomplete",
+              data: {
+                type: "response.incomplete",
+                response: {
+                  incomplete_details: { reason: "max_output_tokens" },
+                  usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 },
+                },
+              },
+            },
+          ])
+        )
+      )
+    );
+
+    const model = createModel();
+    const result = await model.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Stream please" }] }],
+    });
+    const parts = await collectStreamParts(result.stream);
+
+    expect(parts).toEqual([
+      { type: "stream-start", warnings: [] },
+      {
+        type: "finish",
+        finishReason: "length",
+        usage: {
+          inputTokens: 3,
+          outputTokens: 2,
+          totalTokens: 5,
+          reasoningTokens: undefined,
+          cachedInputTokens: undefined,
+        },
+      },
+    ]);
+  });
+
   it("uses a stable synthetic text id even when item_id rotates", async () => {
     restoreFetchers.push(
       mockFetch(() =>

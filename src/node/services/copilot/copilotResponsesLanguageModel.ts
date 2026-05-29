@@ -283,6 +283,7 @@ async function consumeSseStream(
   const reader = source.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let sawTerminalEvent = false;
 
   try {
     for (;;) {
@@ -294,13 +295,18 @@ async function consumeSseStream(
       while (boundary >= 0) {
         const frame = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
-        processFrame(frame, aliasRegistry, includeRawChunks, controller);
+        sawTerminalEvent =
+          processFrame(frame, aliasRegistry, includeRawChunks, controller) || sawTerminalEvent;
         boundary = buffer.indexOf("\n\n");
       }
 
       if (done) {
         if (buffer.trim().length > 0) {
-          processFrame(buffer, aliasRegistry, includeRawChunks, controller);
+          sawTerminalEvent =
+            processFrame(buffer, aliasRegistry, includeRawChunks, controller) || sawTerminalEvent;
+        }
+        if (!sawTerminalEvent) {
+          controller.enqueue({ type: "error", error: createStreamTruncatedError() });
         }
         break;
       }
@@ -318,19 +324,23 @@ function processFrame(
   aliasRegistry: Map<string, string>,
   includeRawChunks: boolean,
   controller: ReadableStreamDefaultController<LanguageModelV2StreamPart>
-) {
+): boolean {
   const parsed = parseSseFrame(frame);
   if (parsed == null) {
-    return;
+    return false;
   }
 
   if (includeRawChunks) {
     controller.enqueue({ type: "raw", rawValue: parsed });
   }
 
+  let sawTerminalEvent = false;
   for (const part of mapStreamEvent(parsed.event, parsed.data, aliasRegistry)) {
+    sawTerminalEvent = part.type === "finish" || part.type === "error" || sawTerminalEvent;
     controller.enqueue(part);
   }
+
+  return sawTerminalEvent;
 }
 
 function parseSseFrame(frame: string) {
@@ -393,6 +403,7 @@ function mapStreamEvent(event: string, data: JsonRecord, aliasRegistry: Map<stri
       return id ? ([{ type: "text-end", id }] satisfies LanguageModelV2StreamPart[]) : [];
     }
     case "response.completed":
+    case "response.incomplete":
       return [
         {
           type: "finish",
@@ -400,11 +411,30 @@ function mapStreamEvent(event: string, data: JsonRecord, aliasRegistry: Map<stri
           finishReason: mapFinishReason(getRawFinishReason(data.response)),
         },
       ] satisfies LanguageModelV2StreamPart[];
+    case "response.failed":
+      return [
+        { type: "error", error: createResponseFailedError(data) },
+      ] satisfies LanguageModelV2StreamPart[];
     case "error":
       return [{ type: "error", error: data }] satisfies LanguageModelV2StreamPart[];
     default:
       return [];
   }
+}
+
+function createStreamTruncatedError() {
+  return new Error("Copilot Responses stream closed before terminal event");
+}
+
+function createResponseFailedError(data: JsonRecord) {
+  const response = data.response as JsonRecord | undefined;
+  const error = response?.error as JsonRecord | undefined;
+  const message = getString(error?.message) ?? "Response failed";
+  const code = getString(error?.code);
+
+  return new Error(
+    code ? `response failed: ${message} (code: ${code})` : `response failed: ${message}`
+  );
 }
 
 function resolveStableTextId(
@@ -479,6 +509,7 @@ function mapFinishReason(reason: unknown): LanguageModelV2FinishReason {
     case "stop":
       return "stop";
     case "max_tokens":
+    case "max_output_tokens":
       return "length";
     case "content_filter":
       return "content-filter";

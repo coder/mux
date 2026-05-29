@@ -40,6 +40,7 @@ export const StreamErrorTypeSchema = z.enum([
   "runtime_not_ready", // Container/runtime doesn't exist or failed to start (permanent)
   "runtime_start_failed", // Runtime is starting or temporarily unavailable (retryable)
   "empty_output", // Provider ended the stream without any assistant-visible output
+  "stream_truncated", // Provider stream closed before its terminal finish event
   "max_output_tokens", // Provider truncated the response at max_tokens (finishReason: "length")
   "unknown", // Catch-all
 ]);

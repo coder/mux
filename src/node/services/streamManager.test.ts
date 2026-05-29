@@ -209,6 +209,7 @@ function createStreamInfoForTests(
     cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     cumulativeProviderMetadata: undefined,
     didRetryPreviousResponseIdAtStep: false,
+    receivedTerminalEvent: false,
     currentStepStartIndex: 0,
     stepTracker: {},
     ...overrides,
@@ -941,6 +942,12 @@ describe("StreamManager - language model cleanup", () => {
       workspaceId: "cleanup-workspace",
       messageId: "cleanup-message",
       streamInfoOverrides: () => ({
+        streamResult: createStreamResultForTests(
+          (async function* () {
+            await Promise.resolve();
+            yield { type: "finish", finishReason: "stop" };
+          })()
+        ),
         parts: [{ type: "text" as const, text: "done", timestamp: Date.now() }],
       }),
     },
@@ -1583,6 +1590,70 @@ describe("StreamManager - empty stream completions", () => {
     expect(partial?.metadata?.metadataModel).toBe(KNOWN_MODELS.SONNET.id);
     expect(partial?.parts).toEqual([]);
   });
+
+  test("persists retryable partial error when a non-empty stream closes before finish", async () => {
+    const streamManager = new StreamManager(historyService);
+    const errorEvents: Array<{ messageId: string; error: string; errorType?: string }> = [];
+    const streamEndEvents: unknown[] = [];
+
+    streamManager.on("error", (data) => {
+      errorEvents.push(data as { messageId: string; error: string; errorType?: string });
+    });
+    streamManager.on("stream-end", (data) => {
+      streamEndEvents.push(data);
+    });
+
+    const replaceTokenTrackerResult = Reflect.set(streamManager, "tokenTracker", {
+      setModel: () => Promise.resolve(undefined),
+      countTokens: () => Promise.resolve(0),
+    });
+    expect(replaceTokenTrackerResult).toBe(true);
+
+    const workspaceId = "truncated-stream-workspace";
+    const messageId = "truncated-stream-message";
+    const historySequence = 1;
+
+    await appendPartialAssistantForTests(workspaceId, messageId, historySequence);
+    const processStreamWithCleanup = getProcessStreamWithCleanupForTests(streamManager);
+    const startTime = Date.now() - 250;
+    const streamInfo = createStreamInfoForTests({
+      streamResult: createStreamResultForTests(
+        (async function* () {
+          await Promise.resolve();
+          yield { type: "text-delta", text: "partial answer" };
+        })(),
+        { inputTokens: 3, outputTokens: 2, totalTokens: 5 }
+      ),
+      messageId,
+      startTime,
+      lastPartTimestamp: startTime,
+      model: KNOWN_MODELS.SONNET.id,
+      metadataModel: KNOWN_MODELS.SONNET.id,
+      historySequence,
+      initialMetadata: { agentId: "plan" },
+      runtime,
+    });
+
+    await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
+
+    expect(streamEndEvents).toHaveLength(0);
+    expect(errorEvents).toHaveLength(1);
+    expect(errorEvents[0]).toMatchObject({
+      messageId,
+      errorType: "stream_truncated",
+    });
+    expect(errorEvents[0]?.error).toContain(
+      "Anthropic stream closed unexpectedly before the response completed"
+    );
+
+    const partial = await historyService.readPartial(workspaceId);
+    expect(partial?.metadata?.errorType).toBe("stream_truncated");
+    expect(partial?.metadata?.error).toContain(
+      "Anthropic stream closed unexpectedly before the response completed"
+    );
+    expect(partial?.metadata?.metadataModel).toBe(KNOWN_MODELS.SONNET.id);
+    expect(partial?.parts).toMatchObject([{ type: "text", text: "partial answer" }]);
+  });
 });
 
 describe("StreamManager - TTFT metadata persistence", () => {
@@ -1702,7 +1773,9 @@ describe("StreamManager - TTFT metadata persistence", () => {
     const streamInfo = createStreamInfoForTests({
       streamResult: createStreamResultForTests(
         (async function* () {
-          // No-op stream: tests verify stream-end finalization behavior from pre-populated parts.
+          // Tests pre-populate parts but still need the provider's terminal proof of completion.
+          await Promise.resolve();
+          yield { type: "finish", finishReason: "stop" };
         })(),
         usage
       ),
@@ -2606,6 +2679,16 @@ describe("StreamManager - categorizeError", () => {
   });
 
   const categorizeCases: Array<{ name: string; error: unknown; expected: string }> = [
+    {
+      name: "classifies Anthropic missing message_stop as stream_truncated",
+      error: new Error("anthropic stream closed before message_stop"),
+      expected: "stream_truncated",
+    },
+    {
+      name: "classifies OpenAI Responses missing terminal event as stream_truncated",
+      error: new Error("openai responses stream closed before terminal event"),
+      expected: "stream_truncated",
+    },
     {
       name: "classifies model_not_found via message fallback",
       error: new Error("The model `gpt-5.2-codex` does not exist or you do not have access to it."),
