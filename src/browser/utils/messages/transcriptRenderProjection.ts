@@ -373,13 +373,10 @@ function hasFutureWorkBundleAgentMessage(
 }
 
 function canContinueWorkBundleAcrossConversation(message: DisplayedMessage): boolean {
-  if (!isWorkBundleAgentMessage(message)) {
-    return false;
-  }
-  if (message.type === "tool" && message.status === "interrupted") {
-    return false;
-  }
-  return message.isPartial === true;
+  // Only partial tool rows prove the agent was still doing operational work when
+  // the user spoke. Partial reasoning/text alone can also be an interrupted turn;
+  // do not anchor the next prompt under that old turn's work bundle.
+  return message.type === "tool" && message.isPartial === true && message.status !== "interrupted";
 }
 
 function getWorkBundleAgentHistoryId(message: DisplayedMessage | undefined): string | undefined {

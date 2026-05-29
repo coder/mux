@@ -300,6 +300,26 @@ describe("work bundle coalescing", () => {
     expect(infos[3]).toMatchObject({ key: "work:bash-1", position: "final" });
   });
 
+  test("does not merge partial text-only interruptions across the next user prompt", () => {
+    const messages = [
+      user("u1"),
+      reasoning({ id: "think-1", historyId: "history-a1", isPartial: true }),
+      assistant("draft-1", { historyId: "history-a1", isPartial: true }),
+      user("u2"),
+      tool({ id: "bash-1", historyId: "history-a2", toolName: "bash" }),
+      assistant("final-2", { historyId: "history-a2" }),
+    ];
+
+    const infos = computeWorkBundleInfos(messages);
+
+    expect(infos[0]).toBeUndefined();
+    expect(infos[1]).toBeUndefined();
+    expect(infos[2]).toBeUndefined();
+    expect(infos[3]).toMatchObject({ key: "work:bash-1", position: "head", headIndex: 3 });
+    expect(infos[4]).toMatchObject({ key: "work:bash-1", position: "member" });
+    expect(infos[5]).toMatchObject({ key: "work:bash-1", position: "final" });
+  });
+
   test("does not merge interrupted work across the next user prompt", () => {
     const messages = [
       user("u1"),
