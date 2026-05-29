@@ -82,7 +82,6 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
       programmaticToolCallingExclusive: isExperimentEnabled(
         EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
       ),
-      advisorTool: isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL),
       execSubagentHardRestart: isExperimentEnabled(EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART),
       imageGenerationTool: isExperimentEnabled(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL),
     },

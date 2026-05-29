@@ -664,6 +664,55 @@ const debugLlmRequestCommandDefinition: SlashCommandDefinition = {
   handler: (): ParsedCommand => ({ type: "debug-llm-request" }),
 };
 
+const ADVISOR_INIT_USAGE = "/advisor init <name>";
+
+const advisorInitCommandDefinition: SlashCommandDefinition = {
+  key: "init",
+  description: "Scaffold a new advisor at .mux/advisors/<name>/ADVISOR.md.",
+  appendSpace: false,
+  handler: ({ cleanRemainingTokens }): ParsedCommand => {
+    if (cleanRemainingTokens.length !== 1) {
+      return {
+        type: "command-missing-args",
+        command: "advisor init",
+        usage: ADVISOR_INIT_USAGE,
+      };
+    }
+    const name = cleanRemainingTokens[0];
+    // Loose kebab-case gate matches the AdvisorNameSchema regex; the backend
+    // re-validates, but failing fast here gives a clearer error message before
+    // the round-trip.
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)) {
+      return {
+        type: "command-invalid-args",
+        command: "advisor init",
+        input: name,
+        usage: ADVISOR_INIT_USAGE,
+      };
+    }
+    return { type: "advisor-init", name };
+  },
+};
+
+const advisorCommandDefinition: SlashCommandDefinition = {
+  key: "advisor",
+  description:
+    "List configured advisors, or use `/advisor init <name>` to scaffold a new ADVISOR.md template.",
+  inputHint: "[init <name>]",
+  appendSpace: false,
+  handler: ({ cleanRemainingTokens }): ParsedCommand => {
+    if (cleanRemainingTokens.length === 0) {
+      return { type: "advisor-list" };
+    }
+    return {
+      type: "unknown-command",
+      command: "advisor",
+      subcommand: cleanRemainingTokens[0],
+    };
+  },
+  children: [advisorInitCommandDefinition],
+};
+
 export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   clearCommandDefinition,
   compactCommandDefinition,
@@ -677,6 +726,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   heartbeatCommandDefinition,
   goalCommandDefinition,
   btwCommandDefinition,
+  advisorCommandDefinition,
   debugLlmRequestCommandDefinition,
 ];
 

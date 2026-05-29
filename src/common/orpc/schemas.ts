@@ -103,6 +103,16 @@ export {
   SkillNameSchema,
 } from "./schemas/agentSkill";
 
+// Advisor schemas (configuration-as-code; advisors live at .mux/advisors/<name>/ADVISOR.md)
+export {
+  AdvisorDescriptorSchema,
+  AdvisorFrontmatterSchema,
+  AdvisorIssueSchema,
+  AdvisorNameSchema,
+  AdvisorPackageSchema,
+  AdvisorScopeSchema,
+} from "./schemas/advisor";
+
 // Instruction context schemas (AGENTS.md, CLAUDE.md, …)
 export {
   AdditionalSystemContextSchema,
@@ -258,6 +268,7 @@ export {
   general,
   menu,
   agentSkills,
+  advisors,
   agents,
   nameGeneration,
   projects,

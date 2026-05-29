@@ -17,7 +17,6 @@ import { copyToClipboard } from "@/browser/utils/clipboard";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { getDefaultModel, useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
-import { resolveAdvisorEnabledForAgent } from "@/common/constants/advisor";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import {
   AGENT_AI_DEFAULTS_KEY,
@@ -82,12 +81,7 @@ function updateAgentDefaultEntry(
     updated.thinkingLevel = enforceThinkingPolicy(updated.modelString, updated.thinkingLevel);
   }
 
-  if (
-    !updated.modelString &&
-    !updated.thinkingLevel &&
-    updated.enabled === undefined &&
-    updated.advisorEnabled === undefined
-  ) {
+  if (!updated.modelString && !updated.thinkingLevel && updated.enabled === undefined) {
     delete next[normalizedId];
   } else {
     next[normalizedId] = updated;
@@ -181,7 +175,7 @@ function getTasksSectionSaveBody(
   };
 
   // Skip unchanged legacy subagent defaults so unrelated agent toggles do not
-  // run router reconciliation and drop enabled/advisorEnabled for custom agents.
+  // run router reconciliation and drop enabled for custom agents.
   if (didSubagentDefaultsChange) {
     saveBody.subagentAiDefaults = payload.subagentAiDefaults;
   }
@@ -274,23 +268,6 @@ function renderPolicySummary(agent: AgentDefinitionDescriptor): React.ReactNode 
   );
 }
 
-function getAdvisorSwitchState(
-  agentId: string,
-  advisorEnabledOverride: boolean | undefined
-): { checked: boolean; title: string } {
-  const checked = resolveAdvisorEnabledForAgent(agentId, advisorEnabledOverride);
-  const title =
-    advisorEnabledOverride === undefined
-      ? checked
-        ? "Advisor enabled by default."
-        : "Advisor disabled by default."
-      : advisorEnabledOverride
-        ? "Advisor enabled (local override)."
-        : "Advisor disabled (local override).";
-
-  return { checked, title };
-}
-
 function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
   return (
     a.maxParallelAgentTasks === b.maxParallelAgentTasks &&
@@ -325,9 +302,6 @@ function areAgentAiDefaultsEqual(a: AgentAiDefaults, b: AgentAiDefaults): boolea
       return false;
     }
     if ((aEntry?.enabled ?? undefined) !== (bEntry?.enabled ?? undefined)) {
-      return false;
-    }
-    if ((aEntry?.advisorEnabled ?? undefined) !== (bEntry?.advisorEnabled ?? undefined)) {
       return false;
     }
   }
@@ -493,7 +467,6 @@ export function TasksSection() {
   );
   const newWorkspaceDefaultAgentId = coerceAgentId(globalDefaultAgentIdRaw);
   const portableDesktopEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
-  const advisorToolEnabled = useExperimentValue(EXPERIMENT_IDS.ADVISOR_TOOL);
 
   // Resolve the workspace's active model so that when a sub-agent's model is
   // "Inherit", we show thinking levels for the workspace model (falling back to
@@ -826,22 +799,6 @@ export function TasksSection() {
     );
   };
 
-  const setAgentAdvisorEnabled = (agentId: string, value: boolean) => {
-    setAgentAiDefaults((prev) =>
-      updateAgentDefaultEntry(prev, agentId, (updated) => {
-        updated.advisorEnabled = value;
-      })
-    );
-  };
-
-  const resetAgentAdvisorEnabled = (agentId: string) => {
-    setAgentAiDefaults((prev) =>
-      updateAgentDefaultEntry(prev, agentId, (updated) => {
-        delete updated.advisorEnabled;
-      })
-    );
-  };
-
   const listedAgents = agents.length > 0 ? agents : FALLBACK_AGENTS;
   const enabledAgentIdSet = new Set(enabledAgentIds);
 
@@ -880,8 +837,6 @@ export function TasksSection() {
     const thinkingValue = entry?.thinkingLevel ?? INHERIT;
     const writesSubagentAiDefaults = agent.subagentRunnable && !agent.uiSelectable;
     const enabledOverride = entry?.enabled;
-    const advisorEnabledOverride = entry?.advisorEnabled;
-    const advisorSwitchState = getAdvisorSwitchState(agent.id, advisorEnabledOverride);
 
     const enablementLocked =
       agent.id === "exec" || agent.id === "plan" || agent.id === "compact" || agent.id === "mux";
@@ -999,34 +954,6 @@ export function TasksSection() {
                 </Button>
               ) : null}
             </div>
-            {advisorToolEnabled ? (
-              <div className="flex items-center gap-3">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="flex items-center gap-2">
-                      <div className="text-muted text-xs">Advisor</div>
-                      <Switch
-                        checked={advisorSwitchState.checked}
-                        onCheckedChange={(checked) => setAgentAdvisorEnabled(agent.id, checked)}
-                        aria-label={`Toggle ${agent.id} advisor`}
-                      />
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent>{advisorSwitchState.title}</TooltipContent>
-                </Tooltip>
-                {advisorEnabledOverride !== undefined ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="px-2"
-                    onClick={() => resetAgentAdvisorEnabled(agent.id)}
-                  >
-                    Reset
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
           </div>
         </div>
 
@@ -1077,8 +1004,7 @@ export function TasksSection() {
             {agent.id} • {agent.scope} • {renderPolicySummary(agent)}
           </div>
           <div className="text-muted mt-1 text-xs">
-            Unset fields inherit from UI Exec defaults. Enabled and advisor settings stay shared
-            with UI Exec.
+            Unset fields inherit from UI Exec defaults. Enabled settings stay shared with UI Exec.
           </div>
         </div>
 
@@ -1105,8 +1031,6 @@ export function TasksSection() {
     const entry = agentAiDefaults[agentId];
     const modelValue = entry?.modelString ?? INHERIT;
     const thinkingValue = entry?.thinkingLevel ?? INHERIT;
-    const advisorEnabledOverride = entry?.advisorEnabled;
-    const advisorSwitchState = getAdvisorSwitchState(agentId, advisorEnabledOverride);
     const effectiveModel = modelValue !== INHERIT ? modelValue : inheritedEffectiveModel;
 
     return (
@@ -1119,34 +1043,6 @@ export function TasksSection() {
             <div className="text-foreground text-sm font-medium">{agentId}</div>
             <div className="text-muted text-xs">Not discovered in the current workspace</div>
           </div>
-          {advisorToolEnabled ? (
-            <div className="flex shrink-0 items-center gap-3">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex items-center gap-2">
-                    <div className="text-muted text-xs">Advisor</div>
-                    <Switch
-                      checked={advisorSwitchState.checked}
-                      onCheckedChange={(checked) => setAgentAdvisorEnabled(agentId, checked)}
-                      aria-label={`Toggle ${agentId} advisor`}
-                    />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>{advisorSwitchState.title}</TooltipContent>
-              </Tooltip>
-              {advisorEnabledOverride !== undefined ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="px-2"
-                  onClick={() => resetAgentAdvisorEnabled(agentId)}
-                >
-                  Reset
-                </Button>
-              ) : null}
-            </div>
-          ) : null}
         </div>
 
         <AiDefaultsControls

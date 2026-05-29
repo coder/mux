@@ -300,7 +300,8 @@ export type TelemetryCommandType =
   | "plan"
   | "providers"
   | "goal"
-  | "btw";
+  | "btw"
+  | "advisor";
 
 /**
  * Command usage event - tracks slash command usage patterns

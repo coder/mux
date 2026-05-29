@@ -75,6 +75,7 @@ import {
   AgentSkillPackageSchema,
   SkillNameSchema,
 } from "./agentSkill";
+import { AdvisorDescriptorSchema, AdvisorIssueSchema, AdvisorNameSchema } from "./advisor";
 import {
   AgentDefinitionDescriptorSchema,
   AgentDefinitionPackageSchema,
@@ -1714,6 +1715,32 @@ export const agentSkills = {
   get: {
     input: AgentDiscoveryInputSchema.and(z.object({ skillName: SkillNameSchema })),
     output: AgentSkillPackageSchema,
+  },
+};
+
+// Advisors (configuration-as-code .mux/advisors/<name>/ADVISOR.md files).
+//
+// `list` is intentionally diagnostics-flavored — surfacing malformed entries
+// inline is the whole point of `/advisor`; hiding them would defeat the
+// design tenet that the filesystem is the source of truth.
+export const advisors = {
+  list: {
+    input: AgentDiscoveryInputSchema,
+    output: z.object({
+      advisors: z.array(AdvisorDescriptorSchema),
+      invalidAdvisors: z.array(AdvisorIssueSchema),
+    }),
+  },
+  scaffold: {
+    input: AgentDiscoveryInputSchema.and(z.object({ name: AdvisorNameSchema })),
+    output: z.object({
+      /** Absolute (runtime-relative) path to the newly-written ADVISOR.md. */
+      sourcePath: z.string().min(1),
+      /** Directory the advisor lives under. */
+      advisorDir: z.string().min(1),
+      /** Resolved advisor name (echoes the validated input). */
+      name: AdvisorNameSchema,
+    }),
   },
 };
 

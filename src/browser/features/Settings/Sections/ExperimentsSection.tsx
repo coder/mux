@@ -28,7 +28,6 @@ import { Input } from "@/browser/components/Input/Input";
 import { useAPI, type APIClient } from "@/browser/contexts/API";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { ImageGenerationExperimentConfig } from "./ImageGenerationExperimentConfig";
-import { AdvisorToolExperimentConfig } from "./AdvisorToolExperimentConfig";
 import { HeartbeatDefaultsControls } from "./HeartbeatSection";
 
 const PORTABLE_DESKTOP_INSTALL_URL = "https://github.com/coder/portabledesktop";
@@ -663,7 +662,6 @@ function ExperimentSettingsPanel(props: ExperimentSettingsPanelProps) {
 export function ExperimentsSection() {
   const allExperiments = getExperimentList();
   const { api } = useAPI();
-  const advisorToolEnabled = useExperimentValue(EXPERIMENT_IDS.ADVISOR_TOOL);
   const imageGenerationToolEnabled = useExperimentValue(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const settingsConfigRequestRef = useRef<{
@@ -750,9 +748,6 @@ export function ExperimentsSection() {
                     : undefined
                 }
               />
-              {exp.id === EXPERIMENT_IDS.ADVISOR_TOOL && advisorToolEnabled && (
-                <AdvisorToolExperimentConfig />
-              )}
               {exp.id === EXPERIMENT_IDS.IMAGE_GENERATION_TOOL && imageGenerationToolEnabled && (
                 <ImageGenerationExperimentConfig enabled={imageGenerationToolEnabled} />
               )}

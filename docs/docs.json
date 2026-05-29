@@ -81,6 +81,7 @@
               "agents",
               "agents/instruction-files",
               "agents/agent-skills",
+              "agents/advisors",
               "agents/plan-mode",
               "agents/system-prompt",
               "agents/prompting-tips",

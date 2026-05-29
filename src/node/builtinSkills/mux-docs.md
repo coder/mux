@@ -80,6 +80,7 @@ Use this index to find a page's:
     - Agents (`/agents`) → `references/docs/agents/index.mdx` — Define custom agents (modes + subagents) as Markdown files
     - Instruction Files (`/agents/instruction-files`) → `references/docs/agents/instruction-files.mdx` — Configure agent behavior with AGENTS.md files
     - Agent Skills (`/agents/agent-skills`) → `references/docs/agents/agent-skills.mdx` — Share reusable workflows and references with skills
+    - Advisors (`/agents/advisors`) → `references/docs/agents/advisors.mdx` — Configure specialist models that agents can consult on hard problems
     - Plan Mode (`/agents/plan-mode`) → `references/docs/agents/plan-mode.mdx` — Review and collaborate on plans before execution
     - System Prompt (`/agents/system-prompt`) → `references/docs/agents/system-prompt.mdx` — How Mux constructs the system prompt for AI models
     - Prompting Tips (`/agents/prompting-tips`) → `references/docs/agents/prompting-tips.mdx` — Tips and tricks for getting the most out of your AI agents

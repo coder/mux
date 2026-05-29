@@ -63,6 +63,7 @@ import type { SendMessageError } from "@/common/types/errors";
 import type { FileState } from "@/node/services/agentSession";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { AdvisorPackage } from "@/common/types/advisor";
 import type { Result } from "@/common/types/result";
 import type { ModelMessage } from "@/common/types/message";
 import type { ProjectRef } from "@/common/types/workspace";
@@ -155,7 +156,6 @@ export interface ToolConfiguration {
   experiments?: {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
-    advisorTool?: boolean;
     imageGenerationTool?: boolean;
     execSubagentHardRestart?: boolean;
   };
@@ -180,23 +180,30 @@ export interface ToolConfiguration {
   };
   /** Whether image upload consent permits registering the image editing tool. */
   imageEditingEnabled?: boolean;
-  /** Runtime bundle for the advisor tool (present only when advisor is eligible for this stream). */
+  /**
+   * Runtime bundle for the advisor tool (present only when at least one
+   * advisor is loaded and the agent's tool policy admits the advisor).
+   *
+   * Per-advisor config (model, thinking, budgets, body) lives on the entries
+   * in `advisors`; the executor reads them at call time. Global defaults live
+   * here as `default*` fallbacks for advisors that don't override.
+   */
   advisorRuntime?: {
-    /** The advisor model string (e.g. "anthropic:claude-sonnet-4-20250514") */
-    advisorModelString: string;
-    /** Optional reasoning/thinking level metadata for the advisor request. */
-    reasoningLevel?: string;
-    /** Normalized max uses per turn: null = unlimited, positive integer = exact cap */
-    maxUsesPerTurn: number | null;
-    /** Normalized max output tokens cap for advisor responses: undefined = unlimited, positive integer = explicit cap */
-    maxOutputTokens?: number;
-    /** Returns the live conversation transcript up to the current tool call */
+    /**
+     * Advisor catalog for this stream, already filtered to advisors that are
+     * visible to the effective agent. MUST be non-empty when this bundle is
+     * provided — the tool registration gate enforces this invariant.
+     */
+    advisors: readonly AdvisorPackage[];
+    /** Default per-turn usage cap for advisors that don't set `max_uses_per_turn`. */
+    defaultMaxUsesPerTurn: number;
+    /** Returns the live conversation transcript up to the current tool call. */
     getTranscriptSnapshot: () => ModelMessage[];
     /** Returns the frozen same-step capture snapshot for a specific advisor tool call, if available. */
     takeToolCallSnapshot: (toolCallId: string) => AdvisorToolCallSnapshot | undefined;
-    /** Creates a LanguageModel from a model string (delegates to providerModelFactory) */
+    /** Creates a LanguageModel from a model string (delegates to providerModelFactory). */
     createModel: (modelString: string) => Promise<LanguageModel>;
-    /** The abort signal from the parent stream */
+    /** The abort signal from the parent stream. */
     abortSignal: AbortSignal;
   };
   /** Desktop session manager for desktop automation tools */

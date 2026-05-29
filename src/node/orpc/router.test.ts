@@ -85,7 +85,6 @@ describe("router config.saveConfig", () => {
           modelString: "anthropic:claude-3-5-sonnet",
           thinkingLevel: "high",
           enabled: true,
-          advisorEnabled: true,
         },
       },
       subagentAiDefaults: {
@@ -108,7 +107,6 @@ describe("router config.saveConfig", () => {
     expect(saved.agentAiDefaults?.foo?.modelString).toBeUndefined();
     expect(saved.agentAiDefaults?.foo?.thinkingLevel).toBeUndefined();
     expect(saved.agentAiDefaults?.foo?.enabled).toBe(true);
-    expect(saved.agentAiDefaults?.foo?.advisorEnabled).toBe(true);
     expect(saved.subagentAiDefaults?.foo).toBeUndefined();
   });
 

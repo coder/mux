@@ -1052,7 +1052,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     preparedPayloadMessageIds: string[][];
     preparedToolNamesForSentinel: string[][];
     streamSystemContextMuxScopes: MuxToolScope[];
-    streamSystemContextAdvisorFlags: Array<boolean | undefined>;
+
     startStreamCalls: unknown[][];
     getToolsForModelSpy: ReturnType<typeof spyOn<typeof toolsModule, "getToolsForModel">>;
   }
@@ -1119,7 +1119,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const preparedPayloadMessageIds: string[][] = [];
     const preparedToolNamesForSentinel: string[][] = [];
     const streamSystemContextMuxScopes: MuxToolScope[] = [];
-    const streamSystemContextAdvisorFlags: Array<boolean | undefined> = [];
+
     const startStreamCalls: unknown[][] = [];
 
     const getToolsForModelSpy = stubCommonStreamMessageDependencies({
@@ -1137,7 +1137,6 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
           throw new Error("Expected muxScope in stream system context build args");
         }
         streamSystemContextMuxScopes.push(contextArgs.muxScope);
-        streamSystemContextAdvisorFlags.push(contextArgs.advisorToolAvailable);
       },
       onPrepareMessagesForProvider: (pipelineArgs) => {
         preparedPayloadMessageIds.push(
@@ -1159,7 +1158,6 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       preparedPayloadMessageIds,
       preparedToolNamesForSentinel,
       streamSystemContextMuxScopes,
-      streamSystemContextAdvisorFlags,
       startStreamCalls,
       getToolsForModelSpy,
     };
@@ -1170,6 +1168,12 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   const START_STREAM_RUNTIME_TEMP_DIR_INDEX = 23;
 
   interface AdvisorRuntimeForTests {
+    advisors: ReadonlyArray<{
+      directoryName: string;
+      scope: "project" | "global";
+      frontmatter: { model: string; description: string };
+    }>;
+    defaultMaxUsesPerTurn: number;
     createModel: (modelString: string) => Promise<LanguageModel>;
     takeToolCallSnapshot: (toolCallId: string) =>
       | {
@@ -1192,22 +1196,22 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     };
   }) => PromiseLike<void> | void;
 
-  async function enableAdvisorForHarness(
-    harness: StreamMessageHarness,
+  /**
+   * Stand-in for the pre-GA `enableAdvisorForHarness` cfg writer.
+   *
+   * Post-GA, advisors are configured by writing `.mux/advisors/<name>/ADVISOR.md`
+   * files into the workspace directory. This helper writes the minimum
+   * fixture needed to make the advisor catalog non-empty during the stream.
+   */
+  async function writeProjectAdvisor(
+    workspacePath: string,
+    name: string,
     advisorModelString = KNOWN_MODELS.SONNET.id
   ): Promise<void> {
-    const baseConfig = harness.config.loadConfigOrDefault();
-    await harness.config.saveConfig({
-      ...baseConfig,
-      advisorModelString,
-      agentAiDefaults: {
-        ...baseConfig.agentAiDefaults,
-        exec: {
-          ...baseConfig.agentAiDefaults?.exec,
-          advisorEnabled: true,
-        },
-      },
-    });
+    const advisorDir = path.join(workspacePath, ".mux", "advisors", name);
+    await fs.mkdir(advisorDir, { recursive: true });
+    const body = `---\ndescription: Test advisor for ${name}.\nmodel: ${advisorModelString}\n---\n`;
+    await fs.writeFile(path.join(advisorDir, "ADVISOR.md"), body, "utf-8");
   }
 
   async function startAdvisorStream(
@@ -1219,7 +1223,6 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
-      experiments: { advisorTool: true },
     });
     expect(result.success).toBe(true);
     return result;
@@ -1344,12 +1347,12 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     ]);
   });
 
-  it("reuses the pre-policy stream system context when advisor availability is unchanged", async () => {
-    using muxHome = new DisposableTempDir("ai-service-reuse-system-context");
+  it("uses the workspace-scoped tmp-stream directory for stream runtime tempdirs", async () => {
+    using muxHome = new DisposableTempDir("ai-service-stream-tmpdir");
     const projectPath = path.join(muxHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
-    const workspaceId = "workspace-reuse-system-context";
+    const workspaceId = "workspace-stream-tmpdir";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
@@ -1361,40 +1364,9 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(harness.streamSystemContextAdvisorFlags).toEqual([false]);
     expect(harness.startStreamCalls[0]?.[START_STREAM_RUNTIME_TEMP_DIR_INDEX]).toBe(
       path.join(metadata.projectPath, ".tmp-stream")
     );
-  });
-
-  it("rebuilds the stream system context when policy removes advisor guidance", async () => {
-    using muxHome = new DisposableTempDir("ai-service-rebuild-system-context-advisor");
-    const projectPath = path.join(muxHome.path, "project");
-    await fs.mkdir(projectPath, { recursive: true });
-
-    const workspaceId = "workspace-rebuild-system-context-advisor";
-    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for advisor availability gating
-    const stubTool: Tool = {} as never;
-    const harness = createHarness(muxHome.path, metadata, {
-      allTools: { advisor: stubTool },
-      postPolicyTools: {},
-    });
-    await harness.config.editConfig((cfg) => {
-      cfg.advisorModelString = KNOWN_MODELS.SONNET.id;
-      return cfg;
-    });
-
-    const result = await harness.service.streamMessage({
-      messages: [createMuxMessage("latest-user", "user", "hello")],
-      workspaceId,
-      modelString: "openai:gpt-5.2",
-      thinkingLevel: "off",
-      experiments: { advisorTool: true },
-    });
-
-    expect(result.success).toBe(true);
-    expect(harness.streamSystemContextAdvisorFlags).toEqual([true, false]);
   });
 
   it("keeps legacy system workspaces on the global mux tool scope", async () => {
@@ -1681,7 +1653,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const workspaceId = "workspace-advisor-step-snapshot-boundary";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
-    await enableAdvisorForHarness(harness);
+    await writeProjectAdvisor(projectPath, "default");
 
     await startAdvisorStream(harness, workspaceId);
 
@@ -1719,7 +1691,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const workspaceId = "workspace-advisor-step-snapshot-isolated";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
-    await enableAdvisorForHarness(harness);
+    await writeProjectAdvisor(projectPath, "default");
 
     await startAdvisorStream(harness, workspaceId);
 
@@ -1766,7 +1738,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const workspaceId = "workspace-advisor-step-snapshot-reset";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
-    await enableAdvisorForHarness(harness);
+    await writeProjectAdvisor(projectPath, "default");
 
     await startAdvisorStream(harness, workspaceId);
 
@@ -1816,7 +1788,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const workspaceId = "workspace-advisor-step-snapshot-consume";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
-    await enableAdvisorForHarness(harness);
+    await writeProjectAdvisor(projectPath, "default");
 
     await startAdvisorStream(harness, workspaceId);
 
@@ -1985,25 +1957,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         },
       },
     });
-    const baseConfig = harness.config.loadConfigOrDefault();
-    await harness.config.saveConfig({
-      ...baseConfig,
-      advisorModelString: KNOWN_MODELS.GPT_53_CODEX.id,
-      agentAiDefaults: {
-        ...baseConfig.agentAiDefaults,
-        exec: {
-          ...baseConfig.agentAiDefaults?.exec,
-          advisorEnabled: true,
-        },
-      },
-    });
+    await writeProjectAdvisor(projectPath, "default", KNOWN_MODELS.GPT_53_CODEX.id);
 
     const result = await harness.service.streamMessage({
       messages: [createMuxMessage("latest-user", "user", "continue")],
       workspaceId,
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
-      experiments: { advisorTool: true },
     });
 
     expect(result.success).toBe(true);

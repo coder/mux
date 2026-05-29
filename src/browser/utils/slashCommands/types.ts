@@ -46,6 +46,8 @@ export type ParsedCommand =
   | { type: "goal-complete"; summary?: string }
   | { type: "goal-clear" }
   | { type: "side-question"; question: string }
+  | { type: "advisor-list" }
+  | { type: "advisor-init"; name: string }
   | null;
 
 export interface SuggestionsHandlerArgs {
