@@ -166,19 +166,20 @@ describe("work bundle coalescing", () => {
 
     const infos = computeWorkBundleInfos(messages);
 
-    expect(infos[0]).toBeUndefined();
-    expect(infos[1]).toMatchObject({
+    expect(infos[0]).toMatchObject({
       key: "work:think-1",
       position: "head",
-      headIndex: 1,
+      headIndex: 0,
       durationMs: 180_000,
       defaultExpanded: false,
       entries: [
         { message: messages[1], originalIndex: 1 },
         { message: messages[2], originalIndex: 2 },
         { message: messages[3], originalIndex: 3 },
+        { message: messages[4], originalIndex: 4 },
       ],
     });
+    expect(infos[1]).toMatchObject({ key: "work:think-1", position: "member" });
     expect(infos[2]).toMatchObject({ key: "work:think-1", position: "member" });
     expect(infos[3]).toMatchObject({ key: "work:think-1", position: "member" });
     expect(infos[4]).toMatchObject({ key: "work:think-1", position: "final" });
@@ -206,7 +207,7 @@ describe("work bundle coalescing", () => {
     const workInfos = computeWorkBundleInfos(messages);
     const operationalInfos = computeOperationalBundleInfos(messages, { isTurnActive: false });
 
-    expect(workInfos[0]?.entries.map((entry) => entry.originalIndex)).toEqual([0, 1, 2, 3]);
+    expect(workInfos[0]?.entries.map((entry) => entry.originalIndex)).toEqual([0, 1, 2, 3, 4]);
     expect(operationalInfos[2]).toMatchObject({
       position: "head",
       headIndex: 2,
@@ -221,7 +222,7 @@ describe("work bundle coalescing", () => {
   test("spans steering user messages until the turn final assistant row", () => {
     const messages = [
       user("u1"),
-      tool({ id: "read-1", historyId: "history-a1", timestamp: 1_000 }),
+      tool({ id: "read-1", historyId: "history-a1", isPartial: true, timestamp: 1_000 }),
       user("steer-1"),
       tool({ id: "bash-1", historyId: "history-a1", toolName: "bash", timestamp: 31_000 }),
       assistant("final-1", { historyId: "history-a1", timestamp: 61_000 }),
@@ -229,16 +230,19 @@ describe("work bundle coalescing", () => {
 
     const infos = computeWorkBundleInfos(messages);
 
-    expect(infos[1]).toMatchObject({
+    expect(infos[0]).toMatchObject({
       key: "work:read-1",
       position: "head",
+      headIndex: 0,
       durationMs: 60_000,
       entries: [
         { message: messages[1], originalIndex: 1 },
         { message: messages[2], originalIndex: 2 },
         { message: messages[3], originalIndex: 3 },
+        { message: messages[4], originalIndex: 4 },
       ],
     });
+    expect(infos[1]).toMatchObject({ key: "work:read-1", position: "member" });
     expect(infos[2]).toMatchObject({ key: "work:read-1", position: "member" });
     expect(infos[3]).toMatchObject({ key: "work:read-1", position: "member" });
     expect(infos[4]).toMatchObject({ key: "work:read-1", position: "final" });
@@ -256,15 +260,18 @@ describe("work bundle coalescing", () => {
 
     const infos = computeWorkBundleInfos(messages);
 
-    expect(infos[1]).toMatchObject({
+    expect(infos[0]).toMatchObject({
       key: "work:read-1",
+      headIndex: 0,
       entries: [
         { message: messages[1], originalIndex: 1 },
         { message: messages[2], originalIndex: 2 },
         { message: messages[3], originalIndex: 3 },
         { message: messages[4], originalIndex: 4 },
+        { message: messages[5], originalIndex: 5 },
       ],
     });
+    expect(infos[1]).toMatchObject({ key: "work:read-1", position: "member" });
     expect(infos[2]).toMatchObject({ key: "work:read-1", position: "member" });
     expect(infos[3]).toMatchObject({ key: "work:read-1", position: "member" });
     expect(infos[4]).toMatchObject({ key: "work:read-1", position: "member" });
@@ -281,10 +288,14 @@ describe("work bundle coalescing", () => {
 
     const infos = computeWorkBundleInfos(messages);
 
+    expect(infos[0]).toBeUndefined();
     expect(infos[1]).toBeUndefined();
     expect(infos[2]).toMatchObject({
       key: "work:bash-1",
-      entries: [{ message: messages[2], originalIndex: 2 }],
+      entries: [
+        { message: messages[2], originalIndex: 2 },
+        { message: messages[3], originalIndex: 3 },
+      ],
     });
     expect(infos[3]).toMatchObject({ key: "work:bash-1", position: "final" });
   });
@@ -301,10 +312,13 @@ describe("work bundle coalescing", () => {
     const infos = computeWorkBundleInfos(messages);
 
     expect(infos[1]).toBeUndefined();
-    expect(infos[2]).toBeUndefined();
+    expect(infos[2]).toMatchObject({ key: "work:bash-1", position: "head", headIndex: 2 });
     expect(infos[3]).toMatchObject({
       key: "work:bash-1",
-      entries: [{ message: messages[3], originalIndex: 3 }],
+      entries: [
+        { message: messages[3], originalIndex: 3 },
+        { message: messages[4], originalIndex: 4 },
+      ],
     });
     expect(infos[4]).toMatchObject({ key: "work:bash-1", position: "final" });
   });
@@ -321,15 +335,22 @@ describe("work bundle coalescing", () => {
 
     const infos = computeWorkBundleInfos(messages);
 
-    expect(infos[1]).toMatchObject({
+    expect(infos[0]).toMatchObject({
       key: "work:read-1",
-      entries: [{ message: messages[1], originalIndex: 1 }],
+      position: "head",
+      entries: [
+        { message: messages[1], originalIndex: 1 },
+        { message: messages[2], originalIndex: 2 },
+      ],
     });
     expect(infos[2]).toMatchObject({ key: "work:read-1", position: "final" });
-    expect(infos[3]).toBeUndefined();
+    expect(infos[3]).toMatchObject({ key: "work:bash-1", position: "head" });
     expect(infos[4]).toMatchObject({
       key: "work:bash-1",
-      entries: [{ message: messages[4], originalIndex: 4 }],
+      entries: [
+        { message: messages[4], originalIndex: 4 },
+        { message: messages[5], originalIndex: 5 },
+      ],
     });
     expect(infos[5]).toMatchObject({ key: "work:bash-1", position: "final" });
   });
@@ -400,6 +421,7 @@ describe("work bundle coalescing", () => {
         { message: interruptedRead, originalIndex: 2 },
         { message: redactedRead, originalIndex: 3 },
         { message: partialRead, originalIndex: 4 },
+        { message: messages[5], originalIndex: 5 },
       ],
     });
     expect(infos[1]).toMatchObject({ key: "work:search-1", position: "member" });

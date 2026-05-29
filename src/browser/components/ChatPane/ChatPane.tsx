@@ -1243,13 +1243,14 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                         msg.type === "user" ||
                         (msg.type === "assistant" && msg.isSideAnswer === true);
                       if (
-                        workBundle?.position === "member" &&
+                        (workBundle?.position === "member" || workBundle?.position === "final") &&
                         (isWorkBundleExpanded || !keepCollapsedWorkBundleMemberVisible)
                       ) {
                         return null;
                       }
 
                       const renderWorkBundle = workBundle?.position === "head";
+                      const renderMessageBeforeWorkBundle = renderWorkBundle && msg.type === "user";
                       const renderMessageAfterWorkBundle = !renderWorkBundle;
                       const operationalBundle = workBundle
                         ? undefined
@@ -1275,6 +1276,10 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 
                       return (
                         <React.Fragment key={`${workspaceId}:${msg.id}`}>
+                          {renderMessageBeforeWorkBundle &&
+                            renderMessageAtIndex(msg, index, {
+                              key: `${workspaceId}:${msg.id}:message`,
+                            })}
                           {renderWorkBundle && workBundle && (
                             <WorkBundleMessage
                               item={workBundle}

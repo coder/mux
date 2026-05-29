@@ -116,54 +116,59 @@ export function computeWorkBundleInfos(
   let index = 0;
 
   while (index < messages.length) {
-    if (!isWorkBundleStart(messages, index)) {
-      index += 1;
-      continue;
-    }
-
-    const startIndex = index;
-    const finalIndex = findWorkBundleFinalIndex(messages, startIndex);
-    if (finalIndex === undefined) {
+    const span = findWorkBundleSpan(messages, index);
+    if (span === undefined) {
       index += 1;
       continue;
     }
 
     const entries: WorkBundleEntry[] = [];
-    for (let entryIndex = startIndex; entryIndex < finalIndex; entryIndex++) {
+    for (let entryIndex = span.firstEntryIndex; entryIndex <= span.finalIndex; entryIndex++) {
       entries.push({ message: messages[entryIndex], originalIndex: entryIndex });
     }
 
-    const finalMessage = messages[finalIndex];
+    const finalMessage = messages[span.finalIndex];
     if (finalMessage?.type !== "assistant") {
-      index = finalIndex + 1;
+      index = span.finalIndex + 1;
       continue;
     }
 
-    const groupMessages = [...entries.map((entry) => entry.message), finalMessage];
-    if (groupMessages.some(isActiveWorkBundleMessage)) {
-      index = finalIndex + 1;
+    if (entries.some((entry) => isActiveWorkBundleMessage(entry.message))) {
+      index = span.finalIndex + 1;
       continue;
     }
 
     const frozenEntries = Object.freeze(entries);
-    const first = entries[0].message;
+    const firstAgentMessage = frozenEntries.find((entry) =>
+      isWorkBundleAgentMessage(entry.message)
+    );
+    if (firstAgentMessage === undefined) {
+      index = span.finalIndex + 1;
+      continue;
+    }
+
     const info: WorkBundleInfo = {
-      key: `work:${first.id}`,
+      key: `work:${firstAgentMessage.message.id}`,
       position: "head",
-      headIndex: startIndex,
+      headIndex: span.headIndex,
       entries: frozenEntries,
       durationMs: computeWorkBundleDurationMs(frozenEntries, finalMessage),
       defaultExpanded: false,
     };
 
+    infos[span.headIndex] = info;
     for (const entry of entries) {
       infos[entry.originalIndex] = {
         ...info,
-        position: entry.originalIndex === startIndex ? "head" : "member",
+        position:
+          entry.originalIndex === span.headIndex
+            ? "head"
+            : entry.originalIndex === span.finalIndex
+              ? "final"
+              : "member",
       };
     }
-    infos[finalIndex] = { ...info, position: "final" };
-    index = finalIndex + 1;
+    index = span.finalIndex + 1;
   }
 
   return infos;
@@ -239,78 +244,91 @@ export function computeOperationalBundleInfos(
   return infos;
 }
 
-function isWorkBundleStart(messages: DisplayedMessage[], index: number): boolean {
+interface WorkBundleSpan {
+  headIndex: number;
+  firstEntryIndex: number;
+  finalIndex: number;
+}
+
+function findWorkBundleSpan(
+  messages: DisplayedMessage[],
+  index: number
+): WorkBundleSpan | undefined {
   const message = messages[index];
-  const historyId = getWorkBundleAgentHistoryId(message);
-  if (historyId === undefined) {
-    return false;
-  }
-  if (message.type !== "assistant") {
-    return true;
-  }
-  if (message.isPartial) {
-    return true;
+  const firstEntryIndex = message?.type === "user" ? index + 1 : index;
+  const firstEntry = messages[firstEntryIndex];
+  if (getWorkBundleAgentHistoryId(firstEntry) === undefined) {
+    return undefined;
   }
 
-  for (let nextIndex = index + 1; nextIndex < messages.length; nextIndex++) {
-    const next = messages[nextIndex];
-    if (!isWorkBundleTimelineMessage(next)) {
-      return false;
-    }
-    if (isWorkBundleVisibleConversationMessage(next)) {
-      if (!hasFutureAgentMessageWithHistoryId(messages, nextIndex + 1, historyId)) {
-        return false;
-      }
-      continue;
-    }
-
-    const nextHistoryId = getWorkBundleAgentHistoryId(next);
-    if (nextHistoryId !== historyId) {
-      return false;
-    }
-    if (isWorkBundleOperationalMessage(next)) {
-      return true;
-    }
-    if (next.type === "assistant" && !next.isPartial) {
-      return false;
-    }
+  const finalIndex = findWorkBundleFinalIndex(messages, firstEntryIndex);
+  if (finalIndex === undefined) {
+    return undefined;
   }
 
-  return false;
+  return {
+    headIndex: message?.type === "user" ? index : firstEntryIndex,
+    firstEntryIndex,
+    finalIndex,
+  };
 }
 
 function findWorkBundleFinalIndex(
   messages: DisplayedMessage[],
   startIndex: number
 ): number | undefined {
-  const historyId = getWorkBundleAgentHistoryId(messages[startIndex]);
-  if (historyId === undefined) {
+  const firstHistoryId = getWorkBundleAgentHistoryId(messages[startIndex]);
+  if (firstHistoryId === undefined) {
     return undefined;
   }
 
-  let sawOperationalMessage = isWorkBundleOperationalMessage(messages[startIndex]);
+  const historyIds = new Set<string>([firstHistoryId]);
+  let canCrossVisibleConversation = false;
+  let sawVisibleConversationSinceLastAgent = false;
+  let sawOperationalMessage = false;
   let finalIndex: number | undefined;
 
-  for (let index = startIndex + 1; index < messages.length; index++) {
+  for (let index = startIndex; index < messages.length; index++) {
     const message = messages[index];
     if (!isWorkBundleTimelineMessage(message)) {
       break;
     }
 
     if (isWorkBundleVisibleConversationMessage(message)) {
-      if (!hasFutureAgentMessageWithHistoryId(messages, index + 1, historyId)) {
+      if (finalIndex !== undefined) {
         break;
       }
+      if (message.type === "assistant" || isSideQuestionStart(messages, index)) {
+        continue;
+      }
+      if (!canCrossVisibleConversation) {
+        break;
+      }
+      if (!hasFutureWorkBundleAgentMessage(messages, index + 1)) {
+        break;
+      }
+      sawVisibleConversationSinceLastAgent = true;
+      canCrossVisibleConversation = false;
       continue;
     }
 
     const messageHistoryId = getWorkBundleAgentHistoryId(message);
-    if (messageHistoryId !== historyId) {
+    if (messageHistoryId === undefined) {
       break;
     }
+    if (!historyIds.has(messageHistoryId)) {
+      if (!sawVisibleConversationSinceLastAgent) {
+        break;
+      }
+      historyIds.add(messageHistoryId);
+    }
+    sawVisibleConversationSinceLastAgent = false;
 
     if (isWorkBundleOperationalMessage(message)) {
       sawOperationalMessage = true;
+    }
+    if (canContinueWorkBundleAcrossConversation(message)) {
+      canCrossVisibleConversation = true;
     }
 
     if (message.type !== "assistant" || message.isPartial) {
@@ -318,29 +336,26 @@ function findWorkBundleFinalIndex(
     }
 
     finalIndex = index;
-    const next = messages[index + 1];
-    if (next === undefined || !isWorkBundleTimelineMessage(next)) {
-      break;
-    }
-    if (!isWorkBundleVisibleConversationMessage(next)) {
-      const nextHistoryId = getWorkBundleAgentHistoryId(next);
-      if (nextHistoryId !== historyId) {
-        break;
-      }
-    }
+    canCrossVisibleConversation = false;
   }
 
-  if (!sawOperationalMessage || finalIndex === undefined || finalIndex <= startIndex) {
+  if (!sawOperationalMessage || finalIndex === undefined || finalIndex < startIndex) {
     return undefined;
   }
 
   return finalIndex;
 }
 
-function hasFutureAgentMessageWithHistoryId(
+function isSideQuestionStart(messages: DisplayedMessage[], index: number): boolean {
+  const next = messages[index + 1];
+  return (
+    messages[index]?.type === "user" && next?.type === "assistant" && next.isSideAnswer === true
+  );
+}
+
+function hasFutureWorkBundleAgentMessage(
   messages: DisplayedMessage[],
-  startIndex: number,
-  historyId: string
+  startIndex: number
 ): boolean {
   for (let index = startIndex; index < messages.length; index++) {
     const message = messages[index];
@@ -351,10 +366,20 @@ function hasFutureAgentMessageWithHistoryId(
       continue;
     }
 
-    return getWorkBundleAgentHistoryId(message) === historyId;
+    return getWorkBundleAgentHistoryId(message) !== undefined;
   }
 
   return false;
+}
+
+function canContinueWorkBundleAcrossConversation(message: DisplayedMessage): boolean {
+  if (!isWorkBundleAgentMessage(message)) {
+    return false;
+  }
+  if (message.type === "tool" && message.status === "interrupted") {
+    return false;
+  }
+  return message.isPartial === true;
 }
 
 function getWorkBundleAgentHistoryId(message: DisplayedMessage | undefined): string | undefined {
