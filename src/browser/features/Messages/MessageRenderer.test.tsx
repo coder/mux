@@ -222,6 +222,83 @@ Live goal accounting at limit:
   });
 });
 
+describe("MessageRenderer /btw side-question rows", () => {
+  beforeEach(() => {
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+    globalThis.localStorage = globalThis.window.localStorage;
+  });
+
+  afterEach(() => {
+    cleanup();
+
+    globalThis.window = undefined as unknown as Window & typeof globalThis;
+    globalThis.document = undefined as unknown as Document;
+    globalThis.localStorage = undefined as unknown as Storage;
+  });
+
+  function makeSideQuestionMessage(historyId: string): DisplayedMessage {
+    return {
+      type: "user",
+      id: historyId,
+      historyId,
+      content: "Why is the sky blue?",
+      historySequence: 1,
+      isSideQuestion: true,
+    };
+  }
+
+  test("does not render a dismiss-sticky control when no handler is supplied", () => {
+    const message = makeSideQuestionMessage("btw-no-handler");
+
+    const { queryByLabelText } = render(
+      <TooltipProvider>
+        <MessageRenderer message={message} />
+      </TooltipProvider>
+    );
+
+    expect(queryByLabelText("Dismiss side question sticky position")).toBeNull();
+  });
+
+  test("renders a dismiss-sticky control on side-question rows and forwards the historyId", () => {
+    const message = makeSideQuestionMessage("btw-with-handler");
+    const dismissed: string[] = [];
+
+    const { getByLabelText } = render(
+      <TooltipProvider>
+        <MessageRenderer
+          message={message}
+          onDismissSideQuestionSticky={(historyId) => dismissed.push(historyId)}
+        />
+      </TooltipProvider>
+    );
+
+    const button = getByLabelText("Dismiss side question sticky position");
+    expect(button).toBeDefined();
+    (button as HTMLButtonElement).click();
+    expect(dismissed).toEqual(["btw-with-handler"]);
+  });
+
+  test("does not render the dismiss control on non-side-question user rows", () => {
+    const message: DisplayedMessage = {
+      type: "user",
+      id: "plain-user",
+      historyId: "plain-user",
+      content: "Hello",
+      historySequence: 1,
+    };
+
+    const { queryByLabelText } = render(
+      <TooltipProvider>
+        <MessageRenderer message={message} onDismissSideQuestionSticky={() => undefined} />
+      </TooltipProvider>
+    );
+
+    // The dismiss button only renders inside the side-question header chrome.
+    expect(queryByLabelText("Dismiss side question sticky position")).toBeNull();
+  });
+});
+
 describe("MessageRenderer generated image rows", () => {
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;

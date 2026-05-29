@@ -125,6 +125,11 @@ export function createAssistantMessage(
     partial?: boolean;
     /** Custom context usage for testing context meter display */
     contextUsage?: { inputTokens: number; outputTokens: number; totalTokens?: number };
+    /**
+     * Optional muxMetadata payload — used by stories that need to tag the
+     * assistant message as a side-question answer, a goal summary, etc.
+     */
+    muxMetadata?: MuxMessageMetadata;
   }
 ): ChatMuxMessage {
   const parts: MuxPart[] = [];
@@ -154,6 +159,7 @@ export function createAssistantMessage(
       contextUsage,
       duration: 1000,
       partial: opts.partial,
+      muxMetadata: opts.muxMetadata,
     },
   };
 }

@@ -34,6 +34,12 @@ interface MessageRendererProps {
   taskReportLinking?: TaskReportLinking;
   /** Navigation info for user messages (backward/forward between user messages) */
   userMessageNavigation?: UserMessageNavigation;
+  /**
+   * For /btw side-question rows: opt-in dismissal of the transcript scroll-hold
+   * ("stickiness") for this side question. When provided, UserMessage renders a
+   * small dismiss control in the side-question header.
+   */
+  onDismissSideQuestionSticky?: (historyId: string) => void;
 }
 
 function getMessageHistoryId(message: DisplayedMessage): string | undefined {
@@ -82,6 +88,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
     bashOutputGroup,
     taskReportLinking,
     userMessageNavigation,
+    onDismissSideQuestionSticky,
   }) => {
     let renderedMessage: React.ReactNode;
 
@@ -95,6 +102,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             onEdit={onEditUserMessage}
             isCompacting={isCompacting}
             navigation={userMessageNavigation}
+            onDismissSticky={onDismissSideQuestionSticky}
           />
         );
         break;
