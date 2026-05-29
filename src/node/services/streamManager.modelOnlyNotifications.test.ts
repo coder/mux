@@ -52,6 +52,8 @@ describe("StreamManager - model-only tool notifications", () => {
             __mux_notifications: ["<notification>hello</notification>"],
           },
         };
+
+        yield { type: "finish", finishReason: "stop" };
       })(),
       totalUsage: Promise.resolve({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
       usage: Promise.resolve({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
@@ -131,6 +133,8 @@ describe("StreamManager - model-only tool notifications", () => {
             ],
           },
         };
+
+        yield { type: "finish", finishReason: "stop" };
       })(),
       totalUsage: Promise.resolve({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
       usage: Promise.resolve({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
