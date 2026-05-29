@@ -345,10 +345,13 @@ describe("advisor tool", () => {
           "## Advisor Handoff\n\n" +
           `**Question:** ${question}\n\n` +
           "**Current-step commentary:**\nVisible commentary about the current step.\n\n" +
-          "**Current-step reasoning:**\nInternal reasoning about coordination and race conditions.\n\n" +
-          `**Pending tool call:**\nadvisor(${JSON.stringify(snapshot.input)})`,
+          "**Current-step reasoning:**\nInternal reasoning about coordination and race conditions.",
       },
     ]);
+
+    const handoffText = getHandoffText(streamTextSpy);
+    expect(handoffText).not.toContain("**Pending tool call:**");
+    expect(handoffText).not.toContain('advisor({"question":');
   });
 
   it("consumes the frozen snapshot exactly once for the current tool call", async () => {

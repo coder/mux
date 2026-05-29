@@ -41,12 +41,6 @@ function tailTruncate(value: string, maxChars: number): string {
   return `...${value.slice(-(maxChars - 3))}`;
 }
 
-function formatPendingToolCall(input: Record<string, unknown>): string {
-  const serializedInput = JSON.stringify(input);
-  assert(serializedInput != null, "advisor handoff input must be JSON serializable");
-  return `advisor(${serializedInput})`;
-}
-
 function buildAdvisorHandoffMessage(
   question: string | undefined,
   snapshot: AdvisorToolCallSnapshot | undefined
@@ -76,14 +70,6 @@ function buildAdvisorHandoffMessage(
 
   if (stepReasoning != null) {
     sections.push(`**Current-step reasoning:**\n${stepReasoning}`);
-  }
-
-  if (snapshot != null) {
-    assert(
-      snapshot.toolName === "advisor",
-      "advisor handoff snapshot must come from the advisor tool"
-    );
-    sections.push(`**Pending tool call:**\n${formatPendingToolCall(snapshot.input)}`);
   }
 
   return {
