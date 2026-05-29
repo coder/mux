@@ -1,0 +1,25 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "rootDir": "src",
+    "outDir": "dist",
+    "noEmit": false,
+    "sourceMap": true
+  },
+  "watchOptions": {
+    "excludeDirectories": ["**/node_modules", "**/dist", "**/build", "**/.git"],
+    "excludeFiles": ["**/*.d.ts.map"]
+  },
+  "include": [
+    "src/version.ts",
+    "src/cli/index.ts",
+    "src/cli/run.ts",
+    "src/cli/server.ts",
+    "src/cli/acp.ts",
+    "src/desktop/**/*",
+    "src/node/**/*",
+    "src/common/**/*"
+  ],
+  "exclude": ["src/browser/**/*", "src/cli/debug/**/*"]
+}

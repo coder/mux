@@ -1,0 +1,76 @@
+/**
+ * Shared constants and utilities for Shiki syntax highlighting
+ * Used by both the main app and documentation theme
+ */
+
+// Shiki themes used throughout the application
+export const SHIKI_DARK_THEME = "min-dark";
+export const SHIKI_LIGHT_THEME = "min-light";
+
+/**
+ * Whether a theme-mode string maps to the light Shiki theme.
+ *
+ * Accepts both base modes (`"light"`/`"dark"`) and namespaced variants
+ * (e.g. `"flexoki-light"`), keeping the variant suffix convention as the
+ * single source of truth for the light/dark mapping.
+ */
+export function isLightThemeMode(themeMode: string): boolean {
+  return themeMode === "light" || themeMode.endsWith("-light");
+}
+
+/**
+ * Map language names to Shiki-compatible language IDs
+ * Handles special cases where detected language differs from Shiki's name
+ */
+export function mapToShikiLang(detectedLang: string): string {
+  const mapping: Record<string, string> = {
+    text: "plaintext",
+    sh: "bash",
+    // Shiki does not bundle a Starlark/Bazel grammar, so use Python's close-enough
+    // grammar to keep fenced code blocks highlighted instead of warning and falling back.
+    starlark: "python",
+    bazel: "python",
+    bzl: "python",
+  };
+  return mapping[detectedLang] || detectedLang;
+}
+
+/**
+ * Extract line contents from Shiki HTML output
+ * Shiki wraps code in <pre><code>...</code></pre> with <span class="line">...</span> per line
+ */
+function isVisuallyEmptyShikiLine(lineHtml: string): boolean {
+  // Shiki represents an empty line as something like:
+  //   <span class="line"><span style="..."></span></span>
+  // which is visually empty but non-empty as a string.
+  //
+  // We treat these as empty so callers don't render a phantom blank line.
+  const textOnly = lineHtml
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, "")
+    .trim();
+  return textOnly === "";
+}
+
+export function extractShikiLines(html: string): string[] {
+  const codeMatch = /<code[^>]*>(.*?)<\/code>/s.exec(html);
+  if (!codeMatch) return [];
+
+  const lines = codeMatch[1].split("\n").map((chunk) => {
+    const start = chunk.indexOf('<span class="line">');
+    if (start === -1) return "";
+
+    const contentStart = start + '<span class="line">'.length;
+    const end = chunk.lastIndexOf("</span>");
+
+    const lineHtml = end > contentStart ? chunk.substring(contentStart, end) : "";
+    return isVisuallyEmptyShikiLine(lineHtml) ? "" : lineHtml;
+  });
+
+  // Remove trailing empty lines (Shiki often adds one).
+  while (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+
+  return lines;
+}

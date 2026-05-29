@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2023", "DOM", "ES2022.Intl"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "allowJs": true,
+    "sourceMap": true,
+    "inlineSources": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@shared/*": ["./src/*"]
+    }
+  },
+  "watchOptions": {
+    "excludeDirectories": ["**/node_modules", "**/dist", "**/build", "**/.git"],
+    "excludeFiles": ["**/*.d.ts.map"]
+  },
+  "include": [
+    "src/**/*.tsx",
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    ".storybook/**/*.ts",
+    ".storybook/**/*.tsx"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

@@ -1,0 +1,752 @@
+import { describe, expect, test, beforeEach, afterEach, spyOn } from "bun:test";
+import { EventEmitter } from "events";
+import { MockAiStreamPlayer } from "./mockAiStreamPlayer";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { Ok } from "@/common/types/result";
+import type { HistoryService } from "@/node/services/historyService";
+import type { AIService } from "@/node/services/aiService";
+import { createTestHistoryService } from "../testHistoryService";
+
+function readWorkspaceId(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  if (!("workspaceId" in payload)) return undefined;
+
+  const workspaceId = (payload as { workspaceId?: unknown }).workspaceId;
+  return typeof workspaceId === "string" ? workspaceId : undefined;
+}
+
+function extractText(message: MuxMessage | null | undefined): string {
+  if (!message) {
+    return "";
+  }
+
+  return message.parts
+    .filter(
+      (part): part is Extract<MuxMessage["parts"][number], { type: "text" }> => part.type === "text"
+    )
+    .map((part) => part.text)
+    .join("");
+}
+
+async function waitForCondition(
+  check: () => boolean | Promise<boolean>,
+  timeoutMs: number
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await check()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for condition after ${timeoutMs}ms`);
+}
+
+describe("MockAiStreamPlayer", () => {
+  let historyService: HistoryService;
+  let cleanup: () => Promise<void>;
+
+  beforeEach(async () => {
+    const testHistory = await createTestHistoryService();
+    historyService = testHistory.historyService;
+    cleanup = testHistory.cleanup;
+  });
+
+  afterEach(async () => {
+    await cleanup();
+  });
+
+  test("appends assistant placeholder even when router turn ends with stream error", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const workspaceId = "workspace-1";
+
+    const firstTurnUser = createMuxMessage(
+      "user-1",
+      "user",
+      "[mock:list-languages] List 3 programming languages",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const firstResult = await player.play([firstTurnUser], workspaceId);
+    expect(firstResult.success).toBe(true);
+    await player.stop(workspaceId);
+
+    // Read back what was appended during the first turn
+    const historyResult = await historyService.getLastMessages(workspaceId, 100);
+    const historyBeforeSecondTurn = historyResult.success ? historyResult.data : [];
+
+    const secondTurnUser = createMuxMessage(
+      "user-2",
+      "user",
+      "[mock:error:api] Trigger API error",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const secondResult = await player.play(
+      [firstTurnUser, ...historyBeforeSecondTurn, secondTurnUser],
+      workspaceId
+    );
+    expect(secondResult.success).toBe(true);
+
+    // Read back all messages and check the assistant placeholders
+    const allResult = await historyService.getLastMessages(workspaceId, 100);
+    const allMessages = allResult.success ? allResult.data : [];
+    const assistantMessages = allMessages.filter((m) => m.role === "assistant");
+
+    expect(assistantMessages).toHaveLength(2);
+    const [firstAppend, secondAppend] = assistantMessages;
+
+    expect(firstAppend.id).not.toBe(secondAppend.id);
+
+    const firstSeq = firstAppend.metadata?.historySequence ?? -1;
+    const secondSeq = secondAppend.metadata?.historySequence ?? -1;
+    expect(secondSeq).toBe(firstSeq + 1);
+
+    await player.stop(workspaceId);
+  });
+
+  test("removes assistant placeholder when aborted before stream scheduling", async () => {
+    type AppendResult = Awaited<ReturnType<HistoryService["appendToHistory"]>>;
+
+    // Control when appendToHistory resolves to test the abort race condition.
+    // The real service writes to disk immediately; we gate the returned promise
+    // so the player sees a pending append while we trigger abort.
+    let appendResolve!: (result: AppendResult) => void;
+    const appendGate = new Promise<AppendResult>((resolve) => {
+      appendResolve = resolve;
+    });
+
+    let appendedMessageResolve!: (msg: MuxMessage) => void;
+    const appendedMessage = new Promise<MuxMessage>((resolve) => {
+      appendedMessageResolve = resolve;
+    });
+
+    const originalAppend = historyService.appendToHistory.bind(historyService);
+    spyOn(historyService, "appendToHistory").mockImplementation(
+      async (wId: string, message: MuxMessage) => {
+        // Write to disk so deleteMessage can find it later
+        await originalAppend(wId, message);
+        appendedMessageResolve(message);
+        // Delay returning to the caller until the gate opens
+        return appendGate;
+      }
+    );
+
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const workspaceId = "workspace-abort-startup";
+
+    const userMessage = createMuxMessage(
+      "user-1",
+      "user",
+      "[mock:list-languages] List 3 programming languages",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const abortController = new AbortController();
+    const playPromise = player.play([userMessage], workspaceId, {
+      abortSignal: abortController.signal,
+    });
+
+    const assistantMsg = await appendedMessage;
+
+    appendResolve(Ok(undefined));
+    abortController.abort();
+
+    const result = await playPromise;
+    expect(result.success).toBe(true);
+
+    // Verify the placeholder was deleted from history
+    const storedResult = await historyService.getLastMessages(workspaceId, 100);
+    const storedMessages = storedResult.success ? storedResult.data : [];
+    expect(storedMessages.some((msg) => msg.id === assistantMsg.id)).toBe(false);
+  });
+
+  test("does not schedule a replacement stream when abort fires during prior stop cleanup", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const originalDeletePartial = historyService.deletePartial.bind(historyService);
+    let deletePartialCallCount = 0;
+    let releaseStopCleanup!: () => void;
+    const stopCleanupGate = new Promise<void>((resolve) => {
+      releaseStopCleanup = () => resolve();
+    });
+    spyOn(historyService, "deletePartial").mockImplementation(async (workspaceIdToDelete) => {
+      deletePartialCallCount += 1;
+      if (deletePartialCallCount === 1) {
+        await stopCleanupGate;
+      }
+      return await originalDeletePartial(workspaceIdToDelete);
+    });
+
+    const workspaceId = "workspace-abort-during-replacement-stop";
+    const streamStartMessageIds: string[] = [];
+    aiServiceStub.on("stream-start", (payload: unknown) => {
+      if (readWorkspaceId(payload) !== workspaceId) {
+        return;
+      }
+      const messageId = (payload as { messageId?: string }).messageId;
+      if (typeof messageId === "string") {
+        streamStartMessageIds.push(messageId);
+      }
+    });
+
+    const firstUserMessage = createMuxMessage(
+      "user-abort-replacement-first",
+      "user",
+      "[force] first stream before aborted replacement",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    try {
+      const firstPlayResult = await player.play([firstUserMessage], workspaceId);
+      expect(firstPlayResult.success).toBe(true);
+      expect(streamStartMessageIds).toHaveLength(1);
+
+      const abortController = new AbortController();
+      const replacementUserMessage = createMuxMessage(
+        "user-abort-replacement-second",
+        "user",
+        "[force] replacement stream should abort before scheduling",
+        {
+          timestamp: Date.now(),
+        }
+      );
+
+      const replacementPlayPromise = player.play([replacementUserMessage], workspaceId, {
+        abortSignal: abortController.signal,
+      });
+
+      await waitForCondition(() => deletePartialCallCount >= 1, 1000);
+      abortController.abort();
+      releaseStopCleanup();
+
+      const replacementPlayResult = await replacementPlayPromise;
+      expect(replacementPlayResult.success).toBe(true);
+
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      expect(player.isStreaming(workspaceId)).toBe(false);
+      expect(streamStartMessageIds).toHaveLength(1);
+
+      const historyResult = await historyService.getLastMessages(workspaceId, 10);
+      const historyMessages = historyResult.success ? historyResult.data : [];
+      expect(historyMessages.filter((message) => message.role === "assistant")).toHaveLength(1);
+    } finally {
+      releaseStopCleanup();
+      await player.stop(workspaceId);
+    }
+  });
+
+  test("writes partial assistant state while a mock stream is still in progress", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const workspaceId = "workspace-partial-progress";
+    const firstDelta = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Timed out waiting for stream-delta"));
+      }, 1000);
+
+      aiServiceStub.on("stream-delta", (payload: unknown) => {
+        if (readWorkspaceId(payload) !== workspaceId) {
+          return;
+        }
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+
+    const userMessage = createMuxMessage("user-partial", "user", "[force] keep streaming", {
+      timestamp: Date.now(),
+    });
+
+    const playResult = await player.play([userMessage], workspaceId);
+    expect(playResult.success).toBe(true);
+
+    await firstDelta;
+    await waitForCondition(
+      async () => (await historyService.readPartial(workspaceId)) !== null,
+      1000
+    );
+
+    const partial = await historyService.readPartial(workspaceId);
+    expect(partial).not.toBeNull();
+    expect(partial?.metadata?.partial).toBe(true);
+    expect(partial?.id).toMatch(/^msg-mock-/);
+    expect(extractText(partial).length).toBeGreaterThan(0);
+
+    await player.stop(workspaceId);
+    await waitForCondition(
+      async () => (await historyService.readPartial(workspaceId)) === null,
+      1000
+    );
+  });
+
+  test("cleans up a delayed partial write after stop cancels the stream", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const originalWritePartial = historyService.writePartial.bind(historyService);
+    let releaseFirstWrite!: () => void;
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = () => resolve();
+    });
+    let writePartialCallCount = 0;
+    spyOn(historyService, "writePartial").mockImplementation(
+      async (workspaceIdToWrite, message) => {
+        writePartialCallCount += 1;
+        if (writePartialCallCount === 1) {
+          await firstWriteGate;
+        }
+        return await originalWritePartial(workspaceIdToWrite, message);
+      }
+    );
+
+    const workspaceId = "workspace-stale-partial-after-stop";
+    const userMessage = createMuxMessage("user-stale-partial", "user", "[force] keep streaming", {
+      timestamp: Date.now(),
+    });
+
+    try {
+      const playResult = await player.play([userMessage], workspaceId);
+      expect(playResult.success).toBe(true);
+
+      await waitForCondition(() => writePartialCallCount >= 1, 1000);
+
+      await player.stop(workspaceId);
+      expect(player.isStreaming(workspaceId)).toBe(false);
+      expect(await historyService.readPartial(workspaceId)).toBeNull();
+
+      releaseFirstWrite();
+      await waitForCondition(
+        async () => (await historyService.readPartial(workspaceId)) === null,
+        1000
+      );
+    } finally {
+      releaseFirstWrite();
+      await player.stop(workspaceId);
+    }
+  });
+
+  test("does not let stale delayed-write cleanup delete a replacement stream partial", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const originalWritePartial = historyService.writePartial.bind(historyService);
+    let releaseFirstWrite!: () => void;
+    const firstWriteGate = new Promise<void>((resolve) => {
+      releaseFirstWrite = () => resolve();
+    });
+    let writePartialCallCount = 0;
+    spyOn(historyService, "writePartial").mockImplementation(
+      async (workspaceIdToWrite, message) => {
+        writePartialCallCount += 1;
+        if (writePartialCallCount === 1) {
+          await firstWriteGate;
+        }
+        return await originalWritePartial(workspaceIdToWrite, message);
+      }
+    );
+
+    const originalDeletePartialIfMessageIdMatches =
+      historyService.deletePartialIfMessageIdMatches.bind(historyService);
+    let releaseStaleCleanup!: () => void;
+    const staleCleanupGate = new Promise<void>((resolve) => {
+      releaseStaleCleanup = () => resolve();
+    });
+    let deleteMatchingCallCount = 0;
+    spyOn(historyService, "deletePartialIfMessageIdMatches").mockImplementation(
+      async (workspaceIdToDelete, messageIdToDelete) => {
+        deleteMatchingCallCount += 1;
+        if (deleteMatchingCallCount === 1) {
+          await staleCleanupGate;
+        }
+        return await originalDeletePartialIfMessageIdMatches(
+          workspaceIdToDelete,
+          messageIdToDelete
+        );
+      }
+    );
+
+    const workspaceId = "workspace-stale-delayed-write-cleanup";
+    const streamStartMessageIds: string[] = [];
+    aiServiceStub.on("stream-start", (payload: unknown) => {
+      if (readWorkspaceId(payload) !== workspaceId) {
+        return;
+      }
+      const messageId = (payload as { messageId?: string }).messageId;
+      if (typeof messageId === "string") {
+        streamStartMessageIds.push(messageId);
+      }
+    });
+
+    const firstUserMessage = createMuxMessage(
+      "user-stale-delayed-write-first",
+      "user",
+      "[force] first stream before stale delayed-write cleanup",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    try {
+      const firstPlayResult = await player.play([firstUserMessage], workspaceId);
+      expect(firstPlayResult.success).toBe(true);
+
+      await waitForCondition(() => writePartialCallCount >= 1, 1000);
+
+      const replacementUserMessage = createMuxMessage(
+        "user-stale-delayed-write-second",
+        "user",
+        "[force] replacement stream should keep its partial after stale cleanup",
+        {
+          timestamp: Date.now(),
+        }
+      );
+
+      const replacementPlayResult = await player.play([replacementUserMessage], workspaceId);
+      expect(replacementPlayResult.success).toBe(true);
+
+      await waitForCondition(() => streamStartMessageIds.length >= 2, 1000);
+      const replacementMessageId = streamStartMessageIds[1];
+
+      releaseFirstWrite();
+      await waitForCondition(() => deleteMatchingCallCount >= 1, 1000);
+
+      await waitForCondition(
+        async () => (await historyService.readPartial(workspaceId))?.id === replacementMessageId,
+        2000
+      );
+
+      releaseStaleCleanup();
+      await waitForCondition(
+        async () => (await historyService.readPartial(workspaceId))?.id === replacementMessageId,
+        1000
+      );
+    } finally {
+      releaseFirstWrite();
+      releaseStaleCleanup();
+      await player.stop(workspaceId);
+    }
+  });
+
+  test("waits for partial cleanup before a replacement stream starts writing its own partial", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const originalDeletePartial = historyService.deletePartial.bind(historyService);
+    spyOn(historyService, "deletePartial").mockImplementation(async (workspaceIdToDelete) => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return await originalDeletePartial(workspaceIdToDelete);
+    });
+
+    const workspaceId = "workspace-partial-replacement";
+    const firstUserMessage = createMuxMessage(
+      "user-partial-first",
+      "user",
+      "[force] first-partial-marker keep streaming",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const firstPlayResult = await player.play([firstUserMessage], workspaceId);
+    expect(firstPlayResult.success).toBe(true);
+
+    await waitForCondition(
+      async () => (await historyService.readPartial(workspaceId)) !== null,
+      1500
+    );
+
+    const firstPartial = await historyService.readPartial(workspaceId);
+    expect(firstPartial).not.toBeNull();
+
+    const secondUserMessage = createMuxMessage(
+      "user-partial-second",
+      "user",
+      "[force] second-partial-marker keep streaming",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const secondPlayResult = await player.play([secondUserMessage], workspaceId);
+    expect(secondPlayResult.success).toBe(true);
+
+    await waitForCondition(async () => {
+      const partial = await historyService.readPartial(workspaceId);
+      return partial !== null && partial.id !== firstPartial?.id;
+    }, 2000);
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const replacementPartial = await historyService.readPartial(workspaceId);
+    expect(replacementPartial).not.toBeNull();
+    expect(replacementPartial?.id).not.toBe(firstPartial?.id);
+
+    await player.stop(workspaceId);
+    await waitForCondition(
+      async () => (await historyService.readPartial(workspaceId)) === null,
+      1500
+    );
+  });
+
+  test("suppresses stale stream errors after a replacement stream cancels the old one", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const originalDeletePartial = historyService.deletePartial.bind(historyService);
+    let deletePartialCallCount = 0;
+    spyOn(historyService, "deletePartial").mockImplementation(async (workspaceIdToDelete) => {
+      deletePartialCallCount += 1;
+      if (deletePartialCallCount === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      return await originalDeletePartial(workspaceIdToDelete);
+    });
+
+    const workspaceId = "workspace-stale-stream-error";
+    const errorEvents: Array<{ messageId?: string }> = [];
+    aiServiceStub.on("error", (payload: unknown) => {
+      if (readWorkspaceId(payload) !== workspaceId) {
+        return;
+      }
+      errorEvents.push(payload as { messageId?: string });
+    });
+
+    const firstUserMessage = createMuxMessage(
+      "user-stream-error-first",
+      "user",
+      "[mock:error:api] Trigger API error",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const firstPlayResult = await player.play([firstUserMessage], workspaceId);
+    expect(firstPlayResult.success).toBe(true);
+
+    await waitForCondition(() => deletePartialCallCount >= 1, 1000);
+
+    const replacementUserMessage = createMuxMessage(
+      "user-stream-error-second",
+      "user",
+      "[force] replacement stream after cancelled error",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const replacementPlayResult = await player.play([replacementUserMessage], workspaceId);
+    expect(replacementPlayResult.success).toBe(true);
+
+    await waitForCondition(
+      async () => (await historyService.readPartial(workspaceId)) !== null,
+      1500
+    );
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    const replacementPartial = await historyService.readPartial(workspaceId);
+    expect(replacementPartial).not.toBeNull();
+    expect(errorEvents).toHaveLength(0);
+
+    await player.stop(workspaceId);
+    await waitForCondition(() => !player.isStreaming(workspaceId), 1000);
+  });
+
+  test("does not let stale stream-end cleanup delete a replacement stream partial", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const originalDeletePartial = historyService.deletePartial.bind(historyService);
+    let deletePartialCallCount = 0;
+    spyOn(historyService, "deletePartial").mockImplementation(async (workspaceIdToDelete) => {
+      deletePartialCallCount += 1;
+      if (deletePartialCallCount === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      return await originalDeletePartial(workspaceIdToDelete);
+    });
+
+    const workspaceId = "workspace-stale-stream-end";
+    const firstUserMessage = createMuxMessage(
+      "user-stream-end-first",
+      "user",
+      "[mock:list-languages] List 3 programming languages",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const firstPlayResult = await player.play([firstUserMessage], workspaceId);
+    expect(firstPlayResult.success).toBe(true);
+
+    await waitForCondition(() => deletePartialCallCount >= 1, 1000);
+
+    const replacementUserMessage = createMuxMessage(
+      "user-stream-end-second",
+      "user",
+      "[force] replacement stream after completed turn",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const replacementPlayResult = await player.play([replacementUserMessage], workspaceId);
+    expect(replacementPlayResult.success).toBe(true);
+
+    await waitForCondition(
+      async () => (await historyService.readPartial(workspaceId)) !== null,
+      1500
+    );
+    const replacementPartial = await historyService.readPartial(workspaceId);
+    expect(replacementPartial).not.toBeNull();
+
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    const partialAfterStaleCleanup = await historyService.readPartial(workspaceId);
+    expect(partialAfterStaleCleanup).not.toBeNull();
+    expect(partialAfterStaleCleanup?.id).toBe(replacementPartial?.id);
+
+    await player.stop(workspaceId);
+    await waitForCondition(() => !player.isStreaming(workspaceId), 1000);
+  });
+
+  test("commits the full assistant message and clears partial state on stream end", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const workspaceId = "workspace-partial-commit";
+    const userMessage = createMuxMessage(
+      "user-commit",
+      "user",
+      "[mock:list-languages] List 3 programming languages",
+      {
+        timestamp: Date.now(),
+      }
+    );
+
+    const playResult = await player.play([userMessage], workspaceId);
+    expect(playResult.success).toBe(true);
+
+    await waitForCondition(() => !player.isStreaming(workspaceId), 2000);
+
+    const partial = await historyService.readPartial(workspaceId);
+    expect(partial).toBeNull();
+
+    const historyResult = await historyService.getLastMessages(workspaceId, 10);
+    const historyMessages = historyResult.success ? historyResult.data : [];
+    const assistantMessage = historyMessages.find((message) => message.role === "assistant");
+    expect(assistantMessage).toBeDefined();
+    expect(extractText(assistantMessage)).toContain("Here are three programming languages");
+  });
+
+  test("stop prevents queued stream events from emitting", async () => {
+    const aiServiceStub = new EventEmitter();
+
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+
+    const workspaceId = "workspace-2";
+
+    let deltaCount = 0;
+    let abortCount = 0;
+    let stopped = false;
+
+    aiServiceStub.on("stream-abort", (payload: unknown) => {
+      if (readWorkspaceId(payload) === workspaceId) {
+        abortCount += 1;
+      }
+    });
+
+    const firstDelta = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("Timed out waiting for stream-delta"));
+      }, 1000);
+
+      aiServiceStub.on("stream-delta", (payload: unknown) => {
+        if (readWorkspaceId(payload) !== workspaceId) return;
+
+        deltaCount += 1;
+
+        if (!stopped) {
+          stopped = true;
+          clearTimeout(timeout);
+          void player.stop(workspaceId);
+          resolve();
+        }
+      });
+    });
+
+    const forceTurnUser = createMuxMessage("user-force", "user", "[force] keep streaming", {
+      timestamp: Date.now(),
+    });
+
+    const playResult = await player.play([forceTurnUser], workspaceId);
+    expect(playResult.success).toBe(true);
+
+    await firstDelta;
+
+    const deltasAtStop = deltaCount;
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(deltaCount).toBe(deltasAtStop);
+    expect(abortCount).toBe(1);
+  });
+});

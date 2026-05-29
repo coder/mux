@@ -1,0 +1,477 @@
+import { describe, expect, mock, test } from "bun:test";
+import type { DuckDBConnection } from "@duckdb/node-api";
+import { executeRawQuery, RAW_QUERY_ROW_LIMIT } from "./queries";
+
+interface MockColumn {
+  name: string;
+  type: string | { toString(): string };
+}
+
+interface MockResultInput {
+  columns: MockColumn[];
+  rows: Array<Record<string, unknown>>;
+}
+
+function createMockResult(input: MockResultInput) {
+  return {
+    get columnCount(): number {
+      return input.columns.length;
+    },
+    columnName(index: number): string {
+      return input.columns[index].name;
+    },
+    columnType(index: number): string | { toString(): string } {
+      return input.columns[index].type;
+    },
+    getRowObjectsJS(): Promise<Array<Record<string, unknown>>> {
+      return Promise.resolve(input.rows);
+    },
+  };
+}
+
+function createMockConn(
+  runImplementation: (
+    sql: string
+  ) =>
+    | Promise<ReturnType<typeof createMockResult>>
+    | ReturnType<typeof createMockResult>
+    | Promise<never>
+): {
+  conn: DuckDBConnection;
+  runMock: ReturnType<typeof mock>;
+} {
+  const runMock = mock(runImplementation);
+
+  return {
+    conn: { run: runMock } as unknown as DuckDBConnection,
+    runMock,
+  };
+}
+
+function expectedWrappedSql(sql: string): string {
+  return `SELECT * FROM (\n${sql}\n) AS __q LIMIT ${RAW_QUERY_ROW_LIMIT + 1}`;
+}
+
+async function expectQueryFailure(promise: Promise<unknown>, errorPattern: RegExp): Promise<void> {
+  try {
+    await promise;
+    throw new Error("Expected query to fail");
+  } catch (error) {
+    expect(error).toBeInstanceOf(Error);
+    if (!(error instanceof Error)) {
+      throw error;
+    }
+    expect(error.message).toMatch(errorPattern);
+  }
+}
+
+async function expectValidationFailure(sql: string, errorPattern: RegExp): Promise<void> {
+  const { conn, runMock } = createMockConn(() => {
+    throw new Error("executeRawQuery should reject SQL before DuckDB execution");
+  });
+
+  await expectQueryFailure(executeRawQuery(conn, sql), errorPattern);
+  expect(runMock).not.toHaveBeenCalled();
+}
+
+describe("executeRawQuery", () => {
+  // Security model: regex blocklist rejects dangerous functions/statements,
+  // while subquery wrapping + read-only connections prevent writes.
+  test("wraps SQL with limit, normalizes rows, and returns metadata", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [
+          { name: "model", type: "VARCHAR" },
+          { name: "input_tokens", type: "BIGINT" },
+          { name: "created_at", type: "TIMESTAMP" },
+        ],
+        rows: [
+          {
+            model: "openai:gpt-4.1",
+            input_tokens: 123n,
+            created_at: new Date("2025-01-01T00:00:00.000Z"),
+          },
+        ],
+      })
+    );
+
+    const result = await executeRawQuery(
+      conn,
+      "SELECT model, input_tokens, created_at FROM events"
+    );
+
+    expect(runMock).toHaveBeenCalledWith(
+      expectedWrappedSql("SELECT model, input_tokens, created_at FROM events")
+    );
+    expect(result.columns).toEqual([
+      { name: "model", type: "VARCHAR" },
+      { name: "input_tokens", type: "BIGINT" },
+      { name: "created_at", type: "TIMESTAMP" },
+    ]);
+    expect(result.rows).toEqual([
+      {
+        model: "openai:gpt-4.1",
+        input_tokens: 123,
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+    ]);
+    expect(result.truncated).toBe(false);
+    expect(result.rowCount).toBe(1);
+    expect(result.rowCountExact).toBe(true);
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test("strips trailing semicolons before wrapping SQL", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "value", type: "INTEGER" }],
+        rows: [{ value: 1 }],
+      })
+    );
+
+    const result = await executeRawQuery(conn, "  SELECT 1 AS value FROM events;;   ");
+
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql("SELECT 1 AS value FROM events"));
+    expect(result.rows).toEqual([{ value: 1 }]);
+  });
+
+  test("keeps wrapper terminator outside trailing line comments", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "value", type: "INTEGER" }],
+        rows: [{ value: 1 }],
+      })
+    );
+
+    const sql = "SELECT 1 AS value -- trailing comment";
+
+    await executeRawQuery(conn, sql);
+
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql(sql));
+  });
+
+  test("rejects duckdb system functions", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM duckdb_tables()",
+      /disallowed SQL: .*duckdb_tables/i
+    );
+  });
+
+  test("rejects quoted information_schema references", async () => {
+    await expectValidationFailure(
+      'SELECT * FROM "information_schema".tables',
+      /disallowed SQL: .*information_schema/i
+    );
+  });
+
+  test("rejects parenthesized table function in FROM", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM (duckdb_tables()) AS t",
+      /disallowed SQL: .*duckdb_tables/i
+    );
+  });
+
+  test("rejects comma-joined source containing blocked function", async () => {
+    await expectValidationFailure(
+      "SELECT 1 FROM events, duckdb_tables()",
+      /disallowed SQL: .*duckdb_tables/i
+    );
+  });
+
+  test("rejects blocked function call even when a CTE shadows the name", async () => {
+    await expectValidationFailure(
+      "WITH duckdb_tables AS (SELECT * FROM events) SELECT * FROM duckdb_tables()",
+      /disallowed SQL: .*duckdb_tables/i
+    );
+  });
+
+  test("allows parenthesized subquery", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "request_count", type: "BIGINT" }],
+        rows: [{ request_count: 3n }],
+      })
+    );
+
+    const sql = "SELECT COUNT(*) AS request_count FROM (SELECT * FROM events) AS sub";
+
+    const result = await executeRawQuery(conn, sql);
+
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql(sql));
+    expect(result.rows).toEqual([{ request_count: 3 }]);
+  });
+
+  test("rejects queries using read_csv_auto", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM read_csv_auto('/etc/passwd')",
+      /disallowed SQL: .*read_csv_auto/i
+    );
+  });
+
+  test("rejects queries using quoted read_csv_auto", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM \"read_csv_auto\"('/etc/passwd')",
+      /disallowed SQL: .*read_csv_auto/i
+    );
+  });
+
+  test("rejects queries using read_parquet", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM read_parquet('file.parquet')",
+      /disallowed SQL: .*read_parquet/i
+    );
+  });
+
+  test("rejects queries using quoted read_parquet", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM \"read_parquet\"('s3://bucket/data.parquet')",
+      /disallowed SQL: .*read_parquet/i
+    );
+  });
+
+  test("rejects DuckDB replacement scans using string-literal table sources", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM '/etc/passwd'",
+      /string literals cannot be used as table sources/i
+    );
+  });
+
+  test("rejects replacement scan with comment gap", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM /*gap*/ '/etc/passwd'",
+      /string literals cannot be used as table sources/i
+    );
+  });
+
+  test("rejects replacement scan in comma-separated FROM source list", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM events, '/etc/passwd'",
+      /string literals cannot be used as table sources/i
+    );
+  });
+
+  test("allows FROM/JOIN text inside single-quoted string literals", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "request_count", type: "BIGINT" }],
+        rows: [{ request_count: 1n }],
+      })
+    );
+
+    const sql =
+      "SELECT COUNT(*) AS request_count FROM events WHERE message LIKE '%FROM file.csv%' OR message LIKE '%JOIN backup.parquet%'";
+
+    const result = await executeRawQuery(conn, sql);
+
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql(sql));
+    expect(result.rows).toEqual([{ request_count: 1 }]);
+  });
+
+  test("allows double-quoted table identifiers", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "request_count", type: "BIGINT" }],
+        rows: [{ request_count: 1n }],
+      })
+    );
+
+    const sql = 'SELECT COUNT(*) AS request_count FROM "events"';
+
+    const result = await executeRawQuery(conn, sql);
+
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql(sql));
+    expect(result.rows).toEqual([{ request_count: 1 }]);
+  });
+
+  test("allows string literals in WHERE clauses", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "request_count", type: "BIGINT" }],
+        rows: [{ request_count: 1n }],
+      })
+    );
+
+    const sql = "SELECT COUNT(*) AS request_count FROM events WHERE model = 'gpt-4'";
+
+    const result = await executeRawQuery(conn, sql);
+
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql(sql));
+    expect(result.rows).toEqual([{ request_count: 1 }]);
+  });
+
+  test("rejects queries using read_json", async () => {
+    await expectValidationFailure(
+      "SELECT * FROM read_json('/tmp/data.json')",
+      /disallowed SQL: .*read_json/i
+    );
+  });
+
+  test("rejects COPY statements", async () => {
+    await expectValidationFailure("COPY events TO '/tmp/out.csv'", /disallowed SQL: .*copy/i);
+  });
+
+  test("rejects ATTACH statements", async () => {
+    await expectValidationFailure("ATTACH '/tmp/db.duckdb' AS stolen", /disallowed SQL: .*attach/i);
+  });
+
+  test("rejects PRAGMA statements", async () => {
+    await expectValidationFailure("PRAGMA database_list", /disallowed SQL: .*pragma/i);
+  });
+
+  test("rejects SET statements", async () => {
+    await expectValidationFailure("SET access_mode = 'read_write'", /disallowed SQL: .*set/i);
+  });
+
+  test("rejects INSTALL and LOAD statements", async () => {
+    await expectValidationFailure("INSTALL httpfs", /disallowed SQL: .*install/i);
+    await expectValidationFailure("LOAD httpfs", /disallowed SQL: .*load/i);
+  });
+
+  test("allows normal SELECT from events", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "request_count", type: "BIGINT" }],
+        rows: [{ request_count: 7n }],
+      })
+    );
+
+    const result = await executeRawQuery(conn, "SELECT COUNT(*) AS request_count FROM events");
+
+    expect(runMock).toHaveBeenCalledWith(
+      expectedWrappedSql("SELECT COUNT(*) AS request_count FROM events")
+    );
+    expect(result.rows).toEqual([{ request_count: 7 }]);
+  });
+
+  test("allows normal SELECT from delegation_rollups", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "delegation_count", type: "BIGINT" }],
+        rows: [{ delegation_count: 2n }],
+      })
+    );
+
+    const result = await executeRawQuery(
+      conn,
+      "SELECT COUNT(*) AS delegation_count FROM delegation_rollups"
+    );
+
+    expect(runMock).toHaveBeenCalledWith(
+      expectedWrappedSql("SELECT COUNT(*) AS delegation_count FROM delegation_rollups")
+    );
+    expect(result.rows).toEqual([{ delegation_count: 2 }]);
+  });
+
+  test("false positive check: a column named read_count is allowed", async () => {
+    const { conn, runMock } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "read_count", type: "BIGINT" }],
+        rows: [{ read_count: 5n }],
+      })
+    );
+
+    const result = await executeRawQuery(conn, "SELECT read_count FROM events");
+
+    expect(runMock).toHaveBeenCalledWith(expectedWrappedSql("SELECT read_count FROM events"));
+    expect(result.rows).toEqual([{ read_count: 5 }]);
+  });
+
+  test("throws when SQL execution fails", async () => {
+    const { conn } = createMockConn(() => {
+      throw new Error("Parser Error: syntax error at or near FRM");
+    });
+
+    await expectQueryFailure(
+      executeRawQuery(conn, "SELECT * FRM events"),
+      /syntax error at or near FRM/i
+    );
+  });
+
+  test("enforces RAW_QUERY_ROW_LIMIT and marks response truncated", async () => {
+    const oversizedRows = Array.from({ length: RAW_QUERY_ROW_LIMIT + 1 }, (_, index) => ({
+      rank: index,
+    }));
+
+    const { conn } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "rank", type: "BIGINT" }],
+        rows: oversizedRows,
+      })
+    );
+
+    const result = await executeRawQuery(conn, "SELECT rank FROM events");
+
+    expect(result.truncated).toBe(true);
+    expect(result.rowCount).toBe(RAW_QUERY_ROW_LIMIT + 1);
+    expect(result.rowCountExact).toBe(false);
+    expect(result.rows).toHaveLength(RAW_QUERY_ROW_LIMIT);
+    expect(result.rows[0]).toEqual({ rank: 0 });
+    expect(result.rows.at(-1)).toEqual({ rank: RAW_QUERY_ROW_LIMIT - 1 });
+  });
+
+  test("returns empty rows with column metadata for empty result sets", async () => {
+    const { conn } = createMockConn(() =>
+      createMockResult({
+        columns: [
+          { name: "workspace_id", type: "VARCHAR" },
+          { name: "total_cost_usd", type: "DOUBLE" },
+        ],
+        rows: [],
+      })
+    );
+
+    const result = await executeRawQuery(
+      conn,
+      "SELECT workspace_id, total_cost_usd FROM events WHERE workspace_id = 'missing'"
+    );
+
+    expect(result.columns).toEqual([
+      { name: "workspace_id", type: "VARCHAR" },
+      { name: "total_cost_usd", type: "DOUBLE" },
+    ]);
+    expect(result.rows).toEqual([]);
+    expect(result.rowCount).toBe(0);
+    expect(result.rowCountExact).toBe(true);
+    expect(result.truncated).toBe(false);
+  });
+
+  test("uses DuckDB type toString output for complex type names", async () => {
+    const { conn } = createMockConn(() =>
+      createMockResult({
+        columns: [{ name: "cost", type: { toString: () => "DECIMAL(18,4)" } }],
+        rows: [{ cost: 12.34 }],
+      })
+    );
+
+    const result = await executeRawQuery(conn, "SELECT cost FROM delegation_rollups");
+
+    expect(result.columns).toEqual([{ name: "cost", type: "DECIMAL(18,4)" }]);
+  });
+
+  test("preserves CTE SQL and relies on subquery wrapping for write prevention", async () => {
+    const { conn, runMock } = createMockConn((sql) => {
+      if (sql.includes("INSERT INTO events")) {
+        throw new Error('Parser Error: syntax error at or near "INSERT"');
+      }
+
+      return createMockResult({
+        columns: [{ name: "value", type: "INTEGER" }],
+        rows: [{ value: 1 }],
+      });
+    });
+
+    await expectQueryFailure(
+      executeRawQuery(
+        conn,
+        "WITH cte AS (INSERT INTO events (workspace_id) VALUES ('x')) SELECT * FROM cte"
+      ),
+      /syntax error at or near "INSERT"/i
+    );
+
+    expect(runMock).toHaveBeenCalledWith(
+      expectedWrappedSql(
+        "WITH cte AS (INSERT INTO events (workspace_id) VALUES ('x')) SELECT * FROM cte"
+      )
+    );
+  });
+});

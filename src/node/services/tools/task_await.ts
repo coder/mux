@@ -1,0 +1,455 @@
+import { tool } from "ai";
+
+import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
+import { readSubagentGitPatchArtifact } from "@/node/services/subagentGitPatchArtifacts";
+import { TaskAwaitToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+
+import { fromBashTaskId, toBashTaskId } from "./taskId";
+import { formatBashOutputReport } from "./bashTaskReport";
+import {
+  dedupeStrings,
+  parseToolResult,
+  requireTaskService,
+  requireWorkspaceId,
+} from "./toolUtils";
+import { getErrorMessage } from "@/common/utils/errors";
+import {
+  ForegroundWaitBackgroundedError,
+  type AgentTaskStatus,
+  type AgentTaskStatusLookup,
+  type AgentTaskTimestamps,
+} from "@/node/services/taskService";
+
+// Status values for which task_await still treats an agent task as live and
+// should surface the live status (plus an `elapsed_ms` field) instead of
+// awaiting a report. Centralised here so the timeout=0 and "timed out" error
+// branches below stay in lockstep when shared fields are added — see #3234,
+// which extended both branches symmetrically with `getAgentTaskElapsedField`.
+type AgentTaskActiveStatus = "queued" | "running" | "awaiting_report";
+
+function isAgentTaskActiveStatus(status: AgentTaskStatus | null): status is AgentTaskActiveStatus {
+  return status === "queued" || status === "running" || status === "awaiting_report";
+}
+
+function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
+  if (typeof timeoutSecs !== "number" || !Number.isFinite(timeoutSecs)) return undefined;
+  if (timeoutSecs < 0) return undefined;
+  const timeoutMs = Math.floor(timeoutSecs * 1000);
+  return timeoutMs;
+}
+
+function parseTimestampMs(value: string | undefined): number | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function getAgentTaskElapsedMs(
+  timestamps: AgentTaskTimestamps | null | undefined
+): number | undefined {
+  const createdAtMs = parseTimestampMs(timestamps?.createdAt);
+  if (createdAtMs == null) {
+    return undefined;
+  }
+
+  const endAtMs = parseTimestampMs(timestamps?.reportedAt) ?? Date.now();
+  return Math.max(0, endAtMs - createdAtMs);
+}
+
+function withElapsedMs(elapsedMs: number | undefined): { elapsed_ms?: number } {
+  return elapsedMs == null ? {} : { elapsed_ms: elapsedMs };
+}
+
+function buildTaskAwaitSequencingError(taskId: string, suggestedTaskIds: string[]) {
+  return {
+    status: "error" as const,
+    taskId,
+    error:
+      "Do not call task_await in the same parallel tool-call batch as task or bash. " +
+      "Wait for the spawning tool result first, then call task_await in a later step. " +
+      `Use one of these returned task IDs instead: ${suggestedTaskIds.join(", ")}.`,
+  };
+}
+
+export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
+  return tool({
+    description: TOOL_DEFINITIONS.task_await.description,
+    inputSchema: TOOL_DEFINITIONS.task_await.schema,
+    execute: async (args, { abortSignal }): Promise<unknown> => {
+      const workspaceId = requireWorkspaceId(config, "task_await");
+      const taskService = requireTaskService(config, "task_await");
+
+      const timeoutMs = coerceTimeoutMs(args.timeout_secs);
+      // Preserve the documented 600s default when the model sends null
+      // (Zod .default() only replaces undefined, not null).
+      const timeoutSecsForBash = args.timeout_secs ?? 600;
+
+      const requestedIds: string[] | null =
+        args.task_ids && args.task_ids.length > 0 ? args.task_ids : null;
+
+      const activeDescendantAgentTaskIds =
+        taskService.listActiveDescendantAgentTaskIds(workspaceId);
+      const listInScopeBackgroundBashTaskIds = async (): Promise<string[]> => {
+        if (!config.backgroundProcessManager) {
+          return [];
+        }
+
+        const bashTaskIds: string[] = [];
+        const processes = await config.backgroundProcessManager.list();
+        for (const proc of processes) {
+          if (proc.status !== "running") continue;
+          const inScope =
+            proc.workspaceId === workspaceId ||
+            (await taskService.isDescendantAgentTask(workspaceId, proc.workspaceId));
+          if (!inScope) continue;
+          bashTaskIds.push(toBashTaskId(proc.id));
+        }
+
+        return dedupeStrings(bashTaskIds);
+      };
+      const listInScopeAwaitableTaskIds = async (): Promise<string[]> => {
+        const awaitableTaskIds = [...activeDescendantAgentTaskIds];
+        awaitableTaskIds.push(...(await listInScopeBackgroundBashTaskIds()));
+        return dedupeStrings(awaitableTaskIds);
+      };
+      let suggestionBashTaskIdsPromise: Promise<string[]> | undefined;
+      const getSuggestionBashTaskIds = async (): Promise<string[]> => {
+        suggestionBashTaskIdsPromise ??= listInScopeBackgroundBashTaskIds().catch(() => []);
+        return await suggestionBashTaskIdsPromise;
+      };
+      const uniqueTaskIds = requestedIds
+        ? dedupeStrings(requestedIds)
+        : await listInScopeAwaitableTaskIds();
+
+      const agentTaskIds = uniqueTaskIds.filter((taskId) => !taskId.startsWith("bash:"));
+      const bulkFilter = (
+        taskService as unknown as {
+          filterDescendantAgentTaskIds?: (
+            ancestorWorkspaceId: string,
+            taskIds: string[]
+          ) => Promise<string[]>;
+        }
+      ).filterDescendantAgentTaskIds;
+
+      // Read patch artifacts lazily (after waiting) to avoid stale results. Patch generation
+      // runs asynchronously (started in `finalizeAgentTaskReport` before waiters resolve), so
+      // the artifact may still be "pending" at read time — task_apply_git_patch does a fresh read.
+      const readGitFormatPatchArtifact = async (childTaskId: string) => {
+        if (!config.workspaceSessionDir) return null;
+        return await readSubagentGitPatchArtifact(config.workspaceSessionDir, childTaskId);
+      };
+
+      // Agent task records currently store creation/report timestamps, but not a separate
+      // running-start timestamp, so this elapsed value intentionally includes queued time.
+      const getAgentTaskElapsedField = (taskId: string) =>
+        withElapsedMs(getAgentTaskElapsedMs(taskService.getAgentTaskTimestamps?.(taskId)));
+
+      const descendantAgentTaskIds =
+        typeof bulkFilter === "function"
+          ? await bulkFilter.call(taskService, workspaceId, agentTaskIds)
+          : (
+              await Promise.all(
+                agentTaskIds.map(async (taskId) =>
+                  (await taskService.isDescendantAgentTask(workspaceId, taskId)) ? taskId : null
+                )
+              )
+            ).filter((taskId): taskId is string => typeof taskId === "string");
+
+      const descendantAgentTaskIdSet = new Set(descendantAgentTaskIds);
+      const rejectedAgentTaskIds = agentTaskIds.filter(
+        (taskId) => !descendantAgentTaskIdSet.has(taskId)
+      );
+      const rejectedAgentTaskStatuses =
+        rejectedAgentTaskIds.length > 0
+          ? taskService.getAgentTaskStatuses(rejectedAgentTaskIds)
+          : new Map<string, AgentTaskStatusLookup>();
+
+      // task_await resolves once `min_completed` tasks have completed (default 1 = return on the
+      // first completion) rather than always blocking on every awaited task. Each task gets its
+      // own AbortController chained to the tool-call signal so that, once we have enough
+      // completions, we can detach the still-pending waiters/reads without terminating those
+      // children — they keep running and remain re-awaitable later (reports stay cached in
+      // TaskService and the child's bash poll is merely interrupted, not killed).
+      const awaitOne = async (taskId: string, taskSignal: AbortSignal) => {
+        const maybeProcessId = fromBashTaskId(taskId);
+        if (taskId.startsWith("bash:") && !maybeProcessId) {
+          return { status: "error" as const, taskId, error: "Invalid bash taskId." };
+        }
+
+        if (maybeProcessId) {
+          if (!config.backgroundProcessManager) {
+            return {
+              status: "error" as const,
+              taskId,
+              error: "Background process manager not available",
+            };
+          }
+
+          const proc = await config.backgroundProcessManager.getProcess(maybeProcessId);
+          if (!proc) {
+            return { status: "not_found" as const, taskId };
+          }
+
+          const inScope =
+            proc.workspaceId === workspaceId ||
+            (await taskService.isDescendantAgentTask(workspaceId, proc.workspaceId));
+          if (!inScope) {
+            return { status: "invalid_scope" as const, taskId };
+          }
+
+          const outputResult = await config.backgroundProcessManager.getOutput(
+            maybeProcessId,
+            args.filter ?? undefined,
+            args.filter_exclude ?? undefined,
+            timeoutSecsForBash,
+            taskSignal,
+            workspaceId,
+            "task_await"
+          );
+
+          if (!outputResult.success) {
+            return { status: "error" as const, taskId, error: outputResult.error };
+          }
+
+          if (outputResult.status === "running" || outputResult.status === "interrupted") {
+            return {
+              status: "running" as const,
+              taskId,
+              output: outputResult.output,
+              elapsed_ms: outputResult.elapsed_ms,
+              note: outputResult.note,
+            };
+          }
+
+          return {
+            status: "completed" as const,
+            taskId,
+            title: proc.displayName ?? proc.id,
+            reportMarkdown: formatBashOutputReport({
+              processId: proc.id,
+              status: outputResult.status,
+              exitCode: outputResult.exitCode,
+              output: outputResult.output,
+            }),
+            elapsed_ms: outputResult.elapsed_ms,
+            exitCode: outputResult.exitCode,
+            note: outputResult.note,
+          };
+        }
+
+        if (!descendantAgentTaskIdSet.has(taskId)) {
+          const lookup = rejectedAgentTaskStatuses.get(taskId);
+          const activeTaskIds =
+            activeDescendantAgentTaskIds.length > 0 ? activeDescendantAgentTaskIds : undefined;
+          if (requestedIds) {
+            const suggestedTaskIds = dedupeStrings([
+              ...activeDescendantAgentTaskIds,
+              ...(await getSuggestionBashTaskIds()),
+            ]);
+            if (suggestedTaskIds.length > 0) {
+              return buildTaskAwaitSequencingError(taskId, suggestedTaskIds);
+            }
+          }
+          if (!lookup?.exists) {
+            return { status: "not_found" as const, taskId, activeTaskIds };
+          }
+          return { status: "invalid_scope" as const, taskId, activeTaskIds };
+        }
+
+        // When timeout_secs=0 (or rounds down to 0ms), task_await should be non-blocking.
+        // `waitForAgentReport` asserts timeoutMs > 0, so handle 0 explicitly by returning the
+        // current task status instead of awaiting.
+        if (timeoutMs === 0) {
+          const status = taskService.getAgentTaskStatus(taskId);
+          if (isAgentTaskActiveStatus(status)) {
+            return { status, taskId, ...getAgentTaskElapsedField(taskId) };
+          }
+
+          // Best-effort: the task might already have a cached report (even if its workspace was
+          // cleaned up). Avoid blocking when it isn't available.
+          try {
+            const report = await taskService.waitForAgentReport(taskId, {
+              timeoutMs: 1,
+              abortSignal: taskSignal,
+              requestingWorkspaceId: workspaceId,
+              backgroundOnMessageQueued: true,
+            });
+
+            const gitFormatPatch = await readGitFormatPatchArtifact(taskId);
+            return {
+              status: "completed" as const,
+              taskId,
+              reportMarkdown: report.reportMarkdown,
+              title: report.title,
+              ...getAgentTaskElapsedField(taskId),
+              ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
+            };
+          } catch (error: unknown) {
+            const message = getErrorMessage(error);
+            if (/not found/i.test(message)) {
+              return { status: "not_found" as const, taskId };
+            }
+            return { status: "error" as const, taskId, error: message };
+          }
+        }
+
+        try {
+          const report = await taskService.waitForAgentReport(taskId, {
+            timeoutMs,
+            abortSignal: taskSignal,
+            requestingWorkspaceId: workspaceId,
+            backgroundOnMessageQueued: true,
+          });
+
+          const gitFormatPatch = await readGitFormatPatchArtifact(taskId);
+          return {
+            status: "completed" as const,
+            taskId,
+            reportMarkdown: report.reportMarkdown,
+            title: report.title,
+            ...getAgentTaskElapsedField(taskId),
+            ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
+          };
+        } catch (error: unknown) {
+          if (error instanceof ForegroundWaitBackgroundedError) {
+            const currentStatus = taskService.getAgentTaskStatus(taskId);
+            const normalizedStatus = isAgentTaskActiveStatus(currentStatus)
+              ? currentStatus
+              : ("running" as const);
+            return {
+              status: normalizedStatus,
+              taskId,
+              ...getAgentTaskElapsedField(taskId),
+              note: "Task sent to background because a new message was queued. Use task_await to monitor progress.",
+            };
+          }
+
+          if (abortSignal?.aborted) {
+            return { status: "error" as const, taskId, error: "Interrupted" };
+          }
+
+          // Intentional early-stop: this task's per-task signal was aborted because
+          // `min_completed` was already satisfied by other tasks (the outer tool-call signal is
+          // not aborted). The child keeps running and its report stays re-awaitable on a later
+          // task_await call, so report a live status snapshot instead of an error.
+          if (taskSignal.aborted) {
+            const status = taskService.getAgentTaskStatus(taskId);
+            const normalizedStatus = isAgentTaskActiveStatus(status)
+              ? status
+              : ("running" as const);
+            return { status: normalizedStatus, taskId, ...getAgentTaskElapsedField(taskId) };
+          }
+
+          const message = getErrorMessage(error);
+          if (/not found/i.test(message)) {
+            return { status: "not_found" as const, taskId };
+          }
+          if (/timed out/i.test(message)) {
+            const status = taskService.getAgentTaskStatus(taskId);
+            if (isAgentTaskActiveStatus(status)) {
+              return { status, taskId, ...getAgentTaskElapsedField(taskId) };
+            }
+            if (!status) {
+              return { status: "not_found" as const, taskId };
+            }
+            return {
+              status: "error" as const,
+              taskId,
+              error: `Task status is '${status}' (not awaitable via task_await).`,
+            };
+          }
+          return { status: "error" as const, taskId, error: message };
+        }
+      };
+
+      const requestedMinCompleted = typeof args.min_completed === "number" ? args.min_completed : 1;
+      // Clamp to [1, number of awaited tasks]; values above the count behave like "wait for all".
+      // timeout_secs=0 is an explicit non-blocking snapshot of every task, so never early-return
+      // there — wait for all per-task results (which all resolve immediately) instead.
+      const wantCount =
+        timeoutMs === 0
+          ? Math.max(uniqueTaskIds.length, 1)
+          : Math.min(Math.max(requestedMinCompleted, 1), Math.max(uniqueTaskIds.length, 1));
+
+      const taskControllers = new Map<string, AbortController>();
+      for (const taskId of uniqueTaskIds) {
+        const controller = new AbortController();
+        // Propagate a real tool-call interrupt to every per-task wait.
+        if (abortSignal) {
+          if (abortSignal.aborted) {
+            controller.abort();
+          } else {
+            abortSignal.addEventListener("abort", () => controller.abort(), { once: true });
+          }
+        }
+        taskControllers.set(taskId, controller);
+      }
+
+      const resultsByTaskId = new Map<string, Awaited<ReturnType<typeof awaitOne>>>();
+      let completedCount = 0;
+      const taskPromises = uniqueTaskIds.map((taskId) => {
+        // awaitOne resolves to a result object for every documented path, but a few calls (e.g. the
+        // bash getProcess/getOutput reads) run outside its internal try/catch and could reject.
+        // Convert any stray rejection into an `error` result so the task still counts as settled —
+        // otherwise the gate below could never reach `wantCount` or "all settled" and would stall.
+        const promise = awaitOne(taskId, taskControllers.get(taskId)!.signal).catch(
+          (error: unknown): Awaited<ReturnType<typeof awaitOne>> => ({
+            status: "error",
+            taskId,
+            error: getErrorMessage(error),
+          })
+        );
+        // Record results as they settle so we can both count completions and assemble the final
+        // array. Registered before the gate listener below, so recording always runs first for a
+        // given promise.
+        void promise.then((res) => {
+          resultsByTaskId.set(taskId, res);
+          if (res.status === "completed") {
+            completedCount += 1;
+          }
+        });
+        return promise;
+      });
+
+      // Resolve once `wantCount` tasks have completed, or every awaited task has otherwise settled
+      // (failed/interrupted/timed out) — so an unreachable threshold still returns promptly.
+      await new Promise<void>((resolveGate) => {
+        if (uniqueTaskIds.length === 0) {
+          resolveGate();
+          return;
+        }
+        let gateResolved = false;
+        const checkGate = () => {
+          if (gateResolved) return;
+          if (completedCount >= wantCount || resultsByTaskId.size >= uniqueTaskIds.length) {
+            gateResolved = true;
+            resolveGate();
+          }
+        };
+        for (const promise of taskPromises) {
+          void promise.then(checkGate, checkGate);
+        }
+      });
+
+      // Detach the still-pending waiters/reads for tasks we are not returning as completed.
+      // Aborting only removes the in-memory waiter (and interrupts a bash poll); the child keeps
+      // running and its report stays cached for a later task_await call.
+      for (const [taskId, controller] of taskControllers) {
+        if (!resultsByTaskId.has(taskId)) {
+          controller.abort();
+        }
+      }
+
+      // Aborted waits resolve to live-status snapshots (agent) or running output (bash); wait for
+      // those to land so every awaited task has a result before assembling the ordered array.
+      await Promise.all(taskPromises);
+
+      const results = uniqueTaskIds.map((taskId) => resultsByTaskId.get(taskId)!);
+
+      return parseToolResult(TaskAwaitToolResultSchema, { results }, "task_await");
+    },
+  });
+};

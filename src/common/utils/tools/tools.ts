@@ -1,0 +1,632 @@
+import { type ImageModel, type LanguageModel, type Tool } from "ai";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
+import { createFileReadTool } from "@/node/services/tools/file_read";
+import { createAttachFileTool } from "@/node/services/tools/attach_file";
+import { createBashTool } from "@/node/services/tools/bash";
+import { createBashOutputTool } from "@/node/services/tools/bash_output";
+import { createBashBackgroundListTool } from "@/node/services/tools/bash_background_list";
+import { createBashBackgroundTerminateTool } from "@/node/services/tools/bash_background_terminate";
+import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit_replace_string";
+// DISABLED: import { createFileEditReplaceLinesTool } from "@/node/services/tools/file_edit_replace_lines";
+import { createFileEditInsertTool } from "@/node/services/tools/file_edit_insert";
+import { createAskUserQuestionTool } from "@/node/services/tools/ask_user_question";
+import { createImageGenerateTool } from "@/node/services/tools/image_generate";
+import { createImageEditTool } from "@/node/services/tools/image_edit";
+import { createAdvisorTool } from "@/node/services/tools/advisor";
+import { createProposePlanTool } from "@/node/services/tools/propose_plan";
+import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
+import {
+  createReviewPaneUpdateTool,
+  createReviewPaneGetTool,
+} from "@/node/services/tools/review_pane";
+import { createGetGoalTool } from "@/node/services/tools/get_goal";
+import { createCompleteGoalTool } from "@/node/services/tools/complete_goal";
+import { createNotifyTool } from "@/node/services/tools/notify";
+import { createAnalyticsQueryTool } from "@/node/services/tools/analyticsQuery";
+import { createDesktopTools } from "@/node/services/tools/desktopTools";
+import type { MuxToolScope } from "@/common/types/toolScope";
+import { createTaskTool } from "@/node/services/tools/task";
+import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
+import { createTaskAwaitTool } from "@/node/services/tools/task_await";
+import { createTaskTerminateTool } from "@/node/services/tools/task_terminate";
+import { createTaskListTool } from "@/node/services/tools/task_list";
+import { createAgentSkillReadTool } from "@/node/services/tools/agent_skill_read";
+import { createAgentSkillReadFileTool } from "@/node/services/tools/agent_skill_read_file";
+import { createAgentSkillListTool } from "@/node/services/tools/agent_skill_list";
+import { createAgentSkillWriteTool } from "@/node/services/tools/agent_skill_write";
+import { createAgentSkillDeleteTool } from "@/node/services/tools/agent_skill_delete";
+import { createSkillsCatalogSearchTool } from "@/node/services/tools/skills_catalog_search";
+import { createSkillsCatalogReadTool } from "@/node/services/tools/skills_catalog_read";
+import { createMuxAgentsReadTool } from "@/node/services/tools/mux_agents_read";
+import { createMuxAgentsWriteTool } from "@/node/services/tools/mux_agents_write";
+import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
+import { createMuxConfigWriteTool } from "@/node/services/tools/mux_config_write";
+import { createAgentReportTool } from "@/node/services/tools/agent_report";
+import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
+import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
+import { log } from "@/node/services/log";
+import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalToolResultFields";
+import { NotificationEngine } from "@/node/services/agentNotifications/NotificationEngine";
+import { TodoListReminderSource } from "@/node/services/agentNotifications/sources/TodoListReminderSource";
+import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
+import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
+
+import type { Runtime } from "@/node/runtime/Runtime";
+import type { InitStateManager } from "@/node/services/initStateManager";
+import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
+import type { TaskService } from "@/node/services/taskService";
+import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { SendMessageError } from "@/common/types/errors";
+import type { FileState } from "@/node/services/agentSession";
+import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { Result } from "@/common/types/result";
+import type { ModelMessage } from "@/common/types/message";
+import type { ProjectRef } from "@/common/types/workspace";
+
+export interface ToolModelUsageEvent {
+  source: "tool";
+  toolName: string;
+  model: string;
+  usage: LanguageModelV2Usage;
+  providerMetadata?: Record<string, unknown>;
+  toolCallId?: string;
+  timestamp: number;
+}
+
+export interface AdvisorToolCallSnapshot {
+  toolCallId: string;
+  toolName: "advisor";
+  input: Record<string, unknown>;
+  stepText: string;
+  stepReasoning: string;
+}
+
+export interface AdvisorStepCaptureRef {
+  currentStepText: string;
+  currentStepReasoning: string;
+  frozenSnapshotsByToolCallId: Map<string, AdvisorToolCallSnapshot>;
+}
+
+/**
+ * Configuration for tools that need runtime context
+ */
+export interface ToolConfiguration {
+  /** Working directory for command execution - actual path in runtime's context (local or remote) */
+  cwd: string;
+  /** Runtime environment for executing commands and file operations */
+  runtime: Runtime;
+  /** Project roots in this workspace (single- or multi-project context for tool descriptions) */
+  projects?: ProjectRef[];
+  /** Environment secrets to inject (optional) */
+  secrets?: Record<string, string>;
+  /** MUX_ environment variables (MUX_PROJECT_PATH, MUX_RUNTIME) - set from init hook env */
+  muxEnv?: Record<string, string>;
+  /** Temporary directory for tool outputs in runtime's context (local or remote) */
+  runtimeTempDir: string;
+  /** OpenAI wire format — webSearch requires "responses" */
+  openaiWireFormat?: "responses" | "chatCompletions";
+  /** Overflow policy for bash tool output (optional, not exposed to AI) */
+  overflow_policy?: "truncate" | "tmpfile";
+  /** Background process manager for bash tool (optional, AI-only) */
+  backgroundProcessManager?: BackgroundProcessManager;
+  /** When true, restrict edits to the plan file (plan agent behavior). */
+  planFileOnly?: boolean;
+  /** Plan file path - only this file can be edited when planFileOnly is true. */
+  planFilePath?: string;
+  /** Additional exact ancestor plan files surfaced in prompt context. */
+  ancestorPlanFilePaths?: string[];
+  /**
+   * Optional callback for emitting UI-only workspace chat events.
+   * Used for streaming bash stdout/stderr to the UI without sending it to the model.
+   */
+  emitChatEvent?: (event: WorkspaceChatMessage) => void;
+  /** Primary project path for workspace-scoped tools that need project-relative coordinates. */
+  workspaceProjectPath?: string;
+  /** Absolute cwd for workspace-scoped tools that accept execution-relative paths. */
+  workspaceExecutionRootPath?: string;
+  /** Workspace session directory (e.g. ~/.mux/sessions/<workspaceId>) for persistent tool state */
+  workspaceSessionDir?: string;
+  /** Workspace ID for tracking background processes and plan storage */
+  workspaceId?: string;
+  /** Pre-resolved mux-managed resource scope (global ~/.mux vs project root). */
+  muxScope?: MuxToolScope;
+  /** Callback to record file state for external edit detection (plan files) */
+  recordFileState?: (filePath: string, state: FileState) => Promise<void>;
+  /** Callback to notify that provider/config was written (triggers hot-reload). */
+  onConfigChanged?: () => void;
+  /** Best-effort callback for recording tool-initiated model usage in session totals. */
+  reportModelUsage?: (event: ToolModelUsageEvent) => void;
+  /** Task orchestration for sub-agent tasks */
+  taskService?: TaskService;
+  /** Workspace goal lifecycle service for model-facing goal tools. */
+  goalService?: WorkspaceGoalService;
+  /** Per-request goal tool gates derived from goal status and agent capabilities. */
+  enableGoalTools?: {
+    getGoal: boolean;
+    completeGoal: boolean;
+  };
+  /** Enable agent_report tool (only valid for child task workspaces) */
+  enableAgentReport?: boolean;
+  /** Experiments inherited from parent (for subagent spawning) */
+  experiments?: {
+    programmaticToolCalling?: boolean;
+    programmaticToolCallingExclusive?: boolean;
+    advisorTool?: boolean;
+    imageGenerationTool?: boolean;
+    execSubagentHardRestart?: boolean;
+  };
+  /** Available sub-agents for the task tool description (dynamic context) */
+  availableSubagents?: AgentDefinitionDescriptor[];
+  /** Available skills for the agent_skill_read tool description (dynamic context) */
+  availableSkills?: AgentSkillDescriptor[];
+  /** Whether the project is trusted for hook/script execution */
+  trusted?: boolean;
+  /** Analytics service for raw SQL queries against DuckDB analytics data */
+  analyticsService?: {
+    executeRawQuery(sql: string): Promise<unknown>;
+  };
+  /** Runtime bundle for image tools (present only when the experiment is enabled). */
+  imageGenerationRuntime?: {
+    /** Configured image model string (e.g. "openai:gpt-image-2"). */
+    modelString: string;
+    /** Per-call image count cap configured by the user. */
+    maxImagesPerCall: number;
+    /** Creates an AI SDK image model for the configured image model string. */
+    createImageModel: (modelString: string) => Promise<Result<ImageModel, SendMessageError>>;
+  };
+  /** Whether image upload consent permits registering the image editing tool. */
+  imageEditingEnabled?: boolean;
+  /** Runtime bundle for the advisor tool (present only when advisor is eligible for this stream). */
+  advisorRuntime?: {
+    /** The advisor model string (e.g. "anthropic:claude-sonnet-4-20250514") */
+    advisorModelString: string;
+    /** Optional reasoning/thinking level metadata for the advisor request. */
+    reasoningLevel?: string;
+    /** Normalized max uses per turn: null = unlimited, positive integer = exact cap */
+    maxUsesPerTurn: number | null;
+    /** Normalized max output tokens cap for advisor responses: undefined = unlimited, positive integer = explicit cap */
+    maxOutputTokens?: number;
+    /** Returns the live conversation transcript up to the current tool call */
+    getTranscriptSnapshot: () => ModelMessage[];
+    /** Returns the frozen same-step capture snapshot for a specific advisor tool call, if available. */
+    takeToolCallSnapshot: (toolCallId: string) => AdvisorToolCallSnapshot | undefined;
+    /** Creates a LanguageModel from a model string (delegates to providerModelFactory) */
+    createModel: (modelString: string) => Promise<LanguageModel>;
+    /** The abort signal from the parent stream */
+    abortSignal: AbortSignal;
+  };
+  /** Desktop session manager for desktop automation tools */
+  desktopSessionManager?: DesktopSessionManager;
+}
+
+/**
+ * Factory function interface for creating tools with configuration
+ */
+export type ToolFactory = (config: ToolConfiguration) => Tool;
+
+/**
+ * Augment a tool's description with additional instructions from "Tool: <name>" sections
+ * Mutates the base tool in place to append the instructions to its description.
+ * This preserves any provider-specific metadata or internal state on the tool object.
+ * @param baseTool The original tool to augment
+ * @param additionalInstructions Additional instructions to append to the description
+ * @returns The same tool instance with the augmented description
+ */
+function augmentToolDescription(baseTool: Tool, additionalInstructions: string): Tool {
+  // Access the tool as a record to get its properties
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const baseToolRecord = baseTool as any as Record<string, unknown>;
+  const originalDescription =
+    typeof baseToolRecord.description === "string" ? baseToolRecord.description : "";
+  const augmentedDescription = `${originalDescription}\n\n${additionalInstructions}`;
+
+  // Mutate the description in place to preserve other properties (e.g. provider metadata)
+  baseToolRecord.description = augmentedDescription;
+
+  return baseTool;
+}
+
+function wrapToolExecuteWithModelOnlyNotifications(
+  toolName: string,
+  baseTool: Tool,
+  engine: NotificationEngine
+): Tool {
+  // Access the tool as a record to get its properties.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const baseToolRecord = baseTool as any as Record<string, unknown>;
+  const originalExecute = baseToolRecord.execute;
+
+  if (typeof originalExecute !== "function") {
+    return baseTool;
+  }
+
+  const executeFn = originalExecute as (this: unknown, args: unknown, options: unknown) => unknown;
+
+  // Avoid mutating cached tools in place (e.g. MCP tools cached per workspace).
+  // Repeated getToolsForModel() calls should not stack wrappers.
+  const wrappedTool = cloneToolPreservingDescriptors(baseTool);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const wrappedToolRecord = wrappedTool as any as Record<string, unknown>;
+
+  wrappedToolRecord.execute = async (args: unknown, options: unknown) => {
+    try {
+      const result: unknown = await executeFn.call(baseTool, args, options);
+
+      let notifications: string[] = [];
+      try {
+        notifications = await engine.pollAfterToolCall({
+          toolName,
+          toolSucceeded: true,
+          now: Date.now(),
+        });
+      } catch (error) {
+        log.debug("[getToolsForModel] notification poll failed", { error, toolName });
+      }
+
+      return attachModelOnlyToolNotifications(result, notifications);
+    } catch (error) {
+      try {
+        await engine.pollAfterToolCall({
+          toolName,
+          toolSucceeded: false,
+          now: Date.now(),
+        });
+      } catch (pollError) {
+        log.debug("[getToolsForModel] notification poll failed", { pollError, toolName });
+      }
+
+      throw error;
+    }
+  };
+
+  return wrappedTool;
+}
+
+function wrapToolsWithModelOnlyNotifications(
+  tools: Record<string, Tool>,
+  config: ToolConfiguration
+): Record<string, Tool> {
+  if (!config.workspaceSessionDir) {
+    return tools;
+  }
+
+  const engine = new NotificationEngine([
+    new TodoListReminderSource({ workspaceSessionDir: config.workspaceSessionDir }),
+  ]);
+
+  const wrappedTools: Record<string, Tool> = {};
+  for (const [toolName, tool] of Object.entries(tools)) {
+    wrappedTools[toolName] = wrapToolExecuteWithModelOnlyNotifications(toolName, tool, engine);
+  }
+
+  return wrappedTools;
+}
+
+/**
+ * Wrap tools with hook support.
+ *
+ * If any of these exist, each tool execution is wrapped:
+ * - `.mux/tool_pre` (pre-hook)
+ * - `.mux/tool_post` (post-hook)
+ * - `.mux/tool_hook` (legacy pre+post)
+ */
+function wrapToolsWithHooks(
+  tools: Record<string, Tool>,
+  config: ToolConfiguration
+): Record<string, Tool> {
+  // Skip hooks for untrusted projects — repo-controlled scripts must not run
+  if (config.trusted !== true) {
+    return tools;
+  }
+
+  // Hooks require workspaceId, cwd, and runtime
+  if (!config.workspaceId || !config.cwd || !config.runtime) {
+    return tools;
+  }
+
+  const hookConfig: HookConfig = {
+    runtime: config.runtime,
+    cwd: config.cwd,
+    runtimeTempDir: config.runtimeTempDir,
+    workspaceId: config.workspaceId,
+    // Match bash tool behavior: muxEnv is present and secrets override it.
+    env: {
+      ...(config.muxEnv ?? {}),
+      ...(config.secrets ?? {}),
+    },
+  };
+
+  const wrappedTools: Record<string, Tool> = {};
+  for (const [toolName, tool] of Object.entries(tools)) {
+    wrappedTools[toolName] = withHooks(toolName, tool, hookConfig);
+  }
+
+  return wrappedTools;
+}
+
+async function getDesktopTools(config: ToolConfiguration): Promise<Record<string, Tool>> {
+  if (config.desktopSessionManager == null || config.workspaceId == null) {
+    return {};
+  }
+
+  try {
+    const capability = await config.desktopSessionManager.getCapability(config.workspaceId);
+    if (!capability.available) {
+      return {};
+    }
+
+    return createDesktopTools(config, config.desktopSessionManager);
+  } catch (error) {
+    log.warn("[getToolsForModel] failed to resolve desktop tool capability", {
+      error,
+      workspaceId: config.workspaceId,
+    });
+    return {};
+  }
+}
+
+/**
+ * Get tools available for a specific model with configuration
+ *
+ * Providers are lazy-loaded to reduce startup time. AI SDK providers are only
+ * imported when actually needed for a specific model.
+ *
+ * @param modelString The model string in format "provider:model-id"
+ * @param config Required configuration for tools
+ * @param workspaceId Workspace ID for init state tracking (required for runtime tools)
+ * @param initStateManager Init state manager for runtime tools to wait for initialization
+ * @param toolInstructions Optional map of tool names to additional instructions from "Tool: <name>" sections
+ * @returns Promise resolving to record of tools available for the model
+ */
+/**
+ * Returns true when an Anthropic model supports webFetch_20250910 (Claude 4.6+).
+ *
+ * Generation-based IDs: claude-{variant}-{major}-{minor} (e.g. claude-sonnet-4-6)
+ * Pinned generation IDs: claude-{variant}-{major}-{minor}-{date} (e.g. claude-opus-4-6-20260201)
+ * Date-based pre-4.6 IDs: claude-{variant}-{major}-{date} (e.g. claude-sonnet-4-20250514)
+ *
+ * The \d{1,2} constraint on the minor segment accepts 1-2 digit version numbers (1–99) while
+ * rejecting 8-digit date suffixes. The (?:-|$) lookahead allows an optional pinned date to follow.
+ */
+function supportsAnthropicNativeWebFetch(modelId: string): boolean {
+  const match = /^claude-\w+-(\d+)-(\d{1,2})(?:-|$)/.exec(modelId);
+  if (!match) return false;
+  const major = parseInt(match[1], 10);
+  const minor = parseInt(match[2], 10);
+  return major > 4 || (major === 4 && minor >= 6);
+}
+
+export async function getToolsForModel(
+  modelString: string,
+  config: ToolConfiguration,
+  workspaceId: string,
+  initStateManager: InitStateManager,
+  toolInstructions?: Record<string, string>,
+  mcpTools?: Record<string, Tool>
+): Promise<Record<string, Tool>> {
+  const [provider, modelId] = modelString.split(":");
+
+  // Helper to reduce repetition when wrapping runtime tools
+  const wrap = <TParameters, TResult>(tool: Tool<TParameters, TResult>) =>
+    wrapWithInitWait(tool, workspaceId, initStateManager);
+
+  // Lazy-load web_fetch to avoid loading jsdom (ESM-only) at Jest setup time
+  // This allows integration tests to run without transforming jsdom's dependencies
+  const { createWebFetchTool } = await import("@/node/services/tools/web_fetch");
+
+  // Runtime-dependent tools need to wait for workspace initialization
+  // Wrap them to handle init waiting centrally instead of in each tool
+  const runtimeTools: Record<string, Tool> = {
+    ...(config.imageGenerationRuntime
+      ? { image_generate: wrap(createImageGenerateTool(config)) }
+      : {}),
+    ...(config.imageEditingEnabled && config.imageGenerationRuntime
+      ? { image_edit: wrap(createImageEditTool(config)) }
+      : {}),
+    file_read: wrap(createFileReadTool(config)),
+    attach_file: wrap(createAttachFileTool(config)),
+    agent_skill_read: wrap(createAgentSkillReadTool(config)),
+    agent_skill_read_file: wrap(createAgentSkillReadFileTool(config)),
+    file_edit_replace_string: wrap(createFileEditReplaceStringTool(config)),
+    file_edit_insert: wrap(createFileEditInsertTool(config)),
+    // DISABLED: file_edit_replace_lines - causes models (particularly GPT-5-Codex)
+    // to leave repository in broken state due to issues with concurrent file modifications
+    // and line number miscalculations. Use file_edit_replace_string instead.
+    // file_edit_replace_lines: wrap(createFileEditReplaceLinesTool(config)),
+
+    // Sub-agent task orchestration (child workspaces)
+    task: wrap(createTaskTool(config)),
+    task_await: wrap(createTaskAwaitTool(config)),
+    task_apply_git_patch: wrap(createTaskApplyGitPatchTool(config)),
+    task_terminate: wrap(createTaskTerminateTool(config)),
+    task_list: wrap(createTaskListTool(config)),
+
+    // Bash execution (foreground/background). Manage background output via task_await/task_list/task_terminate.
+    bash: wrap(createBashTool(config)),
+
+    // Legacy bash process tools (deprecated)
+    bash_output: wrap(createBashOutputTool(config)),
+    bash_background_list: wrap(createBashBackgroundListTool(config)),
+    bash_background_terminate: wrap(createBashBackgroundTerminateTool(config)),
+
+    web_fetch: wrap(createWebFetchTool(config)),
+  };
+
+  // Non-runtime tools execute immediately (no init wait needed)
+  // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
+  const nonRuntimeTools: Record<string, Tool> = {
+    mux_agents_read: createMuxAgentsReadTool(config),
+    mux_agents_write: createMuxAgentsWriteTool(config),
+    agent_skill_list: createAgentSkillListTool(config),
+    agent_skill_write: createAgentSkillWriteTool(config),
+    agent_skill_delete: createAgentSkillDeleteTool(config),
+    mux_config_read: createMuxConfigReadTool(config),
+    mux_config_write: createMuxConfigWriteTool(config),
+    skills_catalog_search: createSkillsCatalogSearchTool(config),
+    skills_catalog_read: createSkillsCatalogReadTool(config),
+    ...(config.advisorRuntime ? { advisor: createAdvisorTool(config) } : {}),
+    ask_user_question: createAskUserQuestionTool(config),
+    propose_plan: createProposePlanTool(config),
+    // propose_name and propose_status are intentionally NOT registered here —
+    // they are only used by the internal workspace-naming path
+    // (workspaceTitleGenerator.ts) and the sidebar agent-status path
+    // (workspaceStatusGenerator.ts), which create the tool inline. Exposing
+    // them in the default toolset would let exec-derived agents see their
+    // "call me immediately" descriptions.
+    ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
+    ...(config.goalService && config.enableGoalTools?.getGoal
+      ? { get_goal: createGetGoalTool(config) }
+      : {}),
+    ...(config.goalService && config.enableGoalTools?.completeGoal
+      ? { complete_goal: createCompleteGoalTool(config) }
+      : {}),
+    todo_write: createTodoWriteTool(config),
+    todo_read: createTodoReadTool(config),
+    review_pane_update: createReviewPaneUpdateTool(config),
+    review_pane_get: createReviewPaneGetTool(config),
+    notify: createNotifyTool(config),
+    ...(config.analyticsService
+      ? {
+          analytics_query: createAnalyticsQueryTool(config),
+        }
+      : {}),
+  };
+
+  const desktopTools = await getDesktopTools(config);
+
+  // Base tools available for all models
+  const baseTools: Record<string, Tool> = {
+    ...runtimeTools,
+    ...nonRuntimeTools,
+    ...desktopTools,
+  };
+
+  // Try to add provider-specific web search tools if available
+  // Lazy-load providers to avoid loading all AI SDKs at startup
+  let allTools = { ...baseTools, ...(mcpTools ?? {}) };
+  try {
+    switch (provider) {
+      case "anthropic": {
+        const { anthropic } = await import("@ai-sdk/anthropic");
+
+        // webFetch_20250910 was introduced with the Claude 4.6 generation.
+        // Sending it to an older model (e.g. claude-sonnet-4-5) causes an API error,
+        // so only override web_fetch when the model is >= 4.6.
+        //
+        // Known limitations when the native override is active:
+        // - Cannot reach private/localhost URLs (Anthropic's servers can't see workspace network).
+        // - mux.md share links rely on client-side decryption via URL fragment (#key);
+        //   Anthropic drops the fragment when making HTTP requests, so decryption silently fails.
+        // - Not bridgeable in the PTC sandbox (no execute()); see BridgeableToolName comment.
+        // - Tool hooks (.mux/tool_pre/.mux/tool_post) are skipped because withHooks() returns
+        //   early when execute() is absent — same limitation as web_search (provider-native).
+        if (supportsAnthropicNativeWebFetch(modelId)) {
+          allTools = {
+            ...baseTools,
+            ...(mcpTools ?? {}),
+            // Provider-specific tool types are compatible with Tool at runtime
+            web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
+            web_fetch: anthropic.tools.webFetch_20250910({ maxUses: 1000 }) as Tool,
+          };
+        } else {
+          allTools = {
+            ...baseTools,
+            ...(mcpTools ?? {}),
+            web_search: anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as Tool,
+          };
+        }
+        break;
+      }
+
+      case "openai": {
+        // Sanitize MCP tools for OpenAI's stricter JSON Schema validation.
+        // OpenAI's Responses API doesn't support certain schema properties like
+        // minLength, maximum, default, etc. that are valid JSON Schema but not
+        // accepted by OpenAI's Structured Outputs implementation.
+        const sanitizedMcpTools = mcpTools ? sanitizeMCPToolsForOpenAI(mcpTools) : {};
+
+        const useResponsesTools = config.openaiWireFormat !== "chatCompletions";
+
+        // Only add web search for models that support it
+        if (useResponsesTools && (modelId.includes("gpt-5") || modelId.includes("gpt-4"))) {
+          const { openai } = await import("@ai-sdk/openai");
+          allTools = {
+            ...baseTools,
+            ...sanitizedMcpTools,
+            // Provider-specific tool types are compatible with Tool at runtime
+            web_search: openai.tools.webSearch({
+              searchContextSize: "high",
+            }) as Tool,
+          };
+        } else {
+          // For other OpenAI models (o1, o3, etc.), still use sanitized MCP tools
+          allTools = {
+            ...baseTools,
+            ...sanitizedMcpTools,
+          };
+        }
+        break;
+      }
+
+      // Note: Gemini 3 tool support:
+      // Combining native tools with function calling is currently only
+      // supported in the Live API. Thus no `google_search` or `url_context` added here.
+      // - https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#native-tools
+    }
+  } catch (error) {
+    // If tools aren't available, just use base tools
+    log.error(`No web search tools available for ${provider}:`, error);
+  }
+
+  // Filter tools to the canonical allowlist so system prompt + toolset stay in sync.
+  // Include MCP tools even if they're not in getAvailableTools().
+  const allowlistedToolNames = new Set(
+    getAvailableTools(modelString, {
+      enableAgentReport: config.enableAgentReport,
+      enableAnalyticsQuery: Boolean(config.analyticsService),
+      enableAdvisor: Boolean(config.advisorRuntime),
+      enableImageGeneration: Boolean(config.imageGenerationRuntime),
+      enableImageEditing: Boolean(config.imageGenerationRuntime && config.imageEditingEnabled),
+      // Mux global tools are always created; tool policy (agent frontmatter)
+      // controls which agents can actually use them.
+      enableMuxGlobalAgentsTools: true,
+    })
+  );
+  for (const toolName of Object.keys(mcpTools ?? {})) {
+    allowlistedToolNames.add(toolName);
+  }
+
+  allTools = Object.fromEntries(
+    Object.entries(allTools).filter(([toolName]) => allowlistedToolNames.has(toolName))
+  );
+
+  let finalTools = allTools;
+  // Apply tool-specific instructions if provided
+  if (toolInstructions) {
+    const augmentedTools: Record<string, Tool> = {};
+    for (const [toolName, baseTool] of Object.entries(allTools)) {
+      const instructions = toolInstructions[toolName];
+      if (instructions) {
+        augmentedTools[toolName] = augmentToolDescription(baseTool, instructions);
+      } else {
+        augmentedTools[toolName] = baseTool;
+      }
+    }
+    finalTools = augmentedTools;
+  }
+
+  // Apply hook wrapping first (hooks wrap each tool execution)
+  finalTools = wrapToolsWithHooks(finalTools, config);
+
+  // Then apply model-only notifications (adds notifications to results)
+  finalTools = wrapToolsWithModelOnlyNotifications(finalTools, config);
+
+  // Sort tool names so provider prompt cache prefixes stay byte-identical
+  // across turns, even when tool composition sources are assembled in a
+  // different order.
+  return Object.fromEntries(Object.entries(finalTools).sort(([a], [b]) => a.localeCompare(b)));
+}

@@ -1,0 +1,49 @@
+name: "Setup Playwright"
+description: "Install Playwright browsers and dependencies with caching"
+inputs:
+  browsers:
+    description: "Space-separated list of browsers to install (e.g., 'chromium', 'chromium webkit')"
+    required: false
+    default: "chromium"
+runs:
+  using: "composite"
+  steps:
+    - name: Get Playwright version
+      id: playwright-version
+      shell: bash
+      run: |
+        # Extract Playwright version from bun.lock (macOS-compatible regex)
+        VERSION=$(grep -A1 '"playwright":' bun.lock | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Playwright version: $VERSION"
+
+    - name: Cache Playwright browsers
+      id: cache-playwright
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-${{ inputs.browsers }}
+        restore-keys: |
+          ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-
+
+    - name: Install Playwright browsers
+      if: steps.cache-playwright.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        set -f
+        read -r -a browsers <<<"$BROWSERS"
+        bun x playwright install "${browsers[@]}"
+      env:
+        BROWSERS: ${{ inputs.browsers }}
+
+    - name: Install Playwright system dependencies (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        set -f
+        read -r -a browsers <<<"$BROWSERS"
+        bun x playwright install-deps "${browsers[@]}"
+      env:
+        BROWSERS: ${{ inputs.browsers }}

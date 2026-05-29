@@ -1,0 +1,2382 @@
+/**
+ * Tool definitions module - Frontend-safe
+ *
+ * Single source of truth for all tool definitions.
+ * Zod schemas are defined here and JSON schemas are auto-generated.
+ *
+ * ## Schema convention: `.nullish()` for optional tool parameters
+ *
+ * All optional fields in **tool input schemas** (i.e. parameters the model
+ * provides) MUST use `.nullish()` instead of `.optional()`.
+ *
+ * Why: OpenAI's Responses API normalizes tool schemas into strict mode, which
+ * forces every field into `required` and expects optional fields to accept
+ * `null` (via `"type": ["string", "null"]`).  Using `.optional()` alone
+ * produces a schema without a null type, so the model is forced to hallucinate
+ * values for fields it would normally skip.  `.nullish()` (= `.optional().nullable()`)
+ * emits both `null` in the type union AND keeps the field out of `required`,
+ * which satisfies strict-mode providers (OpenAI) while remaining compatible
+ * with non-strict providers (Anthropic, Google).
+ *
+ * Implementation handlers that consume these values should use `!= null`
+ * (loose equality) instead of `!== undefined` to correctly treat both
+ * `null` and `undefined` as "not provided".
+ *
+ * This does NOT apply to tool **output/result** schemas — those are constructed
+ * by our own backend code and always use `undefined` for absent fields.
+ */
+
+import { z } from "zod";
+import { AgentIdSchema, AgentSkillPackageSchema, SkillNameSchema } from "@/common/orpc/schemas";
+import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
+import {
+  BASH_HARD_MAX_LINES,
+  BASH_MAX_LINE_BYTES,
+  BASH_MAX_TOTAL_BYTES,
+  WEB_FETCH_MAX_OUTPUT_BYTES,
+} from "@/common/constants/toolLimits";
+import { ADVISOR_TOOL_DESCRIPTION } from "@/common/constants/advisor";
+import {
+  ConfigMutationPathSchema,
+  ConfigOperationsSchema,
+} from "@/common/config/schemas/configOperations";
+import { TOOL_EDIT_WARNING } from "@/common/types/tools";
+import { THINKING_LEVELS } from "@/common/types/thinking";
+
+import { zodToJsonSchema } from "zod-to-json-schema";
+import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
+import { TASK_VARIANT_PLACEHOLDER, TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
+
+import {
+  IMAGE_GENERATION_OUTPUT_FORMAT_VALUES,
+  IMAGE_GENERATION_QUALITY_VALUES,
+} from "@/common/types/imageGeneration";
+
+// -----------------------------------------------------------------------------
+// ask_user_question (plan-mode interactive questions)
+// -----------------------------------------------------------------------------
+
+export const AskUserQuestionOptionSchema = z
+  .object({
+    label: z.string().min(1),
+    description: z.string().min(1),
+  })
+  .strict();
+
+export const AskUserQuestionQuestionSchema = z
+  .object({
+    question: z.string().min(1),
+    header: z.string().min(1).max(32).describe("Short label shown in the UI (keep it concise)"),
+    options: z.array(AskUserQuestionOptionSchema).min(2).max(4),
+    multiSelect: z.boolean(),
+  })
+  .strict()
+  .superRefine((question, ctx) => {
+    const labels = question.options.map((o) => o.label);
+    const labelSet = new Set(labels);
+    if (labelSet.size !== labels.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Option labels must be unique within a question",
+        path: ["options"],
+      });
+    }
+
+    // Claude Code provides "Other" automatically; do not include it explicitly.
+    if (labels.some((label) => label.trim().toLowerCase() === "other")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Do not include an 'Other' option; it is provided automatically",
+        path: ["options"],
+      });
+    }
+  });
+
+const AskUserQuestionUiOnlySchema = z.object({
+  questions: z.array(AskUserQuestionQuestionSchema),
+  answers: z.record(z.string(), z.string()),
+});
+
+const ToolOutputUiOnlySchema = z.object({
+  ask_user_question: AskUserQuestionUiOnlySchema.optional(),
+  file_edit: z
+    .object({
+      diff: z.string(),
+    })
+    .optional(),
+  notify: z
+    .object({
+      notifiedVia: z.enum(["electron", "browser"]),
+      workspaceId: z.string().optional(),
+    })
+    .optional(),
+});
+
+const ToolOutputUiOnlyFieldSchema = {
+  ui_only: ToolOutputUiOnlySchema.optional(),
+};
+
+export const AskUserQuestionToolArgsSchema = z
+  .object({
+    questions: z.array(AskUserQuestionQuestionSchema).min(1).max(4),
+    // Optional prefilled answers (Claude Code supports this, though Mux typically won't use it)
+    answers: z.record(z.string(), z.string()).nullish(),
+  })
+  .strict()
+  .superRefine((args, ctx) => {
+    const questionTexts = args.questions.map((q) => q.question);
+    const questionTextSet = new Set(questionTexts);
+    if (questionTextSet.size !== questionTexts.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Question text must be unique across questions",
+        path: ["questions"],
+      });
+    }
+  });
+
+const AskUserQuestionToolSummarySchema = z
+  .object({
+    summary: z.string(),
+  })
+  .extend(ToolOutputUiOnlyFieldSchema);
+
+const AskUserQuestionToolLegacySchema = z
+  .object({
+    questions: z.array(AskUserQuestionQuestionSchema),
+    answers: z.record(z.string(), z.string()),
+  })
+  .strict();
+
+export const AskUserQuestionToolResultSchema = z.union([
+  AskUserQuestionToolSummarySchema,
+  AskUserQuestionToolLegacySchema,
+]);
+
+// -----------------------------------------------------------------------------
+// advisor (nested strategic guidance)
+// -----------------------------------------------------------------------------
+
+export const AdvisorToolInputSchema = z
+  .object({
+    // Advisor prompts often need tradeoff context; keep bounded while allowing a compact brief.
+    question: z.string().min(1).max(2000).nullish(),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// task (sub-workspaces as subagents)
+// -----------------------------------------------------------------------------
+
+const SubagentTypeSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+  AgentIdSchema
+);
+
+const TaskAgentIdSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+  AgentIdSchema
+);
+
+const TaskToolBestOfCountSchema = z.number().int().min(1).max(20);
+
+const TaskToolVariantSchema = z.string().trim().min(1);
+
+const TaskToolVariantsSchema = z.array(TaskToolVariantSchema).min(1).max(20);
+
+function getTaskRuntimeVisibilityGuidance(runtimeMode: RuntimeMode | undefined): string {
+  switch (runtimeMode) {
+    case RUNTIME_MODE.LOCAL:
+      return (
+        "In local runtime, sub-agents share the same working directory as the parent, so they can see uncommitted changes. " +
+        "Be careful: they can also modify the same files concurrently."
+      );
+    case RUNTIME_MODE.WORKTREE:
+      return (
+        "In worktree runtime, sub-agents start from a forked workspace based on committed state. " +
+        "Uncommitted changes from the parent are not available. Commit any changes you want the sub-agent to consider before spawning a task."
+      );
+    case RUNTIME_MODE.DOCKER:
+      return (
+        "In Docker runtime, sub-agents start from a new workspace created from the repository's committed state. " +
+        "Uncommitted changes from the parent are not available. Commit any changes you want the sub-agent to consider before spawning a task."
+      );
+    case RUNTIME_MODE.DEVCONTAINER:
+      return (
+        "In devcontainer runtime, sub-agents start from a forked workspace based on committed state. " +
+        "Uncommitted changes from the parent are not available. Commit any changes you want the sub-agent to consider before spawning a task."
+      );
+    case RUNTIME_MODE.SSH:
+      return (
+        "In SSH runtime, sub-agents usually start from committed state. Some fallback fork paths may copy the working tree, but do not rely on that ambiguity. " +
+        "If the child must see your latest changes, commit them before spawning the task."
+      );
+    default:
+      return "Sub-agent visibility depends on runtime. If the child must see your latest work, commit it before spawning the task unless your runtime explicitly shares the working copy.";
+  }
+}
+
+export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): string {
+  return (
+    "Spawn a sub-agent task (child workspace). " +
+    "\n\nIMPORTANT: Whether a sub-agent can see uncommitted changes depends on the runtime. " +
+    `${getTaskRuntimeVisibilityGuidance(runtimeMode)} ` +
+    "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n or variants. " +
+    `Use n when you want several agents to try the same prompt independently. Use variants when you want several agents to run the same prompt template with a different ${TASK_VARIANT_PLACEHOLDER} substituted into each run. ` +
+    "Examples: solve GitHub issues 45, 32, and 69 with one shared issue-solving template; investigate a regression across commit windows like A..B and B..C with one shared investigation template; or split a review into frontend/backend/tests/docs lanes with one shared review template. " +
+    `For variants, keep the shared template in the prompt and put the per-lane difference into ${TASK_VARIANT_PLACEHOLDER}. ` +
+    "n and variants are mutually exclusive; omit both for a single task. Leave n and variants unset unless the developer explicitly asks for parallel sibling tasks, and prefer non-interfering sub-agents for grouped runs (for example read-only agents like explore). " +
+    "\n\nWhen the user explicitly asks for best-of-n work, the parent should begin with light preliminary analysis to extract shared context, constraints, or evaluation criteria that would otherwise be duplicated across children. " +
+    "Keep that pre-work lightweight: frame the task and provide useful starting points, but do not pre-solve the problem or over-constrain how the children reason about it. Then delegate the substantive analysis to the spawned sub-agents. " +
+    "Do not also do a full parallel analysis in the parent. Call task_await when you are ready to act on child output; do not await reflexively just because tasks are running. " +
+    "task_await returns as soon as the first awaited task completes by default (min_completed), so you can start dependent work on each result as it lands instead of blocking on the whole batch; for best-of-N synthesis that must compare every candidate, pass min_completed equal to the batch size (or use a foreground grouped spawn, below). " +
+    "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
+    "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
+    "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When grouped sibling tasks are requested via n or variants, the completed result includes one report per spawned task. " +
+    "If the foreground wait times out, returns queued/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
+    "If run_in_background is true, returns immediately with queued/running task metadata; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
+    "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
+    "Use run_in_background: true when launching multiple tasks in parallel so you can act on each as it completes via task_await (which returns on the first completion by default); a foreground grouped spawn (run_in_background: false) instead blocks until every sibling finishes and returns all reports at once. " +
+    "Do not call task_await in the same parallel tool-call batch; wait for the returned task metadata first. " +
+    "Use the bash tool to run shell commands."
+  );
+}
+
+const TaskToolAgentArgsSchema = z
+  .object({
+    // Prefer agentId. subagent_type is a deprecated alias for backwards compatibility.
+    agentId: TaskAgentIdSchema.nullish(),
+    subagent_type: SubagentTypeSchema.nullish(),
+    prompt: z.string().min(1),
+    title: z.string().min(1),
+    run_in_background: z.boolean().default(false),
+    n: TaskToolBestOfCountSchema.nullish().describe(
+      "Optional best-of count. Use n when several agents should try the same prompt independently. Mutually exclusive with variants; omit both for a single task. Only use grouped runs for sub-agents without interfering side effects, such as read-only agents like explore."
+    ),
+    variants: TaskToolVariantsSchema.nullish().describe(
+      `Optional labels for sibling runs of the same prompt template. Use variants when the task should be repeated across labeled lanes such as issue numbers, commit windows, or frontend/backend/tests/docs review lanes. Mutually exclusive with n. When provided, Mux launches one sibling per label and substitutes ${TASK_VARIANT_PLACEHOLDER} in the prompt.`
+    ),
+  })
+  .strict()
+  .superRefine((args, ctx) => {
+    const hasAgentId = typeof args.agentId === "string" && args.agentId.length > 0;
+    const hasSubagentType = typeof args.subagent_type === "string" && args.subagent_type.length > 0;
+
+    if (!hasAgentId && !hasSubagentType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide agentId (preferred) or subagent_type",
+        path: ["agentId"],
+      });
+      return;
+    }
+
+    // GPT models often send both fields with identical values — allow that.
+    // Only reject when they conflict, since the handler silently prefers agentId.
+    if (hasAgentId && hasSubagentType && args.agentId !== args.subagent_type) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agentId and subagent_type must match when both are provided",
+        path: ["agentId"],
+      });
+      return;
+    }
+
+    if (args.n != null && args.variants != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "n and variants are mutually exclusive",
+        path: ["variants"],
+      });
+    }
+
+    if (args.variants == null) {
+      return;
+    }
+
+    const uniqueVariants = new Set(args.variants);
+    if (uniqueVariants.size !== args.variants.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "variants must be unique",
+        path: ["variants"],
+      });
+    }
+
+    if (!args.prompt.includes(TASK_VARIANT_PLACEHOLDER)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `prompt must reference ${TASK_VARIANT_PLACEHOLDER} when variants are provided`,
+        path: ["prompt"],
+      });
+    }
+  });
+
+export const TaskToolArgsSchema = TaskToolAgentArgsSchema;
+
+const TaskToolSpawnedTaskSchema = z
+  .object({
+    taskId: z.string(),
+    status: z.enum(["queued", "running", "completed", "interrupted"]),
+    groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
+    label: z.string().optional(),
+  })
+  .strict();
+
+const TaskToolCompletedReportSchema = z
+  .object({
+    taskId: z.string(),
+    reportMarkdown: z.string(),
+    title: z.string().optional(),
+    agentId: z.string().optional(),
+    agentType: z.string().optional(),
+    groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
+    label: z.string().optional(),
+  })
+  .strict();
+
+export const TaskToolQueuedResultSchema = z
+  .object({
+    status: z.enum(["queued", "running"]),
+    taskId: z.string().optional(),
+    taskIds: z.array(z.string()).min(1).optional(),
+    tasks: z.array(TaskToolSpawnedTaskSchema).min(1).optional(),
+    reports: z.array(TaskToolCompletedReportSchema).min(1).optional(),
+    note: z
+      .string()
+      .min(1)
+      .describe("Additional guidance for the caller (e.g., use task_await to monitor progress)."),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const hasSingleTaskId = typeof value.taskId === "string" && value.taskId.trim().length > 0;
+    const hasTaskIds = Array.isArray(value.taskIds) && value.taskIds.length > 0;
+    const hasTasks = Array.isArray(value.tasks) && value.tasks.length > 0;
+
+    if (!hasSingleTaskId && !hasTaskIds && !hasTasks) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide taskId for single-task results or taskIds/tasks for grouped task results",
+        path: ["taskId"],
+      });
+    }
+  });
+
+export const TaskToolCompletedResultSchema = z
+  .object({
+    status: z.literal("completed"),
+    taskId: z.string().optional(),
+    taskIds: z.array(z.string()).min(1).optional(),
+    reportMarkdown: z.string().optional(),
+    title: z.string().optional(),
+    agentId: z.string().optional(),
+    agentType: z.string().optional(),
+    reports: z.array(TaskToolCompletedReportSchema).min(1).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const hasSingleTaskId = typeof value.taskId === "string" && value.taskId.trim().length > 0;
+    const hasSingleReport = typeof value.reportMarkdown === "string";
+    const hasReports = Array.isArray(value.reports) && value.reports.length > 0;
+
+    if (hasSingleTaskId !== hasSingleReport) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Single-task completed results must include both taskId and reportMarkdown",
+        path: hasSingleTaskId ? ["reportMarkdown"] : ["taskId"],
+      });
+    }
+
+    if (!hasSingleTaskId && !hasReports) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Provide taskId/reportMarkdown for single-task results or reports for grouped task results",
+        path: ["reports"],
+      });
+    }
+
+    const reports = value.reports;
+    if (hasReports && Array.isArray(reports)) {
+      const taskIds = value.taskIds;
+      if (Array.isArray(taskIds) && taskIds.length !== reports.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "taskIds length must match reports length when both are provided",
+          path: ["taskIds"],
+        });
+      }
+    }
+  });
+
+export const TaskToolResultSchema = z.discriminatedUnion("status", [
+  TaskToolQueuedResultSchema,
+  TaskToolCompletedResultSchema,
+]);
+
+// -----------------------------------------------------------------------------
+// task_await (await one or more sub-agent tasks)
+// -----------------------------------------------------------------------------
+
+export const TaskAwaitToolArgsSchema = z
+  .object({
+    task_ids: z
+      .array(z.string().min(1))
+      .nullish()
+      .describe(
+        "List of task IDs to await — use only real IDs returned by prior task, bash, or task_list tool results; never fabricate an ID. " +
+          "When omitted, waits for all active descendant tasks of the current workspace."
+      ),
+    filter: z
+      .string()
+      .nullish()
+      .describe(
+        "Optional regex to filter bash task output lines. By default, only matching lines are returned. " +
+          "When filter_exclude is true, matching lines are excluded instead. " +
+          "Non-matching lines are discarded and cannot be retrieved later."
+      ),
+    filter_exclude: z
+      .boolean()
+      .nullish()
+      .describe(
+        "When true, lines matching 'filter' are excluded instead of kept. " +
+          "Requires 'filter' to be set."
+      ),
+    timeout_secs: z
+      .number()
+      .min(0)
+      .nullish()
+      .default(600)
+      .describe(
+        "Maximum time to wait in seconds for each task. " +
+          "For bash tasks, this waits for NEW output (or process exit). " +
+          "If exceeded, the result returns status=queued|running|awaiting_report (task is still active). " +
+          "Defaults to 600 seconds (10 minutes) if not specified. " +
+          "Set to 0 for a non-blocking status check."
+      ),
+    min_completed: z
+      .number()
+      .int()
+      .min(1)
+      .nullish()
+      .describe(
+        "Number of awaited tasks that must complete before this call returns. " +
+          "Defaults to 1, so by default task_await returns as soon as the FIRST awaited task completes, " +
+          "letting you act on it while the rest keep running. " +
+          "The result still includes every task complete at that moment plus current status (running/queued) for the rest. " +
+          "Tasks that have not yet completed keep running and remain re-awaitable on a later task_await call. " +
+          "Raise this (e.g. set it to the total number of awaited tasks) when you genuinely need more before proceeding — " +
+          "for example best-of-N synthesis that must compare every candidate. " +
+          "Clamped to the number of awaited tasks; values above that behave like 'wait for all'."
+      ),
+  })
+  .strict()
+  .superRefine((args, ctx) => {
+    if (args.filter_exclude && !args.filter) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "filter_exclude requires filter to be set",
+        path: ["filter_exclude"],
+      });
+    }
+  });
+
+export const SubagentGitPatchArtifactStatusSchema = z.enum([
+  "pending",
+  "ready",
+  "failed",
+  "skipped",
+]);
+
+export const SubagentGitProjectPatchArtifactSchema = z
+  .object({
+    projectPath: z.string(),
+    projectName: z.string(),
+    storageKey: z.string(),
+    status: SubagentGitPatchArtifactStatusSchema,
+    baseCommitSha: z.string().optional(),
+    headCommitSha: z.string().optional(),
+    commitCount: z.number().int().nonnegative().optional(),
+    mboxPath: z.string().optional(),
+    error: z.string().optional(),
+    appliedAtMs: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export const SubagentGitPatchArtifactSchema = z
+  .object({
+    childTaskId: z.string(),
+    parentWorkspaceId: z.string(),
+    createdAtMs: z.number().int().nonnegative(),
+    updatedAtMs: z.number().int().nonnegative().optional(),
+    status: SubagentGitPatchArtifactStatusSchema,
+    projectArtifacts: z.array(SubagentGitProjectPatchArtifactSchema),
+    readyProjectCount: z.number().int().nonnegative(),
+    failedProjectCount: z.number().int().nonnegative(),
+    skippedProjectCount: z.number().int().nonnegative(),
+    totalCommitCount: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type SubagentGitProjectPatchArtifact = z.infer<typeof SubagentGitProjectPatchArtifactSchema>;
+export type SubagentGitPatchArtifact = z.infer<typeof SubagentGitPatchArtifactSchema>;
+
+const TaskAwaitToolArtifactsSchema = z
+  .object({
+    gitFormatPatch: SubagentGitPatchArtifactSchema.optional(),
+  })
+  .strict();
+
+export const TaskAwaitToolCompletedResultSchema = z
+  .object({
+    status: z.literal("completed"),
+    taskId: z.string(),
+    reportMarkdown: z.string(),
+    title: z.string().optional(),
+    output: z.string().optional(),
+    elapsed_ms: z.number().optional(),
+    exitCode: z.number().optional(),
+    note: z.string().optional(),
+    artifacts: TaskAwaitToolArtifactsSchema.optional(),
+  })
+  .strict();
+
+export const TaskAwaitToolActiveResultSchema = z
+  .object({
+    status: z.enum(["queued", "running", "awaiting_report"]),
+    taskId: z.string(),
+    output: z.string().optional(),
+    elapsed_ms: z.number().optional(),
+    note: z.string().optional(),
+  })
+  .strict();
+
+export const TaskAwaitToolNotFoundResultSchema = z
+  .object({
+    status: z.literal("not_found"),
+    taskId: z.string(),
+    activeTaskIds: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export const TaskAwaitToolInvalidScopeResultSchema = z
+  .object({
+    status: z.literal("invalid_scope"),
+    taskId: z.string(),
+    activeTaskIds: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export const TaskAwaitToolErrorResultSchema = z
+  .object({
+    status: z.literal("error"),
+    taskId: z.string(),
+    error: z.string(),
+  })
+  .strict();
+
+export const TaskAwaitToolResultSchema = z
+  .object({
+    results: z.array(
+      z.discriminatedUnion("status", [
+        TaskAwaitToolCompletedResultSchema,
+        TaskAwaitToolActiveResultSchema,
+        TaskAwaitToolNotFoundResultSchema,
+        TaskAwaitToolInvalidScopeResultSchema,
+        TaskAwaitToolErrorResultSchema,
+      ])
+    ),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// task_apply_git_patch (apply git-format-patch artifact via git am)
+// -----------------------------------------------------------------------------
+
+export const TaskApplyGitPatchToolArgsSchema = z
+  .object({
+    task_id: z.string().min(1).describe("Child task ID whose patch artifact should be applied"),
+    project_path: z
+      .string()
+      .nullish()
+      .describe("When provided, apply only the patch artifact for this project path."),
+    dry_run: z
+      .boolean()
+      .nullish()
+      .describe(
+        "When true, attempt to apply the patch in a temporary git worktree and then discard it (does not modify the current workspace)."
+      ),
+    three_way: z.boolean().nullish().default(true).describe("When true, run git am with --3way"),
+    force: z
+      .boolean()
+      .nullish()
+      .describe(
+        "When true, allow apply even if the patch was previously applied (and skip clean-tree checks)."
+      ),
+  })
+  .strict();
+
+const TaskApplyGitPatchAppliedCommitSchema = z
+  .object({
+    // Commit subject line (always stable, even across dry-run vs real apply)
+    subject: z.string().min(1),
+    // Optional SHA (omitted for dry-run because the commit IDs may differ when applied for real)
+    sha: z.string().min(1).optional(),
+  })
+  .strict();
+
+const TaskApplyGitPatchProjectResultStatusSchema = z.enum(["applied", "failed", "skipped"]);
+
+export const TaskApplyGitPatchProjectResultSchema = z
+  .object({
+    projectPath: z.string(),
+    projectName: z.string(),
+    status: TaskApplyGitPatchProjectResultStatusSchema,
+    appliedCommits: z.array(TaskApplyGitPatchAppliedCommitSchema).optional(),
+    headCommitSha: z.string().optional(),
+    error: z.string().optional(),
+    failedPatchSubject: z.string().optional(),
+    conflictPaths: z.array(z.string()).optional(),
+    note: z.string().optional(),
+  })
+  .strict();
+
+export const TaskApplyGitPatchToolResultSchema = z.union([
+  z
+    .object({
+      success: z.literal(true),
+      taskId: z.string(),
+      projectResults: z.array(TaskApplyGitPatchProjectResultSchema),
+      appliedCommits: z.array(TaskApplyGitPatchAppliedCommitSchema).optional(),
+      headCommitSha: z.string().optional(),
+      dryRun: z.boolean().optional(),
+      note: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      success: z.literal(false),
+      taskId: z.string(),
+      error: z.string(),
+      projectResults: z.array(TaskApplyGitPatchProjectResultSchema).optional(),
+      dryRun: z.boolean().optional(),
+      appliedCommits: z.array(TaskApplyGitPatchAppliedCommitSchema).optional(),
+      headCommitSha: z.string().optional(),
+      conflictPaths: z.array(z.string()).optional(),
+      failedPatchSubject: z.string().optional(),
+      note: z.string().optional(),
+    })
+    .strict(),
+]);
+
+// -----------------------------------------------------------------------------
+// task_terminate (terminate one or more sub-agent tasks)
+// -----------------------------------------------------------------------------
+export const TaskTerminateToolArgsSchema = z
+  .object({
+    task_ids: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe(
+        "List of task IDs to terminate. Each must be a descendant sub-agent task of the current workspace."
+      ),
+  })
+  .strict();
+
+export const TaskTerminateToolTerminatedResultSchema = z
+  .object({
+    status: z.literal("terminated"),
+    taskId: z.string(),
+    terminatedTaskIds: z
+      .array(z.string())
+      .describe("All terminated task IDs (includes descendants)"),
+  })
+  .strict();
+
+export const TaskTerminateToolNotFoundResultSchema = z
+  .object({
+    status: z.literal("not_found"),
+    taskId: z.string(),
+    activeTaskIds: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export const TaskTerminateToolInvalidScopeResultSchema = z
+  .object({
+    status: z.literal("invalid_scope"),
+    taskId: z.string(),
+    activeTaskIds: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export const TaskTerminateToolErrorResultSchema = z
+  .object({
+    status: z.literal("error"),
+    taskId: z.string(),
+    error: z.string(),
+  })
+  .strict();
+
+export const TaskTerminateToolResultSchema = z
+  .object({
+    results: z.array(
+      z.discriminatedUnion("status", [
+        TaskTerminateToolTerminatedResultSchema,
+        TaskTerminateToolNotFoundResultSchema,
+        TaskTerminateToolInvalidScopeResultSchema,
+        TaskTerminateToolErrorResultSchema,
+      ])
+    ),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// task_list (list descendant sub-agent tasks)
+// -----------------------------------------------------------------------------
+
+const TaskListStatusSchema = z.enum([
+  "queued",
+  "running",
+  "awaiting_report",
+  "interrupted",
+  "reported",
+]);
+const TaskListThinkingLevelSchema = z.enum(THINKING_LEVELS);
+
+export const TaskListToolArgsSchema = z
+  .object({
+    statuses: z
+      .array(TaskListStatusSchema)
+      .nullish()
+      .describe(
+        "Task statuses to include. Defaults to active tasks: queued, running, awaiting_report."
+      ),
+  })
+  .strict();
+
+export const TaskListToolTaskSchema = z
+  .object({
+    taskId: z.string(),
+    status: TaskListStatusSchema,
+    parentWorkspaceId: z.string(),
+    agentType: z.string().optional(),
+    workspaceName: z.string().optional(),
+    title: z.string().optional(),
+    createdAt: z.string().optional(),
+    modelString: z.string().optional(),
+    thinkingLevel: TaskListThinkingLevelSchema.optional(),
+    depth: z.number().int().min(0),
+  })
+  .strict();
+
+export const TaskListToolResultSchema = z
+  .object({
+    tasks: z.array(TaskListToolTaskSchema),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// agent_report (explicit subagent -> parent report)
+// -----------------------------------------------------------------------------
+
+export const AgentReportToolArgsSchema = z
+  .object({
+    reportMarkdown: z.string().min(1),
+    title: z.string().nullish(),
+  })
+  .strict();
+
+export const AgentReportToolResultSchema = z.object({ success: z.literal(true) }).strict();
+const FILE_TOOL_PATH = z
+  .string()
+  .describe("Path to the file to edit (absolute or relative to the current workspace)");
+
+/**
+ * Zod preprocessor: normalizes legacy `file_path` / `filePath` keys to canonical `path`.
+ * Signature is `unknown → unknown` because `z.preprocess` requires it.
+ */
+function normalizeFilePath(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+
+  const obj = value as Record<string, unknown>;
+
+  // Canonical `path` already present — let schema validation handle it.
+  if ("path" in obj) return value;
+
+  const resolved = extractToolFilePath(value);
+  if (resolved == null) return value;
+
+  const { file_path: _, filePath: __, ...rest } = obj;
+  return { ...rest, path: resolved };
+}
+
+interface ToolSchema {
+  name: string;
+  description: string;
+  inputSchema: {
+    type: string;
+    properties: Record<string, unknown>;
+    required: string[];
+  };
+}
+
+// -----------------------------------------------------------------------------
+// propose_name (workspace name generation)
+// -----------------------------------------------------------------------------
+
+export const ProposeNameToolArgsSchema = z.object({
+  name: z
+    .string()
+    .regex(/^[a-z0-9-]+$/)
+    .min(2)
+    .max(20)
+    .describe(
+      "Codebase area (1-2 words, max 15 chars): lowercase, hyphens only, e.g. 'sidebar', 'auth', 'config'"
+    ),
+  title: z
+    .string()
+    .min(5)
+    .max(60)
+    .describe("Human-readable title (2-5 words): verb-noun format like 'Fix plan mode'"),
+});
+
+// -----------------------------------------------------------------------------
+// propose_status (sidebar agent status generation)
+// -----------------------------------------------------------------------------
+
+export const ProposeStatusToolArgsSchema = z.object({
+  emoji: z
+    .string()
+    .min(1)
+    .max(8)
+    .describe(
+      "A single emoji that represents the agent's current activity (e.g. '🔍', '🛠️', '🧪', '📝')"
+    ),
+  message: z
+    .string()
+    .min(2)
+    .max(60)
+    .describe(
+      "A short verb-led phrase (2-6 words) describing what the agent is currently working on, in sentence case, no punctuation, no quotes (e.g. 'Investigating crash', 'Implementing sidebar status')"
+    ),
+});
+
+const MuxConfigFileSchema = z.enum(["providers", "config"]);
+
+/**
+ * Rename a string-typed alias field to its canonical name on a plain object,
+ * dropping the alias to keep downstream tool args canonical. No-op if the
+ * canonical field is already a string or the alias is missing/non-string.
+ *
+ * Used by the bash tool's `preprocess` to normalize quirky model emissions
+ * (e.g. `command` → `script`, `description` → `display_name`) without
+ * duplicating the same destructure/spread shape per alias.
+ */
+function renameAliasField(
+  obj: Record<string, unknown>,
+  alias: string,
+  canonical: string
+): Record<string, unknown> {
+  if (typeof obj[canonical] === "string") return obj;
+  if (typeof obj[alias] !== "string") return obj;
+  const { [alias]: aliasValue, ...rest } = obj;
+  return { ...rest, [canonical]: aliasValue };
+}
+
+/**
+ * Tool definitions: single source of truth
+ * Key = tool name, Value = { description, schema }
+ */
+export const TOOL_DEFINITIONS = {
+  image_generate: {
+    description:
+      "Generate raster image artifacts using Mux's experimental Image Tools configuration. " +
+      "Use only when the user explicitly asks to generate or create image artifacts. " +
+      "Do not call for ordinary code, design discussion, or prompt brainstorming. " +
+      "Generated full-resolution images are saved as runtime artifacts; copy selected final assets into the workspace when needed.",
+    schema: z
+      .object({
+        prompt: z.string().min(1).describe("Prompt describing the image(s) to generate"),
+        n: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe(
+            "Number of images to generate. Defaults to 1 and must not exceed the user's configured Image Tools maximum."
+          ),
+        quality: z
+          .enum(IMAGE_GENERATION_QUALITY_VALUES)
+          .nullish()
+          .describe("Optional generation quality. Defaults to the provider/model default."),
+        outputFormat: z
+          .enum(IMAGE_GENERATION_OUTPUT_FORMAT_VALUES)
+          .nullish()
+          .describe("Optional output format. Defaults to png."),
+      })
+      .strict(),
+  },
+  image_edit: {
+    description:
+      "Edit one existing local PNG, JPEG, or WebP image using Mux's experimental Image Tools configuration. " +
+      "Use only when image editing is requested or clearly required by the current task; do not upload incidental image files. " +
+      "The source image is uploaded as-is, including embedded metadata, to the configured image provider. " +
+      "Do not edit images containing secrets or sensitive visual/metadata content. " +
+      "Edited full-resolution images are saved as runtime artifacts; copy selected final assets into the workspace when needed.",
+    schema: z
+      .object({
+        sourcePath: z.string().min(1).describe("Path to the existing source image to edit"),
+        prompt: z.string().min(1).describe("Edit prompt describing the desired image changes"),
+        n: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe(
+            "Number of edited variants to create. Defaults to 1; request multiple variants only when the user asks or variants are clearly useful."
+          ),
+        quality: z
+          .enum(IMAGE_GENERATION_QUALITY_VALUES)
+          .nullish()
+          .describe("Optional edit quality. Defaults to the provider/model default."),
+        outputFormat: z
+          .enum(IMAGE_GENERATION_OUTPUT_FORMAT_VALUES)
+          .nullish()
+          .describe("Optional output format. Defaults to png."),
+      })
+      .strict(),
+  },
+  bash: {
+    description:
+      "Execute a bash command with a configurable timeout. " +
+      `Output is strictly limited to ${BASH_HARD_MAX_LINES} lines, ${BASH_MAX_LINE_BYTES} bytes per line, and ${BASH_MAX_TOTAL_BYTES} bytes total. ` +
+      "Commands that exceed these limits will FAIL with an error (no partial output returned). " +
+      "Be conservative: use 'head', 'tail', 'grep', or other filters to limit output before running commands. " +
+      "Large outputs may be automatically filtered; when this happens, the result includes a note explaining what was kept and (if available) where the full output was saved.\n" +
+      "On Windows this runs in Git Bash; to discard output use `>/dev/null` (not `>nul`).",
+    schema: z.preprocess(
+      (value) => {
+        // Compatibility shims for models that emit alias fields:
+        // - some models emit `command` instead of `script`
+        // - DeepSeek v4 emits `description` instead of `display_name`
+        // Normalize both so downstream code (tool runner + UI) sees canonical args.
+        // Aliases are intentionally undocumented in the public schema; we don't
+        // want to invite other models to use the wrong field.
+        if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+
+        let obj = value as Record<string, unknown>;
+        obj = renameAliasField(obj, "command", "script");
+        obj = renameAliasField(obj, "description", "display_name");
+        return obj;
+      },
+      z.object({
+        script: z.string().describe("The bash script/command to execute"),
+        model_intent: z
+          .string()
+          .nullish()
+          .describe(
+            "Optional. Short user-facing purpose for this command, shown next to the command in collapsed chat. " +
+              "Use a present-participle phrase in plain English, under 100 characters. " +
+              "Do not repeat the command or include duration, because Mux appends those. " +
+              "Examples: 'Running the unit tests', 'Checking repository state', 'Inspecting build output'."
+          ),
+        timeout_secs: z
+          .number()
+          .positive()
+          .describe(
+            "Timeout in seconds. For foreground: max execution time before kill. " +
+              "For background: max lifetime before auto-termination. " +
+              "Start small and increase on retry; avoid large initial values to keep UX responsive"
+          ),
+        run_in_background: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Run this command in the background without blocking. " +
+              "Use for processes running >5s (dev servers, builds, file watchers). " +
+              "Do NOT use for quick commands (<5s), interactive processes (no stdin support), " +
+              "or processes requiring real-time output (use foreground with larger timeout instead). " +
+              "Returns immediately with a taskId (bash:<processId>) and backgroundProcessId. " +
+              "Read output with task_await (returns only new output since last check). " +
+              "Terminate with task_terminate using the taskId. " +
+              "List active tasks with task_list. " +
+              "Process persists until timeout_secs expires, terminated, or workspace is removed." +
+              "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
+              "Do not call task_await in the same parallel tool-call batch; wait for the returned taskId first. " +
+              "When you actually need the output, read it with task_await; do not poll task_await just because the process is still running."
+          ),
+        display_name: z
+          .string()
+          .describe(
+            "Human-readable name for the process (e.g., 'Dev Server', 'TypeCheck Watch'). " +
+              "Required for all bash invocations since any process can be sent to background."
+          ),
+      })
+    ),
+  },
+  file_read: {
+    description:
+      "Read the contents of a file from the file system. Read as little as possible to complete the task. " +
+      "Content is returned with line numbers prepended in the format '<line_number>\\t<content>'. " +
+      "These line numbers are NOT part of the actual file content and must not be included when editing files.",
+    schema: z.preprocess(
+      normalizeFilePath,
+      z.object({
+        path: z.string().describe("The path to the file to read (absolute or relative)"),
+        offset: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe("1-based starting line number (optional, defaults to 1)"),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe(
+            "Number of lines to return from offset (optional, returns all if not specified)"
+          ),
+      })
+    ),
+  },
+  attach_file: {
+    description:
+      "Attach a supported file from the filesystem so later model steps receive it as a real attachment instead of a huge base64 JSON blob. " +
+      "Accepts absolute or relative paths, including files outside the workspace. " +
+      "Currently supports raster images, SVG, and PDF as model attachments. Markdown files are shown to the user for preview/download only. Unsupported file types are shown to the user in chat when possible, but only a notice is sent to the model.",
+    schema: z.preprocess(
+      normalizeFilePath,
+      z
+        .object({
+          path: z.string().describe("The path to the file to attach (absolute or relative)"),
+          mediaType: z
+            .string()
+            .nullish()
+            .describe("Optional media type override when the filename/extension is ambiguous."),
+          filename: z
+            .string()
+            .nullish()
+            .describe("Optional filename override to present to the model."),
+        })
+        .strict()
+    ),
+  },
+  desktop_screenshot: {
+    description:
+      "Capture a screenshot of the desktop. " +
+      "Optionally accepts scaledWidth and scaledHeight hints for downstream consumers while still capturing at the desktop's actual resolution.",
+    schema: z
+      .object({
+        scaledWidth: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe("Optional scaled width hint in pixels for downstream consumers."),
+        scaledHeight: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe("Optional scaled height hint in pixels for downstream consumers."),
+      })
+      .strict(),
+  },
+  desktop_move_mouse: {
+    description: "Move the desktop mouse cursor to the provided screen coordinates.",
+    schema: z
+      .object({
+        x: z.number().int().describe("Target X coordinate in screen pixels."),
+        y: z.number().int().describe("Target Y coordinate in screen pixels."),
+      })
+      .strict(),
+  },
+  desktop_click: {
+    description:
+      "Click on the desktop at the provided screen coordinates. Defaults to the left mouse button when button is omitted.",
+    schema: z
+      .object({
+        x: z.number().int().describe("Target X coordinate in screen pixels."),
+        y: z.number().int().describe("Target Y coordinate in screen pixels."),
+        button: z
+          .enum(["left", "right"])
+          .nullish()
+          .describe("Optional mouse button to click. Defaults to left."),
+      })
+      .strict(),
+  },
+  desktop_double_click: {
+    description:
+      "Double-click on the desktop at the provided screen coordinates. Defaults to the left mouse button when button is omitted.",
+    schema: z
+      .object({
+        x: z.number().int().describe("Target X coordinate in screen pixels."),
+        y: z.number().int().describe("Target Y coordinate in screen pixels."),
+        button: z
+          .enum(["left"])
+          .nullish()
+          .describe("Optional mouse button to double-click. Defaults to left."),
+      })
+      .strict(),
+  },
+  desktop_drag: {
+    description: "Drag on the desktop from one screen position to another.",
+    schema: z
+      .object({
+        startX: z.number().int().describe("Starting X coordinate in screen pixels."),
+        startY: z.number().int().describe("Starting Y coordinate in screen pixels."),
+        endX: z.number().int().describe("Ending X coordinate in screen pixels."),
+        endY: z.number().int().describe("Ending Y coordinate in screen pixels."),
+      })
+      .strict(),
+  },
+  desktop_scroll: {
+    description: "Scroll on the desktop at the provided screen coordinates.",
+    schema: z
+      .object({
+        x: z.number().int().describe("Target X coordinate in screen pixels."),
+        y: z.number().int().describe("Target Y coordinate in screen pixels."),
+        deltaX: z.number().int().nullish().describe("Optional horizontal scroll delta in pixels."),
+        deltaY: z.number().int().describe("Vertical scroll delta in pixels."),
+      })
+      .strict(),
+  },
+  desktop_type: {
+    description: "Type text into the active desktop input target.",
+    schema: z
+      .object({
+        text: z.string().describe("Text to type into the active desktop target."),
+      })
+      .strict(),
+  },
+  desktop_key_press: {
+    description:
+      'Press a desktop key or key combination such as "ctrl+c", "Return", or "cmd+shift+p".',
+    schema: z
+      .object({
+        key: z.string().describe("Key or key combination to press on the desktop."),
+      })
+      .strict(),
+  },
+  mux_agents_read: {
+    description:
+      "Read the AGENTS.md instructions file. In a project workspace, reads the project's AGENTS.md. " +
+      "In the system workspace, reads the global ~/.mux/AGENTS.md.",
+    schema: z.object({}).strict(),
+  },
+  mux_agents_write: {
+    description:
+      "Write the AGENTS.md instructions file. In a project workspace, writes the project's AGENTS.md. " +
+      "In the system workspace, writes the global ~/.mux/AGENTS.md. " +
+      "Requires explicit confirmation via confirm: true.",
+    schema: z
+      .object({
+        newContent: z.string().describe("The full new contents of the AGENTS.md file"),
+        confirm: z
+          .boolean()
+          .describe(
+            "Must be true to apply the write. The agent should ask the user for confirmation first."
+          ),
+      })
+      .strict(),
+  },
+  mux_config_read: {
+    description:
+      "Read the mux configuration file. Returns the current configuration with secrets redacted. " +
+      "Use 'providers' for ~/.mux/providers.jsonc (API provider settings) or 'config' for ~/.mux/config.json (app settings).",
+    schema: z
+      .object({
+        file: MuxConfigFileSchema.describe("Which configuration file to read"),
+        path: ConfigMutationPathSchema.nullish().describe(
+          "Optional path segments to read a specific nested value. If omitted, returns the full config."
+        ),
+      })
+      .strict(),
+  },
+  mux_config_write: {
+    description:
+      "Write to the mux configuration file. Applies one or more set/delete operations and validates the full document before writing. " +
+      "Use 'providers' for ~/.mux/providers.jsonc or 'config' for ~/.mux/config.json. " +
+      "Requires explicit confirmation via confirm: true.",
+    schema: z
+      .object({
+        file: MuxConfigFileSchema.describe("Which configuration file to write"),
+        operations: ConfigOperationsSchema.describe("Operations to apply to the config document"),
+        confirm: z
+          .boolean()
+          .describe("Must be true to apply the write. Ask the user for confirmation first."),
+      })
+      .strict(),
+  },
+  agent_skill_read: {
+    description:
+      "Load an Agent Skill's SKILL.md (YAML frontmatter + markdown body) by name. " +
+      "Skills are discovered from <projectRoot>/.mux/skills/<name>/SKILL.md, <projectRoot>/.agents/skills/<name>/SKILL.md, ~/.mux/skills/<name>/SKILL.md, and ~/.agents/skills/<name>/SKILL.md.",
+    schema: z
+      .object({
+        name: SkillNameSchema.describe("Skill name (directory name under the skills root)"),
+      })
+      .strict(),
+  },
+  agent_skill_read_file: {
+    description:
+      "Read a file within an Agent Skill directory. " +
+      "filePath must be relative to the skill directory (no absolute paths, no ~, no .. traversal). " +
+      "Supports offset/limit like file_read.",
+    schema: z
+      .object({
+        name: SkillNameSchema.describe("Skill name (directory name under the skills root)"),
+        filePath: z
+          .string()
+          .min(1)
+          .describe("Path to the file within the skill directory (relative)"),
+        offset: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe("1-based starting line number (optional, defaults to 1)"),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe(
+            "Number of lines to return from offset (optional, returns all if not specified)"
+          ),
+      })
+      .strict(),
+  },
+  agent_skill_list: {
+    description:
+      "List available skills. In a project workspace, lists project skills from .mux/skills/ and legacy/universal .agents/skills/, plus global skills from ~/.mux/skills/ and legacy/universal ~/.agents/skills/, each tagged with its scope. In the system workspace, lists global skills only.",
+    schema: z
+      .object({
+        includeUnadvertised: z
+          .boolean()
+          .nullish()
+          .describe("When true, includes skills with advertise: false"),
+      })
+      .strict(),
+  },
+  agent_skill_write: {
+    description:
+      "Create or update a file within the contextual skills directory. In a project workspace, writes under .mux/skills/<name>/. In the system workspace, writes under ~/.mux/skills/<name>/. " +
+      "When writing SKILL.md, content is validated as a skill definition and frontmatter.name is aligned to the skill name argument.",
+    schema: z
+      .object({
+        name: SkillNameSchema.describe("Skill name (directory name under the global skills root)"),
+        filePath: z
+          .string()
+          .min(1)
+          .nullish()
+          .describe("Relative path within skill directory. Defaults to SKILL.md"),
+        content: z.string().min(1).describe("File content to write"),
+      })
+      .strict(),
+  },
+  agent_skill_delete: {
+    description:
+      "Delete either a file within the contextual skills directory or the entire skill directory. In a project workspace, deletes from .mux/skills/. In the system workspace, deletes from ~/.mux/skills/. " +
+      "Requires confirm: true.",
+    schema: z
+      .object({
+        name: SkillNameSchema.describe("Skill name to delete"),
+        target: z
+          .enum(["file", "skill"])
+          .nullish()
+          .describe(
+            "Deletion target: 'file' to delete a specific file, 'skill' to remove the entire skill directory (defaults to file)"
+          ),
+        filePath: z
+          .string()
+          .min(1)
+          .nullish()
+          .describe(
+            "Relative file path within the skill directory to delete. Required when target is 'file'"
+          ),
+        confirm: z.boolean().describe("Must be true to confirm deletion"),
+      })
+      .strict(),
+  },
+
+  skills_catalog_search: {
+    description:
+      "Search the skills.sh community catalog for agent skills. " +
+      "Returns a list of matching skills with their IDs, names, source repos, and install counts. " +
+      "Use skills_catalog_read to preview a skill's full content before installing.",
+    schema: z
+      .object({
+        query: z.string().describe("Search query to find skills in the catalog"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .nullish()
+          .describe("Maximum number of results to return (default: 10)"),
+      })
+      .strict(),
+  },
+
+  skills_catalog_read: {
+    description:
+      "Read the full SKILL.md content for a skill from the skills.sh community catalog. " +
+      "Use this to preview a skill's documentation before installing it with agent_skill_write. " +
+      "The owner and repo come from skills_catalog_search results.",
+    schema: z
+      .object({
+        owner: z.string().describe("GitHub owner from the search result (e.g. 'vercel-labs')"),
+        repo: z
+          .string()
+          .describe("GitHub repository name from the search result (e.g. 'agent-skills')"),
+        skillId: SkillNameSchema.describe("Skill ID from the search result"),
+      })
+      .strict(),
+  },
+
+  file_edit_replace_string: {
+    description:
+      "⚠️ CRITICAL: Always check tool results - edits WILL fail if old_string is not found or unique. Do not proceed with dependent operations (commits, pushes, builds) until confirming success.\n\n" +
+      "Apply one or more edits to a file by replacing exact text matches. All edits are applied sequentially. Each old_string must be unique in the file unless replace_count > 1 or replace_count is -1.",
+    schema: z.preprocess(
+      normalizeFilePath,
+      z.object({
+        path: FILE_TOOL_PATH,
+        old_string: z
+          .string()
+          .describe(
+            "The exact text to replace (must be unique in file if replace_count is 1). Include enough context (indentation, surrounding lines) to make it unique."
+          ),
+        new_string: z.string().describe("The replacement text"),
+        replace_count: z
+          .number()
+          .int()
+          .nullish()
+          .describe(
+            "Number of occurrences to replace (default: 1). Use -1 to replace all occurrences. If 1, old_string must be unique in the file."
+          ),
+      })
+    ),
+  },
+  file_edit_replace_lines: {
+    description:
+      "⚠️ CRITICAL: Always check tool results - edits WILL fail if line numbers are invalid or file content has changed. Do not proceed with dependent operations (commits, pushes, builds) until confirming success.\n\n" +
+      "Replace a range of lines in a file. Use this for line-based edits when you know the exact line numbers to modify.",
+    schema: z.preprocess(
+      normalizeFilePath,
+      z.object({
+        path: FILE_TOOL_PATH,
+        start_line: z.number().int().min(1).describe("1-indexed start line (inclusive) to replace"),
+        end_line: z.number().int().min(1).describe("1-indexed end line (inclusive) to replace"),
+        new_lines: z
+          .array(z.string())
+          .describe("Replacement lines. Provide an empty array to delete the specified range."),
+        expected_lines: z
+          .array(z.string())
+          .nullish()
+          .describe(
+            "Optional safety check. When provided, the current lines in the specified range must match exactly."
+          ),
+      })
+    ),
+  },
+  file_edit_insert: {
+    description:
+      "Insert content into a file using substring guards. " +
+      "Provide exactly one of insert_before or insert_after to anchor the operation when editing an existing file. " +
+      "When the file does not exist or is empty, it is populated automatically without guards. " +
+      "Optional before/after substrings must uniquely match surrounding content. " +
+      "Avoid short guards like `}` or `}\\n` that match multiple locations — " +
+      `use longer patterns like full function signatures or unique comments. ${TOOL_EDIT_WARNING}`,
+    schema: z.preprocess(
+      normalizeFilePath,
+      z
+        .object({
+          path: FILE_TOOL_PATH,
+          insert_before: z
+            .string()
+            .min(1)
+            .nullish()
+            .describe(
+              "Anchor text to insert before. Content will be placed immediately before this substring."
+            ),
+          insert_after: z
+            .string()
+            .min(1)
+            .nullish()
+            .describe(
+              "Anchor text to insert after. Content will be placed immediately after this substring."
+            ),
+          content: z.string().describe("The content to insert"),
+        })
+        .refine((data) => !(data.insert_before != null && data.insert_after != null), {
+          message: "Provide only one of insert_before or insert_after (not both).",
+          path: ["insert_before"],
+        })
+    ),
+  },
+  advisor: {
+    description: ADVISOR_TOOL_DESCRIPTION,
+    schema: AdvisorToolInputSchema,
+  },
+  ask_user_question: {
+    description:
+      "Ask 1–4 multiple-choice questions (with optional multi-select) and wait for the user's answers. " +
+      "This tool is intended for plan mode. " +
+      "Use it ONLY for genuinely balanced decisions that hinge on user-specific context, preference, or information not present in the conversation or repo. " +
+      "Do NOT use it when you already have a reasonable recommendation: if one option is clearly best, proceed with it (stating the assumption) instead of asking — surfacing a question you can answer yourself defeats the purpose. " +
+      "When you do ask, keep the options genuinely open; do not steer toward a single 'recommended' choice. " +
+      "Do not output a list of open questions; ask them via this tool instead. " +
+      "Each question must include 2–4 options; an 'Other' choice is provided automatically.",
+    schema: AskUserQuestionToolArgsSchema,
+  },
+  // `internal` tools are excluded from user-facing tool docs (hooks/tools.mdx
+  // env-var tables) because users can't write hooks for them — they run via
+  // bespoke streamText paths in their own services, not the standard tool
+  // execution pipeline. See gen_docs.ts.
+  propose_name: {
+    description:
+      "Propose a workspace name and title. You MUST call this tool exactly once with your chosen name and title. " +
+      "Do not emit a text response; call this tool immediately.",
+    schema: ProposeNameToolArgsSchema,
+    internal: true,
+  },
+  propose_status: {
+    description:
+      "Propose a short sidebar status (emoji + 2-6 word verb-led phrase) summarizing what the agent is currently doing. " +
+      "You MUST call this tool exactly once. Do not emit a text response; call this tool immediately.",
+    schema: ProposeStatusToolArgsSchema,
+    internal: true,
+  },
+  propose_plan: {
+    description:
+      "Signal that your plan is complete and ready for user approval. " +
+      "This tool reads the plan from the plan file you wrote. " +
+      "You must write your plan to the plan file before calling this tool. " +
+      "After calling this tool, do not paste the plan contents or mention the plan file path; the UI already shows the full plan.",
+    schema: z.object({}),
+  },
+  task: {
+    description: buildTaskToolDescription(undefined),
+    schema: TaskToolArgsSchema,
+  },
+  task_apply_git_patch: {
+    description:
+      "Apply a completed sub-agent task's git-format-patch artifact to the current workspace using `git am`. " +
+      "This is an explicit integration step: mux will not auto-apply patches.",
+    schema: TaskApplyGitPatchToolArgsSchema,
+  },
+  task_await: {
+    description:
+      "Wait for one or more tasks to produce output. " +
+      "\n\nWHEN TO USE: only call task_await when the current user request depends on a task's output, or when synthesis/integration of a previously-spawned task is the next logical step. " +
+      "Do not call task_await solely because active tasks exist; for unrelated user messages, respond directly and let tasks continue in the background. " +
+      "\n\nIMPORTANT: Do not call task_await in the same parallel tool-call batch as task or bash — " +
+      "the taskId is not available until the spawning tool returns. " +
+      "Always wait for the task/bash tool result first, then call task_await in a subsequent step. " +
+      "When omitting task_ids to await all active tasks, ensure at least one background task was already spawned in a prior step. " +
+      "\n\nAgent tasks return reports when completed. " +
+      "Bash tasks return incremental output while running and a final reportMarkdown when they exit. " +
+      "For bash tasks, you may optionally pass filter/filter_exclude to include/exclude output lines by regex. " +
+      "WARNING: when using filter, non-matching lines are permanently discarded. " +
+      "Use this tool to WAIT; do not poll task_list in a loop to wait for task completion (that is misuse and wastes tool calls). " +
+      "\n\nBy default (min_completed=1) this returns as soon as the FIRST awaited task completes, so you can begin dependent work on that result while the rest keep running — then call task_await again for the remainder. " +
+      "This is ideal for independent lanes (variants) or any case where per-result work exists. " +
+      "Set min_completed higher (up to the number of awaited tasks) when you genuinely need more before proceeding — e.g. best-of-N synthesis that must compare every candidate should pass min_completed equal to the batch size. " +
+      "The result always includes every task complete at the moment it returns, plus current status for the rest; not-yet-completed tasks keep running and stay re-awaitable on a later call. " +
+      "You always get per-task results (like Promise.allSettled), just possibly before every task has finished. " +
+      "Possible statuses: completed, queued, running, awaiting_report, not_found, invalid_scope, error. " +
+      "Bash task outputs may be automatically filtered; when this happens, check each result's note for details and (if available) where the full output was saved.",
+    schema: TaskAwaitToolArgsSchema,
+  },
+  task_terminate: {
+    description:
+      "Terminate one or more tasks immediately (sub-agent tasks or background bash tasks). " +
+      "For sub-agent tasks, this stops their AI streams and deletes their workspaces (best-effort). " +
+      "No report will be delivered; any in-progress work is discarded. " +
+      "If the task has descendant sub-agent tasks, they are terminated too.",
+    schema: TaskTerminateToolArgsSchema,
+  },
+  task_list: {
+    description:
+      "List descendant tasks for the current workspace, including status + metadata. " +
+      "This includes sub-agent tasks and background bash tasks. " +
+      "Use this after compaction or interruptions to rediscover which tasks are still active. " +
+      "This is a discovery tool, NOT a waiting mechanism. If the current request actually depends on a task's output, call task_await with the specific task IDs you need; do not await all active tasks just because they appear here.",
+    schema: TaskListToolArgsSchema,
+  },
+  agent_report: {
+    description:
+      "Report the final result of a sub-agent task back to the parent workspace. " +
+      "Call this exactly once when you have a final answer (after any spawned sub-tasks complete).",
+    schema: AgentReportToolArgsSchema,
+  },
+  get_goal: {
+    description:
+      "Read the current workspace goal. Returns null when no goal is available in this turn.",
+    schema: z.object({}).strict(),
+  },
+  complete_goal: {
+    description:
+      "Mark the current workspace goal complete with a concise 1-2 sentence summary of why the goal is done. " +
+      "This tool only completes goals; it cannot pause, resume, replace, or change goal budgets. " +
+      "Pass the `goalId` returned by `get_goal` so the completion is rejected with a typed conflict " +
+      "error if the user clears or replaces the goal mid-stream rather than throwing a confusing " +
+      "validation error.",
+    schema: z
+      .object({
+        summary: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("Required 1-2 sentence justification for completing the current goal."),
+        goalId: z
+          .string()
+          .nullish()
+          .describe(
+            "Optional optimistic-concurrency token. Pass the `goalId` returned by `get_goal` to " +
+              "ensure the completion is rejected with a typed conflict error if the user clears " +
+              "or replaces the goal mid-stream."
+          ),
+      })
+      .strict(),
+  },
+
+  todo_write: {
+    description:
+      "Create or update the todo list for tracking multi-step tasks (limit: 7 items). " +
+      "The TODO list is displayed to the user at all times. " +
+      "Replace the entire list on each call - the AI tracks which tasks are completed.\n" +
+      "\n" +
+      "Mark tasks as in_progress when actively being worked on (multiple allowed for parallel work). " +
+      "Order tasks as: completed first, then in_progress, then pending last. " +
+      "Use appropriate tense in content: past tense for completed (e.g., 'Added tests'), " +
+      "present progressive for in_progress (e.g., 'Adding tests'), " +
+      "and imperative/infinitive for pending (e.g., 'Add tests').\n" +
+      "\n" +
+      "If you hit the 7-item limit, summarize older completed items into one line " +
+      "(e.g., 'Completed initial setup (3 tasks)').\n" +
+      "\n" +
+      "Update the list as work progresses. If work fails or the approach changes, update " +
+      "the list to reflect reality - only mark tasks complete when they actually succeed.",
+    schema: z.object({
+      todos: z.array(
+        z.object({
+          content: z
+            .string()
+            .describe(
+              "Task description with tense matching status: past for completed, present progressive for in_progress, imperative for pending"
+            ),
+          status: z.enum(["pending", "in_progress", "completed"]).describe("Task status"),
+        })
+      ),
+    }),
+  },
+  todo_read: {
+    description: "Read the current todo list",
+    schema: z.object({}),
+  },
+  review_pane_update: {
+    description:
+      "Flag specific code regions in the Review pane for the user to review next. " +
+      "Use this to draw the user's attention to critical changes you want reviewed first. " +
+      "Each hunk references a project-relative file path with an optional inclusive line " +
+      'range using familiar syntax: "src/foo.ts" (whole file), "src/foo.ts:42" (single line), ' +
+      'or "src/foo.ts:42-58" (range, new-file line numbers). Project-relative paths are ' +
+      "preferred; use './' or '../' for paths that must resolve from the current tool cwd. " +
+      "Attach a short comment to each " +
+      "hunk explaining what to look at and why.\n\n" +
+      "operation:\n" +
+      "  - 'replace' (default): overwrite the current assisted set\n" +
+      "  - 'add': append to the existing set, deduplicating exact path:range matches\n\n" +
+      "Flagged hunks appear pinned at the top of the Review pane; the user can toggle " +
+      "'Assisted' to hide everything else. Pass an empty hunks array with operation='replace' " +
+      "to clear the set when review is no longer needed.",
+    schema: z
+      .object({
+        operation: z
+          .enum(["add", "replace"])
+          .describe("'replace' overwrites the assisted set; 'add' appends to it."),
+        hunks: z
+          .array(
+            z
+              .object({
+                path: z
+                  .string()
+                  .min(1)
+                  .describe(
+                    'Filter in `path[:range]` form, e.g. "src/foo.ts" or "src/foo.ts:42-58". ' +
+                      "Path is project-relative; use './' or '../' when the path must resolve from the current tool working directory. Range uses new-file line numbers (inclusive)."
+                  ),
+                comment: z
+                  .string()
+                  .nullish()
+                  .describe("Short note (~1 sentence) telling the user what to look at and why."),
+              })
+              .strict()
+          )
+          .describe("List of hunks to flag for review."),
+      })
+      .strict(),
+  },
+  review_pane_get: {
+    description:
+      "Return the current set of agent-flagged hunks in the Review pane, in declared order. " +
+      "Use this to inspect what you've already pinned before adding more.",
+    schema: z.object({}).strict(),
+  },
+  bash_output: {
+    description:
+      'DEPRECATED: use task_await instead (pass bash-prefixed taskId like "bash:<processId>"). ' +
+      "Retrieve output from a running or completed background bash process. " +
+      "Returns only NEW output since the last check (incremental). " +
+      "Returns stdout and stderr output along with process status. " +
+      "Supports optional regex filtering to show only lines matching a pattern. " +
+      "WARNING: When using filter, non-matching lines are permanently discarded. " +
+      "Use timeout to wait for output instead of polling repeatedly. " +
+      "Large outputs may be automatically filtered; when this happens, the result includes a note explaining what was kept and (if available) where the full output was saved.",
+    schema: z.object({
+      process_id: z.string().describe("The ID of the background process to retrieve output from"),
+      filter: z
+        .string()
+        .nullish()
+        .describe(
+          "Optional regex to filter output lines. By default, only matching lines are returned. " +
+            "When filter_exclude is true, matching lines are excluded instead. " +
+            "Non-matching lines are permanently discarded and cannot be retrieved later."
+        ),
+      filter_exclude: z
+        .boolean()
+        .nullish()
+        .describe(
+          "When true, lines matching 'filter' are excluded instead of kept. " +
+            "Key behavior: excluded lines do NOT cause early return from timeout - " +
+            "waiting continues until non-excluded output arrives or process exits. " +
+            "Use to avoid busy polling on progress spam (e.g., filter='⏳|waiting|\\.\\.\\.' with filter_exclude=true " +
+            "lets you set a long timeout and only wake on meaningful output). " +
+            "Requires 'filter' to be set."
+        ),
+      timeout_secs: z
+        .number()
+        .min(0)
+        .describe(
+          "Seconds to wait for new output. " +
+            "If no output is immediately available and process is still running, " +
+            "blocks up to this duration. Returns early when output arrives or process exits. " +
+            "Only use long timeouts (>15s) when no other useful work can be done in parallel."
+        ),
+    }),
+  },
+  bash_background_list: {
+    description:
+      "DEPRECATED: use task_list instead. " +
+      "List all background processes started with bash(run_in_background=true). " +
+      "Returns process_id, status, script for each process. " +
+      "Use to find process_id for termination or check output with bash_output.",
+    schema: z.object({}),
+  },
+  bash_background_terminate: {
+    description:
+      "DEPRECATED: use task_terminate instead. " +
+      "Terminate a background process started with bash(run_in_background=true). " +
+      "Use process_id from the original bash response or from bash_background_list. " +
+      "Sends SIGTERM, waits briefly, then SIGKILL if needed. " +
+      "Output remains available via bash_output after termination.",
+    schema: z.object({
+      process_id: z.string().describe("Background process ID to terminate"),
+    }),
+  },
+  analytics_query: {
+    description: `Execute a DuckDB SQL query against Mux analytics tables and optionally provide visualization hints.
+Use read-only SELECT queries over analytics data.
+
+DuckDB SQL guidelines:
+- Use SELECT queries only; do not write, alter, or drop tables.
+- Prefer explicit column lists and aliases so result sets are easy to understand.
+- Use ORDER BY and LIMIT for exploratory queries over large datasets.
+- Use DuckDB date/time helpers (for example date_trunc, CAST(... AS DATE), and interval arithmetic) for time series.
+
+Available tables:
+
+CREATE TABLE IF NOT EXISTS events (
+  workspace_id VARCHAR NOT NULL,
+  project_path VARCHAR,
+  project_name VARCHAR,
+  workspace_name VARCHAR,
+  parent_workspace_id VARCHAR,
+  agent_id VARCHAR,
+  timestamp BIGINT,
+  date DATE,
+  model VARCHAR,
+  thinking_level VARCHAR,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  reasoning_tokens INTEGER DEFAULT 0,
+  cached_tokens INTEGER DEFAULT 0,
+  cache_create_tokens INTEGER DEFAULT 0,
+  input_cost_usd DOUBLE DEFAULT 0,
+  output_cost_usd DOUBLE DEFAULT 0,
+  reasoning_cost_usd DOUBLE DEFAULT 0,
+  cached_cost_usd DOUBLE DEFAULT 0,
+  total_cost_usd DOUBLE DEFAULT 0,
+  duration_ms DOUBLE,
+  ttft_ms DOUBLE,
+  streaming_ms DOUBLE,
+  tool_execution_ms DOUBLE,
+  output_tps DOUBLE,
+  response_index INTEGER,
+  is_sub_agent BOOLEAN DEFAULT false
+)
+
+CREATE TABLE IF NOT EXISTS delegation_rollups (
+  parent_workspace_id VARCHAR NOT NULL,
+  child_workspace_id VARCHAR NOT NULL,
+  project_path VARCHAR,
+  project_name VARCHAR,
+  agent_type VARCHAR,
+  model VARCHAR,
+  total_tokens INTEGER DEFAULT 0,
+  context_tokens INTEGER DEFAULT 0,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  reasoning_tokens INTEGER DEFAULT 0,
+  cached_tokens INTEGER DEFAULT 0,
+  cache_create_tokens INTEGER DEFAULT 0,
+  report_token_estimate INTEGER DEFAULT 0,
+  total_cost_usd DOUBLE DEFAULT 0,
+  rolled_up_at_ms BIGINT,
+  date DATE,
+  PRIMARY KEY (parent_workspace_id, child_workspace_id)
+)`,
+    schema: z.object({
+      sql: z.string().min(1).describe("DuckDB SQL query to execute"),
+      visualization: z
+        .enum(["table", "bar", "line", "pie", "area", "stacked_bar"])
+        .nullish()
+        .describe("Optional visualization type for rendering the query result"),
+      title: z.string().nullish().describe("Optional chart title"),
+      x_axis: z.string().nullish().describe("Optional column name for the visualization X axis"),
+      y_axis: z
+        .array(z.string())
+        .nullish()
+        .describe("Optional column name(s) for the visualization Y axis"),
+    }),
+  },
+  web_fetch: {
+    description:
+      `Fetch a web page and extract its main content as clean markdown. ` +
+      `Uses the workspace's network context (requests originate from the workspace, not Mux host). ` +
+      `Requires curl to be installed in the workspace. ` +
+      `Output is truncated to ${Math.floor(WEB_FETCH_MAX_OUTPUT_BYTES / 1024)}KB.`,
+    schema: z.object({
+      url: z.string().url().describe("The URL to fetch (http or https)"),
+    }),
+  },
+  code_execution: {
+    description:
+      "Execute JavaScript code in a sandboxed environment with access to Mux tools. " +
+      "Available for multi-tool workflows when PTC experiment is enabled.",
+    schema: z.object({
+      code: z.string().min(1).describe("JavaScript code to execute in the PTC sandbox"),
+    }),
+  },
+  // #region NOTIFY_DOCS
+  notify: {
+    description:
+      "Send a system notification to the user. Use this to alert the user about important events that require their attention, such as long-running task completion, errors requiring intervention, or questions. " +
+      "Notifications appear as OS-native notifications (macOS Notification Center, Windows Toast, Linux). " +
+      "Infer whether to send notifications from user instructions. If no instructions provided, reserve notifications for major wins or blocking issues. Do not use for routine progress updates — keep the todo list current instead.",
+    schema: z
+      .object({
+        title: z
+          .string()
+          .min(1)
+          .max(64)
+          .describe("Short notification title (max 64 chars). Should be concise and actionable."),
+        message: z
+          .string()
+          .max(200)
+          .nullish()
+          .describe(
+            "Optional notification body with more details (max 200 chars). " +
+              "Keep it brief - users may only see a preview."
+          ),
+      })
+      .strict(),
+  },
+  // #endregion NOTIFY_DOCS
+} as const;
+
+// -----------------------------------------------------------------------------
+// Result Schemas for Bridgeable Tools (PTC Type Generation)
+// -----------------------------------------------------------------------------
+// These Zod schemas define the result types for tools exposed in the PTC sandbox.
+// They serve as single source of truth for both:
+// 1. TypeScript types in tools.ts (via z.infer<>)
+// 2. Runtime type generation for PTC (via Zod → JSON Schema → TypeScript string)
+
+/**
+ * Truncation info returned when output exceeds limits.
+ */
+const TruncatedInfoSchema = z.object({
+  reason: z.string(),
+  totalLines: z.number(),
+});
+
+const ImageToolThumbnailSchema = z.object({
+  data: z.string(),
+  mediaType: z.string(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+
+const ImageToolDimensionsSchema = z.object({
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+
+const ImageToolImageSchema = z.object({
+  path: z.string(),
+  filename: z.string(),
+  mediaType: z.string(),
+  thumbnail: ImageToolThumbnailSchema.optional(),
+  revisedPrompt: z.string().optional(),
+});
+
+const ImageEditImageSchema = ImageToolImageSchema.extend({
+  outputDimensions: ImageToolDimensionsSchema,
+});
+
+const ImageEditSourceSchema = z.object({
+  path: z.string(),
+  resolvedPath: z.string(),
+  sizeBytes: z.number().int().nonnegative(),
+  dimensions: ImageToolDimensionsSchema,
+});
+
+export const ImageGenerateToolResultSchema = z.discriminatedUnion("success", [
+  z.object({
+    success: z.literal(true),
+    model: z.string(),
+    prompt: z.string(),
+    requestedCount: z.number().int().positive(),
+    images: z.array(ImageToolImageSchema).min(1),
+    warnings: z.array(z.string()).optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    setupHint: z.string().optional(),
+  }),
+]);
+
+export const ImageEditToolResultSchema = z.discriminatedUnion("success", [
+  z.object({
+    success: z.literal(true),
+    model: z.string(),
+    prompt: z.string(),
+    requestedCount: z.number().int().positive(),
+    source: ImageEditSourceSchema,
+    images: z.array(ImageEditImageSchema).min(1),
+    warnings: z.array(z.string()).optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    setupHint: z.string().optional(),
+  }),
+]);
+
+/**
+ * Bash tool result - success, background spawn, or failure.
+ */
+const BashToolSuccessSchema = z
+  .object({
+    success: z.literal(true),
+    output: z.string(),
+    exitCode: z.literal(0),
+    wall_duration_ms: z.number(),
+    note: z.string().optional(),
+    truncated: TruncatedInfoSchema.optional(),
+  })
+  .extend(ToolOutputUiOnlyFieldSchema);
+
+const BashToolBackgroundSchema = z
+  .object({
+    success: z.literal(true),
+    output: z.string(),
+    exitCode: z.literal(0),
+    wall_duration_ms: z.number(),
+    taskId: z.string(),
+    backgroundProcessId: z.string(),
+  })
+  .extend(ToolOutputUiOnlyFieldSchema);
+
+const BashToolFailureSchema = z
+  .object({
+    success: z.literal(false),
+    output: z.string().optional(),
+    exitCode: z.number(),
+    error: z.string(),
+    wall_duration_ms: z.number(),
+    note: z.string().optional(),
+    truncated: TruncatedInfoSchema.optional(),
+  })
+  .extend(ToolOutputUiOnlyFieldSchema);
+
+export const BashToolResultSchema = z.union([
+  // Foreground success
+  BashToolSuccessSchema,
+  // Background spawn success
+  BashToolBackgroundSchema,
+  // Failure
+  BashToolFailureSchema,
+]);
+
+/**
+ * Bash output tool result - process status and incremental output.
+ */
+export const BashOutputToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    status: z.enum(["running", "exited", "killed", "failed", "interrupted"]),
+    output: z.string(),
+    exitCode: z.number().optional(),
+    note: z.string().optional(),
+    elapsed_ms: z.number(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * Bash background list tool result - all background processes.
+ */
+export const BashBackgroundListResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    processes: z.array(
+      z.object({
+        process_id: z.string(),
+        status: z.enum(["running", "exited", "killed", "failed"]),
+        script: z.string(),
+        uptime_ms: z.number(),
+        exitCode: z.number().optional(),
+        display_name: z.string().optional(),
+      })
+    ),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * Bash background terminate tool result.
+ */
+export const BashBackgroundTerminateResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    message: z.string(),
+    display_name: z.string().optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * mux_agents_read tool result.
+ */
+export const MuxAgentsReadToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    content: z.string(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * mux_agents_write tool result.
+ */
+export const MuxAgentsWriteToolResultSchema = z.union([
+  z
+    .object({
+      success: z.literal(true),
+      diff: z.string(),
+    })
+    .extend(ToolOutputUiOnlyFieldSchema),
+  z
+    .object({
+      success: z.literal(false),
+      error: z.string(),
+    })
+    .extend(ToolOutputUiOnlyFieldSchema),
+]);
+
+/**
+ * mux_config_read tool result.
+ */
+export const MuxConfigReadToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    file: z.string(),
+    data: z.unknown(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+const MuxConfigWriteValidationIssueSchema = z.object({
+  path: z.array(z.union([z.string(), z.number()])),
+  message: z.string(),
+});
+
+/**
+ * mux_config_write tool result.
+ */
+export const MuxConfigWriteToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    file: z.string(),
+    appliedOps: z.number(),
+    summary: z.string(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    validationIssues: z.array(MuxConfigWriteValidationIssueSchema).optional(),
+  }),
+]);
+
+/**
+ * File read tool result - content or error.
+ */
+export const FileReadToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    file_size: z.number(),
+    modifiedTime: z.string(),
+    lines_read: z.number(),
+    content: z
+      .string()
+      .describe(
+        "File content with line numbers prepended as '<line_number>\\t<content>'. " +
+          "Line numbers are not part of the actual file content."
+      ),
+    warning: z.string().optional(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+const AttachFileToolTextPartSchema = z
+  .object({
+    type: z.literal("text"),
+    text: z.string(),
+  })
+  .strict();
+
+const AttachFileToolMediaPartSchema = z
+  .object({
+    type: z.literal("media"),
+    data: z.string(),
+    mediaType: z.string(),
+    filename: z.string().optional(),
+  })
+  .strict();
+
+const AttachFileToolDisplayFilePartSchema = z
+  .object({
+    type: z.literal("display_file"),
+    data: z.string(),
+    mediaType: z.string(),
+    filename: z.string().optional(),
+    providerOptions: z
+      .object({
+        mux: z
+          .object({
+            displayOnly: z.literal(true),
+            size: z.number().int().nonnegative(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+const AttachFileToolSuccessResultSchema = z
+  .object({
+    type: z.literal("content"),
+    value: z.union([
+      z.tuple([AttachFileToolTextPartSchema, AttachFileToolMediaPartSchema]),
+      z.tuple([AttachFileToolTextPartSchema, AttachFileToolDisplayFilePartSchema]),
+    ]),
+  })
+  .strict();
+
+export const AttachFileToolResultSchema = z.union([
+  AttachFileToolSuccessResultSchema,
+  z
+    .object({
+      success: z.literal(false),
+      error: z.string(),
+    })
+    .strict(),
+]);
+
+/**
+ * Agent Skill read tool result - full SKILL.md package or error.
+ */
+export const AgentSkillReadToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    skill: AgentSkillPackageSchema,
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * Agent Skill read_file tool result.
+ * Uses the same shape/limits as file_read.
+ */
+export const AgentSkillReadFileToolResultSchema = FileReadToolResultSchema;
+
+/**
+ * File edit insert tool result - diff or error.
+ */
+export const FileEditInsertToolResultSchema = z.union([
+  z
+    .object({
+      success: z.literal(true),
+      diff: z.string(),
+      warning: z.string().optional(),
+    })
+    .extend(ToolOutputUiOnlyFieldSchema),
+  z
+    .object({
+      success: z.literal(false),
+      error: z.string(),
+      note: z.string().optional(),
+    })
+    .extend(ToolOutputUiOnlyFieldSchema),
+]);
+
+/**
+ * File edit replace string tool result - diff with edit count or error.
+ */
+export const FileEditReplaceStringToolResultSchema = z.union([
+  z
+    .object({
+      success: z.literal(true),
+      diff: z.string(),
+      edits_applied: z.number(),
+      warning: z.string().optional(),
+    })
+    .extend(ToolOutputUiOnlyFieldSchema),
+  z
+    .object({
+      success: z.literal(false),
+      error: z.string(),
+      note: z.string().optional(),
+    })
+    .extend(ToolOutputUiOnlyFieldSchema),
+]);
+
+/**
+ * Web fetch tool result - parsed content or error.
+ */
+export const WebFetchToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    title: z.string(),
+    content: z.string(),
+    url: z.string(),
+    byline: z.string().optional(),
+    length: z.number(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    content: z.string().optional(),
+  }),
+]);
+
+/**
+ * Names of tools that are bridgeable to PTC sandbox.
+ * If adding a new tool here, you must also add its result schema below.
+ */
+export type BridgeableToolName =
+  | "bash"
+  | "bash_output"
+  | "bash_background_list"
+  | "bash_background_terminate"
+  | "file_read"
+  | "attach_file"
+  | "agent_skill_read"
+  | "agent_skill_read_file"
+  | "file_edit_insert"
+  | "file_edit_replace_string"
+  // Note: for Anthropic models, web_fetch is replaced by a provider-native tool
+  // (webFetch_20250910) that has no execute(). ToolBridge's hasExecute filter will drop it
+  // from the PTC sandbox for those sessions. That silent absence is intentional and accepted.
+  | "web_fetch"
+  | "task"
+  | "task_await"
+  | "task_apply_git_patch"
+  | "task_list"
+  | "task_terminate";
+
+/**
+ * Lookup map for result schemas by tool name.
+ * Used by PTC type generator to get result types for bridgeable tools.
+ *
+ * Type-level enforcement ensures all BridgeableToolName entries have schemas.
+ */
+export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
+  bash: BashToolResultSchema,
+  bash_output: BashOutputToolResultSchema,
+  bash_background_list: BashBackgroundListResultSchema,
+  bash_background_terminate: BashBackgroundTerminateResultSchema,
+  file_read: FileReadToolResultSchema,
+  attach_file: AttachFileToolResultSchema,
+  agent_skill_read: AgentSkillReadToolResultSchema,
+  agent_skill_read_file: AgentSkillReadFileToolResultSchema,
+  file_edit_insert: FileEditInsertToolResultSchema,
+  file_edit_replace_string: FileEditReplaceStringToolResultSchema,
+  web_fetch: WebFetchToolResultSchema,
+  task: TaskToolResultSchema,
+  task_await: TaskAwaitToolResultSchema,
+  task_apply_git_patch: TaskApplyGitPatchToolResultSchema,
+  task_list: TaskListToolResultSchema,
+  task_terminate: TaskTerminateToolResultSchema,
+};
+
+/**
+ * Get tool definition schemas for token counting
+ * JSON schemas are auto-generated from zod schemas
+ *
+ * @returns Record of tool name to schema
+ */
+export function getToolSchemas(): Record<string, ToolSchema> {
+  return Object.fromEntries(
+    Object.entries(TOOL_DEFINITIONS).map(([name, def]) => [
+      name,
+      {
+        name,
+        description: def.description,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
+        inputSchema: zodToJsonSchema(def.schema as any) as ToolSchema["inputSchema"],
+      },
+    ])
+  );
+}
+
+/**
+ * Get which tools are available for a given model
+ * @param modelString The model string (e.g., "anthropic:claude-opus-4-1")
+ * @returns Array of tool names available for the model
+ */
+export function getAvailableTools(
+  modelString: string,
+  options?: {
+    enableAgentReport?: boolean;
+    enableAnalyticsQuery?: boolean;
+    enableAdvisor?: boolean;
+    enableImageGeneration?: boolean;
+    enableImageEditing?: boolean;
+    /** @deprecated Mux global tools are always included. */
+    enableMuxGlobalAgentsTools?: boolean;
+  }
+): string[] {
+  const [provider] = modelString.split(":");
+  const enableAgentReport = options?.enableAgentReport ?? true;
+  const enableAnalyticsQuery = options?.enableAnalyticsQuery ?? true;
+  const enableAdvisor = options?.enableAdvisor ?? false;
+  const enableImageGeneration = options?.enableImageGeneration ?? false;
+  const enableImageEditing = enableImageGeneration && (options?.enableImageEditing ?? false);
+
+  // Base tools available for all models
+  // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
+  const baseTools = [
+    "mux_agents_read",
+    "mux_agents_write",
+    "agent_skill_list",
+    "agent_skill_write",
+    "agent_skill_delete",
+    "skills_catalog_search",
+    "skills_catalog_read",
+    "mux_config_read",
+    "mux_config_write",
+    "file_read",
+    "attach_file",
+    "desktop_screenshot",
+    "desktop_move_mouse",
+    "desktop_click",
+    "desktop_double_click",
+    "desktop_drag",
+    "desktop_scroll",
+    "desktop_type",
+    "desktop_key_press",
+    "agent_skill_read",
+    "agent_skill_read_file",
+    "file_edit_replace_string",
+    // "file_edit_replace_lines", // DISABLED: causes models to break repo state
+    "file_edit_insert",
+    ...(enableAdvisor ? ["advisor"] : []),
+    ...(enableImageGeneration ? ["image_generate"] : []),
+    ...(enableImageEditing ? ["image_edit"] : []),
+    "ask_user_question",
+    "propose_plan",
+    "bash",
+    "task",
+    "task_await",
+    "task_apply_git_patch",
+    "task_terminate",
+    "task_list",
+    ...(enableAgentReport ? ["agent_report"] : []),
+    "get_goal",
+    "complete_goal",
+    "todo_write",
+    "todo_read",
+    "review_pane_update",
+    "review_pane_get",
+    "notify",
+    ...(enableAnalyticsQuery ? ["analytics_query"] : []),
+    "web_fetch",
+  ];
+
+  // Add provider-specific tools
+  switch (provider) {
+    case "anthropic":
+      return [...baseTools, "web_search"];
+    case "openai":
+      // Only some OpenAI models support web search
+      if (modelString.includes("gpt-4") || modelString.includes("gpt-5")) {
+        return [...baseTools, "web_search"];
+      }
+      return baseTools;
+    case "google":
+      return [...baseTools, "google_search"];
+    default:
+      return baseTools;
+  }
+}

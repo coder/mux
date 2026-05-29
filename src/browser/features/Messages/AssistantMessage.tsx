@@ -1,0 +1,282 @@
+import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
+import { useStartHere } from "@/browser/hooks/useStartHere";
+import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import type { DisplayedMessage } from "@/common/types/message";
+import { copyToClipboard } from "@/browser/utils/clipboard";
+import {
+  Clipboard,
+  ClipboardCheck,
+  FileText,
+  GitBranch,
+  ListStart,
+  Moon,
+  Package,
+} from "lucide-react";
+import { cn } from "@/common/lib/utils";
+import {
+  SIDE_QUESTION_ANSWER_BLOCK_CLASS,
+  SIDE_QUESTION_MESSAGE_WINDOW_CLASS,
+} from "./sideQuestionStyles";
+import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover/ShareMessagePopover";
+import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
+import { useAPI } from "@/browser/contexts/API";
+import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { Button } from "@/browser/components/Button/Button";
+import { forkWorkspace } from "@/browser/utils/chatCommands";
+import React, { useState } from "react";
+import { CompactingMessageContent } from "./CompactingMessageContent";
+import { CompactionBackground } from "./CompactionBackground";
+import type { ButtonConfig } from "./MessageWindow";
+import { MessageWindow } from "./MessageWindow";
+import { ModelDisplay } from "./ModelDisplay";
+import { TypewriterMarkdown } from "./TypewriterMarkdown";
+
+interface AssistantMessageProps {
+  message: DisplayedMessage & { type: "assistant" };
+  className?: string;
+  workspaceId?: string;
+  isCompacting?: boolean;
+  clipboardWriteText?: (data: string) => Promise<void>;
+}
+
+export const AssistantMessage: React.FC<AssistantMessageProps> = ({
+  message,
+  className,
+  workspaceId,
+  isCompacting = false,
+  clipboardWriteText = copyToClipboard,
+}) => {
+  const [showRaw, setShowRaw] = useState(false);
+  const { api } = useAPI();
+  const workspaceContext = useOptionalWorkspaceContext();
+  const forkError = usePopoverError();
+
+  // Get workspace name from context for share filename
+  const workspaceName = workspaceId
+    ? workspaceContext?.workspaceMetadata.get(workspaceId)?.name
+    : undefined;
+
+  const content = message.content;
+  const isStreaming = message.isStreaming;
+  const isCompacted = message.isCompacted;
+  const isBeforeLatestContextBoundary = message.isBeforeLatestContextBoundary === true;
+  const isStreamingCompaction = isStreaming && isCompacting;
+  const isSideAnswer = message.isSideAnswer === true;
+
+  // Use Start Here hook for final assistant messages
+  const {
+    openModal: openStartHereModal,
+    buttonLabel: startHereLabel,
+    disabled: startHereDisabled,
+    modal: startHereModal,
+  } = useStartHere(workspaceId, content, isCompacted || isBeforeLatestContextBoundary, {
+    // Preserve legacy plan/exec markers so Start Here keeps plan→exec handoff for old history.
+    sourceAgentId: message.agentId ?? message.mode,
+  });
+
+  // Copy to clipboard with feedback
+  const { copied, copyToClipboard } = useCopyToClipboard(clipboardWriteText);
+
+  // Keep only Copy button visible (most common action)
+  // Kebab menu saves horizontal space by collapsing less-used actions into a single ⋮ button
+  const copyButton: ButtonConfig = {
+    label: copied ? "Copied" : "Copy",
+    onClick: () => void copyToClipboard(content),
+    icon: copied ? <ClipboardCheck /> : <Clipboard />,
+  };
+
+  const handleForkFromResponse = async () => {
+    if (!workspaceId) {
+      forkError.showError(message.historyId, "Workspace ID unavailable");
+      return;
+    }
+
+    if (!api) {
+      forkError.showError(message.historyId, "Not connected to server");
+      return;
+    }
+
+    try {
+      // Response-level forks branch from this assistant turn instead of cloning the entire
+      // transcript, so users can explore alternatives without carrying over later replies.
+      const result = await forkWorkspace({
+        client: api,
+        sourceWorkspaceId: workspaceId,
+        sourceMessageId: message.historyId,
+      });
+
+      if (!result.success) {
+        forkError.showError(message.historyId, result.error ?? "Failed to fork chat");
+      }
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "Failed to fork chat";
+      forkError.showError(message.historyId, messageText);
+    }
+  };
+
+  const buttons: ButtonConfig[] = isStreaming ? [] : [copyButton];
+
+  if (!isStreaming && !isSideAnswer) {
+    // Side answers intentionally show only Copy. The /btw side branch is
+    // meant to feel lightweight: Start Here / Fork / Share / Show Text
+    // would imply the message is a fork point in the main agent thread,
+    // which it isn't. Keeping the action set minimal also keeps the pair
+    // visually quiet against the main transcript.
+    buttons.push({
+      label: startHereLabel,
+      onClick: openStartHereModal,
+      disabled: startHereDisabled,
+      tooltip: "Start a new context from this message and preserve earlier chat history",
+      icon: <ListStart />,
+    });
+    buttons.push({
+      label: "Fork",
+      onClick: () => void handleForkFromResponse(),
+      disabled: !workspaceId || !api,
+      tooltip: "Fork a new workspace from this response",
+      icon: <GitBranch />,
+    });
+    buttons.push({
+      label: "Share",
+      component: (
+        <ShareMessagePopover
+          content={content}
+          model={message.model}
+          disabled={!content}
+          workspaceName={workspaceName}
+        />
+      ),
+    });
+    buttons.push({
+      label: showRaw ? "Show Markdown" : "Show Text",
+      onClick: () => setShowRaw(!showRaw),
+      active: showRaw,
+      icon: <FileText />,
+    });
+  }
+
+  // Render appropriate content based on state
+  const renderContent = () => {
+    // Empty streaming state
+    if (isStreaming && !content) {
+      return <div className="font-primary text-secondary italic">Waiting for response...</div>;
+    }
+
+    if (!content) {
+      return null;
+    }
+
+    if (!isStreaming && showRaw) {
+      return (
+        <div className="relative">
+          <pre className="text-text bg-code-bg m-0 rounded-sm p-2 pb-8 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
+            {content}
+          </pre>
+          <div className="absolute right-2 bottom-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-[11px] [&_svg]:size-3.5"
+              onClick={() => void copyToClipboard(content)}
+            >
+              {copied ? <ClipboardCheck /> : <Clipboard />}
+              {copied ? "Copied" : "Copy to clipboard"}
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    // Use TypewriterMarkdown for both streaming and settled content. Swapping to a
+    // different component identity at stream end (previously MarkdownRenderer) caused
+    // the entire markdown subtree to unmount/remount — visible as a flash where Shiki
+    // highlighting and Mermaid diagrams had to re-run and briefly showed unhighlighted
+    // source. isComplete={!isStreaming} makes TypewriterMarkdown bypass smoothing and
+    // renders parseIncompleteMarkdown=false, matching the prior static render exactly.
+    const contentElement = (
+      <TypewriterMarkdown
+        content={content}
+        isComplete={!isStreaming}
+        streamKey={message.historyId}
+        streamSource={message.streamPresentation?.source}
+        workspaceId={workspaceId}
+      />
+    );
+
+    // Wrap streaming compaction in special container
+    if (isStreamingCompaction) {
+      return <CompactingMessageContent>{contentElement}</CompactingMessageContent>;
+    }
+
+    return contentElement;
+  };
+
+  // Create label with model name and compacted indicator if applicable
+  const renderLabel = () => {
+    const modelName = message.model;
+    const isCompacted = message.isCompacted;
+    const isIdleCompacted = message.isIdleCompacted;
+
+    return (
+      <div className="flex items-center gap-2">
+        {modelName && (
+          <ModelDisplay
+            modelString={modelName}
+            routedThroughGateway={message.routedThroughGateway}
+            routeProvider={message.routeProvider}
+          />
+        )}
+        {isCompacted && (
+          <span className="text-plan-mode bg-plan-mode/10 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+            {isIdleCompacted ? (
+              <Moon aria-hidden="true" className="h-3 w-3" />
+            ) : (
+              <Package aria-hidden="true" className="h-3 w-3" />
+            )}
+            <span>{isIdleCompacted ? "idle-compacted" : "compacted"}</span>
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  const messageWindow = (
+    <MessageWindow
+      label={renderLabel()}
+      variant="assistant"
+      message={message}
+      buttons={buttons}
+      // For /btw answers the outer wrapper owns spacing around the pair.
+      className={cn(className, isSideAnswer && SIDE_QUESTION_MESSAGE_WINDOW_CLASS)}
+      backgroundEffect={isStreamingCompaction ? <CompactionBackground /> : undefined}
+    >
+      {renderContent()}
+    </MessageWindow>
+  );
+
+  // /btw side-answer: wrap the normal assistant bubble in the same
+  // thin-stripe block as the user question above it. Do not add another
+  // header here: the "Side question" label on the user row already marks
+  // the whole Q/A branch, and repeating it on the answer felt noisy.
+  const wrappedMessageWindow = isSideAnswer ? (
+    <div className={cn(SIDE_QUESTION_ANSWER_BLOCK_CLASS, className)} data-side-answer>
+      {messageWindow}
+    </div>
+  ) : (
+    messageWindow
+  );
+
+  return (
+    <>
+      {wrappedMessageWindow}
+
+      <PopoverError
+        error={forkError.error}
+        prefix="Failed to fork chat"
+        onDismiss={forkError.clearError}
+      />
+      {startHereModal}
+    </>
+  );
+};

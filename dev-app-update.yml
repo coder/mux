@@ -1,0 +1,4 @@
+provider: github
+owner: coder
+repo: mux
+releaseType: release

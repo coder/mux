@@ -1,0 +1,9 @@
+name: "Build VS Code Extension"
+description: "Build the mux VS Code extension"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build VS Code extension
+      shell: bash
+      run: make vscode-ext

@@ -1,0 +1,45 @@
+# Codecov Configuration
+# https://docs.codecov.com/docs/codecovyml-reference
+
+# Disable PR comments - just show status checks
+comment: false
+
+coverage:
+  # Coverage precision (decimal places)
+  precision: 2
+  round: down
+  range: 70..100
+
+  status:
+    # Project coverage status - informational only
+    project:
+      default:
+        target: auto # Compare to base commit
+        threshold: 5% # Allow 5% drop without changing status
+        informational: true # Won't block PRs
+
+    # Patch coverage status - informational only
+    patch:
+      default:
+        target: auto # Compare to base commit
+        threshold: 5% # Allow 5% drop without changing status
+        informational: true # Won't block PRs
+
+# Flag configuration to track unit vs integration test coverage
+flags:
+  unit-tests:
+    paths:
+      - src/**
+    carryforward: false
+  integration-tests:
+    paths:
+      - src/**
+    carryforward: false
+
+# Ignore common non-source paths
+ignore:
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/dist/**"
+  - "**/node_modules/**"
+  - "**/coverage/**"

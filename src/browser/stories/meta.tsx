@@ -1,0 +1,133 @@
+/**
+ * Shared Storybook meta configuration and wrapper components.
+ *
+ * All App stories share the same meta config and AppWithMocks wrapper
+ * to ensure consistent setup across all story files.
+ */
+
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import type { FC, ReactNode } from "react";
+import { useRef } from "react";
+import { AppLoader } from "../components/AppLoader/AppLoader";
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
+import type { APIClient } from "@/browser/contexts/API";
+import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage";
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// META CONFIG
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CHROMATIC POLICIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * App-level stories default to single dark mode to minimize Chromatic snapshots.
+ * Use CHROMATIC_SMOKE_MODES for explicit dual-theme smoke coverage.
+ */
+export const CHROMATIC_SINGLE_MODE = {
+  "dark-desktop": { theme: "dark" },
+} as const;
+
+/**
+ * Dual-theme smoke mode — use on one "Smoke" story per retained file
+ * to verify both themes render correctly.
+ */
+export const CHROMATIC_SMOKE_MODES = {
+  "dark-desktop": { theme: "dark" },
+  "light-desktop": { theme: "light" },
+} as const;
+
+/** Disable snapshots entirely for docs-only or non-visual stories. */
+export const CHROMATIC_DISABLED = { disableSnapshot: true } as const;
+
+export const appMeta: Meta<typeof AppLoader> = {
+  title: "App",
+  component: AppLoader,
+  parameters: {
+    layout: "fullscreen",
+    backgrounds: {
+      default: "dark",
+      values: [
+        { name: "dark", value: "#1e1e1e" },
+        { name: "light", value: "#f5f6f8" },
+      ],
+    },
+    chromatic: { delay: 500, modes: CHROMATIC_SINGLE_MODE },
+  },
+};
+
+export type AppStory = StoryObj<typeof appMeta>;
+
+export const StoryUiShell: FC<{ children: ReactNode }> = (props) => {
+  return (
+    <ThemeProvider>
+      <TooltipProvider>{props.children}</TooltipProvider>
+    </ThemeProvider>
+  );
+};
+
+export const lightweightMeta: Meta = {
+  parameters: {
+    layout: "fullscreen",
+    chromatic: { delay: 200 },
+  },
+  decorators: [
+    (Story) => (
+      <StoryUiShell>
+        <Story />
+      </StoryUiShell>
+    ),
+  ],
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STORY WRAPPER
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface AppWithMocksProps {
+  setup: () => APIClient;
+}
+
+/** Wrapper that runs setup once and passes the client to AppLoader */
+
+function resetStorybookPersistedStateForStory(): void {
+  // Storybook/Chromatic can preserve localStorage across story captures.
+  // Reset persisted state so each story starts from a known route + theme.
+  if (typeof localStorage !== "undefined") {
+    localStorage.removeItem(SELECTED_WORKSPACE_KEY);
+    localStorage.setItem(UI_THEME_KEY, JSON.stringify("dark"));
+  }
+}
+function getStorybookRenderKey(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const storyId = params.get("id") ?? params.get("path");
+  const viewportBucket = window.innerWidth <= 768 ? "narrow" : "wide";
+  return storyId ? `${storyId}:${viewportBucket}` : viewportBucket;
+}
+
+export const AppWithMocks: FC<AppWithMocksProps> = ({ setup }) => {
+  const lastRenderKeyRef = useRef<string | null>(null);
+  const clientRef = useRef<APIClient | null>(null);
+
+  const renderKey = getStorybookRenderKey();
+  const shouldReset = clientRef.current === null || lastRenderKeyRef.current !== renderKey;
+  if (shouldReset) {
+    resetStorybookPersistedStateForStory();
+    lastRenderKeyRef.current = renderKey;
+    clientRef.current = null;
+  }
+
+  clientRef.current ??= setup();
+
+  // Key by story + viewport bucket so Storybook fully remounts when switching
+  // stories or crossing the mobile breakpoint that changes the left sidebar default.
+  // Without this, RouterProvider keeps its initial route and APIProvider doesn't
+  // re-initialize, causing flaky "loading page vs left screen" states.
+  return <AppLoader key={renderKey} client={clientRef.current} />;
+};

@@ -1,0 +1,139 @@
+# Vim swap files
+*.swp
+*.swo
+*~
+# Font files (copied from node_modules during build)
+public/fonts/
+
+# OSX
+.DS_Store
+
+# Xcode
+build/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata
+*.xccheckout
+*.moved-aside
+DerivedData
+*.hmap
+*.ipa
+*.xcuserstate
+ios/.xcode.env.local
+
+# Android/IntelliJ
+build/
+.idea
+.gradle
+local.properties
+*.iml
+*.hprof
+.cxx/
+
+# node.js
+.log/*
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# fastlane
+*/fastlane/report.xml
+*/fastlane/Preview.html
+*/fastlane/screenshots
+*/fastlane/test_output
+
+# Bundle artifacts
+*.jsbundle
+
+# Ruby / CocoaPods
+/ios/Pods/
+/vendor/bundle/
+
+# Temporary files created by Metro to check the health of the file watcher
+.metro-health-check*
+
+# testing
+/coverage
+
+# ESLint cache for faster incremental lints
+.eslintcache
+
+# Bun
+bun.lockb
+dist
+
+# Electron build output
+release
+build/
+!build/entitlements.mac.plist
+
+# Documentation
+ai-sdk-docs/
+docs/book/
+docs/mermaid-init.js
+docs/mermaid.min.js
+
+# Secrets
+.env
+
+# AI SDK DevTools (local dev only)
+.devtools
+
+# Nix
+.envrc
+.direnv
+
+# Profiling
+**.cpuprofile
+profile.txt
+src/version.ts
+OPENAI_FIX_SUMMARY.md
+docs/vercel/
+TESTING.md
+FEATURE_SUMMARY.md
+CODE_CHANGES.md
+README_COMPACT_HERE.md
+artifacts/
+tests/e2e/tmp/
+
+# Test temporary directories
+src/test-temp-*/
+tests/**/test-temp-*/
+
+runs/
+
+# Python
+__pycache__
+
+tmpfork
+.mux-agent-cli
+storybook-static/
+*.tgz
+src/test-workspaces/
+terminal-bench-results/
+nodemon.json
+test_hot_reload.sh
+
+# TypeDoc
+.typedoc/
+
+# mdBook auto-generated assets
+docs/theme/pagetoc.css
+
+# Build-time generated files
+*.generated.ts
+docs/theme/pagetoc.js
+mobile/.expo/
+.mux/mcp.jsonc
+# Terminal-Bench leaderboard cache
+benchmarks/terminal_bench/.leaderboard_cache/
+# Terminal-Bench job output
+jobs/
+
+dogfood-output/

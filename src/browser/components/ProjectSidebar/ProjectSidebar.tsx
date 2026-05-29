@@ -1,0 +1,3084 @@
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { cn } from "@/common/lib/utils";
+import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
+import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
+import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
+import { useTheme } from "@/browser/contexts/ThemeContext";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
+import { useDebouncedValue } from "@/browser/hooks/useDebouncedValue";
+import { useRuntimeStatusStoreRaw } from "@/browser/stores/RuntimeStatusStore";
+import { useWorkspaceStoreRaw, type WorkspaceStore } from "@/browser/stores/WorkspaceStore";
+import {
+  EXPANDED_PROJECTS_KEY,
+  MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY,
+  getDraftScopeId,
+  getInputAttachmentsKey,
+  getInputKey,
+  getWorkspaceLastReadKey,
+  getWorkspaceNameStateKey,
+} from "@/common/constants/storage";
+import { getDisplayTitleFromPersistedState } from "@/browser/hooks/useWorkspaceName";
+import { DndProvider } from "react-dnd";
+import { HTML5Backend, getEmptyImage } from "react-dnd-html5-backend";
+import { useDrag, useDrop, useDragLayer } from "react-dnd";
+import {
+  sortProjectsByOrder,
+  reorderProjects,
+  normalizeOrder,
+} from "@/common/utils/projectOrdering";
+import {
+  matchesKeybind,
+  formatKeybind,
+  isEditableElement,
+  KEYBINDS,
+} from "@/browser/utils/ui/keybinds";
+import { useAPI } from "@/browser/contexts/API";
+import {
+  CUSTOM_EVENTS,
+  getStorageChangeEvent,
+  type CustomEventType,
+} from "@/common/constants/events";
+import { PlatformPaths } from "@/common/utils/paths";
+import {
+  partitionWorkspacesByAge,
+  partitionWorkspacesBySection,
+  formatDaysThreshold,
+  AGE_THRESHOLDS_DAYS,
+  computeWorkspaceDepthMap,
+  filterVisibleAgentRows,
+  computeAgentRowRenderMeta,
+  findNextNonEmptyTier,
+  getTierKey,
+  getSectionExpandedKey,
+  getSectionTierKey,
+  resolveEffectiveSectionId,
+  type AgentRowRenderMeta,
+} from "@/browser/utils/ui/workspaceFiltering";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { SidebarCollapseButton } from "../SidebarCollapseButton/SidebarCollapseButton";
+import { ConfirmationModal } from "../ConfirmationModal/ConfirmationModal";
+import {
+  buildArchiveConfirmDescription,
+  buildArchiveConfirmWarning,
+} from "@/browser/utils/archiveConfirmation";
+import { ProjectDeleteConfirmationModal } from "../ProjectDeleteConfirmationModal/ProjectDeleteConfirmationModal";
+import { useSettings } from "@/browser/contexts/SettingsContext";
+import { normalizeTaskSettings } from "@/common/types/tasks";
+
+import { AgentListItem, type WorkspaceSelection } from "../AgentListItem/AgentListItem";
+import { getTaskGroupMemberDepth } from "../sidebarItemLayout";
+import { TaskGroupListItem } from "./TaskGroupListItem";
+import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
+import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
+import {
+  PositionedMenu,
+  PositionedMenuItem,
+} from "@/browser/components/PositionedMenu/PositionedMenu";
+import {
+  ChevronRight,
+  EllipsisVertical,
+  Folder,
+  FolderOpen,
+  KeyRound,
+  Palette,
+  Pencil,
+  Trash,
+  Plus,
+} from "lucide-react";
+import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
+import { useRouter } from "@/browser/contexts/RouterContext";
+import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import { forkWorkspace } from "@/browser/utils/chatCommands";
+import { PopoverError } from "../PopoverError/PopoverError";
+import { SectionHeader } from "../SectionHeader/SectionHeader";
+import { WorkspaceSectionDropZone } from "../WorkspaceSectionDropZone/WorkspaceSectionDropZone";
+import { WorkspaceDragLayer } from "../WorkspaceDragLayer/WorkspaceDragLayer";
+import { Separator } from "../Separator/Separator";
+import { ScrollArea } from "../ScrollArea/ScrollArea";
+import { getProjectDisplayName, getSubProjectsForParent } from "@/common/utils/subProjects";
+import { getErrorMessage } from "@/common/utils/errors";
+import { isMultiProject } from "@/common/utils/multiProject";
+import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
+import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
+import { getTaskGroupKindFromMetadata } from "@/common/utils/tools/taskGroups";
+import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { HexColorPicker } from "react-colorful";
+import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
+
+interface SectionConfig {
+  id: string;
+  name: string;
+  color?: string;
+}
+
+// Re-export WorkspaceSelection for backwards compatibility
+export type { WorkspaceSelection } from "../AgentListItem/AgentListItem";
+
+// Draggable project item moved to module scope to avoid remounting on every parent render.
+// Defining components inside another component causes a new function identity each render,
+// which forces React to unmount/remount the subtree. That led to hover flicker and high CPU.
+
+/**
+ * Subscribe sidebar-level attention derivation to workspace updates.
+ *
+ * Project/section highlighting is computed in this parent component, so it must
+ * re-render for both:
+ * - unread storage writes (localStorage-backed "last read" timestamps)
+ * - attention-relevant workspace transitions (streaming, awaiting question, system errors)
+ */
+interface WorkspaceAttentionSignal {
+  isWorking: boolean;
+  awaitingUserQuestion: boolean;
+  hasSystemError: boolean;
+}
+
+function getWorkspaceAttentionSignal(
+  workspaceStore: WorkspaceStore,
+  workspaceId: string
+): WorkspaceAttentionSignal | null {
+  try {
+    const sidebarState = workspaceStore.getWorkspaceSidebarState(workspaceId);
+    const isWorking =
+      (sidebarState.canInterrupt || sidebarState.isStarting) && !sidebarState.awaitingUserQuestion;
+    return {
+      isWorking,
+      awaitingUserQuestion: sidebarState.awaitingUserQuestion,
+      hasSystemError: sidebarState.lastAbortReason?.reason === "system",
+    };
+  } catch {
+    // Workspace may have been removed while subscriptions are being torn down.
+    return null;
+  }
+}
+
+function didWorkspaceAttentionSignalChange(
+  prev: WorkspaceAttentionSignal | undefined,
+  next: WorkspaceAttentionSignal
+): boolean {
+  if (!prev) {
+    return true;
+  }
+  return (
+    prev.isWorking !== next.isWorking ||
+    prev.awaitingUserQuestion !== next.awaitingUserQuestion ||
+    prev.hasSystemError !== next.hasSystemError
+  );
+}
+
+function useWorkspaceAttentionSubscription(
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>,
+  workspaceStore: WorkspaceStore
+): void {
+  const [, setVersion] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const workspaceIds = new Set<string>();
+    const workspaceLastReadKeys = new Set<string>();
+    for (const workspaces of sortedWorkspacesByProject.values()) {
+      for (const workspace of workspaces) {
+        workspaceIds.add(workspace.id);
+        workspaceLastReadKeys.add(getWorkspaceLastReadKey(workspace.id));
+      }
+    }
+
+    if (workspaceIds.size === 0 && workspaceLastReadKeys.size === 0) {
+      return;
+    }
+
+    const bumpVersion = () => {
+      setVersion((currentVersion) => currentVersion + 1);
+    };
+    const attentionSignalsByWorkspaceId = new Map<string, WorkspaceAttentionSignal>();
+    for (const workspaceId of workspaceIds) {
+      const signal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
+      if (signal) {
+        attentionSignalsByWorkspaceId.set(workspaceId, signal);
+      }
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key && workspaceLastReadKeys.has(event.key)) {
+        bumpVersion();
+      }
+    };
+
+    const unsubscribeWorkspaceStore = Array.from(workspaceIds.values()).map((workspaceId) =>
+      workspaceStore.subscribeKey(workspaceId, () => {
+        const nextSignal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
+        if (!nextSignal) {
+          return;
+        }
+
+        const previousSignal = attentionSignalsByWorkspaceId.get(workspaceId);
+        if (!didWorkspaceAttentionSignalChange(previousSignal, nextSignal)) {
+          return;
+        }
+
+        attentionSignalsByWorkspaceId.set(workspaceId, nextSignal);
+        bumpVersion();
+      })
+    );
+    window.addEventListener("storage", handleStorage);
+    for (const key of workspaceLastReadKeys) {
+      window.addEventListener(getStorageChangeEvent(key), bumpVersion);
+    }
+
+    return () => {
+      for (const unsubscribe of unsubscribeWorkspaceStore) {
+        unsubscribe();
+      }
+      window.removeEventListener("storage", handleStorage);
+      for (const key of workspaceLastReadKeys) {
+        window.removeEventListener(getStorageChangeEvent(key), bumpVersion);
+      }
+    };
+  }, [sortedWorkspacesByProject, workspaceStore]);
+}
+
+// Keep the project header visible while scrolling through long workspace lists.
+// Project rows are also drag handles, so disable text selection to avoid
+// highlighting the whole sidebar before a reorder gesture locks in.
+// pr-2 matches AgentListItem LIST_ITEM_BASE_CLASSES so project kebab aligns with workspace rows.
+const PROJECT_ITEM_BASE_CLASS =
+  "group sticky top-0 z-30 py-2 pl-2 pr-1 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";
+
+// Shared classes for the chevron toggle buttons on project/section headers.
+const PROJECT_TOGGLE_BUTTON_CLASSES =
+  "text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200";
+
+function getProjectFallbackLabel(projectPath: string): string {
+  const abbreviatedPath = PlatformPaths.abbreviate(projectPath);
+  const { basename } = PlatformPaths.splitAbbreviated(abbreviatedPath);
+  return basename;
+}
+
+function getProjectNameFromPath(path: string): string {
+  if (!path || typeof path !== "string") {
+    return "Unknown";
+  }
+  return PlatformPaths.getProjectName(path);
+}
+
+function normalizeDisplayNameInput(value: string): string | null {
+  const trimmedValue = value.trim();
+  return trimmedValue.length > 0 ? trimmedValue : null;
+}
+
+function getProjectItemClassName(opts: {
+  isDragging: boolean;
+  isOver: boolean;
+  selected: boolean;
+}): string {
+  return cn(
+    PROJECT_ITEM_BASE_CLASS,
+    opts.isDragging ? "cursor-grabbing opacity-35 [&_*]:!cursor-grabbing" : "cursor-grab",
+    opts.isOver && "bg-accent/[0.08]",
+    opts.selected && "bg-hover border-l-accent",
+    "hover:[&_button]:opacity-100 hover:[&_button]:pointer-events-auto hover:[&_[data-drag-handle]]:opacity-100"
+  );
+}
+type DraggableProjectItemProps = React.PropsWithChildren<{
+  projectPath: string;
+  onReorder: (draggedPath: string, targetPath: string) => void;
+  selected?: boolean;
+  onClick?: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
+  onTouchStart?: (e: React.TouchEvent) => void;
+  onTouchEnd?: (e: React.TouchEvent) => void;
+  onTouchMove?: (e: React.TouchEvent) => void;
+  onKeyDown?: (e: React.KeyboardEvent) => void;
+  role?: string;
+  tabIndex?: number;
+  "aria-expanded"?: boolean;
+  "aria-controls"?: string;
+  "aria-label"?: string;
+  "data-project-path"?: string;
+}>;
+
+const DraggableProjectItem: React.FC<DraggableProjectItemProps> = ({
+  projectPath,
+  onReorder,
+  children,
+  selected,
+  ...rest
+}) => {
+  const [{ isDragging }, drag, dragPreview] = useDrag(
+    () => ({
+      type: "PROJECT",
+      item: { type: "PROJECT" as const, projectPath },
+      collect: (monitor) => ({ isDragging: monitor.isDragging() }),
+    }),
+    [projectPath]
+  );
+
+  // Hide native drag preview; we render a custom preview via DragLayer
+  useEffect(() => {
+    dragPreview(getEmptyImage(), { captureDraggingState: true });
+  }, [dragPreview]);
+
+  const [{ isOver }, drop] = useDrop(
+    () => ({
+      accept: "PROJECT",
+      drop: (item: { projectPath: string }) => {
+        if (item.projectPath !== projectPath) {
+          onReorder(item.projectPath, projectPath);
+        }
+      },
+      collect: (monitor) => ({ isOver: monitor.isOver({ shallow: true }) }),
+    }),
+    [projectPath, onReorder]
+  );
+
+  return (
+    <div
+      ref={(node) => drag(drop(node))}
+      className={getProjectItemClassName({
+        isDragging,
+        isOver,
+        selected: !!selected,
+      })}
+      {...rest}
+    >
+      {children}
+    </div>
+  );
+};
+
+/**
+ * Wrapper that fetches draft data from localStorage and renders via unified AgentListItem.
+ * Keeps data-fetching logic colocated with sidebar while delegating rendering to shared component.
+ */
+interface DraftAgentListItemWrapperProps {
+  projectPath: string;
+  draftId: string;
+  draftNumber: number;
+  isSelected: boolean;
+  sectionId?: string;
+  onVisibilityChange?: (isVisible: boolean) => void;
+  onOpen: () => void;
+  onDelete: () => void;
+}
+
+// Debounce delay for sidebar preview updates during typing.
+// Prevents constant re-renders while still providing timely feedback.
+const DRAFT_PREVIEW_DEBOUNCE_MS = 1000;
+
+function isDraftVisible(
+  projectPath: string,
+  draftId: string,
+  values?: {
+    draftPrompt?: string;
+    workspaceNameState?: unknown;
+    draftAttachments?: unknown[];
+  }
+): boolean {
+  const scopeId = getDraftScopeId(projectPath, draftId);
+  const draftPrompt = values?.draftPrompt ?? readPersistedState<string>(getInputKey(scopeId), "");
+  const workspaceNameState =
+    values?.workspaceNameState ??
+    readPersistedState<unknown>(getWorkspaceNameStateKey(scopeId), null);
+  const draftAttachments =
+    values?.draftAttachments ?? readPersistedState<unknown[]>(getInputAttachmentsKey(scopeId), []);
+
+  const hasTextContent = typeof draftPrompt === "string" && draftPrompt.trim().length > 0;
+  const hasAttachments = Array.isArray(draftAttachments) && draftAttachments.length > 0;
+  const hasNameState = workspaceNameState !== null;
+  return hasTextContent || hasAttachments || hasNameState;
+}
+
+function DraftAgentListItemWrapper(props: DraftAgentListItemWrapperProps) {
+  const scopeId = getDraftScopeId(props.projectPath, props.draftId);
+  const onVisibilityChange = props.onVisibilityChange;
+
+  const [draftPrompt] = usePersistedState<string>(getInputKey(scopeId), "", {
+    listener: true,
+  });
+
+  const [workspaceNameState] = usePersistedState<unknown>(getWorkspaceNameStateKey(scopeId), null, {
+    listener: true,
+  });
+  const [draftAttachments] = usePersistedState<unknown[]>(getInputAttachmentsKey(scopeId), [], {
+    listener: true,
+  });
+
+  // Debounce the preview values to avoid constant sidebar updates while typing.
+  const debouncedPrompt = useDebouncedValue(draftPrompt, DRAFT_PREVIEW_DEBOUNCE_MS);
+  const debouncedNameState = useDebouncedValue(workspaceNameState, DRAFT_PREVIEW_DEBOUNCE_MS);
+
+  // Keep empty drafts reusable without immediately surfacing them in the sidebar.
+  // Show the row when the draft has any user-provided content (typed text,
+  // attachments, or workspace-name edits), mirroring the isDraftEmpty() contract
+  // so non-empty drafts never become hidden orphans.
+  // Uses raw (non-debounced) values so the row appears immediately, while the
+  // preview text below still updates at the debounced cadence.
+  const isVisible = isDraftVisible(props.projectPath, props.draftId, {
+    draftPrompt,
+    workspaceNameState,
+    draftAttachments: Array.isArray(draftAttachments) ? draftAttachments : [],
+  });
+
+  useEffect(() => {
+    onVisibilityChange?.(isVisible);
+  }, [isVisible, onVisibilityChange]);
+
+  if (!isVisible) {
+    return null;
+  }
+
+  const workspaceTitle = getDisplayTitleFromPersistedState(debouncedNameState);
+
+  // Collapse whitespace so multi-line prompts show up nicely as a single-line preview.
+  const promptPreview =
+    typeof debouncedPrompt === "string" ? debouncedPrompt.trim().replace(/\s+/g, " ") : "";
+
+  const titleText = workspaceTitle.trim().length > 0 ? workspaceTitle.trim() : "Draft";
+
+  return (
+    <AgentListItem
+      variant="draft"
+      projectPath={props.projectPath}
+      isSelected={props.isSelected}
+      sectionId={props.sectionId}
+      draft={{
+        draftId: props.draftId,
+        draftNumber: props.draftNumber,
+        title: titleText,
+        promptPreview,
+        onOpen: props.onOpen,
+        onDelete: props.onDelete,
+      }}
+    />
+  );
+}
+
+// Custom drag layer to show a semi-transparent preview and enforce grabbing cursor
+interface ProjectDragItem {
+  type: "PROJECT";
+  projectPath: string;
+}
+const ProjectDragLayer: React.FC = () => {
+  const dragState = useDragLayer<{
+    isDragging: boolean;
+    item: unknown;
+    currentOffset: { x: number; y: number } | null;
+  }>((monitor) => ({
+    isDragging: monitor.isDragging(),
+    item: monitor.getItem(),
+    currentOffset: monitor.getClientOffset(),
+  }));
+  const isDragging = dragState.isDragging;
+  const item = dragState.item as ProjectDragItem | null;
+  const currentOffset = dragState.currentOffset;
+
+  React.useEffect(() => {
+    if (!isDragging) return;
+    const originalBody = document.body.style.cursor;
+    const originalHtml = document.documentElement.style.cursor;
+    document.body.style.cursor = "grabbing";
+    document.documentElement.style.cursor = "grabbing";
+    return () => {
+      document.body.style.cursor = originalBody;
+      document.documentElement.style.cursor = originalHtml;
+    };
+  }, [isDragging]);
+
+  if (!isDragging || !currentOffset || !item?.projectPath || item.type !== "PROJECT") return null;
+
+  const abbrevPath = PlatformPaths.abbreviate(item.projectPath);
+  const { basename } = PlatformPaths.splitAbbreviated(abbrevPath);
+
+  return (
+    <div className="pointer-events-none fixed inset-0 z-9999 cursor-grabbing">
+      <div style={{ transform: `translate(${currentOffset.x + 10}px, ${currentOffset.y + 10}px)` }}>
+        <div className={cn(PROJECT_ITEM_BASE_CLASS, "w-fit max-w-64 rounded-sm shadow-lg")}>
+          <span className="text-secondary mr-2 flex h-5 w-5 shrink-0 items-center justify-center">
+            <ChevronRight className="h-4 w-4" />
+          </span>
+          <div className="flex min-w-0 flex-1 items-center pr-2">
+            <span className="text-foreground truncate text-sm font-medium">{basename}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Handles F2 (edit title) and Shift+F2 (generate new title) keybinds.
+ * Rendered inside TitleEditProvider so it can access useTitleEdit().
+ */
+function SidebarTitleEditKeybinds(props: {
+  selectedWorkspace: WorkspaceSelection | undefined;
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
+  collapsed: boolean;
+}) {
+  const { requestEdit, wrapGenerateTitle } = useTitleEdit();
+  const { api } = useAPI();
+
+  const regenerateTitleForWorkspace = useCallback(
+    (workspaceId: string) => {
+      wrapGenerateTitle(workspaceId, () => {
+        if (!api) {
+          return Promise.resolve({ success: false, error: "Not connected to server" });
+        }
+        return api.workspace.regenerateTitle({ workspaceId });
+      });
+    },
+    [wrapGenerateTitle, api]
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (props.collapsed) return;
+      if (!props.selectedWorkspace) return;
+      if (isEditableElement(e.target)) return;
+      const wsId = props.selectedWorkspace.workspaceId;
+
+      if (matchesKeybind(e, KEYBINDS.EDIT_WORKSPACE_TITLE)) {
+        e.preventDefault();
+        const meta = props.sortedWorkspacesByProject
+          .get(props.selectedWorkspace.projectPath)
+          ?.find((m) => m.id === wsId);
+        const displayTitle = meta?.title ?? meta?.name ?? "";
+        requestEdit(wsId, displayTitle);
+      } else if (matchesKeybind(e, KEYBINDS.GENERATE_WORKSPACE_TITLE)) {
+        e.preventDefault();
+        regenerateTitleForWorkspace(wsId);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    props.collapsed,
+    props.selectedWorkspace,
+    props.sortedWorkspacesByProject,
+    requestEdit,
+    regenerateTitleForWorkspace,
+  ]);
+
+  useEffect(() => {
+    const handleGenerateTitleRequest: EventListener = (event) => {
+      const customEvent = event as CustomEventType<
+        typeof CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED
+      >;
+      regenerateTitleForWorkspace(customEvent.detail.workspaceId);
+    };
+
+    window.addEventListener(
+      CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED,
+      handleGenerateTitleRequest
+    );
+    return () => {
+      window.removeEventListener(
+        CUSTOM_EVENTS.WORKSPACE_GENERATE_TITLE_REQUESTED,
+        handleGenerateTitleRequest
+      );
+    };
+  }, [regenerateTitleForWorkspace]);
+
+  return null;
+}
+
+interface ProjectSidebarProps {
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
+  workspaceRecency: Record<string, number>;
+}
+
+function didUntrackedPathSetChange(
+  acknowledgedUntrackedPaths: string[],
+  latestUntrackedPaths: string[]
+): boolean {
+  if (acknowledgedUntrackedPaths.length !== latestUntrackedPaths.length) {
+    return true;
+  }
+
+  const acknowledgedSet = new Set(acknowledgedUntrackedPaths);
+  return latestUntrackedPaths.some((path) => !acknowledgedSet.has(path));
+}
+
+function usePreserveSubagentsUntilArchiveSetting(api: ReturnType<typeof useAPI>["api"]): boolean {
+  const [preserveSubagentsUntilArchive, setPreserveSubagentsUntilArchive] = useState(false);
+
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    const { signal } = abortController;
+    let iterator: AsyncIterator<unknown> | null = null;
+    let refreshVersion = 0;
+
+    const refresh = async () => {
+      const version = (refreshVersion += 1);
+      try {
+        const cfg = await api.config.getConfig();
+        if (signal.aborted || version !== refreshVersion) {
+          return;
+        }
+        setPreserveSubagentsUntilArchive(
+          normalizeTaskSettings(cfg.taskSettings).preserveSubagentsUntilArchive === true
+        );
+      } catch {
+        // Best-effort: keep the last known setting instead of hiding preserved rows on a
+        // transient config fetch failure.
+      }
+    };
+
+    void refresh();
+
+    void (async () => {
+      try {
+        const subscribedIterator = await api.config.onConfigChanged(undefined, { signal });
+        if (signal.aborted) {
+          void subscribedIterator.return?.();
+          return;
+        }
+
+        iterator = subscribedIterator;
+        for await (const _ of subscribedIterator) {
+          if (signal.aborted) {
+            break;
+          }
+          void refresh();
+        }
+      } catch {
+        // Subscription cancellation is expected during unmount/API reconnects.
+      }
+    })();
+
+    return () => {
+      abortController.abort();
+      void iterator?.return?.();
+    };
+  }, [api]);
+
+  return preserveSubagentsUntilArchive;
+}
+
+const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
+  collapsed,
+  onToggleCollapsed,
+  sortedWorkspacesByProject,
+  workspaceRecency,
+}) => {
+  // Use the narrow actions context — does NOT subscribe to workspaceMetadata
+  // changes, preventing the entire sidebar tree from re-rendering on every
+  // workspace create/archive/rename.
+  const {
+    selectedWorkspace,
+    setSelectedWorkspace: onSelectWorkspace,
+    preflightArchiveWorkspace,
+    archiveWorkspace: onArchiveWorkspace,
+    removeWorkspace,
+    updateWorkspaceTitle: onUpdateTitle,
+    refreshWorkspaceMetadata,
+    pendingNewWorkspaceProject,
+    pendingNewWorkspaceDraftId,
+    workspaceDraftsByProject,
+    workspaceDraftPromotionsByProject,
+    createWorkspaceDraft,
+    openWorkspaceDraft,
+    deleteWorkspaceDraft,
+  } = useWorkspaceActions();
+  const workspaceStore = useWorkspaceStoreRaw();
+  useWorkspaceAttentionSubscription(sortedWorkspacesByProject, workspaceStore);
+  const runtimeStatusStore = useRuntimeStatusStoreRaw();
+  const { navigateToProject } = useRouter();
+  const { api } = useAPI();
+  const preserveSubagentsUntilArchive = usePreserveSubagentsUntilArchiveSetting(api);
+  const { confirm: confirmDialog } = useConfirmDialog();
+  const settings = useSettings();
+
+  // Get project state and operations from context
+  const {
+    userProjects,
+    openProjectCreateModal: onAddProject,
+    removeProject: onRemoveProject,
+    updateDisplayName,
+    updateColor: updateProjectColor,
+    assignWorkspaceToSubProject,
+  } = useProjectContext();
+
+  // Theme for logo variant
+  const { theme } = useTheme();
+  const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
+  const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
+
+  // Mobile breakpoint for auto-closing sidebar
+  const MOBILE_BREAKPOINT = 768;
+  const projectListScrollRef = useRef<HTMLDivElement | null>(null);
+  const mobileScrollTopRef = useRef(0);
+  const wasCollapsedRef = useRef(collapsed);
+
+  const normalizeMobileScrollTop = useCallback((scrollTop: number): number => {
+    return Number.isFinite(scrollTop) ? Math.max(0, Math.round(scrollTop)) : 0;
+  }, []);
+
+  const persistMobileSidebarScrollTop = useCallback(
+    (scrollTop: number) => {
+      if (window.innerWidth > MOBILE_BREAKPOINT) {
+        return;
+      }
+
+      // Keep the last viewed list position so reopening the touch sidebar returns
+      // users to where they were browsing instead of jumping back to the top.
+      const normalizedScrollTop = normalizeMobileScrollTop(scrollTop);
+      updatePersistedState<number>(MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY, normalizedScrollTop, 0);
+    },
+    [MOBILE_BREAKPOINT, normalizeMobileScrollTop]
+  );
+
+  useEffect(() => {
+    if (collapsed || window.innerWidth > MOBILE_BREAKPOINT) {
+      return;
+    }
+
+    const persistedScrollTop = readPersistedState<unknown>(MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY, 0);
+    const normalizedScrollTop =
+      typeof persistedScrollTop === "number" ? normalizeMobileScrollTop(persistedScrollTop) : 0;
+    mobileScrollTopRef.current = normalizedScrollTop;
+
+    if (projectListScrollRef.current) {
+      projectListScrollRef.current.scrollTop = normalizedScrollTop;
+    }
+  }, [collapsed, MOBILE_BREAKPOINT, normalizeMobileScrollTop]);
+
+  useEffect(() => {
+    const wasCollapsed = wasCollapsedRef.current;
+
+    if (!wasCollapsed && collapsed) {
+      persistMobileSidebarScrollTop(mobileScrollTopRef.current);
+    }
+
+    wasCollapsedRef.current = collapsed;
+  }, [collapsed, persistMobileSidebarScrollTop]);
+
+  const handleProjectListScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      mobileScrollTopRef.current = normalizeMobileScrollTop(event.currentTarget.scrollTop);
+    },
+    [normalizeMobileScrollTop]
+  );
+
+  // Wrapper to close sidebar on mobile after workspace selection
+  const handleSelectWorkspace = useCallback(
+    (selection: WorkspaceSelection) => {
+      onSelectWorkspace(selection);
+      if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
+        onToggleCollapsed();
+      }
+    },
+    [onSelectWorkspace, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
+  );
+
+  // Wrapper to close sidebar on mobile after adding workspace
+  const handleAddWorkspace = useCallback(
+    (projectPath: string, subProjectPath?: string) => {
+      createWorkspaceDraft(projectPath, subProjectPath);
+      if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
+        onToggleCollapsed();
+      }
+    },
+    [createWorkspaceDraft, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
+  );
+
+  // Wrapper to close sidebar on mobile after opening an existing draft
+  const handleOpenWorkspaceDraft = useCallback(
+    (projectPath: string, draftId: string) => {
+      openWorkspaceDraft(projectPath, draftId);
+      if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
+        onToggleCollapsed();
+      }
+    },
+    [openWorkspaceDraft, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]
+  );
+
+  const handleGoHome = useCallback(() => {
+    // Selecting null delegates to WorkspaceContext's home-navigation + selection reset flow.
+    onSelectWorkspace(null);
+    // Close sidebar on mobile
+    if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+      persistMobileSidebarScrollTop(mobileScrollTopRef.current);
+      onToggleCollapsed();
+    }
+  }, [onSelectWorkspace, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop]);
+  // Workspace-specific subscriptions moved to AgentListItem component
+
+  // Store as array in localStorage, convert to Set for usage
+  const [expandedProjectsArray, setExpandedProjectsArray] = usePersistedState<string[]>(
+    EXPANDED_PROJECTS_KEY,
+    []
+  );
+  // Handle corrupted localStorage data (old Set stored as {}).
+  // Use a plain array with .includes() instead of new Set() on every render —
+  // the React Compiler cannot stabilize Set allocations (see AGENTS.md).
+  // For typical sidebar sizes (< 20 projects) .includes() is equivalent perf.
+  const expandedProjectsList = Array.isArray(expandedProjectsArray) ? expandedProjectsArray : [];
+
+  // Track which projects have old workspaces expanded (per-project, per-tier)
+  // Key format: getTierKey(projectPath, tierIndex) where tierIndex is 0, 1, 2 for 1/7/30 days
+  const [expandedOldWorkspaces, setExpandedOldWorkspaces] = usePersistedState<
+    Record<string, boolean>
+  >("expandedOldWorkspaces", {});
+
+  // Track which sections are expanded
+  const [expandedSections, setExpandedSections] = usePersistedState<Record<string, boolean>>(
+    "expandedSections",
+    {}
+  );
+
+  // Track parent workspaces whose reported child tasks are expanded.
+  const [expandedCompletedSubAgents, setExpandedCompletedSubAgents] = usePersistedState<
+    Record<string, boolean>
+  >("expandedCompletedSubAgents", {});
+  const toggleCompletedChildrenExpansion = useCallback(
+    (workspaceId: string) => {
+      setExpandedCompletedSubAgents((prev) => {
+        const current = prev[workspaceId] ?? preserveSubagentsUntilArchive;
+        const next = !current;
+        const updated = { ...prev };
+        if (next === preserveSubagentsUntilArchive) {
+          delete updated[workspaceId];
+        } else {
+          updated[workspaceId] = next;
+        }
+        return updated;
+      });
+    },
+    [preserveSubagentsUntilArchive, setExpandedCompletedSubAgents]
+  );
+  const expandedCompletedParentIds = new Set<string>();
+  for (const workspaces of sortedWorkspacesByProject.values()) {
+    for (const workspace of workspaces) {
+      if (expandedCompletedSubAgents[workspace.id] ?? preserveSubagentsUntilArchive) {
+        expandedCompletedParentIds.add(workspace.id);
+      }
+    }
+  }
+
+  const [expandedTaskGroups, setExpandedTaskGroups] = useState<Record<string, boolean>>({});
+  const toggleTaskGroupExpansion = (groupId: string) => {
+    setExpandedTaskGroups((prev) => ({
+      ...prev,
+      [groupId]: !prev[groupId],
+    }));
+  };
+
+  const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
+  const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());
+  const [draftVisibilityByProject, setDraftVisibilityByProject] = useState<
+    Record<string, Record<string, boolean>>
+  >({});
+  const workspaceArchiveError = usePopoverError();
+  const workspaceForkError = usePopoverError();
+  const workspaceStopRuntimeError = usePopoverError();
+  const workspaceRemoveError = usePopoverError();
+  const [archiveConfirmation, setArchiveConfirmation] = useState<{
+    workspaceId: string;
+    displayTitle: string;
+    buttonElement?: HTMLElement;
+    /** When set, the confirmation warns about permanent deletion of untracked files. */
+    untrackedPaths?: string[];
+    /** Whether the workspace has an active stream that will be interrupted. */
+    isStreaming?: boolean;
+  } | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{
+    projectPath: string;
+    projectName: string;
+    activeCount: number;
+    archivedCount: number;
+  } | null>(null);
+  const projectRemoveError = usePopoverError();
+  const sectionRemoveError = usePopoverError();
+
+  const handleDraftVisibilityChange = useCallback(
+    (projectPath: string, draftId: string, isVisible: boolean) => {
+      setDraftVisibilityByProject((prev) => {
+        const existing = prev[projectPath] ?? {};
+        if (existing[draftId] === isVisible) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          [projectPath]: {
+            ...existing,
+            [draftId]: isVisible,
+          },
+        };
+      });
+    },
+    []
+  );
+
+  const projectContextMenu = useContextMenuPosition({ longPress: true });
+  const [projectMenuTargetPath, setProjectMenuTargetPath] = useState<string | null>(null);
+  const [editingProjectPath, setEditingProjectPath] = useState<string | null>(null);
+  const [editingProjectDisplayName, setEditingProjectDisplayName] = useState("");
+  const [autoEditingSection, setAutoEditingSection] = useState<{
+    projectPath: string;
+    sectionId: string;
+  } | null>(null);
+  const [showProjectColorPicker, setShowProjectColorPicker] = useState(false);
+  const [projectColorHexInput, setProjectColorHexInput] = useState("");
+  const [projectColorPickerValue, setProjectColorPickerValue] = useState("#000000");
+  const [projectColorPickerDirty, setProjectColorPickerDirty] = useState(false);
+  const skipNextProjectNameBlurCommitRef = useRef(false);
+
+  // Use functional update to avoid stale closure issues when clicking rapidly
+  const toggleProject = useCallback(
+    (projectPath: string) => {
+      setExpandedProjectsArray((prev) => {
+        const prevSet = new Set(Array.isArray(prev) ? prev : []);
+        if (prevSet.has(projectPath)) {
+          prevSet.delete(projectPath);
+        } else {
+          prevSet.add(projectPath);
+        }
+        return Array.from(prevSet);
+      });
+    },
+    [setExpandedProjectsArray]
+  );
+
+  const toggleSection = (projectPath: string, sectionId: string) => {
+    const key = getSectionExpandedKey(projectPath, sectionId);
+    setExpandedSections((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  };
+
+  const handleForkWorkspace = useCallback(
+    async (workspaceId: string, buttonElement?: HTMLElement) => {
+      if (!api) {
+        workspaceForkError.showError(workspaceId, "Not connected to server");
+        return;
+      }
+
+      let anchor: { top: number; left: number } | undefined;
+      if (buttonElement) {
+        const rect = buttonElement.getBoundingClientRect();
+        anchor = {
+          top: rect.top + window.scrollY,
+          left: rect.right + 10,
+        };
+      }
+
+      try {
+        const result = await forkWorkspace({
+          client: api,
+          sourceWorkspaceId: workspaceId,
+        });
+        if (result.success) {
+          return;
+        }
+        workspaceForkError.showError(workspaceId, result.error ?? "Failed to fork chat", anchor);
+      } catch (error) {
+        // IPC/transport failures throw instead of returning { success: false }
+        const message = getErrorMessage(error);
+        workspaceForkError.showError(workspaceId, message, anchor);
+      }
+    },
+    [api, workspaceForkError]
+  );
+
+  const handleStopRuntime = useCallback(
+    async (workspaceId: string, buttonElement?: HTMLElement) => {
+      let anchor: { top: number; left: number } | undefined;
+      if (buttonElement) {
+        const rect = buttonElement.getBoundingClientRect();
+        anchor = {
+          top: rect.top + window.scrollY,
+          left: rect.right + 10,
+        };
+      }
+
+      if (!api) {
+        workspaceStopRuntimeError.showError(workspaceId, "Not connected to server", anchor);
+        return;
+      }
+
+      try {
+        const result = await api.workspace.stopRuntime({ workspaceId });
+        if (!result.success) {
+          workspaceStopRuntimeError.showError(
+            workspaceId,
+            result.error ?? "Failed to stop container",
+            anchor
+          );
+          return;
+        }
+
+        // A successful stop should hide the running indicator and menu action without
+        // forcing rows to own their own optimistic runtime state.
+        runtimeStatusStore.invalidateWorkspace(workspaceId);
+      } catch (error) {
+        workspaceStopRuntimeError.showError(workspaceId, getErrorMessage(error), anchor);
+      }
+    },
+    [api, runtimeStatusStore, workspaceStopRuntimeError]
+  );
+
+  const performArchiveWorkspace = useCallback(
+    async (
+      workspaceId: string,
+      buttonElement?: HTMLElement,
+      acknowledgedUntrackedPaths?: string[]
+    ) => {
+      // Mark workspace as being archived for UI feedback
+      setArchivingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
+
+      try {
+        const result = await onArchiveWorkspace(
+          workspaceId,
+          acknowledgedUntrackedPaths ? { acknowledgedUntrackedPaths } : undefined
+        );
+        if (result.success && result.data?.kind === "confirm-lossy-untracked-files") {
+          const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
+          const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
+          const aggregator = workspaceStore.getAggregator(workspaceId);
+          const hasActiveStreams = aggregator?.hasInterruptibleActiveStream() ?? false;
+          const pendingStreamStartTime = aggregator?.getPendingStreamStartTime();
+          const isStarting = pendingStreamStartTime != null && !hasActiveStreams;
+          const awaitingUserQuestion = aggregator?.hasAwaitingUserQuestion() ?? false;
+          const isStreaming = (hasActiveStreams || isStarting) && !awaitingUserQuestion;
+          setArchiveConfirmation({
+            workspaceId,
+            displayTitle,
+            buttonElement,
+            untrackedPaths: result.data.paths,
+            // The retry path already handled any earlier streaming warning. Only surface the
+            // interruption warning again when the archive attempt has not yet been confirmed.
+            isStreaming: acknowledgedUntrackedPaths == null ? isStreaming : false,
+          });
+          return;
+        }
+        if (!result.success) {
+          if (acknowledgedUntrackedPaths != null) {
+            // Archive may fail if new untracked files appear between confirmation and capture.
+            // Re-run preflight so we can reopen the modal with the latest paths.
+            const preflight = await preflightArchiveWorkspace(workspaceId);
+            if (preflight.success && preflight.data?.kind === "confirm-lossy-untracked-files") {
+              const pathsChanged = didUntrackedPathSetChange(
+                acknowledgedUntrackedPaths,
+                preflight.data.paths
+              );
+              if (pathsChanged) {
+                const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
+                const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
+                setArchiveConfirmation({
+                  workspaceId,
+                  displayTitle,
+                  buttonElement,
+                  untrackedPaths: preflight.data.paths,
+                  isStreaming: (() => {
+                    const aggregator = workspaceStore.getAggregator(workspaceId);
+                    if (!aggregator) return false;
+                    const hasActiveStreams = aggregator.hasInterruptibleActiveStream();
+                    const isStarting =
+                      aggregator.getPendingStreamStartTime() !== null && !hasActiveStreams;
+                    const awaitingUserQuestion = aggregator.hasAwaitingUserQuestion();
+                    return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
+                  })(),
+                });
+                return;
+              }
+            }
+          }
+
+          const error = result.error ?? "Failed to archive chat";
+          // Archive failures can be long-lived workflow errors (for example, untracked-file safety
+          // checks) that users should notice near the active workspace content, not pinned beside a
+          // left-sidebar row that may be far from their current focus. Use the shared toast fallback
+          // position so archive errors match other top-right UI error surfaces.
+          workspaceArchiveError.showError(workspaceId, error);
+        }
+      } finally {
+        // Clear archiving state
+        setArchivingWorkspaceIds((prev) => {
+          const next = new Set(prev);
+          next.delete(workspaceId);
+          return next;
+        });
+      }
+    },
+    [onArchiveWorkspace, preflightArchiveWorkspace, workspaceArchiveError, workspaceStore]
+  );
+
+  const hasActiveStream = useCallback(
+    (workspaceId: string) => {
+      const aggregator = workspaceStore.getAggregator(workspaceId);
+      if (!aggregator) return false;
+      const hasActiveStreams = aggregator.hasInterruptibleActiveStream();
+      const isStarting = aggregator.getPendingStreamStartTime() !== null && !hasActiveStreams;
+      const awaitingUserQuestion = aggregator.hasAwaitingUserQuestion();
+      return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
+    },
+    [workspaceStore]
+  );
+
+  const workspaceHasAttention = useCallback(
+    (workspace: FrontendWorkspaceMetadata) => {
+      const workspaceId = workspace.id;
+      const aggregator = workspaceStore.getAggregator(workspaceId);
+      const hasActiveStreams = aggregator?.hasInterruptibleActiveStream() ?? false;
+      const isStarting = aggregator?.getPendingStreamStartTime() != null && !hasActiveStreams;
+      const awaitingUserQuestion = aggregator?.hasAwaitingUserQuestion() ?? false;
+      const isWorking = (hasActiveStreams || isStarting) && !awaitingUserQuestion;
+      const hasError = aggregator?.getLastAbortReason()?.reason === "system";
+      const isRemoving = workspace.isRemoving === true;
+      const isArchiving = archivingWorkspaceIds.has(workspaceId);
+      const isInitializing = workspace.isInitializing === true;
+      const isSelected = selectedWorkspace?.workspaceId === workspaceId;
+      const recencyTimestamp = workspaceRecency[workspaceId] ?? null;
+      const lastReadTimestamp = readPersistedState<number | null>(
+        getWorkspaceLastReadKey(workspaceId),
+        null
+      );
+      const isUnread =
+        !isSelected &&
+        recencyTimestamp !== null &&
+        lastReadTimestamp !== null &&
+        recencyTimestamp > lastReadTimestamp;
+
+      return (
+        isWorking ||
+        awaitingUserQuestion ||
+        hasError ||
+        isInitializing ||
+        isRemoving ||
+        isArchiving ||
+        isUnread
+      );
+    },
+    [archivingWorkspaceIds, selectedWorkspace?.workspaceId, workspaceRecency, workspaceStore]
+  );
+
+  const handleArchiveWorkspace = useCallback(
+    async (workspaceId: string, buttonElement?: HTMLElement) => {
+      const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
+      const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
+      const isStreaming = hasActiveStream(workspaceId);
+
+      // Run preflight to check for untracked files that can't be preserved.
+      const preflight = await preflightArchiveWorkspace(workspaceId);
+      if (!preflight.success) {
+        workspaceArchiveError.showError(
+          workspaceId,
+          preflight.error ?? "Failed to check archive readiness"
+        );
+        return;
+      }
+
+      const untrackedPaths =
+        preflight.data?.kind === "confirm-lossy-untracked-files" ? preflight.data.paths : undefined;
+
+      if (isStreaming || untrackedPaths) {
+        // Show a single combined confirmation dialog for streaming + untracked-file warnings.
+        setArchiveConfirmation({
+          workspaceId,
+          displayTitle,
+          buttonElement,
+          untrackedPaths,
+          isStreaming,
+        });
+        return;
+      }
+
+      await performArchiveWorkspace(workspaceId, buttonElement);
+    },
+    [
+      hasActiveStream,
+      performArchiveWorkspace,
+      preflightArchiveWorkspace,
+      workspaceArchiveError,
+      workspaceStore,
+    ]
+  );
+
+  const handleArchiveWorkspaceConfirm = useCallback(async () => {
+    if (!archiveConfirmation) {
+      return;
+    }
+
+    const confirmation = archiveConfirmation;
+    setArchiveConfirmation(null);
+    await performArchiveWorkspace(
+      confirmation.workspaceId,
+      confirmation.buttonElement,
+      confirmation.untrackedPaths
+    );
+  }, [archiveConfirmation, performArchiveWorkspace]);
+
+  const handleArchiveWorkspaceCancel = useCallback(() => {
+    setArchiveConfirmation(null);
+  }, []);
+
+  const showProjectRemoveError = useCallback(
+    (
+      projectPath: string,
+      error: {
+        type: string;
+        message?: string;
+        activeCount?: number;
+        archivedCount?: number;
+      },
+      buttonElement?: HTMLElement
+    ) => {
+      let message: string;
+      if (error.type === "workspace_blockers") {
+        const parts: string[] = [];
+        const activeCount = error.activeCount ?? 0;
+        const archivedCount = error.archivedCount ?? 0;
+
+        if (activeCount > 0) {
+          parts.push(`${activeCount} active`);
+        }
+        if (archivedCount > 0) {
+          parts.push(`${archivedCount} archived`);
+        }
+        message = `Has ${parts.join(" and ")} workspace(s)`;
+      } else if (error.type === "project_not_found") {
+        message = "Project not found";
+      } else {
+        message = error.message ?? "Failed to remove project";
+      }
+
+      let anchor: { top: number; left: number } | undefined;
+      if (buttonElement) {
+        const rect = buttonElement.getBoundingClientRect();
+        anchor = {
+          top: rect.top + window.scrollY,
+          left: rect.right + 10,
+        };
+      }
+
+      projectRemoveError.showError(projectPath, message, anchor);
+    },
+    [projectRemoveError]
+  );
+
+  const removeProjectWithFeedback = useCallback(
+    async (projectPath: string, options?: { force?: boolean }, buttonElement?: HTMLElement) => {
+      const result = await onRemoveProject(projectPath, options);
+      if (!result.success) {
+        showProjectRemoveError(projectPath, result.error, buttonElement);
+      }
+      return result;
+    },
+    [onRemoveProject, showProjectRemoveError]
+  );
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!deleteConfirmation) {
+      return;
+    }
+
+    const result = await removeProjectWithFeedback(deleteConfirmation.projectPath, {
+      force: true,
+    });
+    if (result.success) {
+      setDeleteConfirmation(null);
+    }
+  }, [deleteConfirmation, removeProjectWithFeedback]);
+
+  const handleDeleteCancel = useCallback(() => {
+    setDeleteConfirmation(null);
+  }, []);
+  const handleCancelWorkspaceCreation = useCallback(
+    async (workspaceId: string) => {
+      // Give immediate UI feedback (spinner / disabled row) while deletion is in-flight.
+      setRemovingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
+
+      try {
+        const result = await removeWorkspace(workspaceId, { force: true });
+        if (!result.success) {
+          workspaceRemoveError.showError(
+            workspaceId,
+            result.error ?? "Failed to cancel workspace creation"
+          );
+        }
+      } finally {
+        setRemovingWorkspaceIds((prev) => {
+          const next = new Set(prev);
+          next.delete(workspaceId);
+          return next;
+        });
+      }
+    },
+    [removeWorkspace, workspaceRemoveError]
+  );
+
+  const handleRemoveSection = async (
+    projectPath: string,
+    subProjectPath: string,
+    buttonElement?: HTMLElement
+  ) => {
+    // Capture the anchor location up front because the sub-project action menu unmounts its
+    // button immediately after click; failures still need stable error placement.
+    const anchor =
+      buttonElement != null
+        ? (() => {
+            const buttonRect = buttonElement.getBoundingClientRect();
+            return {
+              top: buttonRect.top + window.scrollY,
+              left: buttonRect.right + 10,
+            };
+          })()
+        : undefined;
+
+    // Removing a sub-project unregisters it and clears the cwd pointer from its workspaces.
+    const workspacesInSection = (userProjects.get(projectPath)?.workspaces ?? []).filter(
+      (workspace) => workspace.subProjectPath === subProjectPath
+    );
+
+    if (workspacesInSection.length > 0) {
+      const ok = await confirmDialog({
+        title: "Remove sub-project?",
+        description: `${workspacesInSection.length} workspace(s) in this sub-project will move back to the parent project.`,
+        confirmLabel: "Remove",
+        confirmVariant: "destructive",
+      });
+      if (!ok) {
+        return;
+      }
+    }
+
+    const result = await onRemoveProject(subProjectPath);
+    if (!result.success) {
+      const error = getErrorMessage(result.error) || "Failed to remove sub-project";
+      sectionRemoveError.showError(subProjectPath, error, anchor);
+    }
+  };
+
+  const handleOpenSecrets = useCallback(
+    (projectPath: string) => {
+      // Collapse the off-canvas sidebar on mobile before navigating so the
+      // settings page is immediately accessible without a backdrop blocking it.
+      if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
+        onToggleCollapsed();
+      }
+      // Navigate to Settings → Secrets with the project pre-selected.
+      settings.open("secrets", { secretsProjectPath: projectPath });
+    },
+    [MOBILE_BREAKPOINT, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop, settings]
+  );
+
+  const closeProjectContextMenu = useCallback(() => {
+    projectContextMenu.close();
+    setProjectMenuTargetPath(null);
+    setShowProjectColorPicker(false);
+    setProjectColorPickerDirty(false);
+  }, [projectContextMenu]);
+
+  const handleProjectMenuOpenChange = useCallback(
+    (open: boolean) => {
+      projectContextMenu.onOpenChange(open);
+      if (!open) {
+        setProjectMenuTargetPath(null);
+        setShowProjectColorPicker(false);
+        setProjectColorPickerDirty(false);
+      }
+    },
+    [projectContextMenu]
+  );
+
+  const handleOpenProjectMenu = useCallback(
+    (event: React.MouseEvent, projectPath: string) => {
+      setProjectMenuTargetPath(projectPath);
+      setShowProjectColorPicker(false);
+      setProjectColorPickerDirty(false);
+      projectContextMenu.onContextMenu(event);
+    },
+    [projectContextMenu]
+  );
+
+  const handleProjectContextMenuTouchStart = useCallback(
+    (event: React.TouchEvent, projectPath: string) => {
+      setProjectMenuTargetPath(projectPath);
+      setShowProjectColorPicker(false);
+      setProjectColorPickerDirty(false);
+      projectContextMenu.touchHandlers.onTouchStart(event);
+    },
+    [projectContextMenu]
+  );
+
+  const handleRequestProjectRemoval = useCallback(
+    (projectPath: string, buttonElement?: HTMLElement) => {
+      const projectConfig = userProjects.get(projectPath);
+      if (!projectConfig) {
+        return;
+      }
+
+      const projectName = projectConfig.displayName ?? getProjectNameFromPath(projectPath);
+      const counts = getProjectWorkspaceCounts(projectConfig.workspaces);
+      const total = counts.activeCount + counts.archivedCount;
+      if (total > 0) {
+        setDeleteConfirmation({
+          projectPath,
+          projectName,
+          activeCount: counts.activeCount,
+          archivedCount: counts.archivedCount,
+        });
+        return;
+      }
+
+      void removeProjectWithFeedback(projectPath, undefined, buttonElement);
+    },
+    [removeProjectWithFeedback, userProjects]
+  );
+
+  const cancelProjectDisplayNameEditing = useCallback(() => {
+    setEditingProjectPath(null);
+    setEditingProjectDisplayName("");
+  }, []);
+
+  const commitProjectDisplayNameEdit = useCallback(
+    async (projectPath: string, nextDisplayName: string) => {
+      const normalizedDisplayName = normalizeDisplayNameInput(nextDisplayName);
+      const result = await updateDisplayName(projectPath, normalizedDisplayName);
+      if (!result.success) {
+        console.error("Failed to update project display name:", result.error);
+        return;
+      }
+      setEditingProjectPath((currentPath) => {
+        if (currentPath === projectPath) {
+          setEditingProjectDisplayName("");
+          return null;
+        }
+        return currentPath;
+      });
+    },
+    [updateDisplayName]
+  );
+
+  const handleProjectMenuEditName = useCallback(() => {
+    if (!projectMenuTargetPath) {
+      return;
+    }
+
+    const projectConfig = userProjects.get(projectMenuTargetPath);
+    if (!projectConfig) {
+      closeProjectContextMenu();
+      return;
+    }
+
+    // Escape can leave the skip-blur flag set when the input unmounts before a blur event fires.
+    // Clear it when a fresh edit session starts so the next blur commits as expected.
+    skipNextProjectNameBlurCommitRef.current = false;
+    const currentDisplayName =
+      projectConfig.displayName ?? getProjectFallbackLabel(projectMenuTargetPath);
+    setEditingProjectPath(projectMenuTargetPath);
+    setEditingProjectDisplayName(currentDisplayName);
+    closeProjectContextMenu();
+  }, [closeProjectContextMenu, projectMenuTargetPath, userProjects]);
+
+  const handleProjectMenuManageSecrets = useCallback(() => {
+    if (!projectMenuTargetPath) {
+      return;
+    }
+
+    handleOpenSecrets(projectMenuTargetPath);
+    closeProjectContextMenu();
+  }, [closeProjectContextMenu, handleOpenSecrets, projectMenuTargetPath]);
+
+  const handleProjectMenuDelete = useCallback(
+    (buttonElement?: HTMLElement) => {
+      if (!projectMenuTargetPath) {
+        return;
+      }
+
+      handleRequestProjectRemoval(projectMenuTargetPath, buttonElement);
+      closeProjectContextMenu();
+    },
+    [closeProjectContextMenu, handleRequestProjectRemoval, projectMenuTargetPath]
+  );
+
+  const handleProjectMenuAddSubFolder = useCallback(() => {
+    closeProjectContextMenu();
+    onAddProject(projectMenuTargetPath ? { initialPath: projectMenuTargetPath } : undefined);
+  }, [closeProjectContextMenu, onAddProject, projectMenuTargetPath]);
+
+  const projectMenuTargetConfig = projectMenuTargetPath
+    ? (userProjects.get(projectMenuTargetPath) ?? null)
+    : null;
+  const projectMenuResolvedColor = resolveSectionColor(projectMenuTargetConfig?.color);
+
+  // HexColorPicker emits on every drag tick; debounce project color writes so we
+  // don't flood IPC + project refreshes while the user drags through hues.
+  const debouncedProjectColorPickerValue = useDebouncedValue(projectColorPickerValue, 150);
+
+  const handleProjectMenuColorClick = useCallback(() => {
+    if (!projectMenuTargetPath) {
+      return;
+    }
+    setShowProjectColorPicker((prev) => {
+      const next = !prev;
+      if (next) {
+        setProjectColorHexInput(projectMenuResolvedColor);
+        setProjectColorPickerValue(projectMenuResolvedColor);
+      }
+      setProjectColorPickerDirty(false);
+      return next;
+    });
+  }, [projectMenuResolvedColor, projectMenuTargetPath]);
+
+  const handleProjectColorChange = useCallback(
+    async (color: string) => {
+      if (!projectMenuTargetPath) {
+        return;
+      }
+      const result = await updateProjectColor(projectMenuTargetPath, color);
+      if (!result.success) {
+        console.error("Failed to update project color:", result.error);
+      }
+    },
+    [projectMenuTargetPath, updateProjectColor]
+  );
+
+  useEffect(() => {
+    if (!showProjectColorPicker || !projectColorPickerDirty) {
+      return;
+    }
+    if (!/^#[0-9a-fA-F]{6}$/.test(debouncedProjectColorPickerValue)) {
+      return;
+    }
+    if (debouncedProjectColorPickerValue === projectMenuResolvedColor) {
+      return;
+    }
+
+    void handleProjectColorChange(debouncedProjectColorPickerValue);
+  }, [
+    debouncedProjectColorPickerValue,
+    handleProjectColorChange,
+    projectColorPickerDirty,
+    projectMenuResolvedColor,
+    showProjectColorPicker,
+  ]);
+
+  // UI preference: project order persists in localStorage
+  const [projectOrder, setProjectOrder] = usePersistedState<string[]>("mux:projectOrder", []);
+
+  // Build a stable signature of the project keys so effects don't fire on Map identity churn
+  const projectPathsSignature = React.useMemo(() => {
+    // sort to avoid order-related churn
+    const keys = Array.from(userProjects.keys()).sort();
+    return keys.join("\u0001"); // use non-printable separator
+  }, [userProjects]);
+
+  // Normalize order when the set of projects changes (not on every parent render)
+  useEffect(() => {
+    // Skip normalization if projects haven't loaded yet (empty Map on initial render)
+    // This prevents clearing projectOrder before projects load from backend
+    if (userProjects.size === 0) {
+      return;
+    }
+
+    const normalized = normalizeOrder(projectOrder, userProjects);
+    if (
+      normalized.length !== projectOrder.length ||
+      normalized.some((p, i) => p !== projectOrder[i])
+    ) {
+      setProjectOrder(normalized);
+    }
+    // Only re-run when project keys change (projectPathsSignature captures projects Map keys)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectPathsSignature]);
+
+  // Memoize sorted project PATHS (not entries) to avoid capturing stale config objects.
+  // Sorting depends only on keys + order; we read configs from the live Map during render.
+  const sortedProjectPaths = React.useMemo(
+    () =>
+      sortProjectsByOrder(userProjects, projectOrder)
+        .filter(([, config]) => !config.parentProjectPath)
+        .map(([p]) => p),
+    // projectPathsSignature captures projects Map keys
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [projectPathsSignature, projectOrder]
+  );
+
+  const singleProjectWorkspacesByProject = new Map<string, FrontendWorkspaceMetadata[]>();
+  const multiProjectWorkspacesById = new Map<string, FrontendWorkspaceMetadata>();
+  const workspaceAttentionById = new Map<string, boolean>();
+
+  for (const [projectPath, workspaces] of sortedWorkspacesByProject) {
+    const singleProjectWorkspaces: FrontendWorkspaceMetadata[] = [];
+    for (const workspace of workspaces) {
+      workspaceAttentionById.set(workspace.id, workspaceHasAttention(workspace));
+      if (isMultiProject(workspace)) {
+        if (multiProjectWorkspacesEnabled) {
+          multiProjectWorkspacesById.set(workspace.id, workspace);
+        }
+        continue;
+      }
+
+      singleProjectWorkspaces.push(workspace);
+    }
+    singleProjectWorkspacesByProject.set(projectPath, singleProjectWorkspaces);
+  }
+
+  const multiProjectWorkspaces = Array.from(multiProjectWorkspacesById.values());
+  // Multi-project rows should share the same completed-subagent chevron behavior as
+  // regular workspace rows, so reuse the same visibility + metadata calculations.
+  const multiProjectDepthByWorkspaceId = computeWorkspaceDepthMap(multiProjectWorkspaces);
+  const visibleMultiProjectWorkspaces = filterVisibleAgentRows(
+    multiProjectWorkspaces,
+    expandedCompletedParentIds
+  );
+  const multiProjectRowMetaByWorkspaceId = computeAgentRowRenderMeta(
+    multiProjectWorkspaces,
+    multiProjectDepthByWorkspaceId,
+    expandedCompletedParentIds
+  );
+  const isMultiProjectSectionExpanded = expandedProjectsList.includes(
+    MULTI_PROJECT_SIDEBAR_SECTION_ID
+  );
+
+  const handleReorder = useCallback(
+    (draggedPath: string, targetPath: string) => {
+      const next = reorderProjects(projectOrder, userProjects, draggedPath, targetPath);
+      setProjectOrder(next);
+    },
+    [projectOrder, userProjects, setProjectOrder]
+  );
+
+  const hasProjectMenuTarget = projectMenuTargetPath !== null;
+
+  // Handle keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Sub-project workspaces share the parent worktree, so recover the child
+      // target from the live sidebar metadata before opening a sibling draft.
+      if (matchesKeybind(e, KEYBINDS.NEW_WORKSPACE) && selectedWorkspace) {
+        e.preventDefault();
+        // Resolve the effective section ID exactly the way the renderer does:
+        // honor the workspace's own subProjectPath when it still exists,
+        // otherwise inherit from the parent workspace. This keeps Ctrl+N in
+        // lockstep with the visible section and avoids forwarding deleted
+        // sub-project paths that workspace.create would reject.
+        const projectWorkspaces =
+          sortedWorkspacesByProject.get(selectedWorkspace.projectPath) ?? [];
+        const byId = new Map(projectWorkspaces.map((m) => [m.id, m]));
+        const meta = byId.get(selectedWorkspace.workspaceId);
+        const validSectionIds = new Set(
+          getSubProjectsForParent(selectedWorkspace.projectPath, userProjects).map(
+            ([subPath]) => subPath
+          )
+        );
+        const subProjectPath = meta
+          ? resolveEffectiveSectionId(meta, byId, validSectionIds)
+          : undefined;
+        handleAddWorkspace(selectedWorkspace.projectPath, subProjectPath);
+      } else if (matchesKeybind(e, KEYBINDS.ARCHIVE_WORKSPACE) && selectedWorkspace) {
+        e.preventDefault();
+        void handleArchiveWorkspace(selectedWorkspace.workspaceId);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    selectedWorkspace,
+    handleAddWorkspace,
+    handleArchiveWorkspace,
+    sortedWorkspacesByProject,
+    userProjects,
+  ]);
+
+  return (
+    <TitleEditProvider onUpdateTitle={onUpdateTitle}>
+      <SidebarTitleEditKeybinds
+        selectedWorkspace={selectedWorkspace ?? undefined}
+        sortedWorkspacesByProject={sortedWorkspacesByProject}
+        collapsed={collapsed}
+      />
+      <DndProvider backend={HTML5Backend}>
+        <ProjectDragLayer />
+        <WorkspaceDragLayer />
+        <div
+          className={cn(
+            // The sidebar doubles as a drag surface, so keep copy selection disabled
+            // unless a child input explicitly opts back into text selection.
+            "font-primary bg-surface-primary border-border-light relative flex flex-1 select-none flex-col overflow-hidden border-r",
+            // In desktop mode when collapsed, hide border (LeftSidebar handles the partial border)
+            isDesktopMode() && collapsed && "border-r-0"
+          )}
+          role="navigation"
+          aria-label="Projects"
+        >
+          {!collapsed && (
+            <>
+              <div className="border-dark flex items-center justify-between border-b py-3 pr-3 pl-4">
+                <div className="flex min-w-0 items-center gap-2">
+                  <button
+                    onClick={handleGoHome}
+                    className="shrink-0 cursor-pointer border-none bg-transparent p-0"
+                    aria-label="Home"
+                  >
+                    <MuxLogo className="h-5 w-[44px]" aria-hidden="true" />
+                  </button>
+                </div>
+                <button
+                  onClick={() => onAddProject()}
+                  aria-label="Add project"
+                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 text-xs transition-all duration-200"
+                >
+                  <span className="text-base leading-none">+</span>
+                  <span>Add Project</span>
+                </button>
+              </div>
+              <ScrollArea
+                className="flex-1"
+                viewportRef={projectListScrollRef}
+                onViewportScroll={handleProjectListScroll}
+                viewportClassName="overflow-x-hidden"
+              >
+                {multiProjectWorkspaces.length > 0 && (
+                  <div>
+                    <div className={PROJECT_ITEM_BASE_CLASS}>
+                      <button
+                        onClick={() => toggleProject(MULTI_PROJECT_SIDEBAR_SECTION_ID)}
+                        aria-label={`${isMultiProjectSectionExpanded ? "Collapse" : "Expand"} multi-project workspaces`}
+                        className={PROJECT_TOGGLE_BUTTON_CLASSES}
+                      >
+                        <span className="relative flex h-4 w-4 items-center justify-center">
+                          <ChevronRight
+                            className="absolute inset-0 h-4 w-4 opacity-0 transition-[opacity,transform] duration-200 group-hover:opacity-100"
+                            style={{
+                              transform: isMultiProjectSectionExpanded
+                                ? "rotate(90deg)"
+                                : "rotate(0deg)",
+                            }}
+                          />
+                          {isMultiProjectSectionExpanded ? (
+                            <FolderOpen className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0" />
+                          ) : (
+                            <Folder className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0" />
+                          )}
+                        </span>
+                      </button>
+                      <div className="flex min-w-0 flex-1 items-center pr-2">
+                        <span className="text-foreground truncate text-sm font-medium">
+                          Multi-Project
+                        </span>
+                        <span className="text-muted ml-2 text-xs">
+                          ({multiProjectWorkspaces.length})
+                        </span>
+                      </div>
+                    </div>
+                    {isMultiProjectSectionExpanded && (
+                      <div className="pt-1 pb-1">
+                        {visibleMultiProjectWorkspaces.map((metadata) => {
+                          const rowRenderMeta = multiProjectRowMetaByWorkspaceId.get(metadata.id);
+
+                          return (
+                            <AgentListItem
+                              key={metadata.id}
+                              metadata={metadata}
+                              projectPath={metadata.projectPath}
+                              projectName={metadata.projectName}
+                              isSelected={selectedWorkspace?.workspaceId === metadata.id}
+                              isArchiving={archivingWorkspaceIds.has(metadata.id)}
+                              isRemoving={
+                                removingWorkspaceIds.has(metadata.id) ||
+                                metadata.isRemoving === true
+                              }
+                              onSelectWorkspace={handleSelectWorkspace}
+                              onForkWorkspace={handleForkWorkspace}
+                              onArchiveWorkspace={handleArchiveWorkspace}
+                              onCancelCreation={handleCancelWorkspaceCreation}
+                              depth={
+                                rowRenderMeta?.depth ??
+                                multiProjectDepthByWorkspaceId[metadata.id] ??
+                                0
+                              }
+                              rowRenderMeta={rowRenderMeta}
+                              completedChildrenExpanded={expandedCompletedParentIds.has(
+                                metadata.id
+                              )}
+                              onToggleCompletedChildren={toggleCompletedChildrenExpansion}
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {sortedProjectPaths.length === 0 && multiProjectWorkspaces.length === 0 ? (
+                  <div className="px-4 py-8 text-center">
+                    <p className="text-muted mb-4 text-[13px]">No projects</p>
+                    <button
+                      onClick={() => onAddProject()}
+                      className="bg-accent hover:bg-accent-dark cursor-pointer rounded border-none px-4 py-2 text-[13px] text-white transition-colors duration-200"
+                    >
+                      Add Project
+                    </button>
+                  </div>
+                ) : (
+                  sortedProjectPaths.map((projectPath) => {
+                    const config = userProjects.get(projectPath);
+                    if (!config) return null;
+                    const projectFolderColor = config.color
+                      ? resolveSectionColor(config.color)
+                      : undefined;
+                    const projectName = getProjectNameFromPath(projectPath);
+                    const sanitizedProjectId =
+                      projectPath.replace(/[^a-zA-Z0-9_-]/g, "-") || "root";
+                    const workspaceListId = `workspace-list-${sanitizedProjectId}`;
+                    const isExpanded = expandedProjectsList.includes(projectPath);
+                    const displayProjectName =
+                      config.displayName ?? getProjectFallbackLabel(projectPath);
+                    const isEditingProjectDisplayName = editingProjectPath === projectPath;
+                    const projectWorkspaces =
+                      singleProjectWorkspacesByProject.get(projectPath) ?? [];
+                    const projectAgentCount = projectWorkspaces.length;
+                    const projectHasAttention = projectWorkspaces.some(
+                      (workspace) => workspaceAttentionById.get(workspace.id) === true
+                    );
+
+                    return (
+                      <div key={projectPath}>
+                        <DraggableProjectItem
+                          projectPath={projectPath}
+                          onReorder={handleReorder}
+                          selected={false}
+                          onClick={() => {
+                            if (projectContextMenu.suppressClickIfLongPress()) {
+                              return;
+                            }
+                            if (isEditingProjectDisplayName) {
+                              return;
+                            }
+                            handleAddWorkspace(projectPath);
+                          }}
+                          onContextMenu={(event) => handleOpenProjectMenu(event, projectPath)}
+                          onTouchStart={(event) =>
+                            handleProjectContextMenuTouchStart(event, projectPath)
+                          }
+                          onTouchEnd={projectContextMenu.touchHandlers.onTouchEnd}
+                          onTouchMove={projectContextMenu.touchHandlers.onTouchMove}
+                          onKeyDown={(e: React.KeyboardEvent) => {
+                            // Ignore key events from child buttons
+                            if (e.target instanceof HTMLElement && e.target !== e.currentTarget) {
+                              return;
+                            }
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              handleAddWorkspace(projectPath);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={isExpanded}
+                          aria-controls={workspaceListId}
+                          aria-label={`Create workspace in ${projectName}`}
+                          data-project-path={projectPath}
+                        >
+                          <button
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleProject(projectPath);
+                            }}
+                            aria-label={`${isExpanded ? "Collapse" : "Expand"} project ${projectName}`}
+                            data-project-path={projectPath}
+                            className={PROJECT_TOGGLE_BUTTON_CLASSES}
+                          >
+                            <span className="relative flex h-4 w-4 items-center justify-center">
+                              <ChevronRight
+                                className="absolute inset-0 h-4 w-4 opacity-0 transition-[opacity,transform] duration-200 group-hover:opacity-100"
+                                style={{
+                                  transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                                }}
+                              />
+                              {isExpanded ? (
+                                <FolderOpen
+                                  className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0"
+                                  style={
+                                    projectFolderColor ? { color: projectFolderColor } : undefined
+                                  }
+                                />
+                              ) : (
+                                <Folder
+                                  className="h-4 w-4 transition-opacity duration-200 group-hover:opacity-0"
+                                  style={
+                                    projectFolderColor ? { color: projectFolderColor } : undefined
+                                  }
+                                />
+                              )}
+                            </span>
+                          </button>
+                          <div
+                            className="flex min-w-0 flex-1 items-center pr-1"
+                            onContextMenu={(event) => handleOpenProjectMenu(event, projectPath)}
+                          >
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                {isEditingProjectDisplayName ? (
+                                  <input
+                                    value={editingProjectDisplayName}
+                                    autoFocus
+                                    aria-label={`Edit project name for ${projectName}`}
+                                    className="bg-background text-foreground border-border-light h-6 w-full rounded border px-2 text-sm"
+                                    onClick={(event) => event.stopPropagation()}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onContextMenu={(event) => event.stopPropagation()}
+                                    onChange={(event) => {
+                                      setEditingProjectDisplayName(event.target.value);
+                                    }}
+                                    onKeyDown={(event) => {
+                                      stopKeyboardPropagation(event);
+                                      if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        skipNextProjectNameBlurCommitRef.current = true;
+                                        cancelProjectDisplayNameEditing();
+                                        return;
+                                      }
+
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        event.currentTarget.blur();
+                                      }
+                                    }}
+                                    onBlur={(event) => {
+                                      event.stopPropagation();
+                                      if (skipNextProjectNameBlurCommitRef.current) {
+                                        skipNextProjectNameBlurCommitRef.current = false;
+                                        return;
+                                      }
+                                      void commitProjectDisplayNameEdit(
+                                        projectPath,
+                                        event.currentTarget.value
+                                      );
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="text-muted-dark flex min-w-0 items-baseline gap-1.5 text-sm">
+                                    <span
+                                      className={cn(
+                                        "min-w-0 flex-1 truncate font-medium",
+                                        projectHasAttention
+                                          ? "text-content-primary"
+                                          : "text-content-secondary"
+                                      )}
+                                    >
+                                      {displayProjectName}
+                                    </span>
+                                    <span
+                                      className={cn(
+                                        "shrink-0 text-xs",
+                                        projectHasAttention
+                                          ? "text-content-secondary"
+                                          : "text-muted"
+                                      )}
+                                    >
+                                      ({projectAgentCount})
+                                    </span>
+                                  </div>
+                                )}
+                              </TooltipTrigger>
+                              <TooltipContent align="start">{projectPath}</TooltipContent>
+                            </Tooltip>
+                          </div>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleAddWorkspace(projectPath);
+                                }}
+                                aria-label={`New chat in ${projectName}`}
+                                data-project-path={projectPath}
+                                className="text-content-secondary hover:bg-hover hover:border-border-light pointer-events-none flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-sm leading-none opacity-0 transition-all duration-200 focus-visible:pointer-events-auto focus-visible:opacity-100"
+                              >
+                                <Plus className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              New chat ({formatKeybind(KEYBINDS.NEW_WORKSPACE)})
+                            </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleOpenProjectMenu(event, projectPath);
+                                }}
+                                aria-label={`Project options for ${projectName}`}
+                                data-project-path={projectPath}
+                                className={cn(
+                                  "text-content-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent transition-all duration-200 focus-visible:pointer-events-auto focus-visible:opacity-100",
+                                  projectContextMenu.isOpen && projectMenuTargetPath === projectPath
+                                    ? "pointer-events-auto opacity-100"
+                                    : "pointer-events-none opacity-0"
+                                )}
+                              >
+                                <EllipsisVertical className="h-4 w-4 shrink-0" strokeWidth={1.8} />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent align="end">Project options</TooltipContent>
+                          </Tooltip>
+                        </DraggableProjectItem>
+
+                        {isExpanded && (
+                          <div
+                            id={workspaceListId}
+                            role="region"
+                            aria-label={`Workspaces for ${projectName}`}
+                            className="pt-1"
+                          >
+                            {(() => {
+                              // Archived workspaces are excluded from workspaceMetadata so won't appear here
+
+                              const draftsForProject = workspaceDraftsByProject[projectPath] ?? [];
+                              const activeDraftIds = new Set(
+                                draftsForProject.map((draft) => draft.draftId)
+                              );
+                              const draftPromotionsForProject =
+                                workspaceDraftPromotionsByProject[projectPath] ?? {};
+                              const activeDraftPromotions = Object.fromEntries(
+                                Object.entries(draftPromotionsForProject).filter(([draftId]) =>
+                                  activeDraftIds.has(draftId)
+                                )
+                              );
+                              const promotedWorkspaceIds = new Set(
+                                Object.values(activeDraftPromotions).map((metadata) => metadata.id)
+                              );
+                              const workspacesForNormalRendering = projectWorkspaces.filter(
+                                (workspace) => !promotedWorkspaceIds.has(workspace.id)
+                              );
+                              const sections: SectionConfig[] = getSubProjectsForParent(
+                                projectPath,
+                                userProjects
+                              ).map(([subProjectPath, subProjectConfig]) => ({
+                                id: subProjectPath,
+                                name: getProjectDisplayName(subProjectPath, subProjectConfig),
+                                color: subProjectConfig.color,
+                              }));
+                              const depthByWorkspaceId =
+                                computeWorkspaceDepthMap(projectWorkspaces);
+                              const visibleWorkspacesForNormalRendering = filterVisibleAgentRows(
+                                workspacesForNormalRendering,
+                                expandedCompletedParentIds
+                              );
+                              const baseRowMetaByWorkspaceId = computeAgentRowRenderMeta(
+                                workspacesForNormalRendering,
+                                depthByWorkspaceId,
+                                expandedCompletedParentIds
+                              );
+                              const sortedDrafts = draftsForProject
+                                .slice()
+                                .sort((a, b) => b.createdAt - a.createdAt);
+                              const draftVisibilityForProject =
+                                draftVisibilityByProject[projectPath] ?? {};
+                              const hasVisibleDrafts = sortedDrafts.some((draft) => {
+                                const reactiveVisibility = draftVisibilityForProject[draft.draftId];
+                                return (
+                                  reactiveVisibility ?? isDraftVisible(projectPath, draft.draftId)
+                                );
+                              });
+                              const projectHasNoAgentsOrDrafts =
+                                projectWorkspaces.length === 0 && !hasVisibleDrafts;
+                              const draftNumberById = new Map(
+                                sortedDrafts.map(
+                                  (draft, index) => [draft.draftId, index + 1] as const
+                                )
+                              );
+                              const getDraftSectionId = (
+                                draft: (typeof sortedDrafts)[number]
+                              ): string | null =>
+                                typeof draft.subProjectPath === "string" &&
+                                userProjects.get(draft.subProjectPath)?.parentProjectPath ===
+                                  projectPath
+                                  ? draft.subProjectPath
+                                  : null;
+
+                              // Drafts can reference a section that has since been deleted.
+                              // Treat those as unsectioned so they remain accessible.
+                              const unsectionedDrafts: typeof sortedDrafts = [];
+                              const draftsBySectionId = new Map<string, typeof sortedDrafts>();
+                              for (const draft of sortedDrafts) {
+                                const sectionId = getDraftSectionId(draft);
+                                if (sectionId === null) {
+                                  unsectionedDrafts.push(draft);
+                                  continue;
+                                }
+
+                                const existing = draftsBySectionId.get(sectionId);
+                                if (existing) {
+                                  existing.push(draft);
+                                } else {
+                                  draftsBySectionId.set(sectionId, [draft]);
+                                }
+                              }
+
+                              const renderWorkspace = (
+                                metadata: FrontendWorkspaceMetadata,
+                                sectionId?: string,
+                                rowRenderMetaOverride?: AgentRowRenderMeta | null,
+                                depthOverride?: number,
+                                keyOverride?: string,
+                                subAgentConnectorLayout?: "default" | "task-group-member"
+                              ) => {
+                                const rowRenderMeta =
+                                  rowRenderMetaOverride === undefined
+                                    ? baseRowMetaByWorkspaceId.get(metadata.id)
+                                    : (rowRenderMetaOverride ?? undefined);
+
+                                return (
+                                  <AgentListItem
+                                    key={keyOverride ?? metadata.id}
+                                    metadata={metadata}
+                                    projectPath={projectPath}
+                                    projectName={projectName}
+                                    isSelected={selectedWorkspace?.workspaceId === metadata.id}
+                                    isArchiving={archivingWorkspaceIds.has(metadata.id)}
+                                    isRemoving={
+                                      removingWorkspaceIds.has(metadata.id) ||
+                                      metadata.isRemoving === true
+                                    }
+                                    onSelectWorkspace={handleSelectWorkspace}
+                                    onForkWorkspace={handleForkWorkspace}
+                                    onStopRuntime={handleStopRuntime}
+                                    onArchiveWorkspace={handleArchiveWorkspace}
+                                    onCancelCreation={handleCancelWorkspaceCreation}
+                                    depth={
+                                      depthOverride ??
+                                      rowRenderMeta?.depth ??
+                                      depthByWorkspaceId[metadata.id] ??
+                                      0
+                                    }
+                                    sectionId={sectionId}
+                                    rowRenderMeta={rowRenderMeta}
+                                    subAgentConnectorLayout={subAgentConnectorLayout}
+                                    completedChildrenExpanded={expandedCompletedParentIds.has(
+                                      metadata.id
+                                    )}
+                                    onToggleCompletedChildren={toggleCompletedChildrenExpansion}
+                                  />
+                                );
+                              };
+
+                              const renderWorkspaceRowsWithTaskGroupCoalescing = ({
+                                rows,
+                                allRows,
+                                sectionId,
+                                rowMetaByWorkspaceId,
+                              }: {
+                                rows: FrontendWorkspaceMetadata[];
+                                allRows: FrontendWorkspaceMetadata[];
+                                sectionId?: string;
+                                rowMetaByWorkspaceId: ReadonlyMap<string, AgentRowRenderMeta>;
+                              }): React.ReactNode[] => {
+                                if (rows.length === 0) {
+                                  return [];
+                                }
+
+                                const childrenByParentId = new Map<
+                                  string,
+                                  FrontendWorkspaceMetadata[]
+                                >();
+                                for (const workspace of allRows) {
+                                  const parentId = workspace.parentWorkspaceId;
+                                  if (!parentId) {
+                                    continue;
+                                  }
+                                  const children = childrenByParentId.get(parentId) ?? [];
+                                  children.push(workspace);
+                                  childrenByParentId.set(parentId, children);
+                                }
+
+                                const getTaskGroupId = (
+                                  workspace: FrontendWorkspaceMetadata
+                                ): string | null => {
+                                  const groupId = workspace.bestOf?.groupId;
+                                  if (!groupId || !workspace.parentWorkspaceId) {
+                                    return null;
+                                  }
+                                  if ((workspace.bestOf?.total ?? 1) < 2) {
+                                    return null;
+                                  }
+                                  const hasChildren = childrenByParentId.has(workspace.id);
+                                  return hasChildren ? null : groupId;
+                                };
+
+                                const allMembersByGroupId = new Map<
+                                  string,
+                                  FrontendWorkspaceMetadata[]
+                                >();
+                                for (const workspace of allRows) {
+                                  const groupId = getTaskGroupId(workspace);
+                                  if (!groupId) {
+                                    continue;
+                                  }
+                                  const group = allMembersByGroupId.get(groupId) ?? [];
+                                  group.push(workspace);
+                                  allMembersByGroupId.set(groupId, group);
+                                }
+
+                                const visibleMembersByGroupId = new Map<
+                                  string,
+                                  FrontendWorkspaceMetadata[]
+                                >();
+                                for (const workspace of rows) {
+                                  const groupId = getTaskGroupId(workspace);
+                                  if (!groupId) {
+                                    continue;
+                                  }
+                                  const group = visibleMembersByGroupId.get(groupId) ?? [];
+                                  group.push(workspace);
+                                  visibleMembersByGroupId.set(groupId, group);
+                                }
+
+                                const indexByWorkspaceId = new Map(
+                                  rows.map((workspace, index) => [workspace.id, index] as const)
+                                );
+                                const validGroupIds = new Set<string>();
+                                for (const [groupId, visibleMembers] of visibleMembersByGroupId) {
+                                  const allMembers = allMembersByGroupId.get(groupId) ?? [];
+                                  if (visibleMembers.length < 2 || allMembers.length < 2) {
+                                    continue;
+                                  }
+                                  const indices = visibleMembers
+                                    .map((workspace) => indexByWorkspaceId.get(workspace.id))
+                                    .filter((index): index is number => index != null);
+                                  if (indices.length !== visibleMembers.length) {
+                                    continue;
+                                  }
+                                  const firstIndex = Math.min(...indices);
+                                  const lastIndex = Math.max(...indices);
+                                  if (lastIndex - firstIndex + 1 !== visibleMembers.length) {
+                                    continue;
+                                  }
+                                  validGroupIds.add(groupId);
+                                }
+
+                                const skippedWorkspaceIds = new Set<string>();
+                                const renderedRows: React.ReactNode[] = [];
+
+                                for (const workspace of rows) {
+                                  if (skippedWorkspaceIds.has(workspace.id)) {
+                                    continue;
+                                  }
+
+                                  const taskGroupId = getTaskGroupId(workspace);
+                                  if (!taskGroupId || !validGroupIds.has(taskGroupId)) {
+                                    renderedRows.push(
+                                      renderWorkspace(
+                                        workspace,
+                                        sectionId,
+                                        rowMetaByWorkspaceId.get(workspace.id)
+                                      )
+                                    );
+                                    continue;
+                                  }
+
+                                  const visibleMembers =
+                                    visibleMembersByGroupId.get(taskGroupId) ?? [];
+                                  if (visibleMembers[0]?.id !== workspace.id) {
+                                    continue;
+                                  }
+
+                                  for (const member of visibleMembers) {
+                                    skippedWorkspaceIds.add(member.id);
+                                  }
+
+                                  const sortTaskGroupMembers = (
+                                    members: FrontendWorkspaceMetadata[]
+                                  ): FrontendWorkspaceMetadata[] => {
+                                    return [...members].sort(
+                                      (left, right) =>
+                                        (left.bestOf?.index ?? Number.MAX_SAFE_INTEGER) -
+                                          (right.bestOf?.index ?? Number.MAX_SAFE_INTEGER) ||
+                                        left.id.localeCompare(right.id)
+                                    );
+                                  };
+                                  const allMembers = sortTaskGroupMembers(
+                                    allMembersByGroupId.get(taskGroupId) ?? visibleMembers
+                                  );
+                                  const sortedVisibleMembers = sortTaskGroupMembers(visibleMembers);
+                                  const depth =
+                                    rowMetaByWorkspaceId.get(workspace.id)?.depth ??
+                                    depthByWorkspaceId[workspace.id] ??
+                                    0;
+                                  const totalCount = Math.max(
+                                    allMembers[0]?.bestOf?.total ?? allMembers.length,
+                                    allMembers.length
+                                  );
+                                  const groupKind = getTaskGroupKindFromMetadata(
+                                    allMembers[0]?.bestOf
+                                  );
+                                  let completedCount = 0;
+                                  let runningCount = 0;
+                                  let queuedCount = 0;
+                                  let interruptedCount = 0;
+                                  for (const member of allMembers) {
+                                    const hasCompletedReport = hasCompletedAgentReport(member);
+                                    if (hasCompletedReport) {
+                                      completedCount += 1;
+                                      continue;
+                                    }
+                                    if (
+                                      member.taskStatus === "running" ||
+                                      member.taskStatus === "awaiting_report"
+                                    ) {
+                                      runningCount += 1;
+                                      continue;
+                                    }
+                                    if (member.taskStatus === "queued") {
+                                      queuedCount += 1;
+                                      continue;
+                                    }
+                                    if (member.taskStatus === "interrupted") {
+                                      interruptedCount += 1;
+                                    }
+                                  }
+                                  const groupTitle =
+                                    allMembers[0]?.title ?? allMembers[0]?.name ?? "Task group";
+                                  const isExpanded = expandedTaskGroups[taskGroupId] ?? false;
+
+                                  renderedRows.push(
+                                    <TaskGroupListItem
+                                      key={`task-group:${taskGroupId}`}
+                                      groupId={taskGroupId}
+                                      title={groupTitle}
+                                      kind={groupKind}
+                                      sectionId={sectionId}
+                                      depth={depth}
+                                      totalCount={totalCount}
+                                      visibleCount={sortedVisibleMembers.length}
+                                      completedCount={completedCount}
+                                      runningCount={runningCount}
+                                      queuedCount={queuedCount}
+                                      interruptedCount={interruptedCount}
+                                      isExpanded={isExpanded}
+                                      isSelected={allMembers.some(
+                                        (member) => member.id === selectedWorkspace?.workspaceId
+                                      )}
+                                      onToggle={() => {
+                                        toggleTaskGroupExpansion(taskGroupId);
+                                      }}
+                                    />
+                                  );
+
+                                  if (isExpanded) {
+                                    for (const member of sortedVisibleMembers) {
+                                      renderedRows.push(
+                                        renderWorkspace(
+                                          member,
+                                          sectionId,
+                                          rowMetaByWorkspaceId.get(member.id) ?? null,
+                                          getTaskGroupMemberDepth(depth),
+                                          `task-group-member:${taskGroupId}:${member.id}`,
+                                          "task-group-member"
+                                        )
+                                      );
+                                    }
+                                  }
+                                }
+
+                                return renderedRows;
+                              };
+
+                              const renderDraft = (
+                                draft: (typeof sortedDrafts)[number]
+                              ): React.ReactNode => {
+                                const sectionId = getDraftSectionId(draft);
+                                const promotedMetadata = activeDraftPromotions[draft.draftId];
+
+                                if (promotedMetadata) {
+                                  const liveMetadata =
+                                    projectWorkspaces.find(
+                                      (workspace) => workspace.id === promotedMetadata.id
+                                    ) ?? promotedMetadata;
+                                  return renderWorkspace(liveMetadata, sectionId ?? undefined);
+                                }
+
+                                const draftNumber = draftNumberById.get(draft.draftId) ?? 0;
+                                const isSelected =
+                                  pendingNewWorkspaceProject === projectPath &&
+                                  pendingNewWorkspaceDraftId === draft.draftId;
+
+                                return (
+                                  <DraftAgentListItemWrapper
+                                    key={draft.draftId}
+                                    projectPath={projectPath}
+                                    draftId={draft.draftId}
+                                    draftNumber={draftNumber}
+                                    isSelected={isSelected}
+                                    sectionId={sectionId ?? undefined}
+                                    onVisibilityChange={(isVisible) => {
+                                      handleDraftVisibilityChange(
+                                        projectPath,
+                                        draft.draftId,
+                                        isVisible
+                                      );
+                                    }}
+                                    onOpen={() =>
+                                      handleOpenWorkspaceDraft(projectPath, draft.draftId)
+                                    }
+                                    onDelete={() => {
+                                      if (isSelected) {
+                                        const currentIndex = sortedDrafts.findIndex(
+                                          (d) => d.draftId === draft.draftId
+                                        );
+                                        const fallback =
+                                          currentIndex >= 0
+                                            ? (sortedDrafts[currentIndex + 1] ??
+                                              sortedDrafts[currentIndex - 1])
+                                            : undefined;
+
+                                        if (fallback) {
+                                          openWorkspaceDraft(projectPath, fallback.draftId);
+                                        } else {
+                                          navigateToProject(sectionId ?? projectPath);
+                                        }
+                                      }
+
+                                      deleteWorkspaceDraft(projectPath, draft.draftId);
+                                    }}
+                                  />
+                                );
+                              };
+
+                              // Render age tiers for a list of workspaces
+                              const renderAgeTiers = (
+                                workspaces: FrontendWorkspaceMetadata[],
+                                tierKeyPrefix: string,
+                                sectionId?: string,
+                                allRowsForTaskGroupCoalescing: FrontendWorkspaceMetadata[] = workspaces
+                              ): React.ReactNode => {
+                                const { recent: topVisibleRows, buckets } =
+                                  partitionWorkspacesByAge(workspaces, workspaceRecency);
+
+                                const expandedTierVisibleIds = new Set<string>();
+                                const markExpandedTierRowsVisible = (tierIndex: number): void => {
+                                  const bucket = buckets[tierIndex];
+                                  const remainingCount = buckets
+                                    .slice(tierIndex)
+                                    .reduce((sum, bucketRows) => sum + bucketRows.length, 0);
+                                  if (remainingCount === 0) {
+                                    return;
+                                  }
+
+                                  const tierKey = `${tierKeyPrefix}:${tierIndex}`;
+                                  const isTierExpanded = expandedOldWorkspaces[tierKey] ?? false;
+                                  if (!isTierExpanded) {
+                                    return;
+                                  }
+
+                                  for (const workspace of bucket) {
+                                    expandedTierVisibleIds.add(workspace.id);
+                                  }
+
+                                  const nextTier = findNextNonEmptyTier(buckets, tierIndex + 1);
+                                  if (nextTier !== -1) {
+                                    markExpandedTierRowsVisible(nextTier);
+                                  }
+                                };
+
+                                const firstTier = findNextNonEmptyTier(buckets, 0);
+                                if (firstTier !== -1) {
+                                  markExpandedTierRowsVisible(firstTier);
+                                }
+
+                                // Connector geometry should match the rows users can currently see,
+                                // not hidden siblings parked behind collapsed age tiers.
+                                const visibleRowIds = new Set<string>([
+                                  ...topVisibleRows.map((workspace) => workspace.id),
+                                  ...expandedTierVisibleIds,
+                                ]);
+                                const visibleRows = workspaces.filter((workspace) =>
+                                  visibleRowIds.has(workspace.id)
+                                );
+                                const visibleRowsById = new Map(
+                                  visibleRows.map((workspace) => [workspace.id, workspace])
+                                );
+                                const visibleChildrenByParent = new Map<
+                                  string,
+                                  FrontendWorkspaceMetadata[]
+                                >();
+                                for (const workspace of visibleRows) {
+                                  const parentId = workspace.parentWorkspaceId;
+                                  if (!parentId) {
+                                    continue;
+                                  }
+
+                                  const siblings = visibleChildrenByParent.get(parentId) ?? [];
+                                  siblings.push(workspace);
+                                  visibleChildrenByParent.set(parentId, siblings);
+                                }
+
+                                const rowMetaByVisibleWorkspaceId = new Map<
+                                  string,
+                                  AgentRowRenderMeta
+                                >();
+                                for (const workspace of visibleRows) {
+                                  const baseRowMeta = baseRowMetaByWorkspaceId.get(workspace.id);
+                                  if (!baseRowMeta) {
+                                    continue;
+                                  }
+
+                                  const parentId = workspace.parentWorkspaceId;
+                                  if (!parentId) {
+                                    rowMetaByVisibleWorkspaceId.set(workspace.id, {
+                                      ...baseRowMeta,
+                                      ancestorTrunks: [],
+                                    });
+                                    continue;
+                                  }
+
+                                  const siblings = visibleChildrenByParent.get(parentId) ?? [];
+                                  const siblingIndex = siblings.findIndex(
+                                    (sibling) => sibling.id === workspace.id
+                                  );
+                                  let connectorPosition: AgentRowRenderMeta["connectorPosition"] =
+                                    "single";
+                                  if (siblings.length > 1) {
+                                    connectorPosition =
+                                      siblings[siblings.length - 1]?.id === workspace.id
+                                        ? "last"
+                                        : "middle";
+                                  }
+
+                                  let lastRunningSiblingIndex = -1;
+                                  for (let index = siblings.length - 1; index >= 0; index -= 1) {
+                                    if (siblings[index]?.taskStatus === "running") {
+                                      lastRunningSiblingIndex = index;
+                                      break;
+                                    }
+                                  }
+
+                                  const connectorStartsAtParent = siblingIndex === 0;
+                                  const sharedTrunkActiveThroughRow =
+                                    siblingIndex >= 0 &&
+                                    lastRunningSiblingIndex >= 0 &&
+                                    siblingIndex <= lastRunningSiblingIndex;
+                                  const sharedTrunkActiveBelowRow =
+                                    siblingIndex >= 0 &&
+                                    lastRunningSiblingIndex >= 0 &&
+                                    siblingIndex < lastRunningSiblingIndex;
+
+                                  const ancestorTrunks: Array<{
+                                    depth: number;
+                                    active: boolean;
+                                  }> = [];
+                                  const visitedAncestorIds = new Set<string>();
+                                  let ancestorId: string | undefined = parentId;
+                                  while (ancestorId && !visitedAncestorIds.has(ancestorId)) {
+                                    visitedAncestorIds.add(ancestorId);
+
+                                    const ancestorWorkspace = visibleRowsById.get(ancestorId);
+                                    if (!ancestorWorkspace) {
+                                      break;
+                                    }
+
+                                    const ancestorMeta =
+                                      rowMetaByVisibleWorkspaceId.get(ancestorId) ??
+                                      baseRowMetaByWorkspaceId.get(ancestorId);
+                                    const ancestorDepth = depthByWorkspaceId[ancestorId] ?? 0;
+                                    if (
+                                      ancestorDepth > 0 &&
+                                      ancestorMeta?.connectorPosition === "middle"
+                                    ) {
+                                      ancestorTrunks.push({
+                                        depth: ancestorDepth,
+                                        active: ancestorMeta.sharedTrunkActiveBelowRow,
+                                      });
+                                    }
+
+                                    ancestorId = ancestorWorkspace.parentWorkspaceId;
+                                  }
+                                  ancestorTrunks.sort((left, right) => left.depth - right.depth);
+
+                                  rowMetaByVisibleWorkspaceId.set(workspace.id, {
+                                    ...baseRowMeta,
+                                    connectorPosition,
+                                    connectorStartsAtParent,
+                                    sharedTrunkActiveThroughRow,
+                                    sharedTrunkActiveBelowRow,
+                                    ancestorTrunks,
+                                  });
+                                }
+
+                                const renderTier = (tierIndex: number): React.ReactNode => {
+                                  const bucket = buckets[tierIndex];
+                                  const remainingCount = buckets
+                                    .slice(tierIndex)
+                                    .reduce((sum, b) => sum + b.length, 0);
+
+                                  if (remainingCount === 0) return null;
+
+                                  const tierKey = `${tierKeyPrefix}:${tierIndex}`;
+                                  const isTierExpanded = expandedOldWorkspaces[tierKey] ?? false;
+                                  const thresholdDays = AGE_THRESHOLDS_DAYS[tierIndex];
+                                  const thresholdLabel = formatDaysThreshold(thresholdDays);
+                                  const displayCount = isTierExpanded
+                                    ? bucket.length
+                                    : remainingCount;
+
+                                  return (
+                                    <React.Fragment key={tierKey}>
+                                      <button
+                                        onClick={() => {
+                                          setExpandedOldWorkspaces((prev) => ({
+                                            ...prev,
+                                            [tierKey]: !prev[tierKey],
+                                          }));
+                                        }}
+                                        aria-label={
+                                          isTierExpanded
+                                            ? `Collapse workspaces older than ${thresholdLabel}`
+                                            : `Expand workspaces older than ${thresholdLabel}`
+                                        }
+                                        aria-expanded={isTierExpanded}
+                                        className="text-muted border-hover hover:text-label [&:hover_.arrow]:text-label flex w-full cursor-pointer items-center gap-1 border-t border-none bg-transparent px-3 py-2 pl-7 text-xs font-medium transition-all duration-150 hover:bg-white/3"
+                                      >
+                                        <span
+                                          className="arrow text-dim text-[11px] transition-transform duration-200 ease-in-out"
+                                          style={{
+                                            transform: isTierExpanded
+                                              ? "rotate(90deg)"
+                                              : "rotate(0deg)",
+                                          }}
+                                        >
+                                          <ChevronRight className="h-4 w-4" />
+                                        </span>
+                                        <div className="flex items-center gap-1.5">
+                                          <span>Older than {thresholdLabel}</span>
+                                          <span className="text-dim font-normal">
+                                            ({displayCount})
+                                          </span>
+                                        </div>
+                                      </button>
+                                      {isTierExpanded && (
+                                        <>
+                                          {renderWorkspaceRowsWithTaskGroupCoalescing({
+                                            rows: bucket,
+                                            allRows: allRowsForTaskGroupCoalescing,
+                                            sectionId,
+                                            rowMetaByWorkspaceId: rowMetaByVisibleWorkspaceId,
+                                          })}
+                                          {(() => {
+                                            const nextTier = findNextNonEmptyTier(
+                                              buckets,
+                                              tierIndex + 1
+                                            );
+                                            return nextTier !== -1 ? renderTier(nextTier) : null;
+                                          })()}
+                                        </>
+                                      )}
+                                    </React.Fragment>
+                                  );
+                                };
+
+                                return (
+                                  <>
+                                    {renderWorkspaceRowsWithTaskGroupCoalescing({
+                                      rows: topVisibleRows,
+                                      allRows: allRowsForTaskGroupCoalescing,
+                                      sectionId,
+                                      rowMetaByWorkspaceId: rowMetaByVisibleWorkspaceId,
+                                    })}
+                                    {firstTier !== -1 && renderTier(firstTier)}
+                                  </>
+                                );
+                              };
+
+                              // Partition both the full section membership and the filtered visible rows.
+                              // Best-of grouping stays leaf-only by consulting the unfiltered section data,
+                              // while actual rendering still follows the visible hierarchy.
+                              const {
+                                unsectioned: allUnsectionedForNormalRendering,
+                                bySectionId: allBySectionIdForNormalRendering,
+                              } = partitionWorkspacesBySection(
+                                workspacesForNormalRendering,
+                                sections
+                              );
+                              const { unsectioned, bySectionId } = partitionWorkspacesBySection(
+                                visibleWorkspacesForNormalRendering,
+                                sections
+                              );
+
+                              // Handle workspace drop into section
+                              const handleWorkspaceSectionDrop = (
+                                workspaceId: string,
+                                targetSectionId: string | null
+                              ) => {
+                                void (async () => {
+                                  const result = await assignWorkspaceToSubProject(
+                                    projectPath,
+                                    workspaceId,
+                                    targetSectionId
+                                  );
+                                  if (result.success) {
+                                    // Refresh workspace metadata so UI shows updated sectionId
+                                    await refreshWorkspaceMetadata();
+                                  }
+                                })();
+                              };
+
+                              // Render section with its workspaces
+                              const renderSection = (section: SectionConfig) => {
+                                const sectionWorkspaces = bySectionId.get(section.id) ?? [];
+                                const sectionAllWorkspaces =
+                                  allBySectionIdForNormalRendering.get(section.id) ?? [];
+                                const sectionDrafts = draftsBySectionId.get(section.id) ?? [];
+                                const sectionHasPromotedAttention = sectionDrafts.some((draft) => {
+                                  const promotedMetadata = activeDraftPromotions[draft.draftId];
+                                  return promotedMetadata
+                                    ? workspaceAttentionById.get(promotedMetadata.id) === true
+                                    : false;
+                                });
+                                const sectionHasAttention =
+                                  sectionAllWorkspaces.some(
+                                    (workspace) => workspaceAttentionById.get(workspace.id) === true
+                                  ) || sectionHasPromotedAttention;
+
+                                const sectionExpandedKey = getSectionExpandedKey(
+                                  projectPath,
+                                  section.id
+                                );
+                                const isSectionExpanded =
+                                  expandedSections[sectionExpandedKey] ?? true;
+                                const shouldAutoEditSection =
+                                  autoEditingSection?.projectPath === projectPath &&
+                                  autoEditingSection?.sectionId === section.id;
+
+                                return (
+                                  <WorkspaceSectionDropZone
+                                    key={section.id}
+                                    projectPath={projectPath}
+                                    sectionId={section.id}
+                                    onDrop={handleWorkspaceSectionDrop}
+                                  >
+                                    <SectionHeader
+                                      section={section}
+                                      isExpanded={isSectionExpanded}
+                                      workspaceCount={
+                                        sectionWorkspaces.length + sectionDrafts.length
+                                      }
+                                      hasAttention={sectionHasAttention}
+                                      onToggleExpand={() => toggleSection(projectPath, section.id)}
+                                      onAddWorkspace={() => {
+                                        // Create workspace in this section
+                                        handleAddWorkspace(projectPath, section.id);
+                                      }}
+                                      onRename={(name) => {
+                                        if (shouldAutoEditSection) {
+                                          setAutoEditingSection(null);
+                                        }
+                                        void updateDisplayName(section.id, name);
+                                      }}
+                                      onChangeColor={(color) => {
+                                        void updateProjectColor(section.id, color);
+                                      }}
+                                      autoStartEditing={shouldAutoEditSection}
+                                      onAutoCreateAbandon={
+                                        shouldAutoEditSection
+                                          ? () => {
+                                              void (async () => {
+                                                setAutoEditingSection(null);
+                                                await handleRemoveSection(projectPath, section.id);
+                                              })();
+                                            }
+                                          : undefined
+                                      }
+                                      onAutoCreateRenameCancel={
+                                        shouldAutoEditSection
+                                          ? () => {
+                                              setAutoEditingSection(null);
+                                            }
+                                          : undefined
+                                      }
+                                      onDelete={(anchorEl) => {
+                                        void handleRemoveSection(projectPath, section.id, anchorEl);
+                                      }}
+                                    />
+                                    {isSectionExpanded && (
+                                      <div className="pb-1">
+                                        {sectionDrafts.map((draft) => renderDraft(draft))}
+                                        {sectionWorkspaces.length > 0 ? (
+                                          renderAgeTiers(
+                                            sectionWorkspaces,
+                                            getSectionTierKey(projectPath, section.id, 0).replace(
+                                              ":tier:0",
+                                              ":tier"
+                                            ),
+                                            section.id,
+                                            sectionAllWorkspaces
+                                          )
+                                        ) : sectionDrafts.length === 0 ? (
+                                          <div className="text-muted px-3 py-2 text-center text-xs italic">
+                                            No chats in this sub-project
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    )}
+                                  </WorkspaceSectionDropZone>
+                                );
+                              };
+
+                              return (
+                                <>
+                                  {projectHasNoAgentsOrDrafts && (
+                                    <div className="text-content-disabled py-2 pl-12 text-xs">
+                                      Empty
+                                    </div>
+                                  )}
+                                  {/* Unsectioned workspaces first - always show drop zone when sections exist */}
+                                  {sections.length > 0 ? (
+                                    <WorkspaceSectionDropZone
+                                      projectPath={projectPath}
+                                      sectionId={null}
+                                      onDrop={handleWorkspaceSectionDrop}
+                                      testId="unsectioned-drop-zone"
+                                    >
+                                      {unsectionedDrafts.map((draft) => renderDraft(draft))}
+                                      {unsectioned.length > 0 ? (
+                                        renderAgeTiers(
+                                          unsectioned,
+                                          getTierKey(projectPath, 0).replace(":0", ""),
+                                          undefined,
+                                          allUnsectionedForNormalRendering
+                                        )
+                                      ) : unsectionedDrafts.length === 0 ? (
+                                        <div className="text-muted px-3 py-2 text-center text-xs italic">
+                                          No unsectioned chats
+                                        </div>
+                                      ) : null}
+                                    </WorkspaceSectionDropZone>
+                                  ) : (
+                                    <>
+                                      {unsectionedDrafts.map((draft) => renderDraft(draft))}
+                                      {unsectioned.length > 0 &&
+                                        renderAgeTiers(
+                                          unsectioned,
+                                          getTierKey(projectPath, 0).replace(":0", ""),
+                                          undefined,
+                                          allUnsectionedForNormalRendering
+                                        )}
+                                    </>
+                                  )}
+
+                                  {/* Sections */}
+                                  {sections.map(renderSection)}
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </ScrollArea>
+            </>
+          )}
+          <SidebarCollapseButton
+            collapsed={collapsed}
+            onToggle={onToggleCollapsed}
+            side="left"
+            shortcut={formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)}
+          />
+          <PositionedMenu
+            open={projectContextMenu.isOpen}
+            onOpenChange={handleProjectMenuOpenChange}
+            position={projectContextMenu.position}
+          >
+            <PositionedMenuItem
+              icon={<Pencil className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
+              label="Edit name"
+              disabled={!hasProjectMenuTarget}
+              onClick={() => {
+                handleProjectMenuEditName();
+              }}
+            />
+            <PositionedMenuItem
+              icon={<Plus className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
+              label="Add sub-project"
+              disabled={!hasProjectMenuTarget}
+              onClick={() => {
+                handleProjectMenuAddSubFolder();
+              }}
+            />
+            <PositionedMenuItem
+              icon={<KeyRound className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
+              label="Manage secrets"
+              disabled={!hasProjectMenuTarget}
+              onClick={() => {
+                handleProjectMenuManageSecrets();
+              }}
+            />
+            <PositionedMenuItem
+              icon={<Palette className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
+              label="Change color"
+              disabled={!hasProjectMenuTarget}
+              onClick={() => {
+                handleProjectMenuColorClick();
+              }}
+            />
+            {showProjectColorPicker && hasProjectMenuTarget && (
+              <div className="bg-background border-border mx-1 my-1 rounded border p-2">
+                <div className="mb-2 grid grid-cols-5 gap-1">
+                  {SECTION_COLOR_PALETTE.map(([name, color]) => (
+                    <button
+                      key={color}
+                      onClick={() => {
+                        void handleProjectColorChange(color);
+                        setProjectColorHexInput(color);
+                        setProjectColorPickerValue(color);
+                        setProjectColorPickerDirty(false);
+                        setShowProjectColorPicker(false);
+                      }}
+                      className={cn(
+                        "h-5 w-5 rounded border-2 transition-transform hover:scale-110",
+                        projectMenuResolvedColor === color ? "border-white" : "border-transparent"
+                      )}
+                      style={{ backgroundColor: color }}
+                      aria-label={`Set project color to ${name}`}
+                    />
+                  ))}
+                </div>
+                <div className="section-color-picker">
+                  <HexColorPicker
+                    color={projectColorPickerValue}
+                    onChange={(newColor) => {
+                      setProjectColorHexInput(newColor);
+                      setProjectColorPickerValue(newColor);
+                      setProjectColorPickerDirty(true);
+                    }}
+                  />
+                </div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={projectColorHexInput}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setProjectColorHexInput(value);
+                      if (/^#[0-9a-fA-F]{6}$/.test(value)) {
+                        setProjectColorPickerValue(value);
+                        setProjectColorPickerDirty(false);
+                        void handleProjectColorChange(value);
+                      }
+                    }}
+                    className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"
+                  />
+                </div>
+              </div>
+            )}
+            <Separator />
+            <PositionedMenuItem
+              icon={<Trash className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
+              label="Delete..."
+              variant="destructive"
+              disabled={!hasProjectMenuTarget}
+              onClick={(event) => {
+                handleProjectMenuDelete(event.currentTarget);
+              }}
+            />
+          </PositionedMenu>
+
+          <ConfirmationModal
+            isOpen={archiveConfirmation !== null}
+            title={
+              archiveConfirmation?.untrackedPaths
+                ? "Archive workspace with untracked files?"
+                : archiveConfirmation
+                  ? `Archive "${archiveConfirmation.displayTitle}" while streaming?`
+                  : "Archive chat?"
+            }
+            description={buildArchiveConfirmDescription(
+              archiveConfirmation?.isStreaming ?? false,
+              archiveConfirmation?.untrackedPaths
+            )}
+            warning={buildArchiveConfirmWarning(
+              archiveConfirmation?.isStreaming ?? false,
+              archiveConfirmation?.untrackedPaths
+            )}
+            confirmLabel={
+              archiveConfirmation?.untrackedPaths ? "Archive and delete files" : "Archive"
+            }
+            confirmVariant="destructive"
+            onConfirm={handleArchiveWorkspaceConfirm}
+            onCancel={handleArchiveWorkspaceCancel}
+          />
+          <ProjectDeleteConfirmationModal
+            isOpen={deleteConfirmation !== null}
+            projectName={deleteConfirmation?.projectName ?? ""}
+            activeCount={deleteConfirmation?.activeCount ?? 0}
+            archivedCount={deleteConfirmation?.archivedCount ?? 0}
+            onConfirm={handleDeleteConfirm}
+            onCancel={handleDeleteCancel}
+          />
+          <PopoverError
+            error={workspaceArchiveError.error}
+            prefix="Failed to archive chat"
+            onDismiss={workspaceArchiveError.clearError}
+          />
+          <PopoverError
+            error={workspaceStopRuntimeError.error}
+            prefix="Failed to stop container"
+            onDismiss={workspaceStopRuntimeError.clearError}
+          />
+          <PopoverError
+            error={workspaceForkError.error}
+            prefix="Failed to fork chat"
+            onDismiss={workspaceForkError.clearError}
+          />
+          <PopoverError
+            error={workspaceRemoveError.error}
+            prefix="Failed to cancel workspace creation"
+            onDismiss={workspaceRemoveError.clearError}
+          />
+          <PopoverError
+            error={projectRemoveError.error}
+            prefix="Failed to remove project"
+            onDismiss={projectRemoveError.clearError}
+          />
+          <PopoverError
+            error={sectionRemoveError.error}
+            prefix="Failed to remove sub-project"
+            onDismiss={sectionRemoveError.clearError}
+          />
+          {!(isDesktopMode() && collapsed) && (
+            // Keep the sidebar divider above sticky row content and scroll-layer visuals.
+            <div
+              aria-hidden
+              className="bg-border-light pointer-events-none absolute inset-y-0 right-0 z-40 w-px"
+            />
+          )}
+        </div>
+      </DndProvider>
+    </TitleEditProvider>
+  );
+};
+
+// Memoize to prevent re-renders when props haven't changed
+const ProjectSidebar = React.memo(ProjectSidebarInner);
+
+export default ProjectSidebar;

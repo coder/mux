@@ -1,0 +1,51 @@
+name: Publish to NPM
+
+# Publishes prerelease builds on every main push and stable releases when a
+# GitHub Release is published. Tag push triggers remain as supplemental defense
+# in depth, and manual dispatch still supports ad-hoc publishes (e.g.,
+# republishing a failed stable release without re-running the full release
+# pipeline).
+#
+# IMPORTANT: This workflow's filename (publish-npm.yml) must match the OIDC
+# trusted publisher configured on npmjs.com. Do not rename without updating
+# the npm trusted publisher settings for both 'mux' and
+# '@coder/mux-chat-components'.
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+      - "!v*-*"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Publish channel: 'latest' for stable, 'next' for prerelease"
+        type: string
+        required: false
+        default: "next"
+      ref:
+        description: "Git ref to checkout (tag, branch, SHA). Defaults to current SHA."
+        type: string
+        required: false
+        default: ""
+      release_tag:
+        description: "Release tag for traceability (e.g., v0.20.0)"
+        type: string
+        required: false
+        default: ""
+
+jobs:
+  publish:
+    if: github.event_name != 'release' || !github.event.release.prerelease
+    uses: ./.github/workflows/_npm-publish.yml
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      channel: ${{ (github.event_name == 'release' && 'latest') || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'latest') || inputs.channel || 'next' }}
+      ref: ${{ inputs.ref || (github.event_name == 'release' && format('refs/tags/{0}', github.event.release.tag_name)) || github.sha }}
+      release_tag: ${{ inputs.release_tag || (github.event_name == 'release' && github.event.release.tag_name) || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && github.ref_name) || '' }}

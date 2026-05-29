@@ -1,0 +1,297 @@
+import { describe, it, expect } from "bun:test";
+import * as fsPromises from "fs/promises";
+import * as os from "os";
+import * as path from "path";
+import { LineBuffer, createLineBufferedLoggers, getMuxEnv, runWorkspaceInitHook } from "./initHook";
+import type { InitLogger, WorkspaceInitParams } from "./Runtime";
+
+describe("LineBuffer", () => {
+  it("should buffer incomplete lines", () => {
+    const lines: string[] = [];
+    const buffer = new LineBuffer((line) => lines.push(line));
+
+    buffer.append("hello ");
+    expect(lines).toEqual([]);
+
+    buffer.append("world\n");
+    expect(lines).toEqual(["hello world"]);
+  });
+
+  it("should handle multiple lines in one chunk", () => {
+    const lines: string[] = [];
+    const buffer = new LineBuffer((line) => lines.push(line));
+
+    buffer.append("line1\nline2\nline3\n");
+    expect(lines).toEqual(["line1", "line2", "line3"]);
+  });
+
+  it("should handle incomplete line at end", () => {
+    const lines: string[] = [];
+    const buffer = new LineBuffer((line) => lines.push(line));
+
+    buffer.append("line1\nline2\nincomplete");
+    expect(lines).toEqual(["line1", "line2"]);
+
+    buffer.flush();
+    expect(lines).toEqual(["line1", "line2", "incomplete"]);
+  });
+
+  it("should skip empty lines", () => {
+    const lines: string[] = [];
+    const buffer = new LineBuffer((line) => lines.push(line));
+
+    buffer.append("\nline1\n\nline2\n\n");
+    expect(lines).toEqual(["line1", "line2"]);
+  });
+
+  it("should handle flush with no buffered data", () => {
+    const lines: string[] = [];
+    const buffer = new LineBuffer((line) => lines.push(line));
+
+    buffer.append("line1\n");
+    expect(lines).toEqual(["line1"]);
+
+    buffer.flush();
+    expect(lines).toEqual(["line1"]); // No change
+  });
+});
+
+// getMuxEnv tests are placed here because initHook.ts owns the implementation.
+describe("createLineBufferedLoggers", () => {
+  it("should create separate buffers for stdout and stderr", () => {
+    const stdoutLines: string[] = [];
+    const stderrLines: string[] = [];
+
+    const mockLogger: InitLogger = {
+      logStep: () => {
+        /* no-op for test */
+      },
+      logStdout: (line) => stdoutLines.push(line),
+      logStderr: (line) => stderrLines.push(line),
+      logComplete: () => {
+        /* no-op for test */
+      },
+    };
+
+    const loggers = createLineBufferedLoggers(mockLogger);
+
+    loggers.stdout.append("out1\nout2\n");
+    loggers.stderr.append("err1\nerr2\n");
+
+    expect(stdoutLines).toEqual(["out1", "out2"]);
+    expect(stderrLines).toEqual(["err1", "err2"]);
+  });
+
+  it("should handle incomplete lines and flush separately", () => {
+    const stdoutLines: string[] = [];
+    const stderrLines: string[] = [];
+
+    const mockLogger: InitLogger = {
+      logStep: () => {
+        /* no-op for test */
+      },
+      logStdout: (line) => stdoutLines.push(line),
+      logStderr: (line) => stderrLines.push(line),
+      logComplete: () => {
+        /* no-op for test */
+      },
+    };
+
+    const loggers = createLineBufferedLoggers(mockLogger);
+
+    loggers.stdout.append("incomplete");
+    loggers.stderr.append("also incomplete");
+
+    expect(stdoutLines).toEqual([]);
+    expect(stderrLines).toEqual([]);
+
+    loggers.stdout.flush();
+    expect(stdoutLines).toEqual(["incomplete"]);
+    expect(stderrLines).toEqual([]); // stderr not flushed yet
+
+    loggers.stderr.flush();
+    expect(stderrLines).toEqual(["also incomplete"]);
+  });
+});
+
+function createMockInitLogger() {
+  const steps: string[] = [];
+  const stderr: string[] = [];
+  const completions: number[] = [];
+
+  const logger: InitLogger = {
+    logStep: (message) => steps.push(message),
+    logStdout: () => undefined,
+    logStderr: (line) => stderr.push(line),
+    logComplete: (exitCode) => completions.push(exitCode),
+  };
+
+  return { logger, steps, stderr, completions };
+}
+
+function createWorkspaceInitParams(
+  initLogger: InitLogger,
+  overrides?: Partial<WorkspaceInitParams>
+): WorkspaceInitParams {
+  return {
+    projectPath: "/project",
+    branchName: "feature/runtime-cleanup",
+    trunkBranch: "main",
+    workspacePath: "/workspace",
+    initLogger,
+    trusted: true,
+    ...overrides,
+  };
+}
+
+describe("runWorkspaceInitHook", () => {
+  it("runs beforeHook even when skipInitHook disables the repo hook", async () => {
+    const { logger, steps, completions } = createMockInitLogger();
+    const order: string[] = [];
+
+    const result = await runWorkspaceInitHook({
+      params: createWorkspaceInitParams(logger, { skipInitHook: true }),
+      runtimeType: "ssh",
+      hookCheckPath: "/project",
+      beforeHook: () => {
+        order.push("beforeHook");
+        return Promise.resolve();
+      },
+      runHook: () => {
+        order.push("runHook");
+        return Promise.resolve();
+      },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(order).toEqual(["beforeHook"]);
+    expect(steps).toContain("Skipping .mux/init hook (disabled for this task)");
+    expect(completions).toEqual([0]);
+  });
+
+  it("runs the hook with MUX env when .mux/init exists", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-init-hook-"));
+    const hookRoot = path.join(tempRoot, "repo");
+    await fsPromises.mkdir(path.join(hookRoot, ".mux"), { recursive: true });
+    await fsPromises.writeFile(path.join(hookRoot, ".mux", "init"), "#!/bin/sh\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const { logger, completions } = createMockInitLogger();
+    const calls: Array<{ muxEnv: Record<string, string>; abortSignal?: AbortSignal }> = [];
+
+    try {
+      const result = await runWorkspaceInitHook({
+        params: createWorkspaceInitParams(logger, {
+          projectPath: hookRoot,
+          workspacePath: "/workspace/review-slot",
+          env: { TEST_SECRET: "1" },
+        }),
+        runtimeType: "worktree",
+        hookCheckPath: hookRoot,
+        runHook: ({ muxEnv, abortSignal }) => {
+          calls.push({ muxEnv, abortSignal });
+          return Promise.resolve();
+        },
+      });
+
+      expect(result).toEqual({ success: true });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.muxEnv.MUX_PROJECT_PATH).toBe(hookRoot);
+      expect(calls[0]?.muxEnv.MUX_RUNTIME).toBe("worktree");
+      expect(calls[0]?.muxEnv.MUX_WORKSPACE_NAME).toBe("feature/runtime-cleanup");
+      expect(calls[0]?.muxEnv.TEST_SECRET).toBe("1");
+      expect(completions).toEqual([]);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("reports initialization failure when beforeHook throws", async () => {
+    const { logger, stderr, completions } = createMockInitLogger();
+
+    const result = await runWorkspaceInitHook({
+      params: createWorkspaceInitParams(logger),
+      runtimeType: "docker",
+      hookCheckPath: "/project",
+      beforeHook: () => Promise.reject(new Error("prep failed")),
+      runHook: () => Promise.resolve(),
+    });
+
+    expect(result).toEqual({ success: false, error: "prep failed" });
+    expect(stderr).toEqual(["Initialization failed: prep failed"]);
+    expect(completions).toEqual([-1]);
+  });
+});
+
+const legacyBrowserSessionEnvVar = ["MUX", "BROWSER", "SESSION"].join("_");
+
+describe("getMuxEnv", () => {
+  it("should include base MUX_ environment variables", () => {
+    const env = getMuxEnv("/path/to/project", "worktree", "feature-branch");
+
+    expect(env.MUX_PROJECT_PATH).toBe("/path/to/project");
+    expect(env.MUX_RUNTIME).toBe("worktree");
+    expect(env.MUX_WORKSPACE_NAME).toBe("feature-branch");
+    expect(env.MUX_WORKSPACE_ID).toBeUndefined();
+    expect(legacyBrowserSessionEnvVar in env).toBe(false);
+    expect(env.MUX_MODEL_STRING).toBeUndefined();
+    expect(env.MUX_THINKING_LEVEL).toBeUndefined();
+    expect(env.MUX_COSTS_USD).toBeUndefined();
+  });
+
+  it("should include workspace env vars when workspaceId is provided", () => {
+    const env = getMuxEnv("/path/to/project", "worktree", "feature-branch", {
+      workspaceId: "workspace-id",
+    });
+
+    expect(env.MUX_WORKSPACE_ID).toBe("workspace-id");
+    expect(legacyBrowserSessionEnvVar in env).toBe(false);
+  });
+
+  it("should include model + thinking env vars when provided", () => {
+    const env = getMuxEnv("/path/to/project", "worktree", "feature-branch", {
+      modelString: "openai:gpt-5.2-pro",
+      thinkingLevel: "medium",
+    });
+
+    expect(env.MUX_MODEL_STRING).toBe("openai:gpt-5.2-pro");
+    expect(env.MUX_THINKING_LEVEL).toBe("medium");
+  });
+
+  it("should allow explicit thinkingLevel=off", () => {
+    const env = getMuxEnv("/path/to/project", "local", "main", {
+      modelString: "anthropic:claude-3-5-sonnet",
+      thinkingLevel: "off",
+    });
+
+    expect(env.MUX_MODEL_STRING).toBe("anthropic:claude-3-5-sonnet");
+    expect(env.MUX_THINKING_LEVEL).toBe("off");
+  });
+
+  it("should include MUX_COSTS_USD when costsUsd is provided", () => {
+    const env = getMuxEnv("/path/to/project", "worktree", "feature-branch", {
+      modelString: "anthropic:claude-opus-4-5",
+      thinkingLevel: "high",
+      costsUsd: 1.2345,
+    });
+
+    expect(env.MUX_COSTS_USD).toBe("1.23");
+  });
+
+  it("should include MUX_COSTS_USD=0.00 when costsUsd is 0", () => {
+    const env = getMuxEnv("/path/to/project", "worktree", "main", {
+      costsUsd: 0,
+    });
+
+    expect(env.MUX_COSTS_USD).toBe("0.00");
+  });
+
+  it("should not include MUX_COSTS_USD when costsUsd is undefined", () => {
+    const env = getMuxEnv("/path/to/project", "worktree", "main", {
+      modelString: "openai:gpt-4",
+    });
+
+    expect(env.MUX_COSTS_USD).toBeUndefined();
+  });
+});

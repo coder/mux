@@ -1,0 +1,176 @@
+/**
+ * Model configuration and constants
+ */
+
+import { DEFAULT_MODEL, MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
+import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
+
+export const defaultModel = DEFAULT_MODEL;
+
+/**
+ * Resolve model alias to full model string.
+ * If the input is an alias (e.g., "haiku", "sonnet"), returns the full model string.
+ * Otherwise returns the input unchanged.
+ */
+export function resolveModelAlias(modelInput: string): string {
+  if (Object.hasOwn(MODEL_ABBREVIATIONS, modelInput)) {
+    return MODEL_ABBREVIATIONS[modelInput];
+  }
+  return modelInput;
+}
+
+/**
+ * Validate model string format (must be "provider:model-id").
+ * Supports colons in the model ID (e.g., "ollama:gpt-oss:20b").
+ */
+export function isValidModelFormat(model: string): boolean {
+  const colonIndex = model.indexOf(":");
+  return colonIndex > 0 && colonIndex < model.length - 1;
+}
+
+/**
+ * Normalize gateway model strings to canonical provider:model format when possible.
+ * For gateway-only vendor/model IDs, keep the original gateway-scoped identity.
+ */
+export function normalizeToCanonical(modelString: string): string {
+  const colonIndex = modelString.indexOf(":");
+  if (colonIndex === -1) {
+    return modelString;
+  }
+
+  const providerName = modelString.slice(0, colonIndex) as ProviderName;
+  const gatewayModelId = modelString.slice(colonIndex + 1);
+
+  const def = PROVIDER_DEFINITIONS[providerName];
+  if (def?.kind !== "gateway" || !("fromGatewayModelId" in def) || !def.fromGatewayModelId) {
+    return modelString; // direct/local provider or unknown — already canonical
+  }
+
+  const parsed = def.fromGatewayModelId(gatewayModelId);
+  if (!parsed) {
+    return modelString; // couldn't parse
+  }
+
+  // Only normalize if the origin is a known direct provider.
+  // Gateway-only models like "meta-llama/llama-3.1-405b" stay gateway-scoped.
+  const originDef = PROVIDER_DEFINITIONS[parsed.origin as ProviderName];
+  if (originDef?.kind !== "direct") {
+    return modelString; // origin is not a known direct provider
+  }
+
+  return `${parsed.origin}:${parsed.modelId}`;
+}
+
+/**
+ * Return the explicitly requested gateway provider prefix from a raw model string.
+ * This preserves user-selected gateway routing (for example, openrouter:openai/gpt-5)
+ * instead of canonicalizing back to a direct provider model string.
+ */
+export function getExplicitGatewayPrefix(modelString: string): ProviderName | undefined {
+  const trimmedModelString = modelString.trim();
+  const colonIndex = trimmedModelString.indexOf(":");
+  if (colonIndex <= 0 || colonIndex === trimmedModelString.length - 1) {
+    return undefined;
+  }
+
+  const providerName = trimmedModelString.slice(0, colonIndex) as ProviderName;
+  return PROVIDER_DEFINITIONS[providerName]?.kind === "gateway" ? providerName : undefined;
+}
+
+/**
+ * Normalize a selected model while preserving explicit gateway routing choices.
+ * User-selected gateway identities like openrouter:openai/gpt-5 should stay intact.
+ */
+export function normalizeSelectedModel(modelString: string): string {
+  const trimmedModelString = modelString.trim();
+  return getExplicitGatewayPrefix(trimmedModelString)
+    ? trimmedModelString
+    : normalizeToCanonical(trimmedModelString);
+}
+
+/**
+ * Extract the model name from a model string (e.g., "anthropic:claude-sonnet-4-5" -> "claude-sonnet-4-5")
+ * @param modelString - Full model string in format "provider:model-name"
+ * @returns The model name part (after the colon), or the full string if no colon is found
+ */
+export function getModelName(modelString: string): string {
+  const normalized = normalizeToCanonical(modelString);
+  const colonIndex = normalized.indexOf(":");
+  if (colonIndex === -1) {
+    return normalized;
+  }
+  return normalized.substring(colonIndex + 1);
+}
+
+/**
+ * Extract the provider from a model string (e.g., "anthropic:claude-sonnet-4-5" -> "anthropic")
+ * @param modelString - Full model string in format "provider:model-name"
+ * @returns The provider part (before the colon), or empty string if no colon is found
+ */
+export function getModelProvider(modelString: string): string {
+  const normalized = normalizeToCanonical(modelString);
+  const colonIndex = normalized.indexOf(":");
+  if (colonIndex === -1) {
+    return "";
+  }
+  return normalized.substring(0, colonIndex);
+}
+
+export type Anthropic1MContextMode = "none" | "beta" | "native";
+
+const OPTIONAL_VERSION_SUFFIX = String.raw`(?:-(?:\d{8}|\d{4}-\d{2}-\d{2}))?`;
+const ANTHROPIC_NATIVE_1M_PATTERNS = [
+  new RegExp(`^claude-opus-4-8${OPTIONAL_VERSION_SUFFIX}$`, "i"),
+  new RegExp(`^claude-opus-4-7${OPTIONAL_VERSION_SUFFIX}$`, "i"),
+  new RegExp(`^claude-opus-4-6${OPTIONAL_VERSION_SUFFIX}$`, "i"),
+  new RegExp(`^claude-sonnet-4-6${OPTIONAL_VERSION_SUFFIX}$`, "i"),
+];
+const ANTHROPIC_BETA_1M_PATTERNS = [
+  new RegExp(`^claude-sonnet-4-5${OPTIONAL_VERSION_SUFFIX}$`, "i"),
+  new RegExp(`^claude-sonnet-4-20250514${OPTIONAL_VERSION_SUFFIX}$`, "i"),
+];
+
+function matchesAnthropicPattern(modelName: string, patterns: readonly RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(modelName));
+}
+
+/**
+ * Classify Anthropic models by how they reach a 1M context window.
+ *
+ * - `native`: published 1M context is part of the model's standard metadata/pricing.
+ * - `beta`: 1M requires Anthropic's opt-in beta header.
+ * - `none`: model does not offer 1M context.
+ */
+export function getAnthropic1MContextMode(modelString: string): Anthropic1MContextMode {
+  const normalized = normalizeToCanonical(modelString);
+  const [provider, modelName] = normalized.split(":", 2);
+  const normalizedModelName = modelName?.toLowerCase() ?? "";
+
+  if (provider !== "anthropic" || normalizedModelName.length === 0) {
+    return "none";
+  }
+
+  if (matchesAnthropicPattern(normalizedModelName, ANTHROPIC_NATIVE_1M_PATTERNS)) {
+    return "native";
+  }
+
+  if (matchesAnthropicPattern(normalizedModelName, ANTHROPIC_BETA_1M_PATTERNS)) {
+    return "beta";
+  }
+
+  return "none";
+}
+
+/**
+ * Check if a model supports Anthropic's optional 1M beta mode used by Mux's context toggle.
+ *
+ * Native long-context models like Claude Opus 4.6, Claude Sonnet 4.6, and GPT-5.5 expose
+ * their larger window directly through model metadata and should not appear behind this toggle.
+ */
+export function supports1MContext(modelString: string): boolean {
+  return getAnthropic1MContextMode(modelString) === "beta";
+}
+
+export function hasNative1MContext(modelString: string): boolean {
+  return getAnthropic1MContextMode(modelString) === "native";
+}

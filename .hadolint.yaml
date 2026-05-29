@@ -1,0 +1,9 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/hadolint/hadolint/master/contrib/hadolint.schema.yaml
+# Hadolint configuration — Dockerfile best-practice linter
+# Docs: https://github.com/hadolint/hadolint#configure
+
+# Trusted base image registries (empty = allow all)
+trustedRegistries: []
+
+# Rules to ignore globally (add sparingly, with rationale comments)
+ignored: []

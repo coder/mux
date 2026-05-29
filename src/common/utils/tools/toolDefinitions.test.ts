@@ -1,0 +1,466 @@
+import { RUNTIME_MODE } from "@/common/types/runtime";
+import {
+  buildTaskToolDescription,
+  getAvailableTools,
+  TaskToolArgsSchema,
+  TOOL_DEFINITIONS,
+} from "./toolDefinitions";
+
+describe("TOOL_DEFINITIONS", () => {
+  it("accepts custom subagent_type IDs (deprecated alias)", () => {
+    const parsed = TaskToolArgsSchema.safeParse({
+      subagent_type: "potato",
+      prompt: "do the thing",
+      title: "Test",
+      run_in_background: true,
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.subagent_type).toBe("potato");
+    }
+  });
+
+  it("leaves n unset for task tool calls when omitted", () => {
+    const parsed = TaskToolArgsSchema.safeParse({
+      subagent_type: "explore",
+      prompt: "do the thing",
+      title: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.n).toBeUndefined();
+      expect(parsed.data.variants).toBeUndefined();
+    }
+  });
+
+  it("accepts task tool best-of counts between 1 and 20", () => {
+    expect(
+      TaskToolArgsSchema.safeParse({
+        subagent_type: "explore",
+        prompt: "do the thing",
+        title: "Test",
+        n: 20,
+      }).success
+    ).toBe(true);
+
+    expect(
+      TaskToolArgsSchema.safeParse({
+        subagent_type: "explore",
+        prompt: "do the thing",
+        title: "Test",
+        n: 0,
+      }).success
+    ).toBe(false);
+
+    expect(
+      TaskToolArgsSchema.safeParse({
+        subagent_type: "explore",
+        prompt: "do the thing",
+        title: "Test",
+        n: 21,
+      }).success
+    ).toBe(false);
+  });
+
+  it("accepts variants when the prompt references ${variant}", () => {
+    const parsed = TaskToolArgsSchema.safeParse({
+      subagent_type: "explore",
+      prompt: "Review ${variant} for regressions",
+      title: "Split review",
+      variants: ["frontend", "backend"],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.variants).toEqual(["frontend", "backend"]);
+    }
+  });
+
+  it("rejects variants when the prompt does not reference ${variant}", () => {
+    expect(
+      TaskToolArgsSchema.safeParse({
+        subagent_type: "explore",
+        prompt: "Review the codebase for regressions",
+        title: "Split review",
+        variants: ["frontend", "backend"],
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects variants when n is also provided", () => {
+    expect(
+      TaskToolArgsSchema.safeParse({
+        subagent_type: "explore",
+        prompt: "Review ${variant} for regressions",
+        title: "Split review",
+        n: 2,
+        variants: ["frontend", "backend"],
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects duplicate variants after trimming", () => {
+    expect(
+      TaskToolArgsSchema.safeParse({
+        subagent_type: "explore",
+        prompt: "Review ${variant} for regressions",
+        title: "Split review",
+        variants: ["frontend", " frontend "],
+      }).success
+    ).toBe(false);
+  });
+
+  it("accepts bash tool calls using command (alias for script)", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      command: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.script).toBe("ls");
+      expect("command" in parsed.data).toBe(false);
+    }
+  });
+
+  it("accepts bash tool calls with model_intent", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      model_intent: "Checking repository state",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.model_intent).toBe("Checking repository state");
+    }
+  });
+
+  it("accepts bash tool calls without model_intent", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.model_intent).toBeUndefined();
+    }
+  });
+
+  it("accepts bash tool calls with null model_intent", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      model_intent: null,
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.model_intent).toBeNull();
+    }
+  });
+
+  it("prefers script when both script and command are provided", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "echo hi",
+      command: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.script).toBe("echo hi");
+    }
+  });
+
+  it("rejects bash tool calls missing both script and command", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("accepts bash tool calls using description (alias for display_name)", () => {
+    // DeepSeek v4 emits `description` instead of `display_name`; ensure it normalizes.
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      description: "List files",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.display_name).toBe("List files");
+      expect("description" in parsed.data).toBe(false);
+    }
+  });
+
+  it("prefers display_name when both display_name and description are provided", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Real Name",
+      description: "Alias Name",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.display_name).toBe("Real Name");
+    }
+  });
+
+  it("requires complete_goal summary", () => {
+    expect(TOOL_DEFINITIONS.complete_goal.schema.safeParse({}).success).toBe(false);
+    expect(TOOL_DEFINITIONS.complete_goal.schema.safeParse({ summary: "Done." }).success).toBe(
+      true
+    );
+  });
+
+  it("exposes complete_goal as the single completion path only", () => {
+    const parsed = TOOL_DEFINITIONS.complete_goal.schema.safeParse({
+      summary: "Done.",
+      status: "paused",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  const filePathAliasCases = [
+    {
+      toolName: "file_read",
+      args: {
+        offset: 1,
+        limit: 10,
+      },
+    },
+    {
+      toolName: "file_edit_replace_string",
+      args: {
+        old_string: "before",
+        new_string: "after",
+      },
+    },
+    {
+      toolName: "file_edit_replace_lines",
+      args: {
+        start_line: 1,
+        end_line: 1,
+        new_lines: ["line"],
+      },
+    },
+    {
+      toolName: "file_edit_insert",
+      args: {
+        insert_after: "marker",
+        content: "text",
+      },
+    },
+  ] as const;
+
+  it.each(filePathAliasCases)(
+    "accepts file_path alias for $toolName and normalizes to path",
+    ({ toolName, args }) => {
+      const parsed = TOOL_DEFINITIONS[toolName].schema.safeParse({
+        ...args,
+        file_path: "src/example.ts",
+      });
+
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.path).toBe("src/example.ts");
+        expect("file_path" in parsed.data).toBe(false);
+      }
+    }
+  );
+
+  it.each(filePathAliasCases)(
+    "prefers canonical path over file_path for $toolName",
+    ({ toolName, args }) => {
+      const parsed = TOOL_DEFINITIONS[toolName].schema.safeParse({
+        ...args,
+        path: "src/canonical.ts",
+        file_path: "src/legacy.ts",
+      });
+
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.path).toBe("src/canonical.ts");
+        expect("file_path" in parsed.data).toBe(false);
+      }
+    }
+  );
+
+  it.each(filePathAliasCases)(
+    "rejects $toolName when path is present but invalid, even if file_path is provided",
+    ({ toolName, args }) => {
+      const parsed = TOOL_DEFINITIONS[toolName].schema.safeParse({
+        ...args,
+        path: 123,
+        file_path: "src/fallback.ts",
+      });
+
+      expect(parsed.success).toBe(false);
+    }
+  );
+
+  it.each(filePathAliasCases)(
+    "rejects $toolName calls missing both path and file_path",
+    ({ toolName, args }) => {
+      const parsed = TOOL_DEFINITIONS[toolName].schema.safeParse(args);
+      expect(parsed.success).toBe(false);
+    }
+  );
+
+  it("accepts an optional advisor question and encourages passing one", () => {
+    expect(TOOL_DEFINITIONS.advisor.schema.safeParse({}).success).toBe(true);
+    expect(TOOL_DEFINITIONS.advisor.schema.safeParse({ question: null }).success).toBe(true);
+
+    const parsed = TOOL_DEFINITIONS.advisor.schema.safeParse({
+      question: "Should we split this refactor into smaller commits?",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.question).toBe("Should we split this refactor into smaller commits?");
+    }
+  });
+
+  it("dispatches task tool description on runtime mode", () => {
+    // Different runtimes give the agent different visibility guidance for whether
+    // sub-agents see uncommitted parent changes, so the function must actually
+    // branch on runtimeMode rather than collapse to a single string.
+    expect(buildTaskToolDescription(RUNTIME_MODE.LOCAL)).not.toBe(
+      buildTaskToolDescription(RUNTIME_MODE.WORKTREE)
+    );
+  });
+
+  it("accepts ask_user_question headers longer than 12 characters", () => {
+    const parsed = TOOL_DEFINITIONS.ask_user_question.schema.safeParse({
+      questions: [
+        {
+          question: "How should docs be formatted?",
+          header: "Documentation",
+          options: [
+            { label: "Inline", description: "Explain in code comments" },
+            { label: "Sections", description: "Separate markdown sections" },
+          ],
+          multiSelect: false,
+        },
+        {
+          question: "Should we show error handling?",
+          header: "Error Handling",
+          options: [
+            { label: "Minimal", description: "Let errors bubble" },
+            { label: "Basic", description: "Catch common errors" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects task(kind=bash) tool calls (bash is a separate tool)", () => {
+    const parsed = TOOL_DEFINITIONS.task.schema.safeParse({
+      // Legacy shape; should not validate against the current task schema.
+      kind: "bash",
+      script: "ls",
+      timeout_secs: 100000,
+      run_in_background: false,
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("always includes global skill management tools", () => {
+    const tools = getAvailableTools("openai:gpt-4o");
+
+    expect(tools).toContain("agent_skill_list");
+    expect(tools).toContain("agent_skill_write");
+    expect(tools).toContain("agent_skill_delete");
+    expect(tools).toContain("mux_agents_read");
+    expect(tools).toContain("mux_agents_write");
+    expect(tools).toContain("mux_config_read");
+    expect(tools).toContain("mux_config_write");
+  });
+
+  it("includes skills catalog tools", () => {
+    const tools = getAvailableTools("openai:gpt-4o");
+
+    expect(tools).toContain("skills_catalog_search");
+    expect(tools).toContain("skills_catalog_read");
+  });
+
+  it("includes image_generate only when image generation is enabled", () => {
+    expect(getAvailableTools("openai:gpt-5")).not.toContain("image_generate");
+    expect(getAvailableTools("openai:gpt-5", { enableImageGeneration: true })).toContain(
+      "image_generate"
+    );
+  });
+
+  it("includes image_edit only when image tools and upload consent are both enabled", () => {
+    expect(getAvailableTools("openai:gpt-5")).not.toContain("image_edit");
+    expect(getAvailableTools("openai:gpt-5", { enableImageEditing: true })).not.toContain(
+      "image_edit"
+    );
+    expect(getAvailableTools("openai:gpt-5", { enableImageGeneration: true })).not.toContain(
+      "image_edit"
+    );
+    expect(
+      getAvailableTools("openai:gpt-5", {
+        enableImageGeneration: true,
+        enableImageEditing: true,
+      })
+    ).toContain("image_edit");
+  });
+
+  it("agent_skill_write schema rejects an advertise tool argument (advertise is authored in content)", () => {
+    const parsed = TOOL_DEFINITIONS.agent_skill_write.schema.safeParse({
+      name: "demo-skill",
+      content: "---\nname: demo-skill\ndescription: demo\n---\n",
+      advertise: false,
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  describe("skills_catalog_read schema", () => {
+    it("rejects invalid skillId values", () => {
+      const schema = TOOL_DEFINITIONS.skills_catalog_read.schema;
+      const validBase = { owner: "test-owner", repo: "test-repo" };
+
+      // Path traversal attempts
+      expect(schema.safeParse({ ...validBase, skillId: "../escape" }).success).toBe(false);
+      expect(schema.safeParse({ ...validBase, skillId: "../../etc/passwd" }).success).toBe(false);
+
+      // Absolute paths
+      expect(schema.safeParse({ ...validBase, skillId: "/tmp/a" }).success).toBe(false);
+
+      // Invalid format (uppercase, underscores, etc.)
+      expect(schema.safeParse({ ...validBase, skillId: "Bad_Name" }).success).toBe(false);
+      expect(schema.safeParse({ ...validBase, skillId: "UPPER" }).success).toBe(false);
+
+      // Valid skill names should pass
+      expect(schema.safeParse({ ...validBase, skillId: "my-skill" }).success).toBe(true);
+      expect(schema.safeParse({ ...validBase, skillId: "skill123" }).success).toBe(true);
+    });
+  });
+});

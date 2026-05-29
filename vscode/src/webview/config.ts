@@ -1,0 +1,4 @@
+export const CHAT_BUFFER_LIMITS = {
+  MAX_HISTORICAL_MESSAGES: 500,
+  MAX_STREAM_EVENTS: 5_000,
+} as const;

@@ -1,0 +1,163 @@
+name: Nightly Terminal-Bench
+
+on:
+  schedule:
+    # Run twice weekly (Mon + Thu), at peak and trough model load times.
+    # Monday 10:00 UTC (2 AM PT) – lowest US model usage
+    # Thursday 22:00 UTC (2 PM PT) – highest US model usage
+    - cron: "0 10 * * 1"
+    - cron: "0 22 * * 4"
+  workflow_dispatch:
+    inputs:
+      models:
+        description: 'Models to test (comma-separated, or "all" for opus-4-8 + gpt-5.5 + google/gemini-3-pro-preview + google/gemini-3-flash-preview + google/gemini-3.5-flash)'
+        required: false
+        default: "all"
+        type: string
+      experiments:
+        description: "Experiments to enable (comma-separated)"
+        required: false
+        type: string
+      mux_run_as_goal:
+        description: "Run nightly smoke/matrix tasks as strict mux CLI Goal Runs"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  # Smoke test: run chess-best-move task first to catch broken agent setup
+  # If this fails, skip the full suite to save time and API costs
+  smoke-test:
+    name: Smoke test (chess-best-move)
+    uses: ./.github/workflows/terminal-bench.yml
+    with:
+      model_name: "anthropic/claude-sonnet-4-5"
+      mux_run_args: "--thinking high"
+      dataset: "terminal-bench@2.0"
+      concurrency: "1"
+      env: "daytona"
+      task_names: "chess-best-move"
+      experiments: ${{ inputs.experiments }}
+      mux_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && inputs.mux_run_as_goal || false }}
+    # Keep least-privilege secret scope for reusable workflow calls.
+    secrets:
+      TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+
+  # Smoke tests for Harbor SWE-style datasets (single task each).
+  # These validate that mux can run inside the dataset's repo checkout (--runtime local)
+  # and that we target the verifier's expected working directory (MUX_PROJECT_PATH).
+  swebench-verified-smoke-test:
+    name: "Smoke test (swebench-verified: django__django-10097)"
+    needs: smoke-test
+    uses: ./.github/workflows/terminal-bench.yml
+    with:
+      model_name: "anthropic/claude-sonnet-4-5"
+      mux_run_args: "--thinking high --runtime local"
+      dataset: "swebench-verified@1.0"
+      concurrency: "1"
+      env: "daytona"
+      task_names: "django__django-10097"
+      mux_project_path: "/testbed"
+      timeout: "3000"
+      experiments: ${{ inputs.experiments }}
+      mux_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && inputs.mux_run_as_goal || false }}
+    secrets:
+      TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+
+  swe-gen-js-smoke-test:
+    name: "Smoke test (swe-gen-js: biomejs__biome-7314)"
+    needs: smoke-test
+    uses: ./.github/workflows/terminal-bench.yml
+    with:
+      model_name: "anthropic/claude-sonnet-4-5"
+      mux_run_args: "--thinking high --runtime local"
+      dataset: "swe-gen-js@1.0"
+      concurrency: "1"
+      env: "daytona"
+      task_names: "biomejs__biome-7314"
+      mux_project_path: "/app/src"
+      timeout: "600"
+      experiments: ${{ inputs.experiments }}
+      mux_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && inputs.mux_run_as_goal || false }}
+    secrets:
+      TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+
+  aider-polyglot-smoke-test:
+    name: "Smoke test (aider-polyglot: polyglot_cpp_all-your-base)"
+    needs: smoke-test
+    uses: ./.github/workflows/terminal-bench.yml
+    with:
+      model_name: "anthropic/claude-sonnet-4-5"
+      mux_run_args: "--thinking high --runtime local"
+      dataset: "aider-polyglot@1.0"
+      concurrency: "1"
+      env: "daytona"
+      task_names: "polyglot_cpp_all-your-base"
+      mux_project_path: "/app"
+      timeout: "1800"
+      experiments: ${{ inputs.experiments }}
+      mux_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && inputs.mux_run_as_goal || false }}
+    secrets:
+      TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+
+  determine-models:
+    name: Determine models to test
+    needs: smoke-test
+    runs-on: ubuntu-latest
+    outputs:
+      models: ${{ steps.set-models.outputs.models }}
+    steps:
+      - name: Set models matrix
+        id: set-models
+        env:
+          INPUT_MODELS: ${{ inputs.models }}
+        run: |
+          if [ "$INPUT_MODELS" = "all" ] || [ -z "$INPUT_MODELS" ]; then
+            echo 'models=["anthropic/claude-opus-4-8","openai/gpt-5.5","google/gemini-3-pro-preview","google/gemini-3-flash-preview","google/gemini-3.5-flash"]' >> "$GITHUB_OUTPUT"
+          else
+            # Convert comma-separated to JSON array
+            models_json=$(echo "$INPUT_MODELS" | jq -R -s -c 'split(",") | map(gsub("^\\s+|\\s+$"; ""))')
+            echo "models=$models_json" >> "$GITHUB_OUTPUT"
+          fi
+
+  benchmark:
+    name: ${{ matrix.model }}
+    needs: [smoke-test, determine-models]
+    strategy:
+      matrix:
+        model: ${{ fromJSON(needs.determine-models.outputs.models) }}
+      fail-fast: false
+      max-parallel: 1 # Run models sequentially to stay within Daytona's 25-sandbox limit
+    uses: ./.github/workflows/terminal-bench.yml
+    with:
+      model_name: ${{ matrix.model }}
+      # Claude Opus uses xhigh; GPT-5.5 stays high because xhigh timed out in TBench.
+      mux_run_args: "--thinking ${{ contains(matrix.model, 'claude-opus') && 'xhigh' || 'high' }}"
+      dataset: "terminal-bench@2.0"
+      concurrency: "48"
+      env: "daytona"
+      experiments: ${{ inputs.experiments }}
+      mux_run_as_goal: ${{ github.event_name == 'workflow_dispatch' && inputs.mux_run_as_goal || false }}
+      allow_transient_agent_errors: true
+    secrets:
+      TERMINAL_BENCH_ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}

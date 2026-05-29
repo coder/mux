@@ -1,0 +1,211 @@
+import { tool as createTool, type ModelMessage, type Tool } from "ai";
+import assert from "@/common/utils/assert";
+import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
+import { normalizeToCanonical } from "./models";
+
+/**
+ * Anthropic prompt cache TTL value.
+ * "5m" = 5-minute cache (default, free refresh on hit).
+ * "1h" = 1-hour cache (2× base input write cost, longer lived).
+ * See: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
+ */
+export type AnthropicCacheTtl = "5m" | "1h";
+
+/**
+ * Check if a model supports Anthropic cache control.
+ */
+export function supportsAnthropicCache(modelString: string): boolean {
+  const normalized = normalizeToCanonical(modelString);
+  // After normalizeToCanonical, all gateway Anthropic models normalize to "anthropic:..."
+  // so we only need to check for the "anthropic:" prefix.
+  return normalized.startsWith("anthropic:");
+}
+
+/** Build cache control providerOptions for Anthropic with optional TTL. */
+function anthropicCacheControl(cacheTtl?: AnthropicCacheTtl | null) {
+  return {
+    anthropic: {
+      cacheControl: cacheTtl
+        ? { type: "ephemeral" as const, ttl: cacheTtl }
+        : { type: "ephemeral" as const },
+    },
+  };
+}
+
+/** Default cache control (no explicit TTL — Anthropic defaults to 5m). */
+const ANTHROPIC_CACHE_CONTROL = anthropicCacheControl();
+
+type ProviderNativeTool = Extract<Tool, { type: "provider" }>;
+
+function isProviderNativeTool(tool: Tool): tool is ProviderNativeTool {
+  return tool.type === "provider";
+}
+
+/**
+ * Add providerOptions to the last content part of a message.
+ * The SDK requires providerOptions on content parts, not on the message itself.
+ *
+ * For system messages with string content, we use message-level providerOptions
+ * (which the SDK handles correctly). For user/assistant messages with array
+ * content, we add providerOptions to the last content part.
+ */
+function addCacheControlToLastContentPart(
+  msg: ModelMessage,
+  cacheTtl?: AnthropicCacheTtl | null
+): ModelMessage {
+  const cacheOpts = cacheTtl ? anthropicCacheControl(cacheTtl) : ANTHROPIC_CACHE_CONTROL;
+  const content = msg.content;
+
+  // String content (typically system messages): use message-level providerOptions
+  // The SDK correctly translates this for system messages
+  if (typeof content === "string") {
+    return {
+      ...msg,
+      providerOptions: cacheOpts,
+    };
+  }
+
+  // Array content: add providerOptions to the last part
+  // Use type assertion since we're adding providerOptions which is valid but not in base types
+  if (Array.isArray(content) && content.length > 0) {
+    const lastIndex = content.length - 1;
+    const newContent = content.map((part, i) =>
+      i === lastIndex ? { ...part, providerOptions: cacheOpts } : part
+    );
+    // Type assertion needed: ModelMessage types are strict unions but providerOptions
+    // on content parts is valid per SDK docs
+    const result = { ...msg, content: newContent };
+    return result as ModelMessage;
+  }
+
+  // Empty or unexpected content: return as-is
+  return msg;
+}
+
+/**
+ * Apply cache control to messages for Anthropic models.
+ * Adds a cache marker to the last message so the entire conversation is cached.
+ *
+ * NOTE: The SDK requires providerOptions on content parts, not on the message.
+ * We add cache_control to the last content part of the last message.
+ */
+export function applyCacheControl(
+  messages: ModelMessage[],
+  modelString: string,
+  cacheTtl?: AnthropicCacheTtl | null
+): ModelMessage[] {
+  // Only apply cache control for Anthropic models
+  if (!supportsAnthropicCache(modelString)) {
+    return messages;
+  }
+
+  // Need at least 1 message to add a cache breakpoint
+  if (messages.length < 1) {
+    return messages;
+  }
+
+  // Add cache breakpoint at the last message
+  const cacheIndex = messages.length - 1;
+
+  return messages.map((msg, index) => {
+    if (index === cacheIndex) {
+      return addCacheControlToLastContentPart(msg, cacheTtl);
+    }
+    return msg;
+  });
+}
+
+/**
+ * Create a system message with cache control for Anthropic models.
+ * System messages rarely change and should always be cached.
+ */
+export function createCachedSystemMessage(
+  systemContent: string,
+  modelString: string,
+  cacheTtl?: AnthropicCacheTtl | null
+): ModelMessage | null {
+  if (!systemContent || !supportsAnthropicCache(modelString)) {
+    return null;
+  }
+
+  return {
+    role: "system" as const,
+    content: systemContent,
+    providerOptions: cacheTtl ? anthropicCacheControl(cacheTtl) : ANTHROPIC_CACHE_CONTROL,
+  };
+}
+
+/**
+ * Apply cache control to tool definitions for Anthropic models.
+ * Tools are static per model and should always be cached.
+ *
+ * IMPORTANT: Anthropic has a 4 cache breakpoint limit. We use:
+ * 1. System message (1 breakpoint)
+ * 2. Conversation history (1 breakpoint)
+ * 3. Last tool only (1 breakpoint) - caches all tools up to and including this one
+ * = 3 total, leaving 1 for future use
+ *
+ * NOTE: Function tools with execute handlers are recreated so providerOptions is set
+ * at creation time. Provider-native tools (type: "provider") and execute-less
+ * dynamic/MCP tools keep their runtime metadata and are descriptor-cloned before
+ * attaching providerOptions.
+ */
+export function applyCacheControlToTools<T extends Record<string, Tool>>(
+  tools: T,
+  modelString: string,
+  cacheTtl?: AnthropicCacheTtl | null
+): T {
+  // Only apply cache control for Anthropic models
+  if (!supportsAnthropicCache(modelString) || !tools || Object.keys(tools).length === 0) {
+    return tools;
+  }
+
+  // Get the last tool key (tools are ordered, last one gets cached)
+  const toolKeys = Object.keys(tools);
+  const lastToolKey = toolKeys[toolKeys.length - 1];
+
+  const cacheOpts = cacheTtl ? anthropicCacheControl(cacheTtl) : ANTHROPIC_CACHE_CONTROL;
+
+  // Clone tools and add cache control ONLY to the last tool
+  // Anthropic caches everything up to the cache breakpoint, so marking
+  // only the last tool will cache all tools
+  const cachedTools = {} as unknown as T;
+  for (const [key, existingTool] of Object.entries(tools)) {
+    if (key === lastToolKey) {
+      if (isProviderNativeTool(existingTool)) {
+        // Provider-native tools (e.g. Anthropic/OpenAI web search) cannot be recreated with
+        // createTool(). Clone while preserving descriptors/getters and attach providerOptions.
+        const cachedProviderTool = cloneToolPreservingDescriptors(
+          existingTool
+        ) as ProviderNativeTool;
+        cachedProviderTool.providerOptions = cacheOpts;
+        cachedTools[key as keyof T] = cachedProviderTool as unknown as T[keyof T];
+      } else if (existingTool.execute == null) {
+        // Some MCP/dynamic tools are valid without execute handlers (provider-/client-executed).
+        // Keep their runtime shape and attach cache control without forcing recreation.
+        const cachedDynamicTool = cloneToolPreservingDescriptors(existingTool);
+        cachedDynamicTool.providerOptions = cacheOpts;
+        cachedTools[key as keyof T] = cachedDynamicTool as unknown as T[keyof T];
+      } else {
+        assert(
+          existingTool.execute != null,
+          `Tool "${key}" must define execute before cache control is applied`
+        );
+
+        // Function tools with execute handlers: re-create with providerOptions (SDK requires this at creation time)
+        const cachedTool = createTool({
+          description: existingTool.description,
+          inputSchema: existingTool.inputSchema,
+          execute: existingTool.execute,
+          providerOptions: cacheOpts,
+        });
+        cachedTools[key as keyof T] = cachedTool as unknown as T[keyof T];
+      }
+    } else {
+      // Other tools are copied as-is
+      cachedTools[key as keyof T] = existingTool as unknown as T[keyof T];
+    }
+  }
+
+  return cachedTools;
+}

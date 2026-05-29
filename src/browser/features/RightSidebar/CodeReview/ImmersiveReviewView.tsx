@@ -1,0 +1,2191 @@
+/**
+ * ImmersiveReviewView — Full-screen, keyboard-first code review mode.
+ * Rendered via portal into #review-immersive-root overlay.
+ * Shows one file at a time with keyboard navigation for files, hunks, and lines.
+ */
+
+import React, { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import {
+  ArrowLeft,
+  Check,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Circle,
+  MessageSquare,
+  Sparkles,
+  ThumbsDown,
+  ThumbsUp,
+  Trash2,
+} from "lucide-react";
+import { cn } from "@/common/lib/utils";
+import { SelectableDiffRenderer } from "../../Shared/DiffRenderer";
+import { ImmersiveMinimap } from "./ImmersiveMinimap";
+import {
+  buildNewLineNumberToIndexMap,
+  buildOldLineNumberToIndexMap,
+  parseDiffLines,
+} from "./immersiveMinimapMath";
+import { KeycapGroup } from "@/browser/components/Keycap/Keycap";
+import { useAPI } from "@/browser/contexts/API";
+import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
+import {
+  findAdjacentFileHunkId,
+  flattenFileTreeLeaves,
+  getFileHunks,
+  sortHunksInFileOrder,
+} from "@/browser/utils/review/navigation";
+import {
+  isDialogOpen,
+  isEditableElement,
+  KEYBINDS,
+  matchesKeybind,
+} from "@/browser/utils/ui/keybinds";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
+import {
+  buildReadFileScript,
+  EXIT_CODE_TOO_LARGE,
+  EXIT_CODE_TOO_MANY_LINES,
+  processFileContents,
+} from "@/browser/utils/fileRead";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
+import {
+  parseReviewLineRange,
+  type DiffHunk,
+  type Review,
+  type ReviewNoteData,
+} from "@/common/types/review";
+import type { FileTreeNode } from "@/common/utils/git/numstatParser";
+import type { ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
+
+interface ImmersiveReviewViewProps {
+  workspaceId: string;
+  fileTree: FileTreeNode | null;
+  /** Filtered hunks (respects current filters) */
+  hunks: DiffHunk[];
+  /** All hunks for the active file set (bypasses frontend filters like read/search) */
+  allHunks: DiffHunk[];
+  /** True while diff/tree payload for this workspace is still loading. */
+  isLoading?: boolean;
+  isRead: (hunkId: string) => boolean;
+  onToggleRead: (hunkId: string) => void;
+  onMarkFileAsRead: (hunkId: string) => void;
+  selectedHunkId: string | null;
+  onSelectHunk: (hunkId: string | null) => void;
+  /** Whether immersive review should use touch/mobile UX affordances. */
+  isTouchImmersive?: boolean;
+  onExit: () => void;
+  onReviewNote?: (data: ReviewNoteData) => void;
+  reviewActions?: ReviewActionCallbacks;
+  reviewsByFilePath: Map<string, Review[]>;
+  /** Map of hunkId -> first-seen timestamp */
+  firstSeenMap: Record<string, number>;
+  /**
+   * Set of hunkIds the agent flagged for review (via `review_pane_update`).
+   * When the selected hunk is in this set, the header surfaces an "Assisted"
+   * indicator so the agent's focus signal survives the immersive transition.
+   */
+  assistedHunkIds?: ReadonlySet<string>;
+  /**
+   * Per-hunkId agent comments, when available. Rendered next to the assisted
+   * indicator so the user gets the same "why was this flagged?" context they
+   * see in the side panel.
+   */
+  assistedCommentByHunkId?: Map<string, string>;
+}
+
+interface InlineComposerRequest {
+  requestId: number;
+  prefill: string;
+  hunkId: string;
+  /** Absolute overlay indices so composer placement stays locked to marked rows. */
+  startIndex: number;
+  endIndex: number;
+  /** Absolute overlay index for composer placement (cursor position). */
+  cursorIndex: number;
+}
+
+interface InlineReviewEditRequest {
+  requestId: number;
+  reviewId: string;
+}
+
+interface SelectedLineRange {
+  startIndex: number;
+  endIndex: number;
+}
+
+interface PendingComposerHunkSwitch {
+  fromHunkId: string | null;
+  toHunkId: string;
+}
+
+interface HunkLineRange {
+  startIndex: number;
+  endIndex: number;
+  firstModifiedIndex: number | null;
+  lastModifiedIndex: number | null;
+}
+
+interface ImmersiveOverlayData {
+  content: string;
+  lineHunkIds: Array<string | null>;
+  hunkLineRanges: Map<string, HunkLineRange>;
+}
+
+const MAX_FULL_FILE_CONTEXT_LINES = 1500;
+const MAX_FULL_FILE_CONTEXT_BYTES = 256 * 1024;
+
+const LINE_JUMP_SIZE = 10;
+// Keep syntax highlighting on for larger review files now that per-line tooltip overhead is gone,
+// but still cap it to avoid pathological DOM costs on extremely large diffs.
+const MAX_HIGHLIGHTED_DIFF_LINES = 4000;
+const ACTIVE_LINE_OUTLINE = "1px solid hsl(from var(--color-review-accent) h s l / 0.45)";
+const LIKE_NOTE_PREFIX = "I like this change";
+const DISLIKE_NOTE_PREFIX = "I don't like this change";
+const EMPTY_REVIEWS: Review[] = [];
+const EMPTY_COMMENT_LINE_INDICES = new Set<number>();
+
+function getFileBaseName(filePath: string): string {
+  const segments = filePath.split(/[\\/]/);
+  return segments[segments.length - 1] || filePath;
+}
+
+function getChangedLineCount(hunk: DiffHunk): number {
+  // Reuse the shared diff-line parser so completion weighting matches the minimap's
+  // notion of which rows are actual changes instead of ad-hoc string checks here.
+  return parseDiffLines(hunk.content).reduce((count, lineCategory) => {
+    return lineCategory === "context" ? count : count + 1;
+  }, 0);
+}
+
+function getReviewStatusSidebarClasses(status: Review["status"]): {
+  accent: string;
+  badge: string;
+  icon: string;
+} {
+  if (status === "checked") {
+    return {
+      accent: "bg-success",
+      badge: "bg-success/20 text-success",
+      icon: "text-success",
+    };
+  }
+
+  if (status === "attached") {
+    return {
+      accent: "bg-warning",
+      badge: "bg-warning/20 text-warning",
+      icon: "text-warning",
+    };
+  }
+
+  return {
+    accent: "bg-muted",
+    badge: "bg-muted/25 text-muted",
+    icon: "text-muted",
+  };
+}
+
+function splitDiffLines(content: string): string[] {
+  const lines = content.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines;
+}
+
+function normalizeFileLines(content: string): string[] {
+  // Normalize Windows CRLF to LF-equivalent lines so rows stay single-height in
+  // whitespace-preserving diff cells (embedded "\r" can render as extra breaks).
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => (line.endsWith("\r") ? line.slice(0, Math.max(0, line.length - 1)) : line));
+  return lines.filter((line, idx) => idx < lines.length - 1 || line !== "");
+}
+
+function isWithinFullFileContextLineBudget(content: string): boolean {
+  return normalizeFileLines(content).length <= MAX_FULL_FILE_CONTEXT_LINES;
+}
+
+function shouldAttemptFullFileContext(selectedHunk: DiffHunk | null): boolean {
+  if (!selectedHunk) {
+    return false;
+  }
+
+  const lastDisplayLine = selectedHunk.newStart + Math.max(selectedHunk.newLines, 1) - 1;
+  return lastDisplayLine <= MAX_FULL_FILE_CONTEXT_LINES;
+}
+
+function buildFileContentCacheKey(
+  workspaceId: string,
+  filePath: string,
+  sortedHunks: readonly DiffHunk[]
+): string {
+  const hunkSignature = sortedHunks.map((hunk) => hunk.id).join("|");
+  return [workspaceId, filePath, hunkSignature].join("\u0000");
+}
+
+function buildOverlayFromFileContent(
+  fileContent: string,
+  sortedHunks: DiffHunk[]
+): ImmersiveOverlayData {
+  const fileLines = normalizeFileLines(fileContent);
+  const contentLines: string[] = [];
+  const lineHunkIds: Array<string | null> = [];
+  const hunkLineRanges = new Map<string, HunkLineRange>();
+
+  let newLineIdx = 0;
+
+  const pushDisplayLine = (line: string, hunkId: string | null) => {
+    contentLines.push(line);
+    lineHunkIds.push(hunkId);
+  };
+
+  for (const hunk of sortedHunks) {
+    const hunkStartInNew = Math.max(0, hunk.newStart - 1);
+
+    while (newLineIdx < hunkStartInNew && newLineIdx < fileLines.length) {
+      pushDisplayLine(` ${fileLines[newLineIdx]}`, null);
+      newLineIdx += 1;
+    }
+
+    const hunkStartIndex = lineHunkIds.length;
+    let firstModifiedIndex: number | null = null;
+    let lastModifiedIndex: number | null = null;
+
+    for (const line of splitDiffLines(hunk.content)) {
+      const prefix = line[0] ?? " ";
+      if (prefix !== "+" && prefix !== "-" && prefix !== " ") {
+        continue;
+      }
+
+      if (prefix === "+" || prefix === "-") {
+        firstModifiedIndex ??= lineHunkIds.length;
+        lastModifiedIndex = lineHunkIds.length;
+      }
+
+      pushDisplayLine(`${prefix}${line.slice(1)}`, hunk.id);
+      if (prefix !== "-") {
+        newLineIdx += 1;
+      }
+    }
+
+    if (lineHunkIds.length > hunkStartIndex) {
+      hunkLineRanges.set(hunk.id, {
+        startIndex: hunkStartIndex,
+        endIndex: lineHunkIds.length - 1,
+        firstModifiedIndex,
+        lastModifiedIndex,
+      });
+    }
+  }
+
+  while (newLineIdx < fileLines.length) {
+    pushDisplayLine(` ${fileLines[newLineIdx]}`, null);
+    newLineIdx += 1;
+  }
+
+  return {
+    content: contentLines.join("\n"),
+    lineHunkIds,
+    hunkLineRanges,
+  };
+}
+
+function buildOverlayFromHunks(sortedHunks: DiffHunk[]): ImmersiveOverlayData {
+  const contentLines: string[] = [];
+  const lineHunkIds: Array<string | null> = [];
+  const hunkLineRanges = new Map<string, HunkLineRange>();
+
+  const pushDisplayLine = (line: string, hunkId: string | null) => {
+    contentLines.push(line);
+    lineHunkIds.push(hunkId);
+  };
+
+  const pushHeaderLine = (line: string) => {
+    // Header rows are intentionally excluded from lineHunkIds because DiffRenderer
+    // does not render @@ header lines in selectable output.
+    contentLines.push(line);
+  };
+
+  sortedHunks.forEach((hunk, index) => {
+    if (index > 0) {
+      pushDisplayLine(" ", null);
+    }
+
+    pushHeaderLine(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`);
+
+    const hunkStartIndex = lineHunkIds.length;
+    let firstModifiedIndex: number | null = null;
+    let lastModifiedIndex: number | null = null;
+
+    for (const line of splitDiffLines(hunk.content)) {
+      const prefix = line[0] ?? " ";
+      if (prefix !== "+" && prefix !== "-" && prefix !== " ") {
+        continue;
+      }
+
+      if (prefix === "+" || prefix === "-") {
+        firstModifiedIndex ??= lineHunkIds.length;
+        lastModifiedIndex = lineHunkIds.length;
+      }
+
+      pushDisplayLine(`${prefix}${line.slice(1)}`, hunk.id);
+    }
+
+    if (lineHunkIds.length > hunkStartIndex) {
+      hunkLineRanges.set(hunk.id, {
+        startIndex: hunkStartIndex,
+        endIndex: lineHunkIds.length - 1,
+        firstModifiedIndex,
+        lastModifiedIndex,
+      });
+    }
+  });
+
+  return {
+    content: contentLines.join("\n"),
+    lineHunkIds,
+    hunkLineRanges,
+  };
+}
+
+function isSelectionInsideRange(selection: SelectedLineRange, range: HunkLineRange): boolean {
+  const start = Math.min(selection.startIndex, selection.endIndex);
+  const end = Math.max(selection.startIndex, selection.endIndex);
+  return start >= range.startIndex && end <= range.endIndex;
+}
+
+function isLineInsideSelection(lineIndex: number, selection: SelectedLineRange): boolean {
+  const start = Math.min(selection.startIndex, selection.endIndex);
+  const end = Math.max(selection.startIndex, selection.endIndex);
+  return lineIndex >= start && lineIndex <= end;
+}
+
+/** Resolve the hunk that contains a given overlay line index using the lineHunkIds lookup. */
+function findHunkAtLine(
+  lineIndex: number,
+  overlayData: ImmersiveOverlayData,
+  fileHunks: DiffHunk[]
+): { hunk: DiffHunk; range: HunkLineRange } | null {
+  const hunkId = overlayData.lineHunkIds[lineIndex];
+  if (!hunkId) {
+    return null;
+  }
+  const hunk = fileHunks.find((h) => h.id === hunkId);
+  const range = overlayData.hunkLineRanges.get(hunkId);
+  if (!hunk || !range) {
+    return null;
+  }
+  return { hunk, range };
+}
+
+function getLineSpan(start: number, lineCount: number): { start: number; end: number } | null {
+  if (lineCount <= 0) {
+    return null;
+  }
+
+  return {
+    start,
+    end: start + lineCount - 1,
+  };
+}
+
+function rangesOverlap(
+  lhs: { start: number; end: number } | undefined,
+  rhs: { start: number; end: number } | null
+): boolean {
+  if (!lhs || !rhs) {
+    return false;
+  }
+
+  return lhs.start <= rhs.end && rhs.start <= lhs.end;
+}
+
+function findReviewHunkId(review: Review, fileHunks: DiffHunk[]): string | null {
+  const parsedRange = parseReviewLineRange(review.data.lineRange);
+  if (!parsedRange) {
+    return null;
+  }
+
+  const matchingHunk = fileHunks.find((hunk) => {
+    const oldSpan = getLineSpan(hunk.oldStart, hunk.oldLines);
+    const newSpan = getLineSpan(hunk.newStart, hunk.newLines);
+
+    return rangesOverlap(parsedRange.old, oldSpan) || rangesOverlap(parsedRange.new, newSpan);
+  });
+
+  return matchingHunk?.id ?? null;
+}
+
+export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const notesSidebarRef = useRef<HTMLDivElement>(null);
+  const hunkJumpRef = useRef(false);
+  const pendingJumpSelectAllHunkIdRef = useRef<string | null>(null);
+  const { api } = useAPI();
+
+  const {
+    fileTree,
+    hunks,
+    allHunks,
+    selectedHunkId,
+    onSelectHunk,
+    onToggleRead,
+    onMarkFileAsRead,
+    onExit,
+    onReviewNote,
+    isRead,
+    isTouchImmersive,
+    assistedHunkIds,
+    assistedCommentByHunkId,
+  } = props;
+  const selectedAssistedComment =
+    selectedHunkId !== null ? (assistedCommentByHunkId?.get(selectedHunkId) ?? null) : null;
+  const isSelectedAssisted =
+    selectedHunkId !== null && (assistedHunkIds?.has(selectedHunkId) ?? false);
+  const isTouchExperience = isTouchImmersive === true;
+
+  // Flatten file tree into ordered file list
+  const fileList = useMemo(() => flattenFileTreeLeaves(fileTree), [fileTree]);
+  const reviewProgress = useMemo(() => {
+    // Cursor movement should stay lightweight even in large diff-heavy files, so memoize
+    // the per-hunk diff parsing instead of rescanning every hunk on each immersive render.
+    let reviewedHunkCount = 0;
+    let totalChangedLineCount = 0;
+    let reviewedChangedLineCount = 0;
+
+    for (const hunk of allHunks) {
+      const changedLineCount = getChangedLineCount(hunk);
+      totalChangedLineCount += changedLineCount;
+      if (isRead(hunk.id)) {
+        reviewedHunkCount += 1;
+        reviewedChangedLineCount += changedLineCount;
+      }
+    }
+
+    return {
+      reviewedHunkCount,
+      totalChangedLineCount,
+      reviewedChangedLineCount,
+    };
+  }, [allHunks, isRead]);
+  const reviewedHunkCount = reviewProgress.reviewedHunkCount;
+  const totalChangedLineCount = reviewProgress.totalChangedLineCount;
+  const reviewedChangedLineCount = reviewProgress.reviewedChangedLineCount;
+  const reviewCompletionWidthPercent =
+    totalChangedLineCount === 0 ? 0 : (reviewedChangedLineCount / totalChangedLineCount) * 100;
+  const reviewCompletionPercent = Math.round(reviewCompletionWidthPercent);
+  const reviewCompletionSummary =
+    totalChangedLineCount === 0
+      ? "No changed lines to review"
+      : `${reviewCompletionPercent}% of changed lines reviewed`;
+  const reviewCompletionDetails =
+    totalChangedLineCount === 0
+      ? reviewCompletionSummary
+      : `${reviewCompletionSummary} (${reviewedChangedLineCount}/${totalChangedLineCount})`;
+  const reviewCompletionHunkDetails = `${reviewedHunkCount}/${allHunks.length} hunks marked read`;
+  const isReviewComplete =
+    allHunks.length > 0 && hunks.length === 0 && reviewedHunkCount === allHunks.length;
+  const reviewedHunkLabel = `${reviewedHunkCount} ${reviewedHunkCount === 1 ? "hunk" : "hunks"}`;
+
+  // When hide-read removes the last visible hunk, keep immersive review on an explicit
+  // completion state instead of falling back to the first file's empty diff view.
+  const activeFilePath = useMemo(() => {
+    if (isReviewComplete) {
+      return null;
+    }
+
+    if (selectedHunkId) {
+      const selectedHunk =
+        hunks.find((item) => item.id === selectedHunkId) ??
+        allHunks.find((item) => item.id === selectedHunkId);
+      if (selectedHunk) {
+        return selectedHunk.filePath;
+      }
+    }
+
+    // Fallback: first file that has currently visible hunks.
+    if (hunks.length > 0) {
+      return hunks[0].filePath;
+    }
+
+    if (fileList.length > 0) {
+      return fileList[0];
+    }
+
+    return null;
+  }, [selectedHunkId, hunks, allHunks, fileList, isReviewComplete]);
+
+  const selectedHunkFromAll = useMemo(
+    () => (selectedHunkId ? (allHunks.find((item) => item.id === selectedHunkId) ?? null) : null),
+    [selectedHunkId, allHunks]
+  );
+
+  const selectedHunkIsFilteredOut = Boolean(
+    selectedHunkFromAll && !hunks.some((item) => item.id === selectedHunkFromAll.id)
+  );
+
+  const activeFileHunks = selectedHunkIsFilteredOut ? allHunks : hunks;
+
+  // Hunks for the active file only, always sorted in file order.
+  // When the selected hunk is filtered out, keep using unfiltered hunks so
+  // note-driven navigation can still land on the review context.
+  const currentFileHunks = useMemo(
+    () =>
+      activeFilePath ? sortHunksInFileOrder(getFileHunks(activeFileHunks, activeFilePath)) : [],
+    [activeFileHunks, activeFilePath]
+  );
+
+  const selectedHunk = useMemo(() => {
+    if (selectedHunkId) {
+      const matchingHunk = currentFileHunks.find((hunk) => hunk.id === selectedHunkId);
+      if (matchingHunk) {
+        return matchingHunk;
+      }
+    }
+
+    return currentFileHunks[0] ?? null;
+  }, [selectedHunkId, currentFileHunks]);
+
+  // Ensure we always have a selected hunk when the active file has hunks.
+  useEffect(() => {
+    if (currentFileHunks.length === 0) {
+      return;
+    }
+
+    if (!selectedHunkId || !currentFileHunks.some((hunk) => hunk.id === selectedHunkId)) {
+      pendingJumpSelectAllHunkIdRef.current = null;
+      onSelectHunk(currentFileHunks[0].id);
+    }
+  }, [currentFileHunks, selectedHunkId, onSelectHunk]);
+
+  const [activeFileContentState, setActiveFileContentState] = useState<{
+    filePath: string | null;
+    content: string | null;
+    isSettled: boolean;
+  }>({
+    filePath: null,
+    content: null,
+    isSettled: true,
+  });
+  const fileContentCacheRef = useRef<Map<string, string | null>>(new Map());
+  const shouldLoadFullFileContext = useMemo(
+    () => shouldAttemptFullFileContext(selectedHunk),
+    [selectedHunk]
+  );
+  const activeFileContentCacheKey = useMemo(
+    () =>
+      activeFilePath
+        ? buildFileContentCacheKey(props.workspaceId, activeFilePath, currentFileHunks)
+        : null,
+    [activeFilePath, currentFileHunks, props.workspaceId]
+  );
+
+  // Hold diff reveal during file switches until the initial scroll is complete.
+  const [pendingRevealFilePath, setPendingRevealFilePath] = useState<string | null>(null);
+  const revealAnimationFrameRef = useRef<number | null>(null);
+
+  // Load full file context only when it is cheap. The hunk overlay remains visible
+  // while this request is pending so file switches do not block on bash/base64 I/O.
+  useEffect(() => {
+    const apiClient = api;
+    const filePath = activeFilePath;
+    const cacheKey = activeFileContentCacheKey;
+
+    const settleContent = (content: string | null) => {
+      setActiveFileContentState({
+        filePath: filePath ?? null,
+        content,
+        isSettled: true,
+      });
+    };
+
+    if (!filePath || !apiClient || !shouldLoadFullFileContext || !cacheKey) {
+      settleContent(null);
+      return;
+    }
+
+    if (fileContentCacheRef.current.has(cacheKey)) {
+      settleContent(fileContentCacheRef.current.get(cacheKey) ?? null);
+      return;
+    }
+
+    const resolvedApi: NonNullable<typeof api> = apiClient;
+    const resolvedFilePath: string = filePath;
+    let cancelled = false;
+
+    setActiveFileContentState({
+      filePath: resolvedFilePath,
+      content: null,
+      isSettled: false,
+    });
+
+    const settleLoadedContent = (content: string | null, shouldCache: boolean) => {
+      if (shouldCache) {
+        fileContentCacheRef.current.set(cacheKey, content);
+      }
+      if (!cancelled) {
+        setActiveFileContentState({
+          filePath: resolvedFilePath,
+          content,
+          isSettled: true,
+        });
+      }
+    };
+
+    async function loadActiveFileContent() {
+      // Keep plain file reads on the shared container root so immersive review can open
+      // sibling-project files without forcing the primary repo checkout.
+      const fileResult = await resolvedApi.workspace.executeBash({
+        workspaceId: props.workspaceId,
+        script: buildReadFileScript(resolvedFilePath, {
+          maxSizeBytes: MAX_FULL_FILE_CONTEXT_BYTES,
+          maxLineCount: MAX_FULL_FILE_CONTEXT_LINES,
+        }),
+      });
+
+      if (cancelled) {
+        return;
+      }
+
+      if (!fileResult.success) {
+        settleLoadedContent(null, false);
+        return;
+      }
+
+      const bashResult = fileResult.data;
+      const isDeterministicBudgetMiss =
+        bashResult.exitCode === EXIT_CODE_TOO_LARGE ||
+        bashResult.exitCode === EXIT_CODE_TOO_MANY_LINES;
+
+      if (!bashResult.success && !bashResult.output) {
+        settleLoadedContent(null, isDeterministicBudgetMiss);
+        return;
+      }
+
+      const data = processFileContents(bashResult.output ?? "", bashResult.exitCode);
+      const content =
+        data.type === "text" && isWithinFullFileContextLineBudget(data.content)
+          ? data.content
+          : null;
+      settleLoadedContent(content, content != null || isDeterministicBudgetMiss);
+    }
+
+    loadActiveFileContent().catch(() => {
+      settleLoadedContent(null, false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeFileContentCacheKey,
+    activeFilePath,
+    api,
+    props.workspaceId,
+    shouldLoadFullFileContext,
+  ]);
+
+  const isActiveFileContentSettled =
+    !activeFilePath ||
+    (activeFileContentState.filePath === activeFilePath && activeFileContentState.isSettled);
+
+  const resolvedActiveFileContent = isActiveFileContentSettled
+    ? activeFileContentState.content
+    : null;
+
+  const overlayData = useMemo<ImmersiveOverlayData>(() => {
+    if (currentFileHunks.length === 0) {
+      return {
+        content: "",
+        lineHunkIds: [],
+        hunkLineRanges: new Map<string, HunkLineRange>(),
+      };
+    }
+
+    if (resolvedActiveFileContent != null) {
+      return buildOverlayFromFileContent(resolvedActiveFileContent, currentFileHunks);
+    }
+
+    return buildOverlayFromHunks(currentFileHunks);
+  }, [resolvedActiveFileContent, currentFileHunks]);
+
+  const selectedHunkRange = useMemo(
+    () => (selectedHunk ? (overlayData.hunkLineRanges.get(selectedHunk.id) ?? null) : null),
+    [selectedHunk, overlayData]
+  );
+
+  const selectedHunkLineCount = selectedHunkRange
+    ? selectedHunkRange.endIndex - selectedHunkRange.startIndex + 1
+    : 0;
+
+  const allReviews = useMemo(
+    () =>
+      Array.from(props.reviewsByFilePath.values())
+        .flat()
+        .sort((a, b) => {
+          const createdAtDelta = b.createdAt - a.createdAt;
+          if (createdAtDelta !== 0) {
+            return createdAtDelta;
+          }
+
+          return a.id.localeCompare(b.id);
+        }),
+    [props.reviewsByFilePath]
+  );
+  const activeFileReviews = useMemo(
+    () =>
+      activeFilePath
+        ? (props.reviewsByFilePath.get(activeFilePath) ?? EMPTY_REVIEWS)
+        : EMPTY_REVIEWS,
+    [activeFilePath, props.reviewsByFilePath]
+  );
+
+  // Map review line ranges → diff line indices for minimap comment indicators.
+  // Memoize the line-number lookups so cursor movement does not rebuild multi-thousand-line
+  // maps when neither the rendered overlay nor the file's review set changed.
+  const commentLineIndices = useMemo<ReadonlySet<number>>(() => {
+    if (overlayData.content.length === 0 || activeFileReviews.length === 0) {
+      return EMPTY_COMMENT_LINE_INDICES;
+    }
+
+    const newLineMap = buildNewLineNumberToIndexMap(overlayData.content);
+    let oldLineMap: Map<number, number> | null = null;
+    const indices = new Set<number>();
+    for (const review of activeFileReviews) {
+      const parsed = parseReviewLineRange(review.data.lineRange);
+      if (!parsed) continue;
+
+      let lineMap: Map<number, number>;
+      let range: { start: number; end: number } | undefined;
+
+      if (parsed.new) {
+        lineMap = newLineMap;
+        range = parsed.new;
+      } else if (parsed.old) {
+        oldLineMap ??= buildOldLineNumberToIndexMap(overlayData.content);
+        lineMap = oldLineMap;
+        range = parsed.old;
+      } else {
+        continue;
+      }
+
+      for (let ln = range.start; ln <= range.end; ln++) {
+        const idx = lineMap.get(ln);
+        if (idx != null) indices.add(idx);
+      }
+    }
+    return indices;
+  }, [activeFileReviews, overlayData.content]);
+
+  const [inlineComposerRequest, setInlineComposerRequest] = useState<InlineComposerRequest | null>(
+    null
+  );
+  const [inlineReviewEditRequest, setInlineReviewEditRequest] =
+    useState<InlineReviewEditRequest | null>(null);
+  const nextComposerRequestIdRef = useRef(0);
+  const nextInlineReviewEditRequestIdRef = useRef(0);
+  const pendingComposerHunkSwitchRef = useRef<PendingComposerHunkSwitch | null>(null);
+
+  // Keyboard line cursor state within the whole rendered file.
+  const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
+  const [selectedLineRange, setSelectedLineRange] = useState<SelectedLineRange | null>(null);
+  const [scrollNonce, setScrollNonce] = useState(0);
+  const [boundaryToast, setBoundaryToast] = useState<string | null>(null);
+
+  // Which panel has keyboard focus while in immersive mode.
+  const [focusedPanel, setFocusedPanel] = useState<"diff" | "notes">("diff");
+  const [focusedNoteIndex, setFocusedNoteIndex] = useState(0);
+
+  // Keep an immersive-local stack of single-hunk read actions so U can step back through
+  // hide-read auto-advance without changing the main review panel's unread shortcut semantics.
+  const readUndoStackRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    if (revealAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(revealAnimationFrameRef.current);
+      revealAnimationFrameRef.current = null;
+    }
+
+    if (!activeFilePath) {
+      setPendingRevealFilePath(null);
+      return;
+    }
+
+    // Keep the splash visible for each file switch until we have scrolled to the target hunk.
+    setPendingRevealFilePath(activeFilePath);
+    hunkJumpRef.current = true;
+  }, [activeFilePath]);
+
+  useEffect(() => {
+    return () => {
+      if (revealAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(revealAnimationFrameRef.current);
+      }
+    };
+  }, []);
+
+  const selectedHunkRevealTargetLineIndex =
+    selectedHunkRange?.firstModifiedIndex ?? selectedHunkRange?.startIndex ?? null;
+  const isActiveFileRevealPending = pendingRevealFilePath === activeFilePath;
+  const revealTargetLineIndex = isActiveFileRevealPending
+    ? selectedHunkRevealTargetLineIndex
+    : (activeLineIndex ?? selectedHunkRevealTargetLineIndex);
+  const hasResolvedSelectedHunkForReveal =
+    selectedHunkId !== null && currentFileHunks.some((hunk) => hunk.id === selectedHunkId);
+
+  useEffect(() => {
+    if (!isActiveFileRevealPending) {
+      return;
+    }
+
+    // Fail open so the UI cannot get stuck if a file has no hunks.
+    if (currentFileHunks.length === 0) {
+      setPendingRevealFilePath(null);
+      return;
+    }
+
+    // Avoid dropping the reveal gate while selected hunk state is still settling.
+    if (!hasResolvedSelectedHunkForReveal) {
+      return;
+    }
+
+    // Fail open once selection is stable if we still cannot resolve a reveal target.
+    if (selectedHunkRevealTargetLineIndex === null) {
+      setPendingRevealFilePath(null);
+    }
+  }, [
+    currentFileHunks.length,
+    hasResolvedSelectedHunkForReveal,
+    isActiveFileRevealPending,
+    selectedHunkRevealTargetLineIndex,
+  ]);
+
+  useEffect(() => {
+    if (!boundaryToast) return;
+    const timer = setTimeout(() => setBoundaryToast(null), 2500);
+    return () => clearTimeout(timer);
+  }, [boundaryToast]);
+
+  useEffect(() => {
+    if (focusedNoteIndex < allReviews.length) {
+      return;
+    }
+
+    setFocusedNoteIndex(Math.max(0, allReviews.length - 1));
+  }, [allReviews.length, focusedNoteIndex]);
+
+  useEffect(() => {
+    if (focusedPanel !== "notes") {
+      return;
+    }
+
+    const noteEl = notesSidebarRef.current?.querySelector<HTMLElement>(
+      `[data-note-index="${focusedNoteIndex}"]`
+    );
+    noteEl?.scrollIntoView({ block: "nearest", behavior: "auto" });
+  }, [focusedPanel, focusedNoteIndex]);
+
+  useEffect(() => {
+    if (!inlineComposerRequest) {
+      pendingComposerHunkSwitchRef.current = null;
+      return;
+    }
+
+    if (selectedHunk?.id === inlineComposerRequest.hunkId) {
+      pendingComposerHunkSwitchRef.current = null;
+      return;
+    }
+
+    const pendingSwitch = pendingComposerHunkSwitchRef.current;
+    const isAwaitingRequestedHunk =
+      pendingSwitch?.toHunkId === inlineComposerRequest.hunkId &&
+      (selectedHunkId === pendingSwitch.fromHunkId || selectedHunkId === null);
+
+    if (isAwaitingRequestedHunk) {
+      const requestedHunkStillExists = currentFileHunks.some(
+        (hunk) => hunk.id === inlineComposerRequest.hunkId
+      );
+      if (requestedHunkStillExists) {
+        return;
+      }
+    }
+
+    pendingComposerHunkSwitchRef.current = null;
+    setInlineComposerRequest(null);
+  }, [currentFileHunks, inlineComposerRequest, selectedHunk, selectedHunkId]);
+
+  // Refs keep hot-path callbacks stable so cursor movement doesn't trigger expensive re-renders.
+  const activeLineIndexRef = useRef<number | null>(null);
+  const selectedLineRangeRef = useRef<SelectedLineRange | null>(null);
+  const selectedHunkIdRef = useRef<string | null>(selectedHunkId);
+  const isReadRef = useRef(isRead);
+  const onToggleReadRef = useRef(onToggleRead);
+  const onSelectHunkRef = useRef(onSelectHunk);
+  const allHunksRef = useRef(allHunks);
+  const hunkLineRangesRef = useRef(overlayData.hunkLineRanges);
+  const highlightedLineElementRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    activeLineIndexRef.current = activeLineIndex;
+  }, [activeLineIndex]);
+
+  useEffect(() => {
+    selectedLineRangeRef.current = selectedLineRange;
+  }, [selectedLineRange]);
+
+  useEffect(() => {
+    selectedHunkIdRef.current = selectedHunkId;
+  }, [selectedHunkId]);
+
+  useEffect(() => {
+    isReadRef.current = isRead;
+  }, [isRead]);
+
+  useEffect(() => {
+    onToggleReadRef.current = onToggleRead;
+  }, [onToggleRead]);
+
+  useEffect(() => {
+    onSelectHunkRef.current = onSelectHunk;
+  }, [onSelectHunk]);
+
+  useEffect(() => {
+    allHunksRef.current = allHunks;
+  }, [allHunks]);
+
+  useEffect(() => {
+    hunkLineRangesRef.current = overlayData.hunkLineRanges;
+  }, [overlayData.hunkLineRanges]);
+
+  // Keep cursor and selection aligned to the selected hunk when hunk navigation changes.
+  useEffect(() => {
+    const resolvedSelectedHunkId = selectedHunk?.id ?? null;
+
+    if (!selectedHunkRange || !resolvedSelectedHunkId) {
+      pendingJumpSelectAllHunkIdRef.current = null;
+      setActiveLineIndex(null);
+      setSelectedLineRange(null);
+      return;
+    }
+
+    const shouldSelectEntireHunk = pendingJumpSelectAllHunkIdRef.current === resolvedSelectedHunkId;
+    if (shouldSelectEntireHunk) {
+      pendingJumpSelectAllHunkIdRef.current = null;
+      // Use actual modified boundaries (without context padding) for the highlight
+      const modifiedStart = selectedHunkRange.firstModifiedIndex ?? selectedHunkRange.startIndex;
+      const modifiedEnd = selectedHunkRange.lastModifiedIndex ?? selectedHunkRange.endIndex;
+      setActiveLineIndex(modifiedEnd);
+      setSelectedLineRange({
+        startIndex: modifiedStart,
+        endIndex: modifiedEnd,
+      });
+      return;
+    }
+
+    setActiveLineIndex((previousLineIndex) => {
+      if (
+        previousLineIndex !== null &&
+        previousLineIndex >= selectedHunkRange.startIndex &&
+        previousLineIndex <= selectedHunkRange.endIndex
+      ) {
+        return previousLineIndex;
+      }
+      return selectedHunkRange.firstModifiedIndex ?? selectedHunkRange.startIndex;
+    });
+
+    setSelectedLineRange((previousSelection) => {
+      if (!previousSelection) {
+        return null;
+      }
+
+      if (isSelectionInsideRange(previousSelection, selectedHunkRange)) {
+        return previousSelection;
+      }
+
+      const cursorLineIndex = activeLineIndexRef.current;
+      if (cursorLineIndex !== null && isLineInsideSelection(cursorLineIndex, previousSelection)) {
+        // Keep cross-hunk Shift selections alive while the moving cursor edge
+        // tracks into the next hunk.
+        return previousSelection;
+      }
+
+      return null;
+    });
+  }, [
+    selectedHunk?.id,
+    selectedHunkRange?.startIndex,
+    selectedHunkRange?.endIndex,
+    selectedHunkRange,
+  ]);
+
+  // File index for display
+  const fileIndex = activeFilePath ? fileList.indexOf(activeFilePath) : -1;
+  const fileCount = fileList.length;
+
+  // --- Navigation callbacks ---
+
+  const navigateFile = useCallback(
+    (direction: 1 | -1) => {
+      if (!activeFilePath) {
+        return;
+      }
+
+      // Skip files with no currently visible hunks (e.g. filtered out by read/search filters).
+      // This keeps file navigation moving forward instead of getting stuck on empty files.
+      const targetHunkId = findAdjacentFileHunkId(
+        fileList,
+        activeFilePath,
+        hunks,
+        direction,
+        "first"
+      );
+      if (!targetHunkId) {
+        return;
+      }
+
+      pendingJumpSelectAllHunkIdRef.current = null;
+      hunkJumpRef.current = true;
+      onSelectHunk(targetHunkId);
+    },
+    [activeFilePath, fileList, hunks, onSelectHunk]
+  );
+
+  const navigateHunk = useCallback(
+    (direction: 1 | -1) => {
+      if (currentFileHunks.length === 0) return;
+
+      const currentIdx = selectedHunkId
+        ? currentFileHunks.findIndex((hunk) => hunk.id === selectedHunkId)
+        : -1;
+
+      let targetHunkId: string | null;
+      if (currentIdx === -1) {
+        targetHunkId =
+          currentFileHunks[direction === 1 ? 0 : currentFileHunks.length - 1]?.id ?? null;
+      } else {
+        const nextIdx = currentIdx + direction;
+        if (nextIdx < 0 || nextIdx >= currentFileHunks.length) {
+          // Keep J/K feeling like one continuous hunk stream instead of forcing an
+          // extra file-navigation step at every file boundary.
+          targetHunkId = activeFilePath
+            ? findAdjacentFileHunkId(
+                fileList,
+                activeFilePath,
+                selectedHunkIsFilteredOut ? allHunks : hunks,
+                direction,
+                direction === 1 ? "first" : "last"
+              )
+            : null;
+          if (!targetHunkId) {
+            setBoundaryToast(
+              direction === 1
+                ? "Reached the last hunk in review"
+                : "Reached the first hunk in review"
+            );
+            return;
+          }
+        } else {
+          targetHunkId = currentFileHunks[nextIdx].id;
+        }
+      }
+
+      pendingJumpSelectAllHunkIdRef.current = targetHunkId;
+      hunkJumpRef.current = true;
+      onSelectHunk(targetHunkId);
+    },
+    [
+      activeFilePath,
+      allHunks,
+      currentFileHunks,
+      fileList,
+      hunks,
+      onSelectHunk,
+      selectedHunkId,
+      selectedHunkIsFilteredOut,
+    ]
+  );
+
+  const navigateToReview = useCallback(
+    (review: Review, options?: { startEditing?: boolean }) => {
+      const fileHunks = sortHunksInFileOrder(getFileHunks(allHunks, review.data.filePath));
+      if (fileHunks.length === 0) {
+        return;
+      }
+
+      const targetHunkId = findReviewHunkId(review, fileHunks) ?? fileHunks[0].id;
+      pendingJumpSelectAllHunkIdRef.current = null;
+      hunkJumpRef.current = true;
+      onSelectHunk(targetHunkId);
+      // Force scroll effect to re-fire even when activeLineIndex is unchanged
+      // (for example when the cursor is already inside the selected hunk).
+      setScrollNonce((previousNonce) => previousNonce + 1);
+
+      if (options?.startEditing && props.reviewActions?.onEditComment) {
+        nextInlineReviewEditRequestIdRef.current += 1;
+        setInlineReviewEditRequest({
+          requestId: nextInlineReviewEditRequestIdRef.current,
+          reviewId: review.id,
+        });
+      }
+    },
+    [allHunks, onSelectHunk, props.reviewActions?.onEditComment]
+  );
+
+  const diffReviewActions = useMemo<ReviewActionCallbacks | undefined>(() => {
+    if (!props.reviewActions) {
+      return undefined;
+    }
+
+    return {
+      ...props.reviewActions,
+      onEditingChange: (reviewId: string, isEditing: boolean) => {
+        props.reviewActions?.onEditingChange?.(reviewId, isEditing);
+        if (isEditing) {
+          setInlineReviewEditRequest((currentRequest) =>
+            currentRequest?.reviewId === reviewId ? null : currentRequest
+          );
+        }
+      },
+    };
+  }, [props.reviewActions]);
+
+  const getCurrentLineSelection = useCallback((): SelectedLineRange | null => {
+    if (selectedLineRange) {
+      return selectedLineRange;
+    }
+
+    if (activeLineIndex === null) {
+      return null;
+    }
+
+    return { startIndex: activeLineIndex, endIndex: activeLineIndex };
+  }, [activeLineIndex, selectedLineRange]);
+
+  const selectedLineSummary = useMemo(() => {
+    const selection = getCurrentLineSelection();
+    if (!selection) {
+      return null;
+    }
+
+    return {
+      startIndex: Math.min(selection.startIndex, selection.endIndex),
+      endIndex: Math.max(selection.startIndex, selection.endIndex),
+    };
+  }, [getCurrentLineSelection]);
+
+  const openComposer = useCallback(
+    (prefill: string, selectionOverride?: SelectedLineRange) => {
+      const lineCount = overlayData.lineHunkIds.length;
+      if (lineCount === 0) {
+        return;
+      }
+
+      const clampToOverlay = (lineIndex: number): number =>
+        Math.max(0, Math.min(lineCount - 1, lineIndex));
+
+      const selection = selectionOverride ??
+        getCurrentLineSelection() ?? {
+          startIndex: activeLineIndexRef.current ?? 0,
+          endIndex: activeLineIndexRef.current ?? 0,
+        };
+      const effectiveSelection: SelectedLineRange = {
+        startIndex: clampToOverlay(selection.startIndex),
+        endIndex: clampToOverlay(selection.endIndex),
+      };
+      // Keep a single cursor source of truth: the moving edge of the selection.
+      const cursorIndex = clampToOverlay(effectiveSelection.endIndex);
+
+      pendingComposerHunkSwitchRef.current = null;
+
+      const resolvedTarget =
+        findHunkAtLine(cursorIndex, overlayData, currentFileHunks) ??
+        findHunkAtLine(effectiveSelection.startIndex, overlayData, currentFileHunks);
+      const targetHunk = resolvedTarget?.hunk ?? selectedHunk;
+      if (!targetHunk) {
+        return;
+      }
+
+      const currentSelectedHunkId = selectedHunkIdRef.current;
+      if (targetHunk.id !== currentSelectedHunkId) {
+        // Record the in-flight hunk switch so mismatch guards do not clear
+        // this composer request before onSelectHunk propagates.
+        pendingJumpSelectAllHunkIdRef.current = null;
+        pendingComposerHunkSwitchRef.current = {
+          fromHunkId: currentSelectedHunkId,
+          toHunkId: targetHunk.id,
+        };
+        onSelectHunk(targetHunk.id);
+      }
+
+      // Keep the keyboard cursor on the last selected line so comment placement,
+      // selection visuals, and subsequent actions all share the same anchor.
+      setActiveLineIndex(cursorIndex);
+
+      nextComposerRequestIdRef.current += 1;
+      setInlineComposerRequest({
+        requestId: nextComposerRequestIdRef.current,
+        prefill,
+        hunkId: targetHunk.id,
+        startIndex: effectiveSelection.startIndex,
+        endIndex: effectiveSelection.endIndex,
+        cursorIndex,
+      });
+    },
+    [getCurrentLineSelection, selectedHunk, overlayData, currentFileHunks, onSelectHunk]
+  );
+
+  const handleReviewNoteSubmit = useCallback(
+    (data: ReviewNoteData) => {
+      onReviewNote?.(data);
+      // DiffRenderer clears its internal selection after submit, but immersive mode may
+      // still keep an external selection request active. Clear it to close the composer
+      // and prevent accidental duplicate submissions on repeated Enter presses.
+      setInlineComposerRequest(null);
+      // Clear the line selection so the next Shift+C targets the current keyboard
+      // cursor (activeLineIndex) rather than the stale range from this comment.
+      setSelectedLineRange(null);
+      containerRef.current?.focus();
+    },
+    [onReviewNote]
+  );
+
+  const handleInlineComposerCancel = useCallback(() => {
+    // Keep immersive parent state aligned with child composer teardown so canceled
+    // keyboard-initiated requests do not linger or steal focus.
+    setInlineComposerRequest(null);
+    setSelectedLineRange(null);
+    containerRef.current?.focus();
+  }, []);
+
+  const moveLineCursor = useCallback(
+    (delta: number, extendRange: boolean) => {
+      const lineCount = overlayData.lineHunkIds.length;
+      if (lineCount === 0) {
+        return;
+      }
+
+      const currentIndex = activeLineIndexRef.current ?? selectedHunkRange?.startIndex ?? 0;
+      const nextIndex = Math.max(0, Math.min(lineCount - 1, currentIndex + delta));
+
+      setActiveLineIndex(nextIndex);
+
+      if (extendRange) {
+        const anchorIndex = selectedLineRangeRef.current?.startIndex ?? currentIndex;
+        setSelectedLineRange({ startIndex: anchorIndex, endIndex: nextIndex });
+      } else {
+        setSelectedLineRange(null);
+      }
+
+      const lineHunkId = overlayData.lineHunkIds[nextIndex];
+      if (lineHunkId && lineHunkId !== selectedHunkIdRef.current) {
+        pendingJumpSelectAllHunkIdRef.current = null;
+        onSelectHunk(lineHunkId);
+      }
+    },
+    [overlayData.lineHunkIds, selectedHunkRange, onSelectHunk]
+  );
+
+  const resetViewCursorForHunk = useCallback((hunkId: string) => {
+    pendingJumpSelectAllHunkIdRef.current = null;
+    hunkJumpRef.current = true;
+    setSelectedLineRange(null);
+
+    if (selectedHunkIdRef.current === hunkId) {
+      const hunkRange = hunkLineRangesRef.current.get(hunkId) ?? null;
+      setActiveLineIndex(hunkRange?.firstModifiedIndex ?? hunkRange?.startIndex ?? null);
+      setScrollNonce((previousNonce) => previousNonce + 1);
+    } else {
+      setActiveLineIndex(null);
+    }
+
+    onSelectHunkRef.current(hunkId);
+  }, []);
+
+  const handleToggleReadWithUndo = useCallback((hunkId: string) => {
+    const wasRead = isReadRef.current(hunkId);
+    readUndoStackRef.current = wasRead
+      ? readUndoStackRef.current.filter((trackedHunkId) => trackedHunkId !== hunkId)
+      : [...readUndoStackRef.current.filter((trackedHunkId) => trackedHunkId !== hunkId), hunkId];
+    onToggleReadRef.current(hunkId);
+  }, []);
+
+  const handleUndoLastRead = useCallback(() => {
+    while (readUndoStackRef.current.length > 0) {
+      const targetHunkId = readUndoStackRef.current[readUndoStackRef.current.length - 1];
+      readUndoStackRef.current = readUndoStackRef.current.slice(0, -1);
+
+      if (
+        !isReadRef.current(targetHunkId) ||
+        !allHunksRef.current.some((hunk) => hunk.id === targetHunkId)
+      ) {
+        continue;
+      }
+
+      onToggleReadRef.current(targetHunkId);
+      resetViewCursorForHunk(targetHunkId);
+      return;
+    }
+  }, [resetViewCursorForHunk]);
+
+  const handleLineIndexSelect = useCallback(
+    (lineIndex: number, shiftKey: boolean) => {
+      const resolvedHunk = findHunkAtLine(lineIndex, overlayData, currentFileHunks);
+      if (resolvedHunk && selectedHunkIdRef.current !== resolvedHunk.hunk.id) {
+        pendingJumpSelectAllHunkIdRef.current = null;
+        onSelectHunk(resolvedHunk.hunk.id);
+      }
+
+      const anchorIndex = shiftKey
+        ? (selectedLineRangeRef.current?.startIndex ?? activeLineIndexRef.current ?? lineIndex)
+        : lineIndex;
+      setActiveLineIndex((previousLineIndex) =>
+        previousLineIndex === lineIndex ? previousLineIndex : lineIndex
+      );
+
+      if (shiftKey) {
+        setSelectedLineRange((previousRange) => {
+          if (previousRange?.startIndex === anchorIndex && previousRange?.endIndex === lineIndex) {
+            return previousRange;
+          }
+
+          return { startIndex: anchorIndex, endIndex: lineIndex };
+        });
+      } else {
+        setSelectedLineRange((previousRange) => (previousRange === null ? previousRange : null));
+      }
+
+      if (isTouchExperience && !shiftKey && resolvedHunk) {
+        // Mobile row tap should only open a composer for lines backed by a diff hunk.
+        openComposer("", { startIndex: lineIndex, endIndex: lineIndex });
+      }
+    },
+    [overlayData, currentFileHunks, isTouchExperience, onSelectHunk, openComposer]
+  );
+
+  const handleMinimapSelectLine = useCallback(
+    (lineIndex: number) => {
+      const hunkId = overlayData.lineHunkIds[lineIndex] ?? null;
+      if (hunkId && hunkId !== selectedHunkIdRef.current) {
+        onSelectHunk(hunkId);
+      }
+
+      setActiveLineIndex(lineIndex);
+      setSelectedLineRange(null);
+    },
+    [overlayData.lineHunkIds, onSelectHunk]
+  );
+
+  // Auto-focus only for keyboard-first immersive mode.
+  useEffect(() => {
+    if (isTouchExperience) {
+      return;
+    }
+
+    containerRef.current?.focus();
+  }, [isTouchExperience]);
+
+  // --- Keyboard handler ---
+  useLayoutEffect(() => {
+    if (isTouchExperience) {
+      return;
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Tab: toggle between diff and notes panels.
+      if (matchesKeybind(e, KEYBINDS.REVIEW_FOCUS_NOTES)) {
+        // Keep normal tab behavior when typing in inline note editors.
+        if (isEditableElement(e.target)) return;
+        e.preventDefault();
+        if (focusedPanel === "diff") {
+          if (allReviews.length > 0) {
+            setFocusedPanel("notes");
+          }
+        } else {
+          setFocusedPanel("diff");
+          containerRef.current?.focus();
+        }
+        return;
+      }
+
+      // --- Notes sidebar keyboard mode ---
+      if (focusedPanel === "notes") {
+        // Don't intercept when typing in editable elements.
+        if (isEditableElement(e.target)) return;
+
+        // Esc: return to diff panel (not exit immersive).
+        if (matchesKeybind(e, KEYBINDS.CANCEL)) {
+          e.preventDefault();
+          stopKeyboardPropagation(e);
+          setFocusedPanel("diff");
+          containerRef.current?.focus();
+          return;
+        }
+
+        // J / ArrowDown: next note.
+        if (e.key === "j" || e.key === "ArrowDown") {
+          e.preventDefault();
+          const maxNoteIndex = Math.max(0, allReviews.length - 1);
+          setFocusedNoteIndex((previousIndex) => Math.min(maxNoteIndex, previousIndex + 1));
+          return;
+        }
+
+        // K / ArrowUp: previous note.
+        if (e.key === "k" || e.key === "ArrowUp") {
+          e.preventDefault();
+          setFocusedNoteIndex((previousIndex) => Math.max(0, previousIndex - 1));
+          return;
+        }
+
+        // Enter: navigate to focused note in diff and return to diff panel.
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const note = allReviews[focusedNoteIndex];
+          if (note) {
+            navigateToReview(note);
+            setFocusedPanel("diff");
+            containerRef.current?.focus();
+          }
+          return;
+        }
+
+        if (e.key === "e" || e.key === "E") {
+          e.preventDefault();
+          const note = allReviews[focusedNoteIndex];
+          if (note) {
+            // Keep note triage keyboard-first: jump directly from notes list into
+            // editing the exact inline note comment in the diff pane.
+            navigateToReview(note, { startEditing: true });
+            setFocusedPanel("diff");
+            containerRef.current?.focus();
+          }
+          return;
+        }
+
+        // Backspace/Delete: delete focused note.
+        if (e.key === "Backspace" || e.key === "Delete") {
+          e.preventDefault();
+          const note = allReviews[focusedNoteIndex];
+          if (note && props.reviewActions?.onDelete) {
+            props.reviewActions.onDelete(note.id);
+          }
+          return;
+        }
+
+        // Swallow all other keys in notes mode so diff shortcuts do not fire.
+        return;
+      }
+
+      // --- Diff panel keyboard mode ---
+      // Don't intercept when typing in editable elements
+      if (isEditableElement(e.target)) return;
+
+      // Don't intercept Escape (or any shortcut) while a modal dialog is open.
+      // This handler runs in capture phase, so bubble-phase stopPropagation
+      // from dialog onKeyDown can't block it; check the DOM directly.
+      if (isDialogOpen()) return;
+
+      // Esc: exit immersive
+      if (matchesKeybind(e, KEYBINDS.CANCEL)) {
+        e.preventDefault();
+        stopKeyboardPropagation(e);
+        onExit();
+        return;
+      }
+
+      // L/H: next/prev file
+      if (matchesKeybind(e, KEYBINDS.REVIEW_NEXT_FILE)) {
+        e.preventDefault();
+        navigateFile(1);
+        return;
+      }
+      if (matchesKeybind(e, KEYBINDS.REVIEW_PREV_FILE)) {
+        e.preventDefault();
+        navigateFile(-1);
+        return;
+      }
+
+      // J/K: next/prev hunk
+      if (matchesKeybind(e, KEYBINDS.REVIEW_NEXT_HUNK)) {
+        e.preventDefault();
+        navigateHunk(1);
+        return;
+      }
+      if (matchesKeybind(e, KEYBINDS.REVIEW_PREV_HUNK)) {
+        e.preventDefault();
+        navigateHunk(-1);
+        return;
+      }
+
+      // Arrow line cursor controls
+      if (matchesKeybind(e, KEYBINDS.REVIEW_CURSOR_JUMP_DOWN)) {
+        e.preventDefault();
+        moveLineCursor(LINE_JUMP_SIZE, e.shiftKey);
+        return;
+      }
+      if (matchesKeybind(e, KEYBINDS.REVIEW_CURSOR_JUMP_UP)) {
+        e.preventDefault();
+        moveLineCursor(-LINE_JUMP_SIZE, e.shiftKey);
+        return;
+      }
+      if (matchesKeybind(e, KEYBINDS.REVIEW_CURSOR_DOWN)) {
+        e.preventDefault();
+        moveLineCursor(1, e.shiftKey);
+        return;
+      }
+      if (matchesKeybind(e, KEYBINDS.REVIEW_CURSOR_UP)) {
+        e.preventDefault();
+        moveLineCursor(-1, e.shiftKey);
+        return;
+      }
+
+      // Shift+C: add comment
+      if (matchesKeybind(e, KEYBINDS.REVIEW_COMMENT)) {
+        e.preventDefault();
+        openComposer("");
+        return;
+      }
+
+      // Shift+L: quick like
+      if (matchesKeybind(e, KEYBINDS.REVIEW_QUICK_LIKE)) {
+        e.preventDefault();
+        openComposer(LIKE_NOTE_PREFIX);
+        return;
+      }
+
+      // Shift+D: quick dislike
+      if (matchesKeybind(e, KEYBINDS.REVIEW_QUICK_DISLIKE)) {
+        e.preventDefault();
+        openComposer(DISLIKE_NOTE_PREFIX);
+        return;
+      }
+
+      // Mark entire file as read (Shift+M) — check before TOGGLE_HUNK_READ
+      // since matchesKeybind for 'm' could match if shift isn't checked first
+      if (matchesKeybind(e, KEYBINDS.MARK_FILE_READ)) {
+        e.preventDefault();
+        if (selectedHunkId) onMarkFileAsRead(selectedHunkId);
+        return;
+      }
+
+      // Toggle hunk read
+      if (matchesKeybind(e, KEYBINDS.TOGGLE_HUNK_READ)) {
+        e.preventDefault();
+        if (selectedHunkId) handleToggleReadWithUndo(selectedHunkId);
+        return;
+      }
+
+      // U: step back to the last hunk marked read in immersive review.
+      if (matchesKeybind(e, KEYBINDS.MARK_HUNK_UNREAD)) {
+        e.preventDefault();
+        handleUndoLastRead();
+        return;
+      }
+    };
+
+    // Run in capture phase so immersive Escape handling can swallow the event before
+    // bubble-phase global stream-interrupt listeners see it.
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [
+    focusedPanel,
+    allReviews,
+    focusedNoteIndex,
+    navigateToReview,
+    props.reviewActions,
+    onExit,
+    navigateFile,
+    navigateHunk,
+    moveLineCursor,
+    openComposer,
+    selectedHunkId,
+    handleToggleReadWithUndo,
+    handleUndoLastRead,
+    onMarkFileAsRead,
+    isTouchExperience,
+  ]);
+
+  const previousContentRef = useRef(overlayData.content);
+
+  // Keep the active line visible while moving with keyboard shortcuts, without
+  // forcing the full diff tree to re-render on every cursor move.
+  useEffect(() => {
+    const contentChanged = previousContentRef.current !== overlayData.content;
+    previousContentRef.current = overlayData.content;
+
+    const previousLineElement = highlightedLineElementRef.current;
+    if (previousLineElement) {
+      previousLineElement.style.outline = "";
+      previousLineElement.style.outlineOffset = "";
+      highlightedLineElementRef.current = null;
+    }
+
+    // When overlay content structure changes (fallback hunks -> full-file view),
+    // defer regular scrolling until the selected-hunk effect has recalculated
+    // activeLineIndex. During a file-switch reveal gate we still need one initial
+    // scroll so the diff appears already positioned at the selected hunk.
+    if (contentChanged) {
+      hunkJumpRef.current = true;
+      if (!isActiveFileRevealPending) {
+        return;
+      }
+    }
+
+    const lineIndexForScroll = isActiveFileRevealPending ? revealTargetLineIndex : activeLineIndex;
+    if (lineIndexForScroll === null) {
+      return;
+    }
+
+    const lineElement = containerRef.current?.querySelector<HTMLElement>(
+      `[data-line-index="${lineIndexForScroll}"]`
+    );
+    if (!lineElement) {
+      if (!isActiveFileRevealPending || !activeFilePath || contentChanged) {
+        return;
+      }
+
+      if (revealAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(revealAnimationFrameRef.current);
+      }
+
+      const revealFilePath = activeFilePath;
+      revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        setPendingRevealFilePath((pendingFilePath) =>
+          pendingFilePath === revealFilePath ? null : pendingFilePath
+        );
+        revealAnimationFrameRef.current = null;
+      });
+      return;
+    }
+
+    const shouldRenderActiveLineOutline =
+      activeLineIndex !== null && lineIndexForScroll === activeLineIndex;
+
+    if (shouldRenderActiveLineOutline) {
+      lineElement.style.outline = ACTIVE_LINE_OUTLINE;
+      lineElement.style.outlineOffset = "-1px";
+      highlightedLineElementRef.current = lineElement;
+    }
+
+    const block = hunkJumpRef.current ? "center" : "nearest";
+    hunkJumpRef.current = false;
+    lineElement.scrollIntoView({ behavior: "auto", block });
+
+    if (!isActiveFileRevealPending || !activeFilePath) {
+      return;
+    }
+
+    if (revealAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(revealAnimationFrameRef.current);
+    }
+
+    const revealFilePath = activeFilePath;
+    revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      setPendingRevealFilePath((pendingFilePath) =>
+        pendingFilePath === revealFilePath ? null : pendingFilePath
+      );
+      revealAnimationFrameRef.current = null;
+    });
+  }, [
+    activeFilePath,
+    activeLineIndex,
+    isActiveFileRevealPending,
+    overlayData.content,
+    revealTargetLineIndex,
+    scrollNonce,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      const previousLineElement = highlightedLineElementRef.current;
+      if (!previousLineElement) {
+        return;
+      }
+
+      previousLineElement.style.outline = "";
+      previousLineElement.style.outlineOffset = "";
+      highlightedLineElementRef.current = null;
+    };
+  }, []);
+
+  const currentHunkIdx = selectedHunkId
+    ? currentFileHunks.findIndex((hunk) => hunk.id === selectedHunkId)
+    : -1;
+
+  const selectedLineSummaryLabel = useMemo(() => {
+    if (!selectedLineSummary) {
+      return "–";
+    }
+
+    if (!selectedHunkRange || !isSelectionInsideRange(selectedLineSummary, selectedHunkRange)) {
+      return `${selectedLineSummary.startIndex + 1}-${selectedLineSummary.endIndex + 1}`;
+    }
+
+    const relativeStart = selectedLineSummary.startIndex - selectedHunkRange.startIndex + 1;
+    const relativeEnd = selectedLineSummary.endIndex - selectedHunkRange.startIndex + 1;
+    return `${relativeStart}-${relativeEnd}`;
+  }, [selectedLineSummary, selectedHunkRange]);
+
+  const externalComposerSelectionRequest = useMemo(() => {
+    if (!inlineComposerRequest || !selectedHunk) {
+      return null;
+    }
+
+    if (inlineComposerRequest.hunkId !== selectedHunk.id) {
+      return null;
+    }
+
+    const lineCount = overlayData.lineHunkIds.length;
+    if (lineCount === 0) {
+      return null;
+    }
+
+    const clampToOverlay = (lineIndex: number) => Math.max(0, Math.min(lineCount - 1, lineIndex));
+
+    return {
+      requestId: inlineComposerRequest.requestId,
+      selection: {
+        startIndex: clampToOverlay(inlineComposerRequest.startIndex),
+        endIndex: clampToOverlay(inlineComposerRequest.endIndex),
+      },
+      composerAfterIndex: clampToOverlay(inlineComposerRequest.cursorIndex),
+      initialNoteText: inlineComposerRequest.prefill,
+    };
+  }, [inlineComposerRequest, overlayData.lineHunkIds.length, selectedHunk]);
+
+  const shouldEnableHighlighting = overlayData.lineHunkIds.length <= MAX_HIGHLIGHTED_DIFF_LINES;
+
+  return (
+    <div
+      ref={containerRef}
+      tabIndex={isTouchExperience ? -1 : 0}
+      className="flex h-full flex-col overflow-hidden outline-none"
+      data-testid="immersive-review-view"
+    >
+      {/* Header */}
+      <div className="border-border-light bg-dark flex flex-wrap items-center gap-2 border-b px-3 py-2">
+        {/* Back button */}
+        <button
+          onClick={onExit}
+          className="text-muted hover:text-foreground flex shrink-0 cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-xs transition-colors"
+          aria-label="Exit immersive review"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          <span className="hidden sm:inline">Back</span>
+        </button>
+
+        <div className="bg-border-light hidden h-4 w-px shrink-0 sm:block" />
+
+        {/* File navigation */}
+        <div className="flex min-w-0 flex-1 items-center gap-1 sm:flex-initial">
+          <button
+            onClick={() => navigateFile(-1)}
+            disabled={isReviewComplete || fileCount <= 1}
+            className="text-muted hover:text-foreground disabled:text-dim flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default"
+            aria-label="Previous file"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          {/* Mobile: show filename only */}
+          <TooltipIfPresent
+            tooltip={isReviewComplete ? null : activeFilePath}
+            side="bottom"
+            align="start"
+          >
+            <span className="text-foreground min-w-0 flex-1 truncate font-mono text-xs sm:hidden">
+              {isReviewComplete
+                ? "Review complete"
+                : (activeFilePath?.split("/").pop() ?? "No files")}
+            </span>
+          </TooltipIfPresent>
+          {/* Desktop: show full path */}
+          <TooltipIfPresent
+            tooltip={isReviewComplete ? null : activeFilePath}
+            side="bottom"
+            align="start"
+          >
+            <span className="text-foreground hidden max-w-[400px] truncate font-mono text-xs sm:block">
+              {isReviewComplete ? "Review complete" : (activeFilePath ?? "No files")}
+            </span>
+          </TooltipIfPresent>
+          <span className="text-dim hidden shrink-0 text-[10px] sm:inline">
+            {!isReviewComplete && fileIndex >= 0 ? `${fileIndex + 1}/${fileCount}` : ""}
+          </span>
+          <button
+            onClick={() => navigateFile(1)}
+            disabled={isReviewComplete || fileCount <= 1}
+            className="text-muted hover:text-foreground disabled:text-dim flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors disabled:cursor-default"
+            aria-label="Next file"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="bg-border-light hidden h-4 w-px shrink-0 sm:block" />
+
+        {/* Hunk read toggle — mobile only (desktop copy lives inside the summary div below) */}
+        {selectedHunk && (
+          <button
+            type="button"
+            className={cn(
+              "text-muted hover:text-read flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors duration-150 sm:hidden",
+              isRead(selectedHunk.id) && "text-read"
+            )}
+            onClick={() => handleToggleReadWithUndo(selectedHunk.id)}
+            aria-label={isRead(selectedHunk.id) ? "Mark hunk as unread" : "Mark hunk as read"}
+          >
+            {isRead(selectedHunk.id) ? (
+              <Check aria-hidden="true" className="h-3 w-3" />
+            ) : (
+              <Circle aria-hidden="true" className="h-3 w-3" />
+            )}
+          </button>
+        )}
+        {/* Hunk selection summary — hidden on mobile, includes toggle on desktop */}
+        {(isReviewComplete || currentFileHunks.length > 0) && (
+          <div className="text-muted hidden items-center gap-1 text-[10px] sm:flex">
+            {isReviewComplete ? (
+              <span>All {reviewedHunkLabel} reviewed</span>
+            ) : (
+              <>
+                {selectedHunk && (
+                  <button
+                    type="button"
+                    className={cn(
+                      "text-muted hover:text-read flex cursor-pointer items-center border-none bg-transparent p-0 transition-colors duration-150",
+                      isRead(selectedHunk.id) && "text-read"
+                    )}
+                    onClick={() => handleToggleReadWithUndo(selectedHunk.id)}
+                    aria-label={
+                      isRead(selectedHunk.id) ? "Mark hunk as unread" : "Mark hunk as read"
+                    }
+                  >
+                    {isRead(selectedHunk.id) ? (
+                      <Check aria-hidden="true" className="h-3 w-3" />
+                    ) : (
+                      <Circle aria-hidden="true" className="h-3 w-3" />
+                    )}
+                  </button>
+                )}
+                <span>
+                  Hunk {currentHunkIdx >= 0 ? currentHunkIdx + 1 : "–"}/{currentFileHunks.length}
+                </span>
+                <span className="text-dim">·</span>
+                <span>Lines {selectedLineSummaryLabel}</span>
+                {selectedHunkLineCount > 0 && (
+                  <>
+                    <span className="text-dim">·</span>
+                    <span>{selectedHunkLineCount} lines</span>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        {allHunks.length > 0 && (
+          <div className="w-full pt-0.5">
+            <TooltipIfPresent
+              tooltip={
+                <>
+                  <span>{reviewCompletionSummary}</span>
+                  <span className="text-muted block text-[10px]">
+                    {reviewedChangedLineCount}/{totalChangedLineCount} changed lines reviewed
+                  </span>
+                  <span className="text-muted block text-[10px]">
+                    {reviewCompletionHunkDetails}
+                  </span>
+                </>
+              }
+              side="bottom"
+              align="start"
+            >
+              <div
+                role="progressbar"
+                tabIndex={0}
+                aria-label="Review completion by changed lines"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={reviewCompletionPercent}
+                aria-valuetext={reviewCompletionDetails}
+                className="bg-border-light h-0.5 cursor-help overflow-hidden"
+              >
+                <div
+                  className="h-full"
+                  style={{
+                    width: `${reviewCompletionWidthPercent}%`,
+                    backgroundColor: "var(--color-read)",
+                  }}
+                />
+              </div>
+            </TooltipIfPresent>
+          </div>
+        )}
+      </div>
+
+      {/* Assisted-review banner — surfaces the agent's flag + comment when
+          the selected hunk is one the agent pinned for review. We render it
+          between the header and the diff so the focus signal is impossible
+          to miss after entering immersive mode, where the side-panel cues
+          aren't visible. */}
+      {isSelectedAssisted && (
+        <div
+          className="border-review-accent/40 bg-review-accent/5 text-foreground flex items-start gap-2 border-b px-3 py-1.5 text-[11px] leading-[1.4]"
+          data-testid="immersive-assisted-banner"
+          role="status"
+          aria-live="polite"
+        >
+          <Sparkles aria-hidden="true" className="text-review-accent mt-[2px] h-3 w-3 shrink-0" />
+          {selectedAssistedComment ? (
+            <span className="min-w-0 break-words whitespace-pre-wrap">
+              {selectedAssistedComment}
+            </span>
+          ) : (
+            <span className="text-muted italic">Flagged by agent for review</span>
+          )}
+        </div>
+      )}
+
+      {/* Unified whole-file diff with hunk overlays + notes sidebar */}
+      <div className="flex min-h-0 flex-1">
+        {/* Avoid top padding here; it reads as a blank block between the controls and diff. */}
+        <div
+          ref={scrollContainerRef}
+          className="scrollbar-none min-h-0 min-w-0 flex-1 overflow-y-auto pb-3"
+        >
+          {props.isLoading && currentFileHunks.length === 0 ? (
+            <div className="text-muted flex items-center justify-center py-12 text-sm">
+              <span className="animate-pulse">Loading diff...</span>
+            </div>
+          ) : isReviewComplete ? (
+            <div className="flex min-h-full items-center justify-center px-6 py-12">
+              <div
+                data-testid="immersive-review-complete"
+                className="flex max-w-md flex-col items-center gap-4 text-center"
+              >
+                <div className="bg-accent/10 text-accent rounded-full p-3">
+                  <CheckCircle2 aria-hidden="true" className="h-8 w-8" />
+                </div>
+                <div className="space-y-2">
+                  <h2 className="text-foreground text-base font-medium">Review complete</h2>
+                  <p className="text-muted text-sm leading-relaxed">
+                    You have already reviewed all {reviewedHunkLabel} in this diff. Return to chat
+                    to keep going, or reopen reviewed hunks from the review panel if you want
+                    another pass.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onExit}
+                  className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                >
+                  Return to chat
+                </button>
+              </div>
+            </div>
+          ) : currentFileHunks.length === 0 ? (
+            <div className="text-muted flex items-center justify-center py-12 text-sm">
+              {activeFilePath ? "No hunks for this file" : "No files to review"}
+            </div>
+          ) : (
+            <div className="bg-dark relative overflow-hidden">
+              {isActiveFileRevealPending && (
+                <div className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm">
+                  <span className="animate-pulse">Loading file...</span>
+                </div>
+              )}
+              <div className={cn(isActiveFileRevealPending && "invisible")}>
+                <SelectableDiffRenderer
+                  content={overlayData.content}
+                  filePath={activeFilePath ?? currentFileHunks[0].filePath}
+                  inlineReviews={activeFileReviews}
+                  oldStart={1}
+                  newStart={1}
+                  fontSize="11px"
+                  maxHeight="none"
+                  className="rounded-none border-0 [&>div]:overflow-x-visible"
+                  onReviewNote={handleReviewNoteSubmit}
+                  onComposerCancel={handleInlineComposerCancel}
+                  reviewActions={diffReviewActions}
+                  enableHighlighting={shouldEnableHighlighting}
+                  selectedLineRange={selectedLineRange}
+                  onLineIndexSelect={handleLineIndexSelect}
+                  externalSelectionRequest={externalComposerSelectionRequest}
+                  externalEditRequest={inlineReviewEditRequest}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {!isReviewComplete && !isTouchExperience && (
+          <ImmersiveMinimap
+            content={overlayData.content}
+            scrollContainerRef={scrollContainerRef}
+            activeLineIndex={activeLineIndex}
+            onSelectLineIndex={handleMinimapSelectLine}
+            commentLineIndices={commentLineIndices}
+          />
+        )}
+
+        {!isReviewComplete && !isTouchExperience && (
+          <aside className="border-border-light bg-dark flex w-[280px] min-w-[280px] flex-col border-l">
+            <div className="border-border-light flex items-center justify-between border-b px-3 py-2">
+              <h2
+                className={cn(
+                  "text-foreground text-xs font-medium",
+                  focusedPanel === "notes" && "text-[var(--color-review-accent)]"
+                )}
+              >
+                Notes
+              </h2>
+              <span className="bg-muted/20 text-muted rounded px-1.5 py-0.5 font-mono text-[10px]">
+                {allReviews.length}
+              </span>
+            </div>
+
+            <div ref={notesSidebarRef} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+              {allReviews.length === 0 ? (
+                <div className="text-muted flex h-full flex-col items-center justify-center text-center text-xs">
+                  <p>No notes yet</p>
+                  <p className="text-dim mt-1">Press Shift+L to add one</p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {allReviews.map((review, noteIndex) => {
+                    const normalizedUserNote = review.data.userNote.trimStart();
+                    const isDislike = normalizedUserNote.startsWith(DISLIKE_NOTE_PREFIX);
+                    const isLike = normalizedUserNote.startsWith(LIKE_NOTE_PREFIX);
+                    const statusClasses = getReviewStatusSidebarClasses(review.status);
+                    const ReviewTypeIcon = isDislike
+                      ? ThumbsDown
+                      : isLike
+                        ? ThumbsUp
+                        : MessageSquare;
+                    const isActiveFileReview = review.data.filePath === activeFilePath;
+
+                    return (
+                      <div
+                        key={review.id}
+                        role="button"
+                        tabIndex={0}
+                        data-note-index={noteIndex}
+                        className={cn(
+                          "group/review-item border-border-light hover:bg-muted/10 focus-visible:ring-primary/40 flex w-full cursor-pointer overflow-hidden rounded border text-left outline-none transition-colors focus-visible:ring-2",
+                          isActiveFileReview && "bg-muted/10",
+                          focusedPanel === "notes" &&
+                            noteIndex === focusedNoteIndex &&
+                            "ring-2 ring-[var(--color-review-accent)]/40 bg-muted/10"
+                        )}
+                        onClick={() => navigateToReview(review)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            navigateToReview(review);
+                          }
+                        }}
+                      >
+                        <div className={cn("w-[3px] shrink-0", statusClasses.accent)} />
+
+                        <div className="min-w-0 flex-1 px-2 py-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <ReviewTypeIcon className={cn("size-3 shrink-0", statusClasses.icon)} />
+
+                            <TooltipIfPresent
+                              tooltip={`${review.data.filePath}:L${formatLineRangeCompact(review.data.lineRange)}`}
+                              side="top"
+                              align="start"
+                            >
+                              <span className="text-muted min-w-0 flex-1 truncate font-mono text-[10px]">
+                                {`${getFileBaseName(review.data.filePath)}:L${formatLineRangeCompact(review.data.lineRange)}`}
+                              </span>
+                            </TooltipIfPresent>
+
+                            <span
+                              className={cn(
+                                "shrink-0 rounded px-1 py-0.5 text-[9px] uppercase",
+                                statusClasses.badge
+                              )}
+                            >
+                              {review.status}
+                            </span>
+                          </div>
+
+                          <div className="mt-1 flex flex-col">
+                            <p
+                              className="text-foreground overflow-hidden text-[11px] leading-[1.4] break-words whitespace-pre-wrap"
+                              style={{
+                                display: "-webkit-box",
+                                WebkitBoxOrient: "vertical",
+                                WebkitLineClamp: 2,
+                              }}
+                            >
+                              {review.data.userNote || "(No note text)"}
+                            </p>
+
+                            {/* Keep preview actions in a reserved footer so hover reveals do not shift note content. */}
+                            {props.reviewActions?.onDelete && (
+                              <div className="mt-1 flex min-h-4 items-center justify-end">
+                                <button
+                                  type="button"
+                                  className="text-muted hover:text-error invisible cursor-pointer rounded p-0.5 opacity-0 transition-colors transition-opacity group-focus-within/review-item:visible group-focus-within/review-item:opacity-100 group-hover/review-item:visible group-hover/review-item:opacity-100"
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      stopKeyboardPropagation(event);
+                                    }
+                                  }}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    props.reviewActions?.onDelete?.(review.id);
+                                  }}
+                                  aria-label="Delete review note"
+                                >
+                                  <Trash2 className="size-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
+      </div>
+
+      {/* Boundary toast */}
+      {boundaryToast && (
+        <div className="pointer-events-none absolute right-0 bottom-12 left-0 z-10 flex justify-center">
+          <div className="bg-background-secondary text-muted border-border-light pointer-events-auto rounded-md border px-3 py-1.5 text-xs shadow-md">
+            {boundaryToast}
+          </div>
+        </div>
+      )}
+
+      {!isTouchExperience && (
+        <>
+          {/* Shortcut bar */}
+          <div className="border-border-light bg-dark flex flex-wrap items-center justify-center gap-3 border-t px-3 py-1.5">
+            <KeycapGroup keys={["Esc"]} label="back" />
+            <KeycapGroup keys={["H", "L"]} label="file" />
+            <KeycapGroup keys={["J", "K"]} label="hunk" />
+            <KeycapGroup keys={["↑", "↓"]} label="line" />
+            <KeycapGroup keys={["Shift", "↑↓"]} label="select" />
+            <KeycapGroup keys={["m"]} label="read" />
+            <KeycapGroup keys={["u"]} label="undo" />
+            <KeycapGroup keys={["⇧M"]} label="file read" />
+            <KeycapGroup keys={["⇧C"]} label="comment" />
+            <KeycapGroup keys={["⇧L", "⇧D"]} label="like / dislike" />
+            <KeycapGroup keys={["Enter"]} label="submit" />
+            <KeycapGroup keys={["Tab"]} label="notes" />
+          </div>
+        </>
+      )}
+    </div>
+  );
+};

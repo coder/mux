@@ -1,0 +1,25 @@
+/**
+ * Default configuration for PortableDesktop sessions.
+ */
+export const DESKTOP_DEFAULTS = {
+  /** Default display width in pixels. */
+  WIDTH: 1024,
+  /** Default display height in pixels. */
+  HEIGHT: 768,
+  /** Binary name to look for on PATH or in cache. */
+  BINARY_NAME: "portabledesktop",
+  /** Subdirectory name inside mux cache for the desktop binary. */
+  CACHE_DIR_NAME: "portabledesktop",
+  /** Maximum time (ms) to wait for the desktop process to start. */
+  STARTUP_TIMEOUT_MS: 30_000,
+  /** Maximum time (ms) to wait for a screenshot command. */
+  SCREENSHOT_TIMEOUT_MS: 10_000,
+  /** Maximum time (ms) a desktop bridge token is valid. */
+  TOKEN_TTL_MS: 30_000,
+  /** Base delay (ms) before the first reconnect attempt. */
+  RECONNECT_BASE_DELAY_MS: 1_000,
+  /** Maximum delay (ms) between reconnect attempts (caps exponential backoff). */
+  RECONNECT_MAX_DELAY_MS: 30_000,
+  /** Maximum time (ms) to wait for an action command. */
+  ACTION_TIMEOUT_MS: 10_000,
+} as const;

@@ -1,0 +1,327 @@
+name: Terminal-Bench
+
+on:
+  workflow_call:
+    inputs:
+      model_name:
+        description: "Model to use (e.g., anthropic/claude-opus-4-8, openai/gpt-5.5)"
+        required: false
+        type: string
+      dataset:
+        description: "Terminal-Bench dataset to use"
+        required: false
+        type: string
+        default: "terminal-bench@2.0"
+      concurrency:
+        description: "Number of concurrent tasks (--n-concurrent)"
+        required: false
+        type: string
+        default: "4"
+      env:
+        description: "Harbor backend environment (e.g., docker, daytona, e2b). Leave empty for Harbor default."
+        required: false
+        type: string
+        default: ""
+      task_names:
+        description: "Space-separated task names to run (empty = all tasks)"
+        required: false
+        type: string
+      extra_args:
+        description: "Additional arguments to pass to harbor (e.g., --n-tasks 5 for quick dispatch runs)"
+        required: false
+        type: string
+      experiments:
+        description: "Experiments to enable (comma-separated)"
+        required: false
+        type: string
+      timeout:
+        description: "Agent timeout in seconds (default: 1800 = 30 min)"
+        required: false
+        type: string
+        default: ""
+      max_tasks:
+        description: "Maximum number of tasks to run (for faster iteration)"
+        required: false
+        type: string
+        default: ""
+      mux_project_path:
+        description: "Project path inside the task container (e.g., /testbed, /app/src)"
+        required: false
+        type: string
+        default: ""
+      mux_run_args:
+        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m --budget 5.00; with goal mode, add --goal-turns/--goal-budget)"
+        required: false
+        type: string
+        default: ""
+      mux_run_as_goal:
+        description: "Run each task instruction as a mux CLI Goal Run"
+        required: false
+        type: boolean
+        default: false
+      allow_transient_agent_errors:
+        description: "Allow explicitly classified transient agent failures (full nightly only)"
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      # Keep the runtime env name stable while routing benchmark spend to its own key.
+      TERMINAL_BENCH_ANTHROPIC_API_KEY:
+        required: true
+      OPENAI_API_KEY:
+        required: true
+      GOOGLE_API_KEY:
+        required: false
+      DAYTONA_API_KEY:
+        required: false
+      GCP_SA_KEY:
+        required: false
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: "Terminal-Bench dataset to use"
+        required: false
+        default: "terminal-bench@2.0"
+        type: string
+      concurrency:
+        description: "Number of concurrent tasks (--n-concurrent)"
+        required: false
+        default: "4"
+        type: string
+      env:
+        description: "Harbor backend environment (e.g., docker, daytona, e2b). Leave empty for Harbor default."
+        required: false
+        default: ""
+        type: string
+      task_names:
+        description: "Space-separated task names to run (empty = all tasks)"
+        required: false
+        type: string
+      model_name:
+        description: "Model to use (e.g., anthropic/claude-opus-4-8, openai/gpt-5.5)"
+        required: false
+        type: string
+      mux_run_args:
+        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m; with goal mode, add --goal-turns/--goal-budget)"
+        required: false
+        type: string
+      mux_run_as_goal:
+        description: "Run each task instruction as a mux CLI Goal Run"
+        required: false
+        default: false
+        type: boolean
+      extra_args:
+        description: "Additional arguments to pass to harbor (e.g., --n-tasks 5 for quick dispatch runs)"
+        required: false
+        type: string
+      experiments:
+        description: "Experiments to enable (comma-separated)"
+        required: false
+        type: string
+      timeout:
+        description: "Agent timeout in seconds (default: 1800 = 30 min)"
+        required: false
+        type: string
+
+jobs:
+  benchmark:
+    name: Run Terminal-Bench${{ inputs.model_name && format(' ({0})', inputs.model_name) || '' }}
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    # Full suite (~80 tasks) at concurrency=4 takes ~60-90 minutes typically
+    # Set 4-hour timeout to handle occasional API slowdowns while preventing infinite hangs
+    # If consistently hitting this timeout, investigate task-level issues
+    timeout-minutes: 240
+    steps:
+      - name: Validate Harbor env input
+        if: ${{ inputs.env == 'local' }}
+        run: |
+          echo "inputs.env=local is no longer supported by Harbor."
+          echo "Use env: docker or env: daytona (or leave empty for Harbor default)."
+          exit 1
+
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-mux
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install Python 3.12 (Harbor requires >=3.12)
+        run: |
+          uv python install 3.12
+          uv --version
+          uvx --version
+
+      - name: Generate version file
+        run: ./scripts/generate-version.sh
+
+      - name: Build dist/ (skip icons - not needed for benchmark)
+        run: make build-main build-preload
+
+      # Best-effort snapshot of existing Daytona sandboxes so post-run cleanup
+      # only deletes sandboxes created by *this* job, not ones from parallel jobs.
+      # continue-on-error: transient API/pip failures must not block the benchmark.
+      - name: Snapshot Daytona sandboxes
+        if: inputs.env == 'daytona'
+        continue-on-error: true
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        run: |
+          if [ -z "$DAYTONA_API_KEY" ]; then
+            exit 0
+          fi
+          pip install --quiet daytona
+          python3 scripts/daytona_sandbox_cleanup.py snapshot > /tmp/daytona-pre-existing.txt
+          echo "Snapshot $(wc -l < /tmp/daytona-pre-existing.txt) pre-existing sandbox(es)"
+
+      - name: Run Terminal-Bench
+        run: |
+          set -o pipefail
+          make benchmark-terminal 2>&1 | tee benchmark.log
+        env:
+          UV_PYTHON: "3.12"
+          TB_DATASET: ${{ inputs.dataset }}
+          TB_CONCURRENCY: ${{ inputs.concurrency }}
+          TB_ENV: ${{ inputs.env }}
+          TB_TASK_NAMES: ${{ inputs.task_names }}
+          TB_MODEL: ${{ inputs.model_name }}
+          MUX_MODEL: ${{ inputs.model_name }}
+          TB_TIMEOUT: ${{ inputs.timeout }}
+          MUX_PROJECT_PATH: ${{ inputs.mux_project_path }}
+          TB_ARGS: >-
+            ${{ inputs.max_tasks && format('--n-tasks {0}', inputs.max_tasks) || '' }}
+            ${{ inputs.extra_args || '' }}
+          MUX_EXPERIMENTS: ${{ inputs.experiments }}
+          MUX_RUN_ARGS: ${{ inputs.mux_run_args }}
+          MUX_RUN_AS_GOAL: ${{ inputs.mux_run_as_goal && '1' || '' }}
+          ANTHROPIC_API_KEY: ${{ secrets.TERMINAL_BENCH_ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_GENERATIVE_AI_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+
+      # Best-effort cleanup of sandboxes created during this run. Compares
+      # against the pre-run snapshot and only deletes stopped/errored sandboxes,
+      # so active sandboxes from parallel jobs are never touched.
+      # Failures here must never mark the job as failed (benchmark results matter).
+      - name: Cleanup Daytona sandboxes
+        if: always() && inputs.env == 'daytona'
+        continue-on-error: true
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+        run: |
+          if [ -z "$DAYTONA_API_KEY" ]; then
+            echo "No DAYTONA_API_KEY, skipping cleanup"
+            exit 0
+          fi
+          if [ ! -f /tmp/daytona-pre-existing.txt ]; then
+            echo "No pre-run snapshot found, skipping cleanup to avoid deleting unrelated sandboxes"
+            exit 0
+          fi
+          pip install --quiet daytona
+          python3 scripts/daytona_sandbox_cleanup.py cleanup --pre-existing-file /tmp/daytona-pre-existing.txt
+
+      - name: Print results summary
+        if: always()
+        run: |
+          echo "=== Terminal-Bench Results Summary ==="
+          # Harbor writes to jobs/<timestamp>/result.json (singular)
+          if [ -f "$(find jobs -maxdepth 2 -name 'result.json' 2>/dev/null | head -1)" ]; then
+            RESULTS_FILE=$(find jobs -maxdepth 2 -name 'result.json' | head -1)
+            jq '.' "$RESULTS_FILE" 2>/dev/null || cat "$RESULTS_FILE"
+          else
+            echo "❌ No result.json found"
+            ls -laR jobs/ 2>/dev/null || echo "jobs/ directory missing"
+          fi
+
+      - name: Verify agent ran successfully
+        env:
+          ALLOW_TRANSIENT_AGENT_ERRORS: ${{ inputs.allow_transient_agent_errors && '1' || '' }}
+        run: |
+          args=(--jobs-dir jobs)
+          if [ "$ALLOW_TRANSIENT_AGENT_ERRORS" = "1" ]; then
+            args+=(--allow-transient-agent-errors)
+          fi
+          python3 scripts/check_tbench_results.py "${args[@]}"
+
+      - name: Set artifact name
+        if: always()
+        id: artifact-name
+        env:
+          MODEL_NAME: ${{ inputs.model_name }}
+          DATASET: ${{ inputs.dataset }}
+          TASK_NAMES: ${{ inputs.task_names }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          # actions/upload-artifact@v7 requires artifact names to be unique per workflow run.
+          # Nightly workflows can run multiple jobs with the same model (e.g. Harbor smoke tests),
+          # so include dataset + task selection in the artifact name.
+          sanitize() { printf "%s" "$1" | tr ' :/@' '-' | tr -cd 'A-Za-z0-9._-'; }
+
+          SAFE_MODEL=$(sanitize "${MODEL_NAME:-no-model}")
+          SAFE_DATASET=$(sanitize "${DATASET:-unknown-dataset}")
+          if [ -n "${TASK_NAMES:-}" ]; then
+            SAFE_TASKS=$(sanitize "$TASK_NAMES")
+          else
+            SAFE_TASKS="all-tasks"
+          fi
+
+          ARTIFACT_NAME="terminal-bench-results-${SAFE_MODEL}-${SAFE_DATASET}-${SAFE_TASKS}-${RUN_ID}-a${RUN_ATTEMPT}"
+          echo "name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+          echo "Artifact name: $ARTIFACT_NAME"
+
+      - name: Upload Terminal-Bench results to BigQuery
+        if: always() && github.repository == 'coder/mux' && startsWith(inputs.dataset, 'terminal-bench@')
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_PROJECT_ID: mux-benchmarks
+          BQ_DATASET: benchmarks
+          MUX_EXPERIMENTS: ${{ inputs.experiments }}
+          MUX_RUN_AS_GOAL: ${{ inputs.mux_run_as_goal && '1' || '' }}
+        run: |
+          if [ -z "$GCP_SA_KEY" ]; then
+            echo "GCP_SA_KEY not set, skipping BigQuery upload"
+            exit 0
+          fi
+          echo "$GCP_SA_KEY" > /tmp/gcp-sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-sa.json
+          pip install --quiet google-cloud-bigquery
+          python scripts/upload-tbench-results.py
+          rm -f /tmp/gcp-sa.json
+
+      - name: Upload Harbor results to BigQuery
+        if: always() && github.repository == 'coder/mux' && !startsWith(inputs.dataset, 'terminal-bench@')
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_PROJECT_ID: mux-benchmarks
+          BQ_DATASET: benchmarks
+          MUX_EXPERIMENTS: ${{ inputs.experiments }}
+          MUX_RUN_AS_GOAL: ${{ inputs.mux_run_as_goal && '1' || '' }}
+        run: |
+          if [ -z "$GCP_SA_KEY" ]; then
+            echo "GCP_SA_KEY not set, skipping BigQuery upload"
+            exit 0
+          fi
+          echo "$GCP_SA_KEY" > /tmp/gcp-sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-sa.json
+          pip install --quiet google-cloud-bigquery
+          python scripts/upload-harbor-results.py
+          rm -f /tmp/gcp-sa.json
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: |
+            jobs/
+            benchmark.log
+          if-no-files-found: warn
+          retention-days: 30

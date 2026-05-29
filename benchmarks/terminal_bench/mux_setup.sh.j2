@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+log() {
+  printf '[mux-setup] %s\n' "$1"
+}
+
+ensure_tool() {
+  if command -v "$1" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    printf 'Required tool "%s" missing and apt-get unavailable\n' "$1" >&2
+    return 1
+  fi
+
+  log "installing missing dependency: $1"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y "$1"
+}
+
+ensure_tool curl
+ensure_tool git
+ensure_tool unzip
+ensure_tool python3
+export BUN_INSTALL="${BUN_INSTALL:-/root/.bun}"
+export PATH="${BUN_INSTALL}/bin:${PATH}"
+
+if ! command -v bun >/dev/null 2>&1; then
+  log "installing bun"
+  curl -fsSL "${MUX_BUN_INSTALL_URL:-https://bun.sh/install}" | bash
+fi
+
+MUX_APP_ROOT="${MUX_APP_ROOT:-/opt/mux-app}"
+MUX_CONFIG_ROOT="${MUX_CONFIG_ROOT:-/root/.mux}"
+MUX_AGENT_VERSION="{{ version if version is not none else '' }}"
+
+rm -rf "${MUX_APP_ROOT}"
+if [[ -n "${MUX_AGENT_VERSION}" ]]; then
+  : "${MUX_AGENT_GIT_URL:?MUX_AGENT_GIT_URL required when version is set}"
+  log "cloning mux from ${MUX_AGENT_GIT_URL} @ ${MUX_AGENT_VERSION}"
+  git clone --depth 1 --branch "${MUX_AGENT_VERSION}" "${MUX_AGENT_GIT_URL}" "${MUX_APP_ROOT}"
+else
+  log "extracting mux archive"
+  mkdir -p "${MUX_APP_ROOT}"
+  tar -xzf "/installed-agent/mux-app.tar.gz" -C "${MUX_APP_ROOT}"
+fi
+
+cd "${MUX_APP_ROOT}"
+
+# Use --production to skip devDependencies (electron-builder, storybook, etc.)
+# which cuts install size from 1.9GB → 728MB and avoids OOM in memory-constrained
+# Daytona sandboxes (2GB). The headless CLI only needs production deps.
+if [[ -d "node_modules" ]]; then
+  log "node_modules already present, skipping bun install"
+else
+  log "installing mux production dependencies via bun"
+  MUX_HEADLESS=1 bun install --production --frozen-lockfile
+fi
+
+mkdir -p "${MUX_CONFIG_ROOT}"
+
+chmod +x /installed-agent/mux-run.sh
+
+log "setup complete"

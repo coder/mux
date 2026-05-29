@@ -1,0 +1,206 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g., v1.2.3). If provided, will checkout and release this tag regardless of current branch."
+        required: false
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+
+jobs:
+  # NOTE: npm publishing is handled by publish-npm.yml (triggered by tag push),
+  # not by this workflow. This avoids OIDC trusted publisher filename mismatches.
+  preflight:
+    name: Validate release target
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure release tag context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "::error::RELEASE_TAG is empty. Ensure this workflow runs on a release event or refs/tags/* ref."
+            exit 1
+          fi
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ -n "$INPUT_TAG" ]; then
+              echo "workflow_dispatch with explicit tag input: $INPUT_TAG"
+            elif [[ "$GITHUB_REF" != refs/tags/* ]]; then
+              echo "::error::workflow_dispatch runs must either provide a 'tag' input or target a tag ref. Current ref: $GITHUB_REF"
+              exit 1
+            fi
+          fi
+
+          echo "Publishing tag $RELEASE_TAG"
+
+  desktop-builds:
+    name: Build and Release Desktop Apps
+    needs: preflight
+    permissions:
+      contents: write # Upload release assets
+      id-token: write # GCP workload identity for Windows code signing
+    uses: ./.github/workflows/_desktop-release.yml
+    with:
+      ref: ${{ inputs.tag || github.ref }}
+      release_tag: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+    secrets: inherit # zizmor: ignore[secrets-inherit] -- reusable workflow needs platform signing secrets
+
+  docker-publish:
+    name: Build and Push Docker Image
+    needs: preflight
+    permissions:
+      contents: read
+      id-token: write # Depot OIDC authentication
+      packages: write # Push to GHCR
+    uses: ./.github/workflows/_docker-release.yml
+    with:
+      ref: ${{ inputs.tag || github.ref }}
+      version: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+      is_latest: true
+
+  build-vscode-extension:
+    name: Build and Release VS Code Extension
+    needs: preflight
+    runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    permissions:
+      contents: write # Upload .vsix to release
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-mux
+
+      - uses: ./.github/actions/build-vscode-extension
+
+      - name: Wait for GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for attempt in $(seq 1 30); do
+            if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+              echo "Release $RELEASE_TAG is available"
+              exit 0
+            fi
+
+            echo "Release $RELEASE_TAG not found yet (attempt $attempt/30); waiting 10s..."
+            sleep 10
+          done
+
+          echo "::error::Timed out waiting for release $RELEASE_TAG"
+          exit 1
+
+      - name: Upload VS Code extension to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            vscode/mux-*.vsix \
+            --clobber
+
+      - name: Publish to VS Code Marketplace
+        working-directory: vscode
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "VSCE_PAT secret is not set; skipping VS Code Marketplace publish."
+            exit 0
+          fi
+
+          bunx vsce publish -p "$VSCE_PAT"
+
+  notify-slack-failure:
+    name: Notify Slack on Failure
+    runs-on: ubuntu-latest
+    needs: [desktop-builds, docker-publish, build-vscode-extension]
+    if: failure()
+    steps:
+      - name: Send failure notification to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL secret is not set; skipping Slack notification."
+            exit 0
+          fi
+
+          # Build JSON payload with proper escaping via jq
+          jq -n \
+            --arg text "🚨 Release build failed for \`$RELEASE_TAG\`" \
+            --arg workflow_url "$WORKFLOW_URL" \
+            '{
+              text: $text,
+              blocks: [
+                {
+                  type: "section",
+                  text: {
+                    type: "mrkdwn",
+                    text: ("🚨 *Release build failed*\n\nTag: `" + $ARGS.named.tag + "`\n<" + $workflow_url + "|View workflow run>")
+                  }
+                }
+              ]
+            }' --arg tag "$RELEASE_TAG" > payload.json
+
+          # Send to Slack
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d @payload.json \
+            "$SLACK_WEBHOOK_URL"
+
+  notify-discord:
+    name: Notify Discord
+    runs-on: ubuntu-latest
+    needs: [desktop-builds, docker-publish, build-vscode-extension]
+    # Only notify on actual releases, not manual workflow runs
+    if: github.event_name == 'release'
+    steps:
+      - name: Send release notification to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          REPO_NAME: ${{ github.repository }}
+        run: |
+          # Truncate body so we don't blow up Discord
+          BODY="${RELEASE_BODY}"
+          if [ ${#BODY} -gt 1500 ]; then
+            BODY="${BODY:0:1500}..."
+          fi
+
+          # Build JSON payload with proper escaping via jq
+          jq -n \
+            --arg title "New release: ${RELEASE_NAME:-$RELEASE_TAG}" \
+            --arg url "$RELEASE_URL" \
+            --arg body "$BODY" \
+            --arg repo "$REPO_NAME" \
+            '{
+              username: "GitHub Releases",
+              embeds: [{
+                title: $title,
+                url: $url,
+                description: $body,
+                footer: { text: $repo }
+              }]
+            }' > payload.json
+
+          # Send to Discord
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d @payload.json \
+            "$DISCORD_WEBHOOK_URL"

@@ -1,0 +1,8124 @@
+import { EventEmitter } from "events";
+import * as path from "path";
+import * as fsPromises from "fs/promises";
+import assert from "@/common/utils/assert";
+import { DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR } from "@/common/config/worktreeArchiveBehavior";
+import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
+import { isWorkspaceArchived } from "@/common/utils/archive";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
+import type { Config } from "@/node/config";
+import type { Result } from "@/common/types/result";
+import { Ok, Err } from "@/common/types/result";
+import { normalizeTaskSettings } from "@/common/types/tasks";
+import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
+import { delegatedToolCallManager } from "@/node/services/delegatedToolCallManager";
+import { log } from "@/node/services/log";
+import { isPathInsideDir } from "@/node/utils/pathUtils";
+import { AgentSession } from "@/node/services/agentSession";
+import type { HistoryService } from "@/node/services/historyService";
+import type { AIService } from "@/node/services/aiService";
+import type { InitStateManager } from "@/node/services/initStateManager";
+import type {
+  ExtensionMetadataService,
+  ExtensionMetadataStreamingUpdate,
+} from "@/node/services/ExtensionMetadataService";
+import { coerceAgentStatus } from "@/node/utils/extensionMetadata";
+import { readTodosForSessionDir } from "@/node/services/todos/todoStorage";
+import type { TelemetryService } from "@/node/services/telemetryService";
+import type { ExperimentsService } from "@/node/services/experimentsService";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import type { PolicyService } from "@/node/services/policyService";
+import type { MCPServerManager } from "@/node/services/mcpServerManager";
+import {
+  createRuntime,
+  IncompatibleRuntimeError,
+  runBackgroundInit,
+  runFullInit,
+} from "@/node/runtime/runtimeFactory";
+import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
+import {
+  createRuntimeContextForWorkspace,
+  createRuntimeForWorkspace,
+  resolveWorkspaceExecutionPath,
+  resolveWorkspaceRootPath,
+} from "@/node/runtime/runtimeHelpers";
+import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
+import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { ensurePrivateDir, isErrnoWithCode } from "@/node/utils/fs";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { getProjects, isMultiProject } from "@/common/utils/multiProject";
+import { generateGitStatusScript, parseGitStatusScriptOutput } from "@/common/utils/git/gitStatus";
+import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
+import { mergeMultiProjectSecrets } from "@/node/services/utils/multiProjectSecrets";
+import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
+import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
+import { shellQuote } from "@/node/runtime/backgroundCommands";
+import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
+import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
+import {
+  CONTEXT_BOUNDARY_KINDS,
+  hasProviderEligibleMessages,
+  isDurableCompactedMarker,
+  sliceMessagesForProviderFromLatestContextBoundary,
+} from "@/common/utils/messages/compactionBoundary";
+import { isNonNegativeInteger, isPositiveInteger } from "@/common/utils/numbers";
+import { deriveTodoStatus } from "@/common/utils/todoList";
+import { createContextResetBoundaryMessageId } from "@/node/services/utils/messageIds";
+import { fileExists } from "@/node/utils/runtime/fileExists";
+import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
+import {
+  ADDITIONAL_SYSTEM_CONTEXT_DISABLED_FILENAME,
+  ADDITIONAL_SYSTEM_CONTEXT_FILENAME,
+} from "@/node/services/additionalSystemContext";
+import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
+import {
+  askSideQuestion,
+  snapshotSideQuestionLiveStream,
+} from "@/node/services/sideQuestionService";
+import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
+import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
+import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
+import {
+  getDevcontainerContainerName,
+  probeDevcontainerStatuses,
+  stopDevcontainer,
+} from "@/node/runtime/devcontainerCli";
+import { isWorktreeRuntime } from "@/node/runtime/worktreeLifecycleHooks";
+import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
+import { removeManagedGitWorktree } from "@/node/worktree/removeManagedGitWorktree";
+
+import { ContainerManager } from "@/node/multiProject/containerManager";
+
+import type { PostCompactionExclusions } from "@/common/types/attachment";
+import type {
+  SendMessageOptions,
+  DeleteMessage,
+  FilePart,
+  WorkspaceChatMessage,
+} from "@/common/orpc/types";
+
+import type { z } from "zod";
+import type { SendMessageError } from "@/common/types/errors";
+import type {
+  FrontendWorkspaceMetadata,
+  GitStatus,
+  ProjectRef,
+  WorkspaceActivitySnapshot,
+  WorkspaceMetadata,
+} from "@/common/types/workspace";
+import { isDynamicToolPart } from "@/common/types/toolParts";
+import { buildAskUserQuestionSummary } from "@/common/utils/tools/askUserQuestionSummary";
+import {
+  AskUserQuestionToolArgsSchema,
+  AskUserQuestionToolResultSchema,
+} from "@/common/utils/tools/toolDefinitions";
+import type { UIMode } from "@/common/types/mode";
+import {
+  createMuxMessage,
+  pickPreservedSendOptions,
+  type CompactionFollowUpRequest,
+  type MuxMessageMetadata,
+  type MuxMessage,
+} from "@/common/types/message";
+import type { RuntimeConfig } from "@/common/types/runtime";
+import {
+  hasSrcBaseDir,
+  getSrcBaseDir,
+  isSSHRuntime,
+  isDockerRuntime,
+} from "@/common/types/runtime";
+import {
+  isValidModelFormat,
+  normalizeSelectedModel,
+  normalizeToCanonical,
+} from "@/common/utils/ai/models";
+import { DEFAULT_MODEL } from "@/common/constants/knownModels";
+import {
+  hasBudgetedResumableGoal,
+  modelHasPricingData,
+  UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
+} from "@/common/utils/goals/budgetPricing";
+import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import { normalizeAgentId } from "@/common/utils/agentIds";
+import {
+  HEARTBEAT_CONTEXT_MODE_VALUES,
+  HEARTBEAT_DEFAULT_CONTEXT_MODE,
+  HEARTBEAT_DEFAULT_INTERVAL_MS,
+  HEARTBEAT_DEFAULT_MESSAGE_BODY,
+  HEARTBEAT_MAX_INTERVAL_MS,
+  HEARTBEAT_MIN_INTERVAL_MS,
+  HEARTBEAT_RESET_BOUNDARY_MESSAGE,
+  type HeartbeatContextMode,
+} from "@/constants/heartbeat";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import {
+  GOAL_BUDGET_LIMIT_KIND,
+  GOAL_CONTINUATION_KIND,
+  type GoalSyntheticMessageKind,
+} from "@/constants/goals";
+import type {
+  StreamStartEvent,
+  StreamEndEvent,
+  StreamAbortEvent,
+  ToolCallEndEvent,
+} from "@/common/types/stream";
+import type { TerminalService } from "@/node/services/terminalService";
+import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
+import type {
+  WorkspaceAISettingsSchema,
+  WorkspaceGoalDefaultsOverrideSchema,
+  WorkspaceHeartbeatSettingsSchema,
+} from "@/common/orpc/schemas";
+import type {
+  ArchiveLossyUntrackedFilesConfirmation,
+  ArchivePreflightResult,
+  ArchiveWorkspaceResult,
+} from "@/common/orpc/schemas/api";
+import type { SessionTimingService } from "@/node/services/sessionTimingService";
+import type { SessionUsageService } from "@/node/services/sessionUsageService";
+import type {
+  GoalContinuationRuntimeState,
+  WorkspaceGoalService,
+} from "@/node/services/workspaceGoalService";
+import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
+import type { TaskService } from "@/node/services/taskService";
+import { findWorkspaceEntry } from "@/node/services/taskUtils";
+import type { WorktreeArchiveSnapshotService } from "@/node/services/worktreeArchiveSnapshotService";
+
+import { DisposableTempDir } from "@/node/services/tempDir";
+import { createBashTool } from "@/node/services/tools/bash";
+import type { AskUserQuestionToolSuccessResult, BashToolResult } from "@/common/types/tools";
+import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
+
+import {
+  copyPlanFileAcrossRuntimes,
+  execBuffered,
+  movePlanFile,
+} from "@/node/utils/runtime/helpers";
+import {
+  buildFileCompletionsIndex,
+  EMPTY_FILE_COMPLETIONS_INDEX,
+  searchFileCompletions,
+  type FileCompletionsIndex,
+} from "@/node/services/fileCompletionsIndex";
+import { taskQueueDebug } from "@/node/services/taskQueueDebug";
+import {
+  getSubagentGitPatchMboxPath,
+  readSubagentGitPatchArtifactsFile,
+  updateSubagentGitPatchArtifactsFile,
+} from "@/node/services/subagentGitPatchArtifacts";
+import {
+  getSubagentReportArtifactPath,
+  readSubagentReportArtifactsFile,
+  updateSubagentReportArtifactsFile,
+} from "@/node/services/subagentReportArtifacts";
+import {
+  getSubagentTranscriptChatPath,
+  getSubagentTranscriptPartialPath,
+  readSubagentTranscriptArtifactsFile,
+  updateSubagentTranscriptArtifactsFile,
+  upsertSubagentTranscriptArtifactIndexEntry,
+} from "@/node/services/subagentTranscriptArtifacts";
+import { getErrorMessage } from "@/common/utils/errors";
+
+/** Maximum number of retry attempts when workspace name collides */
+const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
+
+/**
+ * Base name used when /new auto-generates a branch name. Numbered suffixes
+ * (`workspace-1`, `workspace-2`, ...) come from {@link generateForkBranchName}
+ * so the existing fork-style numbering helpers stay the single source of truth.
+ */
+const AUTO_NEW_WORKSPACE_BASE_NAME = "workspace";
+
+// Keep short to feel instant, but debounce bursts of file_edit_* tool calls.
+
+// Shared type for workspace-scoped AI settings (model + thinking)
+type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
+type WorkspaceHeartbeatSettings = z.infer<typeof WorkspaceHeartbeatSettingsSchema>;
+type WorkspaceGoalDefaultsOverride = z.infer<typeof WorkspaceGoalDefaultsOverrideSchema>;
+interface HeartbeatExecutionRequest {
+  contextMode: HeartbeatContextMode;
+  sendOptions: SendMessageOptions;
+  heartbeatPrompt: string;
+  muxMetadata: Extract<MuxMessageMetadata, { type: "heartbeat-request" }>;
+  followUp: CompactionFollowUpRequest;
+}
+
+type WorktreeArchiveSnapshotLifecycleService = Pick<
+  WorktreeArchiveSnapshotService,
+  | "preflightSnapshotForArchive"
+  | "captureSnapshotForArchive"
+  | "restoreSnapshotAfterUnarchive"
+  | "getUnsupportedUntrackedPaths"
+>;
+// Trim and normalize a heartbeat message for storage. Accepts `unknown` so it safely handles
+// both user input (string | undefined) and persisted config values that may have been corrupted.
+function sanitizeHeartbeatMessage(message: unknown): string | undefined {
+  if (typeof message !== "string") {
+    return undefined;
+  }
+
+  const trimmedMessage = message.trim();
+  if (trimmedMessage.length === 0) {
+    return undefined;
+  }
+
+  return trimmedMessage;
+}
+
+function isHeartbeatContextMode(value: unknown): value is HeartbeatContextMode {
+  return (
+    typeof value === "string" &&
+    HEARTBEAT_CONTEXT_MODE_VALUES.some((candidate) => candidate === value)
+  );
+}
+
+function sanitizeHeartbeatContextMode(value: unknown): HeartbeatContextMode {
+  return isHeartbeatContextMode(value) ? value : HEARTBEAT_DEFAULT_CONTEXT_MODE;
+}
+
+interface WorkspaceAgentStatus {
+  emoji: string;
+  message: string;
+  url?: string;
+}
+type WorkspaceRuntimeStatus = "running" | "stopped" | "unknown" | "unsupported";
+const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
+
+const MULTI_PROJECT_WORKSPACES_DISABLED_ERROR = "Multi-project workspaces experiment is disabled";
+
+function normalizeRepoRootProjectPath(projectPath: string | null | undefined): string {
+  const normalizedPath = projectPath?.replaceAll("\\", "/").trim() ?? "";
+  if (!normalizedPath) {
+    return "";
+  }
+
+  return stripTrailingSlashes(path.posix.normalize(normalizedPath));
+}
+
+function normalizeArchiveUntrackedPaths(paths: readonly string[]): string[] {
+  const normalizedPaths = paths.map((untrackedPath) => {
+    const trimmedPath = untrackedPath.trim();
+    assert(
+      trimmedPath.length > 0,
+      "normalizeArchiveUntrackedPaths: untracked paths must be non-empty"
+    );
+    return trimmedPath;
+  });
+  return [...new Set(normalizedPaths)].sort();
+}
+
+function buildArchiveLossyUntrackedFilesConfirmation(
+  paths: readonly string[]
+): ArchiveLossyUntrackedFilesConfirmation {
+  const normalizedPaths = normalizeArchiveUntrackedPaths(paths);
+  assert(
+    normalizedPaths.length > 0,
+    "buildArchiveLossyUntrackedFilesConfirmation: expected at least one untracked path"
+  );
+  return {
+    kind: "confirm-lossy-untracked-files",
+    paths: normalizedPaths,
+  };
+}
+
+function areArchiveUntrackedPathListsEqual(
+  leftPaths: readonly string[],
+  rightPaths: readonly string[]
+): boolean {
+  const normalizedLeftPaths = normalizeArchiveUntrackedPaths(leftPaths);
+  const normalizedRightPaths = normalizeArchiveUntrackedPaths(rightPaths);
+  if (normalizedLeftPaths.length !== normalizedRightPaths.length) {
+    return false;
+  }
+
+  return normalizedLeftPaths.every((path, index) => path === normalizedRightPaths[index]);
+}
+
+function isArchiveLossyUntrackedFilesConfirmation(
+  value: unknown
+): value is ArchiveLossyUntrackedFilesConfirmation {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const maybeConfirmation: { kind?: unknown; paths?: unknown } = value;
+  return (
+    maybeConfirmation.kind === "confirm-lossy-untracked-files" &&
+    Array.isArray(maybeConfirmation.paths) &&
+    maybeConfirmation.paths.every((path) => typeof path === "string")
+  );
+}
+
+interface FileCompletionsCacheEntry {
+  index: FileCompletionsIndex;
+  fetchedAt: number;
+  refreshing?: Promise<void>;
+}
+
+function parseFileCompletionPaths(stdout: string): string[] {
+  return (
+    stdout
+      .split("\n")
+      .map((line) => line.trim())
+      // File @mentions are whitespace-delimited, so we exclude spaced paths from autocomplete.
+      .filter((filePath) => Boolean(filePath) && !/\s/.test(filePath))
+  );
+}
+
+interface ArchiveMergedInProjectResult {
+  archivedWorkspaceIds: string[];
+  skippedWorkspaceIds: string[];
+  errors: Array<{ workspaceId: string; error: string }>;
+}
+
+interface ProjectGitStatusResult {
+  projectPath: string;
+  projectName: string;
+  gitStatus: GitStatus | null;
+  error: string | null;
+}
+
+interface ExecuteBashOptions {
+  timeout_secs?: number | null;
+  cwdMode?: "default" | "repo-root" | null;
+  repoRootProjectPath?: string | null;
+}
+
+/**
+ * Checks if an error indicates a workspace name collision
+ */
+function isWorkspaceNameCollision(error: string | undefined): boolean {
+  return error?.includes("Workspace already exists") ?? false;
+}
+
+/**
+ * Generates a unique workspace name by appending a random suffix
+ */
+function appendCollisionSuffix(baseName: string): string {
+  const suffix = Math.random().toString(36).substring(2, 6);
+  return `${baseName}-${suffix}`;
+}
+
+const MAX_REGENERATE_TITLE_RECENT_TURNS = 3;
+
+interface WorkspaceTitleContextTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+interface WorkspaceTitleConversationContext {
+  conversationContext: string | undefined;
+  latestUserText: string | undefined;
+}
+
+function extractMuxMessageText(message: MuxMessage): string {
+  const text =
+    message.parts
+      ?.filter((part) => part.type === "text")
+      .map((part) => part.text.trim())
+      .filter((partText) => partText.length > 0)
+      .join("\n") ?? "";
+  return text;
+}
+
+function collectWorkspaceTitleContextTurns(
+  messages: readonly MuxMessage[]
+): WorkspaceTitleContextTurn[] {
+  const turns: WorkspaceTitleContextTurn[] = [];
+
+  for (const message of messages) {
+    if (message.role !== "user" && message.role !== "assistant") {
+      continue;
+    }
+
+    const text = extractMuxMessageText(message);
+    if (!text) {
+      continue;
+    }
+
+    turns.push({ role: message.role, text });
+  }
+
+  return turns;
+}
+
+function formatWorkspaceTitleContextTurns(turns: readonly WorkspaceTitleContextTurn[]): string {
+  return turns
+    .map(
+      (turn, index) =>
+        `Turn ${index + 1} (${turn.role === "user" ? "User" : "Assistant"}):\n${turn.text}`
+    )
+    .join("\n\n");
+}
+
+function buildWorkspaceTitleConversationContext(
+  turns: readonly WorkspaceTitleContextTurn[]
+): WorkspaceTitleConversationContext {
+  const firstUserIndex = turns.findIndex((turn) => turn.role === "user");
+
+  let latestUserText: string | undefined;
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].role === "user") {
+      latestUserText = turns[i].text;
+      break;
+    }
+  }
+
+  const selectedIndexes = new Set<number>();
+  if (firstUserIndex >= 0) {
+    selectedIndexes.add(firstUserIndex);
+  }
+  const recentStartIndex = Math.max(0, turns.length - MAX_REGENERATE_TITLE_RECENT_TURNS);
+  for (let i = recentStartIndex; i < turns.length; i++) {
+    selectedIndexes.add(i);
+  }
+
+  const selectedTurns = [...selectedIndexes].sort((a, b) => a - b).map((index) => turns[index]);
+  const omittedTurns = turns.length - selectedTurns.length;
+
+  // If there is only the first user message, avoid adding a redundant conversation block.
+  if (selectedTurns.length <= 1 && omittedTurns === 0) {
+    return { conversationContext: undefined, latestUserText };
+  }
+
+  const formattedTurns = formatWorkspaceTitleContextTurns(selectedTurns);
+  const omissionSummary =
+    omittedTurns > 0
+      ? `Note: ${omittedTurns} earlier conversation turn${omittedTurns === 1 ? "" : "s"} omitted for brevity.`
+      : undefined;
+
+  return {
+    conversationContext: omissionSummary
+      ? `${omissionSummary}\n\n${formattedTurns}`
+      : formattedTurns,
+    latestUserText,
+  };
+}
+
+/**
+ * Find the highest sequential number among items that match `prefix<digits>trailingSuffix`.
+ * Returns 0 when no items match.
+ */
+function findMaxSequentialNumber(items: string[], prefix: string, trailingSuffix = ""): number {
+  let max = 0;
+  for (const item of items) {
+    if (!item.startsWith(prefix)) continue;
+    if (trailingSuffix && !item.endsWith(trailingSuffix)) continue;
+
+    const numberStr = trailingSuffix
+      ? item.slice(prefix.length, -trailingSuffix.length)
+      : item.slice(prefix.length);
+    if (!/^\d+$/.test(numberStr)) continue;
+
+    const n = Number(numberStr);
+    if (n > max) max = n;
+  }
+  return max;
+}
+
+function deriveForkFamilyBaseName(metadata: { name: string; forkFamilyBaseName?: string }): string {
+  if (metadata.forkFamilyBaseName) {
+    return metadata.forkFamilyBaseName;
+  }
+
+  const legacyForkMatch = /^(.*)-fork-\d+$/.exec(metadata.name);
+  if (legacyForkMatch) {
+    return legacyForkMatch[1];
+  }
+
+  return metadata.name;
+}
+
+/**
+ * Generate a unique fork branch name from a stable fork family base name.
+ * Scans existing workspace names for both the new `{base}-{N}` pattern and the legacy
+ * `{base}-fork-{N}` pattern so numbering continues cleanly across upgrades.
+ */
+export function generateForkBranchName(
+  forkFamilyBaseName: string,
+  existingNames: string[]
+): string {
+  const nextForkNumber = Math.max(
+    findMaxSequentialNumber(existingNames, `${forkFamilyBaseName}-`),
+    findMaxSequentialNumber(existingNames, `${forkFamilyBaseName}-fork-`)
+  );
+  return `${forkFamilyBaseName}-${nextForkNumber + 1}`;
+}
+
+/**
+ * Generate a forked workspace title by appending a " (N)" suffix to the parent title.
+ * Scans existing titles in the same project to pick the next available number.
+ */
+export function generateForkTitle(parentTitle: string, existingTitles: string[]): string {
+  // Strip any existing " (N)" suffix from the parent title to get the base
+  const base = parentTitle.replace(/ \(\d+\)$/, "");
+  const prefix = `${base} (`;
+  // If parent title itself exists in the list (without suffix), start at (1)
+  // Otherwise continue from the highest found suffix
+  return `${base} (${findMaxSequentialNumber(existingTitles, prefix, ")") + 1})`;
+}
+
+async function copyIfExists(sourcePath: string, destinationPath: string): Promise<void> {
+  try {
+    await fsPromises.copyFile(sourcePath, destinationPath);
+  } catch (error) {
+    if (!isErrnoWithCode(error, "ENOENT")) {
+      throw error;
+    }
+  }
+}
+
+async function resetForkedSessionUsage(
+  sessionUsageService: SessionUsageService | undefined,
+  workspaceId: string,
+  sessionDir: string
+): Promise<void> {
+  if (sessionUsageService) {
+    await sessionUsageService.resetSessionUsage(workspaceId);
+    return;
+  }
+
+  await fsPromises.writeFile(
+    path.join(sessionDir, "session-usage.json"),
+    JSON.stringify({ byModel: {}, version: 1 }, null, 2)
+  );
+}
+
+async function materializeForkedPartialSnapshot(params: {
+  historyService: HistoryService;
+  partialSnapshot: MuxMessage | null;
+  sourceWorkspaceId: string;
+  targetWorkspaceId: string;
+}): Promise<void> {
+  if (!params.partialSnapshot) {
+    return;
+  }
+
+  // Forking must be read-only with respect to the source workspace. During tool calls
+  // such as task_await, deleting or committing the source partial can make the live
+  // parent turn look interrupted. Instead, copy the partial into the fork and finalize
+  // only that snapshot so the child has no inherited live-stream state. The snapshot
+  // is captured before fork checkout/copy I/O so a parent stream that finishes mid-fork
+  // cannot make the child miss the latest visible assistant state.
+  const writeResult = await params.historyService.writePartial(
+    params.targetWorkspaceId,
+    params.partialSnapshot
+  );
+  if (!writeResult.success) {
+    log.warn("Failed to snapshot source partial into fork", {
+      sourceWorkspaceId: params.sourceWorkspaceId,
+      targetWorkspaceId: params.targetWorkspaceId,
+      error: writeResult.error,
+    });
+    return;
+  }
+
+  const commitResult = await params.historyService.commitPartial(params.targetWorkspaceId);
+  if (!commitResult.success) {
+    log.warn("Failed to finalize forked partial snapshot", {
+      sourceWorkspaceId: params.sourceWorkspaceId,
+      targetWorkspaceId: params.targetWorkspaceId,
+      error: commitResult.error,
+    });
+    await params.historyService.deletePartial(params.targetWorkspaceId);
+  }
+}
+
+function getOldestSequencedMessage(
+  messages: readonly MuxMessage[]
+): { message: MuxMessage; historySequence: number } | null {
+  let oldest: { message: MuxMessage; historySequence: number } | null = null;
+
+  for (const message of messages) {
+    const historySequence = message.metadata?.historySequence;
+    if (!isNonNegativeInteger(historySequence)) {
+      continue;
+    }
+
+    if (oldest === null || historySequence < oldest.historySequence) {
+      oldest = { message, historySequence };
+    }
+  }
+
+  return oldest;
+}
+
+interface WorkspaceHistoryLoadMoreCursor {
+  beforeHistorySequence: number;
+  beforeMessageId?: string | null;
+}
+
+interface WorkspaceHistoryLoadMoreResult {
+  messages: WorkspaceChatMessage[];
+  nextCursor: WorkspaceHistoryLoadMoreCursor | null;
+  hasOlder: boolean;
+}
+
+function isCompactedSummaryMessage(message: MuxMessage): boolean {
+  return isDurableCompactedMarker(message.metadata?.compacted);
+}
+
+function getNextCompactionEpochForAppendBoundary(
+  workspaceId: string,
+  messages: MuxMessage[]
+): number {
+  let epochCursor = 0;
+
+  for (const message of messages) {
+    const metadata = message.metadata;
+    if (!metadata) {
+      continue;
+    }
+
+    const isCompactedSummary = isCompactedSummaryMessage(message);
+    const hasBoundaryMarker = metadata.compactionBoundary === true;
+    const epoch = metadata.compactionEpoch;
+
+    if (hasBoundaryMarker && !isCompactedSummary) {
+      // Self-healing read path: skip malformed persisted boundary markers.
+      // Boundary markers are only valid on compacted summaries.
+      log.warn("Skipping malformed compaction boundary while deriving next epoch", {
+        workspaceId,
+        messageId: message.id,
+        reason: "compactionBoundary set on non-compacted message",
+      });
+      continue;
+    }
+
+    if (!isCompactedSummary) {
+      continue;
+    }
+
+    if (hasBoundaryMarker) {
+      if (!isPositiveInteger(epoch)) {
+        // Self-healing read path: invalid boundary metadata should not brick compaction.
+        log.warn("Skipping malformed compaction boundary while deriving next epoch", {
+          workspaceId,
+          messageId: message.id,
+          reason: "compactionBoundary missing positive integer compactionEpoch",
+        });
+        continue;
+      }
+      epochCursor = Math.max(epochCursor, epoch);
+      continue;
+    }
+
+    if (epoch === undefined) {
+      // Legacy compacted summaries predate compactionEpoch metadata.
+      epochCursor += 1;
+      continue;
+    }
+
+    if (!isPositiveInteger(epoch)) {
+      // Self-healing read path: malformed compactionEpoch should not crash compaction.
+      log.warn("Skipping malformed compactionEpoch while deriving next epoch", {
+        workspaceId,
+        messageId: message.id,
+        reason: "compactionEpoch must be a positive integer when present",
+      });
+      continue;
+    }
+
+    epochCursor = Math.max(epochCursor, epoch);
+  }
+
+  const nextEpoch = epochCursor + 1;
+  assert(nextEpoch > 0, "next compaction epoch must be positive");
+  return nextEpoch;
+}
+
+async function copyFileBestEffort(params: {
+  srcPath: string;
+  destPath: string;
+  logContext: Record<string, unknown>;
+}): Promise<boolean> {
+  try {
+    await fsPromises.mkdir(path.dirname(params.destPath), { recursive: true });
+    await fsPromises.copyFile(params.srcPath, params.destPath);
+    return true;
+  } catch (error: unknown) {
+    if (isErrnoWithCode(error, "ENOENT")) {
+      return false;
+    }
+
+    log.error("Failed to copy session artifact file", {
+      ...params.logContext,
+      srcPath: params.srcPath,
+      destPath: params.destPath,
+      error: getErrorMessage(error),
+    });
+    return false;
+  }
+}
+
+async function copyDirIfMissingBestEffort(params: {
+  srcDir: string;
+  destDir: string;
+  logContext: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    try {
+      const stat = await fsPromises.stat(params.destDir);
+      if (stat.isDirectory()) {
+        return;
+      }
+      // If it's a file, fall through and try to copy (will likely fail).
+    } catch (error: unknown) {
+      if (!isErrnoWithCode(error, "ENOENT")) {
+        throw error;
+      }
+    }
+
+    await fsPromises.mkdir(path.dirname(params.destDir), { recursive: true });
+    await fsPromises.cp(params.srcDir, params.destDir, { recursive: true });
+  } catch (error: unknown) {
+    if (isErrnoWithCode(error, "ENOENT")) {
+      return;
+    }
+
+    log.error("Failed to copy session artifact directory", {
+      ...params.logContext,
+      srcDir: params.srcDir,
+      destDir: params.destDir,
+      error: getErrorMessage(error),
+    });
+  }
+}
+
+function coerceUpdatedAtMs(entry: { createdAtMs?: number; updatedAtMs?: number }): number {
+  if (typeof entry.updatedAtMs === "number" && Number.isFinite(entry.updatedAtMs)) {
+    return entry.updatedAtMs;
+  }
+
+  if (typeof entry.createdAtMs === "number" && Number.isFinite(entry.createdAtMs)) {
+    return entry.createdAtMs;
+  }
+
+  return 0;
+}
+
+function rollUpAncestorWorkspaceIds(params: {
+  ancestorWorkspaceIds: string[];
+  removedWorkspaceId: string;
+  newParentWorkspaceId: string;
+}): string[] {
+  const filtered = params.ancestorWorkspaceIds.filter((id) => id !== params.removedWorkspaceId);
+
+  // Ensure the roll-up target is first (parent-first ordering).
+  if (filtered[0] === params.newParentWorkspaceId) {
+    return filtered;
+  }
+
+  return [
+    params.newParentWorkspaceId,
+    ...filtered.filter((id) => id !== params.newParentWorkspaceId),
+  ];
+}
+
+async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
+  parentWorkspaceId: string;
+  parentSessionDir: string;
+  childWorkspaceId: string;
+  childSessionDir: string;
+  /** Task-level model string for the child workspace (optional; persists into transcript artifacts). */
+  childTaskModelString?: string;
+  /** Task-level thinking/reasoning level for the child workspace (optional; persists into transcript artifacts). */
+  childTaskThinkingLevel?: ThinkingLevel;
+}): Promise<void> {
+  if (params.parentWorkspaceId.length === 0) {
+    return;
+  }
+
+  if (params.childWorkspaceId.length === 0) {
+    return;
+  }
+
+  if (params.parentSessionDir.length === 0 || params.childSessionDir.length === 0) {
+    return;
+  }
+
+  // 1) Archive the child session transcript (chat.jsonl + partial.json) into the parent session dir
+  // BEFORE deleting ~/.mux/sessions/<childWorkspaceId>.
+  try {
+    const childChatPath = path.join(params.childSessionDir, "chat.jsonl");
+    const childPartialPath = path.join(params.childSessionDir, "partial.json");
+
+    const archivedChatPath = getSubagentTranscriptChatPath(
+      params.parentSessionDir,
+      params.childWorkspaceId
+    );
+    const archivedPartialPath = getSubagentTranscriptPartialPath(
+      params.parentSessionDir,
+      params.childWorkspaceId
+    );
+
+    // Defensive: avoid path traversal in workspace IDs.
+    if (!isPathInsideDir(params.parentSessionDir, archivedChatPath)) {
+      log.error("Refusing to archive session transcript outside parent session dir", {
+        parentWorkspaceId: params.parentWorkspaceId,
+        childWorkspaceId: params.childWorkspaceId,
+        parentSessionDir: params.parentSessionDir,
+        archivedChatPath,
+      });
+    } else {
+      const didCopyChat = await copyFileBestEffort({
+        srcPath: childChatPath,
+        destPath: archivedChatPath,
+        logContext: {
+          parentWorkspaceId: params.parentWorkspaceId,
+          childWorkspaceId: params.childWorkspaceId,
+          artifact: "chat.jsonl",
+        },
+      });
+
+      const didCopyPartial = await copyFileBestEffort({
+        srcPath: childPartialPath,
+        destPath: archivedPartialPath,
+        logContext: {
+          parentWorkspaceId: params.parentWorkspaceId,
+          childWorkspaceId: params.childWorkspaceId,
+          artifact: "partial.json",
+        },
+      });
+
+      const childMetadataPath = path.join(params.childSessionDir, "metadata.json");
+      const archivedMetadataPath = path.join(
+        params.parentSessionDir,
+        "subagent-transcripts",
+        params.childWorkspaceId,
+        "metadata.json"
+      );
+      await copyFileBestEffort({
+        srcPath: childMetadataPath,
+        destPath: archivedMetadataPath,
+        logContext: {
+          parentWorkspaceId: params.parentWorkspaceId,
+          childWorkspaceId: params.childWorkspaceId,
+          artifact: "metadata.json",
+        },
+      });
+
+      if (didCopyChat || didCopyPartial) {
+        const nowMs = Date.now();
+
+        const model =
+          typeof params.childTaskModelString === "string" &&
+          params.childTaskModelString.trim().length > 0
+            ? params.childTaskModelString.trim()
+            : undefined;
+        const thinkingLevel = coerceThinkingLevel(params.childTaskThinkingLevel);
+
+        await upsertSubagentTranscriptArtifactIndexEntry({
+          workspaceId: params.parentWorkspaceId,
+          workspaceSessionDir: params.parentSessionDir,
+          childTaskId: params.childWorkspaceId,
+          updater: (existing) => ({
+            childTaskId: params.childWorkspaceId,
+            parentWorkspaceId: params.parentWorkspaceId,
+            createdAtMs: existing?.createdAtMs ?? nowMs,
+            updatedAtMs: nowMs,
+            model: model ?? existing?.model,
+            thinkingLevel: thinkingLevel ?? existing?.thinkingLevel,
+            chatPath: didCopyChat ? archivedChatPath : existing?.chatPath,
+            partialPath: didCopyPartial ? archivedPartialPath : existing?.partialPath,
+          }),
+        });
+      }
+    }
+  } catch (error: unknown) {
+    log.error("Failed to archive child transcript into parent session dir", {
+      parentWorkspaceId: params.parentWorkspaceId,
+      childWorkspaceId: params.childWorkspaceId,
+      error: getErrorMessage(error),
+    });
+  }
+
+  // 2) Roll up nested subagent artifacts from the child session dir into the parent session dir.
+  // This preserves grandchild artifacts when intermediate subagent workspaces are cleaned up.
+
+  // --- subagent-patches.json + subagent-patches/<taskId>/...
+  try {
+    const childArtifacts = await readSubagentGitPatchArtifactsFile(params.childSessionDir);
+    const childEntries = Object.entries(childArtifacts.artifactsByChildTaskId);
+
+    for (const [taskId, childEntry] of childEntries) {
+      if (!taskId) continue;
+
+      for (const projectArtifact of childEntry.projectArtifacts) {
+        if (!projectArtifact.mboxPath) {
+          continue;
+        }
+
+        const srcDir = path.dirname(projectArtifact.mboxPath);
+        const destDir = path.dirname(
+          getSubagentGitPatchMboxPath(params.parentSessionDir, taskId, projectArtifact.storageKey)
+        );
+
+        if (!isPathInsideDir(params.childSessionDir, srcDir)) {
+          log.error("Refusing to roll up patch artifact outside child session dir", {
+            parentWorkspaceId: params.parentWorkspaceId,
+            childWorkspaceId: params.childWorkspaceId,
+            taskId,
+            childSessionDir: params.childSessionDir,
+            srcDir,
+          });
+          continue;
+        }
+
+        if (!isPathInsideDir(params.parentSessionDir, destDir)) {
+          log.error("Refusing to roll up patch artifact outside parent session dir", {
+            parentWorkspaceId: params.parentWorkspaceId,
+            childWorkspaceId: params.childWorkspaceId,
+            taskId,
+            parentSessionDir: params.parentSessionDir,
+            destDir,
+          });
+          continue;
+        }
+
+        await copyDirIfMissingBestEffort({
+          srcDir,
+          destDir,
+          logContext: {
+            parentWorkspaceId: params.parentWorkspaceId,
+            childWorkspaceId: params.childWorkspaceId,
+            artifact: "subagent-patches",
+            taskId,
+            projectPath: projectArtifact.projectPath,
+          },
+        });
+      }
+    }
+
+    if (childEntries.length > 0) {
+      await updateSubagentGitPatchArtifactsFile({
+        workspaceId: params.parentWorkspaceId,
+        workspaceSessionDir: params.parentSessionDir,
+        update: (parentFile) => {
+          for (const [taskId, childEntry] of childEntries) {
+            if (!taskId) continue;
+            const existing = parentFile.artifactsByChildTaskId[taskId] ?? null;
+
+            const childUpdated = coerceUpdatedAtMs(childEntry);
+            const existingUpdated = existing ? coerceUpdatedAtMs(existing) : -1;
+
+            if (!existing || childUpdated > existingUpdated) {
+              parentFile.artifactsByChildTaskId[taskId] = {
+                ...childEntry,
+                childTaskId: taskId,
+                parentWorkspaceId: params.parentWorkspaceId,
+                projectArtifacts: childEntry.projectArtifacts.map((projectArtifact) => ({
+                  ...projectArtifact,
+                  mboxPath: projectArtifact.mboxPath
+                    ? getSubagentGitPatchMboxPath(
+                        params.parentSessionDir,
+                        taskId,
+                        projectArtifact.storageKey
+                      )
+                    : undefined,
+                })),
+              };
+            }
+          }
+        },
+      });
+    }
+  } catch (error: unknown) {
+    log.error("Failed to roll up subagent patch artifacts into parent", {
+      parentWorkspaceId: params.parentWorkspaceId,
+      childWorkspaceId: params.childWorkspaceId,
+      error: getErrorMessage(error),
+    });
+  }
+
+  // --- subagent-reports.json + subagent-reports/<taskId>/...
+  try {
+    const childArtifacts = await readSubagentReportArtifactsFile(params.childSessionDir);
+    const childEntries = Object.entries(childArtifacts.artifactsByChildTaskId);
+
+    for (const [taskId] of childEntries) {
+      if (!taskId) continue;
+
+      const srcDir = path.dirname(getSubagentReportArtifactPath(params.childSessionDir, taskId));
+      const destDir = path.dirname(getSubagentReportArtifactPath(params.parentSessionDir, taskId));
+
+      if (!isPathInsideDir(params.childSessionDir, srcDir)) {
+        log.error("Refusing to roll up report artifact outside child session dir", {
+          parentWorkspaceId: params.parentWorkspaceId,
+          childWorkspaceId: params.childWorkspaceId,
+          taskId,
+          childSessionDir: params.childSessionDir,
+          srcDir,
+        });
+        continue;
+      }
+
+      if (!isPathInsideDir(params.parentSessionDir, destDir)) {
+        log.error("Refusing to roll up report artifact outside parent session dir", {
+          parentWorkspaceId: params.parentWorkspaceId,
+          childWorkspaceId: params.childWorkspaceId,
+          taskId,
+          parentSessionDir: params.parentSessionDir,
+          destDir,
+        });
+        continue;
+      }
+
+      await copyDirIfMissingBestEffort({
+        srcDir,
+        destDir,
+        logContext: {
+          parentWorkspaceId: params.parentWorkspaceId,
+          childWorkspaceId: params.childWorkspaceId,
+          artifact: "subagent-reports",
+          taskId,
+        },
+      });
+    }
+
+    if (childEntries.length > 0) {
+      await updateSubagentReportArtifactsFile({
+        workspaceId: params.parentWorkspaceId,
+        workspaceSessionDir: params.parentSessionDir,
+        update: (parentFile) => {
+          for (const [taskId, childEntry] of childEntries) {
+            if (!taskId) continue;
+
+            const existing = parentFile.artifactsByChildTaskId[taskId] ?? null;
+            const childUpdated = coerceUpdatedAtMs(childEntry);
+            const existingUpdated = existing ? coerceUpdatedAtMs(existing) : -1;
+
+            if (!existing || childUpdated > existingUpdated) {
+              parentFile.artifactsByChildTaskId[taskId] = {
+                ...childEntry,
+                childTaskId: taskId,
+                parentWorkspaceId: params.parentWorkspaceId,
+                ancestorWorkspaceIds: rollUpAncestorWorkspaceIds({
+                  ancestorWorkspaceIds: childEntry.ancestorWorkspaceIds,
+                  removedWorkspaceId: params.childWorkspaceId,
+                  newParentWorkspaceId: params.parentWorkspaceId,
+                }),
+              };
+            }
+          }
+        },
+      });
+    }
+  } catch (error: unknown) {
+    log.error("Failed to roll up subagent report artifacts into parent", {
+      parentWorkspaceId: params.parentWorkspaceId,
+      childWorkspaceId: params.childWorkspaceId,
+      error: getErrorMessage(error),
+    });
+  }
+
+  // --- subagent-transcripts.json + subagent-transcripts/<taskId>/...
+  try {
+    const childArtifacts = await readSubagentTranscriptArtifactsFile(params.childSessionDir);
+    const childEntries = Object.entries(childArtifacts.artifactsByChildTaskId);
+
+    for (const [taskId] of childEntries) {
+      if (!taskId) continue;
+
+      const srcDir = path.dirname(getSubagentTranscriptChatPath(params.childSessionDir, taskId));
+      const destDir = path.dirname(getSubagentTranscriptChatPath(params.parentSessionDir, taskId));
+
+      if (!isPathInsideDir(params.childSessionDir, srcDir)) {
+        log.error("Refusing to roll up transcript artifact outside child session dir", {
+          parentWorkspaceId: params.parentWorkspaceId,
+          childWorkspaceId: params.childWorkspaceId,
+          taskId,
+          childSessionDir: params.childSessionDir,
+          srcDir,
+        });
+        continue;
+      }
+
+      if (!isPathInsideDir(params.parentSessionDir, destDir)) {
+        log.error("Refusing to roll up transcript artifact outside parent session dir", {
+          parentWorkspaceId: params.parentWorkspaceId,
+          childWorkspaceId: params.childWorkspaceId,
+          taskId,
+          parentSessionDir: params.parentSessionDir,
+          destDir,
+        });
+        continue;
+      }
+
+      await copyDirIfMissingBestEffort({
+        srcDir,
+        destDir,
+        logContext: {
+          parentWorkspaceId: params.parentWorkspaceId,
+          childWorkspaceId: params.childWorkspaceId,
+          artifact: "subagent-transcripts",
+          taskId,
+        },
+      });
+    }
+
+    if (childEntries.length > 0) {
+      await updateSubagentTranscriptArtifactsFile({
+        workspaceId: params.parentWorkspaceId,
+        workspaceSessionDir: params.parentSessionDir,
+        update: (parentFile) => {
+          for (const [taskId, childEntry] of childEntries) {
+            if (!taskId) continue;
+
+            const existing = parentFile.artifactsByChildTaskId[taskId] ?? null;
+            const childUpdated = coerceUpdatedAtMs(childEntry);
+            const existingUpdated = existing ? coerceUpdatedAtMs(existing) : -1;
+
+            if (!existing || childUpdated > existingUpdated) {
+              parentFile.artifactsByChildTaskId[taskId] = {
+                ...childEntry,
+                childTaskId: taskId,
+                parentWorkspaceId: params.parentWorkspaceId,
+                chatPath: childEntry.chatPath
+                  ? getSubagentTranscriptChatPath(params.parentSessionDir, taskId)
+                  : undefined,
+                partialPath: childEntry.partialPath
+                  ? getSubagentTranscriptPartialPath(params.parentSessionDir, taskId)
+                  : undefined,
+              };
+            }
+          }
+        },
+      });
+    }
+  } catch (error: unknown) {
+    log.error("Failed to roll up subagent transcript artifacts into parent", {
+      parentWorkspaceId: params.parentWorkspaceId,
+      childWorkspaceId: params.childWorkspaceId,
+      error: getErrorMessage(error),
+    });
+  }
+}
+
+async function forEachWithConcurrencyLimit<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>
+): Promise<void> {
+  assert(Number.isInteger(limit) && limit > 0, "Concurrency limit must be a positive integer");
+
+  let nextIndex = 0;
+  const workerCount = Math.min(limit, items.length);
+
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) {
+        return;
+      }
+      await fn(items[index]);
+    }
+  });
+
+  await Promise.all(workers);
+}
+
+export interface WorkspaceServiceEvents {
+  chat: (event: { workspaceId: string; message: WorkspaceChatMessage }) => void;
+  metadata: (event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void;
+  activity: (event: { workspaceId: string; activity: WorkspaceActivitySnapshot | null }) => void;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
+export declare interface WorkspaceService {
+  on<U extends keyof WorkspaceServiceEvents>(event: U, listener: WorkspaceServiceEvents[U]): this;
+  emit<U extends keyof WorkspaceServiceEvents>(
+    event: U,
+    ...args: Parameters<WorkspaceServiceEvents[U]>
+  ): boolean;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
+export class WorkspaceService extends EventEmitter {
+  private readonly sessions = new Map<string, AgentSession>();
+  // Startup recovery may need a short-lived session even before the workspace is opened.
+  // Promote only sessions that keep retry/stream activity alive after the initial check.
+  private readonly transientStartupRecoverySessions = new Map<string, AgentSession>();
+  private readonly sessionSubscriptions = new Map<
+    string,
+    { chat: () => void; metadata: () => void }
+  >();
+
+  // Debounce post-compaction metadata refreshes (file_edit_* can fire rapidly)
+  private readonly postCompactionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // Tracks workspaces currently being renamed to prevent streaming during rename
+  private readonly renamingWorkspaces = new Set<string>();
+
+  // Cache for @file mention autocomplete (git ls-files output).
+  private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
+  // Tracks workspaces currently being removed to prevent new sessions/streams during deletion.
+  private readonly removingWorkspaces = new Set<string>();
+
+  // Tracks workspaces currently being archived to prevent runtime-affecting operations (e.g. SSH)
+  // from waking a dedicated workspace during archive().
+  private readonly archivingWorkspaces = new Set<string>();
+
+  // Tracks stream generations that are compaction turns so background stop snapshots
+  // can carry authoritative notification policy instead of forcing the frontend to
+  // infer compaction from best-effort chat replay state.
+  private readonly compactionStreamGenerations = new Map<string, number>();
+
+  // Tracks workspaces undergoing idle (background) compaction so the activity snapshot
+  // can tag the stream, letting the frontend suppress notifications for maintenance work.
+  private readonly idleCompactingWorkspaces = new Set<string>();
+
+  // Blocks new sends while a context reset is committing its durable boundary and cleanup.
+  private readonly resettingContextWorkspaces = new Set<string>();
+
+  // Tracks in-flight fork auto-title generations so only the first accepted continue
+  // message can claim the workspace title.
+  private readonly autoTitlingWorkspaces = new Set<string>();
+
+  // Monotonic per-workspace stream generations prevent delayed stop-side metadata writes
+  // from older streams from clobbering a newer streaming=true snapshot after async awaits.
+  private readonly streamingGenerations = new Map<string, number>();
+
+  // Serialize todo snapshot refreshes so back-to-back todo_write/propose_plan updates cannot
+  // finish out of order and briefly restore stale progress in workspace activity metadata.
+  private readonly todoStatusUpdateQueue = new Map<string, Promise<void>>();
+
+  // AbortControllers for in-progress workspace initialization (postCreateSetup + initWorkspace).
+  //
+  // Why this lives here: archive/remove are the user-facing lifecycle operations that should
+  // cancel any fire-and-forget init work to avoid orphaned processes (e.g., SSH sync, .mux/init).
+  private readonly initAbortControllers = new Map<string, AbortController>();
+
+  // ExtensionMetadataService now serializes all mutations globally because every
+  // workspace shares the same extensionMetadata.json file.
+
+  /** Check if a workspace is currently being removed. */
+  isRemoving(workspaceId: string): boolean {
+    return this.removingWorkspaces.has(workspaceId);
+  }
+
+  constructor(
+    private readonly config: Config,
+    private readonly historyService: HistoryService,
+    private readonly aiService: AIService,
+    private readonly initStateManager: InitStateManager,
+    private readonly extensionMetadata: ExtensionMetadataService,
+    private readonly backgroundProcessManager: BackgroundProcessManager,
+    private readonly sessionUsageService?: SessionUsageService,
+    policyService?: PolicyService,
+    telemetryService?: TelemetryService,
+    experimentsService?: ExperimentsService,
+    sessionTimingService?: SessionTimingService,
+    private readonly opResolver?: ExternalSecretResolver
+  ) {
+    super();
+    this.policyService = policyService;
+    this.telemetryService = telemetryService;
+    this.experimentsService = experimentsService;
+    this.sessionTimingService = sessionTimingService;
+    this.setupMetadataListeners();
+    this.setupInitMetadataListeners();
+  }
+
+  private readonly policyService?: PolicyService;
+  private readonly telemetryService?: TelemetryService;
+  private readonly experimentsService?: ExperimentsService;
+  private mcpServerManager?: MCPServerManager;
+  // Optional services for workspace cleanup during archive/remove lifecycle operations.
+  private terminalService?: TerminalService;
+  private desktopSessionManager?: DesktopSessionManager;
+  private readonly sessionTimingService?: SessionTimingService;
+  private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
+  private worktreeArchiveSnapshotService?: WorktreeArchiveSnapshotLifecycleService;
+  private taskService?: TaskService;
+  private workspaceGoalService?: WorkspaceGoalService;
+
+  /**
+   * Set the MCP server manager for tool access.
+   * Called after construction due to circular dependency.
+   */
+  setMCPServerManager(manager: MCPServerManager): void {
+    this.mcpServerManager = manager;
+  }
+
+  setWorkspaceGoalService(service: WorkspaceGoalService): void {
+    this.workspaceGoalService = service;
+  }
+
+  /**
+   * Set the terminal service for cleanup on workspace removal.
+   */
+  setTerminalService(terminalService: TerminalService): void {
+    this.terminalService = terminalService;
+  }
+
+  setDesktopSessionManager(manager: DesktopSessionManager): void {
+    this.desktopSessionManager = manager;
+  }
+
+  private async closeDesktopSessionBestEffort(
+    workspaceId: string,
+    reason: "archive" | "remove"
+  ): Promise<void> {
+    try {
+      await this.desktopSessionManager?.close(workspaceId);
+    } catch (error) {
+      log.debug(
+        `Failed to close desktop session during ${reason} for workspace ${workspaceId}: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
+  setWorkspaceLifecycleHooks(hooks: WorkspaceLifecycleHooks): void {
+    this.workspaceLifecycleHooks = hooks;
+  }
+
+  setWorktreeArchiveSnapshotService(service: WorktreeArchiveSnapshotLifecycleService): void {
+    this.worktreeArchiveSnapshotService = service;
+  }
+
+  /**
+   * Set the task service for auto-resume counter resets.
+   * Called after construction due to circular dependency.
+   */
+  setTaskService(taskService: TaskService): void {
+    this.taskService = taskService;
+  }
+
+  private getWorktreeArchiveBehavior(): "keep" | "delete" | "snapshot" {
+    return (
+      this.config.loadConfigOrDefault().worktreeArchiveBehavior ?? DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR
+    );
+  }
+
+  private async getCurrentArchiveUntrackedPaths(args: {
+    workspaceId: string;
+    workspaceMetadata: WorkspaceMetadata;
+  }): Promise<Result<string[]>> {
+    if (this.worktreeArchiveSnapshotService == null) {
+      return Ok([]);
+    }
+
+    if (!isWorktreeRuntime(args.workspaceMetadata.runtimeConfig)) {
+      return Ok([]);
+    }
+
+    // Multi-project workspaces skip snapshot capture entirely, so there is nothing to confirm.
+    if (
+      Array.isArray(args.workspaceMetadata.projects) &&
+      args.workspaceMetadata.projects.length > 1
+    ) {
+      return Ok([]);
+    }
+
+    const unsupportedUntrackedPathsResult =
+      await this.worktreeArchiveSnapshotService.getUnsupportedUntrackedPaths({
+        workspaceId: args.workspaceId,
+        workspaceMetadata: args.workspaceMetadata,
+      });
+    if (!unsupportedUntrackedPathsResult.success) {
+      return Err(unsupportedUntrackedPathsResult.error);
+    }
+
+    return Ok(normalizeArchiveUntrackedPaths(unsupportedUntrackedPathsResult.data));
+  }
+
+  private async getArchiveUntrackedFilesConfirmation(args: {
+    workspaceId: string;
+    workspaceMetadata: WorkspaceMetadata;
+    acknowledgedUntrackedPaths?: string[];
+  }): Promise<Result<ArchiveLossyUntrackedFilesConfirmation | null>> {
+    const currentUntrackedPathsResult = await this.getCurrentArchiveUntrackedPaths({
+      workspaceId: args.workspaceId,
+      workspaceMetadata: args.workspaceMetadata,
+    });
+    if (!currentUntrackedPathsResult.success) {
+      return Err(currentUntrackedPathsResult.error);
+    }
+
+    const currentUntrackedPaths = currentUntrackedPathsResult.data;
+    if (currentUntrackedPaths.length === 0) {
+      return Ok(null);
+    }
+
+    if (args.acknowledgedUntrackedPaths == null) {
+      return Ok(buildArchiveLossyUntrackedFilesConfirmation(currentUntrackedPaths));
+    }
+
+    if (
+      !areArchiveUntrackedPathListsEqual(args.acknowledgedUntrackedPaths, currentUntrackedPaths)
+    ) {
+      return Ok(buildArchiveLossyUntrackedFilesConfirmation(currentUntrackedPaths));
+    }
+
+    return Ok(null);
+  }
+
+  /**
+   * Best-effort startup recovery for non-task chats so restart auto-retry can resume
+   * interrupted turns before the user explicitly opens each workspace.
+   */
+  async initialize(): Promise<void> {
+    const startupStartedAt = Date.now();
+
+    try {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      let scheduledCount = 0;
+      let skippedTaskCount = 0;
+      let skippedArchivedCount = 0;
+
+      for (const metadata of allMetadata) {
+        if (metadata.taskStatus) {
+          skippedTaskCount += 1;
+          continue;
+        }
+
+        if (isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt)) {
+          skippedArchivedCount += 1;
+          continue;
+        }
+
+        this.startStartupRecovery(metadata.id);
+        scheduledCount += 1;
+      }
+
+      log.info("[startup] WorkspaceService.initialize completed", {
+        totalMs: Date.now() - startupStartedAt,
+        scheduledCount,
+        skippedTaskCount,
+        skippedArchivedCount,
+      });
+    } catch (error) {
+      log.warn("[startup] WorkspaceService.initialize failed", {
+        totalMs: Date.now() - startupStartedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  isExperimentEnabled(experimentId: (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS]): boolean {
+    return this.experimentsService?.isExperimentEnabled(experimentId) === true;
+  }
+
+  private async stopLiveWorkspaceActivityForArchive(workspaceId: string): Promise<void> {
+    // Archiving removes the workspace from the sidebar; ensure we don't leave a stream running
+    // "headless" with no obvious UI affordance to interrupt it.
+    if (this.aiService.isStreaming(workspaceId)) {
+      const stopResult = await this.interruptStream(workspaceId);
+      if (!stopResult.success) {
+        log.debug("Failed to stop stream during workspace archive", {
+          workspaceId,
+          error: stopResult.error,
+        });
+      }
+    }
+
+    // Archiving hides workspace UI; do not leave terminal PTYs or desktop sessions running headless.
+    this.terminalService?.closeWorkspaceSessions(workspaceId);
+    await this.closeDesktopSessionBestEffort(workspaceId, "archive");
+  }
+
+  /**
+   * DEBUG ONLY: Trigger an artificial stream error for testing.
+   * This is used by integration tests to simulate network errors mid-stream.
+   * @returns true if an active stream was found and error was triggered
+   */
+  debugTriggerStreamError(workspaceId: string, errorMessage?: string): Promise<boolean> {
+    return this.aiService.debugTriggerStreamError(workspaceId, errorMessage);
+  }
+
+  /**
+   * Setup listeners to update metadata store based on AIService events.
+   * This tracks workspace recency and streaming status for VS Code extension integration.
+   */
+  private setupMetadataListeners(): void {
+    const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+    const isWorkspaceEvent = (v: unknown): v is { workspaceId: string } =>
+      isObj(v) && "workspaceId" in v && typeof v.workspaceId === "string";
+    const isStreamStartEvent = (v: unknown): v is StreamStartEvent =>
+      isWorkspaceEvent(v) && "model" in v && typeof (v as { model: unknown }).model === "string";
+    const isStreamEndEvent = (v: unknown): v is StreamEndEvent =>
+      isWorkspaceEvent(v) &&
+      (!("metadata" in (v as Record<string, unknown>)) || isObj((v as StreamEndEvent).metadata));
+    const isStreamAbortEvent = (v: unknown): v is StreamAbortEvent => isWorkspaceEvent(v);
+    const isErrorEvent = (v: unknown): v is { workspaceId: string; error: string } =>
+      isWorkspaceEvent(v) && "error" in v && typeof (v as { error: unknown }).error === "string";
+    const isToolCallEndEvent = (v: unknown): v is ToolCallEndEvent =>
+      isWorkspaceEvent(v) &&
+      "toolName" in v &&
+      typeof (v as { toolName: unknown }).toolName === "string" &&
+      "result" in v;
+    const extractStatusSetResult = (result: unknown): WorkspaceAgentStatus | null =>
+      isObj(result) && result.success === true ? coerceAgentStatus(result) : null;
+    const isSuccessfulToolResult = (result: unknown): result is { success: true } =>
+      isObj(result) && result.success === true;
+    // Update streaming status and recency on stream start
+    this.aiService.on("stream-start", (data: unknown) => {
+      if (isStreamStartEvent(data)) {
+        const generation = (this.streamingGenerations.get(data.workspaceId) ?? 0) + 1;
+        this.streamingGenerations.set(data.workspaceId, generation);
+        if (data.agentId === "compact" || data.mode === "compact") {
+          this.compactionStreamGenerations.set(data.workspaceId, generation);
+        } else {
+          this.compactionStreamGenerations.delete(data.workspaceId);
+        }
+        void this.updateStreamingStatus(data.workspaceId, true, {
+          model: data.model,
+          thinkingLevel: data.thinkingLevel,
+          generation,
+        });
+      }
+    });
+
+    this.aiService.on("stream-end", (data: unknown) => {
+      if (isStreamEndEvent(data)) {
+        void this.handleStreamCompletion(data.workspaceId);
+      }
+    });
+
+    this.aiService.on("stream-abort", (data: unknown) => {
+      if (isStreamAbortEvent(data)) {
+        void this.stopStreamingStatus(data.workspaceId);
+        // Goal mutations are drained by AgentSession after any abort accounting
+        // runs. Draining here would race ahead of AgentSession's stream-abort
+        // listener and could charge the aborted in-flight stream to a goal that
+        // was queued during that stream. User aborts are still discarded by
+        // recordUserStoppedStream in AgentSession.
+      }
+    });
+
+    this.aiService.on("error", (data: unknown) => {
+      if (isErrorEvent(data)) {
+        void this.stopStreamingStatus(data.workspaceId);
+        void this.workspaceGoalService?.applyPendingAfterStreamEnd(data.workspaceId);
+      }
+    });
+
+    this.aiService.on("tool-call-end", (data: unknown) => {
+      if (!isToolCallEndEvent(data) || data.replay === true) {
+        return;
+      }
+
+      if (data.toolName === "status_set") {
+        const agentStatus = extractStatusSetResult(data.result);
+        if (!agentStatus) {
+          return;
+        }
+
+        void this.updateAgentStatus(data.workspaceId, agentStatus);
+        return;
+      }
+
+      if (
+        (data.toolName === "todo_write" || data.toolName === "propose_plan") &&
+        isSuccessfulToolResult(data.result)
+      ) {
+        void this.updateTodoStatusFromStorage(data.workspaceId);
+      }
+    });
+  }
+
+  private setupInitMetadataListeners(): void {
+    const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+    const isWorkspaceEvent = (v: unknown): v is { workspaceId: string } =>
+      isObj(v) && "workspaceId" in v && typeof v.workspaceId === "string";
+
+    // When init completes, refresh metadata so the UI can clear isInitializing and swap
+    // "Cancel creation" back to the normal archive affordance.
+    this.initStateManager.on("init-end", (event: unknown) => {
+      if (!isWorkspaceEvent(event)) {
+        return;
+      }
+      void this.refreshAndEmitMetadata(event.workspaceId);
+    });
+  }
+
+  /**
+   * Public so AgentStatusService can broadcast a snapshot it produced after
+   * a direct setX call. (Most callers use emitWorkspaceActivityUpdate, which
+   * couples persist + emit but swallows persist errors.)
+   */
+  public emitWorkspaceActivity(
+    workspaceId: string,
+    snapshot: WorkspaceActivitySnapshot | null
+  ): void {
+    this.emit("activity", { workspaceId, activity: snapshot });
+  }
+
+  private async emitWorkspaceActivityUpdate(
+    workspaceId: string,
+    description: string,
+    update: () => Promise<WorkspaceActivitySnapshot>
+  ): Promise<void> {
+    try {
+      this.emitWorkspaceActivity(workspaceId, await update());
+    } catch (error) {
+      log.error(`Failed to ${description}`, { workspaceId, error });
+    }
+  }
+
+  private async updateRecencyTimestamp(workspaceId: string, timestamp?: number): Promise<void> {
+    await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace recency", () =>
+      this.extensionMetadata.updateRecency(workspaceId, timestamp ?? Date.now())
+    );
+  }
+
+  public async updateAgentStatus(
+    workspaceId: string,
+    agentStatus: WorkspaceAgentStatus | null
+  ): Promise<void> {
+    await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace agent status", () =>
+      this.extensionMetadata.setAgentStatus(workspaceId, agentStatus)
+    );
+  }
+
+  private async updateTodoStatusFromStorage(workspaceId: string): Promise<void> {
+    const previousUpdate = this.todoStatusUpdateQueue.get(workspaceId) ?? Promise.resolve();
+    const nextUpdate = previousUpdate
+      .catch(() => undefined)
+      .then(async () => {
+        const sessionDir = this.config.getSessionDir(workspaceId);
+        const todos = await readTodosForSessionDir(sessionDir);
+        const todoStatus = deriveTodoStatus(todos) ?? null;
+
+        await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace todo status", () =>
+          this.extensionMetadata.setTodoStatus(workspaceId, todoStatus, todos.length > 0)
+        );
+      });
+
+    this.todoStatusUpdateQueue.set(workspaceId, nextUpdate);
+    try {
+      await nextUpdate;
+    } finally {
+      if (this.todoStatusUpdateQueue.get(workspaceId) === nextUpdate) {
+        this.todoStatusUpdateQueue.delete(workspaceId);
+      }
+    }
+  }
+
+  private async updateStreamingStatus(
+    workspaceId: string,
+    streaming: boolean,
+    update: ExtensionMetadataStreamingUpdate = {}
+  ): Promise<void> {
+    const streamGeneration = update.generation ?? this.streamingGenerations.get(workspaceId) ?? 0;
+    try {
+      let { hasTodos, todoStatus } = update;
+      if (!streaming && (hasTodos === undefined || todoStatus === undefined)) {
+        // Stop snapshots need an authoritative todo summary even for background workspaces,
+        // and centralizing the read here preserves the fire-and-forget abort/error handlers.
+        const sessionDir = this.config.getSessionDir(workspaceId);
+        const todos = await readTodosForSessionDir(sessionDir);
+        hasTodos ??= todos.length > 0;
+        // When there are no todos to derive from, leave `todoStatus` undefined
+        // so setStreaming doesn't touch the slot. AgentStatusService writes
+        // its AI-generated summary into the same `todoStatus` field — passing
+        // `null` here would clobber a freshly generated summary every time a
+        // free-form (no-todo) turn ends. Explicit clears still happen via
+        // setTodoStatus(null) when the agent calls `todo_write([])`.
+        todoStatus ??= deriveTodoStatus(todos);
+      }
+      if (
+        !streaming &&
+        update.generation !== undefined &&
+        update.generation !== (this.streamingGenerations.get(workspaceId) ?? 0)
+      ) {
+        // A newer stream has started since this stop was initiated, so dropping the stale
+        // streaming=false write preserves the active stream's metadata snapshot.
+        return;
+      }
+
+      const snapshot = await this.extensionMetadata.setStreaming(workspaceId, streaming, {
+        ...update,
+        ...(todoStatus !== undefined ? { todoStatus } : {}),
+        ...(hasTodos !== undefined ? { hasTodos } : {}),
+      });
+      // Compaction tagging is stop-snapshot only. Never tag streaming=true updates,
+      // otherwise fast follow-up turns can inherit stale compaction metadata before cleanup runs.
+      const shouldTagCompaction =
+        !streaming && this.compactionStreamGenerations.get(workspaceId) === streamGeneration;
+      const shouldTagIdleCompaction = !streaming && this.idleCompactingWorkspaces.has(workspaceId);
+      this.emitWorkspaceActivity(workspaceId, {
+        ...snapshot,
+        ...(shouldTagCompaction ? { isCompaction: true } : {}),
+        ...(shouldTagIdleCompaction ? { isIdleCompaction: true } : {}),
+      });
+    } catch (error) {
+      log.error("Failed to update workspace streaming status", { workspaceId, error });
+    } finally {
+      // Compaction markers are turn-scoped. Always clear matching streaming=false
+      // transitions, even when metadata writes fail, so stale state cannot leak into
+      // future user streams. Match by generation so an old stop cannot clear a newer
+      // compaction that started while the stop snapshot was doing async work.
+      if (!streaming) {
+        if (this.compactionStreamGenerations.get(workspaceId) === streamGeneration) {
+          this.compactionStreamGenerations.delete(workspaceId);
+        }
+        this.idleCompactingWorkspaces.delete(workspaceId);
+      }
+    }
+  }
+
+  /**
+   * Snapshot the current streaming generation and fire a streaming=false metadata update.
+   * Accepts an optional pre-captured generation for callers that need to snapshot before
+   * async work (e.g., handleStreamCompletion captures before updateRecencyTimestamp so a
+   * concurrent stream-start won't cause the stop to silently overwrite the newer stream).
+   */
+  private stopStreamingStatus(workspaceId: string, capturedGeneration?: number): Promise<void> {
+    const generation = capturedGeneration ?? this.streamingGenerations.get(workspaceId) ?? 0;
+    return this.updateStreamingStatus(workspaceId, false, { generation });
+  }
+
+  private async handleStreamCompletion(workspaceId: string): Promise<void> {
+    const generation = this.streamingGenerations.get(workspaceId) ?? 0;
+    const isIdleCompaction = this.idleCompactingWorkspaces.has(workspaceId);
+
+    // Idle compaction is maintenance work, so preserve the pre-existing recency.
+    // That keeps the workspace from jumping to the top of the sidebar and also
+    // prevents the background activity path from treating compaction as a fresh response.
+
+    if (!isIdleCompaction) {
+      // Always use Date.now() for stream-completion recency.
+      // extractTimestamp() returns the message-creation timestamp from stream
+      // metadata, which is effectively the same as the sendMessage recency and
+      // can lose the race against the frontend's lastRead (set via Date.now()
+      // after the IPC round-trip). Using a fresh timestamp here ensures the
+      // completion recency is strictly after any earlier lastRead write.
+      await this.updateRecencyTimestamp(workspaceId, Date.now());
+    }
+
+    await this.stopStreamingStatus(workspaceId, generation);
+    // Goal mutations are drained by AgentSession after stream accounting. Doing
+    // it here races with per-session stream-end listeners because EventEmitter
+    // does not await async handlers.
+  }
+
+  private createInitLogger(workspaceId: string) {
+    const hasInitState = () => this.initStateManager.getInitState(workspaceId) !== undefined;
+
+    return {
+      logStep: (message: string) => {
+        if (!hasInitState()) {
+          return;
+        }
+        this.initStateManager.appendOutput(workspaceId, message, false);
+      },
+      logStdout: (line: string) => {
+        if (!hasInitState()) {
+          return;
+        }
+        this.initStateManager.appendOutput(workspaceId, line, false);
+      },
+      logStderr: (line: string) => {
+        if (!hasInitState()) {
+          return;
+        }
+        this.initStateManager.appendOutput(workspaceId, line, true);
+      },
+      logComplete: (exitCode: number) => {
+        this.initAbortControllers.delete(workspaceId);
+
+        // WorkspaceService.remove() clears in-memory init state early so waiters/tools can bail out.
+        // If init completes after deletion, avoid noisy logs (endInit() would report missing state).
+        if (!hasInitState()) {
+          return;
+        }
+
+        void this.initStateManager.endInit(workspaceId, exitCode);
+      },
+      enterHookPhase: () => {
+        if (!hasInitState()) {
+          return;
+        }
+        this.initStateManager.enterHookPhase(workspaceId);
+      },
+    };
+  }
+
+  private schedulePostCompactionMetadataRefresh(workspaceId: string): void {
+    assert(typeof workspaceId === "string", "workspaceId must be a string");
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "workspaceId must not be empty");
+
+    const existing = this.postCompactionRefreshTimers.get(trimmed);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(() => {
+      this.postCompactionRefreshTimers.delete(trimmed);
+      void this.emitPostCompactionMetadata(trimmed);
+    }, POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS);
+
+    this.postCompactionRefreshTimers.set(trimmed, timer);
+  }
+
+  private async emitPostCompactionMetadata(workspaceId: string): Promise<void> {
+    try {
+      const session = this.sessions.get(workspaceId);
+      if (!session) {
+        return;
+      }
+
+      const metadata = await this.getInfo(workspaceId);
+      if (!metadata) {
+        return;
+      }
+
+      const postCompaction = await this.getPostCompactionState(workspaceId);
+      const enrichedMetadata = { ...metadata, postCompaction };
+      session.emitMetadata(enrichedMetadata);
+    } catch (error) {
+      // Workspace runtime unavailable (e.g., SSH unreachable) - skip emitting post-compaction state.
+      log.debug("Failed to emit post-compaction metadata", { workspaceId, error });
+    }
+  }
+
+  // Clear persisted sidebar status only after the user turn is accepted and emitted.
+  // sendMessage can fail before acceptance (for example invalid_model_string), so
+  // clearing inside sendMessage would drop status for turns that never entered history.
+  private shouldClearAgentStatusFromChatMessage(message: WorkspaceChatMessage): boolean {
+    return (
+      message.type === "message" && message.role === "user" && message.metadata?.synthetic !== true
+    );
+  }
+
+  /**
+   * Run startup recovery without permanently caching a session for every workspace.
+   * Only promote the temporary session if recovery leaves background activity alive.
+   */
+  private startStartupRecovery(workspaceId: string): void {
+    const trimmed = workspaceId.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    const existingSession =
+      this.sessions.get(trimmed) ?? this.transientStartupRecoverySessions.get(trimmed);
+    if (existingSession) {
+      existingSession.scheduleStartupRecovery();
+      return;
+    }
+
+    const session = this.createSession(trimmed);
+    this.transientStartupRecoverySessions.set(trimmed, session);
+
+    void session
+      .runStartupRecovery()
+      .then(() => {
+        if (this.transientStartupRecoverySessions.get(trimmed) !== session) {
+          return;
+        }
+
+        this.transientStartupRecoverySessions.delete(trimmed);
+        if (session.shouldRetainAfterStartupRecovery()) {
+          this.registerSession(trimmed, session);
+          return;
+        }
+
+        session.dispose();
+      })
+      .catch((error) => {
+        if (this.transientStartupRecoverySessions.get(trimmed) === session) {
+          this.transientStartupRecoverySessions.delete(trimmed);
+          session.dispose();
+        }
+
+        log.warn("Failed to run startup recovery for workspace", {
+          workspaceId: trimmed,
+          error: getErrorMessage(error),
+        });
+      });
+  }
+
+  private createSession(workspaceId: string): AgentSession {
+    return new AgentSession({
+      workspaceId,
+      config: this.config,
+      historyService: this.historyService,
+      aiService: this.aiService,
+      telemetryService: this.telemetryService,
+      initStateManager: this.initStateManager,
+      experimentsService: this.experimentsService,
+      workspaceGoalService: this.workspaceGoalService,
+      backgroundProcessManager: this.backgroundProcessManager,
+      onCompactionComplete: () => {
+        this.schedulePostCompactionMetadataRefresh(workspaceId);
+      },
+      onPostCompactionStateChange: () => {
+        this.schedulePostCompactionMetadataRefresh(workspaceId);
+      },
+    });
+  }
+
+  private attachSessionSubscriptions(workspaceId: string, session: AgentSession): void {
+    const chatUnsubscribe = session.onChatEvent((event) => {
+      this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
+      if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
+        void this.updateAgentStatus(event.workspaceId, null);
+      }
+    });
+
+    const metadataUnsubscribe = session.onMetadataEvent((event) => {
+      this.emit("metadata", {
+        workspaceId: event.workspaceId,
+        metadata: event.metadata!,
+      });
+    });
+
+    this.sessionSubscriptions.set(workspaceId, {
+      chat: chatUnsubscribe,
+      metadata: metadataUnsubscribe,
+    });
+  }
+
+  public getOrCreateSession(workspaceId: string): AgentSession {
+    assert(typeof workspaceId === "string", "workspaceId must be a string");
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "workspaceId must not be empty");
+
+    let session = this.sessions.get(trimmed);
+    if (session) {
+      return session;
+    }
+
+    session = this.transientStartupRecoverySessions.get(trimmed);
+    if (session) {
+      this.transientStartupRecoverySessions.delete(trimmed);
+      this.sessions.set(trimmed, session);
+      this.attachSessionSubscriptions(trimmed, session);
+      return session;
+    }
+
+    session = this.createSession(trimmed);
+    this.sessions.set(trimmed, session);
+    this.attachSessionSubscriptions(trimmed, session);
+
+    return session;
+  }
+
+  /**
+   * Register an externally-created AgentSession so that WorkspaceService
+   * operations (sendMessage, resumeStream, remove, etc.) reuse it instead of
+   * creating a duplicate. Used by `mux run` CLI to keep a single session
+   * instance for the parent workspace.
+   */
+  public registerSession(workspaceId: string, session: AgentSession): void {
+    workspaceId = workspaceId.trim();
+    assert(workspaceId.length > 0, "workspaceId must not be empty");
+    assert(!this.sessions.has(workspaceId), `session already registered for ${workspaceId}`);
+    if (this.transientStartupRecoverySessions.get(workspaceId) === session) {
+      this.transientStartupRecoverySessions.delete(workspaceId);
+    }
+
+    this.sessions.set(workspaceId, session);
+    this.attachSessionSubscriptions(workspaceId, session);
+  }
+
+  public emitChatEvent(workspaceId: string, message: WorkspaceChatMessage): void {
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "emitChatEvent requires workspaceId");
+    this.sessions.get(trimmed)?.emitChatEvent(message);
+  }
+
+  public disposeSession(workspaceId: string): void {
+    const trimmed = workspaceId.trim();
+    const transientSession = this.transientStartupRecoverySessions.get(trimmed);
+    if (transientSession) {
+      transientSession.dispose();
+      this.transientStartupRecoverySessions.delete(trimmed);
+    }
+
+    const session = this.sessions.get(trimmed);
+    const refreshTimer = this.postCompactionRefreshTimers.get(trimmed);
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+      this.postCompactionRefreshTimers.delete(trimmed);
+    }
+
+    if (!session) {
+      return;
+    }
+
+    const subscriptions = this.sessionSubscriptions.get(trimmed);
+    if (subscriptions) {
+      subscriptions.chat();
+      subscriptions.metadata();
+      this.sessionSubscriptions.delete(trimmed);
+    }
+
+    session.dispose();
+    this.sessions.delete(trimmed);
+  }
+
+  private async getPersistedPostCompactionDiffPaths(workspaceId: string): Promise<string[] | null> {
+    const postCompactionPath = path.join(
+      this.config.getSessionDir(workspaceId),
+      "post-compaction.json"
+    );
+
+    try {
+      const raw = await fsPromises.readFile(postCompactionPath, "utf-8");
+      const parsed: unknown = JSON.parse(raw);
+      const diffsRaw = (parsed as { diffs?: unknown }).diffs;
+      if (!Array.isArray(diffsRaw)) {
+        return null;
+      }
+
+      const result: string[] = [];
+      for (const diff of diffsRaw) {
+        if (!diff || typeof diff !== "object") continue;
+        const p = (diff as { path?: unknown }).path;
+        if (typeof p !== "string") continue;
+        const trimmed = p.trim();
+        if (trimmed.length === 0) continue;
+        result.push(trimmed);
+      }
+
+      return result;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Get post-compaction context state for a workspace.
+   * Returns info about what will be injected after compaction.
+   * Prefers cached paths from pending compaction, falls back to history extraction.
+   */
+  public async getPostCompactionState(workspaceId: string): Promise<{
+    planPath: string | null;
+    trackedFilePaths: string[];
+    excludedItems: string[];
+  }> {
+    // Get workspace metadata to create runtime for plan file check
+    const metadata = await this.getInfo(workspaceId);
+    if (!metadata) {
+      // Can't get metadata, return empty state
+      const exclusions = await this.getPostCompactionExclusions(workspaceId);
+      return { planPath: null, trackedFilePaths: [], excludedItems: exclusions.excludedItems };
+    }
+
+    const runtime = createRuntimeForWorkspace(metadata);
+    const muxHome = runtime.getMuxHome();
+    const planPath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
+    // For local/SSH: expand tilde for comparison with message history paths
+    // For Docker: paths are already absolute (/var/mux/...), no expansion needed
+    const expandedPlanPath = muxHome.startsWith("~") ? expandTilde(planPath) : planPath;
+    // Legacy plan path (stored by workspace ID) for filtering
+    const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
+    const expandedLegacyPlanPath = expandTilde(legacyPlanPath);
+
+    // Check both new and legacy plan paths, prefer new path
+    const newPlanExists = await fileExists(runtime, planPath);
+    const legacyPlanExists = !newPlanExists && (await fileExists(runtime, legacyPlanPath));
+    // Resolve plan path via runtime to get correct absolute path for deep links.
+    // Local: expands ~ to local home. SSH: expands ~ on remote host.
+    const activePlanPath = newPlanExists
+      ? await runtime.resolvePath(planPath)
+      : legacyPlanExists
+        ? await runtime.resolvePath(legacyPlanPath)
+        : null;
+
+    // Load exclusions
+    const exclusions = await this.getPostCompactionExclusions(workspaceId);
+
+    // Helper to check if a path is a plan file (new or legacy format)
+    const isPlanPath = (p: string) =>
+      p === planPath ||
+      p === expandedPlanPath ||
+      p === legacyPlanPath ||
+      p === expandedLegacyPlanPath;
+
+    // If session has pending compaction attachments, use cached paths
+    // (history is cleared after compaction, but cache survives)
+    const session = this.sessions.get(workspaceId);
+    const pendingPaths = session?.getPendingTrackedFilePaths();
+    if (pendingPaths) {
+      // Filter out both new and legacy plan file paths
+      const trackedFilePaths = pendingPaths.filter((p) => !isPlanPath(p));
+      return {
+        planPath: activePlanPath,
+        trackedFilePaths,
+        excludedItems: exclusions.excludedItems,
+      };
+    }
+
+    // Fallback (crash-safe): if a post-compaction snapshot exists on disk, use it.
+    const persistedPaths = await this.getPersistedPostCompactionDiffPaths(workspaceId);
+    if (persistedPaths !== null) {
+      const trackedFilePaths = persistedPaths.filter((p) => !isPlanPath(p));
+      return {
+        planPath: activePlanPath,
+        trackedFilePaths,
+        excludedItems: exclusions.excludedItems,
+      };
+    }
+
+    // Fallback: compute tracked files from message history (survives reloads).
+    // Only the current compaction epoch matters — post-compaction files are from
+    // the active epoch only.
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    const messages = historyResult.success ? historyResult.data : [];
+    const allPaths = extractEditedFilePaths(messages);
+
+    // Exclude plan file from tracked files since it has its own section
+    // Filter out both new and legacy plan file paths
+    const trackedFilePaths = allPaths.filter((p) => !isPlanPath(p));
+    return {
+      planPath: activePlanPath,
+      trackedFilePaths,
+      excludedItems: exclusions.excludedItems,
+    };
+  }
+
+  /**
+   * Get post-compaction exclusions for a workspace.
+   * Returns empty exclusions if file doesn't exist.
+   */
+  public async getPostCompactionExclusions(workspaceId: string): Promise<PostCompactionExclusions> {
+    const exclusionsPath = path.join(this.config.getSessionDir(workspaceId), "exclusions.json");
+    try {
+      const data = await fsPromises.readFile(exclusionsPath, "utf-8");
+      return JSON.parse(data) as PostCompactionExclusions;
+    } catch {
+      return { excludedItems: [] };
+    }
+  }
+
+  /**
+   * Set whether an item is excluded from post-compaction context.
+   * Item IDs: "plan" for plan file, "skills" for loaded skill snapshots, "file:<path>" for tracked files.
+   */
+  public async setPostCompactionExclusion(
+    workspaceId: string,
+    itemId: string,
+    excluded: boolean
+  ): Promise<Result<void>> {
+    try {
+      const exclusions = await this.getPostCompactionExclusions(workspaceId);
+      const set = new Set(exclusions.excludedItems);
+
+      if (excluded) {
+        set.add(itemId);
+      } else {
+        set.delete(itemId);
+      }
+
+      const sessionDir = this.config.getSessionDir(workspaceId);
+      await ensurePrivateDir(sessionDir);
+      const exclusionsPath = path.join(sessionDir, "exclusions.json");
+      await fsPromises.writeFile(
+        exclusionsPath,
+        JSON.stringify({ excludedItems: [...set] }, null, 2)
+      );
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to set exclusion: ${message}`);
+    }
+  }
+
+  async create(
+    projectPath: string,
+    branchName: string | undefined,
+    trunkBranch: string | undefined,
+    title?: string,
+    runtimeConfig?: RuntimeConfig,
+    subProjectPath?: string,
+    pendingAutoTitle?: boolean
+  ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
+    const configSnapshot = this.config.loadConfigOrDefault();
+    const requestedProjectPath = stripTrailingSlashes(projectPath);
+    const requestedProjectConfig = configSnapshot.projects.get(requestedProjectPath);
+    const owningProjectPath = requestedProjectConfig?.parentProjectPath ?? requestedProjectPath;
+    const effectiveSubProjectPath = requestedProjectConfig?.parentProjectPath
+      ? requestedProjectPath
+      : subProjectPath;
+    const projectConfig = configSnapshot.projects.get(owningProjectPath);
+
+    if (
+      effectiveSubProjectPath &&
+      configSnapshot.projects.get(effectiveSubProjectPath)?.parentProjectPath !== owningProjectPath
+    ) {
+      return Err(`Sub-project not found under parent: ${effectiveSubProjectPath}`);
+    }
+
+    // Trust gate: block workspace creation for untrusted projects.
+    // The frontend shows a confirmation dialog before reaching here,
+    // but this guards secondary paths (slash commands, forking). Sub-projects
+    // share their parent's checkout, so trust is owned by that parent project.
+    if (!projectConfig?.trusted) {
+      return Err(
+        "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
+      );
+    }
+
+    // Auto-generate a branch name when the caller omits one (used by /new to
+    // mirror /fork's seamless creation flow). Mirrors fork's auto-naming: scan
+    // existing workspace names AND local git branches so numbering is stable.
+    // Branches/worktrees are owned by the parent project, so always read from
+    // owningProjectPath even when a sub-project initiated creation.
+    let resolvedBranchName: string;
+    if (branchName == null) {
+      const existingNamesSet = new Set<string>();
+      for (const entry of projectConfig.workspaces ?? []) {
+        if (typeof entry.name === "string") {
+          existingNamesSet.add(entry.name);
+        }
+      }
+      try {
+        for (const localBranch of await listLocalBranches(owningProjectPath)) {
+          existingNamesSet.add(localBranch);
+        }
+      } catch (error) {
+        log.debug("Failed to list local branches for /new auto-name preflight", {
+          projectPath: owningProjectPath,
+          error: getErrorMessage(error),
+        });
+      }
+      resolvedBranchName = generateForkBranchName(AUTO_NEW_WORKSPACE_BASE_NAME, [
+        ...existingNamesSet,
+      ]);
+    } else {
+      resolvedBranchName = branchName;
+    }
+
+    // Validate workspace name (covers both caller-provided and auto-generated names)
+    const validation = validateWorkspaceName(resolvedBranchName);
+    if (!validation.valid) {
+      return Err(validation.error ?? "Invalid workspace name");
+    }
+
+    // Generate stable workspace ID
+    const workspaceId = this.config.generateStableId();
+
+    // Create runtime for workspace creation
+    // Default to worktree runtime for backward compatibility
+    let finalRuntimeConfig: RuntimeConfig = runtimeConfig ?? {
+      type: "worktree",
+      srcBaseDir: this.config.srcDir,
+    };
+
+    if (this.policyService?.isEnforced()) {
+      if (!this.policyService.isRuntimeAllowed(finalRuntimeConfig)) {
+        return Err("Selected runtime is not allowed by policy");
+      }
+    }
+
+    // Local runtime doesn't need a trunk branch; worktree/SSH runtimes require it
+    const isLocalRuntime = finalRuntimeConfig.type === "local";
+    const normalizedTrunkBranch = trunkBranch?.trim() ?? "";
+    if (!isLocalRuntime && normalizedTrunkBranch.length === 0) {
+      return Err("Trunk branch is required for worktree and SSH runtimes");
+    }
+
+    let runtime;
+    try {
+      runtime = createRuntime(finalRuntimeConfig, { projectPath: owningProjectPath });
+
+      // Resolve srcBaseDir path if the config has one.
+      // Skip if runtime has deferredRuntimeAccess flag (runtime doesn't exist yet, e.g., Coder).
+      const srcBaseDir = getSrcBaseDir(finalRuntimeConfig);
+      if (srcBaseDir && !runtime.createFlags?.deferredRuntimeAccess) {
+        const resolvedSrcBaseDir = await runtime.resolvePath(srcBaseDir);
+        if (resolvedSrcBaseDir !== srcBaseDir && hasSrcBaseDir(finalRuntimeConfig)) {
+          finalRuntimeConfig = {
+            ...finalRuntimeConfig,
+            srcBaseDir: resolvedSrcBaseDir,
+          };
+          runtime = createRuntime(finalRuntimeConfig, { projectPath: owningProjectPath });
+        }
+      }
+    } catch (error) {
+      const errorMsg = getErrorMessage(error);
+      return Err(errorMsg);
+    }
+
+    const session = this.getOrCreateSession(workspaceId);
+    this.initStateManager.startInit(workspaceId, owningProjectPath);
+
+    // Create abort controller immediately so workspace lifecycle operations (e.g., cancel/remove)
+    // can reliably interrupt init even if the UI deletes the workspace during create().
+    const initAbortController = new AbortController();
+    this.initAbortControllers.set(workspaceId, initAbortController);
+
+    const initLogger = this.createInitLogger(workspaceId);
+
+    try {
+      // Create workspace with automatic collision retry
+      let finalBranchName = resolvedBranchName;
+      let createResult: { success: boolean; workspacePath?: string; error?: string };
+
+      // If runtime uses config-level collision detection (e.g., Coder - can't reach host),
+      // check against existing workspace names before createWorkspace.
+      if (runtime.createFlags?.configLevelCollisionDetection) {
+        const existingNames = new Set(
+          (this.config.loadConfigOrDefault().projects.get(owningProjectPath)?.workspaces ?? []).map(
+            (w) => w.name
+          )
+        );
+        for (
+          let i = 0;
+          i < MAX_WORKSPACE_NAME_COLLISION_RETRIES && existingNames.has(finalBranchName);
+          i++
+        ) {
+          log.debug(`Workspace name collision for "${finalBranchName}", adding suffix`);
+          finalBranchName = appendCollisionSuffix(resolvedBranchName);
+        }
+      }
+
+      const createEnv = await secretsToRecord(
+        this.config.getEffectiveSecrets(owningProjectPath),
+        this.opResolver
+      );
+
+      for (let attempt = 0; attempt <= MAX_WORKSPACE_NAME_COLLISION_RETRIES; attempt++) {
+        createResult = await runtime.createWorkspace({
+          projectPath: owningProjectPath,
+          branchName: finalBranchName,
+          trunkBranch: normalizedTrunkBranch,
+          directoryName: finalBranchName,
+          initLogger,
+          abortSignal: initAbortController.signal,
+          env: createEnv,
+          trusted: projectConfig.trusted ?? false,
+        });
+
+        if (createResult.success) break;
+
+        // If collision and not last attempt, retry with suffix
+        if (
+          isWorkspaceNameCollision(createResult.error) &&
+          attempt < MAX_WORKSPACE_NAME_COLLISION_RETRIES
+        ) {
+          log.debug(`Workspace name collision for "${finalBranchName}", retrying with suffix`);
+          finalBranchName = appendCollisionSuffix(resolvedBranchName);
+          continue;
+        }
+        break;
+      }
+
+      if (!createResult!.success || !createResult!.workspacePath) {
+        initLogger.logComplete(-1);
+        return Err(createResult!.error ?? "Failed to create workspace");
+      }
+
+      // Let runtime finalize config (e.g., derive names, compute host) after collision handling
+      if (runtime.finalizeConfig) {
+        const finalizeResult = await runtime.finalizeConfig(finalBranchName, finalRuntimeConfig);
+        if (!finalizeResult.success) {
+          initLogger.logComplete(-1);
+          return Err(finalizeResult.error);
+        }
+        finalRuntimeConfig = finalizeResult.data;
+        runtime = createRuntime(finalRuntimeConfig, { projectPath: owningProjectPath });
+      }
+
+      // Let runtime validate before persisting (e.g., external collision checks)
+      if (runtime.validateBeforePersist) {
+        const validateResult = await runtime.validateBeforePersist(
+          finalBranchName,
+          finalRuntimeConfig
+        );
+        if (!validateResult.success) {
+          initLogger.logComplete(-1);
+          return Err(validateResult.error);
+        }
+      }
+
+      const projectName =
+        owningProjectPath.split("/").pop() ?? owningProjectPath.split("\\").pop() ?? "unknown";
+
+      const metadata = {
+        id: workspaceId,
+        name: finalBranchName,
+        title,
+        projectName,
+        projectPath: owningProjectPath,
+        subProjectPath: effectiveSubProjectPath,
+        createdAt: new Date().toISOString(),
+      };
+
+      await this.config.editConfig((config) => {
+        let projectConfig = config.projects.get(owningProjectPath);
+        if (!projectConfig) {
+          projectConfig = { workspaces: [] };
+          config.projects.set(owningProjectPath, projectConfig);
+        }
+        projectConfig.workspaces.push({
+          path: createResult!.workspacePath!,
+          id: workspaceId,
+          name: finalBranchName,
+          title,
+          createdAt: metadata.createdAt,
+          runtimeConfig: finalRuntimeConfig,
+          subProjectPath: effectiveSubProjectPath,
+          // Mirror /fork: when /new is invoked with a start message, defer title
+          // selection until the first message can drive LLM-based generation.
+          ...(pendingAutoTitle === true ? { pendingAutoTitle: true } : {}),
+        });
+        return config;
+      });
+
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const completeMetadata = allMetadata.find((m) => m.id === workspaceId);
+      if (!completeMetadata) {
+        initLogger.logComplete(-1);
+        return Err("Failed to retrieve workspace metadata");
+      }
+
+      session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
+
+      // Background init: run postCreateSetup (if present) then initWorkspace
+      const secrets = await secretsToRecord(
+        this.config.getEffectiveSecrets(owningProjectPath),
+        this.opResolver
+      );
+      // Background init: postCreateSetup (provisioning) + initWorkspace (sync/checkout/hook)
+      //
+      // If the user cancelled creation while create() was still in flight, avoid spawning
+      // additional background work for a workspace that's already being removed.
+      if (!this.removingWorkspaces.has(workspaceId) && !initAbortController.signal.aborted) {
+        runBackgroundInit(
+          runtime,
+          {
+            projectPath: owningProjectPath,
+            branchName: finalBranchName,
+            trunkBranch: normalizedTrunkBranch,
+            workspacePath: createResult!.workspacePath,
+            initLogger,
+            env: secrets,
+            abortSignal: initAbortController.signal,
+            trusted: projectConfig.trusted ?? false,
+          },
+          workspaceId,
+          log
+        );
+      } else {
+        initAbortController.abort();
+        this.initAbortControllers.delete(workspaceId);
+
+        // Background init will never run, so init-end won’t fire.
+        // Clear init state + re-emit metadata so the sidebar doesn’t stay stuck on isInitializing.
+        this.initStateManager.clearInMemoryState(workspaceId);
+        session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
+      }
+
+      return Ok({ metadata: this.enrichFrontendMetadata(completeMetadata) });
+    } catch (error) {
+      initLogger.logComplete(-1);
+      const message = getErrorMessage(error);
+      return Err(`Failed to create workspace: ${message}`);
+    }
+  }
+
+  async createMultiProject(
+    projects: ProjectRef[],
+    branchName: string,
+    trunkBranch: string | undefined,
+    title?: string,
+    runtimeConfig?: RuntimeConfig
+  ): Promise<Result<FrontendWorkspaceMetadata>> {
+    assert(projects.length > 1, "createMultiProject requires at least two projects");
+    if (!this.isMultiProjectWorkspacesExperimentEnabled()) {
+      return Err(MULTI_PROJECT_WORKSPACES_DISABLED_ERROR);
+    }
+
+    let initLogger: ReturnType<WorkspaceService["createInitLogger"]> | null = null;
+
+    try {
+      const validation = validateWorkspaceName(branchName);
+      if (!validation.valid) {
+        return Err(validation.error ?? "Invalid workspace name");
+      }
+
+      const normalizedProjects = projects.map((project) => ({
+        projectPath: stripTrailingSlashes(project.projectPath),
+        projectName: project.projectName,
+      }));
+      const primaryProject = normalizedProjects[0];
+      assert(primaryProject, "createMultiProject requires a primary project");
+
+      const configSnapshot = this.config.loadConfigOrDefault();
+      for (const project of normalizedProjects) {
+        const projectConfig = configSnapshot.projects.get(
+          stripTrailingSlashes(project.projectPath)
+        );
+        if (projectConfig?.parentProjectPath) {
+          return Err(
+            `Sub-project ${project.projectName} cannot be added directly to a multi-project workspace. Add its parent project instead.`
+          );
+        }
+      }
+
+      for (const project of normalizedProjects) {
+        const projectConfig = configSnapshot.projects.get(
+          stripTrailingSlashes(project.projectPath)
+        );
+        if (!projectConfig?.trusted) {
+          return Err(
+            `Project ${project.projectName} must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page.`
+          );
+        }
+      }
+
+      const workspaceId = this.config.generateStableId();
+
+      let finalRuntimeConfig: RuntimeConfig = runtimeConfig ?? {
+        type: "worktree",
+        srcBaseDir: this.config.srcDir,
+      };
+
+      if (this.policyService?.isEnforced()) {
+        if (!this.policyService.isRuntimeAllowed(finalRuntimeConfig)) {
+          return Err("Selected runtime is not allowed by policy");
+        }
+      }
+
+      const runtimeType = finalRuntimeConfig.type;
+      assert(
+        runtimeType === "local" || runtimeType === "worktree",
+        `Multi-project workspaces currently require local or worktree runtime, got: ${runtimeType}`
+      );
+
+      const isLocalRuntime = finalRuntimeConfig.type === "local";
+      const normalizedPreferredTrunkBranch = trunkBranch?.trim();
+      if (!isLocalRuntime && normalizedPreferredTrunkBranch === "") {
+        return Err("Trunk branch is required for worktree runtime");
+      }
+
+      let containerSrcBaseDir = getSrcBaseDir(finalRuntimeConfig) ?? this.config.srcDir;
+      const runtimeSrcBaseDir = getSrcBaseDir(finalRuntimeConfig);
+      if (runtimeSrcBaseDir) {
+        const primaryRuntime = createRuntime(finalRuntimeConfig, {
+          projectPath: primaryProject.projectPath,
+        });
+
+        if (!primaryRuntime.createFlags?.deferredRuntimeAccess) {
+          const resolvedSrcBaseDir = await primaryRuntime.resolvePath(runtimeSrcBaseDir);
+          containerSrcBaseDir = resolvedSrcBaseDir;
+          if (resolvedSrcBaseDir !== runtimeSrcBaseDir && hasSrcBaseDir(finalRuntimeConfig)) {
+            finalRuntimeConfig = {
+              ...finalRuntimeConfig,
+              srcBaseDir: resolvedSrcBaseDir,
+            };
+          }
+        }
+      }
+
+      const session = this.getOrCreateSession(workspaceId);
+      this.initStateManager.startInit(workspaceId, primaryProject.projectPath);
+      const initAbortController = new AbortController();
+      this.initAbortControllers.set(workspaceId, initAbortController);
+      initLogger = this.createInitLogger(workspaceId);
+
+      const resolveProjectTrunkBranch = async (projectPath: string): Promise<string> => {
+        if (isLocalRuntime) {
+          return normalizedPreferredTrunkBranch ?? "";
+        }
+
+        if (!normalizedPreferredTrunkBranch) {
+          const localBranches = await listLocalBranches(projectPath);
+          return detectDefaultTrunkBranch(projectPath, localBranches);
+        }
+
+        try {
+          const localBranches = await listLocalBranches(projectPath);
+          if (localBranches.includes(normalizedPreferredTrunkBranch)) {
+            return normalizedPreferredTrunkBranch;
+          }
+
+          const detectedTrunkBranch = await detectDefaultTrunkBranch(projectPath, localBranches);
+          log.debug("Requested multi-project trunk branch missing; using detected branch", {
+            projectPath,
+            requestedTrunkBranch: normalizedPreferredTrunkBranch,
+            detectedTrunkBranch,
+          });
+          return detectedTrunkBranch;
+        } catch (error: unknown) {
+          // When branch discovery is unavailable, preserve the caller-provided branch.
+          // This mirrors single-project create() behavior for non-local runtimes.
+          log.debug("Failed to detect per-project trunk branch; using requested branch", {
+            projectPath,
+            requestedTrunkBranch: normalizedPreferredTrunkBranch,
+            error: getErrorMessage(error),
+          });
+          return normalizedPreferredTrunkBranch;
+        }
+      };
+      const projectRuntimeEntries = normalizedProjects.map((project) => ({
+        project,
+        runtime: createRuntime(finalRuntimeConfig, {
+          projectPath: project.projectPath,
+          workspaceName: branchName,
+        }),
+      }));
+
+      const createdWorkspaces: Array<{
+        project: ProjectRef;
+        runtime: ReturnType<typeof createRuntime>;
+        workspacePath: string;
+        trunkBranch: string;
+      }> = [];
+
+      const rollbackCreatedWorkspaces = async (): Promise<void> => {
+        for (const createdWorkspace of [...createdWorkspaces].reverse()) {
+          const trusted =
+            configSnapshot.projects.get(stripTrailingSlashes(createdWorkspace.project.projectPath))
+              ?.trusted ?? false;
+          try {
+            // Rollback only removes the just-created workspace path; forcing deletion could
+            // also drop an older same-named branch in worktree runtimes.
+            await createdWorkspace.runtime.deleteWorkspace(
+              createdWorkspace.project.projectPath,
+              branchName,
+              false,
+              initAbortController.signal,
+              trusted
+            );
+          } catch (error: unknown) {
+            log.error("Failed to roll back multi-project workspace creation", {
+              workspaceId,
+              projectPath: createdWorkspace.project.projectPath,
+              error: getErrorMessage(error),
+            });
+          }
+        }
+      };
+
+      for (const projectRuntimeEntry of projectRuntimeEntries) {
+        const trusted =
+          configSnapshot.projects.get(stripTrailingSlashes(projectRuntimeEntry.project.projectPath))
+            ?.trusted ?? false;
+
+        let projectTrunkBranch: string;
+        try {
+          projectTrunkBranch = await resolveProjectTrunkBranch(
+            projectRuntimeEntry.project.projectPath
+          );
+        } catch (error: unknown) {
+          await rollbackCreatedWorkspaces();
+          initLogger.logComplete(-1);
+          return Err(
+            `Failed to resolve trunk branch for project ${projectRuntimeEntry.project.projectName}: ${getErrorMessage(error)}`
+          );
+        }
+
+        assert(
+          isLocalRuntime || projectTrunkBranch.length > 0,
+          `Expected non-empty trunk branch for project ${projectRuntimeEntry.project.projectPath}`
+        );
+
+        const createEnv = await secretsToRecord(
+          this.config.getEffectiveSecrets(projectRuntimeEntry.project.projectPath),
+          this.opResolver
+        );
+
+        const createResult = await projectRuntimeEntry.runtime.createWorkspace({
+          projectPath: projectRuntimeEntry.project.projectPath,
+          branchName,
+          trunkBranch: projectTrunkBranch,
+          directoryName: branchName,
+          initLogger,
+          abortSignal: initAbortController.signal,
+          env: createEnv,
+          trusted,
+        });
+
+        if (!createResult.success || !createResult.workspacePath) {
+          await rollbackCreatedWorkspaces();
+          initLogger.logComplete(-1);
+          return Err(
+            createResult.error ??
+              `Failed to create workspace for project ${projectRuntimeEntry.project.projectName}`
+          );
+        }
+
+        createdWorkspaces.push({
+          project: projectRuntimeEntry.project,
+          runtime: projectRuntimeEntry.runtime,
+          workspacePath: createResult.workspacePath,
+          trunkBranch: projectTrunkBranch,
+        });
+      }
+
+      const containerManager = new ContainerManager(containerSrcBaseDir);
+      let containerPath: string;
+      try {
+        containerPath = await containerManager.createContainer(
+          branchName,
+          createdWorkspaces.map((workspace) => ({
+            projectName: workspace.project.projectName,
+            workspacePath: workspace.workspacePath,
+          }))
+        );
+      } catch (error) {
+        await rollbackCreatedWorkspaces();
+        const containerAlreadyExists = isErrnoWithCode(error, "EEXIST");
+        if (!containerAlreadyExists) {
+          try {
+            await containerManager.removeContainer(branchName);
+          } catch (cleanupError: unknown) {
+            log.error("Failed to clean up multi-project container after create failure", {
+              workspaceId,
+              branchName,
+              error: getErrorMessage(cleanupError),
+            });
+          }
+        }
+        initLogger.logComplete(-1);
+        if (containerAlreadyExists) {
+          return Err(`Failed to create multi-project container: ${branchName} already exists`);
+        }
+        return Err(`Failed to create multi-project container: ${getErrorMessage(error)}`);
+      }
+
+      const createdAt = new Date().toISOString();
+      await this.config.editConfig((config) => {
+        const multiProjectConfig = config.projects.get(MULTI_PROJECT_CONFIG_KEY) ?? {
+          workspaces: [],
+          projectKind: "system",
+        };
+        // Ensure legacy _multi entries are hidden from user-facing project lists.
+        multiProjectConfig.projectKind = "system";
+        multiProjectConfig.workspaces.push({
+          path: containerPath,
+          id: workspaceId,
+          name: branchName,
+          title,
+          createdAt,
+          runtimeConfig: finalRuntimeConfig,
+          projects: normalizedProjects,
+        });
+        config.projects.set(MULTI_PROJECT_CONFIG_KEY, multiProjectConfig);
+        return config;
+      });
+
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const completeMetadata = allMetadata.find((metadata) => metadata.id === workspaceId);
+      if (!completeMetadata) {
+        initLogger.logComplete(-1);
+        return Err("Failed to retrieve workspace metadata");
+      }
+
+      const enrichedMetadata = this.enrichFrontendMetadata(completeMetadata);
+      session.emitMetadata(enrichedMetadata);
+
+      // Background init: run postCreateSetup (if present) then initWorkspace for each project runtime.
+      // Multi-project creation should mirror create(): return metadata immediately, but only mark init
+      // complete after initialization work has run.
+      if (!this.removingWorkspaces.has(workspaceId) && !initAbortController.signal.aborted) {
+        void (async () => {
+          let initFailed = false;
+
+          for (const createdWorkspace of createdWorkspaces) {
+            if (this.removingWorkspaces.has(workspaceId) || initAbortController.signal.aborted) {
+              break;
+            }
+
+            const trusted =
+              configSnapshot.projects.get(
+                stripTrailingSlashes(createdWorkspace.project.projectPath)
+              )?.trusted ?? false;
+
+            const projectInitLogger = {
+              ...initLogger,
+              // Each runtime's init path reports completion. Suppress per-project completion so
+              // multi-project workspaces only transition out of initializing after all runtimes finish.
+              logComplete: (_exitCode: number) => undefined,
+            };
+
+            try {
+              const secrets = await secretsToRecord(
+                this.config.getEffectiveSecrets(createdWorkspace.project.projectPath),
+                this.opResolver
+              );
+
+              const initResult = await runFullInit(createdWorkspace.runtime, {
+                projectPath: createdWorkspace.project.projectPath,
+                branchName,
+                trunkBranch: createdWorkspace.trunkBranch,
+                workspacePath: createdWorkspace.workspacePath,
+                initLogger: projectInitLogger,
+                env: secrets,
+                abortSignal: initAbortController.signal,
+                trusted,
+              });
+
+              if (!initResult.success) {
+                initFailed = true;
+                log.error("Multi-project workspace init failed", {
+                  workspaceId,
+                  projectPath: createdWorkspace.project.projectPath,
+                  error: initResult.error ?? "Unknown initialization failure",
+                });
+              }
+            } catch (error: unknown) {
+              initFailed = true;
+              const message = getErrorMessage(error);
+              log.error("Multi-project workspace init failed", {
+                workspaceId,
+                projectPath: createdWorkspace.project.projectPath,
+                error: message,
+              });
+              initLogger.logStderr(
+                `Initialization failed for ${createdWorkspace.project.projectName}: ${message}`
+              );
+            }
+          }
+
+          if (this.removingWorkspaces.has(workspaceId) || initAbortController.signal.aborted) {
+            initAbortController.abort();
+            this.initAbortControllers.delete(workspaceId);
+
+            // Background init will never fully complete, so init-end won’t fire.
+            // Clear init state + re-emit fresh metadata so the sidebar doesn’t stay stuck on isInitializing.
+            this.initStateManager.clearInMemoryState(workspaceId);
+            session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
+            return;
+          }
+
+          initLogger.logComplete(initFailed ? -1 : 0);
+        })();
+      } else {
+        initAbortController.abort();
+        this.initAbortControllers.delete(workspaceId);
+
+        // Background init will never run, so init-end won’t fire.
+        // Clear init state + re-emit fresh metadata so the sidebar doesn’t stay stuck on isInitializing.
+        this.initStateManager.clearInMemoryState(workspaceId);
+        session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
+      }
+
+      return Ok(enrichedMetadata);
+    } catch (error) {
+      initLogger?.logComplete(-1);
+      const message = getErrorMessage(error);
+      return Err(`Failed to create multi-project workspace: ${message}`);
+    }
+  }
+
+  async remove(workspaceId: string, force = false): Promise<Result<void>> {
+    // Idempotent: if already removing, return success to prevent race conditions
+    if (this.removingWorkspaces.has(workspaceId)) {
+      return Ok(undefined);
+    }
+    this.removingWorkspaces.add(workspaceId);
+
+    // If this workspace is mid-init, cancel the fire-and-forget init work (postCreateSetup,
+    // sync/checkout, .mux/init hook, etc.) so removal doesn't leave orphaned background work.
+    const initAbortController = this.initAbortControllers.get(workspaceId);
+    if (initAbortController) {
+      initAbortController.abort();
+      this.initAbortControllers.delete(workspaceId);
+    }
+
+    const persistedWorkspace = this.config.findWorkspace(workspaceId);
+
+    // Try to remove from runtime (filesystem)
+    try {
+      if (!force) {
+        const config = this.config.loadConfigOrDefault();
+        const taskSettings = normalizeTaskSettings(config.taskSettings);
+        if (
+          taskSettings.preserveSubagentsUntilArchive &&
+          this.taskService?.hasCompletedDescendants?.(workspaceId)
+        ) {
+          const persistedWorkspaceEntry = findWorkspaceEntry(config, workspaceId);
+          const isArchived =
+            persistedWorkspaceEntry != null &&
+            isWorkspaceArchived(
+              persistedWorkspaceEntry.workspace.archivedAt,
+              persistedWorkspaceEntry.workspace.unarchivedAt
+            );
+
+          // Keep the whole parentWorkspaceId chain intact while completed descendants still exist.
+          // Unarchived ancestors must be archived first so descendant cleanup can safely walk that lineage.
+          if (!isArchived) {
+            return Err(
+              "This workspace has preserved completed sub-agent workspaces. Archive the workspace first to trigger cleanup, then try removing it."
+            );
+          }
+
+          // Archived parents can still retain completed descendants while cleanup waits on
+          // prerequisites like pending patch artifacts. Keep removal blocked until that cleanup
+          // finishes so descendants do not lose the archived ancestor that makes them eligible.
+          return Err(
+            "This workspace still has completed sub-agent workspaces pending cleanup. Wait for cleanup to finish, or force-remove the workspace."
+          );
+        }
+      }
+
+      // Stop any active stream before deleting metadata/config to avoid tool calls racing with removal.
+      //
+      // IMPORTANT: AIService forwards "stream-abort" asynchronously after partial cleanup. If we roll up
+      // session timing (or delete session files) immediately after stopStream(), we can race the final
+      // abort timing write.
+      const wasStreaming = this.aiService.isStreaming(workspaceId);
+      const streamStoppedEvent: Promise<"abort" | "end" | undefined> | undefined = wasStreaming
+        ? new Promise((resolve) => {
+            const aiService = this.aiService;
+            const targetWorkspaceId = workspaceId;
+            const timeoutMs = 5000;
+
+            let settled = false;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+
+            const cleanup = (result: "abort" | "end" | undefined) => {
+              if (settled) return;
+              settled = true;
+              if (timer) {
+                clearTimeout(timer);
+                timer = undefined;
+              }
+              aiService.off("stream-abort", onAbort);
+              aiService.off("stream-end", onEnd);
+              resolve(result);
+            };
+
+            function onAbort(data: StreamAbortEvent): void {
+              if (data.workspaceId !== targetWorkspaceId) return;
+              cleanup("abort");
+            }
+
+            function onEnd(data: StreamEndEvent): void {
+              if (data.workspaceId !== targetWorkspaceId) return;
+              cleanup("end");
+            }
+
+            aiService.on("stream-abort", onAbort);
+            aiService.on("stream-end", onEnd);
+
+            timer = setTimeout(() => cleanup(undefined), timeoutMs);
+          })
+        : undefined;
+
+      try {
+        const stopResult = await this.aiService.stopStream(workspaceId, { abandonPartial: true });
+        if (!stopResult.success) {
+          log.debug("Failed to stop stream during workspace removal", {
+            workspaceId,
+            error: stopResult.error,
+          });
+        }
+      } catch (error: unknown) {
+        log.debug("Failed to stop stream during workspace removal (threw)", { workspaceId, error });
+      }
+
+      if (streamStoppedEvent) {
+        const stopEvent = await streamStoppedEvent;
+        if (!stopEvent) {
+          log.debug("Timed out waiting for stream to stop during workspace removal", {
+            workspaceId,
+          });
+        }
+
+        // If session timing is enabled, make sure no pending writes can recreate session files after
+        // we delete the session directory.
+        if (this.sessionTimingService) {
+          await this.sessionTimingService.waitForIdle(workspaceId);
+        }
+      }
+
+      let parentWorkspaceId: string | null = null;
+      let childTaskModelString: string | undefined;
+      let childTaskThinkingLevel: ThinkingLevel | undefined;
+
+      const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+      if (metadataResult.success) {
+        const metadata = metadataResult.data;
+        const configSnapshot = this.config.loadConfigOrDefault();
+
+        const persistedWorkspacePath = persistedWorkspace?.workspacePath;
+
+        if (isMultiProject(metadata)) {
+          const projects = getProjects(metadata);
+          const deleteErrors: string[] = [];
+          const projectRemovals: Array<{
+            project: (typeof projects)[number];
+            runtime: ReturnType<typeof createRuntime>;
+            trusted: boolean;
+          }> = [];
+
+          for (const project of projects) {
+            try {
+              const runtime = createRuntime(metadata.runtimeConfig, {
+                projectPath: project.projectPath,
+                workspaceName: metadata.name,
+                workspacePath: persistedWorkspacePath
+                  ? getWorkspacePathHintForProject(
+                      {
+                        workspaceId,
+                        workspaceName: metadata.name,
+                        workspacePath: persistedWorkspacePath,
+                        runtimeConfig: metadata.runtimeConfig,
+                        projectPath: metadata.projectPath,
+                        projectName: metadata.projectName,
+                        projects: metadata.projects,
+                      },
+                      project.projectPath
+                    )
+                  : undefined,
+              });
+              const trusted =
+                configSnapshot.projects.get(stripTrailingSlashes(project.projectPath))?.trusted ??
+                false;
+              projectRemovals.push({ project, runtime, trusted });
+            } catch (error: unknown) {
+              deleteErrors.push(`[${project.projectName}] ${getErrorMessage(error)}`);
+            }
+          }
+
+          if (deleteErrors.length > 0 && !force) {
+            return Err(
+              `Failed to delete multi-project workspace from disk: ${deleteErrors.join("; ")}`
+            );
+          }
+
+          const requiresWorktreeDeletePreflight =
+            !force &&
+            (metadata.runtimeConfig.type === "worktree" ||
+              (metadata.runtimeConfig.type === "local" && hasSrcBaseDir(metadata.runtimeConfig)));
+          if (requiresWorktreeDeletePreflight) {
+            const preflightErrors: string[] = [];
+
+            for (const projectRemoval of projectRemovals) {
+              const preflightRuntime = projectRemoval.runtime as typeof projectRemoval.runtime & {
+                canDeleteWorkspaceWithoutForce?: (
+                  projectPath: string,
+                  workspaceName: string,
+                  trusted?: boolean
+                ) => Promise<{ success: true } | { success: false; error: string }>;
+              };
+
+              try {
+                if (typeof preflightRuntime.canDeleteWorkspaceWithoutForce !== "function") {
+                  preflightErrors.push(
+                    `[${projectRemoval.project.projectName}] Worktree delete preflight is unavailable for runtime type ${metadata.runtimeConfig.type}`
+                  );
+                  continue;
+                }
+
+                // Preflight every worktree before mutating disk so force=false cannot partially
+                // delete earlier projects when a later worktree still needs force.
+                const preflightResult = await preflightRuntime.canDeleteWorkspaceWithoutForce(
+                  projectRemoval.project.projectPath,
+                  metadata.name,
+                  projectRemoval.trusted
+                );
+                if (!preflightResult.success) {
+                  preflightErrors.push(
+                    `[${projectRemoval.project.projectName}] ${preflightResult.error}`
+                  );
+                }
+              } catch (error: unknown) {
+                preflightErrors.push(
+                  `[${projectRemoval.project.projectName}] ${getErrorMessage(error)}`
+                );
+              }
+            }
+
+            if (preflightErrors.length > 0) {
+              return Err(
+                `Failed to delete multi-project workspace from disk: ${preflightErrors.join("; ")}`
+              );
+            }
+          }
+
+          for (const projectRemoval of projectRemovals) {
+            try {
+              const deleteResult = await projectRemoval.runtime.deleteWorkspace(
+                projectRemoval.project.projectPath,
+                metadata.name,
+                force,
+                undefined,
+                projectRemoval.trusted
+              );
+
+              if (!deleteResult.success) {
+                deleteErrors.push(
+                  `[${projectRemoval.project.projectName}] ${
+                    deleteResult.error ?? "Failed to delete workspace from disk"
+                  }`
+                );
+              }
+            } catch (error: unknown) {
+              deleteErrors.push(
+                `[${projectRemoval.project.projectName}] ${getErrorMessage(error)}`
+              );
+            }
+          }
+
+          if (deleteErrors.length > 0 && !force) {
+            return Err(
+              `Failed to delete multi-project workspace from disk: ${deleteErrors.join("; ")}`
+            );
+          }
+
+          const containerManager = new ContainerManager(
+            getSrcBaseDir(metadata.runtimeConfig) ?? this.config.srcDir
+          );
+          try {
+            await containerManager.removeContainer(metadata.name);
+          } catch (error: unknown) {
+            deleteErrors.push(`[container] ${getErrorMessage(error)}`);
+          }
+
+          if (deleteErrors.length > 0) {
+            if (!force) {
+              return Err(
+                `Failed to delete multi-project workspace from disk: ${deleteErrors.join("; ")}`
+              );
+            }
+            log.error(
+              `Failed to fully delete multi-project workspace from disk, but force=true. Removing from config. Errors: ${deleteErrors.join("; ")}`
+            );
+          }
+        } else {
+          const projectPath = metadata.projectPath;
+          const runtime = createRuntime(metadata.runtimeConfig, {
+            projectPath,
+            workspaceName: metadata.name,
+            workspacePath: persistedWorkspacePath,
+          });
+
+          // Delete workspace from runtime first - if this fails with force=false, we abort
+          // and keep workspace in config so user can retry. This prevents orphaned directories.
+          const trusted =
+            configSnapshot.projects.get(stripTrailingSlashes(projectPath))?.trusted ?? false;
+          const deleteResult = await runtime.deleteWorkspace(
+            projectPath,
+            metadata.name, // use branch name
+            force,
+            undefined, // abortSignal
+            trusted
+          );
+
+          if (!deleteResult.success) {
+            // If force is true, we continue to remove from config even if fs removal failed
+            if (!force) {
+              return Err(deleteResult.error ?? "Failed to delete workspace from disk");
+            }
+            log.error(
+              `Failed to delete workspace from disk, but force=true. Removing from config. Error: ${deleteResult.error}`
+            );
+          }
+
+          // Note: Coder workspace deletion is handled by CoderSSHRuntime.deleteWorkspace()
+        }
+
+        parentWorkspaceId = metadata.parentWorkspaceId ?? null;
+        childTaskModelString = metadata.taskModelString;
+        childTaskThinkingLevel = coerceThinkingLevel(metadata.taskThinkingLevel);
+
+        // If this workspace is a sub-agent/task, roll its accumulated timing into the parent BEFORE
+        // deleting ~/.mux/sessions/<workspaceId>/session-timing.json.
+        if (parentWorkspaceId && this.sessionTimingService) {
+          try {
+            // Flush any last timing write (e.g. from stream-abort) before reading.
+            await this.sessionTimingService.waitForIdle(workspaceId);
+            await this.sessionTimingService.rollUpTimingIntoParent(parentWorkspaceId, workspaceId);
+          } catch (error: unknown) {
+            log.error("Failed to roll up child session timing into parent", {
+              workspaceId,
+              parentWorkspaceId,
+              error: getErrorMessage(error),
+            });
+          }
+        }
+
+        // If this workspace is a sub-agent/task, roll its accumulated usage into the parent BEFORE
+        // deleting ~/.mux/sessions/<workspaceId>/session-usage.json.
+        if (parentWorkspaceId && this.sessionUsageService) {
+          try {
+            const childUsage = await this.sessionUsageService.getSessionUsage(workspaceId);
+            if (childUsage && Object.keys(childUsage.byModel).length > 0) {
+              const rollup = await this.sessionUsageService.rollUpUsageIntoParent(
+                parentWorkspaceId,
+                workspaceId,
+                childUsage.byModel,
+                {
+                  agentType: metadata.agentType,
+                  model: metadata.taskModelString,
+                }
+              );
+
+              if (rollup.didRollUp) {
+                // Live UI update (best-effort): only emit if the parent session is already active.
+                this.sessions.get(parentWorkspaceId)?.emitChatEvent({
+                  type: "session-usage-delta",
+                  workspaceId: parentWorkspaceId,
+                  sourceWorkspaceId: workspaceId,
+                  byModelDelta: childUsage.byModel,
+                  timestamp: Date.now(),
+                });
+              }
+            }
+          } catch (error: unknown) {
+            log.error("Failed to roll up child session usage into parent", {
+              workspaceId,
+              parentWorkspaceId,
+              error: getErrorMessage(error),
+            });
+          }
+        }
+      } else {
+        log.error(`Could not find metadata for workspace ${workspaceId}, creating phantom cleanup`);
+      }
+
+      // Avoid leaking init waiters/logs after workspace deletion.
+      // Must happen before deleting the session directory so queued init-status writes don't
+      // recreate ~/.mux/sessions/<workspaceId>/ after removal.
+      //
+      // Intentionally deferred until we're committed to removal: if runtime deletion fails with
+      // force=false we return early and keep init state intact so init-end can refresh metadata.
+      this.initStateManager.clearInMemoryState(workspaceId);
+      // Remove session data
+      try {
+        const sessionDir = this.config.getSessionDir(workspaceId);
+
+        if (parentWorkspaceId) {
+          try {
+            const parentSessionDir = this.config.getSessionDir(parentWorkspaceId);
+            await archiveChildSessionArtifactsIntoParentSessionDir({
+              parentWorkspaceId,
+              parentSessionDir,
+              childWorkspaceId: workspaceId,
+              childSessionDir: sessionDir,
+              childTaskModelString,
+              childTaskThinkingLevel,
+            });
+          } catch (error: unknown) {
+            log.error("Failed to roll up child session artifacts into parent", {
+              workspaceId,
+              parentWorkspaceId,
+              error: getErrorMessage(error),
+            });
+          }
+        }
+
+        await fsPromises.rm(sessionDir, { recursive: true, force: true });
+      } catch (error) {
+        log.error(`Failed to remove session directory for ${workspaceId}:`, error);
+      }
+
+      // Stop MCP servers for this workspace
+      if (this.mcpServerManager) {
+        await this.mcpServerManager.stopServers(workspaceId);
+      }
+
+      // Dispose session
+      this.disposeSession(workspaceId);
+
+      // Close any terminal sessions for this workspace
+      this.terminalService?.closeWorkspaceSessions(workspaceId);
+      await this.closeDesktopSessionBestEffort(workspaceId, "remove");
+
+      // Remove from config
+      await this.config.removeWorkspace(workspaceId);
+      this.autoTitlingWorkspaces.delete(workspaceId);
+
+      this.emit("metadata", { workspaceId, metadata: null });
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to remove workspace: ${message}`);
+    } finally {
+      this.removingWorkspaces.delete(workspaceId);
+    }
+  }
+
+  private enrichFrontendMetadata(metadata: FrontendWorkspaceMetadata): FrontendWorkspaceMetadata {
+    const isInitializing =
+      this.initStateManager.getInitState(metadata.id)?.status === "running" || undefined;
+    return {
+      ...metadata,
+      isRemoving: this.removingWorkspaces.has(metadata.id) || undefined,
+      isInitializing,
+    };
+  }
+
+  private isMultiProjectWorkspacesExperimentEnabled(): boolean {
+    return (
+      this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES) ?? false
+    );
+  }
+
+  private shouldExposeWorkspaceMetadata(
+    metadata: WorkspaceMetadata | FrontendWorkspaceMetadata
+  ): boolean {
+    return this.isMultiProjectWorkspacesExperimentEnabled() || !isMultiProject(metadata);
+  }
+
+  private filterVisibleWorkspaceMetadata<T extends WorkspaceMetadata | FrontendWorkspaceMetadata>(
+    workspaces: readonly T[]
+  ): T[] {
+    if (this.isMultiProjectWorkspacesExperimentEnabled()) {
+      return [...workspaces];
+    }
+
+    // Keep persisted _multi config intact and hide it only at workspace-facing service boundaries.
+    return workspaces.filter((workspace) => this.shouldExposeWorkspaceMetadata(workspace));
+  }
+
+  private enrichMaybeFrontendMetadata(
+    metadata: FrontendWorkspaceMetadata | null
+  ): FrontendWorkspaceMetadata | null {
+    if (!metadata) {
+      return null;
+    }
+    return this.enrichFrontendMetadata(metadata);
+  }
+
+  async list(): Promise<FrontendWorkspaceMetadata[]> {
+    try {
+      const workspaces = await this.config.getAllWorkspaceMetadata();
+      return this.filterVisibleWorkspaceMetadata(workspaces).map((workspace) =>
+        this.enrichFrontendMetadata(workspace)
+      );
+    } catch (error) {
+      log.error("Failed to list workspaces:", error);
+      return [];
+    }
+  }
+
+  // Devcontainer Docker labels are keyed by the exact host worktree path from startup, so stop/status
+  // APIs must prefer the persisted config path and only fall back to canonical reconstruction if the
+  // config entry is missing.
+  private async getDevcontainerHostWorkspacePath(workspaceId: string): Promise<string> {
+    const workspace = this.config.findWorkspace(workspaceId);
+    if (workspace) {
+      return workspace.workspacePath;
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      throw new Error(metadataResult.error);
+    }
+
+    const metadata = metadataResult.data;
+    const hostRuntime = new WorktreeRuntime(this.config.srcDir, {
+      projectPath: metadata.projectPath,
+      workspaceName: metadata.name,
+    });
+    return hostRuntime.getWorkspacePath(metadata.projectPath, metadata.name);
+  }
+
+  /**
+   * Get devcontainer info for deep link generation.
+   * Returns null if not a devcontainer workspace or container is not running.
+   *
+   * This queries Docker for the container name (on-demand discovery) and
+   * calls ensureReady to get the container workspace path.
+   */
+  async getDevcontainerInfo(workspaceId: string): Promise<{
+    containerName: string;
+    containerWorkspacePath: string;
+    hostWorkspacePath: string;
+  } | null> {
+    const metadata = await this.getInfo(workspaceId);
+    if (metadata?.runtimeConfig?.type !== "devcontainer") {
+      return null;
+    }
+
+    const workspace = this.config.findWorkspace(workspaceId);
+    if (!workspace) {
+      return null;
+    }
+
+    const runtimeConfig = metadata.runtimeConfig;
+    const runtime = createRuntime(runtimeConfig, {
+      projectPath: metadata.projectPath,
+      workspaceName: metadata.name,
+      workspacePath: workspace.workspacePath,
+    });
+
+    const hostWorkspacePath = workspace.workspacePath;
+
+    // Query Docker for container name (on-demand discovery)
+    const containerName = await getDevcontainerContainerName(hostWorkspacePath);
+    if (!containerName) {
+      return null; // Container not running
+    }
+
+    // Get container workspace path via ensureReady (idempotent if already running)
+    const readyResult = await runtime.ensureReady();
+    if (!readyResult.ready) {
+      return null;
+    }
+
+    // Access the cached remoteWorkspaceFolder from DevcontainerRuntime
+    const devRuntime = runtime as DevcontainerRuntime;
+    const containerWorkspacePath = devRuntime.getRemoteWorkspaceFolder();
+    if (!containerWorkspacePath) {
+      return null;
+    }
+
+    return { containerName, containerWorkspacePath, hostWorkspacePath };
+  }
+  async getInfo(workspaceId: string): Promise<FrontendWorkspaceMetadata | null> {
+    const allMetadata = await this.config.getAllWorkspaceMetadata();
+    const found = allMetadata.find((metadata) => metadata.id === workspaceId) ?? null;
+    if (found && !this.shouldExposeWorkspaceMetadata(found)) {
+      return null;
+    }
+    return this.enrichMaybeFrontendMetadata(found);
+  }
+
+  getHeartbeatSettings(workspaceId: string): WorkspaceHeartbeatSettings | null {
+    const normalizedWorkspaceId = workspaceId.trim();
+    assert(
+      normalizedWorkspaceId.length > 0,
+      "getHeartbeatSettings requires a non-empty workspaceId"
+    );
+
+    const found = this.config.findWorkspace(normalizedWorkspaceId);
+    if (!found) {
+      return null;
+    }
+
+    const config = this.config.loadConfigOrDefault();
+    const projectConfig = config.projects.get(found.projectPath);
+    const workspaceEntry =
+      projectConfig?.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+      projectConfig?.workspaces.find((workspace) => workspace.path === found.workspacePath);
+    if (!workspaceEntry?.heartbeat) {
+      return null;
+    }
+
+    const message = sanitizeHeartbeatMessage(workspaceEntry.heartbeat.message);
+    const contextMode = sanitizeHeartbeatContextMode(workspaceEntry.heartbeat.contextMode);
+    return {
+      enabled: workspaceEntry.heartbeat.enabled,
+      intervalMs: workspaceEntry.heartbeat.intervalMs,
+      contextMode,
+      ...(message != null ? { message } : {}),
+    };
+  }
+
+  async setHeartbeatSettings(
+    workspaceId: string,
+    settings: WorkspaceHeartbeatSettings
+  ): Promise<Result<void, string>> {
+    try {
+      const normalizedWorkspaceId = workspaceId.trim();
+      assert(
+        normalizedWorkspaceId.length > 0,
+        "setHeartbeatSettings requires a non-empty workspaceId"
+      );
+      assert(typeof settings.enabled === "boolean", "Heartbeat enabled flag must be a boolean");
+      assert(Number.isInteger(settings.intervalMs), "Heartbeat interval must be an integer");
+      assert(
+        settings.intervalMs >= HEARTBEAT_MIN_INTERVAL_MS &&
+          settings.intervalMs <= HEARTBEAT_MAX_INTERVAL_MS,
+        `Heartbeat interval must be between ${HEARTBEAT_MIN_INTERVAL_MS} and ${HEARTBEAT_MAX_INTERVAL_MS} ms`
+      );
+      const hasMessageUpdate = Object.prototype.hasOwnProperty.call(settings, "message");
+      assert(
+        !hasMessageUpdate || settings.message == null || typeof settings.message === "string",
+        "Heartbeat message must be a string when provided"
+      );
+      const hasContextModeUpdate = Object.prototype.hasOwnProperty.call(settings, "contextMode");
+      assert(
+        !hasContextModeUpdate ||
+          settings.contextMode == null ||
+          isHeartbeatContextMode(settings.contextMode),
+        "Heartbeat context mode must be a supported value when provided"
+      );
+
+      const found = this.config.findWorkspace(normalizedWorkspaceId);
+      if (!found) {
+        return Err("Workspace not found");
+      }
+
+      const { projectPath, workspacePath } = found;
+      const config = this.config.loadConfigOrDefault();
+      const projectConfig = config.projects.get(projectPath);
+      if (!projectConfig) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      const workspaceEntry =
+        projectConfig.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+        projectConfig.workspaces.find((workspace) => workspace.path === workspacePath);
+      if (!workspaceEntry) {
+        return Err("Workspace not found");
+      }
+
+      const nextMessage = hasMessageUpdate
+        ? sanitizeHeartbeatMessage(settings.message)
+        : sanitizeHeartbeatMessage(workspaceEntry.heartbeat?.message);
+      const nextContextMode = hasContextModeUpdate
+        ? sanitizeHeartbeatContextMode(settings.contextMode)
+        : sanitizeHeartbeatContextMode(workspaceEntry.heartbeat?.contextMode);
+      // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
+      const nextSettings: WorkspaceHeartbeatSettings = {
+        enabled: settings.enabled,
+        intervalMs: settings.intervalMs,
+        contextMode: nextContextMode,
+        ...(nextMessage != null ? { message: nextMessage } : {}),
+      };
+
+      const changed =
+        workspaceEntry.heartbeat?.enabled !== nextSettings.enabled ||
+        workspaceEntry.heartbeat?.intervalMs !== nextSettings.intervalMs ||
+        workspaceEntry.heartbeat?.message !== nextSettings.message ||
+        sanitizeHeartbeatContextMode(workspaceEntry.heartbeat?.contextMode) !== nextContextMode;
+      if (!changed) {
+        return Ok(undefined);
+      }
+
+      workspaceEntry.heartbeat = nextSettings;
+      await this.config.saveConfig(config);
+
+      // Changing heartbeat settings is a real user interaction. Persist that recency before
+      // emitting metadata so restarts preserve the post-config-change first-fire deadline
+      // instead of rebuilding from an older completed turn.
+      const interactionTimestamp = Date.now();
+      await this.updateRecencyTimestamp(normalizedWorkspaceId, interactionTimestamp);
+      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to set heartbeat settings: ${message}`);
+    }
+  }
+
+  /**
+   * Read the per-workspace goal-defaults override.
+   *
+   * Returns `null` when this workspace has no override (callers should fall
+   * back to `appConfig.goalDefaults`). The override is *sparse*: each field
+   * is independently nullable so a workspace can pin (e.g.) a custom budget
+   * without also overriding the turn cap.
+   */
+  getWorkspaceGoalDefaults(workspaceId: string): WorkspaceGoalDefaultsOverride | null {
+    const normalizedWorkspaceId = workspaceId.trim();
+    assert(
+      normalizedWorkspaceId.length > 0,
+      "getWorkspaceGoalDefaults requires a non-empty workspaceId"
+    );
+
+    const found = this.config.findWorkspace(normalizedWorkspaceId);
+    if (!found) {
+      return null;
+    }
+
+    const config = this.config.loadConfigOrDefault();
+    const projectConfig = config.projects.get(found.projectPath);
+    const workspaceEntry =
+      projectConfig?.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+      projectConfig?.workspaces.find((workspace) => workspace.path === found.workspacePath);
+    const override = workspaceEntry?.goalDefaults;
+    if (!override) {
+      return null;
+    }
+    // Normalize sparse shape: each field defaults to null when absent so
+    // the frontend can treat "missing" and "explicitly inherit" identically.
+    return {
+      defaultBudgetCents: override.defaultBudgetCents ?? null,
+      defaultTurnCap: override.defaultTurnCap ?? null,
+      alwaysRequireExplicitBudget: override.alwaysRequireExplicitBudget ?? null,
+    };
+  }
+
+  /**
+   * Write the per-workspace goal-defaults override.
+   *
+   * `null` fields mean "follow the global default" — when *every* field is
+   * null, the entire override is dropped from `~/.mux/config.json` so the
+   * workspace is indistinguishable from never having had one. Modeled on
+   * `setHeartbeatSettings` so consumers re-fetch via the existing workspace
+   * metadata subscription.
+   */
+  async setWorkspaceGoalDefaults(
+    workspaceId: string,
+    override: WorkspaceGoalDefaultsOverride
+  ): Promise<Result<void, string>> {
+    try {
+      const normalizedWorkspaceId = workspaceId.trim();
+      assert(
+        normalizedWorkspaceId.length > 0,
+        "setWorkspaceGoalDefaults requires a non-empty workspaceId"
+      );
+
+      const defaultBudgetCents = override.defaultBudgetCents;
+      assert(
+        defaultBudgetCents == null ||
+          (Number.isInteger(defaultBudgetCents) && defaultBudgetCents >= 0),
+        "Goal default budget must be a non-negative integer or null"
+      );
+      const defaultTurnCap = override.defaultTurnCap;
+      assert(
+        defaultTurnCap == null || (Number.isInteger(defaultTurnCap) && defaultTurnCap > 0),
+        "Goal default turn cap must be a positive integer or null"
+      );
+      assert(
+        override.alwaysRequireExplicitBudget == null ||
+          typeof override.alwaysRequireExplicitBudget === "boolean",
+        "alwaysRequireExplicitBudget must be a boolean or null"
+      );
+
+      const found = this.config.findWorkspace(normalizedWorkspaceId);
+      if (!found) {
+        return Err("Workspace not found");
+      }
+
+      const { projectPath, workspacePath } = found;
+      const config = this.config.loadConfigOrDefault();
+      const projectConfig = config.projects.get(projectPath);
+      if (!projectConfig) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      const workspaceEntry =
+        projectConfig.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+        projectConfig.workspaces.find((workspace) => workspace.path === workspacePath);
+      if (!workspaceEntry) {
+        return Err("Workspace not found");
+      }
+
+      // Drop the whole record when every field is null — keeps the
+      // config.json minimal and makes "no override" the canonical state
+      // that resolves to global defaults.
+      const allNull =
+        override.defaultBudgetCents == null &&
+        override.defaultTurnCap == null &&
+        override.alwaysRequireExplicitBudget == null;
+
+      const prior = workspaceEntry.goalDefaults;
+      if (allNull) {
+        if (prior == null) {
+          return Ok(undefined);
+        }
+        delete workspaceEntry.goalDefaults;
+      } else {
+        const next: WorkspaceGoalDefaultsOverride = {
+          defaultBudgetCents: override.defaultBudgetCents ?? null,
+          defaultTurnCap: override.defaultTurnCap ?? null,
+          alwaysRequireExplicitBudget: override.alwaysRequireExplicitBudget ?? null,
+        };
+        const unchanged =
+          prior != null &&
+          (prior.defaultBudgetCents ?? null) === next.defaultBudgetCents &&
+          (prior.defaultTurnCap ?? null) === next.defaultTurnCap &&
+          (prior.alwaysRequireExplicitBudget ?? null) === next.alwaysRequireExplicitBudget;
+        if (unchanged) {
+          return Ok(undefined);
+        }
+        workspaceEntry.goalDefaults = next;
+      }
+
+      await this.config.saveConfig(config);
+      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to set workspace goal defaults: ${message}`);
+    }
+  }
+
+  /**
+   * Refresh workspace metadata from config and emit to subscribers.
+   * Useful when external changes (like section assignment) modify workspace config.
+   */
+  async refreshAndEmitMetadata(workspaceId: string): Promise<void> {
+    const metadata = await this.getInfo(workspaceId);
+    if (metadata) {
+      this.emit("metadata", { workspaceId, metadata });
+    }
+  }
+
+  async rename(workspaceId: string, newName: string): Promise<Result<{ newWorkspaceId: string }>> {
+    try {
+      if (this.aiService.isStreaming(workspaceId)) {
+        return Err(
+          "Cannot rename workspace while AI stream is active. Please wait for the stream to complete."
+        );
+      }
+
+      const validation = validateWorkspaceName(newName);
+      if (!validation.valid) {
+        return Err(validation.error ?? "Invalid workspace name");
+      }
+
+      // Mark workspace as renaming to block new streams during the rename operation
+      this.renamingWorkspaces.add(workspaceId);
+
+      const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+      if (!metadataResult.success) {
+        return Err(`Failed to get workspace metadata: ${metadataResult.error}`);
+      }
+      const oldMetadata = metadataResult.data;
+      const oldName = oldMetadata.name;
+
+      if (newName === oldName) {
+        return Ok({ newWorkspaceId: workspaceId });
+      }
+
+      const allWorkspaces = await this.config.getAllWorkspaceMetadata();
+      const collision = allWorkspaces.find(
+        (ws) => (ws.name === newName || ws.id === newName) && ws.id !== workspaceId
+      );
+      if (collision) {
+        return Err(`Workspace with name "${newName}" already exists`);
+      }
+
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Failed to find workspace in config");
+      }
+      const { projectPath: configProjectPath } = workspace;
+      const configSnapshot = this.config.loadConfigOrDefault();
+
+      let oldPath: string;
+      let newPath: string;
+      let runtimeForPlanFile: ReturnType<typeof createRuntime>;
+
+      if (isMultiProject(oldMetadata)) {
+        const projects = getProjects(oldMetadata);
+        const primaryProject = projects[0];
+        assert(primaryProject, "Multi-project workspace requires a primary project");
+        const renamedProjectWorkspaces: Array<{
+          projectName: string;
+          projectPath: string;
+          oldWorkspacePath: string;
+          newWorkspacePath: string;
+        }> = [];
+
+        const rollbackRenamedProjects = async (): Promise<void> => {
+          // Roll back already-renamed project workspaces to avoid leaving mixed workspace names.
+          for (const renamedProject of [...renamedProjectWorkspaces].reverse()) {
+            try {
+              const rollbackRuntime = createRuntime(oldMetadata.runtimeConfig, {
+                projectPath: renamedProject.projectPath,
+                workspaceName: newName,
+                workspacePath: renamedProject.newWorkspacePath,
+              });
+              const rollbackTrusted =
+                configSnapshot.projects.get(stripTrailingSlashes(renamedProject.projectPath))
+                  ?.trusted ?? false;
+              const rollbackResult = await rollbackRuntime.renameWorkspace(
+                renamedProject.projectPath,
+                newName,
+                oldName,
+                undefined,
+                rollbackTrusted
+              );
+
+              if (!rollbackResult.success) {
+                log.error("Failed to rollback multi-project rename", {
+                  workspaceId,
+                  projectName: renamedProject.projectName,
+                  error: rollbackResult.error,
+                });
+              }
+            } catch (rollbackError: unknown) {
+              log.error("Failed to rollback multi-project rename", {
+                workspaceId,
+                projectName: renamedProject.projectName,
+                error: getErrorMessage(rollbackError),
+              });
+            }
+          }
+        };
+
+        for (const project of projects) {
+          const runtime = createRuntime(oldMetadata.runtimeConfig, {
+            projectPath: project.projectPath,
+            workspaceName: oldName,
+            workspacePath: getWorkspacePathHintForProject(
+              {
+                workspaceId,
+                workspaceName: oldName,
+                workspacePath: workspace.workspacePath,
+                runtimeConfig: oldMetadata.runtimeConfig,
+                projectPath: oldMetadata.projectPath,
+                projectName: oldMetadata.projectName,
+                projects: oldMetadata.projects,
+              },
+              project.projectPath
+            ),
+          });
+
+          const trusted =
+            configSnapshot.projects.get(stripTrailingSlashes(project.projectPath))?.trusted ??
+            false;
+          const renameResult = await runtime.renameWorkspace(
+            project.projectPath,
+            oldName,
+            newName,
+            undefined,
+            trusted
+          );
+
+          if (!renameResult.success) {
+            await rollbackRenamedProjects();
+            return Err(
+              `Failed to rename workspace for project ${project.projectName}: ${renameResult.error}`
+            );
+          }
+
+          renamedProjectWorkspaces.push({
+            projectName: project.projectName,
+            projectPath: project.projectPath,
+            oldWorkspacePath: renameResult.oldPath,
+            newWorkspacePath: renameResult.newPath,
+          });
+        }
+
+        const containerManager = new ContainerManager(
+          getSrcBaseDir(oldMetadata.runtimeConfig) ?? this.config.srcDir
+        );
+        const oldContainerPath = containerManager.getContainerPath(oldName);
+        const newContainerPath = containerManager.getContainerPath(newName);
+
+        let newContainerExistedBeforeRename = false;
+        try {
+          await fsPromises.access(newContainerPath);
+          newContainerExistedBeforeRename = true;
+        } catch {
+          newContainerExistedBeforeRename = false;
+        }
+
+        try {
+          await containerManager.removeContainer(oldName);
+          await containerManager.createContainer(
+            newName,
+            renamedProjectWorkspaces.map((workspaceEntry) => ({
+              projectName: workspaceEntry.projectName,
+              workspacePath: workspaceEntry.newWorkspacePath,
+            }))
+          );
+        } catch (containerError: unknown) {
+          await rollbackRenamedProjects();
+
+          if (!newContainerExistedBeforeRename) {
+            try {
+              await containerManager.removeContainer(newName);
+            } catch (cleanupErr: unknown) {
+              log.error("Failed to remove partially created new container after rename failure", {
+                workspaceId,
+                workspaceName: newName,
+                error: getErrorMessage(cleanupErr),
+              });
+            }
+          }
+
+          // Recreate the old container from the per-project paths returned by the rename
+          // calls so rollback never reuses the primary project's runtime for sibling links.
+          try {
+            const originalWorkspaces = projects.map((project) => {
+              const renamedWorkspaceEntry = renamedProjectWorkspaces.find(
+                (workspaceEntry) => workspaceEntry.projectPath === project.projectPath
+              );
+              assert(
+                renamedWorkspaceEntry,
+                "Expected renamed workspace entry while recreating old container after rollback"
+              );
+
+              return {
+                projectName: project.projectName,
+                workspacePath: renamedWorkspaceEntry.oldWorkspacePath,
+              };
+            });
+            await fsPromises.mkdir(oldContainerPath, { recursive: true });
+            for (const workspaceEntry of originalWorkspaces) {
+              const linkPath = path.join(oldContainerPath, workspaceEntry.projectName);
+              await fsPromises.access(workspaceEntry.workspacePath);
+              await fsPromises.symlink(workspaceEntry.workspacePath, linkPath);
+            }
+          } catch (recreateErr: unknown) {
+            log.error("Failed to recreate old container after rename failure", recreateErr);
+          }
+
+          return Err(`Failed to recreate container: ${getErrorMessage(containerError)}`);
+        }
+
+        // Multi-project tasks/forks stored under a real project must keep their git-root path in
+        // config so downstream artifact collection can resolve the owning repo after rename.
+        const persistedWorkspacePath =
+          configProjectPath === MULTI_PROJECT_CONFIG_KEY
+            ? undefined
+            : (renamedProjectWorkspaces.find(
+                (workspaceEntry) => workspaceEntry.projectPath === configProjectPath
+              ) ??
+              renamedProjectWorkspaces.find(
+                (workspaceEntry) => workspaceEntry.projectPath === primaryProject.projectPath
+              ));
+        assert(
+          configProjectPath === MULTI_PROJECT_CONFIG_KEY || persistedWorkspacePath,
+          "Expected multi-project rename to preserve the config project's workspace path"
+        );
+        oldPath = persistedWorkspacePath?.oldWorkspacePath ?? oldContainerPath;
+        newPath = persistedWorkspacePath?.newWorkspacePath ?? newContainerPath;
+
+        runtimeForPlanFile = createRuntime(oldMetadata.runtimeConfig, {
+          projectPath: primaryProject.projectPath,
+          workspaceName: newName,
+        });
+      } else {
+        const runtime = createRuntime(oldMetadata.runtimeConfig, {
+          projectPath: configProjectPath,
+          workspaceName: oldName,
+          workspacePath: workspace.workspacePath,
+        });
+
+        const trusted =
+          configSnapshot.projects.get(stripTrailingSlashes(configProjectPath))?.trusted ?? false;
+        const renameResult = await runtime.renameWorkspace(
+          configProjectPath,
+          oldName,
+          newName,
+          undefined, // abortSignal
+          trusted
+        );
+
+        if (!renameResult.success) {
+          return Err(renameResult.error);
+        }
+
+        oldPath = renameResult.oldPath;
+        newPath = renameResult.newPath;
+        runtimeForPlanFile = runtime;
+      }
+
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(configProjectPath);
+        if (projectConfig) {
+          const workspaceEntry =
+            projectConfig.workspaces.find((w) => w.id === workspaceId) ??
+            projectConfig.workspaces.find((w) => w.path === oldPath);
+          if (workspaceEntry) {
+            workspaceEntry.name = newName;
+            workspaceEntry.path = newPath;
+          }
+        }
+        return config;
+      });
+
+      // Rename plan file if it exists (uses workspace name, not ID)
+      await movePlanFile(runtimeForPlanFile, oldName, newName, oldMetadata.projectName);
+
+      const allMetadataUpdated = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadataUpdated.find((m) => m.id === workspaceId);
+      if (!updatedMetadata) {
+        return Err("Failed to retrieve updated workspace metadata");
+      }
+
+      const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
+
+      const session = this.sessions.get(workspaceId);
+      if (session) {
+        session.emitMetadata(enrichedMetadata);
+      } else {
+        this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+      }
+
+      return Ok({ newWorkspaceId: workspaceId });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to rename workspace: ${message}`);
+    } finally {
+      // Always clear renaming flag, even on error
+      this.renamingWorkspaces.delete(workspaceId);
+    }
+  }
+
+  private async emitCurrentWorkspaceMetadata(workspaceId: string): Promise<void> {
+    const allMetadata = await this.config.getAllWorkspaceMetadata();
+    const updatedMetadata = allMetadata.find((metadata) => metadata.id === workspaceId) ?? null;
+    const enrichedMetadata = this.enrichMaybeFrontendMetadata(updatedMetadata);
+    const session = this.sessions.get(workspaceId);
+    if (session) {
+      session.emitMetadata(enrichedMetadata);
+    } else {
+      this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+    }
+  }
+
+  private hasPendingAutoTitle(workspaceId: string): boolean {
+    return this.config.findWorkspace(workspaceId)?.pendingAutoTitle === true;
+  }
+
+  private async updateWorkspaceTitleState(
+    workspaceId: string,
+    options: {
+      title?: string;
+      clearPendingAutoTitle?: boolean;
+      requirePendingAutoTitle?: boolean;
+    }
+  ): Promise<Result<{ updated: boolean }>> {
+    try {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Workspace not found");
+      }
+      const { projectPath, workspacePath } = workspace;
+
+      let updated = false;
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(projectPath);
+        if (!projectConfig) {
+          return config;
+        }
+
+        const workspaceEntry =
+          projectConfig.workspaces.find((entry) => entry.id === workspaceId) ??
+          projectConfig.workspaces.find((entry) => entry.path === workspacePath);
+        if (!workspaceEntry) {
+          return config;
+        }
+
+        if (options.requirePendingAutoTitle && workspaceEntry.pendingAutoTitle !== true) {
+          return config;
+        }
+
+        if (options.title !== undefined) {
+          workspaceEntry.title = options.title;
+          updated = true;
+        }
+
+        if (options.clearPendingAutoTitle && workspaceEntry.pendingAutoTitle) {
+          delete workspaceEntry.pendingAutoTitle;
+          updated = true;
+        }
+
+        return config;
+      });
+
+      if (updated) {
+        await this.emitCurrentWorkspaceMetadata(workspaceId);
+      }
+
+      return Ok({ updated });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to update workspace title: ${message}`);
+    }
+  }
+
+  /**
+   * Candidate list for "small model" callers (title + AI sidebar status).
+   * Global preferences first, then any workspace-configured model so a
+   * custom-model workspace still works when global preferences are
+   * unavailable. Public so AgentStatusService can share the precedence.
+   */
+  public async getWorkspaceTitleModelCandidates(workspaceId: string): Promise<string[]> {
+    const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      return candidates;
+    }
+
+    const fallbackModels = [
+      metadataResult.data.aiSettings?.model,
+      ...Object.values(metadataResult.data.aiSettingsByAgent ?? {}).map(
+        (settings) => settings.model
+      ),
+    ];
+    for (const model of fallbackModels) {
+      if (model && !candidates.includes(model)) {
+        candidates.push(model);
+      }
+    }
+
+    return candidates;
+  }
+
+  /**
+   * Build the candidate-model list for a /btw side question.
+   *
+   * Unlike title generation, /btw should prefer the live parent stream's
+   * actual model first (important for one-shot overrides like /opus), then the
+   * workspace's configured chat models. The title-gen list is appended as a
+   * last-resort fallback so a misconfigured chat model can still produce an
+   * answer.
+   */
+  public async getSideQuestionModelCandidates(
+    workspaceId: string,
+    liveStreamModelOverride?: string
+  ): Promise<string[]> {
+    const candidates: string[] = [];
+    const liveStreamModel =
+      liveStreamModelOverride ?? this.aiService.getStreamInfo(workspaceId)?.model;
+    if (liveStreamModel) {
+      candidates.push(liveStreamModel);
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (metadataResult.success) {
+      const preferred = [
+        metadataResult.data.aiSettings?.model,
+        ...Object.values(metadataResult.data.aiSettingsByAgent ?? {}).map((s) => s.model),
+      ];
+      for (const model of preferred) {
+        if (model && !candidates.includes(model)) {
+          candidates.push(model);
+        }
+      }
+    }
+
+    // Fallback: small-model preference list (same set used by title/status
+    // generation). Keeps /btw working when no chat model has been chosen yet
+    // (e.g. brand-new workspace before the first send).
+    for (const model of NAME_GEN_PREFERRED_MODELS) {
+      if (!candidates.includes(model)) {
+        candidates.push(model);
+      }
+    }
+    return candidates;
+  }
+
+  /**
+   * Run a /btw side question over the workspace's current conversation.
+   *
+   * Both the user question and the assistant answer are persisted to
+   * chat.jsonl with side-question metadata, and stream lifecycle events
+   * are emitted through the standard chat-event channel so the renderer
+   * animates the response with TypewriterMarkdown.
+   *
+   * The workspace's "streaming" flag is intentionally NOT toggled here —
+   * /btw runs alongside the main agent without claiming busy state, so the
+   * user can fire a side question while the agent is mid-turn (or vice
+   * versa) without interfering with either.
+   */
+  public async askSideQuestion(
+    workspaceId: string,
+    question: string
+  ): Promise<{ success: true; modelUsed: string } | { success: false; error: string }> {
+    // Match other workspace ops: refuse on missing/in-flight workspaces so
+    // the user gets a clear error instead of a confusing model failure
+    // downstream.
+    const workspaceConfig = this.config.findWorkspace(workspaceId);
+    if (!workspaceConfig) {
+      return { success: false, error: "Workspace not found." };
+    }
+
+    const liveStreamSnapshot = snapshotSideQuestionLiveStream(
+      this.aiService.getStreamInfo(workspaceId)
+    );
+    const candidates = await this.getSideQuestionModelCandidates(
+      workspaceId,
+      liveStreamSnapshot?.model
+    );
+    const result = await askSideQuestion({
+      workspaceId,
+      question,
+      candidates,
+      aiService: this.aiService,
+      historyService: this.historyService,
+      liveStreamSnapshot,
+      // Re-use the session's existing chat-event emitter; this is the same
+      // path agentSession / streamManager use, so the frontend's onChat
+      // subscription handles side-question events identically to a normal
+      // agent stream (TypewriterMarkdown, smooth-text, replay all "just
+      // work").
+      emitChatEvent: (wsId, message) => {
+        this.sessions.get(wsId)?.emitChatEvent(message);
+      },
+    });
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error.raw ?? `Side question failed: ${result.error.type}`,
+      };
+    }
+    return { success: true, modelUsed: result.data.modelUsed };
+  }
+
+  private async maybeRunPendingAutoTitleFromMessage(
+    workspaceId: string,
+    message: string
+  ): Promise<void> {
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage || !this.hasPendingAutoTitle(workspaceId)) {
+      return;
+    }
+
+    try {
+      const candidates = await this.getWorkspaceTitleModelCandidates(workspaceId);
+      const result = await generateWorkspaceIdentity(trimmedMessage, candidates, this.aiService);
+      if (result.success) {
+        const persistResult = await this.updateWorkspaceTitleState(workspaceId, {
+          title: result.data.title,
+          clearPendingAutoTitle: true,
+          requirePendingAutoTitle: true,
+        });
+        if (!persistResult.success) {
+          log.warn("Failed to persist fork auto-title", {
+            workspaceId,
+            error: persistResult.error,
+          });
+        }
+        return;
+      }
+
+      log.warn("Failed to generate fork auto-title", {
+        workspaceId,
+        error: result.error,
+      });
+    } catch (error) {
+      log.error("Unexpected error generating fork auto-title", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+
+    const clearPendingResult = await this.updateWorkspaceTitleState(workspaceId, {
+      clearPendingAutoTitle: true,
+      requirePendingAutoTitle: true,
+    });
+    if (!clearPendingResult.success) {
+      log.warn("Failed to clear pending fork auto-title state", {
+        workspaceId,
+        error: clearPendingResult.error,
+      });
+    }
+  }
+
+  /**
+   * Update workspace title without affecting the filesystem name.
+   * Unlike rename(), this can be called even while streaming is active.
+   */
+  async updateTitle(workspaceId: string, title: string): Promise<Result<void>> {
+    const result = await this.updateWorkspaceTitleState(workspaceId, {
+      title,
+      clearPendingAutoTitle: true,
+    });
+    if (!result.success) {
+      return Err(result.error);
+    }
+    return Ok(undefined);
+  }
+
+  /**
+   * Regenerate the workspace title from chat history using AI.
+   * Uses the first user message as the durable objective, plus a context block with
+   * that first user message and the latest turns, then persists the generated title.
+   */
+  async regenerateTitle(workspaceId: string): Promise<Result<{ title: string }>> {
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      return Err("Could not read workspace history");
+    }
+
+    let contextTurns = collectWorkspaceTitleContextTurns(historyResult.data);
+    let firstUserText = contextTurns.find((turn) => turn.role === "user")?.text;
+
+    if (!firstUserText) {
+      // Compaction boundaries can leave the latest epoch with only an assistant summary.
+      // Fall back to scanning full history so regenerateTitle still works for compacted chats.
+      const fallbackTurns: WorkspaceTitleContextTurn[] = [];
+      let fallbackFirstUserText: string | undefined;
+      const fullHistoryResult = await this.historyService.iterateFullHistory(
+        workspaceId,
+        "forward",
+        (messages) => {
+          const chunkTurns = collectWorkspaceTitleContextTurns(messages);
+          for (const turn of chunkTurns) {
+            if (!fallbackFirstUserText && turn.role === "user") {
+              fallbackFirstUserText = turn.text;
+            }
+            fallbackTurns.push(turn);
+          }
+        }
+      );
+      if (!fullHistoryResult.success) {
+        return Err("Could not read workspace history");
+      }
+
+      firstUserText = fallbackFirstUserText;
+      contextTurns = fallbackTurns;
+    }
+
+    if (!firstUserText) {
+      return Err("No user messages in workspace history");
+    }
+
+    const { conversationContext, latestUserText } =
+      buildWorkspaceTitleConversationContext(contextTurns);
+
+    const candidates = await this.getWorkspaceTitleModelCandidates(workspaceId);
+
+    const result = await generateWorkspaceIdentity(
+      firstUserText,
+      candidates,
+      this.aiService,
+      conversationContext,
+      latestUserText
+    );
+    if (!result.success) {
+      return Err("Title generation failed");
+    }
+
+    const updateTitleResult = await this.updateTitle(workspaceId, result.data.title);
+    if (!updateTitleResult.success) {
+      return Err(updateTitleResult.error);
+    }
+
+    return Ok({ title: result.data.title });
+  }
+
+  /**
+   * Check whether archiving a workspace requires user acknowledgement (e.g. untracked files
+   * that snapshot cannot preserve). Returns a discriminated union the frontend uses to decide
+   * whether to show a destructive confirmation dialog.
+   */
+  async preflightArchive(workspaceId: string): Promise<Result<ArchivePreflightResult>> {
+    try {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Workspace not found");
+      }
+
+      const worktreeArchiveBehavior = this.getWorktreeArchiveBehavior();
+      const snapshotBehaviorEnabled =
+        worktreeArchiveBehavior === "snapshot" && this.worktreeArchiveSnapshotService != null;
+
+      if (!snapshotBehaviorEnabled) {
+        return Ok({ kind: "ready" as const });
+      }
+
+      const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+      if (!metadataResult.success) {
+        return Err(metadataResult.error);
+      }
+      const metadata = metadataResult.data;
+
+      const confirmationResult = await this.getArchiveUntrackedFilesConfirmation({
+        workspaceId,
+        workspaceMetadata: metadata,
+      });
+      if (!confirmationResult.success) {
+        return Err(confirmationResult.error);
+      }
+
+      if (confirmationResult.data) {
+        return Ok(confirmationResult.data);
+      }
+
+      return Ok({ kind: "ready" as const });
+    } catch (error) {
+      return Err(`Failed to preflight archive: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Archive a workspace. Archived workspaces are hidden from the main sidebar
+   * but can be viewed on the project page.
+   *
+   * If init is still running, we abort it before archiving so we don't leave
+   * orphaned post-create work running in the background.
+   *
+   * Returns a typed confirmation result instead of a generic error when the current
+   * untracked-file set must be re-reviewed before a lossy snapshot archive can proceed.
+   */
+  async archive(
+    workspaceId: string,
+    acknowledgedUntrackedPaths?: string[]
+  ): Promise<Result<ArchiveWorkspaceResult>> {
+    this.archivingWorkspaces.add(workspaceId);
+
+    try {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Workspace not found");
+      }
+      const initState = this.initStateManager.getInitState(workspaceId);
+      if (initState?.status === "running") {
+        // Archiving should not leave post-create setup running in the background.
+        const initAbortController = this.initAbortControllers.get(workspaceId);
+        if (initAbortController) {
+          initAbortController.abort();
+          this.initAbortControllers.delete(workspaceId);
+        }
+
+        this.initStateManager.clearInMemoryState(workspaceId);
+
+        // Clearing init state prevents init-end from firing (createInitLogger.logComplete() bails when
+        // state is missing). If archiving fails before we persist archivedAt (e.g., beforeArchive hook
+        // error), ensure the sidebar doesn't stay stuck on isInitializing/"Cancel creation".
+        try {
+          const allMetadata = await this.config.getAllWorkspaceMetadata();
+          const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
+          if (updatedMetadata) {
+            const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
+            const session = this.sessions.get(workspaceId);
+            if (session) {
+              session.emitMetadata(enrichedMetadata);
+            } else {
+              this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+            }
+          }
+        } catch (error) {
+          log.debug("Failed to emit metadata after init cancellation during archive", {
+            workspaceId,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+
+      const { projectPath, workspacePath } = workspace;
+      const worktreeArchiveBehavior = this.getWorktreeArchiveBehavior();
+      const snapshotBehaviorEnabled =
+        worktreeArchiveBehavior === "snapshot" && this.worktreeArchiveSnapshotService != null;
+
+      let beforeArchiveMetadata: WorkspaceMetadata | undefined;
+      if (this.workspaceLifecycleHooks || snapshotBehaviorEnabled) {
+        const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+        if (!metadataResult.success) {
+          return Err(metadataResult.error);
+        }
+        beforeArchiveMetadata = metadataResult.data;
+      }
+
+      const canSnapshotManagedWorktree =
+        snapshotBehaviorEnabled &&
+        beforeArchiveMetadata != null &&
+        isWorktreeRuntime(beforeArchiveMetadata.runtimeConfig);
+      const shouldSkipSnapshotCapture =
+        canSnapshotManagedWorktree &&
+        beforeArchiveMetadata != null &&
+        Array.isArray(beforeArchiveMetadata.projects) &&
+        beforeArchiveMetadata.projects.length > 1;
+      const needsSnapshotCapture = canSnapshotManagedWorktree && !shouldSkipSnapshotCapture;
+
+      if (needsSnapshotCapture && beforeArchiveMetadata) {
+        const initialArchiveConfirmationResult = await this.getArchiveUntrackedFilesConfirmation({
+          workspaceId,
+          workspaceMetadata: beforeArchiveMetadata,
+          acknowledgedUntrackedPaths,
+        });
+        if (!initialArchiveConfirmationResult.success) {
+          return Err(initialArchiveConfirmationResult.error);
+        }
+        if (initialArchiveConfirmationResult.data) {
+          return Ok(initialArchiveConfirmationResult.data);
+        }
+      }
+
+      // Lifecycle hooks run *before* we persist archivedAt.
+      //
+      // NOTE: Archiving is typically a quick UI action, but it can fail if a hook needs to perform
+      // cleanup (e.g., stopping a dedicated mux-created Coder workspace) and that cleanup fails.
+      if (this.workspaceLifecycleHooks && beforeArchiveMetadata) {
+        const hookResult = await this.workspaceLifecycleHooks.runBeforeArchive({
+          workspaceId,
+          workspaceMetadata: beforeArchiveMetadata,
+        });
+        if (!hookResult.success) {
+          return Err(hookResult.error);
+        }
+      }
+
+      let capturedWorktreeSnapshot: WorktreeArchiveSnapshot | undefined;
+      if (
+        needsSnapshotCapture &&
+        beforeArchiveMetadata &&
+        isWorktreeRuntime(beforeArchiveMetadata.runtimeConfig)
+      ) {
+        const latestArchiveConfirmationResult = await this.getArchiveUntrackedFilesConfirmation({
+          workspaceId,
+          workspaceMetadata: beforeArchiveMetadata,
+          acknowledgedUntrackedPaths,
+        });
+        if (!latestArchiveConfirmationResult.success) {
+          return Err(latestArchiveConfirmationResult.error);
+        }
+        if (latestArchiveConfirmationResult.data) {
+          return Ok(latestArchiveConfirmationResult.data);
+        }
+
+        if (acknowledgedUntrackedPaths != null) {
+          log.info("Archive proceeding with acknowledged lossy untracked files", {
+            workspaceId,
+            acknowledgedPaths: acknowledgedUntrackedPaths,
+          });
+        }
+
+        await this.stopLiveWorkspaceActivityForArchive(workspaceId);
+
+        // Pass acknowledgedUntrackedPaths to capture so it re-verifies at capture time,
+        // closing the remaining race window between the final confirmation check and the
+        // actual snapshot capture work.
+        const captureResult = await this.worktreeArchiveSnapshotService!.captureSnapshotForArchive({
+          workspaceId,
+          workspaceMetadata: beforeArchiveMetadata,
+          acknowledgedUntrackedPaths,
+        });
+        if (!captureResult.success) {
+          if (isArchiveLossyUntrackedFilesConfirmation(captureResult.error)) {
+            return Ok(captureResult.error);
+          }
+          return Err(captureResult.error);
+        }
+        capturedWorktreeSnapshot = captureResult.data;
+      }
+
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(projectPath);
+        if (projectConfig) {
+          const workspaceEntry =
+            projectConfig.workspaces.find((w) => w.id === workspaceId) ??
+            projectConfig.workspaces.find((w) => w.path === workspacePath);
+          if (workspaceEntry) {
+            // Just set archivedAt - archived state is derived from archivedAt > unarchivedAt.
+            workspaceEntry.archivedAt = new Date().toISOString();
+            if (capturedWorktreeSnapshot) {
+              workspaceEntry.worktreeArchiveSnapshot = capturedWorktreeSnapshot;
+            } else {
+              delete workspaceEntry.worktreeArchiveSnapshot;
+            }
+          }
+        }
+        return config;
+      });
+
+      if (!needsSnapshotCapture) {
+        try {
+          await this.stopLiveWorkspaceActivityForArchive(workspaceId);
+        } catch (error) {
+          log.debug("Failed to stop live workspace activity after archive persistence", {
+            workspaceId,
+            error: getErrorMessage(error),
+          });
+        }
+      }
+
+      // Emit updated metadata
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
+      if (updatedMetadata) {
+        const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
+        const session = this.sessions.get(workspaceId);
+        if (session) {
+          session.emitMetadata(enrichedMetadata);
+        } else {
+          this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+        }
+      }
+
+      // Lifecycle hooks run after we persist archivedAt.
+      //
+      // Why best-effort: Archive should stay successful once the archived state is durable, even if
+      // follow-up cleanup like managed worktree deletion fails.
+      if (this.workspaceLifecycleHooks) {
+        let hookMetadata: WorkspaceMetadata | undefined = updatedMetadata;
+        if (!hookMetadata) {
+          const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+          if (!metadataResult.success) {
+            log.debug("Failed to load workspace metadata for afterArchive hook", {
+              workspaceId,
+              error: metadataResult.error,
+            });
+          } else {
+            hookMetadata = metadataResult.data;
+          }
+        }
+
+        if (hookMetadata) {
+          await this.workspaceLifecycleHooks.runAfterArchive({
+            workspaceId,
+            workspaceMetadata: hookMetadata,
+          });
+          await this.emitCurrentWorkspaceMetadata(workspaceId);
+        }
+      }
+
+      // Best-effort cleanup of preserved completed descendants after archive persistence succeeds.
+      try {
+        await this.taskService?.cleanupReportedDescendantsAfterArchive?.(workspaceId);
+      } catch (error) {
+        log.error("Failed to cleanup reported descendants after archive", { workspaceId, error });
+      }
+
+      return Ok({ kind: "archived" as const });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to archive workspace: ${message}`);
+    } finally {
+      this.archivingWorkspaces.delete(workspaceId);
+    }
+  }
+
+  /**
+   * Unarchive a workspace. Restores it to the main sidebar view.
+   */
+  async unarchive(workspaceId: string): Promise<Result<void>> {
+    try {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Workspace not found");
+      }
+      const { projectPath, workspacePath } = workspace;
+
+      let didUnarchive = false;
+      let previousUnarchivedAt: string | undefined;
+      let persistedUnarchivedAt: string | undefined;
+
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(projectPath);
+        if (projectConfig) {
+          const workspaceEntry =
+            projectConfig.workspaces.find((w) => w.id === workspaceId) ??
+            projectConfig.workspaces.find((w) => w.path === workspacePath);
+          if (workspaceEntry) {
+            const wasArchived = isWorkspaceArchived(
+              workspaceEntry.archivedAt,
+              workspaceEntry.unarchivedAt
+            );
+            if (wasArchived) {
+              // Just set unarchivedAt - archived state is derived from archivedAt > unarchivedAt.
+              // This also bumps workspace to top of recency.
+              previousUnarchivedAt = workspaceEntry.unarchivedAt;
+              persistedUnarchivedAt = new Date().toISOString();
+              workspaceEntry.unarchivedAt = persistedUnarchivedAt;
+              didUnarchive = true;
+            }
+          }
+        }
+        return config;
+      });
+
+      // Only run hooks when the workspace is transitioning from archived → unarchived.
+      if (!didUnarchive) {
+        return Ok(undefined);
+      }
+
+      // Emit updated metadata
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
+      if (updatedMetadata) {
+        const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
+        const session = this.sessions.get(workspaceId);
+        if (session) {
+          session.emitMetadata(enrichedMetadata);
+        } else {
+          this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+        }
+      }
+
+      let hookMetadata: WorkspaceMetadata | undefined = updatedMetadata;
+      if (!hookMetadata && (this.workspaceLifecycleHooks || this.worktreeArchiveSnapshotService)) {
+        const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+        if (metadataResult.success) {
+          hookMetadata = metadataResult.data;
+        } else {
+          log.debug("Failed to load workspace metadata for unarchive follow-up work", {
+            workspaceId,
+            error: metadataResult.error,
+          });
+        }
+      }
+
+      if (this.worktreeArchiveSnapshotService && hookMetadata) {
+        const restoreResult =
+          await this.worktreeArchiveSnapshotService.restoreSnapshotAfterUnarchive({
+            workspaceId,
+            workspaceMetadata: hookMetadata,
+          });
+        if (!restoreResult.success) {
+          log.debug("Failed to restore worktree archive snapshot during unarchive", {
+            workspaceId,
+            error: restoreResult.error,
+          });
+          if (persistedUnarchivedAt) {
+            await this.config.editConfig((config) => {
+              const projectConfig = config.projects.get(projectPath);
+              const workspaceEntry =
+                projectConfig?.workspaces.find((w) => w.id === workspaceId) ??
+                projectConfig?.workspaces.find((w) => w.path === workspacePath);
+              if (workspaceEntry && workspaceEntry.unarchivedAt === persistedUnarchivedAt) {
+                if (previousUnarchivedAt === undefined) {
+                  delete workspaceEntry.unarchivedAt;
+                } else {
+                  workspaceEntry.unarchivedAt = previousUnarchivedAt;
+                }
+              }
+              return config;
+            });
+            await this.emitCurrentWorkspaceMetadata(workspaceId);
+          }
+          return Err(restoreResult.error);
+        }
+      }
+
+      // Lifecycle hooks run *after* we persist unarchivedAt.
+      //
+      // Why best-effort: Unarchive is a quick UI action and should not fail permanently due to a
+      // start error (e.g., Coder workspace start).
+      if (this.workspaceLifecycleHooks && hookMetadata) {
+        await this.workspaceLifecycleHooks.runAfterUnarchive({
+          workspaceId,
+          workspaceMetadata: hookMetadata,
+        });
+      }
+
+      if (this.workspaceLifecycleHooks || this.worktreeArchiveSnapshotService) {
+        await this.emitCurrentWorkspaceMetadata(workspaceId);
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to unarchive workspace: ${message}`);
+    }
+  }
+
+  async deleteWorktree(workspaceId: string): Promise<Result<void>> {
+    try {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const workspaceMetadata = allMetadata.find((metadata) => metadata.id === workspaceId);
+      if (!workspaceMetadata) {
+        return Err("Workspace not found");
+      }
+
+      if (!isWorkspaceArchived(workspaceMetadata.archivedAt, workspaceMetadata.unarchivedAt)) {
+        return Err("Only archived workspaces can delete their managed worktree");
+      }
+
+      if (!isWorktreeRuntime(workspaceMetadata.runtimeConfig)) {
+        return Err("Deleting a managed worktree is only supported for worktree runtimes");
+      }
+
+      const managedPath = workspaceMetadata.namedWorkspacePath;
+      await removeManagedGitWorktree(workspaceMetadata.projectPath, managedPath);
+      await this.emitCurrentWorkspaceMetadata(workspaceId);
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to delete managed worktree: ${message}`);
+    }
+  }
+
+  async stopRuntime(workspaceId: string): Promise<Result<void>> {
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      return Err(metadataResult.error);
+    }
+
+    if (this.aiService.isStreaming(workspaceId)) {
+      return Err("Cannot stop: workspace has an active AI stream");
+    }
+
+    // Treat any open terminal as active, even if idle, so we do not tear down a runtime with
+    // attached shells still open in the UI.
+    const workspaceActivity = this.terminalService?.getWorkspaceActivity(workspaceId);
+    if ((workspaceActivity?.totalSessions ?? 0) > 0) {
+      return Err("Cannot stop: workspace has active sessions");
+    }
+
+    const metadata = metadataResult.data;
+    if (metadata.runtimeConfig.type !== "devcontainer") {
+      return Err(`Runtime stop is unsupported for ${metadata.runtimeConfig.type} workspaces`);
+    }
+
+    const stopResult = await stopDevcontainer(
+      await this.getDevcontainerHostWorkspacePath(workspaceId)
+    );
+    if (stopResult.kind === "error") {
+      return Err(`Failed to stop runtime: ${stopResult.message}`);
+    }
+
+    return Ok(undefined);
+  }
+
+  async getRuntimeStatuses(
+    workspaceIds: string[]
+  ): Promise<Record<string, WorkspaceRuntimeStatus>> {
+    const statuses: Record<string, WorkspaceRuntimeStatus> = {};
+    for (const workspaceId of workspaceIds) {
+      statuses[workspaceId] = "unknown";
+    }
+
+    if (workspaceIds.length === 0) {
+      return statuses;
+    }
+
+    let allMetadata: WorkspaceMetadata[];
+    try {
+      allMetadata = await this.config.getAllWorkspaceMetadata();
+    } catch (error) {
+      log.debug("Failed to load workspace metadata for runtime status checks", {
+        error: getErrorMessage(error),
+      });
+      return statuses;
+    }
+
+    const metadataById = new Map(allMetadata.map((metadata) => [metadata.id, metadata]));
+    const devcontainerWorkspaces: Array<{ workspaceId: string; hostWorkspacePath: string }> = [];
+
+    for (const workspaceId of workspaceIds) {
+      const metadata = metadataById.get(workspaceId);
+      if (!metadata) {
+        continue;
+      }
+
+      if (metadata.runtimeConfig.type !== "devcontainer") {
+        statuses[workspaceId] = "unsupported";
+        continue;
+      }
+
+      try {
+        devcontainerWorkspaces.push({
+          workspaceId,
+          hostWorkspacePath: await this.getDevcontainerHostWorkspacePath(workspaceId),
+        });
+      } catch (error) {
+        log.debug("Failed to resolve devcontainer workspace path for runtime status", {
+          workspaceId,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
+    // Passive status probes must not call ensureReady(); Docker labels are enough to tell
+    // whether devcontainers are already running. Probe all requested paths with one docker ps.
+    const probeResults = await probeDevcontainerStatuses(
+      devcontainerWorkspaces.map((workspace) => workspace.hostWorkspacePath)
+    );
+    for (const workspace of devcontainerWorkspaces) {
+      const probeResult = probeResults[workspace.hostWorkspacePath] ?? { kind: "absent" as const };
+      statuses[workspace.workspaceId] =
+        probeResult.kind === "found"
+          ? "running"
+          : probeResult.kind === "absent"
+            ? "stopped"
+            : "unknown";
+    }
+
+    return statuses;
+  }
+
+  async getProjectGitStatuses(
+    workspaceId: string,
+    baseRef?: string | null
+  ): Promise<ProjectGitStatusResult[]> {
+    assert(workspaceId.trim().length > 0, "getProjectGitStatuses requires a workspaceId");
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      throw new Error(`Failed to get workspace metadata: ${metadataResult.error}`);
+    }
+
+    const metadata = metadataResult.data;
+    assert(metadata, `Workspace ${workspaceId} metadata is required for git status checks`);
+
+    const projects = getProjects(metadata);
+    assert(projects.length > 0, `Workspace ${workspaceId} must include at least one project`);
+
+    const normalizedProjectPaths = projects.map((project) => {
+      assert(
+        project.projectPath.trim().length > 0,
+        `Workspace ${workspaceId} project ${project.projectName} is missing a projectPath`
+      );
+      assert(
+        project.projectName.trim().length > 0,
+        `Workspace ${workspaceId} project ${project.projectPath} is missing a projectName`
+      );
+      const normalizedProjectPath = normalizeRepoRootProjectPath(project.projectPath);
+      assert(
+        normalizedProjectPath.length > 0,
+        `Workspace ${workspaceId} project ${project.projectName} normalized to an empty projectPath`
+      );
+      return normalizedProjectPath;
+    });
+    const uniqueNormalizedProjectPaths = new Set(normalizedProjectPaths);
+    assert(
+      uniqueNormalizedProjectPaths.size === normalizedProjectPaths.length,
+      `Workspace ${workspaceId} has duplicate project paths`
+    );
+
+    const script = generateGitStatusScript(baseRef ?? undefined);
+    const results: ProjectGitStatusResult[] = [];
+
+    for (const project of projects) {
+      try {
+        const result = await this.executeBash(workspaceId, script, {
+          cwdMode: "repo-root",
+          repoRootProjectPath: project.projectPath,
+          timeout_secs: 5,
+        });
+
+        if (!result.success) {
+          results.push({
+            projectPath: project.projectPath,
+            projectName: project.projectName,
+            gitStatus: null,
+            error: result.error,
+          });
+          continue;
+        }
+
+        if (!result.data.success) {
+          results.push({
+            projectPath: project.projectPath,
+            projectName: project.projectName,
+            gitStatus: null,
+            error: result.data.error,
+          });
+          continue;
+        }
+
+        if (result.data.output.trim().length === 0) {
+          results.push({
+            projectPath: project.projectPath,
+            projectName: project.projectName,
+            gitStatus: null,
+            error: "Git status script returned empty output",
+          });
+          continue;
+        }
+
+        const parsed = parseGitStatusScriptOutput(result.data.output);
+        if (!parsed) {
+          results.push({
+            projectPath: project.projectPath,
+            projectName: project.projectName,
+            gitStatus: null,
+            error: "Failed to parse git status script output",
+          });
+          continue;
+        }
+
+        results.push({
+          projectPath: project.projectPath,
+          projectName: project.projectName,
+          gitStatus: {
+            branch: parsed.headBranch,
+            ahead: parsed.ahead,
+            behind: parsed.behind,
+            dirty: parsed.dirtyCount > 0,
+            outgoingAdditions: parsed.outgoingAdditions,
+            outgoingDeletions: parsed.outgoingDeletions,
+            incomingAdditions: parsed.incomingAdditions,
+            incomingDeletions: parsed.incomingDeletions,
+          },
+          error: null,
+        });
+      } catch (error) {
+        results.push({
+          projectPath: project.projectPath,
+          projectName: project.projectName,
+          gitStatus: null,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+
+    assert(
+      results.length === projects.length,
+      `Workspace ${workspaceId} git status result count must match project count`
+    );
+    const resultProjectPaths = results.map((result) =>
+      normalizeRepoRootProjectPath(result.projectPath)
+    );
+    assert(
+      new Set(resultProjectPaths).size === uniqueNormalizedProjectPaths.size,
+      `Workspace ${workspaceId} git status results must contain one entry per project`
+    );
+    for (const resultProjectPath of resultProjectPaths) {
+      assert(
+        uniqueNormalizedProjectPaths.has(resultProjectPath),
+        `Workspace ${workspaceId} git status returned an unknown project path: ${resultProjectPath}`
+      );
+    }
+
+    return results;
+  }
+
+  /**
+   * Archive all non-archived workspaces within a project whose GitHub PR is merged.
+   *
+   * This is intended for a single command-palette action (one backend call), to avoid
+   * O(n) frontend→backend loops.
+   */
+  async archiveMergedInProject(projectPath: string): Promise<Result<ArchiveMergedInProjectResult>> {
+    const targetProjectPath = projectPath.trim();
+    if (!targetProjectPath) {
+      return Err("projectPath is required");
+    }
+
+    const archivedWorkspaceIds: string[] = [];
+    const skippedWorkspaceIds: string[] = [];
+    const errors: Array<{ workspaceId: string; error: string }> = [];
+
+    try {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+
+      const candidates = allMetadata.filter((metadata) => {
+        if (metadata.projectPath !== targetProjectPath) {
+          return false;
+        }
+        return !isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt);
+      });
+
+      const mergedWorkspaceIds: string[] = [];
+
+      const GH_CONCURRENCY_LIMIT = 4;
+      const GH_TIMEOUT_SECS = 15;
+
+      await forEachWithConcurrencyLimit(candidates, GH_CONCURRENCY_LIMIT, async (metadata) => {
+        const workspaceId = metadata.id;
+
+        try {
+          const result = await this.executeBash(
+            workspaceId,
+            `gh pr view --json state 2>/dev/null || echo '{"no_pr":true}'`,
+            {
+              timeout_secs: GH_TIMEOUT_SECS,
+              // gh requires the runtime environment — devcontainer auth/CLI
+              // may only exist inside the container.
+            }
+          );
+
+          if (!result.success) {
+            errors.push({ workspaceId, error: result.error });
+            return;
+          }
+
+          if (!result.data.success) {
+            errors.push({ workspaceId, error: result.data.error });
+            return;
+          }
+
+          const output = result.data.output;
+          if (!output || output.trim().length === 0) {
+            errors.push({ workspaceId, error: "gh pr view returned empty output" });
+            return;
+          }
+
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(output);
+          } catch (error) {
+            const message = getErrorMessage(error);
+            errors.push({ workspaceId, error: `Failed to parse gh output: ${message}` });
+            return;
+          }
+
+          if (typeof parsed !== "object" || parsed === null) {
+            errors.push({ workspaceId, error: "Unexpected gh output: not a JSON object" });
+            return;
+          }
+
+          const record = parsed as Record<string, unknown>;
+
+          if ("no_pr" in record) {
+            skippedWorkspaceIds.push(workspaceId);
+            return;
+          }
+
+          if (record.state === "MERGED") {
+            mergedWorkspaceIds.push(workspaceId);
+            return;
+          }
+
+          skippedWorkspaceIds.push(workspaceId);
+        } catch (error) {
+          const message = getErrorMessage(error);
+          errors.push({ workspaceId, error: message });
+        }
+      });
+
+      // Archive sequentially: config.editConfig is not mutex-protected.
+      for (const workspaceId of mergedWorkspaceIds) {
+        const result = await this.archive(workspaceId);
+        if (!result.success) {
+          errors.push({ workspaceId, error: result.error });
+          continue;
+        }
+        if (result.data.kind !== "archived") {
+          errors.push({
+            workspaceId,
+            error: `Archive requires confirmation for untracked files: ${result.data.paths.join(", ")}`,
+          });
+          continue;
+        }
+        archivedWorkspaceIds.push(workspaceId);
+      }
+
+      archivedWorkspaceIds.sort();
+      skippedWorkspaceIds.sort();
+      errors.sort((a, b) => a.workspaceId.localeCompare(b.workspaceId));
+
+      return Ok({
+        archivedWorkspaceIds,
+        skippedWorkspaceIds,
+        errors,
+      });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to archive merged workspaces: ${message}`);
+    }
+  }
+
+  private normalizeWorkspaceAISettings(
+    aiSettings: WorkspaceAISettings
+  ): Result<WorkspaceAISettings, string> {
+    const rawModel = aiSettings.model;
+    const model = normalizeSelectedModel(rawModel).trim();
+    if (!model) {
+      return Err("Model is required");
+    }
+    if (!isValidModelFormat(model)) {
+      return Err(`Invalid model format: ${rawModel}`);
+    }
+
+    return Ok({
+      model,
+      thinkingLevel: aiSettings.thinkingLevel,
+    });
+  }
+
+  private normalizeSendMessageAgentId(options: SendMessageOptions): SendMessageOptions {
+    // agentId is required by the schema, so this just normalizes the value.
+    const rawAgentId = options.agentId;
+    const normalizedAgentId = normalizeAgentId(rawAgentId, WORKSPACE_DEFAULTS.agentId);
+
+    if (normalizedAgentId === options.agentId) {
+      return options;
+    }
+
+    return {
+      ...options,
+      agentId: normalizedAgentId,
+    };
+  }
+
+  private extractWorkspaceAISettingsFromSendOptions(
+    options: SendMessageOptions | undefined
+  ): WorkspaceAISettings | null {
+    const rawModel = options?.model;
+    if (typeof rawModel !== "string" || rawModel.trim().length === 0) {
+      return null;
+    }
+
+    const model = normalizeSelectedModel(rawModel).trim();
+    if (!isValidModelFormat(model)) {
+      return null;
+    }
+
+    const requestedThinking = options?.thinkingLevel;
+    // Be defensive: if a (very) old client doesn't send thinkingLevel, don't overwrite
+    // any existing workspace-scoped value.
+    if (requestedThinking === undefined) {
+      return null;
+    }
+
+    const thinkingLevel = requestedThinking;
+
+    return { model, thinkingLevel };
+  }
+
+  /**
+   * Pre-dispatch gate at the WorkspaceService boundary. Delegates to
+   * `WorkspaceGoalService.assertPricedModelForBudgetedGoal` so the gate
+   * lives in exactly one place; this layer exists so `sendMessage` /
+   * `resumeStream` reject before persisting an unpriced model into the
+   * workspace's AI settings (otherwise the user's stored model selection
+   * gets corrupted on a rejected request).
+   *
+   * The same gate runs again inside `AgentSession.sendMessage` to cover
+   * every dispatch path (queued messages, internal compaction/heartbeat
+   * sends, agent-switch follow-ups), so a budgeted goal that becomes
+   * resumable after queueing still cannot bypass enforcement.
+   */
+  private async assertPricedModelForBudgetedGoal(
+    workspaceId: string,
+    options: SendMessageOptions | undefined
+  ): Promise<Result<void, SendMessageError>> {
+    return (
+      (await this.workspaceGoalService?.assertPricedModelForBudgetedGoal(
+        workspaceId,
+        options?.model
+      )) ?? Ok(undefined)
+    );
+  }
+
+  /**
+   * Best-effort persist AI settings from send/resume options.
+   * Skips requests explicitly marked to avoid persistence.
+   */
+  private async maybePersistAISettingsFromOptions(
+    workspaceId: string,
+    options: SendMessageOptions | undefined,
+    context: "send" | "resume"
+  ): Promise<void> {
+    if (options?.skipAiSettingsPersistence) {
+      // One-shot/compaction sends shouldn't overwrite workspace defaults.
+      return;
+    }
+
+    const rawAgentId = options?.agentId;
+    const agentId = normalizeAgentId(rawAgentId, WORKSPACE_DEFAULTS.agentId);
+    const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
+
+    const persistResult = await this.persistWorkspaceAISettingsForAgent(
+      workspaceId,
+      agentId,
+      extractedSettings,
+      {
+        // Normal sends/resumes also persist the selected agent so future backend heartbeat
+        // dispatches can reuse the same workspace default after reloads and reconnects.
+        persistSelectedAgentId: true,
+        ...(options?.disableWorkspaceAgents === true ? { disableWorkspaceAgents: true } : {}),
+      }
+    );
+    if (!persistResult.success) {
+      log.debug(`Failed to persist workspace AI settings from ${context} options`, {
+        workspaceId,
+        error: persistResult.error,
+      });
+    }
+  }
+
+  private async persistWorkspaceAISettingsForAgent(
+    workspaceId: string,
+    agentId: string,
+    aiSettings: WorkspaceAISettings | null,
+    options?: {
+      emitMetadata?: boolean;
+      disableWorkspaceAgents?: boolean;
+      persistSelectedAgentId?: boolean;
+    }
+  ): Promise<Result<boolean, string>> {
+    const found = this.config.findWorkspace(workspaceId);
+    if (!found) {
+      return Err("Workspace not found");
+    }
+
+    const { projectPath, workspacePath } = found;
+
+    const config = this.config.loadConfigOrDefault();
+    const projectConfig = config.projects.get(projectPath);
+    if (!projectConfig) {
+      return Err(`Project not found: ${projectPath}`);
+    }
+
+    const workspaceEntry = projectConfig.workspaces.find((w) => w.id === workspaceId);
+    const workspaceEntryWithFallback =
+      workspaceEntry ?? projectConfig.workspaces.find((w) => w.path === workspacePath);
+    if (!workspaceEntryWithFallback) {
+      return Err("Workspace not found");
+    }
+
+    const normalizedAgentId = normalizeAgentId(agentId, "");
+    if (!normalizedAgentId) {
+      return Err("Agent ID is required");
+    }
+
+    // Removing the built-in Ask agent should not force writes into Auto's
+    // settings bucket. Persist whatever agent ID the caller chose so legacy Ask
+    // settings can fade out naturally instead of being mixed into Auto.
+
+    const prev = workspaceEntryWithFallback.aiSettingsByAgent?.[normalizedAgentId];
+    const aiSettingsChanged =
+      aiSettings != null &&
+      (prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel);
+    const selectedAgentChanged =
+      options?.persistSelectedAgentId === true &&
+      workspaceEntryWithFallback.agentId !== normalizedAgentId;
+    if (!aiSettingsChanged && !selectedAgentChanged) {
+      return Ok(false);
+    }
+
+    if (aiSettings != null) {
+      workspaceEntryWithFallback.aiSettingsByAgent = {
+        ...(workspaceEntryWithFallback.aiSettingsByAgent ?? {}),
+        [normalizedAgentId]: aiSettings,
+      };
+    }
+
+    if (options?.persistSelectedAgentId === true) {
+      workspaceEntryWithFallback.agentId = normalizedAgentId;
+    }
+
+    await this.config.saveConfig(config);
+
+    if (options?.emitMetadata !== false) {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId) ?? null;
+      const enrichedMetadata = this.enrichMaybeFrontendMetadata(updatedMetadata);
+
+      const session = this.sessions.get(workspaceId);
+      if (session) {
+        session.emitMetadata(enrichedMetadata);
+      } else {
+        this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+      }
+    }
+
+    return Ok(true);
+  }
+
+  async updateModeAISettings(
+    workspaceId: string,
+    mode: UIMode,
+    aiSettings: WorkspaceAISettings
+  ): Promise<Result<void, string>> {
+    // Mode-based updates use mode as the agentId.
+    return this.updateAgentAISettings(workspaceId, mode, aiSettings);
+  }
+
+  async updateAgentAISettings(
+    workspaceId: string,
+    agentId: string,
+    aiSettings: WorkspaceAISettings,
+    options?: { persistSelectedAgentId?: boolean }
+  ): Promise<Result<void, string>> {
+    try {
+      const normalized = this.normalizeWorkspaceAISettings(aiSettings);
+      if (!normalized.success) {
+        return Err(normalized.error);
+      }
+
+      if (this.workspaceGoalService) {
+        const goal = await this.workspaceGoalService.getGoal(workspaceId);
+        // Use the resumable check rather than active-only: a paused or
+        // budget-limited budgeted goal will resume accounting when the user
+        // un-pauses or raises the budget. Letting them switch to an unpriced
+        // model in the meantime silently records 0 cost on the next stream
+        // and budget enforcement quietly stops working.
+        if (
+          hasBudgetedResumableGoal(goal) &&
+          !modelHasPricingData(
+            normalized.data.model,
+            typeof this.config.loadProvidersConfig === "function"
+              ? this.config.loadProvidersConfig()
+              : null
+          )
+        ) {
+          return Err(UNPRICED_TARGET_MODEL_GOAL_MESSAGE);
+        }
+      }
+
+      const persistResult = await this.persistWorkspaceAISettingsForAgent(
+        workspaceId,
+        agentId,
+        normalized.data,
+        {
+          emitMetadata: true,
+          ...(options?.persistSelectedAgentId === true ? { persistSelectedAgentId: true } : {}),
+        }
+      );
+      if (!persistResult.success) {
+        return Err(persistResult.error);
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to update workspace AI settings: ${message}`);
+    }
+  }
+
+  async fork(
+    sourceWorkspaceId: string,
+    newName?: string,
+    sourceMessageId?: string,
+    pendingAutoTitle?: boolean
+  ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
+    try {
+      const sourceMetadataResult = await this.aiService.getWorkspaceMetadata(sourceWorkspaceId);
+      if (!sourceMetadataResult.success) {
+        return Err(`Failed to get source workspace metadata: ${sourceMetadataResult.error}`);
+      }
+      const sourceMetadata = sourceMetadataResult.data;
+      const partialSnapshot =
+        sourceMessageId == null ? await this.historyService.readPartial(sourceWorkspaceId) : null;
+      const foundProjectPath = sourceMetadata.projectPath;
+      const projectName = sourceMetadata.projectName;
+      const sourceRuntimeConfig = sourceMetadata.runtimeConfig;
+
+      // Policy: do not allow creating new workspaces (including via fork) with a disallowed runtime.
+      if (this.policyService?.isEnforced()) {
+        if (!this.policyService.isRuntimeAllowed(sourceRuntimeConfig)) {
+          return Err("Forking this workspace is not allowed by policy (runtime disabled)");
+        }
+      }
+
+      // Trust gate: block fork for untrusted projects.
+      // Same defense-in-depth as create() — the frontend shows a dialog,
+      // but forking is a secondary creation path that needs backend gating.
+      const projectConfig = this.config
+        .loadConfigOrDefault()
+        .projects.get(stripTrailingSlashes(foundProjectPath));
+      if (!projectConfig?.trusted) {
+        return Err(
+          "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
+        );
+      }
+
+      // Auto-generate branch name (and title) when user omits one (seamless fork).
+      // Uses pattern: {parentName}-{N} for branch, "{parentTitle} (N)" for title.
+      const isAutoName = newName == null;
+      // Fetch all metadata upfront for both branch name and title collision checks.
+      const allMetadata = isAutoName ? await this.config.getAllWorkspaceMetadata() : [];
+      let resolvedName: string;
+      if (isAutoName) {
+        const existingNamesSet = new Set(
+          allMetadata.filter((m) => m.projectPath === foundProjectPath).map((m) => m.name)
+        );
+        // Also include local branch names to avoid silently reusing stale branches that
+        // were left behind on disk but no longer exist in config metadata.
+        try {
+          for (const branchName of await listLocalBranches(foundProjectPath)) {
+            existingNamesSet.add(branchName);
+          }
+        } catch (error) {
+          log.debug("Failed to list local branches for fork auto-name preflight", {
+            projectPath: foundProjectPath,
+            error: getErrorMessage(error),
+          });
+        }
+
+        const existingNames = [...existingNamesSet];
+        const forkFamilyBaseName = deriveForkFamilyBaseName(sourceMetadata);
+        resolvedName = generateForkBranchName(forkFamilyBaseName, existingNames);
+
+        if (!validateWorkspaceName(resolvedName).valid) {
+          // Legacy workspace names can violate current naming rules (invalid
+          // chars / length). Normalize and shrink the parent base until the
+          // generated fork name satisfies current invariants.
+          let normalizedParent = forkFamilyBaseName
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]+/g, "-")
+            .replace(/-+/g, "-")
+            .replace(/^[-_]+|[-_]+$/g, "");
+
+          if (!normalizedParent) {
+            normalizedParent = "workspace";
+          }
+
+          let candidateParent = normalizedParent;
+          while (candidateParent.length > 1) {
+            resolvedName = generateForkBranchName(candidateParent, existingNames);
+            if (validateWorkspaceName(resolvedName).valid) {
+              break;
+            }
+            candidateParent = candidateParent.slice(0, -1);
+          }
+
+          if (!validateWorkspaceName(resolvedName).valid) {
+            resolvedName = generateForkBranchName(candidateParent, existingNames);
+          }
+        }
+      } else {
+        resolvedName = newName;
+      }
+
+      const resolvedNameValidation = validateWorkspaceName(resolvedName);
+      if (!resolvedNameValidation.valid) {
+        return Err(resolvedNameValidation.error ?? "Invalid workspace name");
+      }
+
+      const sourceWorkspace = this.config.findWorkspace(sourceWorkspaceId);
+      const sourceRuntime = createRuntime(sourceRuntimeConfig, {
+        projectPath: foundProjectPath,
+        workspaceName: sourceMetadata.name,
+        workspacePath: sourceWorkspace?.workspacePath,
+      });
+
+      const newWorkspaceId = this.config.generateStableId();
+
+      const session = this.getOrCreateSession(newWorkspaceId);
+      this.initStateManager.startInit(newWorkspaceId, foundProjectPath);
+      const initLogger = this.createInitLogger(newWorkspaceId);
+
+      const initAbortController = new AbortController();
+      this.initAbortControllers.set(newWorkspaceId, initAbortController);
+
+      const projectEnvCache = new Map<string, Record<string, string>>();
+      const resolveProjectEnv = async (runtimeProjectPath: string) => {
+        const normalizedRuntimeProjectPath = stripTrailingSlashes(runtimeProjectPath);
+        const cachedEnv = projectEnvCache.get(normalizedRuntimeProjectPath);
+        if (cachedEnv) {
+          return cachedEnv;
+        }
+
+        const projectEnv = await secretsToRecord(
+          this.config.getEffectiveSecrets(normalizedRuntimeProjectPath),
+          this.opResolver
+        );
+        projectEnvCache.set(normalizedRuntimeProjectPath, projectEnv);
+        return projectEnv;
+      };
+      const createEnv = await resolveProjectEnv(foundProjectPath);
+
+      let forkResult: Awaited<ReturnType<typeof orchestrateFork>>;
+      try {
+        forkResult = await orchestrateFork({
+          sourceRuntime,
+          projectPath: foundProjectPath,
+          sourceWorkspaceName: sourceMetadata.name,
+          newWorkspaceName: resolvedName,
+          initLogger,
+          config: this.config,
+          sourceWorkspaceId,
+          sourceRuntimeConfig,
+          parentMetadata: sourceMetadata,
+          allowCreateFallback: false,
+          abortSignal: initAbortController.signal,
+          env: createEnv,
+          projectEnvResolver: resolveProjectEnv,
+          trusted: projectConfig.trusted ?? false,
+          multiProjectExperimentEnabled: this.isExperimentEnabled(
+            EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
+          ),
+        });
+      } catch (error) {
+        // Guarantee init lifecycle cleanup when orchestrateFork rejects.
+        // initLogger.logComplete deletes from initAbortControllers and ends init state.
+        initLogger.logComplete(-1);
+        throw error;
+      }
+
+      if (!forkResult.success) {
+        initLogger.logComplete(-1);
+        return Err(forkResult.error);
+      }
+
+      const {
+        workspacePath,
+        trunkBranch,
+        forkedRuntimeConfig,
+        targetRuntime,
+        sourceRuntimeConfigUpdate,
+        sourceRuntimeConfigUpdated,
+      } = forkResult.data;
+
+      // Run init for forked workspace (fire-and-forget like create()).
+      // Multi-project forks need per-project secrets for each runtime's init hook.
+      if (targetRuntime instanceof MultiProjectRuntime) {
+        targetRuntime.envResolver = resolveProjectEnv;
+      }
+
+      const secrets = await resolveProjectEnv(foundProjectPath);
+      runBackgroundInit(
+        targetRuntime,
+        {
+          projectPath: foundProjectPath,
+          branchName: resolvedName,
+          trunkBranch,
+          workspacePath,
+          initLogger,
+          env: secrets,
+          abortSignal: initAbortController.signal,
+          trusted: projectConfig.trusted ?? false,
+        },
+        newWorkspaceId,
+        log
+      );
+
+      const sourceSessionDir = this.config.getSessionDir(sourceWorkspaceId);
+      const newSessionDir = this.config.getSessionDir(newWorkspaceId);
+
+      try {
+        await ensurePrivateDir(newSessionDir);
+
+        const sessionFiles = [
+          "chat.jsonl",
+          "session-timing.json",
+          ADDITIONAL_SYSTEM_CONTEXT_FILENAME,
+          // Preserve the enabled/disabled toggle when forking so the fork
+          // behaves identically to its source from the very first turn.
+          ADDITIONAL_SYSTEM_CONTEXT_DISABLED_FILENAME,
+        ] as const;
+        for (const fileName of sessionFiles) {
+          await copyIfExists(
+            path.join(sourceSessionDir, fileName),
+            path.join(newSessionDir, fileName)
+          );
+        }
+
+        if (sourceMessageId) {
+          const truncateResult = await this.historyService.truncateAfterMessage(
+            newWorkspaceId,
+            sourceMessageId,
+            {
+              keepTargetMessage: true,
+            }
+          );
+          if (!truncateResult.success) {
+            throw new Error(truncateResult.error);
+          }
+
+          // Forking from a prior assistant response intentionally discards any later in-flight
+          // state so the new workspace resumes cleanly at the chosen branch point.
+          await fsPromises.rm(path.join(newSessionDir, "partial.json"), { force: true });
+          if (this.sessionTimingService) {
+            await this.sessionTimingService.clearTimingFile(newWorkspaceId);
+          } else {
+            await fsPromises.rm(path.join(newSessionDir, "session-timing.json"), { force: true });
+          }
+        }
+
+        await materializeForkedPartialSnapshot({
+          historyService: this.historyService,
+          partialSnapshot,
+          sourceWorkspaceId,
+          targetWorkspaceId: newWorkspaceId,
+        });
+
+        // Forks inherit chat history, but their cost ledger must start fresh.
+        // Persist an explicit empty usage file so later reads do not rebuild
+        // historical costs from the copied messages.
+        await resetForkedSessionUsage(this.sessionUsageService, newWorkspaceId, newSessionDir);
+      } catch (copyError) {
+        const forkTrusted = projectConfig.trusted ?? false;
+        await targetRuntime.deleteWorkspace(
+          foundProjectPath,
+          resolvedName,
+          true,
+          undefined,
+          forkTrusted
+        );
+        try {
+          await fsPromises.rm(newSessionDir, { recursive: true, force: true });
+        } catch (cleanupError) {
+          log.error(`Failed to clean up session dir ${newSessionDir}:`, cleanupError);
+        }
+        initLogger.logComplete(-1);
+        const message = getErrorMessage(copyError);
+        return Err(`Failed to copy chat history: ${message}`);
+      }
+
+      // Copy plan file using explicit source/target runtimes for cross-runtime safety.
+      // Create a fresh source runtime handle because DockerRuntime.forkWorkspace() can
+      // mutate the original runtime's container identity to target the new workspace.
+      const freshSourceRuntime = createRuntime(sourceRuntimeConfig, {
+        projectPath: foundProjectPath,
+        workspaceName: sourceMetadata.name,
+        workspacePath: sourceWorkspace?.workspacePath,
+      });
+      await copyPlanFileAcrossRuntimes(
+        freshSourceRuntime,
+        targetRuntime,
+        sourceMetadata.name,
+        sourceWorkspaceId,
+        resolvedName,
+        projectName
+      );
+
+      if (sourceRuntimeConfigUpdate) {
+        await this.config.updateWorkspaceMetadata(sourceWorkspaceId, {
+          runtimeConfig: sourceRuntimeConfigUpdate,
+        });
+      }
+
+      if (sourceRuntimeConfigUpdated) {
+        const allMetadataUpdated = await this.config.getAllWorkspaceMetadata();
+        const updatedMetadata = allMetadataUpdated.find((m) => m.id === sourceWorkspaceId) ?? null;
+        const enrichedMetadata = this.enrichMaybeFrontendMetadata(updatedMetadata);
+        const sourceSession = this.sessions.get(sourceWorkspaceId);
+        if (sourceSession) {
+          sourceSession.emitMetadata(enrichedMetadata);
+        } else {
+          this.emit("metadata", { workspaceId: sourceWorkspaceId, metadata: enrichedMetadata });
+        }
+      }
+
+      // Compute namedWorkspacePath for frontend metadata
+      const namedWorkspacePath = targetRuntime.getWorkspacePath(foundProjectPath, resolvedName);
+
+      const metadata: FrontendWorkspaceMetadata = {
+        id: newWorkspaceId,
+        name: resolvedName,
+        projectName,
+        projectPath: foundProjectPath,
+        projects: forkResult.data.projects ?? sourceMetadata.projects,
+        createdAt: new Date().toISOString(),
+        runtimeConfig: forkedRuntimeConfig,
+        namedWorkspacePath,
+        // Preserve sub-project cwd/prompt context when forking via /fork.
+        subProjectPath: sourceMetadata.subProjectPath,
+        // Forks with a continue message stay pending until the first accepted user send
+        // can generate a more specific title, unless the user edits the title first.
+        pendingAutoTitle: pendingAutoTitle === true ? true : undefined,
+        ...(isAutoName
+          ? {
+              // Preserve the original base name only for auto-generated forks so future
+              // auto-forks can keep the same numbered family without affecting manual names.
+              forkFamilyBaseName: deriveForkFamilyBaseName(sourceMetadata),
+              // Seamless fork: generate a numbered title like "Parent Title (1)".
+              title: generateForkTitle(
+                sourceMetadata.title ?? sourceMetadata.name,
+                allMetadata
+                  .filter((m) => m.projectPath === foundProjectPath)
+                  .map((m) => m.title ?? m.name)
+              ),
+            }
+          : {}),
+      };
+
+      await this.config.addWorkspace(foundProjectPath, metadata);
+      await this.workspaceGoalService?.inheritFromFork(sourceWorkspaceId, newWorkspaceId);
+
+      const enrichedMetadata = this.enrichFrontendMetadata(metadata);
+      session.emitMetadata(enrichedMetadata);
+
+      return Ok({ metadata: enrichedMetadata, projectPath: foundProjectPath });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to fork workspace: ${message}`);
+    }
+  }
+
+  async sendMessage(
+    workspaceId: string,
+    message: string,
+    options: SendMessageOptions & {
+      fileParts?: FilePart[];
+    },
+    internal?: {
+      allowQueuedAgentTask?: boolean;
+      skipAutoResumeReset?: boolean;
+      synthetic?: boolean;
+      /** Marks a synthetic send as an active-goal continuation turn. */
+      goalContinuation?: boolean;
+      /** Specific active-goal synthetic turn kind to persist on the user message. */
+      goalKind?: GoalSyntheticMessageKind;
+      /** Force Copilot billing classification to "agent" for internal sends. */
+      agentInitiated?: boolean;
+      onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+      /** Return once the user message is accepted; stream startup continues asynchronously. */
+      startStreamInBackground?: boolean;
+      /** When true, reject instead of queueing if the workspace is busy. */
+      requireIdle?: boolean;
+    }
+  ): Promise<Result<void, SendMessageError>> {
+    log.debug("sendMessage handler: Received", {
+      workspaceId,
+      messagePreview: message.substring(0, 50),
+      agentId: options?.agentId,
+      options,
+    });
+
+    let resumedInterruptedTask = false;
+    let claimedAutoTitle = false;
+    try {
+      // Block streaming while workspace is being renamed to prevent path conflicts
+      if (this.renamingWorkspaces.has(workspaceId)) {
+        log.debug("sendMessage blocked: workspace is being renamed", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being renamed. Please wait and try again.",
+        });
+      }
+
+      // Block streaming while workspace is being removed to prevent races with config/session deletion.
+      if (this.removingWorkspaces.has(workspaceId)) {
+        log.debug("sendMessage blocked: workspace is being removed", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being deleted. Please wait and try again.",
+        });
+      }
+
+      if (this.resettingContextWorkspaces.has(workspaceId)) {
+        log.debug("sendMessage blocked: context reset is in progress", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace context is resetting. Please wait and try again.",
+        });
+      }
+
+      // Guard: avoid creating sessions for workspaces that don't exist anymore.
+      const workspaceConfig = this.config.findWorkspace(workspaceId);
+      if (!workspaceConfig) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace not found. It may have been deleted.",
+        });
+      }
+
+      // Guard: queued agent tasks must not start streaming via generic sendMessage calls.
+      // They should only be started by TaskService once a parallel slot is available.
+      if (!internal?.allowQueuedAgentTask) {
+        const config = this.config.loadConfigOrDefault();
+        for (const [_projectPath, project] of config.projects) {
+          const ws = project.workspaces.find((w) => w.id === workspaceId);
+          if (!ws) continue;
+          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
+            taskQueueDebug("WorkspaceService.sendMessage blocked (queued task)", {
+              workspaceId,
+              stack: new Error("sendMessage blocked").stack,
+            });
+            return Err({
+              type: "unknown",
+              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+            });
+          }
+          break;
+        }
+      } else {
+        taskQueueDebug("WorkspaceService.sendMessage allowed (internal dequeue)", {
+          workspaceId,
+          stack: new Error("sendMessage internal").stack,
+        });
+      }
+
+      const session = this.getOrCreateSession(workspaceId);
+
+      // Skip recency update for idle compaction - preserve original "last used" time
+      const muxMeta = options?.muxMetadata as { type?: string; source?: string } | undefined;
+      const isIdleCompaction =
+        muxMeta?.type === "compaction-request" && muxMeta?.source === "idle-compaction";
+      // Use current time for recency - this matches the timestamp used on the message
+      // in agentSession.sendMessage(). Keeps ExtensionMetadata in sync with chat.jsonl.
+      const messageTimestamp = Date.now();
+      if (!isIdleCompaction) {
+        void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
+      }
+
+      const normalizedOptions = this.normalizeSendMessageAgentId(options);
+
+      // Reject before any settings persistence so an unpriced model can never
+      // be saved for a budgeted resumable goal — including via direct callers
+      // that bypass the client-side guard. Manual sends still delegate into
+      // AgentSession on rejection so it can preserve the user's interruption
+      // message and apply goal auto-pause safety.
+      const pricingGate = await this.assertPricedModelForBudgetedGoal(
+        workspaceId,
+        normalizedOptions
+      );
+      if (!pricingGate.success) {
+        if (internal?.synthetic !== true) {
+          return session.sendMessage(message, normalizedOptions, {
+            synthetic: internal?.synthetic,
+            agentInitiated: internal?.agentInitiated,
+            goalKind: internal?.goalKind,
+            onAcceptedPreStreamFailure: internal?.onAcceptedPreStreamFailure,
+            startStreamInBackground: internal?.startStreamInBackground,
+            goalContinuation: internal?.goalContinuation,
+          });
+        }
+        return Err(pricingGate.error);
+      }
+
+      // Persist last-used model + thinking level for cross-device consistency.
+      await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "send");
+
+      const shouldQueue = !normalizedOptions?.editMessageId && session.isBusy();
+
+      if (shouldQueue) {
+        const taskStatus = this.taskService?.getAgentTaskStatus?.(workspaceId);
+        if (taskStatus === "interrupted") {
+          return Err({
+            type: "unknown",
+            raw: "Interrupted task is still winding down. Wait until it is idle, then try again.",
+          });
+        }
+
+        if (internal?.requireIdle) {
+          return Err({
+            type: "unknown",
+            raw: "Workspace is busy; idle-only send was skipped.",
+          });
+        }
+
+        const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
+        if (pendingAskUserQuestion) {
+          try {
+            askUserQuestionManager.cancel(
+              workspaceId,
+              pendingAskUserQuestion.toolCallId,
+              "User responded in chat; questions canceled"
+            );
+          } catch (error) {
+            log.debug("Failed to cancel pending ask_user_question", {
+              workspaceId,
+              toolCallId: pendingAskUserQuestion.toolCallId,
+              error: getErrorMessage(error),
+            });
+          }
+        }
+
+        // Background any foreground task waits so the queued message can dispatch promptly.
+        // This must happen after queueMessage succeeds — if enqueue fails (throws),
+        // we must not cancel foreground waits. Use the queue's effective dispatch mode
+        // (not incoming options) because MessageQueue makes tool-end sticky.
+        const effectiveQueueDispatchMode = session.queueMessage(message, normalizedOptions, {
+          synthetic: internal?.synthetic,
+          agentInitiated: internal?.agentInitiated,
+        });
+
+        if (effectiveQueueDispatchMode === "tool-end") {
+          this.taskService?.backgroundForegroundWaitsForWorkspace(workspaceId);
+        }
+
+        return Ok(undefined);
+      }
+
+      if (!internal?.skipAutoResumeReset) {
+        this.taskService?.resetAutoResumeCount(workspaceId);
+      }
+
+      // Non-destructive interrupt cascades preserve descendant task workspaces with
+      // taskStatus=interrupted. Transition before starting a new stream so TaskService
+      // stream-end handling does not early-return on interrupted status.
+      try {
+        resumedInterruptedTask =
+          (await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false;
+      } catch (error: unknown) {
+        log.error("Failed to restore interrupted task status before sendMessage", {
+          workspaceId,
+          error,
+        });
+      }
+
+      const onAcceptedPreStreamFailure = async (error: SendMessageError) => {
+        if (resumedInterruptedTask && normalizedOptions?.editMessageId) {
+          try {
+            await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+          } catch (restoreError: unknown) {
+            log.error(
+              "Failed to restore interrupted task status after accepted edit startup failure",
+              {
+                workspaceId,
+                error,
+                restoreError,
+              }
+            );
+          }
+        }
+        await internal?.onAcceptedPreStreamFailure?.(error);
+      };
+
+      const shouldRunPendingAutoTitle =
+        internal?.synthetic !== true &&
+        normalizedOptions.editMessageId == null &&
+        workspaceConfig.pendingAutoTitle === true &&
+        !this.autoTitlingWorkspaces.has(workspaceId);
+      if (shouldRunPendingAutoTitle) {
+        this.autoTitlingWorkspaces.add(workspaceId);
+        claimedAutoTitle = true;
+      }
+
+      const result = await session.sendMessage(message, normalizedOptions, {
+        synthetic: internal?.synthetic,
+        agentInitiated: internal?.agentInitiated,
+        goalKind: internal?.goalKind,
+        goalContinuation: internal?.goalContinuation,
+        startStreamInBackground: internal?.startStreamInBackground,
+        onAcceptedPreStreamFailure,
+      });
+      if (!result.success) {
+        log.error("sendMessage handler: session returned error", {
+          workspaceId,
+          error: result.error,
+        });
+
+        if (claimedAutoTitle) {
+          this.autoTitlingWorkspaces.delete(workspaceId);
+          claimedAutoTitle = false;
+        }
+
+        if (resumedInterruptedTask) {
+          try {
+            await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+          } catch (error: unknown) {
+            log.error("Failed to restore interrupted task status after sendMessage failure", {
+              workspaceId,
+              error,
+            });
+          }
+        }
+
+        return result;
+      }
+
+      if (claimedAutoTitle) {
+        const autoTitlePromise = this.maybeRunPendingAutoTitleFromMessage(workspaceId, message);
+        autoTitlePromise
+          .catch((error: unknown) => {
+            log.error("Unexpected rejection while running fork auto-title", {
+              workspaceId,
+              error: getErrorMessage(error),
+            });
+          })
+          .finally(() => {
+            this.autoTitlingWorkspaces.delete(workspaceId);
+          });
+      }
+
+      return result;
+    } catch (error) {
+      if (claimedAutoTitle) {
+        this.autoTitlingWorkspaces.delete(workspaceId);
+        claimedAutoTitle = false;
+      }
+
+      if (resumedInterruptedTask) {
+        try {
+          await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+        } catch (restoreError: unknown) {
+          log.error("Failed to restore interrupted task status after sendMessage throw", {
+            workspaceId,
+            error: restoreError,
+          });
+        }
+      }
+
+      const errorMessage = error instanceof Error ? error.message : JSON.stringify(error, null, 2);
+      log.error("Unexpected error in sendMessage handler:", error);
+
+      // Handle incompatible workspace errors from downgraded configs
+      if (error instanceof IncompatibleRuntimeError) {
+        const sendError: SendMessageError = {
+          type: "incompatible_workspace",
+          message: error.message,
+        };
+        return Err(sendError);
+      }
+
+      const sendError: SendMessageError = {
+        type: "unknown",
+        raw: `Failed to send message: ${errorMessage}`,
+      };
+      return Err(sendError);
+    }
+  }
+
+  async resumeStream(
+    workspaceId: string,
+    options: SendMessageOptions,
+    internal?: { allowQueuedAgentTask?: boolean; agentInitiated?: boolean }
+  ): Promise<Result<{ started: boolean }, SendMessageError>> {
+    let resumedInterruptedTask = false;
+    try {
+      // Block streaming while workspace is being renamed to prevent path conflicts
+      if (this.renamingWorkspaces.has(workspaceId)) {
+        log.debug("resumeStream blocked: workspace is being renamed", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being renamed. Please wait and try again.",
+        });
+      }
+
+      // Block streaming while workspace is being removed to prevent races with config/session deletion.
+      if (this.removingWorkspaces.has(workspaceId)) {
+        log.debug("resumeStream blocked: workspace is being removed", { workspaceId });
+        return Err({
+          type: "unknown",
+          raw: "Workspace is being deleted. Please wait and try again.",
+        });
+      }
+
+      // Guard: avoid creating sessions for workspaces that don't exist anymore.
+      if (!this.config.findWorkspace(workspaceId)) {
+        return Err({
+          type: "unknown",
+          raw: "Workspace not found. It may have been deleted.",
+        });
+      }
+
+      // Guard: queued agent tasks must not be resumed by generic UI/API calls.
+      // TaskService is responsible for dequeuing and starting them.
+      if (!internal?.allowQueuedAgentTask) {
+        const config = this.config.loadConfigOrDefault();
+        for (const [_projectPath, project] of config.projects) {
+          const ws = project.workspaces.find((w) => w.id === workspaceId);
+          if (!ws) continue;
+          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
+            taskQueueDebug("WorkspaceService.resumeStream blocked (queued task)", {
+              workspaceId,
+              stack: new Error("resumeStream blocked").stack,
+            });
+            return Err({
+              type: "unknown",
+              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+            });
+          }
+          break;
+        }
+      } else {
+        taskQueueDebug("WorkspaceService.resumeStream allowed (internal dequeue)", {
+          workspaceId,
+          stack: new Error("resumeStream internal").stack,
+        });
+      }
+
+      const session = this.getOrCreateSession(workspaceId);
+
+      const taskStatus = this.taskService?.getAgentTaskStatus?.(workspaceId);
+      if (taskStatus === "interrupted" && session.isBusy()) {
+        return Err({
+          type: "unknown",
+          raw: "Interrupted task is still winding down. Wait until it is idle, then try again.",
+        });
+      }
+
+      const normalizedOptions = this.normalizeSendMessageAgentId(options);
+
+      // Reject before persistence/dispatch when the chosen model would silently
+      // bypass budget enforcement on a budgeted resumable goal.
+      const pricingGate = await this.assertPricedModelForBudgetedGoal(
+        workspaceId,
+        normalizedOptions
+      );
+      if (!pricingGate.success) {
+        return Err(pricingGate.error);
+      }
+
+      // Persist last-used model + thinking level for cross-device consistency.
+      await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "resume");
+
+      // Non-destructive interrupt cascades preserve descendant task workspaces with
+      // taskStatus=interrupted. Transition before stream start so TaskService stream-end
+      // handling does not early-return on interrupted status.
+      try {
+        resumedInterruptedTask =
+          (await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false;
+      } catch (error: unknown) {
+        log.error("Failed to restore interrupted task status before resumeStream", {
+          workspaceId,
+          error,
+        });
+      }
+
+      const result = await session.resumeStream(normalizedOptions, {
+        agentInitiated: internal?.agentInitiated,
+      });
+      if (!result.success) {
+        log.error("resumeStream handler: session returned error", {
+          workspaceId,
+          error: result.error,
+        });
+        if (resumedInterruptedTask) {
+          try {
+            await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+          } catch (error: unknown) {
+            log.error("Failed to restore interrupted task status after resumeStream failure", {
+              workspaceId,
+              error,
+            });
+          }
+        }
+        return result;
+      }
+
+      // resumeStream can succeed without starting a new stream when the session is
+      // still busy (started=false). Keep interrupted semantics in that case.
+      if (!result.data.started) {
+        if (resumedInterruptedTask) {
+          try {
+            await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+          } catch (error: unknown) {
+            log.error("Failed to restore interrupted task status after no-op resumeStream", {
+              workspaceId,
+              error,
+            });
+          }
+        }
+        return result;
+      }
+
+      return result;
+    } catch (error) {
+      if (resumedInterruptedTask) {
+        try {
+          await this.taskService?.restoreInterruptedTaskAfterResumeFailure?.(workspaceId);
+        } catch (restoreError: unknown) {
+          log.error("Failed to restore interrupted task status after resumeStream throw", {
+            workspaceId,
+            error: restoreError,
+          });
+        }
+      }
+
+      const errorMessage = getErrorMessage(error);
+      log.error("Unexpected error in resumeStream handler:", error);
+
+      // Handle incompatible workspace errors from downgraded configs
+      if (error instanceof IncompatibleRuntimeError) {
+        const sendError: SendMessageError = {
+          type: "incompatible_workspace",
+          message: error.message,
+        };
+        return Err(sendError);
+      }
+
+      const sendError: SendMessageError = {
+        type: "unknown",
+        raw: `Failed to resume stream: ${errorMessage}`,
+      };
+      return Err(sendError);
+    }
+  }
+
+  async setAutoRetryEnabled(
+    workspaceId: string,
+    enabled: boolean,
+    persist = true
+  ): Promise<Result<{ previousEnabled: boolean; enabled: boolean }>> {
+    try {
+      const session = this.getOrCreateSession(workspaceId);
+      const state = await session.setAutoRetryEnabled(enabled, { persist });
+      return Ok(state);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error("Unexpected error in setAutoRetryEnabled handler:", error);
+      return Err(`Failed to set auto-retry enabled state: ${errorMessage}`);
+    }
+  }
+
+  async getStartupAutoRetryModel(workspaceId: string): Promise<Result<string | null>> {
+    try {
+      const session = this.getOrCreateSession(workspaceId);
+      const model = await session.getStartupAutoRetryModelHint();
+      return Ok(model);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error("Unexpected error in getStartupAutoRetryModel handler:", error);
+      return Err(`Failed to inspect startup auto-retry model: ${errorMessage}`);
+    }
+  }
+
+  setAutoCompactionThreshold(workspaceId: string, threshold: number): Result<void> {
+    try {
+      const session = this.getOrCreateSession(workspaceId);
+      session.setAutoCompactionThreshold(threshold);
+      return Ok(undefined);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error("Unexpected error in setAutoCompactionThreshold handler:", error);
+      return Err(`Failed to set auto-compaction threshold: ${errorMessage}`);
+    }
+  }
+
+  async interruptStream(
+    workspaceId: string,
+    options?: { soft?: boolean; abandonPartial?: boolean; sendQueuedImmediately?: boolean }
+  ): Promise<Result<void>> {
+    try {
+      this.taskService?.resetAutoResumeCount(workspaceId);
+      if (!options?.soft) {
+        // Mark before attempting the session interrupt to close races where a child
+        // could report between stop initiation and descendant cascade termination.
+        this.taskService?.markParentWorkspaceInterrupted(workspaceId);
+      }
+
+      const session = this.getOrCreateSession(workspaceId);
+      const stopResult = await session.interruptStream(options);
+      if (!stopResult.success) {
+        // Interrupt failed, so clear hard-interrupt suppression we set above.
+        if (!options?.soft) {
+          this.taskService?.resetAutoResumeCount(workspaceId);
+        }
+        log.error("Failed to stop stream:", stopResult.error);
+        return Err(stopResult.error);
+      }
+
+      // For hard interrupts, delete partial immediately. For soft interrupts,
+      // defer to stream-abort handler (stream is still running and may recreate partial).
+      if (options?.abandonPartial && !options?.soft) {
+        log.debug("Abandoning partial for workspace:", workspaceId);
+        await this.historyService.deletePartial(workspaceId);
+      }
+
+      // Rationale: user-initiated hard interrupts should stop the entire task tree so
+      // descendant sub-agents cannot finish later and auto-resume this workspace.
+      if (!options?.soft) {
+        try {
+          const interruptedTaskIds =
+            await this.taskService?.terminateAllDescendantAgentTasks?.(workspaceId);
+          if (interruptedTaskIds && interruptedTaskIds.length > 0) {
+            log.debug("Cascade-interrupted descendant tasks on interrupt", {
+              workspaceId,
+              interruptedTaskIds,
+            });
+          }
+        } catch (error: unknown) {
+          log.error("Failed to cascade-interrupt descendant tasks on interrupt", {
+            workspaceId,
+            error,
+          });
+        }
+      }
+
+      // Handle queued messages based on option
+      if (options?.sendQueuedImmediately) {
+        // `sendQueuedMessages()` routes through AgentSession directly, so explicitly
+        // clear hard-interrupt suppression first (it won't flow through sendMessage()).
+        this.taskService?.resetAutoResumeCount(workspaceId);
+        // Send queued messages immediately instead of restoring to input
+        session.sendQueuedMessages();
+      } else {
+        // Restore queued messages to input box for user-initiated interrupts
+        session.restoreQueueToInput();
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      if (!options?.soft) {
+        // Keep suppression state consistent if interrupt setup/stop throws.
+        this.taskService?.resetAutoResumeCount(workspaceId);
+      }
+      const errorMessage = getErrorMessage(error);
+      log.error("Unexpected error in interruptStream handler:", error);
+      return Err(`Failed to interrupt stream: ${errorMessage}`);
+    }
+  }
+
+  async answerAskUserQuestion(
+    workspaceId: string,
+    toolCallId: string,
+    answers: Record<string, string>
+  ): Promise<Result<void>> {
+    try {
+      // Fast path: normal in-memory execution (stream still running, tool is awaiting input).
+      askUserQuestionManager.answer(workspaceId, toolCallId, answers);
+      return Ok(undefined);
+    } catch (error) {
+      // Fallback path: app restart (or other process death) means the in-memory
+      // AskUserQuestionManager has no pending entry anymore.
+      //
+      // In that case we persist the tool result into partial.json or chat.jsonl,
+      // then emit a synthetic tool-call-end so the renderer updates immediately.
+      try {
+        // Helper: update a message in-place if it contains this ask_user_question tool call.
+        const tryFinalizeMessage = (
+          msg: MuxMessage
+        ): Result<{ updated: MuxMessage; output: AskUserQuestionToolSuccessResult }> => {
+          let foundToolCall = false;
+          let output: AskUserQuestionToolSuccessResult | null = null;
+          let errorMessage: string | null = null;
+
+          const updatedParts = msg.parts.map((part) => {
+            if (!isDynamicToolPart(part) || part.toolCallId !== toolCallId) {
+              return part;
+            }
+
+            foundToolCall = true;
+
+            if (part.toolName !== "ask_user_question") {
+              errorMessage = `toolCallId=${toolCallId} is toolName=${part.toolName}, expected ask_user_question`;
+              return part;
+            }
+
+            // Already answered - treat as idempotent.
+            if (part.state === "output-available") {
+              const parsedOutput = AskUserQuestionToolResultSchema.safeParse(part.output);
+              if (!parsedOutput.success) {
+                errorMessage = `ask_user_question output validation failed: ${parsedOutput.error.message}`;
+                return part;
+              }
+              output = parsedOutput.data;
+              return part;
+            }
+
+            const parsedArgs = AskUserQuestionToolArgsSchema.safeParse(part.input);
+            if (!parsedArgs.success) {
+              errorMessage = `ask_user_question input validation failed: ${parsedArgs.error.message}`;
+              return part;
+            }
+
+            const nextOutput: AskUserQuestionToolSuccessResult = {
+              summary: buildAskUserQuestionSummary(answers),
+              ui_only: {
+                ask_user_question: {
+                  questions: parsedArgs.data.questions,
+                  answers,
+                },
+              },
+            };
+            output = nextOutput;
+
+            return {
+              ...part,
+              state: "output-available" as const,
+              output: nextOutput,
+            };
+          });
+
+          if (errorMessage) {
+            return Err(errorMessage);
+          }
+          if (!foundToolCall) {
+            return Err("ask_user_question toolCallId not found in message");
+          }
+          if (!output) {
+            return Err("ask_user_question output missing after update");
+          }
+
+          return Ok({ updated: { ...msg, parts: updatedParts }, output });
+        };
+
+        // 1) Prefer partial.json (most common after restart while waiting)
+        const partial = await this.historyService.readPartial(workspaceId);
+        if (partial) {
+          const finalized = tryFinalizeMessage(partial);
+          if (finalized.success) {
+            const writeResult = await this.historyService.writePartial(
+              workspaceId,
+              finalized.data.updated
+            );
+            if (!writeResult.success) {
+              return Err(writeResult.error);
+            }
+
+            const session = this.getOrCreateSession(workspaceId);
+            session.emitChatEvent({
+              type: "tool-call-end",
+              workspaceId,
+              messageId: finalized.data.updated.id,
+              toolCallId,
+              toolName: "ask_user_question",
+              result: finalized.data.output,
+              timestamp: Date.now(),
+            });
+
+            return Ok(undefined);
+          }
+        }
+
+        // 2) Fall back to chat history (partial may have already been committed).
+        // Only the current compaction epoch matters — pending tool calls don't survive compaction.
+        const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+        if (!historyResult.success) {
+          return Err(historyResult.error);
+        }
+
+        // Find the newest message containing this tool call.
+        let best: MuxMessage | null = null;
+        let bestSeq = -Infinity;
+        for (const msg of historyResult.data) {
+          const seq = msg.metadata?.historySequence;
+          if (seq === undefined) continue;
+
+          const hasTool = msg.parts.some(
+            (p) => isDynamicToolPart(p) && p.toolCallId === toolCallId
+          );
+          if (hasTool && seq > bestSeq) {
+            best = msg;
+            bestSeq = seq;
+          }
+        }
+
+        if (!best) {
+          const errorMessage = getErrorMessage(error);
+          return Err(`Failed to answer ask_user_question: ${errorMessage}`);
+        }
+
+        // Guard against answering stale tool calls.
+        const maxSeq = Math.max(
+          ...historyResult.data
+            .map((m) => m.metadata?.historySequence)
+            .filter((n): n is number => typeof n === "number")
+        );
+        if (bestSeq !== maxSeq) {
+          return Err(
+            `Refusing to answer ask_user_question: tool call is not the latest message (toolSeq=${bestSeq}, latestSeq=${maxSeq})`
+          );
+        }
+
+        const finalized = tryFinalizeMessage(best);
+        if (!finalized.success) {
+          return Err(finalized.error);
+        }
+
+        const updateResult = await this.historyService.updateHistory(
+          workspaceId,
+          finalized.data.updated
+        );
+        if (!updateResult.success) {
+          return Err(updateResult.error);
+        }
+
+        const session = this.getOrCreateSession(workspaceId);
+        session.emitChatEvent({
+          type: "tool-call-end",
+          workspaceId,
+          messageId: finalized.data.updated.id,
+          toolCallId,
+          toolName: "ask_user_question",
+          result: finalized.data.output,
+          timestamp: Date.now(),
+        });
+
+        return Ok(undefined);
+      } catch (innerError) {
+        const errorMessage = getErrorMessage(innerError);
+        return Err(errorMessage);
+      }
+    }
+  }
+
+  answerDelegatedToolCall(workspaceId: string, toolCallId: string, result: unknown): Result<void> {
+    try {
+      delegatedToolCallManager.answer(workspaceId, toolCallId, result);
+      return Ok(undefined);
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+      return Err(`Failed to answer delegated tool call: ${errorMessage}`);
+    }
+  }
+
+  clearQueue(workspaceId: string): Result<void> {
+    try {
+      const session = this.getOrCreateSession(workspaceId);
+      session.clearQueue();
+      return Ok(undefined);
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+      log.error("Unexpected error in clearQueue handler:", error);
+      return Err(`Failed to clear queue: ${errorMessage}`);
+    }
+  }
+
+  hasPendingQueuedOrPreparingTurn(workspaceId: string): boolean {
+    const session = this.sessions.get(workspaceId.trim());
+    if (!session) {
+      return false;
+    }
+
+    return session.hasQueuedMessages() || session.isPreparingTurn();
+  }
+
+  /**
+   * Best-effort delete of plan files (new + legacy paths) for a workspace.
+   *
+   * Why best-effort: plan files may not exist yet, or deletion may fail due to permissions.
+   */
+  private async deletePlanFilesForWorkspace(
+    workspaceId: string,
+    metadata: FrontendWorkspaceMetadata
+  ): Promise<void> {
+    // Create runtime to get correct muxHome (Docker uses /var/mux, others use ~/.mux)
+    const runtime = createRuntimeForWorkspace(metadata);
+    const muxHome = runtime.getMuxHome();
+    const planPath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
+    const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
+
+    const isDocker = isDockerRuntime(metadata.runtimeConfig);
+    const isSSH = isSSHRuntime(metadata.runtimeConfig);
+
+    // For Docker: paths are already absolute (/var/mux/...), just quote
+    // For SSH: use $HOME expansion so the runtime shell resolves to the runtime home directory
+    // For local: expand tilde locally since shellQuote prevents shell expansion
+    const quotedPlanPath = isDocker
+      ? shellQuote(planPath)
+      : isSSH
+        ? expandTildeForSSH(planPath)
+        : shellQuote(expandTilde(planPath));
+    // For legacy path: SSH/Docker use $HOME expansion, local expands tilde
+    const quotedLegacyPlanPath =
+      isDocker || isSSH
+        ? expandTildeForSSH(legacyPlanPath)
+        : shellQuote(expandTilde(legacyPlanPath));
+
+    if (isDocker || isSSH) {
+      try {
+        // Use exec to delete files since runtime doesn't have a deleteFile method.
+        // Use runtime workspace path (not host projectPath) for Docker containers.
+        const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+        const execStream = await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
+          cwd: workspacePath,
+          timeout: 10,
+        });
+
+        try {
+          await execStream.stdin.close();
+        } catch {
+          // Ignore stdin-close errors (e.g. already closed).
+        }
+
+        await execStream.exitCode.catch(() => {
+          // Best-effort: ignore failures.
+        });
+      } catch {
+        // Plan files don't exist or can't be deleted - ignore
+      }
+
+      return;
+    }
+
+    // Local runtimes: delete directly on the local filesystem.
+    const planPathAbs = expandTilde(planPath);
+    const legacyPlanPathAbs = expandTilde(legacyPlanPath);
+
+    await Promise.allSettled([
+      fsPromises.rm(planPathAbs, { force: true }),
+      fsPromises.rm(legacyPlanPathAbs, { force: true }),
+    ]);
+  }
+
+  async truncateHistory(workspaceId: string, percentage?: number): Promise<Result<void>> {
+    const session = this.sessions.get(workspaceId);
+    if (session?.isBusy() || this.aiService.isStreaming(workspaceId)) {
+      return Err(
+        "Cannot truncate history while a turn is active. Press Esc to stop the stream first."
+      );
+    }
+
+    const truncateResult = await this.historyService.truncateHistory(
+      workspaceId,
+      percentage ?? 1.0
+    );
+    if (!truncateResult.success) {
+      return Err(truncateResult.error);
+    }
+
+    const deletedSequences = truncateResult.data;
+    if (deletedSequences.length > 0) {
+      const deleteMessage: DeleteMessage = {
+        type: "delete",
+        historySequences: deletedSequences,
+      };
+      // Emit through the session so ORPC subscriptions receive the event
+      if (session) {
+        session.emitChatEvent(deleteMessage);
+      } else {
+        // Fallback to direct emit (legacy path)
+        this.emit("chat", { workspaceId, message: deleteMessage });
+      }
+    }
+
+    // On full clear, also delete plan file and clear file change tracking
+    if ((percentage ?? 1.0) === 1.0) {
+      const metadata = await this.getInfo(workspaceId);
+      if (metadata) {
+        await this.deletePlanFilesForWorkspace(workspaceId, metadata);
+      }
+      // A full chat clear removes the context the goal loop was using; require
+      // one user re-engagement before later continuation slices resume it.
+      try {
+        await this.workspaceGoalService?.requireUserAcknowledgment(workspaceId);
+      } catch (error) {
+        return Err(getErrorMessage(error));
+      }
+      this.sessions.get(workspaceId)?.clearFileState();
+    }
+
+    return Ok(undefined);
+  }
+
+  async resetContext(workspaceId: string): Promise<Result<"reset" | "noop">> {
+    if (this.resettingContextWorkspaces.has(workspaceId)) {
+      return Err("Context reset is already in progress for this workspace.");
+    }
+
+    this.resettingContextWorkspaces.add(workspaceId);
+    try {
+      const session = this.sessions.get(workspaceId);
+      if (session?.isBusy() || this.aiService.isStreaming(workspaceId)) {
+        return Err(
+          "Cannot reset context while a turn is active. Press Esc to stop the stream first."
+        );
+      }
+
+      if (this.hasPendingQueuedOrPreparingTurn(workspaceId)) {
+        return Err(
+          "Cannot reset context while queued user input is pending. Send or clear the queued message first."
+        );
+      }
+
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+      if (!historyResult.success) {
+        return Err(`Failed to read active context before reset: ${historyResult.error}`);
+      }
+
+      const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
+        historyResult.data
+      );
+      if (!hasProviderEligibleMessages(activeContextMessages)) {
+        return Ok("noop");
+      }
+
+      const boundaryMessage = createMuxMessage(
+        createContextResetBoundaryMessageId(),
+        "assistant",
+        "",
+        {
+          timestamp: Date.now(),
+          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+        }
+      );
+
+      const appendResult = await this.historyService.appendToHistory(workspaceId, boundaryMessage);
+      if (!appendResult.success) {
+        return Err(`Failed to append context reset boundary: ${appendResult.error}`);
+      }
+
+      const typedBoundaryMessage = { ...boundaryMessage, type: "message" as const };
+      if (session) {
+        session.emitChatEvent(typedBoundaryMessage);
+      } else {
+        this.emit("chat", { workspaceId, message: typedBoundaryMessage });
+      }
+
+      try {
+        await this.workspaceGoalService?.requireUserAcknowledgment(workspaceId);
+      } catch (error) {
+        log.error("Failed to require goal acknowledgment after context reset:", error);
+      }
+      this.sessions.get(workspaceId)?.clearFileState();
+
+      return Ok("reset");
+    } finally {
+      this.resettingContextWorkspaces.delete(workspaceId);
+    }
+  }
+
+  async replaceHistory(
+    workspaceId: string,
+    summaryMessage: MuxMessage,
+    options?: {
+      mode?: "destructive" | "append-compaction-boundary" | null;
+      deletePlanFile?: boolean;
+    }
+  ): Promise<Result<void>> {
+    // Support both new enum ("user"|"idle") and legacy boolean (true)
+    const isCompaction = !!summaryMessage.metadata?.compacted;
+    if (!isCompaction) {
+      const session = this.sessions.get(workspaceId);
+      if (session?.isBusy() || this.aiService.isStreaming(workspaceId)) {
+        return Err(
+          "Cannot replace history while a turn is active. Press Esc to stop the stream first."
+        );
+      }
+    }
+
+    const replaceMode = options?.mode ?? "destructive";
+
+    try {
+      let messageToAppend = summaryMessage;
+      let deletedSequences: number[] = [];
+
+      if (replaceMode === "append-compaction-boundary") {
+        assert(
+          summaryMessage.role === "assistant",
+          "append-compaction-boundary replace mode requires an assistant summary message"
+        );
+
+        // Only need the current epoch's messages — the latest boundary marker holds
+        // the max compaction epoch, and epochs are monotonically increasing with
+        // append-only compaction. Falls back to full history for uncompacted workspaces.
+        const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+        if (!historyResult.success) {
+          return Err(
+            `Failed to read history for append-compaction-boundary mode: ${historyResult.error}`
+          );
+        }
+
+        const nextCompactionEpoch = getNextCompactionEpochForAppendBoundary(
+          workspaceId,
+          historyResult.data
+        );
+        assert(
+          isPositiveInteger(nextCompactionEpoch),
+          "append-compaction-boundary replace mode must compute a positive compaction epoch"
+        );
+
+        const compactedMarker = isDurableCompactedMarker(summaryMessage.metadata?.compacted)
+          ? summaryMessage.metadata.compacted
+          : "user";
+
+        messageToAppend = {
+          ...summaryMessage,
+          metadata: {
+            ...(summaryMessage.metadata ?? {}),
+            compacted: compactedMarker,
+            compactionBoundary: true,
+            compactionEpoch: nextCompactionEpoch,
+          },
+        };
+
+        assert(
+          isDurableCompactedMarker(messageToAppend.metadata?.compacted),
+          "append-compaction-boundary replace mode requires a durable compacted marker"
+        );
+        assert(
+          messageToAppend.metadata?.compactionBoundary === true,
+          "append-compaction-boundary replace mode must persist compactionBoundary=true"
+        );
+        assert(
+          isPositiveInteger(messageToAppend.metadata?.compactionEpoch),
+          "append-compaction-boundary replace mode must persist a positive compactionEpoch"
+        );
+      } else {
+        assert(
+          replaceMode === "destructive",
+          `replaceHistory received unsupported replace mode: ${String(replaceMode)}`
+        );
+
+        const clearResult = await this.historyService.clearHistory(workspaceId);
+        if (!clearResult.success) {
+          return Err(`Failed to clear history: ${clearResult.error}`);
+        }
+        deletedSequences = clearResult.data;
+      }
+
+      const appendResult = await this.historyService.appendToHistory(workspaceId, messageToAppend);
+      if (!appendResult.success) {
+        return Err(`Failed to append summary message: ${appendResult.error}`);
+      }
+
+      // Emit through the session so ORPC subscriptions receive the events
+      const session = this.sessions.get(workspaceId);
+      if (deletedSequences.length > 0) {
+        const deleteMessage: DeleteMessage = {
+          type: "delete",
+          historySequences: deletedSequences,
+        };
+        if (session) {
+          session.emitChatEvent(deleteMessage);
+        } else {
+          this.emit("chat", { workspaceId, message: deleteMessage });
+        }
+      }
+
+      // Add type: "message" for discriminated union (MuxMessage doesn't have it)
+      const typedSummaryMessage = { ...messageToAppend, type: "message" as const };
+      if (session) {
+        session.emitChatEvent(typedSummaryMessage);
+      } else {
+        this.emit("chat", { workspaceId, message: typedSummaryMessage });
+      }
+
+      // Optional cleanup: delete plan file when caller explicitly requests it.
+      // Note: the propose_plan UI keeps the plan file on disk; this flag is reserved for
+      // explicit reset flows and backwards compatibility.
+      if (options?.deletePlanFile === true) {
+        const metadata = await this.getInfo(workspaceId);
+        if (metadata) {
+          await this.deletePlanFilesForWorkspace(workspaceId, metadata);
+        }
+        this.sessions.get(workspaceId)?.clearFileState();
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to replace history: ${message}`);
+    }
+  }
+
+  async getActivityList(): Promise<Record<string, WorkspaceActivitySnapshot>> {
+    try {
+      const snapshots = await this.extensionMetadata.getAllSnapshots();
+      return Object.fromEntries(snapshots.entries());
+    } catch (error) {
+      log.error("Failed to list activity:", error);
+      return {};
+    }
+  }
+  async getChatHistory(workspaceId: string): Promise<MuxMessage[]> {
+    try {
+      // Only return messages from the latest compaction boundary onward.
+      // Pre-boundary messages are summarized in the boundary marker.
+      // TODO: allow users to opt in to viewing full pre-boundary history.
+      const history = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+      return history.success ? history.data : [];
+    } catch (error) {
+      log.error("Failed to get chat history:", error);
+      return [];
+    }
+  }
+
+  async getHistoryLoadMore(
+    workspaceId: string,
+    cursor: WorkspaceHistoryLoadMoreCursor | null | undefined
+  ): Promise<WorkspaceHistoryLoadMoreResult> {
+    assert(
+      typeof workspaceId === "string" && workspaceId.trim().length > 0,
+      "workspaceId is required"
+    );
+
+    if (cursor !== null && cursor !== undefined) {
+      assert(
+        isNonNegativeInteger(cursor.beforeHistorySequence),
+        "cursor.beforeHistorySequence must be a non-negative integer"
+      );
+      assert(
+        cursor.beforeMessageId === null ||
+          cursor.beforeMessageId === undefined ||
+          typeof cursor.beforeMessageId === "string",
+        "cursor.beforeMessageId must be a string, null, or undefined"
+      );
+      if (typeof cursor.beforeMessageId === "string") {
+        assert(
+          cursor.beforeMessageId.trim().length > 0,
+          "cursor.beforeMessageId must be non-empty when provided"
+        );
+      }
+    }
+
+    const emptyResult: WorkspaceHistoryLoadMoreResult = {
+      messages: [],
+      nextCursor: null,
+      hasOlder: false,
+    };
+
+    try {
+      let beforeHistorySequence: number | undefined = cursor?.beforeHistorySequence;
+
+      if (beforeHistorySequence === undefined) {
+        // Initial load-more request (no cursor) should page one epoch older than startup replay.
+        const latestBoundaryResult = await this.historyService.getHistoryFromLatestBoundary(
+          workspaceId,
+          0
+        );
+        if (!latestBoundaryResult.success) {
+          log.warn("workspace.history.loadMore: failed to read latest boundary", {
+            workspaceId,
+            error: latestBoundaryResult.error,
+          });
+          return emptyResult;
+        }
+
+        const oldestFromLatestBoundary = getOldestSequencedMessage(latestBoundaryResult.data);
+        if (!oldestFromLatestBoundary) {
+          return emptyResult;
+        }
+
+        beforeHistorySequence = oldestFromLatestBoundary.historySequence;
+      }
+
+      assert(
+        isNonNegativeInteger(beforeHistorySequence),
+        "resolved beforeHistorySequence must be a non-negative integer"
+      );
+
+      const historyWindowResult = await this.historyService.getHistoryBoundaryWindow(
+        workspaceId,
+        beforeHistorySequence
+      );
+      if (!historyWindowResult.success) {
+        log.warn("workspace.history.loadMore: failed to read boundary window", {
+          workspaceId,
+          beforeHistorySequence,
+          error: historyWindowResult.error,
+        });
+        return emptyResult;
+      }
+
+      const messages: WorkspaceChatMessage[] = historyWindowResult.data.messages.map((message) => ({
+        ...message,
+        type: "message",
+      }));
+
+      if (!historyWindowResult.data.hasOlder) {
+        return {
+          messages,
+          nextCursor: null,
+          hasOlder: false,
+        };
+      }
+
+      const oldestInWindow = getOldestSequencedMessage(historyWindowResult.data.messages);
+      if (!oldestInWindow) {
+        // Defensive fallback: if we cannot build a stable cursor, stop paging instead of looping.
+        log.warn("workspace.history.loadMore: cannot compute next cursor despite hasOlder=true", {
+          workspaceId,
+          beforeHistorySequence,
+        });
+        return {
+          messages,
+          nextCursor: null,
+          hasOlder: false,
+        };
+      }
+
+      return {
+        messages,
+        nextCursor: {
+          beforeHistorySequence: oldestInWindow.historySequence,
+          beforeMessageId: oldestInWindow.message.id,
+        },
+        hasOlder: true,
+      };
+    } catch (error) {
+      log.error("Failed to load more workspace history:", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+      return emptyResult;
+    }
+  }
+
+  private async listGitPathsForFileCompletions(
+    runtime: Parameters<typeof execBuffered>[0],
+    cwd: string
+  ): Promise<string[] | null> {
+    assert(cwd.trim().length > 0, "File completion git listing requires a workspace cwd");
+
+    const result = await execBuffered(runtime, "git ls-files -co --exclude-standard", {
+      cwd,
+      timeout: 5,
+    });
+
+    if (result.exitCode !== 0) {
+      return null;
+    }
+
+    return parseFileCompletionPaths(result.stdout);
+  }
+
+  private async listWorkspacePathsForFileCompletions(
+    metadata: FrontendWorkspaceMetadata,
+    workspacePath?: string
+  ): Promise<string[] | null> {
+    if (!isMultiProject(metadata)) {
+      const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
+      return this.listGitPathsForFileCompletions(runtime, workspacePath);
+    }
+
+    const projectFiles = await Promise.all(
+      getProjects(metadata).map(async (project) => {
+        assert(
+          project.projectName.trim().length > 0,
+          `Workspace ${metadata.id} has a project without a projectName`
+        );
+
+        const projectRuntime = createRuntime(metadata.runtimeConfig, {
+          projectPath: project.projectPath,
+          workspaceName: metadata.name,
+          workspacePath:
+            isSSHRuntime(metadata.runtimeConfig) && workspacePath != null
+              ? getWorkspacePathHintForProject(
+                  {
+                    workspaceId: metadata.id,
+                    workspaceName: metadata.name,
+                    workspacePath,
+                    runtimeConfig: metadata.runtimeConfig,
+                    projectPath: metadata.projectPath,
+                    projectName: metadata.projectName,
+                    projects: metadata.projects,
+                  },
+                  project.projectPath
+                )
+              : undefined,
+        });
+        const projectWorkspacePath = projectRuntime.getWorkspacePath(
+          project.projectPath,
+          metadata.name
+        );
+        assert(
+          projectWorkspacePath.trim().length > 0,
+          `Workspace ${metadata.id} project ${project.projectName} resolved to an empty workspace path`
+        );
+
+        const repoFiles = await this.listGitPathsForFileCompletions(
+          projectRuntime,
+          projectWorkspacePath
+        );
+        if (repoFiles === null) {
+          return null;
+        }
+
+        return repoFiles.map((filePath) => path.posix.join(project.projectName, filePath));
+      })
+    );
+
+    const validProjectFiles = projectFiles.filter((files): files is string[] => files !== null);
+    if (validProjectFiles.length !== projectFiles.length) {
+      return null;
+    }
+
+    return validProjectFiles.flat();
+  }
+
+  async getFileCompletions(
+    workspaceId: string,
+    query: string,
+    limit = 20
+  ): Promise<{ paths: string[] }> {
+    assert(workspaceId, "workspaceId is required");
+    assert(typeof query === "string", "query must be a string");
+
+    const resolvedLimit = Math.min(Math.max(1, Math.trunc(limit)), 50);
+
+    const metadata = await this.getInfo(workspaceId);
+    if (!metadata) {
+      return { paths: [] };
+    }
+
+    const now = Date.now();
+    const CACHE_TTL_MS = 10_000;
+
+    let cached = this.fileCompletionsCache.get(workspaceId);
+    if (!cached) {
+      cached = { index: EMPTY_FILE_COMPLETIONS_INDEX, fetchedAt: 0 };
+      this.fileCompletionsCache.set(workspaceId, cached);
+    }
+
+    const cacheEntry = cached;
+
+    const isStale = cacheEntry.fetchedAt === 0 || now - cacheEntry.fetchedAt > CACHE_TTL_MS;
+    if (isStale && !cacheEntry.refreshing) {
+      cacheEntry.refreshing = (async () => {
+        const previousIndex = cacheEntry.index;
+
+        try {
+          const workspace = this.config.findWorkspace(workspaceId);
+          const files = await this.listWorkspacePathsForFileCompletions(
+            metadata,
+            workspace?.workspacePath
+          );
+          cacheEntry.index = files === null ? previousIndex : buildFileCompletionsIndex(files);
+          cacheEntry.fetchedAt = Date.now();
+        } catch (error) {
+          log.debug("getFileCompletions: failed to list files", {
+            workspaceId,
+            error: getErrorMessage(error),
+          });
+
+          // Keep any previously indexed data, but avoid retrying in a tight loop.
+          cacheEntry.index = previousIndex;
+          cacheEntry.fetchedAt = Date.now();
+        }
+      })().finally(() => {
+        cacheEntry.refreshing = undefined;
+      });
+    }
+
+    if (cacheEntry.fetchedAt === 0 && cacheEntry.refreshing) {
+      await cacheEntry.refreshing;
+    }
+
+    return { paths: searchFileCompletions(cacheEntry.index, query, resolvedLimit) };
+  }
+  async getFullReplay(workspaceId: string): Promise<WorkspaceChatMessage[]> {
+    try {
+      const session = this.getOrCreateSession(workspaceId);
+      const events: WorkspaceChatMessage[] = [];
+      await session.replayHistory(({ message }) => {
+        events.push(message);
+      });
+      return events;
+    } catch (error) {
+      log.error("Failed to get full replay:", error);
+      return [];
+    }
+  }
+
+  async executeBash(
+    workspaceId: string,
+    script: string,
+    options?: ExecuteBashOptions,
+    command?: string,
+    args?: string[]
+  ): Promise<Result<BashToolResult>> {
+    // Block bash execution while workspace is being removed to prevent races with directory deletion.
+    // A common case: subagent calls agent_report → frontend's GitStatusStore triggers a git status
+    // refresh → executeBash arrives while remove() is deleting the directory → spawn fails with ENOENT.
+    // removingWorkspaces is set for the entire duration of remove(), covering the window between
+    // disk deletion and metadata invalidation.
+    if (this.removingWorkspaces.has(workspaceId)) {
+      return Err(`Workspace ${workspaceId} is being removed`);
+    }
+
+    // NOTE: This guard must run before any init/runtime operations that could wake a stopped SSH
+    // runtime (e.g., Coder workspaces started via `coder ssh --wait=yes`).
+    if (this.archivingWorkspaces.has(workspaceId)) {
+      return Err(`Workspace ${workspaceId} is being archived; cannot execute bash`);
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      return Err(`Failed to get workspace metadata: ${metadataResult.error}`);
+    }
+
+    const metadata = metadataResult.data;
+    if (isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt)) {
+      return Err(`Workspace ${workspaceId} is archived; cannot execute bash`);
+    }
+
+    // Wait for workspace initialization (container creation, code sync, etc.)
+    // Same behavior as AI tools - 5 min timeout, then proceeds anyway
+    await this.initStateManager.waitForInit(workspaceId);
+
+    try {
+      // Get the persisted workspace entry from config. Multi-project git command mode needs the
+      // workspace checkout path rather than metadata.projectPath, and other path-addressable
+      // runtimes also reuse the persisted workspace root shown in the Explorer.
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err(`Workspace ${workspaceId} not found in config`);
+      }
+
+      const multiProjectRuntimes = isMultiProject(metadata)
+        ? getProjects(metadata).map((project) => ({
+            projectPath: project.projectPath,
+            projectName: project.projectName,
+            runtime: createRuntime(metadata.runtimeConfig, {
+              projectPath: project.projectPath,
+              workspaceName: metadata.name,
+              workspacePath: isSSHRuntime(metadata.runtimeConfig)
+                ? getWorkspacePathHintForProject(
+                    {
+                      workspaceId,
+                      workspaceName: metadata.name,
+                      workspacePath: workspace.workspacePath,
+                      runtimeConfig: metadata.runtimeConfig,
+                      projectPath: metadata.projectPath,
+                      projectName: metadata.projectName,
+                      projects: metadata.projects,
+                    },
+                    project.projectPath
+                  )
+                : undefined,
+            }),
+          }))
+        : undefined;
+
+      // Multi-project workspaces execute bash from the container root so sibling repos are addressable.
+      // Single-project workspaces use the persisted workspacePath so devcontainer Docker labels
+      // resolve to the correct container even if the path diverges from canonical reconstruction.
+      const runtime = multiProjectRuntimes
+        ? new MultiProjectRuntime(
+            new ContainerManager(getSrcBaseDir(metadata.runtimeConfig) ?? this.config.srcDir),
+            multiProjectRuntimes,
+            metadata.name
+          )
+        : createRuntime(metadata.runtimeConfig, {
+            projectPath: metadata.projectPath,
+            workspaceName: metadata.name,
+            workspacePath: workspace.workspacePath,
+          });
+
+      // Ensure runtime is ready (e.g., start Docker container if stopped)
+      const readyResult = await runtime.ensureReady();
+      if (!readyResult.ready) {
+        return Err(readyResult.error ?? "Runtime not ready");
+      }
+
+      const singleProjectMetadataWithPath = {
+        ...metadata,
+        namedWorkspacePath: workspace.workspacePath,
+      };
+      const workspaceRootPath = multiProjectRuntimes
+        ? undefined
+        : resolveWorkspaceRootPath(singleProjectMetadataWithPath, runtime);
+      const workspacePath = multiProjectRuntimes
+        ? undefined
+        : resolveWorkspaceExecutionPath(singleProjectMetadataWithPath, runtime);
+      const multiProjectContainerPath = multiProjectRuntimes
+        ? runtime.getWorkspacePath(metadata.projectPath, metadata.name)
+        : undefined;
+      if (multiProjectContainerPath != null) {
+        assert(
+          multiProjectContainerPath.length > 0,
+          "Multi-project executeBash requires a shared container cwd"
+        );
+      }
+
+      // Read trust state so tool_env is sourced only when the shared execution environment is trusted.
+      const configSnapshot = this.config.loadConfigOrDefault();
+
+      let scriptToExecute = script;
+      if (command != null) {
+        if (command !== "git") {
+          return Err("executeBash command mode only supports git");
+        }
+
+        const commandArgs = args ?? [];
+        scriptToExecute = [shellQuote(command), ...commandArgs.map((arg) => shellQuote(arg))].join(
+          " "
+        );
+      }
+
+      // Multi-project script mode must stay at the shared container root so sibling repos remain
+      // addressable even when task/child workspaces persist their primary-project checkout path.
+      // Repo-context UI can opt scripts back into a repo checkout, and path-targeted callers can
+      // point repo-root execution at the project that owns the referenced workspace-relative path.
+      // Bare git command mode still defaults to the primary repo checkout so git always runs inside
+      // a repo even when no caller hint is provided.
+      let cwdForExecution = multiProjectContainerPath ?? workspacePath;
+      assert(cwdForExecution?.length, "executeBash requires a resolved execution cwd");
+      const requiresRepoRootCwd = command === "git" || options?.cwdMode === "repo-root";
+      const requestedRepoRootProjectPath = normalizeRepoRootProjectPath(
+        options?.repoRootProjectPath
+      );
+      if (!multiProjectRuntimes && requiresRepoRootCwd) {
+        // Sub-project workspaces normally execute tools from their scoped cwd, but repo-context
+        // commands (Review, Git status, bare git command mode) need the checkout root so git
+        // pathspecs and diff output share the same repo-root coordinate system.
+        cwdForExecution = workspaceRootPath;
+        assert(cwdForExecution?.length, "Single-project repo-root execution requires a repo cwd");
+      }
+      if (multiProjectRuntimes && requiresRepoRootCwd) {
+        const repoRootRuntime = requestedRepoRootProjectPath
+          ? multiProjectRuntimes.find(
+              (runtimeEntry) =>
+                normalizeRepoRootProjectPath(runtimeEntry.projectPath) ===
+                requestedRepoRootProjectPath
+            )
+          : (multiProjectRuntimes.find(
+              (runtimeEntry) =>
+                normalizeRepoRootProjectPath(runtimeEntry.projectPath) ===
+                normalizeRepoRootProjectPath(metadata.projectPath)
+            ) ?? multiProjectRuntimes[0]);
+        if (!repoRootRuntime) {
+          return Err(
+            requestedRepoRootProjectPath
+              ? `Unknown repo-root project for workspace ${workspaceId}: ${requestedRepoRootProjectPath}`
+              : `Missing primary project runtime for workspace ${workspaceId}`
+          );
+        }
+        cwdForExecution = repoRootRuntime.runtime.getWorkspacePath(
+          repoRootRuntime.projectPath,
+          metadata.name
+        );
+        assert(cwdForExecution.length > 0, "Multi-project repo-root execution requires a repo cwd");
+      }
+
+      // Multi-project bash shares one execution environment, so inject the union of repo secrets.
+      const projectSecrets = isMultiProject(metadata)
+        ? mergeMultiProjectSecrets(metadata, this.config)
+        : this.config.getEffectiveSecrets(metadata.projectPath);
+
+      // Create scoped temp directory for this IPC call
+      using tempDir = new DisposableTempDir("mux-ipc-bash");
+
+      // Create bash tool
+      const bashTool = createBashTool({
+        cwd: cwdForExecution,
+        runtime,
+        secrets: await secretsToRecord(projectSecrets, this.opResolver),
+        runtimeTempDir: tempDir.path,
+        overflow_policy: "truncate",
+        trusted: isWorkspaceTrustedForSharedExecution(metadata, configSnapshot.projects),
+      });
+
+      // Execute the script
+      const result = (await bashTool.execute!(
+        {
+          script: scriptToExecute,
+          timeout_secs: options?.timeout_secs ?? 120,
+        },
+        {
+          toolCallId: `bash-${Date.now()}`,
+          messages: [],
+        }
+      )) as BashToolResult;
+
+      return Ok(result);
+    } catch (error) {
+      // bashTool.execute returns error results instead of throwing, so this only catches
+      // failures from setup code (getWorkspaceMetadata, findWorkspace, createRuntime, etc.)
+      const message = getErrorMessage(error);
+      return Err(`Failed to execute bash command: ${message}`);
+    }
+  }
+
+  /**
+   * List background processes for a workspace.
+   * Returns process info suitable for UI display (excludes handle).
+   */
+  async listBackgroundProcesses(workspaceId: string): Promise<
+    Array<{
+      id: string;
+      pid: number;
+      script: string;
+      displayName?: string;
+      startTime: number;
+      status: "running" | "exited" | "killed" | "failed";
+      exitCode?: number;
+    }>
+  > {
+    const processes = await this.backgroundProcessManager.list(workspaceId);
+    return processes.map((p) => ({
+      id: p.id,
+      pid: p.pid,
+      script: p.script,
+      displayName: p.displayName,
+      startTime: p.startTime,
+      status: p.status,
+      exitCode: p.exitCode,
+    }));
+  }
+
+  /**
+   * Terminate a background process by ID.
+   * Verifies the process belongs to the specified workspace.
+   */
+  async terminateBackgroundProcess(workspaceId: string, processId: string): Promise<Result<void>> {
+    // Get process to verify workspace ownership
+    const proc = await this.backgroundProcessManager.getProcess(processId);
+    if (!proc) {
+      return Err(`Process not found: ${processId}`);
+    }
+    if (proc.workspaceId !== workspaceId) {
+      return Err(`Process ${processId} does not belong to workspace ${workspaceId}`);
+    }
+
+    const result = await this.backgroundProcessManager.terminate(processId);
+    if (!result.success) {
+      return Err(result.error);
+    }
+    return Ok(undefined);
+  }
+
+  /**
+   * Peek output for a background bash process.
+   *
+   * This must not consume the output cursor used by bash_output/task_await.
+   */
+  async getBackgroundProcessOutput(
+    workspaceId: string,
+    processId: string,
+    options?: { fromOffset?: number; tailBytes?: number }
+  ): Promise<
+    Result<{
+      status: "running" | "exited" | "killed" | "failed";
+      output: string;
+      nextOffset: number;
+      truncatedStart: boolean;
+    }>
+  > {
+    const proc = await this.backgroundProcessManager.getProcess(processId);
+    if (!proc) {
+      return Err(`Process not found: ${processId}`);
+    }
+    if (proc.workspaceId !== workspaceId) {
+      return Err(`Process ${processId} does not belong to workspace ${workspaceId}`);
+    }
+
+    const result = await this.backgroundProcessManager.peekOutput(processId, options);
+    if (!result.success) {
+      return Err(result.error);
+    }
+
+    return Ok({
+      status: result.status,
+      output: result.output,
+      nextOffset: result.nextOffset,
+      truncatedStart: result.truncatedStart,
+    });
+  }
+
+  /**
+   * Get the tool call IDs of foreground bash processes for a workspace.
+   * Returns empty array if no foreground bashes are running.
+   */
+  getForegroundToolCallIds(workspaceId: string): string[] {
+    return this.backgroundProcessManager.getForegroundToolCallIds(workspaceId);
+  }
+
+  /**
+   * Send a foreground bash process to background by its tool call ID.
+   * The process continues running but the agent stops waiting for it.
+   */
+  sendToBackground(toolCallId: string): Result<void> {
+    const result = this.backgroundProcessManager.sendToBackground(toolCallId);
+    if (!result.success) {
+      return Err(result.error);
+    }
+    return Ok(undefined);
+  }
+
+  /**
+   * Subscribe to background bash state changes.
+   */
+  onBackgroundBashChange(callback: (workspaceId: string) => void): void {
+    this.backgroundProcessManager.on("change", callback);
+  }
+
+  /**
+   * Unsubscribe from background bash state changes.
+   */
+  offBackgroundBashChange(callback: (workspaceId: string) => void): void {
+    this.backgroundProcessManager.off("change", callback);
+  }
+
+  getGoalContinuationRuntimeState(workspaceId: string): GoalContinuationRuntimeState {
+    assert(workspaceId.trim().length > 0, "getGoalContinuationRuntimeState requires workspaceId");
+    const session =
+      this.sessions.get(workspaceId) ?? this.transientStartupRecoverySessions.get(workspaceId);
+    const initState = this.initStateManager.getInitState(workspaceId);
+    return {
+      // Finished init states remain cached; only "running" should block continuations.
+      isInitializing: initState?.status === "running",
+      isRuntimeCompatible: true,
+      isBusy: session?.isBusy() === true,
+      hasQueuedMessages: session?.hasQueuedMessages() === true,
+      hasPendingFollowUp: false,
+    };
+  }
+
+  getGoalContinuationKickoffSendOptions(workspaceId: string): SendMessageOptions | null {
+    assert(
+      workspaceId.trim().length > 0,
+      "getGoalContinuationKickoffSendOptions requires workspaceId"
+    );
+    const config = this.config.loadConfigOrDefault();
+    const workspaceMatch = this.config.findWorkspace(workspaceId);
+    if (!workspaceMatch) {
+      return null;
+    }
+    const project = config.projects.get(workspaceMatch.projectPath);
+    const workspaceEntry =
+      project?.workspaces.find((w) => w.id === workspaceId) ??
+      project?.workspaces.find((w) => w.path === workspaceMatch.workspacePath);
+
+    // Initial workspace `/goal` creation can arm a continuation before any normal
+    // sendMessage call runs, so resolve kickoff options from the persisted selected
+    // agent instead of assuming the default exec agent. Plan/compact are UI modes,
+    // not continuation-capable agents, so fall back to exec for the actual kickoff.
+    const persistedAgentId = normalizeAgentId(workspaceEntry?.agentId, WORKSPACE_DEFAULTS.agentId);
+    const agentId =
+      persistedAgentId === "plan" || persistedAgentId === "compact"
+        ? WORKSPACE_DEFAULTS.agentId
+        : persistedAgentId;
+    const selectedAgentSettings = workspaceEntry?.aiSettingsByAgent?.[agentId];
+    const execAgentSettings =
+      agentId !== WORKSPACE_DEFAULTS.agentId
+        ? workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId]
+        : undefined;
+
+    const candidates: Array<string | undefined> = [
+      selectedAgentSettings?.model,
+      workspaceEntry?.aiSettings?.model,
+      config.agentAiDefaults?.[agentId]?.modelString,
+      execAgentSettings?.model,
+      agentId !== WORKSPACE_DEFAULTS.agentId
+        ? config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString
+        : undefined,
+      DEFAULT_MODEL,
+    ];
+
+    for (const raw of candidates) {
+      if (typeof raw !== "string" || raw.trim().length === 0) {
+        continue;
+      }
+      const normalized = normalizeToCanonical(raw.trim());
+      if (isValidModelFormat(normalized)) {
+        return {
+          model: normalized,
+          agentId,
+        };
+      }
+    }
+
+    return null;
+  }
+
+  async executeGoalContinuation(input: {
+    workspaceId: string;
+    message: string;
+    startStreamInBackground?: boolean;
+    kind?: GoalSyntheticMessageKind;
+    options: SendMessageOptions;
+  }): Promise<boolean> {
+    assert(input.workspaceId.trim().length > 0, "executeGoalContinuation requires workspaceId");
+    assert(input.message.trim().length > 0, "executeGoalContinuation requires message");
+
+    const goalKind = input.kind ?? GOAL_CONTINUATION_KIND;
+    const startStreamInBackground =
+      input.startStreamInBackground === true && goalKind !== GOAL_BUDGET_LIMIT_KIND;
+    const sendResult = await this.sendMessage(
+      input.workspaceId,
+      input.message,
+      {
+        ...input.options,
+        editMessageId: undefined,
+      },
+      {
+        skipAutoResumeReset: true,
+        synthetic: true,
+        agentInitiated: true,
+        startStreamInBackground,
+        onAcceptedPreStreamFailure: startStreamInBackground
+          ? () =>
+              this.workspaceGoalService?.requestPendingGoalContinuationDispatch(input.workspaceId)
+          : undefined,
+        requireIdle: true,
+        goalKind,
+        goalContinuation: true,
+      }
+    );
+
+    if (!sendResult.success) {
+      log.info("WorkspaceService: goal continuation send skipped", {
+        workspaceId: input.workspaceId,
+        error: sendResult.error,
+      });
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Execute idle compaction for a workspace directly from the backend.
+   *
+   * This path is frontend-independent: compaction still runs even if no UI is open.
+   * Throws on failure so IdleCompactionService can log and continue with the next workspace.
+   */
+  async executeIdleCompaction(workspaceId: string): Promise<void> {
+    assert(workspaceId.trim().length > 0, "executeIdleCompaction requires a non-empty workspaceId");
+
+    const sendOptions = await this.buildIdleCompactionSendOptions(workspaceId);
+
+    const muxMetadata: MuxMessageMetadata = {
+      type: "compaction-request",
+      rawCommand: "/compact",
+      commandPrefix: "/compact",
+      parsed: {
+        model: sendOptions.model,
+      },
+      requestedModel: sendOptions.model,
+      source: "idle-compaction",
+      displayStatus: { emoji: "💤", message: "Compacting idle workspace..." },
+    };
+
+    const session = this.getOrCreateSession(workspaceId);
+    if (session.isBusy()) {
+      throw new Error(
+        "Failed to execute idle compaction: Workspace is busy; idle-only send was skipped."
+      );
+    }
+
+    const sendResult = await this.sendMessage(
+      workspaceId,
+      buildCompactionMessageText({}),
+      {
+        ...sendOptions,
+        muxMetadata,
+      },
+      {
+        // Idle compaction runs in background; avoid mutating auto-resume counters.
+        skipAutoResumeReset: true,
+        // Backend-initiated maintenance turn: do not treat as explicit user re-engagement.
+        synthetic: true,
+        // If the workspace became active after eligibility checks, skip instead of queueing
+        // stale maintenance work for later.
+        requireIdle: true,
+      }
+    );
+
+    if (!sendResult.success) {
+      const rawError = sendResult.error;
+      const formattedError =
+        typeof rawError === "object" && rawError !== null
+          ? "raw" in rawError && typeof rawError.raw === "string"
+            ? rawError.raw
+            : "message" in rawError && typeof rawError.message === "string"
+              ? rawError.message
+              : "type" in rawError && typeof rawError.type === "string"
+                ? rawError.type
+                : JSON.stringify(rawError)
+          : String(rawError);
+      throw new Error(`Failed to execute idle compaction: ${formattedError}`);
+    }
+
+    // Mark idle compaction only while a stream is actually active.
+    // sendMessage can succeed on startup-abort paths where no stream is running,
+    // and leaking this marker into the next user stream would suppress real notifications.
+    if (session.isBusy()) {
+      // Marker is added after dispatch to avoid races with concurrent user sends.
+      // The streaming=true snapshot was already emitted without the flag, but the
+      // streaming=false snapshot (on stream end) picks up the marker.
+      this.idleCompactingWorkspaces.add(workspaceId);
+      return;
+    }
+
+    // Defensive cleanup for startup-abort paths or extremely fast completions that
+    // finish before executeIdleCompaction regains control.
+    this.idleCompactingWorkspaces.delete(workspaceId);
+  }
+
+  private async buildIdleCompactionSendOptions(workspaceId: string): Promise<SendMessageOptions> {
+    const config = this.config.loadConfigOrDefault();
+    const workspaceMatch = this.config.findWorkspace(workspaceId);
+
+    const workspaceEntry = workspaceMatch
+      ? (() => {
+          const project = config.projects.get(workspaceMatch.projectPath);
+          return (
+            project?.workspaces.find((workspace) => workspace.id === workspaceId) ??
+            project?.workspaces.find((workspace) => workspace.path === workspaceMatch.workspacePath)
+          );
+        })()
+      : undefined;
+
+    const activity = await this.extensionMetadata.getSnapshot(workspaceId);
+
+    const compactAgentSettings = workspaceEntry?.aiSettingsByAgent?.compact;
+    const execAgentSettings =
+      workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId] ?? workspaceEntry?.aiSettings;
+
+    // Compaction defaults now flow through per-agent defaults.
+    const globalCompactDefaults = config.agentAiDefaults?.compact;
+    const globalCompactDefaultModel = globalCompactDefaults?.modelString;
+    const normalizedGlobalCompactDefaultModel =
+      typeof globalCompactDefaultModel === "string"
+        ? normalizeToCanonical(globalCompactDefaultModel.trim())
+        : undefined;
+    const validGlobalCompactDefaultModel =
+      normalizedGlobalCompactDefaultModel && isValidModelFormat(normalizedGlobalCompactDefaultModel)
+        ? normalizedGlobalCompactDefaultModel
+        : undefined;
+
+    const globalExecDefaultModel =
+      config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString;
+    const normalizedGlobalExecDefaultModel =
+      typeof globalExecDefaultModel === "string"
+        ? normalizeToCanonical(globalExecDefaultModel.trim())
+        : undefined;
+    const validGlobalExecDefaultModel =
+      normalizedGlobalExecDefaultModel && isValidModelFormat(normalizedGlobalExecDefaultModel)
+        ? normalizedGlobalExecDefaultModel
+        : undefined;
+
+    const fallbackModel =
+      compactAgentSettings?.model ??
+      validGlobalCompactDefaultModel ??
+      execAgentSettings?.model ??
+      validGlobalExecDefaultModel ??
+      activity?.lastModel ??
+      WORKSPACE_DEFAULTS.model;
+
+    let model = normalizeToCanonical(fallbackModel);
+    if (!isValidModelFormat(model)) {
+      log.warn("Idle compaction resolved invalid model; falling back to workspace default", {
+        workspaceId,
+        model,
+      });
+      model = WORKSPACE_DEFAULTS.model;
+    }
+
+    const globalCompactDefaultThinking = globalCompactDefaults?.thinkingLevel;
+
+    const requestedThinking =
+      compactAgentSettings?.thinkingLevel ??
+      globalCompactDefaultThinking ??
+      execAgentSettings?.thinkingLevel ??
+      activity?.lastThinkingLevel ??
+      WORKSPACE_DEFAULTS.thinkingLevel;
+
+    const normalizedThinkingLevel =
+      coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
+
+    return {
+      model,
+      agentId: "compact",
+      thinkingLevel: enforceThinkingPolicy(model, normalizedThinkingLevel),
+      maxOutputTokens: undefined,
+      // Disable all tools during compaction - regex .* matches all tool names.
+      toolPolicy: [{ regex_match: ".*", action: "disable" }],
+      // Compaction should not mutate persisted workspace AI defaults.
+      skipAiSettingsPersistence: true,
+    };
+  }
+
+  /**
+   * Execute a synthetic heartbeat turn for an idle workspace.
+   *
+   * This path is frontend-independent: heartbeats still run even if no UI is open.
+   * Throws on failure so HeartbeatService can log and continue with the next workspace.
+   */
+  async executeHeartbeat(workspaceId: string): Promise<void> {
+    assert(workspaceId.trim().length > 0, "executeHeartbeat requires a non-empty workspaceId");
+
+    const heartbeatRequest = await this.buildHeartbeatRequest(workspaceId);
+    const session = this.getOrCreateSession(workspaceId);
+    if (session.isBusy()) {
+      throw new Error(
+        "Failed to execute heartbeat: Workspace is busy; idle-only send was skipped."
+      );
+    }
+    if (session.hasQueuedMessages()) {
+      throw new Error(
+        "Failed to execute heartbeat: Workspace has queued user input; idle-only send was skipped."
+      );
+    }
+
+    log.info("Executing heartbeat", {
+      workspaceId,
+      contextMode: heartbeatRequest.contextMode,
+      model: heartbeatRequest.sendOptions.model,
+      agentId: heartbeatRequest.sendOptions.agentId,
+    });
+
+    switch (heartbeatRequest.contextMode) {
+      case "normal":
+        await this.dispatchHeartbeatMessage(workspaceId, heartbeatRequest);
+        return;
+      case "compact":
+        await this.dispatchHeartbeatCompactionRequest(workspaceId, heartbeatRequest);
+        return;
+      case "reset": {
+        const appendResult = await session.appendHeartbeatContextResetBoundary({
+          boundaryText: HEARTBEAT_RESET_BOUNDARY_MESSAGE,
+          pendingFollowUp: heartbeatRequest.followUp,
+        });
+        if (!appendResult.success) {
+          throw new Error(`Failed to execute heartbeat: ${appendResult.error}`);
+        }
+
+        const dispatched = await session.dispatchPendingCompactionFollowUpIfNeeded(
+          appendResult.data.summaryMessageId
+        );
+        if (!dispatched) {
+          log.info("Skipped heartbeat follow-up after reset boundary", {
+            workspaceId,
+            contextMode: heartbeatRequest.contextMode,
+          });
+        }
+        return;
+      }
+      default: {
+        const exhaustiveContextMode: never = heartbeatRequest.contextMode;
+        throw new Error(`Unhandled heartbeat context mode: ${String(exhaustiveContextMode)}`);
+      }
+    }
+  }
+
+  private async buildHeartbeatRequest(workspaceId: string): Promise<HeartbeatExecutionRequest> {
+    const { sendOptions, heartbeatMessage, contextMode } =
+      await this.buildHeartbeatSendOptions(workspaceId);
+
+    const activity = await this.extensionMetadata.getSnapshot(workspaceId);
+    const idleMs =
+      typeof activity?.recency === "number"
+        ? Math.max(0, Date.now() - activity.recency)
+        : HEARTBEAT_DEFAULT_INTERVAL_MS;
+    const idleDuration = this.formatIdleDuration(idleMs);
+    const heartbeatLead = `[Heartbeat] This workspace has been idle for approximately ${idleDuration}.`;
+    const heartbeatBody = heartbeatMessage ?? HEARTBEAT_DEFAULT_MESSAGE_BODY;
+    const heartbeatPrompt = `${heartbeatLead} ${heartbeatBody}`;
+
+    assert(
+      typeof sendOptions.agentId === "string" && sendOptions.agentId.trim().length > 0,
+      "Heartbeat requests require a resolved agentId"
+    );
+
+    const muxMetadata: Extract<MuxMessageMetadata, { type: "heartbeat-request" }> = {
+      type: "heartbeat-request",
+      source: "heartbeat",
+      requestedModel: sendOptions.model,
+      displayStatus: { emoji: "💓", message: "Heartbeat check..." },
+    };
+
+    return {
+      contextMode,
+      sendOptions,
+      heartbeatPrompt,
+      muxMetadata,
+      followUp: {
+        text: heartbeatPrompt,
+        model: sendOptions.model,
+        agentId: sendOptions.agentId,
+        ...pickPreservedSendOptions(sendOptions),
+        muxMetadata,
+        dispatchOptions: { requireIdle: true },
+      },
+    };
+  }
+
+  private async dispatchHeartbeatMessage(
+    workspaceId: string,
+    heartbeatRequest: HeartbeatExecutionRequest
+  ): Promise<void> {
+    const sendResult = await this.sendMessage(
+      workspaceId,
+      heartbeatRequest.heartbeatPrompt,
+      {
+        ...heartbeatRequest.sendOptions,
+        muxMetadata: heartbeatRequest.muxMetadata,
+      },
+      {
+        // Heartbeats run in background; avoid mutating auto-resume counters.
+        skipAutoResumeReset: true,
+        // Backend-initiated maintenance turn: do not treat as explicit user re-engagement.
+        synthetic: true,
+        // If the workspace became active after eligibility checks, skip instead of queueing
+        // stale maintenance work for later.
+        requireIdle: true,
+      }
+    );
+
+    if (!sendResult.success) {
+      throw new Error(
+        `Failed to execute heartbeat: ${this.formatSendMessageError(sendResult.error)}`
+      );
+    }
+  }
+
+  private async dispatchHeartbeatCompactionRequest(
+    workspaceId: string,
+    heartbeatRequest: HeartbeatExecutionRequest
+  ): Promise<void> {
+    const compactionSendOptions = await this.buildIdleCompactionSendOptions(workspaceId);
+    const compactionMuxMetadata: MuxMessageMetadata = {
+      type: "compaction-request",
+      rawCommand: "/compact",
+      commandPrefix: "/compact",
+      parsed: {
+        model: compactionSendOptions.model,
+        followUpContent: heartbeatRequest.followUp,
+      },
+      requestedModel: compactionSendOptions.model,
+      source: "idle-compaction",
+      displayStatus: { emoji: "💓", message: "Compacting before heartbeat..." },
+    };
+
+    const sendResult = await this.sendMessage(
+      workspaceId,
+      buildCompactionMessageText({ followUpContent: heartbeatRequest.followUp }),
+      {
+        ...compactionSendOptions,
+        muxMetadata: compactionMuxMetadata,
+      },
+      {
+        skipAutoResumeReset: true,
+        synthetic: true,
+        requireIdle: true,
+      }
+    );
+
+    if (!sendResult.success) {
+      throw new Error(
+        `Failed to execute heartbeat: ${this.formatSendMessageError(sendResult.error)}`
+      );
+    }
+  }
+
+  private formatSendMessageError(error: SendMessageError): string {
+    return typeof error === "object" && error !== null
+      ? "raw" in error && typeof error.raw === "string"
+        ? error.raw
+        : "message" in error && typeof error.message === "string"
+          ? error.message
+          : "type" in error && typeof error.type === "string"
+            ? error.type
+            : JSON.stringify(error)
+      : String(error);
+  }
+
+  private async buildHeartbeatSendOptions(workspaceId: string): Promise<{
+    sendOptions: SendMessageOptions;
+    heartbeatMessage: string | undefined;
+    contextMode: HeartbeatContextMode;
+  }> {
+    const config = this.config.loadConfigOrDefault();
+    const workspaceMatch = this.config.findWorkspace(workspaceId);
+
+    const workspaceEntry = workspaceMatch
+      ? (() => {
+          const project = config.projects.get(workspaceMatch.projectPath);
+          return (
+            project?.workspaces.find((workspace) => workspace.id === workspaceId) ??
+            project?.workspaces.find((workspace) => workspace.path === workspaceMatch.workspacePath)
+          );
+        })()
+      : undefined;
+
+    const activity = await this.extensionMetadata.getSnapshot(workspaceId);
+
+    const rawAgentId = workspaceEntry?.agentId;
+    const agentId = normalizeAgentId(rawAgentId, WORKSPACE_DEFAULTS.agentId);
+    const agentSettings =
+      workspaceEntry?.aiSettingsByAgent?.[agentId] ?? workspaceEntry?.aiSettings;
+    const execAgentSettings =
+      agentId !== WORKSPACE_DEFAULTS.agentId
+        ? (workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId] ??
+          workspaceEntry?.aiSettings)
+        : undefined;
+
+    const globalAgentDefaults = config.agentAiDefaults?.[agentId];
+    const globalAgentDefaultModel = globalAgentDefaults?.modelString;
+    const normalizedGlobalAgentDefaultModel =
+      typeof globalAgentDefaultModel === "string"
+        ? normalizeToCanonical(globalAgentDefaultModel.trim())
+        : undefined;
+    const validGlobalAgentDefaultModel =
+      normalizedGlobalAgentDefaultModel && isValidModelFormat(normalizedGlobalAgentDefaultModel)
+        ? normalizedGlobalAgentDefaultModel
+        : undefined;
+
+    const globalExecDefaults =
+      agentId !== WORKSPACE_DEFAULTS.agentId
+        ? config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]
+        : undefined;
+    const globalExecDefaultModel = globalExecDefaults?.modelString;
+    const normalizedGlobalExecDefaultModel =
+      typeof globalExecDefaultModel === "string"
+        ? normalizeToCanonical(globalExecDefaultModel.trim())
+        : undefined;
+    const validGlobalExecDefaultModel =
+      normalizedGlobalExecDefaultModel && isValidModelFormat(normalizedGlobalExecDefaultModel)
+        ? normalizedGlobalExecDefaultModel
+        : undefined;
+
+    const fallbackModel =
+      agentSettings?.model ??
+      validGlobalAgentDefaultModel ??
+      execAgentSettings?.model ??
+      validGlobalExecDefaultModel ??
+      activity?.lastModel ??
+      WORKSPACE_DEFAULTS.model;
+
+    let model = normalizeToCanonical(fallbackModel);
+    if (!isValidModelFormat(model)) {
+      log.warn("Heartbeat resolved invalid model; falling back to workspace default", {
+        workspaceId,
+        agentId,
+        model,
+      });
+      model = WORKSPACE_DEFAULTS.model;
+    }
+
+    const globalAgentDefaultThinking = globalAgentDefaults?.thinkingLevel;
+    const globalExecDefaultThinking = globalExecDefaults?.thinkingLevel;
+
+    const requestedThinking =
+      agentSettings?.thinkingLevel ??
+      globalAgentDefaultThinking ??
+      execAgentSettings?.thinkingLevel ??
+      globalExecDefaultThinking ??
+      activity?.lastThinkingLevel ??
+      WORKSPACE_DEFAULTS.thinkingLevel;
+
+    const normalizedThinkingLevel =
+      coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
+
+    return {
+      sendOptions: {
+        model,
+        agentId,
+        thinkingLevel: enforceThinkingPolicy(model, normalizedThinkingLevel),
+        maxOutputTokens: undefined,
+        // Heartbeats should not mutate persisted workspace AI defaults.
+        skipAiSettingsPersistence: true,
+      },
+      heartbeatMessage:
+        sanitizeHeartbeatMessage(workspaceEntry?.heartbeat?.message) ??
+        sanitizeHeartbeatMessage(config.heartbeatDefaultPrompt),
+      contextMode: sanitizeHeartbeatContextMode(workspaceEntry?.heartbeat?.contextMode),
+    };
+  }
+
+  private formatIdleDuration(ms: number): string {
+    assert(Number.isFinite(ms) && ms >= 0, "formatIdleDuration requires a non-negative ms value");
+
+    if (ms < 60_000) {
+      return "less than a minute";
+    }
+
+    if (ms < 3_600_000) {
+      const minutes = Math.round(ms / 60_000);
+      return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+    }
+
+    if (ms < 86_400_000) {
+      const hours = Math.round(ms / 3_600_000);
+      return `${hours} hour${hours === 1 ? "" : "s"}`;
+    }
+
+    const days = Math.round(ms / 86_400_000);
+    return `${days} day${days === 1 ? "" : "s"}`;
+  }
+}

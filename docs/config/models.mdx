@@ -1,0 +1,105 @@
+---
+title: Models
+description: Select and configure AI models in Mux
+---
+
+Mux supports multiple AI providers. Configure provider API keys in **Settings → Providers** — see [Providers](/config/providers) for setup.
+
+## First-class Models
+
+Mux ships with curated models kept up to date with the frontier. Use any custom model with `/model <provider:model_id>`.
+
+{/* BEGIN KNOWN_MODELS_TABLE */}
+
+| Model                  | ID                            | Aliases                                                      | Default |
+| ---------------------- | ----------------------------- | ------------------------------------------------------------ | ------- |
+| Opus 4.8               | anthropic:claude-opus-4-8     | `opus`                                                       | ✓       |
+| Sonnet 4.6             | anthropic:claude-sonnet-4-6   | `sonnet`                                                     |         |
+| Haiku 4.5              | anthropic:claude-haiku-4-5    | `haiku`                                                      |         |
+| GPT-5.5                | openai:gpt-5.5                | `gpt`, `gpt-5.5`                                             |         |
+| GPT-5.5 Pro            | openai:gpt-5.5-pro            | `gpt-pro`, `gpt-5.5-pro`                                     |         |
+| GPT-5.4 Mini           | openai:gpt-5.4-mini           | `gpt-mini`                                                   |         |
+| GPT-5.4 Nano           | openai:gpt-5.4-nano           | `gpt-nano`                                                   |         |
+| Codex 5.3              | openai:gpt-5.3-codex          | `codex`, `codex-5.3`                                         |         |
+| Spark 5.3              | openai:gpt-5.3-codex-spark    | `spark`                                                      |         |
+| Codex Mini 5.1         | openai:gpt-5.1-codex-mini     | `codex-mini`                                                 |         |
+| Codex Max 5.1          | openai:gpt-5.1-codex-max      | `codex-max`                                                  |         |
+| Gemini 3.1 Pro Preview | google:gemini-3.1-pro-preview | `gemini`, `gemini-pro`                                       |         |
+| Gemini 3.5 Flash       | google:gemini-3.5-flash       | `gemini-flash`                                               |         |
+| Grok 4 1 Fast          | xai:grok-4-1-fast             | `grok`, `grok-4`, `grok-4.1`, `grok-4-1`                     |         |
+| Grok Code Fast 1       | xai:grok-code-fast-1          | `grok-code`                                                  |         |
+| DeepSeek V4 Pro        | deepseek:deepseek-v4-pro      | `deepseek`, `deepseek-pro`, `deepseek-v4`, `deepseek-v4-pro` |         |
+| DeepSeek V4 Flash      | deepseek:deepseek-v4-flash    | `deepseek-flash`, `deepseek-v4-flash`                        |         |
+
+{/* END KNOWN_MODELS_TABLE */}
+
+## Model Selection
+
+Keyboard shortcuts:
+
+- **Cycle models**
+  - **macOS:** `Cmd+/`
+  - **Windows/Linux:** `Ctrl+/`
+
+To _choose_ a specific model, click the model pill in the chat footer.
+
+Alternatively, use the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`):
+
+1. Type "model"
+2. Select "Change Model"
+3. Choose from available models
+
+Models are specified in the format: `provider:model-name`
+
+## One-shot Overrides
+
+Override the model or thinking level for a single message using slash commands. The override applies only to that message — workspace settings stay unchanged.
+
+### Syntax
+
+| Command                     | Effect                                   |
+| --------------------------- | ---------------------------------------- |
+| `/sonnet explain this code` | Use Sonnet for one message               |
+| `/opus+high deep review`    | Use Opus with high thinking              |
+| `/haiku+0 quick answer`     | Use Haiku at its lowest thinking level   |
+| `/+2 analyze this`          | Keep current model, set thinking level 2 |
+
+### Thinking levels
+
+Append `+level` to any model alias. Levels can be **named** (`off`, `low`, `medium`/`med`, `high`, `max`) or **numeric** (`0`–`9`).
+
+Numeric levels are **model-relative** — they map to the model's allowed thinking range:
+
+- `0` = model's lowest allowed level (e.g., `off` for Sonnet, `medium` for GPT-5.5 Pro)
+- Higher numbers select progressively higher levels, clamped to the model's maximum
+
+This means `/sonnet+0` disables thinking while `/gpt-pro+0` sets thinking to medium (GPT-5.5 Pro's minimum).
+
+Use `/+level` (no model) to override thinking on the current model: `/+0 quick answer`
+
+### CLI
+
+The `mux run` CLI accepts the same thinking levels via `--thinking`:
+
+```bash
+mux run -t 0 "Quick fix"          # Lowest thinking for the model
+mux run -t high "Deep analysis"   # Named level
+```
+
+## Experimental Image Tools Model
+
+Mux can expose experimental Image Tools for Exec agents. Enable them in **Settings → Experiments → Image Tools**.
+
+The image model is configured separately from the chat model. The default is `openai:gpt-image-2`. Image Tools are OpenAI-only in this experiment and require OpenAI provider credentials in **Settings → Providers**.
+
+`image_generate` creates raster images from text prompts. It supports prompt, image count, quality, and output format.
+
+`image_edit` edits one existing PNG, JPEG, or WebP image by path. Because editing uploads the source file to the image provider, including embedded metadata, it is hidden unless you also enable **Allow image uploads for editing** under the Image Tools settings. Source images are sent as-is; Mux does not automatically redact screenshot contents or strip image metadata.
+
+Generated and edited full-resolution images are saved as runtime artifacts. Copy selected final assets into the workspace when they should become project files.
+
+## Next Steps
+
+<Card title="Configure Providers" icon="key" href="/config/providers">
+  Set up API keys for Anthropic, OpenAI, Google, and other providers.
+</Card>

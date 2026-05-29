@@ -1,0 +1,92 @@
+---
+title: Customization
+description: Customize the compaction system prompt
+---
+
+You can customize how Mux summarizes conversations during compaction by overriding the `compact` agent.
+
+## Override the `compact` agent
+
+Create `.mux/agents/compact.md` in your project (or `~/.mux/agents/compact.md` for global):
+
+```md
+---
+name: Compact
+base: compact
+---
+
+When summarizing:
+
+- Preserve exact file paths and command output
+- Prefer bullet lists over long prose
+```
+
+By default, your prompt is **appended** to the built-in `compact` agent.
+
+### Replace instead of append
+
+```md
+---
+name: Compact
+base: compact
+prompt:
+  append: false
+---
+
+Summarize in 5 bullets max. No preamble.
+```
+
+## Defaults (synced from source)
+
+<Accordion title="Built-in compact agent system prompt">
+
+{/* BEGIN COMPACT_AGENT_SYSTEM_PROMPT */}
+
+```text
+You are running a compaction/summarization pass. Your task is to write a concise summary of the conversation so far.
+
+IMPORTANT:
+
+- You have NO tools available. Do not attempt to call any tools or output JSON.
+- Simply write the summary as plain text prose.
+- Follow the user's instructions for what to include in the summary.
+```
+
+{/* END COMPACT_AGENT_SYSTEM_PROMPT */}
+
+</Accordion>
+
+<Accordion title="Default compaction instructions (user message)">
+
+{/* BEGIN COMPACTION_USER_PROMPT */}
+
+```text
+Summarize this conversation for a new Assistant to continue helping the user.
+
+Your summary must be approximately 2000 words.
+
+Include:
+- The user's overall goal and current task
+- Key decisions made and their rationale
+- Current state of the work (what's done, what's in progress)
+- Important technical details (file paths, function names, configurations)
+- Any errors encountered and how they were resolved
+- Unresolved issues or blockers
+
+Do not include:
+- Suggestions for next steps
+- Conversational filler or pleasantries
+- Redundant information
+
+Write in a factual, dense style. Every sentence should convey essential context.
+```
+
+{/* END COMPACTION_USER_PROMPT */}
+
+</Accordion>
+
+## Notes
+
+- Custom `compact` agents apply to both manual `/compact` and auto-compaction.
+- Tools are always disabled during compaction.
+- `-t` sets `maxOutputTokens`; Mux converts this into an approximate word target for the instruction message.

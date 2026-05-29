@@ -1,0 +1,1678 @@
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import { Config } from "./config";
+import {
+  CODER_ARCHIVE_BEHAVIORS,
+  DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+} from "@/common/config/coderArchiveBehavior";
+import {
+  DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
+  WORKTREE_ARCHIVE_BEHAVIORS,
+} from "@/common/config/worktreeArchiveBehavior";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
+import { type ExternalSecretResolver, secretsToRecord } from "@/common/types/secrets";
+
+describe("Config", () => {
+  let tempDir: string;
+  let config: Config;
+
+  beforeEach(() => {
+    // Create a temporary directory for each test
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-test-"));
+    config = new Config(tempDir);
+  });
+
+  afterEach(() => {
+    // Clean up temporary directory
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  describe("loadConfigOrDefault with trailing slash migration", () => {
+    it("should strip trailing slashes from project paths on load", () => {
+      // Create config file with trailing slashes in project paths
+      const configFile = path.join(tempDir, "config.json");
+      const corruptedConfig = {
+        projects: [
+          ["/home/user/project/", { workspaces: [] }],
+          ["/home/user/another//", { workspaces: [] }],
+          ["/home/user/clean", { workspaces: [] }],
+        ],
+      };
+      fs.writeFileSync(configFile, JSON.stringify(corruptedConfig));
+
+      // Load config - should migrate paths
+      const loaded = config.loadConfigOrDefault();
+
+      // Verify paths are normalized (no trailing slashes)
+      const projectPaths = Array.from(loaded.projects.keys());
+      expect(projectPaths).toContain("/home/user/project");
+      expect(projectPaths).toContain("/home/user/another");
+      expect(projectPaths).toContain("/home/user/clean");
+      expect(projectPaths).not.toContain("/home/user/project/");
+      expect(projectPaths).not.toContain("/home/user/another//");
+    });
+  });
+
+  describe("chat transcript settings", () => {
+    it("persists the full-width transcript flag", async () => {
+      await config.editConfig((cfg) => {
+        cfg.chatTranscriptFullWidth = true;
+        return cfg;
+      });
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.loadConfigOrDefault().chatTranscriptFullWidth).toBe(true);
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        chatTranscriptFullWidth?: unknown;
+      };
+      expect(raw.chatTranscriptFullWidth).toBe(true);
+    });
+
+    it("omits the full-width transcript flag when disabled", async () => {
+      await config.editConfig((cfg) => {
+        cfg.chatTranscriptFullWidth = false;
+        return cfg;
+      });
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        chatTranscriptFullWidth?: unknown;
+      };
+      expect(raw.chatTranscriptFullWidth).toBeUndefined();
+    });
+
+    it("ignores invalid full-width transcript values on load", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          chatTranscriptFullWidth: "yes",
+        })
+      );
+
+      expect(config.loadConfigOrDefault().chatTranscriptFullWidth).toBeUndefined();
+    });
+  });
+
+  describe("api server settings", () => {
+    it("should persist apiServerBindHost, apiServerPort, and apiServerServeWebUi", async () => {
+      await config.editConfig((cfg) => {
+        cfg.apiServerBindHost = "0.0.0.0";
+        cfg.apiServerPort = 3000;
+        cfg.apiServerServeWebUi = true;
+        return cfg;
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.apiServerBindHost).toBe("0.0.0.0");
+      expect(loaded.apiServerPort).toBe(3000);
+      expect(loaded.apiServerServeWebUi).toBe(true);
+    });
+
+    it("should ignore invalid apiServerPort values on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          apiServerPort: 70000,
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.apiServerPort).toBeUndefined();
+    });
+  });
+
+  describe("projectKind normalization", () => {
+    it("normalizes unknown projectKind to user semantics on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [["/repo", { workspaces: [], projectKind: "experimental" }]],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.get("/repo")?.projectKind).toBeUndefined();
+    });
+
+    it("preserves valid projectKind 'system' on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [["/repo", { workspaces: [], projectKind: "system" }]],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.get("/repo")?.projectKind).toBe("system");
+    });
+  });
+
+  describe("update channel preference", () => {
+    it("defaults to stable when no channel is configured", () => {
+      expect(config.getUpdateChannel()).toBe("stable");
+    });
+
+    it("persists nightly channel selection", async () => {
+      await config.setUpdateChannel("nightly");
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.getUpdateChannel()).toBe("nightly");
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(raw.updateChannel).toBe("nightly");
+    });
+
+    it("persists explicit stable channel selection", async () => {
+      await config.setUpdateChannel("nightly");
+      await config.setUpdateChannel("stable");
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.getUpdateChannel()).toBe("stable");
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(raw.updateChannel).toBe("stable");
+    });
+  });
+
+  describe("server GitHub owner auth setting", () => {
+    it("persists serverAuthGithubOwner", async () => {
+      await config.editConfig((cfg) => {
+        cfg.serverAuthGithubOwner = "octocat";
+        return cfg;
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.serverAuthGithubOwner).toBe("octocat");
+      expect(config.getServerAuthGithubOwner()).toBe("octocat");
+    });
+
+    it("ignores empty serverAuthGithubOwner values on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          serverAuthGithubOwner: "   ",
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.serverAuthGithubOwner).toBeUndefined();
+    });
+  });
+
+  describe("onePasswordAccountName loading", () => {
+    it("loads top-level settings even when projects is missing", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          onePasswordAccountName: "personal-account",
+          muxGovernorUrl: "https://governor.example.com",
+          terminalDefaultShell: "zsh",
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.size).toBe(0);
+      expect(loaded.onePasswordAccountName).toBe("personal-account");
+      expect(loaded.muxGovernorUrl).toBe("https://governor.example.com");
+      expect(loaded.terminalDefaultShell).toBe("zsh");
+    });
+  });
+
+  describe("coderWorkspaceArchiveBehavior", () => {
+    const readRawArchiveConfig = () =>
+      JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        coderWorkspaceArchiveBehavior?: unknown;
+        stopCoderWorkspaceOnArchive?: unknown;
+        terminalDefaultShell?: unknown;
+      };
+
+    const legacyBooleanForBehavior = (behavior: string): false | undefined =>
+      behavior === "keep" ? false : undefined;
+
+    for (const behavior of CODER_ARCHIVE_BEHAVIORS) {
+      it(`loads the new enum value ${behavior}`, () => {
+        fs.writeFileSync(
+          path.join(tempDir, "config.json"),
+          JSON.stringify({
+            projects: [],
+            coderWorkspaceArchiveBehavior: behavior,
+          })
+        );
+
+        const loaded = config.loadConfigOrDefault();
+        expect(loaded.coderWorkspaceArchiveBehavior).toBe(behavior);
+        expect(loaded.stopCoderWorkspaceOnArchive).toBe(legacyBooleanForBehavior(behavior));
+      });
+    }
+
+    it("resolves legacy false to keep when the enum is missing", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          stopCoderWorkspaceOnArchive: false,
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.coderWorkspaceArchiveBehavior).toBe("keep");
+      expect(loaded.stopCoderWorkspaceOnArchive).toBe(false);
+    });
+
+    it("resolves legacy true or undefined to stop when the enum is missing", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          stopCoderWorkspaceOnArchive: true,
+        })
+      );
+      expect(config.loadConfigOrDefault().coderWorkspaceArchiveBehavior).toBe(
+        DEFAULT_CODER_ARCHIVE_BEHAVIOR
+      );
+
+      fs.writeFileSync(path.join(tempDir, "config.json"), JSON.stringify({ projects: [] }));
+      expect(config.loadConfigOrDefault().coderWorkspaceArchiveBehavior).toBe(
+        DEFAULT_CODER_ARCHIVE_BEHAVIOR
+      );
+    });
+
+    it("prefers the new enum when both fields are present", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          coderWorkspaceArchiveBehavior: "delete",
+          stopCoderWorkspaceOnArchive: false,
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.coderWorkspaceArchiveBehavior).toBe("delete");
+      expect(loaded.stopCoderWorkspaceOnArchive).toBeUndefined();
+    });
+
+    it("falls back to stop when the enum value is invalid", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          coderWorkspaceArchiveBehavior: "hibernate",
+          terminalDefaultShell: "zsh",
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.coderWorkspaceArchiveBehavior).toBe(DEFAULT_CODER_ARCHIVE_BEHAVIOR);
+      expect(loaded.stopCoderWorkspaceOnArchive).toBeUndefined();
+      expect(loaded.terminalDefaultShell).toBe("zsh");
+    });
+
+    it("enum field takes precedence over legacy boolean on save", async () => {
+      // Simulate: user had "keep" (legacy false), then switches to "stop" via the new enum.
+      await config.editConfig((c) => ({
+        ...c,
+        coderWorkspaceArchiveBehavior: "stop",
+        stopCoderWorkspaceOnArchive: false,
+      }));
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.coderWorkspaceArchiveBehavior).toBe("stop");
+    });
+
+    it("round-trips each behavior with the enum field and legacy shim", async () => {
+      for (const behavior of CODER_ARCHIVE_BEHAVIORS) {
+        await config.editConfig((cfg) => {
+          cfg.coderWorkspaceArchiveBehavior = behavior;
+          cfg.stopCoderWorkspaceOnArchive = legacyBooleanForBehavior(behavior);
+          return cfg;
+        });
+
+        const raw = readRawArchiveConfig();
+        expect(raw.coderWorkspaceArchiveBehavior).toBe(behavior);
+        expect(raw.stopCoderWorkspaceOnArchive).toBe(legacyBooleanForBehavior(behavior));
+
+        const reloaded = new Config(tempDir).loadConfigOrDefault();
+        expect(reloaded.coderWorkspaceArchiveBehavior).toBe(behavior);
+        expect(reloaded.stopCoderWorkspaceOnArchive).toBe(legacyBooleanForBehavior(behavior));
+      }
+    });
+  });
+
+  describe("worktreeArchiveBehavior", () => {
+    const readRawArchiveConfig = () =>
+      JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        worktreeArchiveBehavior?: unknown;
+        deleteWorktreeOnArchive?: unknown;
+      };
+
+    for (const behavior of WORKTREE_ARCHIVE_BEHAVIORS) {
+      it(`loads the new enum value ${behavior}`, () => {
+        fs.writeFileSync(
+          path.join(tempDir, "config.json"),
+          JSON.stringify({
+            projects: [],
+            worktreeArchiveBehavior: behavior,
+          })
+        );
+
+        const loaded = config.loadConfigOrDefault();
+        expect(loaded.worktreeArchiveBehavior).toBe(behavior);
+        expect(loaded.deleteWorktreeOnArchive).toBe(behavior === "delete");
+      });
+    }
+
+    it("resolves legacy delete boolean when the enum is missing", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          deleteWorktreeOnArchive: true,
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.worktreeArchiveBehavior).toBe("delete");
+      expect(loaded.deleteWorktreeOnArchive).toBe(true);
+    });
+
+    it("defaults to keep when the enum is missing and the legacy boolean is false/undefined", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          deleteWorktreeOnArchive: false,
+        })
+      );
+      expect(config.loadConfigOrDefault().worktreeArchiveBehavior).toBe(
+        DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR
+      );
+
+      fs.writeFileSync(path.join(tempDir, "config.json"), JSON.stringify({ projects: [] }));
+      expect(config.loadConfigOrDefault().worktreeArchiveBehavior).toBe(
+        DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR
+      );
+    });
+
+    it("round-trips each behavior with the enum field and legacy shim", async () => {
+      for (const behavior of WORKTREE_ARCHIVE_BEHAVIORS) {
+        await config.editConfig((cfg) => {
+          cfg.worktreeArchiveBehavior = behavior;
+          cfg.deleteWorktreeOnArchive = behavior === "delete";
+          return cfg;
+        });
+
+        const raw = readRawArchiveConfig();
+        expect(raw.worktreeArchiveBehavior).toBe(behavior);
+        expect(raw.deleteWorktreeOnArchive).toBe(behavior === "delete");
+
+        const reloaded = new Config(tempDir).loadConfigOrDefault();
+        expect(reloaded.worktreeArchiveBehavior).toBe(behavior);
+        expect(reloaded.deleteWorktreeOnArchive).toBe(behavior === "delete");
+      }
+    });
+  });
+
+  describe("model preferences", () => {
+    it("should preserve explicit gateway-scoped defaultModel and hiddenModels", async () => {
+      await config.editConfig((cfg) => {
+        cfg.defaultModel = "mux-gateway:openai/gpt-4o";
+        cfg.hiddenModels = [
+          " mux-gateway:openai/gpt-4o-mini ",
+          "invalid-model",
+          "openai:gpt-4o-mini",
+        ];
+        return cfg;
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.defaultModel).toBe("mux-gateway:openai/gpt-4o");
+      expect(loaded.hiddenModels).toEqual(["mux-gateway:openai/gpt-4o-mini", "openai:gpt-4o-mini"]);
+    });
+
+    it("preserves explicit gateway-prefixed model strings on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          defaultModel: "mux-gateway:openai/gpt-4o",
+          hiddenModels: ["mux-gateway:openai/gpt-4o-mini"],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.defaultModel).toBe("mux-gateway:openai/gpt-4o");
+      expect(loaded.hiddenModels).toEqual(["mux-gateway:openai/gpt-4o-mini"]);
+    });
+
+    it("rejects malformed mux-gateway model strings on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          defaultModel: "mux-gateway:openai", // missing "/model"
+          hiddenModels: ["mux-gateway:openai", "openai:gpt-4o-mini"],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.defaultModel).toBeUndefined();
+      expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
+    });
+
+    it("ignores invalid model preference values on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          defaultModel: "gpt-4o", // missing provider
+          hiddenModels: ["openai:gpt-4o-mini", "bad"],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.defaultModel).toBeUndefined();
+      expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
+    });
+  });
+
+  describe("agent AI defaults model normalization", () => {
+    it("preserves explicit gateway-scoped model strings in nested AI defaults", async () => {
+      await config.editConfig((cfg) => {
+        cfg.agentAiDefaults = {
+          exec: { modelString: " openrouter:openai/gpt-5 ", thinkingLevel: "high" },
+          worker: {
+            modelString: " mux-gateway:anthropic/claude-haiku-4-5 ",
+            thinkingLevel: "low",
+          },
+        };
+        return cfg;
+      });
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        agentAiDefaults?: Record<string, { modelString?: string }>;
+        subagentAiDefaults?: Record<string, { modelString?: string }>;
+      };
+
+      expect(raw.agentAiDefaults).toEqual({
+        exec: { modelString: "openrouter:openai/gpt-5", thinkingLevel: "high" },
+        worker: {
+          modelString: "mux-gateway:anthropic/claude-haiku-4-5",
+          thinkingLevel: "low",
+        },
+      });
+      expect(raw.subagentAiDefaults).toEqual({
+        worker: {
+          modelString: "mux-gateway:anthropic/claude-haiku-4-5",
+          thinkingLevel: "low",
+        },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.agentAiDefaults?.exec?.modelString).toBe("openrouter:openai/gpt-5");
+      expect(loaded.agentAiDefaults?.worker?.modelString).toBe(
+        "mux-gateway:anthropic/claude-haiku-4-5"
+      );
+      expect(loaded.subagentAiDefaults?.worker?.modelString).toBe(
+        "mux-gateway:anthropic/claude-haiku-4-5"
+      );
+    });
+
+    it("removes mirrored exec subagent fields on first load", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+            worker: { modelString: "openai:gpt-5.2" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.subagentAiDefaults?.exec).toBeUndefined();
+      expect(loaded.subagentAiDefaults?.worker?.modelString).toBe("openai:gpt-5.2");
+      expect(loaded.migrations?.execSubagentDefaultsSplit).toBe(true);
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        subagentAiDefaults?: Record<string, unknown>;
+        migrations?: { execSubagentDefaultsSplit?: boolean };
+      };
+      expect(raw.subagentAiDefaults?.exec).toBeUndefined();
+      expect(raw.migrations?.execSubagentDefaultsSplit).toBe(true);
+    });
+
+    it("preserves session usage cache when only exec-split cleanup modifies config", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+            worker: { modelString: "openai:gpt-5.2" },
+          },
+        })
+      );
+
+      const usagePath = path.join(config.getSessionDir("workspace-1"), "session-usage.json");
+      fs.mkdirSync(path.dirname(usagePath), { recursive: true });
+      fs.writeFileSync(usagePath, JSON.stringify({ totalCost: 1.23 }));
+      expect(fs.existsSync(usagePath)).toBe(true);
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.subagentAiDefaults?.exec).toBeUndefined();
+      expect(loaded.subagentAiDefaults?.worker?.modelString).toBe("openai:gpt-5.2");
+      expect(loaded.migrations?.execSubagentDefaultsSplit).toBe(true);
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        subagentAiDefaults?: Record<string, unknown>;
+        migrations?: { execSubagentDefaultsSplit?: boolean };
+      };
+      expect(raw.subagentAiDefaults?.exec).toBeUndefined();
+      expect(raw.migrations?.execSubagentDefaultsSplit).toBe(true);
+      expect(fs.existsSync(usagePath)).toBe(true);
+    });
+
+    it("preserves differing exec subagent defaults on first load", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.subagentAiDefaults?.exec).toEqual({
+        modelString: "anthropic:claude-haiku-4-5",
+        thinkingLevel: "off",
+      });
+      expect(loaded.migrations?.execSubagentDefaultsSplit).toBe(true);
+    });
+
+    it("removes only mirrored exec subagent fields during first-load cleanup", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "off" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.subagentAiDefaults?.exec).toEqual({
+        thinkingLevel: "off",
+      });
+    });
+
+    it("preserves intentionally equal exec subagent defaults after migration marker is set", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          migrations: { execSubagentDefaultsSplit: true },
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.subagentAiDefaults?.exec).toEqual({
+        modelString: "openai:gpt-5.3-codex",
+        thinkingLevel: "xhigh",
+      });
+    });
+
+    it("does not synthesize UI exec defaults from legacy subagent-only exec defaults", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.agentAiDefaults?.exec).toBeUndefined();
+      expect(loaded.subagentAiDefaults?.exec).toEqual({
+        modelString: "openai:gpt-5.3-codex",
+        thinkingLevel: "xhigh",
+      });
+    });
+
+    it("preserves existing exec subagent defaults when saving derived legacy defaults", async () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          migrations: { execSubagentDefaultsSplit: true },
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.2", thinkingLevel: "medium" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+        })
+      );
+
+      await config.editConfig((cfg) => {
+        cfg.agentAiDefaults = {
+          ...cfg.agentAiDefaults,
+          worker: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+        };
+        return cfg;
+      });
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        subagentAiDefaults?: Record<string, unknown>;
+      };
+      expect(raw.subagentAiDefaults).toEqual({
+        exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+        worker: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+      });
+    });
+
+    it("allows an explicit empty exec subagent default to delete the preserved value", async () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          migrations: { execSubagentDefaultsSplit: true },
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.2", thinkingLevel: "medium" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+        })
+      );
+
+      await config.editConfig((cfg) => ({
+        ...cfg,
+        subagentAiDefaults: {},
+      }));
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        subagentAiDefaults?: Record<string, unknown>;
+      };
+      expect(raw.subagentAiDefaults).toBeUndefined();
+    });
+  });
+  describe("route priority and overrides persistence", () => {
+    it("round-trips routePriority through disk", async () => {
+      const expectedPriority = ["openai:gpt-4o", "anthropic:claude-3-5-sonnet"];
+
+      await config.editConfig((cfg) => {
+        cfg.routePriority = expectedPriority;
+        return cfg;
+      });
+
+      const restartedConfig = new Config(tempDir);
+      const loaded = restartedConfig.loadConfigOrDefault();
+      expect(loaded.routePriority).toEqual(expectedPriority);
+    });
+
+    it("round-trips routeOverrides through disk", async () => {
+      const expectedOverrides = {
+        "openai:gpt-4o": "direct",
+        "anthropic:claude-3-5-sonnet": "auto",
+      };
+
+      await config.editConfig((cfg) => {
+        cfg.routeOverrides = expectedOverrides;
+        return cfg;
+      });
+
+      const restartedConfig = new Config(tempDir);
+      const loaded = restartedConfig.loadConfigOrDefault();
+      expect(loaded.routeOverrides).toEqual(expectedOverrides);
+    });
+
+    it("normalizes gateway-scoped override keys on save", async () => {
+      await config.editConfig((cfg) => {
+        cfg.routeOverrides = {
+          "openrouter:anthropic/claude-opus-4-6": "direct",
+        };
+        return cfg;
+      });
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        routeOverrides?: Record<string, string>;
+      };
+
+      expect(raw.routeOverrides).toEqual({
+        "anthropic:claude-opus-4-6": "direct",
+      });
+    });
+
+    it("normalizes gateway-scoped override keys on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          routeOverrides: {
+            "openrouter:anthropic/claude-opus-4-6": "direct",
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.routeOverrides).toEqual({
+        "anthropic:claude-opus-4-6": "direct",
+      });
+    });
+
+    it("handles key collisions after normalization", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          routeOverrides: {
+            "openrouter:anthropic/claude-opus-4-6": "direct",
+            "mux-gateway:anthropic/claude-opus-4-6": "openrouter",
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.routeOverrides).toEqual({
+        "anthropic:claude-opus-4-6": "openrouter",
+      });
+    });
+
+    it("keeps routePriority and routeOverrides across unrelated editConfig saves", async () => {
+      const expectedPriority = ["openai:gpt-4o"];
+      const expectedOverrides = {
+        "openai:gpt-4o": "direct",
+      };
+
+      await config.editConfig((cfg) => {
+        cfg.routePriority = expectedPriority;
+        cfg.routeOverrides = expectedOverrides;
+        return cfg;
+      });
+
+      await config.editConfig((cfg) => {
+        cfg.apiServerPort = 4000;
+        return cfg;
+      });
+
+      const restartedConfig = new Config(tempDir);
+      const loaded = restartedConfig.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(expectedPriority);
+      expect(loaded.routeOverrides).toEqual(expectedOverrides);
+      expect(loaded.apiServerPort).toBe(4000);
+    });
+  });
+
+  describe("legacy gateway migration preserves downgrade compatibility", () => {
+    const writeRawConfig = (value: Record<string, unknown>) => {
+      fs.writeFileSync(path.join(tempDir, "config.json"), JSON.stringify(value));
+    };
+
+    const writeProvidersConfig = (value: Record<string, unknown>) => {
+      fs.writeFileSync(path.join(tempDir, "providers.jsonc"), JSON.stringify(value, null, 2));
+    };
+
+    const readRawConfig = () =>
+      JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        muxGatewayEnabled?: boolean;
+        muxGatewayModels?: string[];
+        routePriority?: string[];
+        routeOverrides?: Record<string, string>;
+      };
+
+    for (const { name, rawConfig, expectedOverrides } of [
+      {
+        name: "translates a single legacy allowlisted model into a mux-gateway routeOverride",
+        rawConfig: {
+          muxGatewayEnabled: true,
+          muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+        },
+        expectedOverrides: { "anthropic:claude-sonnet-4-6": "mux-gateway" },
+      },
+      {
+        name: "translates multiple legacy models and merges them with existing routeOverrides",
+        rawConfig: {
+          muxGatewayEnabled: true,
+          muxGatewayModels: ["anthropic:claude-sonnet-4-6", "openrouter:anthropic/claude-opus-4-6"],
+          routeOverrides: { "openai:gpt-4o": "direct" },
+        },
+        expectedOverrides: {
+          "openai:gpt-4o": "direct",
+          "anthropic:claude-sonnet-4-6": "mux-gateway",
+          "anthropic:claude-opus-4-6": "mux-gateway",
+        },
+      },
+      {
+        name: "keeps existing routeOverrides when a legacy model normalizes to the same canonical key",
+        rawConfig: {
+          muxGatewayEnabled: true,
+          muxGatewayModels: ["openrouter:anthropic/claude-opus-4-6"],
+          routeOverrides: { "anthropic:claude-opus-4-6": "openrouter" },
+        },
+        expectedOverrides: { "anthropic:claude-opus-4-6": "openrouter" },
+      },
+      {
+        name: "synthesizes direct-only priority when the legacy allowlist is empty",
+        rawConfig: { muxGatewayEnabled: true, muxGatewayModels: [] },
+        expectedOverrides: undefined,
+      },
+      {
+        name: "synthesizes direct-only priority when the legacy gateway flag is disabled",
+        rawConfig: {
+          muxGatewayEnabled: false,
+          muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+        },
+        expectedOverrides: undefined,
+      },
+    ] as const) {
+      it(name, () => {
+        writeRawConfig(rawConfig);
+
+        const loaded = config.loadConfigOrDefault();
+
+        expect(loaded.routePriority).toEqual(["direct"]);
+        if (expectedOverrides === undefined) {
+          expect(loaded.routeOverrides).toBeUndefined();
+        } else {
+          expect(loaded.routeOverrides).toEqual(expectedOverrides);
+        }
+      });
+    }
+
+    it("preserves legacy fields on disk alongside synthesized modern routing state", () => {
+      writeRawConfig({
+        muxGatewayEnabled: true,
+        muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+      });
+      writeProvidersConfig({
+        "mux-gateway": { couponCode: "test-coupon" },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.routePriority).toEqual(["mux-gateway", "direct"]);
+      expect(loaded.routeOverrides).toEqual({
+        "anthropic:claude-sonnet-4-6": "mux-gateway",
+      });
+
+      expect(readRawConfig()).toMatchObject({
+        muxGatewayEnabled: true,
+        muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+        routePriority: ["mux-gateway", "direct"],
+        routeOverrides: {
+          "anthropic:claude-sonnet-4-6": "mux-gateway",
+        },
+      });
+    });
+
+    it("seeds routePriority from other configured gateways for legacy configs", () => {
+      writeRawConfig({
+        muxGatewayEnabled: true,
+        muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+      });
+      writeProvidersConfig({
+        openrouter: { apiKey: "test-openrouter-key" },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(["openrouter", "direct"]);
+      expect(loaded.routeOverrides).toEqual({
+        "anthropic:claude-sonnet-4-6": "mux-gateway",
+      });
+    });
+
+    it("excludes mux-gateway from seeded priority when legacy muxGatewayEnabled is false", () => {
+      writeRawConfig({
+        muxGatewayEnabled: false,
+        muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+      });
+      writeProvidersConfig({
+        "mux-gateway": { couponCode: "test-coupon" },
+        openrouter: { apiKey: "test-openrouter-key" },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(["openrouter", "direct"]);
+      expect(loaded.routeOverrides).toBeUndefined();
+    });
+
+    it("clears stale muxGatewayEnabled disables when routePriority already includes mux-gateway", () => {
+      writeRawConfig({
+        muxGatewayEnabled: false,
+        routePriority: ["mux-gateway", "direct"],
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(["mux-gateway", "direct"]);
+      expect(loaded.muxGatewayEnabled).toBeUndefined();
+      expect(readRawConfig().muxGatewayEnabled).toBeUndefined();
+      expect(new Config(tempDir).loadConfigOrDefault().muxGatewayEnabled).toBeUndefined();
+    });
+
+    it("does not rewrite configs that already include routePriority", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          muxGatewayEnabled: true,
+          muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
+          routePriority: ["openrouter", "direct"],
+          routeOverrides: {
+            "openai:gpt-4o": "direct",
+          },
+        })
+      );
+
+      const preservedTime = new Date("2000-01-01T00:00:00.000Z");
+      fs.utimesSync(configFile, preservedTime, preservedTime);
+      const beforeMtimeMs = fs.statSync(configFile).mtimeMs;
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.routePriority).toEqual(["openrouter", "direct"]);
+      expect(loaded.routeOverrides).toEqual({
+        "openai:gpt-4o": "direct",
+      });
+
+      const afterMtimeMs = fs.statSync(configFile).mtimeMs;
+      expect(afterMtimeMs).toBe(beforeMtimeMs);
+    });
+  });
+
+  describe("routePriority seeding from providers", () => {
+    const gatewayEnvKeys = [
+      "OPENROUTER_API_KEY",
+      "GITHUB_COPILOT_TOKEN",
+      "AWS_REGION",
+      "AWS_DEFAULT_REGION",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "AWS_BEARER_TOKEN_BEDROCK",
+      "AWS_PROFILE",
+    ] as const;
+    let originalGatewayEnv: Partial<Record<(typeof gatewayEnvKeys)[number], string | undefined>>;
+
+    const writeProvidersConfig = (providersConfig: Record<string, unknown>) => {
+      fs.writeFileSync(
+        path.join(tempDir, "providers.jsonc"),
+        JSON.stringify(providersConfig, null, 2)
+      );
+    };
+
+    beforeEach(() => {
+      originalGatewayEnv = Object.fromEntries(
+        gatewayEnvKeys.map((key) => [key, process.env[key]])
+      ) as Partial<Record<(typeof gatewayEnvKeys)[number], string | undefined>>;
+
+      for (const key of gatewayEnvKeys) {
+        delete process.env[key];
+      }
+    });
+
+    afterEach(() => {
+      for (const key of gatewayEnvKeys) {
+        const value = originalGatewayEnv[key];
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    });
+
+    it("seeds routePriority on fresh installs when a gateway is configured", () => {
+      writeProvidersConfig({
+        // mux-gateway is configured by couponCode/voucher rather than apiKey.
+        "mux-gateway": { couponCode: "test-coupon" },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      const muxGatewayIndex = loaded.routePriority?.indexOf("mux-gateway") ?? -1;
+      const directIndex = loaded.routePriority?.indexOf("direct") ?? -1;
+
+      expect(muxGatewayIndex).toBeGreaterThanOrEqual(0);
+      expect(directIndex).toBeGreaterThan(muxGatewayIndex);
+    });
+
+    it("does not seed routePriority when a configured gateway is disabled", () => {
+      writeProvidersConfig({
+        "mux-gateway": { couponCode: "test-coupon", enabled: false },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toBeUndefined();
+    });
+
+    it("leaves routePriority undefined on fresh installs without configured gateways", () => {
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toBeUndefined();
+    });
+
+    it("does not seed routePriority for bedrock when env only exposes a region", () => {
+      process.env.AWS_REGION = "us-east-1";
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toBeUndefined();
+    });
+
+    it("preserves existing routePriority when a gateway is configured", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({ routePriority: ["direct"] })
+      );
+      writeProvidersConfig({
+        // mux-gateway is configured by couponCode/voucher rather than apiKey.
+        "mux-gateway": { couponCode: "test-coupon" },
+      });
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.routePriority).toEqual(["direct"]);
+    });
+  });
+
+  describe("config change notifications", () => {
+    it("emits for editConfig saves and stops after unsubscribe", async () => {
+      let notifications = 0;
+      const unsubscribe = config.onConfigChanged(() => {
+        notifications += 1;
+      });
+
+      await config.editConfig((cfg) => {
+        cfg.routePriority = ["openai:gpt-4o"];
+        return cfg;
+      });
+
+      expect(notifications).toBe(1);
+
+      unsubscribe();
+
+      await config.editConfig((cfg) => {
+        cfg.routeOverrides = { "openai:gpt-4o": "direct" };
+        return cfg;
+      });
+
+      expect(notifications).toBe(1);
+    });
+  });
+
+  describe("generateStableId", () => {
+    it("should generate a 10-character hex string", () => {
+      const id = config.generateStableId();
+      expect(id).toMatch(/^[0-9a-f]{10}$/);
+    });
+
+    it("should generate unique IDs", () => {
+      const id1 = config.generateStableId();
+      const id2 = config.generateStableId();
+      const id3 = config.generateStableId();
+
+      expect(id1).not.toBe(id2);
+      expect(id2).not.toBe(id3);
+      expect(id1).not.toBe(id3);
+    });
+  });
+
+  describe("findWorkspace", () => {
+    it("preserves the config key while exposing a real attribution path for multi-project workspaces", async () => {
+      const primaryProjectPath = "/fake/project-a";
+      const secondaryProjectPath = "/fake/project-b";
+      const workspacePath = path.join(config.srcDir, "project-a+project-b", "feature-branch");
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(MULTI_PROJECT_CONFIG_KEY, {
+          workspaces: [
+            {
+              path: workspacePath,
+              id: "workspace-1",
+              name: "feature-branch",
+              projects: [
+                { projectName: "project-a", projectPath: primaryProjectPath },
+                { projectName: "project-b", projectPath: secondaryProjectPath },
+              ],
+            },
+          ],
+        });
+        return cfg;
+      });
+
+      expect(config.findWorkspace("workspace-1")).toEqual({
+        workspacePath,
+        projectPath: MULTI_PROJECT_CONFIG_KEY,
+        attributionProjectPath: primaryProjectPath,
+        workspaceName: "feature-branch",
+        parentWorkspaceId: undefined,
+      });
+    });
+  });
+
+  describe("getAllWorkspaceMetadata with migration", () => {
+    it("should migrate legacy workspace without metadata file", async () => {
+      const projectPath = "/fake/project";
+      const workspacePath = path.join(config.srcDir, "project", "feature-branch");
+
+      // Create workspace directory
+      fs.mkdirSync(workspacePath, { recursive: true });
+
+      // Add workspace to config without metadata file
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [{ path: workspacePath }],
+        });
+        return cfg;
+      });
+
+      // Get all metadata (should trigger migration)
+      const allMetadata = await config.getAllWorkspaceMetadata();
+
+      expect(allMetadata).toHaveLength(1);
+      const metadata = allMetadata[0];
+      expect(metadata.id).toBe("project-feature-branch"); // Legacy ID format
+      expect(metadata.name).toBe("feature-branch");
+      expect(metadata.projectName).toBe("project");
+      expect(metadata.projectPath).toBe(projectPath);
+
+      // Verify metadata was migrated to config
+      const configData = config.loadConfigOrDefault();
+      const projectConfig = configData.projects.get(projectPath);
+      expect(projectConfig).toBeDefined();
+      expect(projectConfig!.workspaces).toHaveLength(1);
+      const workspace = projectConfig!.workspaces[0];
+      expect(workspace.id).toBe("project-feature-branch");
+      expect(workspace.name).toBe("feature-branch");
+    });
+
+    it("should use existing metadata file if present (legacy format)", async () => {
+      const projectPath = "/fake/project";
+      const workspaceName = "my-feature";
+      const workspacePath = path.join(config.srcDir, "project", workspaceName);
+
+      // Create workspace directory
+      fs.mkdirSync(workspacePath, { recursive: true });
+
+      // Test backward compatibility: Create metadata file using legacy ID format.
+      // This simulates workspaces created before stable IDs were introduced.
+      const legacyId = config.generateLegacyId(projectPath, workspacePath);
+      const sessionDir = config.getSessionDir(legacyId);
+      fs.mkdirSync(sessionDir, { recursive: true });
+      const metadataPath = path.join(sessionDir, "metadata.json");
+      const existingMetadata = {
+        id: legacyId,
+        name: workspaceName,
+        projectName: "project",
+        projectPath: projectPath,
+        createdAt: "2025-01-01T00:00:00.000Z",
+      };
+      fs.writeFileSync(metadataPath, JSON.stringify(existingMetadata));
+
+      // Add workspace to config (without id/name, simulating legacy format)
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [{ path: workspacePath }],
+        });
+        return cfg;
+      });
+
+      // Get all metadata (should use existing metadata and migrate to config)
+      const allMetadata = await config.getAllWorkspaceMetadata();
+
+      expect(allMetadata).toHaveLength(1);
+      const metadata = allMetadata[0];
+      expect(metadata.id).toBe(legacyId);
+      expect(metadata.name).toBe(workspaceName);
+      expect(metadata.createdAt).toBe("2025-01-01T00:00:00.000Z");
+
+      // Verify metadata was migrated to config
+      const configData = config.loadConfigOrDefault();
+      const projectConfig = configData.projects.get(projectPath);
+      expect(projectConfig).toBeDefined();
+      expect(projectConfig!.workspaces).toHaveLength(1);
+      const workspace = projectConfig!.workspaces[0];
+      expect(workspace.id).toBe(legacyId);
+      expect(workspace.name).toBe(workspaceName);
+      expect(workspace.createdAt).toBe("2025-01-01T00:00:00.000Z");
+    });
+  });
+
+  describe("transcriptOnly derivation", () => {
+    it("leaves transcriptOnly unset for worktree workspaces with an existing checkout", async () => {
+      const projectPath = "/fake/project";
+      const workspacePath = path.join(config.srcDir, "project", "existing-worktree");
+      fs.mkdirSync(workspacePath, { recursive: true });
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [
+            {
+              path: workspacePath,
+              id: "workspace-existing",
+              name: "existing-worktree",
+              createdAt: "2025-01-01T00:00:00.000Z",
+              runtimeConfig: { type: "worktree", srcBaseDir: config.srcDir },
+            },
+          ],
+        });
+        return cfg;
+      });
+
+      const [metadata] = await config.getAllWorkspaceMetadata();
+
+      expect(metadata.transcriptOnly).toBeUndefined();
+    });
+
+    it("returns transcriptOnly for missing worktree checkouts even after unarchiving", async () => {
+      const projectPath = "/fake/project";
+      const workspacePath = path.join(config.srcDir, "project", "missing-worktree");
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [
+            {
+              path: workspacePath,
+              id: "workspace-missing-worktree",
+              name: "missing-worktree",
+              createdAt: "2025-01-01T00:00:00.000Z",
+              archivedAt: "2025-01-02T00:00:00.000Z",
+              unarchivedAt: "2025-01-03T00:00:00.000Z",
+              runtimeConfig: { type: "worktree", srcBaseDir: config.srcDir },
+            },
+          ],
+        });
+        return cfg;
+      });
+
+      const [metadata] = await config.getAllWorkspaceMetadata();
+
+      expect(metadata.transcriptOnly).toBe(true);
+    });
+
+    it("leaves transcriptOnly unset for queued worktree tasks whose checkout is still missing", async () => {
+      const projectPath = "/fake/project";
+      const workspacePath = path.join(config.srcDir, "project", "queued-missing-worktree");
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [
+            {
+              path: workspacePath,
+              id: "workspace-queued-missing-worktree",
+              name: "queued-missing-worktree",
+              createdAt: "2025-01-01T00:00:00.000Z",
+              runtimeConfig: { type: "worktree", srcBaseDir: config.srcDir },
+              taskStatus: "queued",
+            },
+          ],
+        });
+        return cfg;
+      });
+
+      const [metadata] = await config.getAllWorkspaceMetadata();
+
+      expect(metadata.transcriptOnly).toBeUndefined();
+    });
+
+    it("never returns transcriptOnly for non-worktree runtimes", async () => {
+      const projectPath = "/fake/project";
+      const workspacePath = path.join(tempDir, "missing-local-workspace");
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [
+            {
+              path: workspacePath,
+              id: "workspace-missing-local",
+              name: "missing-local-workspace",
+              createdAt: "2025-01-01T00:00:00.000Z",
+              runtimeConfig: { type: "local" },
+            },
+          ],
+        });
+        return cfg;
+      });
+
+      const [metadata] = await config.getAllWorkspaceMetadata();
+
+      expect(metadata.transcriptOnly).toBeUndefined();
+    });
+  });
+
+  describe("secrets", () => {
+    it("supports global secrets stored under a sentinel key", async () => {
+      await config.updateGlobalSecrets([{ key: "GLOBAL_A", value: "1" }]);
+
+      expect(config.getGlobalSecrets()).toEqual([{ key: "GLOBAL_A", value: "1" }]);
+
+      const raw = fs.readFileSync(path.join(tempDir, "secrets.json"), "utf-8");
+      const parsed = JSON.parse(raw) as { __global__?: unknown };
+      expect(parsed.__global__).toEqual([{ key: "GLOBAL_A", value: "1" }]);
+    });
+
+    it("does not inherit global secrets by default", async () => {
+      await config.updateGlobalSecrets([
+        { key: "TOKEN", value: "global" },
+        { key: "A", value: "1" },
+      ]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "TOKEN", value: "project" },
+        { key: "B", value: "2" },
+      ]);
+
+      const effective = config.getEffectiveSecrets(projectPath);
+      const record = await secretsToRecord(effective);
+
+      expect(record).toEqual({
+        TOKEN: "project",
+        B: "2",
+      });
+    });
+
+    it("injects global secrets with injectAll into any project's effective secrets", async () => {
+      await config.updateGlobalSecrets([
+        { key: "INJECTED", value: "everywhere", injectAll: true },
+        { key: "STORED_ONLY", value: "shared" },
+      ]);
+
+      const record = await secretsToRecord(config.getEffectiveSecrets("/fake/project"));
+      expect(record).toEqual({
+        INJECTED: "everywhere",
+      });
+    });
+
+    it("project secrets override injectAll global secrets", async () => {
+      await config.updateGlobalSecrets([{ key: "TOKEN", value: "global", injectAll: true }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [{ key: "TOKEN", value: "project" }]);
+
+      const record = await secretsToRecord(config.getEffectiveSecrets(projectPath));
+      expect(record).toEqual({
+        TOKEN: "project",
+      });
+    });
+
+    it("injects injectAll globals alongside project-specific secrets", async () => {
+      await config.updateGlobalSecrets([{ key: "GLOBAL_TOKEN", value: "global", injectAll: true }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [{ key: "LOCAL_TOKEN", value: "local" }]);
+
+      const record = await secretsToRecord(config.getEffectiveSecrets(projectPath));
+      expect(record).toEqual({
+        GLOBAL_TOKEN: "global",
+        LOCAL_TOKEN: "local",
+      });
+    });
+
+    it("returns only globally injected secrets for project settings visibility", async () => {
+      await config.updateGlobalSecrets([
+        { key: "GLOBAL_VISIBLE", value: "v", injectAll: true },
+        { key: "GLOBAL_HIDDEN", value: "h" },
+        { key: "SHARED", value: "global", injectAll: true },
+      ]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "LOCAL_ONLY", value: "local" },
+        { key: "SHARED", value: "project" },
+      ]);
+
+      expect(config.getInjectedGlobalSecrets(projectPath)).toEqual([
+        { key: "GLOBAL_VISIBLE", value: "v" },
+      ]);
+    });
+
+    it("does not inject global secrets unless injectAll is true", async () => {
+      await config.updateGlobalSecrets([
+        { key: "A", value: "1", injectAll: false },
+        { key: "B", value: "2" },
+        { key: "C", value: "3", injectAll: true },
+      ]);
+
+      const record = await secretsToRecord(config.getEffectiveSecrets("/fake/project"));
+      expect(record).toEqual({
+        C: "3",
+      });
+    });
+
+    it("uses last global duplicate to decide injectAll behavior", async () => {
+      await config.updateGlobalSecrets([
+        { key: "DUP", value: "first", injectAll: true },
+        { key: "DUP", value: "second", injectAll: false },
+      ]);
+
+      expect(await secretsToRecord(config.getEffectiveSecrets("/fake/project"))).toEqual({});
+
+      await config.updateGlobalSecrets([
+        { key: "DUP", value: "first", injectAll: false },
+        { key: "DUP", value: "second", injectAll: true },
+      ]);
+
+      expect(await secretsToRecord(config.getEffectiveSecrets("/fake/project"))).toEqual({
+        DUP: "second",
+      });
+    });
+
+    it('resolves project secret aliases to global secrets via {secret:"KEY"}', async () => {
+      await config.updateGlobalSecrets([{ key: "GLOBAL_TOKEN", value: "abc" }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "TOKEN", value: { secret: "GLOBAL_TOKEN" } },
+      ]);
+
+      const record = await secretsToRecord(config.getEffectiveSecrets(projectPath));
+      expect(record).toEqual({
+        TOKEN: "abc",
+      });
+    });
+
+    it("resolves same-key project secret references to global values", async () => {
+      await config.updateGlobalSecrets([{ key: "OPENAI_API_KEY", value: "abc" }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "OPENAI_API_KEY", value: { secret: "OPENAI_API_KEY" } },
+      ]);
+
+      const record = await secretsToRecord(config.getEffectiveSecrets(projectPath));
+      expect(record).toEqual({
+        OPENAI_API_KEY: "abc",
+      });
+    });
+
+    it("resolves project secret aliases to global { op } values", async () => {
+      const opRef = "op://Vault/Item/field";
+      await config.updateGlobalSecrets([{ key: "GLOBAL_OP", value: { op: opRef } }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "TOKEN", value: { secret: "GLOBAL_OP" } },
+      ]);
+
+      const effective = config.getEffectiveSecrets(projectPath);
+      expect(effective).toEqual([{ key: "TOKEN", value: { op: opRef } }]);
+
+      const resolver: ExternalSecretResolver = (ref: string) => {
+        if (ref === opRef) return Promise.resolve("resolved-op");
+        return Promise.resolve(undefined);
+      };
+
+      const record = await secretsToRecord(effective, resolver);
+      expect(record).toEqual({ TOKEN: "resolved-op" });
+    });
+
+    it("omits missing referenced secrets when resolving secretsToRecord", async () => {
+      const record = await secretsToRecord([
+        { key: "GLOBAL", value: "1" },
+        { key: "A", value: { secret: "MISSING" } },
+      ]);
+
+      expect(record).toEqual({ GLOBAL: "1" });
+    });
+
+    it("omits cyclic secret references when resolving secretsToRecord", async () => {
+      const record = await secretsToRecord([
+        { key: "A", value: { secret: "B" } },
+        { key: "B", value: { secret: "A" } },
+        { key: "OK", value: "y" },
+      ]);
+
+      expect(record).toEqual({ OK: "y" });
+    });
+
+    it("resolves { op } values via external resolver", async () => {
+      const resolver: ExternalSecretResolver = (ref: string) => {
+        if (ref === "op://Dev/Stripe/key") return Promise.resolve("sk-resolved");
+        return Promise.resolve(undefined);
+      };
+
+      const record = await secretsToRecord(
+        [
+          { key: "STRIPE_KEY", value: { op: "op://Dev/Stripe/key" } },
+          { key: "LITERAL", value: "plain" },
+        ],
+        resolver
+      );
+
+      expect(record).toEqual({ STRIPE_KEY: "sk-resolved", LITERAL: "plain" });
+    });
+
+    it("omits { op } values when no resolver is provided", async () => {
+      const record = await secretsToRecord([
+        { key: "A", value: { op: "op://Dev/Stripe/key" } },
+        { key: "B", value: "literal" },
+      ]);
+
+      expect(record).toEqual({ B: "literal" });
+    });
+
+    it("omits { op } values when resolver returns undefined", async () => {
+      const resolver: ExternalSecretResolver = () => Promise.resolve(undefined);
+      const record = await secretsToRecord(
+        [{ key: "A", value: { op: "op://Dev/Stripe/key" } }],
+        resolver
+      );
+
+      expect(record).toEqual({});
+    });
+
+    it("resolves mixed literal, { secret }, and { op } values", async () => {
+      const resolver: ExternalSecretResolver = (ref: string) => {
+        if (ref === "op://Vault/Item/field") return Promise.resolve("op-resolved");
+        return Promise.resolve(undefined);
+      };
+
+      const record = await secretsToRecord(
+        [
+          { key: "LITERAL", value: "raw" },
+          { key: "GLOBAL_TOKEN", value: "abc" },
+          { key: "ALIAS", value: { secret: "GLOBAL_TOKEN" } },
+          { key: "OP_REF", value: { op: "op://Vault/Item/field" } },
+        ],
+        resolver
+      );
+
+      expect(record).toEqual({
+        LITERAL: "raw",
+        GLOBAL_TOKEN: "abc",
+        ALIAS: "abc",
+        OP_REF: "op-resolved",
+      });
+    });
+    it("normalizes project paths so trailing slashes don't split secrets", async () => {
+      const projectPath = "/repo";
+      const projectPathWithSlash = "/repo/";
+
+      await config.updateProjectSecrets(projectPathWithSlash, [{ key: "A", value: "1" }]);
+
+      expect(config.getProjectSecrets(projectPath)).toEqual([{ key: "A", value: "1" }]);
+      expect(config.getProjectSecrets(projectPathWithSlash)).toEqual([{ key: "A", value: "1" }]);
+
+      const raw = fs.readFileSync(path.join(tempDir, "secrets.json"), "utf-8");
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      expect(parsed[projectPath]).toEqual([{ key: "A", value: "1" }]);
+      expect(parsed[projectPathWithSlash]).toBeUndefined();
+    });
+
+    it("treats malformed store shapes as empty arrays", () => {
+      const secretsFile = path.join(tempDir, "secrets.json");
+      fs.writeFileSync(
+        secretsFile,
+        JSON.stringify({
+          __global__: { key: "NOPE", value: "1" },
+          "/repo": "not-an-array",
+          "/repo/": [{ key: "A", value: "1" }, null, { key: 123, value: "x" }],
+        })
+      );
+
+      expect(config.getGlobalSecrets()).toEqual([]);
+      expect(config.getProjectSecrets("/repo")).toEqual([{ key: "A", value: "1" }]);
+    });
+    it("sanitizes malformed injectAll values without dropping valid secrets", async () => {
+      const projectPath = "/repo";
+      const secretsFile = path.join(tempDir, "secrets.json");
+      fs.writeFileSync(
+        secretsFile,
+        JSON.stringify({
+          __global__: [{ key: "GLOBAL_TOKEN", value: "abc", injectAll: "true" }],
+          [projectPath]: [{ key: "TOKEN", value: { secret: "GLOBAL_TOKEN" } }],
+        })
+      );
+
+      expect(config.getGlobalSecrets()).toEqual([{ key: "GLOBAL_TOKEN", value: "abc" }]);
+      expect(await secretsToRecord(config.getEffectiveSecrets(projectPath))).toEqual({
+        TOKEN: "abc",
+      });
+    });
+  });
+});

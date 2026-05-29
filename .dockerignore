@@ -1,0 +1,56 @@
+# Dependencies (will be installed fresh)
+node_modules/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test artifacts
+coverage/
+.nyc_output/
+
+# Development files
+*.log
+*.local
+.env
+.env.*
+!.env.example
+
+# Documentation build
+docs/book/
+
+# Mobile app (not needed for server)
+mobile/
+
+# Electron-specific (not needed for server)
+*.dmg
+*.exe
+*.AppImage
+*.snap
+*.deb
+*.rpm
+
+# Storybook
+storybook-static/
+
+# Misc
+.DS_Store
+Thumbs.db
+*.md
+!README.md
+!src/node/builtinAgents/*.md
+!src/node/builtinSkills/*.md
+!docs/**/*.md
+!docs/**/*.mdx
+LICENSE

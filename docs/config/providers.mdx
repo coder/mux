@@ -1,0 +1,270 @@
+---
+title: Providers
+description: Configure API keys and settings for AI providers
+---
+
+Mux supports multiple AI providers. The easiest way to configure them is through **Settings → Providers** (`Cmd+,` / `Ctrl+,`).
+
+## Quick Setup
+
+1. Open Settings (`Cmd+,` / `Ctrl+,`)
+2. Navigate to **Providers**
+3. Expand any provider and enter your API key
+4. Start using models from that provider
+
+Most providers only need an API key. The UI handles validation and shows which providers are configured.
+
+## Supported Providers
+
+| Provider           | Models                      | Get API Key                                             |
+| ------------------ | --------------------------- | ------------------------------------------------------- |
+| **Anthropic**      | Claude Opus, Sonnet, Haiku  | [console.anthropic.com](https://console.anthropic.com/) |
+| **OpenAI**         | GPT-5, Codex                | [platform.openai.com](https://platform.openai.com/)     |
+| **Google**         | Gemini Pro, Flash           | [aistudio.google.com](https://aistudio.google.com/)     |
+| **xAI**            | Grok                        | [console.x.ai](https://console.x.ai/)                   |
+| **DeepSeek**       | DeepSeek Chat, Reasoner     | [platform.deepseek.com](https://platform.deepseek.com/) |
+| **OpenRouter**     | 300+ models                 | [openrouter.ai](https://openrouter.ai/)                 |
+| **Ollama**         | Local models                | [ollama.com](https://ollama.com/) (no key needed)       |
+| **Bedrock**        | Claude via AWS              | AWS Console                                             |
+| **GitHub Copilot** | GPT-4o, Claude Sonnet, etc. | [GitHub Copilot](https://github.com/features/copilot)   |
+
+## Environment Variables
+
+Providers also read from environment variables as fallback:
+
+{/* BEGIN PROVIDER_ENV_VARS */}
+
+| Provider       | Environment Variable                               |
+| -------------- | -------------------------------------------------- |
+| Anthropic      | `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`      |
+| OpenAI         | `OPENAI_API_KEY`                                   |
+| Google         | `GOOGLE_GENERATIVE_AI_API_KEY` or `GOOGLE_API_KEY` |
+| xAI            | `XAI_API_KEY`                                      |
+| OpenRouter     | `OPENROUTER_API_KEY`                               |
+| DeepSeek       | `DEEPSEEK_API_KEY`                                 |
+| github-copilot | `GITHUB_COPILOT_TOKEN`                             |
+| Bedrock        | `AWS_REGION` (credentials via AWS SDK chain)       |
+
+<details>
+<summary>Additional environment variables</summary>
+
+| Provider     | Variable                   | Purpose             |
+| ------------ | -------------------------- | ------------------- |
+| Anthropic    | `ANTHROPIC_BASE_URL`       | Custom API endpoint |
+| OpenAI       | `OPENAI_BASE_URL`          | Custom API endpoint |
+| OpenAI       | `OPENAI_ORG_ID`            | Organization ID     |
+| Google       | `GOOGLE_BASE_URL`          | Custom API endpoint |
+| xAI          | `XAI_BASE_URL`             | Custom API endpoint |
+| Azure OpenAI | `AZURE_OPENAI_API_KEY`     | API key             |
+| Azure OpenAI | `AZURE_OPENAI_ENDPOINT`    | Endpoint URL        |
+| Azure OpenAI | `AZURE_OPENAI_DEPLOYMENT`  | Deployment name     |
+| Azure OpenAI | `AZURE_OPENAI_API_VERSION` | API version         |
+
+Azure OpenAI env vars configure the OpenAI provider with Azure backend.
+
+</details>
+
+{/* END PROVIDER_ENV_VARS */}
+
+## Advanced: Manual Configuration
+
+For advanced options not exposed in the UI, edit `~/.mux/providers.jsonc` directly:
+
+```jsonc
+{
+  "anthropic": {
+    "apiKey": "sk-ant-...",
+    "baseUrl": "https://api.anthropic.com", // Optional custom endpoint
+  },
+  "openrouter": {
+    "apiKey": "sk-or-v1-...",
+    // Provider routing preferences
+    "order": ["Cerebras", "Fireworks"],
+    "allow_fallbacks": true,
+  },
+  "xai": {
+    "apiKey": "sk-xai-...",
+    // Search orchestration settings
+    "searchParameters": { "mode": "auto" },
+  },
+  "bedrock": {
+    "region": "us-east-1",
+    // Uses AWS credential chain if no explicit credentials
+  },
+  "ollama": {
+    "baseUrl": "http://your-server:11434/api", // Custom Ollama server
+  },
+}
+```
+
+### Custom OpenAI-compatible providers
+
+Custom OpenAI-compatible providers let you keep the built-in `openai` provider for OpenAI and
+Codex, while also adding named local or remote endpoints such as llama.cpp, vLLM, LM Studio,
+or proxies.
+
+Add each endpoint as a top-level provider in `~/.mux/providers.jsonc`:
+
+```jsonc
+{
+  "local-vllm": {
+    "providerType": "openai-compatible",
+    "displayName": "Local vLLM",
+    "baseUrl": "http://localhost:8000/v1",
+    "models": ["qwen3-coder"],
+  },
+}
+```
+
+| Option         | Required | Description                                                                           |
+| -------------- | -------- | ------------------------------------------------------------------------------------- |
+| `providerType` | Yes      | Must be `"openai-compatible"` for custom OpenAI-compatible providers.                 |
+| `baseUrl`      | Yes      | The OpenAI-compatible API base URL. Most servers require the `/v1` suffix.            |
+| `apiKey`       | No       | Optional API key. Keyless local servers do not need a placeholder key.                |
+| `apiKeyFile`   | No       | Path to a file containing the API key. Supports `~` for home directory.               |
+| `displayName`  | No       | Optional UI label shown instead of the provider ID.                                   |
+| `models`       | No       | Discovery list shown in the model picker. You can still type any model ID at runtime. |
+
+Provider IDs must use lowercase letters, digits, `_`, and `-`, and must start with a letter or digit. They must not collide with
+built-in provider names, and cannot contain `.`, `:`, `/`, or whitespace. Good examples are
+`local-vllm`, `llama-cpp`, and `lm-studio`.
+
+#### llama.cpp
+
+```jsonc
+{
+  "llama-cpp": {
+    "providerType": "openai-compatible",
+    "displayName": "llama.cpp",
+    "baseUrl": "http://localhost:8080/v1",
+    "models": ["qwen3-coder"],
+  },
+}
+```
+
+#### vLLM
+
+```jsonc
+{
+  "local-vllm": {
+    "providerType": "openai-compatible",
+    "displayName": "Local vLLM",
+    "baseUrl": "http://localhost:8000/v1",
+    "models": ["qwen3-coder"],
+  },
+}
+```
+
+#### LM Studio
+
+```jsonc
+{
+  "lm-studio": {
+    "providerType": "openai-compatible",
+    "displayName": "LM Studio",
+    "baseUrl": "http://localhost:1234/v1",
+    "models": ["local-model"],
+  },
+}
+```
+
+Operational notes:
+
+- `baseUrl` is resolved from the Mux backend process. In desktop mode, this is your local
+  machine. In server mode, the endpoint must be reachable from the server.
+- Most OpenAI-compatible servers require the `/v1` suffix in the URL.
+- Custom providers use Chat Completions via `@ai-sdk/openai-compatible`.
+- Keep the official `openai` provider for the Responses API, Codex OAuth, and OpenAI service
+  tiers. Custom providers do not inherit those features.
+- Custom providers are direct-only and do not participate in gateway routing.
+- You no longer need to set a fake `apiKey` to point Mux at a keyless local server.
+
+### Bedrock Authentication
+
+Bedrock supports multiple authentication methods (tried in order):
+
+1. **Bearer Token** - Single API key via `bearerToken` config or `AWS_BEARER_TOKEN_BEDROCK` env var
+2. **Explicit Credentials** - `accessKeyId` + `secretAccessKey` in config
+3. **AWS Credential Chain** - Automatic resolution from environment, `~/.aws/credentials`, SSO, EC2/ECS roles
+
+If you're already authenticated with AWS CLI (`aws sso login`), Mux uses those credentials automatically.
+
+### OpenRouter Provider Routing
+
+Control which infrastructure providers handle your requests:
+
+- `order`: Priority list of providers (e.g., `["Cerebras", "Fireworks"]`)
+- `allow_fallbacks`: Whether to try other providers if preferred ones are unavailable
+- `only` / `ignore`: Restrict or exclude specific providers
+- `data_collection`: `"allow"` or `"deny"` for training data policies
+
+See [OpenRouter Provider Routing docs](https://openrouter.ai/docs/features/provider-routing) for details.
+
+### xAI Search Orchestration
+
+Grok models support live web search. Mux enables this by default with `mode: "auto"`. Customize via [`searchParameters`](https://docs.x.ai/docs/resources/search) for regional focus, time filters, or to disable search.
+
+### Model Parameter Overrides
+
+Set per-model defaults for parameters like temperature, token limits, and sampling by adding a
+`modelParameters` section under any provider:
+
+```jsonc
+{
+  "anthropic": {
+    "apiKey": "sk-ant-...",
+    "modelParameters": {
+      // Override for a specific model
+      "claude-sonnet-4-5": {
+        "temperature": 0.7,
+        "max_output_tokens": 16384,
+      },
+      // Wildcard default for all Anthropic models
+      "*": {
+        "max_output_tokens": 8192,
+      },
+    },
+  },
+}
+```
+
+#### Supported parameters
+
+| Parameter           | Range            | Description                     |
+| ------------------- | ---------------- | ------------------------------- |
+| `temperature`       | 0–2              | Randomness of responses         |
+| `top_p`             | 0–1              | Nucleus sampling threshold      |
+| `top_k`             | positive integer | Top-K sampling                  |
+| `max_output_tokens` | positive integer | Maximum response length         |
+| `seed`              | integer          | Deterministic generation seed   |
+| `frequency_penalty` | number           | Penalize repeated tokens        |
+| `presence_penalty`  | number           | Penalize tokens already present |
+
+Any unrecognized key is passed through as a provider-specific option (for example, OpenRouter routing hints).
+
+#### Resolution order
+
+When multiple entries could match, the **first match wins** (no merging across tiers):
+
+1. **Effective model ID** - a dated snapshot like `claude-sonnet-4-5-20250929`
+2. **Canonical model ID** - the model you selected, e.g. `claude-sonnet-4-5`
+3. **Wildcard `"*"`** - catch-all for that provider
+
+For example, if you configure both `"claude-sonnet-4-5"` and `"*"` with different temperatures,
+requesting `claude-sonnet-4-5` uses the specific entry - the wildcard is not merged in.
+
+#### Priority with other settings
+
+For `max_output_tokens` specifically, the priority chain is:
+
+1. Explicit per-message override (from thinking level or UI)
+2. `modelParameters` config value
+3. Model's built-in default
+
+This means model parameters act as a **default** - they never override explicit per-message choices.
+
+<Warning>
+  Some providers require specific parameter values when extended thinking is enabled. For example,
+  Anthropic requires `temperature: 1` with thinking. Setting a different temperature in
+  `modelParameters` may cause API errors when thinking is active.
+</Warning>

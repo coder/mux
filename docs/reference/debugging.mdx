@@ -1,0 +1,26 @@
+---
+title: Debugging
+description: View live backend logs and diagnose issues
+---
+
+The **Output** tab streams Mux's backend logs in real time — useful for diagnosing tool failures, MCP server issues, or unexpected behavior.
+
+## Opening the Output tab
+
+Open the command palette with `Ctrl+Shift+P` (`⌘+Shift+P` on macOS). Type `>` to switch to command mode, then run **Show Output**. This opens the Output tab in the right sidebar.
+
+You can also press `F4` to open the command palette directly in command mode (prefilled with `>`), then run **Show Output**.
+
+To close it, open command mode again (`>` or `F4`) and run **Hide Output**.
+
+## Filtering by level
+
+A dropdown at the top of the Output tab filters logs by minimum severity: `debug`, `info`, `warn`, or `error`. The default is `info`. Your selection is persisted across sessions.
+
+## Clearing logs
+
+The trash icon clears all log entries — both in the UI and on disk. This is useful when you want a clean slate before reproducing an issue.
+
+## Opening the raw log file
+
+The **Open Log File** command (also in the command palette) opens the underlying log file in your system's default viewer. Useful when you need to search, copy, or share the full log output.

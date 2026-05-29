@@ -1,0 +1,185 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "Mux",
+  "logo": {
+    "light": "/img/logo-black.svg",
+    "dark": "/img/logo-white.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#999",
+    "light": "#FFF",
+    "dark": "#000"
+  },
+  "appearance": {
+    "default": "dark"
+  },
+  "interaction": {
+    "drilldown": true
+  },
+  "icons": {
+    "library": "lucide"
+  },
+  "css": ["/custom.css"],
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "index",
+              "install",
+              {
+                "group": "Models",
+                "pages": ["config/models", "config/providers"]
+              },
+              "getting-started/why-parallelize",
+              "getting-started/mux-gateway",
+              "reference/cli"
+            ]
+          },
+          {
+            "group": "Workspaces",
+            "pages": [
+              "workspaces",
+              "workspaces/fork",
+              "workspaces/sharing",
+              "workspaces/muxignore",
+              {
+                "group": "Compaction",
+                "pages": [
+                  "workspaces/compaction",
+                  "workspaces/compaction/manual",
+                  "workspaces/compaction/automatic",
+                  "workspaces/compaction/customization"
+                ]
+              },
+              {
+                "group": "Runtimes",
+                "pages": [
+                  "runtime",
+                  "runtime/local",
+                  "runtime/worktree",
+                  "runtime/ssh",
+                  "runtime/coder",
+                  "runtime/docker",
+                  "runtime/devcontainer"
+                ]
+              },
+              {
+                "group": "Hooks",
+                "pages": ["hooks/init", "hooks/tools", "hooks/environment-variables"]
+              }
+            ]
+          },
+          {
+            "group": "Agents",
+            "pages": [
+              "agents",
+              "agents/instruction-files",
+              "agents/agent-skills",
+              "agents/plan-mode",
+              "agents/system-prompt",
+              "agents/prompting-tips",
+              "agents/best-of-n"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "config/mcp-servers",
+              "config/policy-file",
+              "config/project-secrets",
+              "config/agentic-git-identity",
+              "config/keybinds",
+              "config/notifications",
+              "config/server-access",
+              "config/vim-mode"
+            ]
+          },
+
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/github-actions",
+              "config/agentic-git-identity",
+              "agents/prompting-tips"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": ["integrations/vscode-extension", "integrations/acp"]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/debugging",
+              "reference/telemetry",
+              "reference/storybook",
+              "reference/benchmarking",
+              "adr/0001-experimental-image-generation-tool",
+              "adr/0002-image-editing-visual-mockups",
+              "adr/0003-context-boundaries-for-compaction-and-reset",
+              "adr/0004-cli-goal-runs-are-not-strict-goal-aliases",
+              "AGENTS"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footerSocials": {
+    "github": "https://github.com/coder/mux"
+  },
+  "integrations": {
+    "ga4": {
+      "measurementId": "G-D1HL4PBRSY"
+    }
+  },
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude", "cursor", "vscode"]
+  },
+  "redirects": [
+    { "source": "/why-parallelize", "destination": "/getting-started/why-parallelize" },
+    { "source": "/mux-codes", "destination": "/getting-started/mux-gateway" },
+    { "source": "/getting-started/mux-codes", "destination": "/getting-started/mux-gateway" },
+    { "source": "/fork", "destination": "/workspaces/fork" },
+    { "source": "/init-hooks", "destination": "/hooks/init" },
+    { "source": "/agent-skills", "destination": "/agents/agent-skills" },
+    { "source": "/instruction-files", "destination": "/agents/instruction-files" },
+    { "source": "/plan-mode", "destination": "/agents/plan-mode" },
+    { "source": "/system-prompt", "destination": "/agents/system-prompt" },
+    { "source": "/models", "destination": "/config/models" },
+    { "source": "/providers", "destination": "/config/providers" },
+    { "source": "/mcp-servers", "destination": "/config/mcp-servers" },
+    { "source": "/project-secrets", "destination": "/config/project-secrets" },
+    { "source": "/agentic-git-identity", "destination": "/config/agentic-git-identity" },
+    { "source": "/keybinds", "destination": "/config/keybinds" },
+    { "source": "/notifications", "destination": "/config/notifications" },
+    { "source": "/server-access", "destination": "/config/server-access" },
+    { "source": "/cli", "destination": "/reference/cli" },
+    { "source": "/guides/cli", "destination": "/reference/cli" },
+    { "source": "/context-management", "destination": "/workspaces/compaction" },
+    { "source": "/guides/context-management", "destination": "/workspaces/compaction" },
+    { "source": "/guides/compaction", "destination": "/workspaces/compaction" },
+    { "source": "/guides/compaction/manual", "destination": "/workspaces/compaction/manual" },
+    { "source": "/guides/compaction/automatic", "destination": "/workspaces/compaction/automatic" },
+    { "source": "/sharing", "destination": "/workspaces/sharing" },
+    { "source": "/guides/sharing", "destination": "/workspaces/sharing" },
+    { "source": "/prompting-tips", "destination": "/agents/prompting-tips" },
+    { "source": "/prompting-tips.html", "destination": "/agents/prompting-tips" },
+    { "source": "/guides/prompting-tips", "destination": "/agents/prompting-tips" },
+    { "source": "/best-of-n", "destination": "/agents/best-of-n" },
+    { "source": "/vim-mode", "destination": "/config/vim-mode" },
+    { "source": "/guides/vim-mode", "destination": "/config/vim-mode" },
+    { "source": "/vscode-extension", "destination": "/integrations/vscode-extension" },
+    { "source": "/acp", "destination": "/integrations/acp" },
+    { "source": "/telemetry", "destination": "/reference/telemetry" },
+    { "source": "/storybook", "destination": "/reference/storybook" },
+    { "source": "/benchmarking", "destination": "/reference/benchmarking" },
+    { "source": "/debugging", "destination": "/reference/debugging" }
+  ]
+}

@@ -1,0 +1,1434 @@
+import type { Config, ProjectConfig } from "@/node/config";
+import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
+import { spawn } from "child_process";
+import { createHash, randomBytes } from "crypto";
+import {
+  validateProjectPath,
+  isGitRepository,
+  isInsideGitRepository,
+  stripTrailingSlashes,
+} from "@/node/utils/pathUtils";
+import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
+import type { Result } from "@/common/types/result";
+import { Ok, Err } from "@/common/types/result";
+import type { Secret } from "@/common/types/secrets";
+import type { Stats } from "fs";
+import * as fsPromises from "fs/promises";
+import { execFileAsync, killProcessTree } from "@/node/utils/disposableExec";
+import {
+  buildFileCompletionsIndex,
+  EMPTY_FILE_COMPLETIONS_INDEX,
+  searchFileCompletions,
+  type FileCompletionsIndex,
+} from "@/node/services/fileCompletionsIndex";
+import { log } from "@/node/services/log";
+import type { SshPromptService } from "@/node/services/sshPromptService";
+import { createMediatedAskpassSession } from "@/node/runtime/openSshPromptMediation";
+import {
+  classifySshCloneFailure,
+  summarizeCloneStderr,
+  type CloneErrorCode,
+} from "./sshCloneFailure";
+import type { BranchListResult } from "@/common/orpc/types";
+import type { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
+import type { FileTreeNode } from "@/common/utils/git/numstatParser";
+import * as path from "path";
+import { getMuxProjectsDir } from "@/common/constants/paths";
+import { expandTilde } from "@/node/runtime/tildeExpansion";
+import { getErrorMessage } from "@/common/utils/errors";
+import { deriveProjectHierarchy, isPathDescendant } from "@/common/utils/subProjects";
+import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
+import type { z } from "zod";
+
+/**
+ * List directory contents for the DirectoryPickerModal.
+ * Returns a FileTreeNode where:
+ * - name and path are the resolved absolute path of the requested directory
+ * - children are the immediate subdirectories (not recursive)
+ */
+async function listDirectory(requestedPath: string): Promise<FileTreeNode> {
+  // Expand ~ to home directory (path.resolve doesn't handle tilde)
+  const expanded =
+    requestedPath === "~" || requestedPath.startsWith("~/") || requestedPath.startsWith("~\\")
+      ? expandTilde(requestedPath)
+      : requestedPath;
+  const normalizedRoot = path.resolve(expanded || ".");
+  const entries = await fsPromises.readdir(normalizedRoot, { withFileTypes: true });
+
+  const children: FileTreeNode[] = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const entryPath = path.join(normalizedRoot, entry.name);
+      return {
+        name: entry.name,
+        path: entryPath,
+        isDirectory: true,
+        children: [],
+      };
+    });
+
+  return {
+    name: normalizedRoot,
+    path: normalizedRoot,
+    isDirectory: true,
+    children,
+  };
+}
+
+interface CloneProjectParams {
+  repoUrl: string;
+  cloneParentDir?: string | null;
+}
+
+export type { CloneErrorCode } from "./sshCloneFailure";
+
+export type CloneEvent =
+  | { type: "progress"; line: string }
+  | { type: "success"; projectConfig: ProjectConfig; normalizedPath: string }
+  | {
+      type: "error";
+      code: CloneErrorCode;
+      error: string;
+      normalizedPath?: string | null;
+    };
+
+type ProjectRemoveError = z.infer<typeof ProjectRemoveErrorSchema>;
+
+interface WorkspaceRemover {
+  remove(workspaceId: string, force?: boolean): Promise<Result<void>>;
+}
+
+function isTildePrefixedPath(value: string): boolean {
+  return value === "~" || value.startsWith("~/") || value.startsWith("~\\");
+}
+
+function resolvePathWithTilde(inputPath: string): string {
+  const expanded = isTildePrefixedPath(inputPath) ? expandTilde(inputPath) : inputPath;
+  return path.resolve(expanded);
+}
+
+function resolveProjectParentDir(
+  parentDir: string | null | undefined,
+  defaultProjectDir: string | undefined
+): string {
+  const rawParentDir = parentDir ?? defaultProjectDir ?? getMuxProjectsDir();
+  const trimmedParentDir = rawParentDir.trim();
+
+  if (!trimmedParentDir) {
+    throw new Error("Project parent directory cannot be empty");
+  }
+
+  return resolvePathWithTilde(trimmedParentDir);
+}
+
+// Windows device names are invalid as path segments (CON/PRN/AUX/NUL/COM1.../LPT9)
+// even when used as a directory name.
+const WINDOWS_RESERVED_BASENAME_PATTERN = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?=\.|$)/iu;
+
+// Derive a conservative folder name from user-controlled repo input.
+// This path can flow into shell-adjacent commands (for example when opening
+// native terminals), so we only keep letters/digits/combining marks plus . _ -.
+function sanitizeRepoFolderName(name: string): string {
+  const sanitized = name
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{M}\p{N}._-]+/gu, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[.\s-]+/u, "")
+    .replace(/[.\s-]+$/u, "");
+
+  if (!sanitized) {
+    return "";
+  }
+
+  const reservedStemMatch = WINDOWS_RESERVED_BASENAME_PATTERN.exec(sanitized);
+  if (reservedStemMatch) {
+    const stemLength = reservedStemMatch[1]?.length ?? 0;
+    return `${sanitized.slice(0, stemLength)}-repo${sanitized.slice(stemLength)}`;
+  }
+
+  return sanitized;
+}
+
+function deriveFallbackRepoFolderName(repoSeed: string): string {
+  const digest = createHash("sha256").update(repoSeed).digest("hex").slice(0, 10);
+  return `repo-${digest}`;
+}
+
+function deriveRepoFolderName(repoUrl: string): string {
+  const trimmedRepoUrl = repoUrl.trim();
+  if (!trimmedRepoUrl) {
+    throw new Error("Repository URL cannot be empty");
+  }
+
+  let candidatePath = trimmedRepoUrl;
+
+  // SSH-style shorthand: git@github.com:owner/repo.git
+  const scpLikeMatch = /^[^@\s]+@[^:\s]+:(.+)$/.exec(trimmedRepoUrl);
+  if (scpLikeMatch) {
+    candidatePath = scpLikeMatch[1];
+  } else if (/^[^/\\\s]+\/[^/\\\s]+$/.test(trimmedRepoUrl)) {
+    // Owner/repo shorthand
+    candidatePath = trimmedRepoUrl;
+  } else {
+    try {
+      // https://..., ssh://..., file://...
+      const parsed = new URL(trimmedRepoUrl);
+      candidatePath = decodeURIComponent(parsed.pathname);
+    } catch {
+      // Not a URL with protocol. Treat as local path-like input.
+    }
+  }
+
+  const normalizedCandidatePath = candidatePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const repoName = path.posix.basename(normalizedCandidatePath).replace(/\.git$/i, "");
+  const safeFolderName = sanitizeRepoFolderName(repoName);
+
+  // Keep clone flow resilient even when the repo basename contains only symbols/emojis.
+  // A deterministic fallback avoids user-visible hard failures while staying shell-safe.
+  if (!safeFolderName) {
+    return deriveFallbackRepoFolderName(trimmedRepoUrl);
+  }
+
+  return safeFolderName;
+}
+
+const GITHUB_SHORTHAND_PATTERN = /^[a-zA-Z0-9][\w-]*\/[a-zA-Z0-9][\w.-]*$/;
+
+function hasLikelySshCredentials(): boolean {
+  const sshAgentSocket = process.env.SSH_AUTH_SOCK;
+  // Be conservative: only prefer git@github.com shorthand when the session has an active
+  // SSH agent. The mere presence of local key files does not imply GitHub SSH access.
+  return typeof sshAgentSocket === "string" && sshAgentSocket.trim().length > 0;
+}
+
+/**
+ * Normalize a repo URL so git clone receives a valid remote.
+ * Expands "owner/repo" shorthand to either SSH or HTTPS based on likely local credentials.
+ * All other inputs (HTTPS URLs, SSH URLs, SCP-style, etc.) pass through unchanged.
+ */
+function normalizeRepoUrlForClone(repoUrl: string): string {
+  const trimmedRepoUrl = repoUrl.trim();
+  const shorthandCandidate = trimmedRepoUrl.replace(/[\\/]+$/, "");
+
+  // owner/repo shorthand: exactly two non-empty segments separated by a single slash,
+  // where the first segment looks like a GitHub username (letters, digits, hyphens).
+  // Excludes local paths like ../repo, ./foo, foo/bar/baz, and absolute paths.
+  // Note: bare `foo/bar` style local relative paths are intentionally treated as GitHub
+  // shorthand here because this function is only called from the Clone dialog, which is
+  // specifically for remote repos. Users cloning local repos should use the "Local folder" tab.
+  if (GITHUB_SHORTHAND_PATTERN.test(shorthandCandidate)) {
+    // Strip existing .git suffix before appending to avoid double .git (e.g. owner/repo.git → owner/repo.git.git)
+    const withoutGitSuffix = shorthandCandidate.replace(/\.git$/i, "");
+
+    // Prefer SSH for shorthand only when the current session has an active SSH agent.
+    // This avoids assuming GitHub access from unrelated key files on disk.
+    if (hasLikelySshCredentials()) {
+      return `git@github.com:${withoutGitSuffix}.git`;
+    }
+
+    return `https://github.com/${withoutGitSuffix}.git`;
+  }
+
+  // Strip query strings and fragments only from URL-like inputs (protocol:// or git@),
+  // not from local paths where # and ? may be valid filename characters.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmedRepoUrl) || trimmedRepoUrl.startsWith("git@")) {
+    return trimmedRepoUrl.replace(/[?#].*$/, "");
+  }
+
+  return trimmedRepoUrl;
+}
+
+function parseScpStyleSshUrl(url: string): { host: string } | undefined {
+  const trimmedUrl = url.trim();
+
+  // Keep Windows drive-letter paths (e.g. C:\repo) out of SCP-style SSH matching.
+  if (/^[a-zA-Z]:[\\/]/.test(trimmedUrl)) {
+    return undefined;
+  }
+
+  // Protocol URLs (https://, ssh://, etc.) are handled separately.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmedUrl)) {
+    return undefined;
+  }
+
+  // SCP-style clone URL: [user@]host:path
+  const scpLikeMatch = /^(?:[a-zA-Z0-9._-]+@)?(\[[^\]]+\]|[^:/\s][^:/\s]*):(.+)$/.exec(trimmedUrl);
+  if (!scpLikeMatch) {
+    return undefined;
+  }
+
+  return { host: scpLikeMatch[1] };
+}
+
+/** Protocol schemes that Git routes through SSH transport. */
+const SSH_PROTOCOL_SCHEMES = new Set(["ssh:", "git+ssh:", "ssh+git:"]);
+
+type CloneTransport =
+  | { kind: "ssh"; hostname: string; port: number }
+  | { kind: "ssh-scp"; hostname: string; port: number }
+  | { kind: "non-ssh" };
+
+/**
+ * Canonical clone-URL transport classifier.
+ * Every SSH-related decision in the clone flow (askpass enablement, prompt
+ * deduplication) should consume this parser so protocol support cannot drift.
+ */
+function parseCloneTransport(rawUrl: string): CloneTransport {
+  const trimmedUrl = rawUrl.trim();
+
+  // SCP-style: [user@]host:path (always SSH, port 22)
+  const parsedScpLikeUrl = parseScpStyleSshUrl(trimmedUrl);
+  if (parsedScpLikeUrl) {
+    return { kind: "ssh-scp", hostname: parsedScpLikeUrl.host, port: 22 };
+  }
+
+  // Protocol URLs: ssh://, git+ssh://, ssh+git://
+  try {
+    const parsed = new URL(trimmedUrl);
+    if (SSH_PROTOCOL_SCHEMES.has(parsed.protocol.toLowerCase()) && parsed.hostname) {
+      const parsedPort = Number.parseInt(parsed.port, 10);
+      const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 22;
+      return { kind: "ssh", hostname: parsed.hostname, port };
+    }
+  } catch {
+    // Not a valid protocol URL; treat as non-SSH.
+  }
+
+  return { kind: "non-ssh" };
+}
+
+/** Detect whether a clone URL will use SSH transport. */
+function isSshCloneUrl(url: string): boolean {
+  return parseCloneTransport(url).kind !== "non-ssh";
+}
+
+function deriveSshClonePromptDedupeKey(cloneUrl: string): string | undefined {
+  const transport = parseCloneTransport(cloneUrl);
+  if (transport.kind === "non-ssh") {
+    return undefined;
+  }
+
+  return formatSshEndpoint(transport.hostname, transport.port);
+}
+
+const FILE_COMPLETIONS_CACHE_TTL_MS = 10_000;
+
+interface FileCompletionsCacheEntry {
+  index: FileCompletionsIndex;
+  fetchedAt: number;
+  refreshing?: Promise<void>;
+}
+
+async function resolveRealProjectPath(projectPath: string): Promise<string> {
+  return stripTrailingSlashes(await fsPromises.realpath(projectPath));
+}
+
+async function readGitTopLevel(projectPath: string): Promise<string | null> {
+  try {
+    using proc = execFileAsync("git", ["-C", projectPath, "rev-parse", "--show-toplevel"]);
+    const { stdout } = await proc.result;
+    return stripTrailingSlashes(stdout.trim());
+  } catch {
+    return null;
+  }
+}
+
+function findDeepestTopLevelParentProject(
+  candidatePath: string,
+  projects: Map<string, ProjectConfig>
+): string | null {
+  let parentPath: string | null = null;
+  for (const [projectPath, projectConfig] of projects) {
+    if (projectConfig.parentProjectPath || projectPath === candidatePath) {
+      continue;
+    }
+    if (!isPathDescendant(projectPath, candidatePath)) {
+      continue;
+    }
+    if (!parentPath || projectPath.length > parentPath.length) {
+      parentPath = projectPath;
+    }
+  }
+  return parentPath;
+}
+
+function hasRegisteredSubProjectAncestor(
+  candidatePath: string,
+  projects: Map<string, ProjectConfig>
+): boolean {
+  for (const [projectPath, projectConfig] of projects) {
+    if (!projectConfig.parentProjectPath) {
+      continue;
+    }
+    if (isPathDescendant(projectPath, candidatePath)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export class ProjectService {
+  private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
+  private directoryPicker?: (initialPath?: string | null) => Promise<string | null>;
+  private readonly sshPromptService: SshPromptService | undefined;
+  private workspaceService?: WorkspaceRemover;
+
+  constructor(
+    private readonly config: Config,
+    sshPromptService?: SshPromptService
+  ) {
+    this.sshPromptService = sshPromptService;
+  }
+
+  setWorkspaceService(workspaceService: WorkspaceRemover): void {
+    this.workspaceService = workspaceService;
+  }
+
+  setDirectoryPicker(picker: (initialPath?: string | null) => Promise<string | null>) {
+    this.directoryPicker = picker;
+  }
+
+  async pickDirectory(initialPath?: string | null): Promise<string | null> {
+    if (!this.directoryPicker) return null;
+    return this.directoryPicker(initialPath ?? null);
+  }
+
+  async create(
+    projectPath: string
+  ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
+    try {
+      // Validate input
+      if (!projectPath || projectPath.trim().length === 0) {
+        return Err("Project path cannot be empty");
+      }
+
+      // Resolve the path:
+      // - Bare names like "my-project" → ~/.mux/projects/my-project
+      // - Paths with ~ → expand to home directory
+      // - Absolute/relative paths → resolve normally
+      const isBareProjectName =
+        projectPath.length > 0 &&
+        !projectPath.includes("/") &&
+        !projectPath.includes("\\") &&
+        !projectPath.startsWith("~");
+
+      const config = this.config.loadConfigOrDefault();
+      let normalizedPath: string;
+      if (isBareProjectName) {
+        // Bare project name - put in default projects directory
+        const parentDir = resolveProjectParentDir(undefined, config.defaultProjectDir);
+        normalizedPath = path.join(parentDir, projectPath);
+      } else if (
+        projectPath === "~" ||
+        projectPath.startsWith("~/") ||
+        projectPath.startsWith("~\\")
+      ) {
+        // Tilde expansion - uses expandTilde to respect MUX_ROOT for ~/.mux paths
+        normalizedPath = path.resolve(expandTilde(projectPath));
+      } else {
+        normalizedPath = path.resolve(projectPath);
+      }
+
+      let existingStat: Stats | null = null;
+      try {
+        existingStat = await fsPromises.stat(normalizedPath);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      if (existingStat && !existingStat.isDirectory()) {
+        return Err("Project path is not a directory");
+      }
+
+      if (config.projects.has(normalizedPath)) {
+        return Err("Project already exists");
+      }
+
+      const createdDirectory = existingStat == null;
+      const cleanupCreatedDirectory = async () => {
+        if (!createdDirectory) return;
+        try {
+          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+        } catch (error) {
+          log.error(`Failed to clean up rejected project directory ${normalizedPath}:`, error);
+        }
+      };
+
+      // Create the directory if it doesn't exist (like mkdir -p). Keep the user-facing
+      // path stable in config; Windows realpath may expand 8.3 short names and surprise callers.
+      await fsPromises.mkdir(normalizedPath, { recursive: true });
+      const canonicalPath = await resolveRealProjectPath(normalizedPath);
+
+      if (config.projects.has(canonicalPath)) {
+        await cleanupCreatedDirectory();
+        return Err("Project already exists");
+      }
+
+      config.projects = deriveProjectHierarchy(config.projects);
+      if (hasRegisteredSubProjectAncestor(normalizedPath, config.projects)) {
+        await cleanupCreatedDirectory();
+        return Err("Sub-projects can only be one level deep");
+      }
+
+      const parentProjectPath = findDeepestTopLevelParentProject(normalizedPath, config.projects);
+      if (parentProjectPath) {
+        const [parentGitRoot, subProjectGitRoot] = await Promise.all([
+          readGitTopLevel(parentProjectPath),
+          readGitTopLevel(normalizedPath),
+        ]);
+        if (parentGitRoot !== subProjectGitRoot) {
+          await cleanupCreatedDirectory();
+          return Err("Sub-project must be in the same git repository as its parent project");
+        }
+      }
+
+      const descendantProjectPaths = Array.from(config.projects.keys()).filter((candidatePath) =>
+        isPathDescendant(normalizedPath, candidatePath)
+      );
+      if (descendantProjectPaths.length > 0) {
+        const parentGitRoot = await readGitTopLevel(normalizedPath);
+        for (const descendantProjectPath of descendantProjectPaths) {
+          const descendantGitRoot = await readGitTopLevel(descendantProjectPath);
+          if (parentGitRoot !== descendantGitRoot) {
+            await cleanupCreatedDirectory();
+            return Err(
+              "Cannot register a parent project above an existing project from a different git repository"
+            );
+          }
+        }
+      }
+
+      const projectConfig: ProjectConfig = {
+        workspaces: [],
+        parentProjectPath: parentProjectPath ?? undefined,
+      };
+      config.projects.set(normalizedPath, projectConfig);
+      config.projects = deriveProjectHierarchy(config.projects);
+      await this.config.saveConfig(config);
+
+      return Ok({ projectConfig, normalizedPath });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to create project: ${message}`);
+    }
+  }
+
+  getDefaultProjectDir(): string {
+    const config = this.config.loadConfigOrDefault();
+    return resolveProjectParentDir(undefined, config.defaultProjectDir);
+  }
+
+  async setDefaultProjectDir(dirPath: string): Promise<void> {
+    const trimmed = dirPath.trim();
+    await this.config.editConfig((config) => ({
+      ...config,
+      defaultProjectDir: trimmed || undefined,
+    }));
+  }
+
+  private validateAndPrepareClone(
+    input: CloneProjectParams
+  ): Result<{ cloneUrl: string; normalizedPath: string; cloneParentDir: string }> {
+    try {
+      const repoUrl = input.repoUrl.trim();
+      if (!repoUrl) {
+        return Err("Repository URL cannot be empty");
+      }
+
+      const config = this.config.loadConfigOrDefault();
+      const cloneParentDir = resolveProjectParentDir(
+        input.cloneParentDir,
+        config.defaultProjectDir
+      );
+      const repoFolderName = deriveRepoFolderName(repoUrl);
+      const normalizedPath = path.join(cloneParentDir, repoFolderName);
+
+      const normalizedProjects = deriveProjectHierarchy(config.projects);
+      if (findDeepestTopLevelParentProject(normalizedPath, normalizedProjects)) {
+        return Err("Cannot clone a new git repository inside an existing project tree");
+      }
+
+      if (config.projects.has(normalizedPath)) {
+        return Err(`Project already exists at ${normalizedPath}`);
+      }
+
+      return Ok({
+        cloneUrl: normalizeRepoUrlForClone(repoUrl),
+        normalizedPath,
+        cloneParentDir,
+      });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(message);
+    }
+  }
+
+  async *cloneWithProgress(
+    input: CloneProjectParams,
+    signal?: AbortSignal
+  ): AsyncGenerator<CloneEvent> {
+    const prepared = this.validateAndPrepareClone(input);
+    if (!prepared.success) {
+      yield { type: "error", code: "clone_failed", error: prepared.error };
+      return;
+    }
+
+    const { cloneUrl, normalizedPath, cloneParentDir } = prepared.data;
+    const cloneWorkPath = `${normalizedPath}.mux-clone-${randomBytes(6).toString("hex")}`;
+    let cloneSucceeded = false;
+    // Preserve full stderr so failed clones can surface git's fatal message instead of only exit code 128.
+    let collectedStderr = "";
+    let askpass: Awaited<ReturnType<typeof createMediatedAskpassSession>> | undefined;
+
+    const cleanupPartialClone = async () => {
+      if (cloneSucceeded) {
+        return;
+      }
+
+      try {
+        // Only clean up the temp clone path we created so we never delete
+        // a destination directory that another process created concurrently.
+        await fsPromises.rm(cloneWorkPath, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors — the original error is more important.
+      }
+    };
+
+    try {
+      if (signal?.aborted) {
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
+        return;
+      }
+
+      let cloneParentStat: Stats | null = null;
+      try {
+        cloneParentStat = await fsPromises.stat(cloneParentDir);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      if (cloneParentStat && !cloneParentStat.isDirectory()) {
+        yield {
+          type: "error",
+          code: "clone_failed",
+          error: "Clone destination parent directory is not a directory",
+        };
+        return;
+      }
+
+      let destinationStat: Stats | null = null;
+      try {
+        destinationStat = await fsPromises.stat(normalizedPath);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      if (destinationStat) {
+        if (destinationStat.isDirectory()) {
+          yield {
+            type: "error",
+            code: "destination_exists",
+            error: `Destination already exists: ${normalizedPath}`,
+            normalizedPath,
+          };
+        } else {
+          yield {
+            type: "error",
+            code: "clone_failed",
+            error: `Destination already exists: ${normalizedPath}`,
+          };
+        }
+        return;
+      }
+
+      await fsPromises.mkdir(cloneParentDir, { recursive: true });
+
+      // Set up SSH askpass mediation for SSH clone URLs.
+      // This allows clone to surface host-key and credential prompts through the
+      // same in-app dialog used by SSH runtime probes.
+      askpass =
+        isSshCloneUrl(cloneUrl) && this.sshPromptService
+          ? await createMediatedAskpassSession({
+              sshPromptService: this.sshPromptService,
+              promptPolicy: { allowHostKey: true, allowCredential: true },
+              // Deduplicate host-key prompts by SSH endpoint identity (host:port),
+              // not by full repo path, so concurrent clones to the same host coalesce.
+              dedupeKey: deriveSshClonePromptDedupeKey(cloneUrl),
+              getStderrContext: () => collectedStderr,
+            })
+          : undefined;
+
+      const child = spawn("git", ["clone", "--progress", "--", cloneUrl, cloneWorkPath], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...(askpass?.env ?? {}) },
+        // Detached children become process-group leaders on Unix so we can
+        // reliably terminate clone helpers (ssh, shells) as a full tree.
+        detached: process.platform !== "win32",
+      });
+
+      const stderrChunks: string[] = [];
+      let resolveChunk: (() => void) | null = null;
+      let processEnded = false;
+      let resolveProcessExit: (() => void) | null = null;
+      const processExitPromise = new Promise<void>((resolve) => {
+        resolveProcessExit = resolve;
+      });
+      let spawnErrorMessage: string | null = null;
+
+      const summarizeStderr = (): string | null => summarizeCloneStderr(collectedStderr);
+
+      const notifyChunk = () => {
+        if (!resolveChunk) {
+          return;
+        }
+
+        if (!processEnded && stderrChunks.length === 0) {
+          return;
+        }
+
+        const resolve = resolveChunk;
+        resolveChunk = null;
+        resolve();
+      };
+
+      const markProcessEnded = () => {
+        if (processEnded) {
+          return;
+        }
+
+        processEnded = true;
+        notifyChunk();
+
+        if (resolveProcessExit) {
+          const resolve = resolveProcessExit;
+          resolveProcessExit = null;
+          resolve();
+        }
+      };
+
+      child.stderr?.on("data", (data: Buffer) => {
+        const chunk = data.toString();
+        stderrChunks.push(chunk);
+        collectedStderr += chunk;
+        notifyChunk();
+      });
+
+      child.on("error", (error: Error) => {
+        spawnErrorMessage = error.message;
+        markProcessEnded();
+      });
+
+      child.on("close", () => {
+        markProcessEnded();
+      });
+
+      if (child.exitCode !== null || child.signalCode !== null) {
+        markProcessEnded();
+      }
+
+      const terminateCloneProcess = () => {
+        if (child.killed || child.exitCode !== null || child.signalCode !== null) {
+          return;
+        }
+
+        if (typeof child.pid === "number" && child.pid > 0) {
+          killProcessTree(child.pid);
+          return;
+        }
+
+        try {
+          child.kill();
+        } catch {
+          // Ignore ESRCH races if process exits between checks.
+        }
+      };
+
+      const onAbort = () => {
+        terminateCloneProcess();
+        notifyChunk();
+      };
+
+      if (signal) {
+        if (signal.aborted) {
+          onAbort();
+        } else {
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+      }
+
+      try {
+        while (!processEnded) {
+          if (stderrChunks.length > 0) {
+            yield { type: "progress", line: stderrChunks.shift()! };
+            continue;
+          }
+
+          await new Promise<void>((resolve) => {
+            resolveChunk = resolve;
+            notifyChunk();
+          });
+        }
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+        terminateCloneProcess();
+        await processExitPromise;
+      }
+
+      while (stderrChunks.length > 0) {
+        yield { type: "progress", line: stderrChunks.shift()! };
+      }
+
+      if (spawnErrorMessage != null) {
+        await cleanupPartialClone();
+        const errorMessage = summarizeStderr() ?? spawnErrorMessage;
+        yield { type: "error", code: "clone_failed", error: errorMessage };
+        return;
+      }
+
+      if (signal?.aborted) {
+        await cleanupPartialClone();
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
+        return;
+      }
+
+      const exitCode = child.exitCode;
+      const exitSignal = child.signalCode;
+
+      if (exitCode !== 0 || exitSignal != null) {
+        await cleanupPartialClone();
+        const errorMessage =
+          summarizeStderr() ??
+          (exitSignal != null
+            ? `Clone failed: process terminated by signal ${String(exitSignal)}`
+            : `Clone failed with exit code ${exitCode ?? "unknown"}`);
+        yield {
+          type: "error",
+          code: classifySshCloneFailure({
+            stderr: collectedStderr,
+            promptOutcome: askpass?.getLastPromptOutcome() ?? null,
+          }),
+          error: errorMessage,
+        };
+        return;
+      }
+
+      if (signal?.aborted) {
+        await cleanupPartialClone();
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
+        return;
+      }
+
+      try {
+        await fsPromises.rename(cloneWorkPath, normalizedPath);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === "EEXIST" || err.code === "ENOTEMPTY") {
+          await cleanupPartialClone();
+
+          let existingDestinationStat: Stats | null = null;
+          try {
+            existingDestinationStat = await fsPromises.stat(normalizedPath);
+          } catch (statError) {
+            const statErr = statError as NodeJS.ErrnoException;
+            if (statErr.code !== "ENOENT") {
+              throw statError;
+            }
+          }
+
+          if (existingDestinationStat?.isDirectory()) {
+            yield {
+              type: "error",
+              code: "destination_exists",
+              error: `Destination already exists: ${normalizedPath}`,
+              normalizedPath,
+            };
+          } else {
+            yield {
+              type: "error",
+              code: "clone_failed",
+              error: `Destination already exists: ${normalizedPath}`,
+            };
+          }
+          return;
+        }
+        throw error;
+      }
+
+      if (signal?.aborted) {
+        // Abort won the race after rename but before config mutation.
+        // Remove the newly materialized destination so cancellation remains authoritative.
+        try {
+          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+        } catch {
+          // Best-effort cleanup only.
+        }
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
+        return;
+      }
+
+      const projectConfig: ProjectConfig = { workspaces: [] };
+      await this.config.editConfig((freshConfig) => {
+        if (freshConfig.projects.has(normalizedPath)) {
+          return freshConfig;
+        }
+        const updatedProjects = new Map(freshConfig.projects);
+        updatedProjects.set(normalizedPath, projectConfig);
+        return { ...freshConfig, projects: updatedProjects };
+      });
+
+      if (!this.config.loadConfigOrDefault().projects.has(normalizedPath)) {
+        // Config.saveConfig logs-and-continues on write failures, so verify persistence
+        // explicitly before reporting success.
+        try {
+          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+        } catch {
+          // Best-effort rollback only.
+        }
+        yield {
+          type: "error",
+          code: "clone_failed",
+          error: "Failed to persist cloned project configuration",
+        };
+        return;
+      }
+
+      cloneSucceeded = true;
+      yield { type: "success", projectConfig, normalizedPath };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      yield {
+        type: "error",
+        code: "clone_failed",
+        error: `Failed to clone repository: ${message}`,
+      };
+    } finally {
+      askpass?.cleanup();
+      await cleanupPartialClone();
+    }
+  }
+
+  async clone(
+    input: CloneProjectParams
+  ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
+    for await (const event of this.cloneWithProgress(input)) {
+      if (event.type === "success") {
+        return Ok({ projectConfig: event.projectConfig, normalizedPath: event.normalizedPath });
+      }
+
+      if (event.type === "error") {
+        return Err(event.error);
+      }
+    }
+
+    return Err("Clone did not return a completion event");
+  }
+
+  async remove(projectPath: string, force = false): Promise<Result<void, ProjectRemoveError>> {
+    try {
+      const normalizedPath = stripTrailingSlashes(projectPath);
+      let config = this.config.loadConfigOrDefault();
+      let projectConfig = config.projects.get(normalizedPath);
+
+      if (!projectConfig) {
+        return Err({ type: "project_not_found" as const });
+      }
+
+      if (projectConfig.parentProjectPath) {
+        const parentProject = config.projects.get(projectConfig.parentProjectPath);
+        if (parentProject) {
+          for (const workspace of parentProject.workspaces) {
+            if (workspace.subProjectPath === normalizedPath) {
+              workspace.subProjectPath = undefined;
+            }
+          }
+        }
+        try {
+          await this.config.updateProjectSecrets(normalizedPath, []);
+        } catch (error) {
+          log.error(`Failed to clean up secrets for sub-project ${normalizedPath}:`, error);
+        }
+        config.projects.delete(normalizedPath);
+        await this.config.saveConfig(config);
+        return Ok(undefined);
+      }
+
+      // Self-healing: purge workspace entries whose backing directories no longer exist.
+      // This handles the case where a user manually deleted workspace dirs from ~/.mux/src/.
+      // Only check local/worktree runtimes — remote runtimes (SSH, Docker, devcontainer)
+      // have paths on the remote host that won't exist locally.
+      const localRuntimeTypes = new Set(["local", "worktree"]);
+      const survivingWorkspaces = [];
+      for (const ws of projectConfig.workspaces) {
+        const runtimeType = ws.runtimeConfig?.type;
+        const isLocal = runtimeType == null || localRuntimeTypes.has(runtimeType);
+        if (!isLocal) {
+          survivingWorkspaces.push(ws);
+          continue;
+        }
+        try {
+          await fsPromises.access(ws.path);
+          survivingWorkspaces.push(ws);
+        } catch (err: unknown) {
+          // Only prune when the directory is truly gone (ENOENT/ENOTDIR).
+          // Other errors (EACCES, transient I/O) mean the path may still exist.
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === "ENOENT" || code === "ENOTDIR") {
+            log.info(`Pruning stale workspace entry (directory missing): ${ws.path}`);
+          } else {
+            log.warn(
+              `Keeping workspace entry despite access error (${code ?? "unknown"}): ${ws.path}`
+            );
+            survivingWorkspaces.push(ws);
+          }
+        }
+      }
+      if (survivingWorkspaces.length !== projectConfig.workspaces.length) {
+        projectConfig.workspaces = survivingWorkspaces;
+        await this.config.saveConfig(config);
+      }
+
+      let counts = getProjectWorkspaceCounts(projectConfig.workspaces);
+
+      const totalWorkspaces = counts.activeCount + counts.archivedCount;
+      if (force && totalWorkspaces > 0) {
+        if (!this.workspaceService) {
+          return Err({
+            type: "unknown" as const,
+            message: "Failed to remove project: workspace service unavailable for cascade cleanup",
+          });
+        }
+
+        const workspaceIdsByPath = new Map<string, string>();
+
+        if (projectConfig.workspaces.some((workspace) => !workspace.id)) {
+          const allWorkspaceMetadata = await this.config.getAllWorkspaceMetadata();
+          for (const metadata of allWorkspaceMetadata) {
+            if (metadata.projectPath !== normalizedPath) {
+              continue;
+            }
+            workspaceIdsByPath.set(metadata.namedWorkspacePath, metadata.id);
+          }
+        }
+
+        for (const workspace of projectConfig.workspaces) {
+          // Legacy workspace entries can be missing `id`. Resolve through metadata so
+          // WorkspaceService.remove() receives the canonical workspace ID (it cannot remove by path).
+          const workspaceId = workspace.id ?? workspaceIdsByPath.get(workspace.path);
+          if (!workspaceId) {
+            return Err({
+              type: "unknown" as const,
+              message: `Failed to remove project: Failed to resolve workspace ID for ${workspace.path}`,
+            });
+          }
+
+          const removeResult = await this.workspaceService.remove(workspaceId, true);
+          if (!removeResult.success) {
+            return Err({
+              type: "unknown" as const,
+              message: `Failed to remove project: Failed to delete workspace ${workspaceId}: ${removeResult.error}`,
+            });
+          }
+        }
+
+        config = this.config.loadConfigOrDefault();
+        projectConfig = config.projects.get(normalizedPath);
+        if (!projectConfig) {
+          return Err({ type: "project_not_found" as const });
+        }
+        counts = getProjectWorkspaceCounts(projectConfig.workspaces);
+      }
+
+      // Also count multi-project workspace references to this project from OTHER project buckets.
+      // Multi-project workspaces can be stored under _multi (interactive creation) or under
+      // any project bucket (task/fork creation via taskService).
+      let crossProjectActiveCount = 0;
+      let crossProjectArchivedCount = 0;
+      for (const [configKey, otherConfig] of config.projects) {
+        if (configKey === normalizedPath) {
+          // Project workspaces in this bucket are already counted above.
+          continue;
+        }
+
+        const referencingWorkspaces = otherConfig.workspaces.filter((workspace) =>
+          workspace.projects?.some(
+            (project) => stripTrailingSlashes(project.projectPath) === normalizedPath
+          )
+        );
+
+        if (referencingWorkspaces.length === 0) {
+          continue;
+        }
+
+        const referencingWorkspaceCounts = getProjectWorkspaceCounts(referencingWorkspaces);
+        crossProjectActiveCount += referencingWorkspaceCounts.activeCount;
+        crossProjectArchivedCount += referencingWorkspaceCounts.archivedCount;
+      }
+
+      counts = {
+        activeCount: counts.activeCount + crossProjectActiveCount,
+        archivedCount: counts.archivedCount + crossProjectArchivedCount,
+      };
+
+      if (counts.activeCount + counts.archivedCount > 0) {
+        return Err({ type: "workspace_blockers" as const, ...counts });
+      }
+
+      const removedSubProjectPaths: string[] = [];
+      for (const [candidatePath, candidateConfig] of Array.from(config.projects.entries())) {
+        if (candidateConfig.parentProjectPath === normalizedPath) {
+          removedSubProjectPaths.push(candidatePath);
+          config.projects.delete(candidatePath);
+        }
+      }
+      config.projects.delete(normalizedPath);
+      await this.config.saveConfig(config);
+
+      for (const subProjectPath of removedSubProjectPaths) {
+        try {
+          await this.config.updateProjectSecrets(subProjectPath, []);
+        } catch (error) {
+          log.error(`Failed to clean up secrets for sub-project ${subProjectPath}:`, error);
+        }
+      }
+
+      try {
+        await this.config.updateProjectSecrets(normalizedPath, []);
+      } catch (error) {
+        log.error(`Failed to clean up secrets for project ${normalizedPath}:`, error);
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err({ type: "unknown" as const, message: `Failed to remove project: ${message}` });
+    }
+  }
+
+  list(): Array<[string, ProjectConfig]> {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      return Array.from(deriveProjectHierarchy(config.projects).entries());
+    } catch (error) {
+      log.error("Failed to list projects:", error);
+      return [];
+    }
+  }
+
+  async listBranches(projectPath: string): Promise<BranchListResult> {
+    if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
+      throw new Error("Project path is required to list branches");
+    }
+    try {
+      const validation = await validateProjectPath(projectPath);
+      if (!validation.valid) {
+        throw new Error(validation.error ?? "Invalid project path");
+      }
+      const normalizedPath = validation.expandedPath!;
+
+      // Non-git repos return empty branches - they're restricted to local runtime only.
+      // Use `git rev-parse --is-inside-work-tree` so sub-projects (whose .git lives
+      // in a parent directory) still surface the surrounding repo's branches and
+      // don't trigger the "git init" banner.
+      if (!(await isInsideGitRepository(normalizedPath))) {
+        return { branches: [], recommendedTrunk: null };
+      }
+
+      const branches = await listLocalBranches(normalizedPath);
+
+      // Empty branches means the repo is unborn (git init but no commits yet)
+      // Return empty branches - frontend will show the git init banner since no branches exist
+      // After user creates a commit, branches will populate
+      if (branches.length === 0) {
+        return { branches: [], recommendedTrunk: null };
+      }
+
+      const recommendedTrunk = await detectDefaultTrunkBranch(normalizedPath, branches);
+      return { branches, recommendedTrunk };
+    } catch (error) {
+      log.error("Failed to list branches:", error);
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  /**
+   * Initialize a git repository in the project directory.
+   * Runs `git init` and creates an initial commit so branches exist.
+   * Also handles "unborn" repos (git init already run but no commits yet).
+   */
+  async gitInit(projectPath: string): Promise<Result<void>> {
+    if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
+      return Err("Project path is required");
+    }
+    try {
+      const validation = await validateProjectPath(projectPath);
+      if (!validation.valid) {
+        return Err(validation.error ?? "Invalid project path");
+      }
+      const normalizedPath = validation.expandedPath!;
+
+      const isGitRepo = await isGitRepository(normalizedPath);
+
+      if (isGitRepo) {
+        // Check if repo is "unborn" (git init but no commits yet)
+        const branches = await listLocalBranches(normalizedPath);
+        if (branches.length > 0) {
+          return Err("Directory is already a git repository with commits");
+        }
+        // Repo exists but is unborn - just create the initial commit
+      } else {
+        // Initialize git repository with main as default branch
+        using initProc = execFileAsync("git", ["-C", normalizedPath, "init", "-b", "main"]);
+        await initProc.result;
+      }
+
+      // Create an initial empty commit so the branch exists and worktree/SSH can work
+      // Without a commit, the repo is "unborn" and has no branches
+      // Use -c flags to set identity only for this commit (don't persist to repo config)
+      using commitProc = execFileAsync("git", [
+        "-C",
+        normalizedPath,
+        "-c",
+        "user.name=mux",
+        "-c",
+        "user.email=mux@localhost",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "Initial commit",
+      ]);
+      await commitProc.result;
+
+      // Invalidate file completions cache since the repo state changed
+      this.fileCompletionsCache.delete(normalizedPath);
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      log.error("Failed to initialize git repository:", error);
+      return Err(`Failed to initialize git repository: ${message}`);
+    }
+  }
+
+  async getFileCompletions(
+    projectPath: string,
+    query: string,
+    limit?: number
+  ): Promise<{ paths: string[] }> {
+    const resolvedLimit = limit ?? 20;
+
+    if (typeof projectPath !== "string" || projectPath.trim().length === 0) {
+      return { paths: [] };
+    }
+
+    const validation = await validateProjectPath(projectPath);
+    if (!validation.valid) {
+      return { paths: [] };
+    }
+
+    const normalizedPath = validation.expandedPath!;
+
+    let cacheEntry = this.fileCompletionsCache.get(normalizedPath);
+    if (!cacheEntry) {
+      cacheEntry = { index: EMPTY_FILE_COMPLETIONS_INDEX, fetchedAt: 0 };
+      this.fileCompletionsCache.set(normalizedPath, cacheEntry);
+    }
+
+    const now = Date.now();
+    const isStale =
+      cacheEntry.fetchedAt === 0 || now - cacheEntry.fetchedAt > FILE_COMPLETIONS_CACHE_TTL_MS;
+
+    if (isStale && !cacheEntry.refreshing) {
+      cacheEntry.refreshing = (async () => {
+        try {
+          // Sub-projects share a parent git repository; match branch listing by
+          // accepting any path inside a work tree rather than requiring `.git`
+          // directly under the project directory.
+          if (!(await isInsideGitRepository(normalizedPath))) {
+            cacheEntry.index = EMPTY_FILE_COMPLETIONS_INDEX;
+            return;
+          }
+
+          using proc = execFileAsync("git", [
+            "-C",
+            normalizedPath,
+            "ls-files",
+            "-co",
+            "--exclude-standard",
+          ]);
+          const { stdout } = await proc.result;
+
+          const files = stdout
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0)
+            // File @mentions are whitespace-delimited (extractAtMentions uses /@(\\S+)/), so
+            // suggestions containing spaces would be inserted incorrectly (e.g. "@foo bar.ts").
+            .filter((filePath) => !/\s/.test(filePath));
+
+          cacheEntry.index = buildFileCompletionsIndex(files);
+        } catch (error) {
+          log.debug("getFileCompletions: failed to list files", {
+            projectPath: normalizedPath,
+            error: getErrorMessage(error),
+          });
+        } finally {
+          cacheEntry.fetchedAt = Date.now();
+          cacheEntry.refreshing = undefined;
+        }
+      })();
+    }
+
+    if (cacheEntry.fetchedAt === 0 && cacheEntry.refreshing) {
+      await cacheEntry.refreshing;
+    }
+
+    return { paths: searchFileCompletions(cacheEntry.index, query, resolvedLimit) };
+  }
+
+  getSecrets(projectPath: string): Secret[] {
+    try {
+      return this.config.getProjectSecrets(projectPath);
+    } catch (error) {
+      log.error("Failed to get project secrets:", error);
+      return [];
+    }
+  }
+
+  async listDirectory(path: string) {
+    try {
+      const tree = await listDirectory(path);
+      return { success: true as const, data: tree };
+    } catch (error) {
+      return {
+        success: false as const,
+        error: getErrorMessage(error),
+      };
+    }
+  }
+
+  async createDirectory(
+    requestedPath: string
+  ): Promise<Result<{ normalizedPath: string }, string>> {
+    try {
+      // Expand ~ to home directory
+      const expanded =
+        requestedPath === "~" || requestedPath.startsWith("~/") || requestedPath.startsWith("~\\")
+          ? expandTilde(requestedPath)
+          : requestedPath;
+      const normalizedPath = path.resolve(expanded);
+
+      await fsPromises.mkdir(normalizedPath, { recursive: true });
+      return Ok({ normalizedPath });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to create directory: ${message}`);
+    }
+  }
+
+  async updateSecrets(projectPath: string, secrets: Secret[]): Promise<Result<void>> {
+    try {
+      await this.config.updateProjectSecrets(projectPath, secrets);
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to update project secrets: ${message}`);
+    }
+  }
+
+  /**
+   * Get idle compaction hours setting for a project.
+   * Returns null if disabled or project not found.
+   */
+  getIdleCompactionHours(projectPath: string): number | null {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const project = config.projects.get(projectPath);
+      return project?.idleCompactionHours ?? null;
+    } catch (error) {
+      log.error("Failed to get idle compaction hours:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Set idle compaction hours for a project.
+   * Pass null to disable idle compaction.
+   */
+  async setIdleCompactionHours(projectPath: string, hours: number | null): Promise<Result<void>> {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const project = config.projects.get(projectPath);
+
+      if (!project) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      project.idleCompactionHours = hours;
+      await this.config.saveConfig(config);
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to set idle compaction hours: ${message}`);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Section Management
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Re-home a workspace into a sub-project (or back to the parent with null).
+   * This intentionally changes only the cwd/prompt context pointer; the parent
+   * project keeps owning the checkout and branch because sub-projects share one git repo.
+   */
+  async assignWorkspaceToSubProject(
+    projectPath: string,
+    workspaceId: string,
+    subProjectPath: string | null
+  ): Promise<Result<void>> {
+    try {
+      const config = this.config.loadConfigOrDefault();
+      const requestedProject = config.projects.get(projectPath);
+
+      if (!requestedProject) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      // Match workspace creation: callers may identify the current sub-project,
+      // but the workspace row itself is stored in the parent project's bucket.
+      const owningProjectPath = requestedProject.parentProjectPath ?? projectPath;
+      const owningProject = config.projects.get(owningProjectPath);
+      if (!owningProject) {
+        return Err(`Project not found: ${owningProjectPath}`);
+      }
+
+      if (subProjectPath !== null) {
+        const subProject = config.projects.get(subProjectPath);
+        if (subProject?.parentProjectPath !== owningProjectPath) {
+          return Err(`Sub-project not found under parent: ${subProjectPath}`);
+        }
+      }
+
+      const workspace = owningProject.workspaces.find((w) => w.id === workspaceId);
+      if (!workspace) {
+        return Err(`Workspace not found: ${workspaceId}`);
+      }
+
+      workspace.subProjectPath = subProjectPath ?? undefined;
+      await this.config.saveConfig(config);
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to assign workspace to sub-project: ${message}`);
+    }
+  }
+}

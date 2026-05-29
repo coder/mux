@@ -1,0 +1,857 @@
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Bell, BellOff, Ellipsis, Menu, Pencil } from "lucide-react";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { cn } from "@/common/lib/utils";
+import { getErrorMessage } from "@/common/utils/errors";
+
+import {
+  RIGHT_SIDEBAR_COLLAPSED_KEY,
+  getNotifyOnResponseKey,
+  getNotifyOnResponseAutoEnableKey,
+} from "@/common/constants/storage";
+import { GitStatusIndicator } from "../GitStatusIndicator/GitStatusIndicator";
+import { MultiProjectGitStatusIndicator } from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
+import { RuntimeBadge } from "../RuntimeBadge/RuntimeBadge";
+import { BranchSelector } from "../BranchSelector/BranchSelector";
+import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
+import { WorkspaceMCPModal } from "../WorkspaceMCPModal/WorkspaceMCPModal";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { Popover, PopoverTrigger, PopoverContent } from "../Popover/Popover";
+import { Checkbox } from "../Checkbox/Checkbox";
+import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import { getDevcontainerStatusChip } from "@/browser/utils/runtimeUi";
+import { useGitStatus } from "@/browser/stores/GitStatusStore";
+import { useRuntimeStatus, useRuntimeStatusStoreRaw } from "@/browser/stores/RuntimeStatusStore";
+import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
+import { Button } from "@/browser/components/Button/Button";
+import { isDevcontainerRuntime, type RuntimeConfig } from "@/common/types/runtime";
+import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
+import { useTutorial } from "@/browser/contexts/TutorialContext";
+
+import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
+import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
+import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import { isDesktopMode, DESKTOP_TITLEBAR_HEIGHT_CLASS } from "@/browser/hooks/useDesktopTitlebar";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { DebugLlmRequestModal } from "../DebugLlmRequestModal/DebugLlmRequestModal";
+import { WorkspaceLinks } from "../WorkspaceLinks/WorkspaceLinks";
+import { ShareTranscriptDialog } from "../ShareTranscriptDialog/ShareTranscriptDialog";
+import { ConfirmationModal } from "../ConfirmationModal/ConfirmationModal";
+import { PopoverError } from "../PopoverError/PopoverError";
+import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
+import { WorkspaceTerminalIcon } from "../icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
+
+import { SkillIndicator } from "../SkillIndicator/SkillIndicator";
+import { useAPI } from "@/browser/contexts/API";
+import { useAgent } from "@/browser/contexts/AgentContext";
+
+import { useWorkspaceActions, useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
+import { isMultiProject } from "@/common/utils/multiProject";
+import { forkWorkspace } from "@/browser/utils/chatCommands";
+import { WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX } from "@/constants/layout";
+import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
+
+interface WorkspaceMenuBarProps {
+  workspaceId: string;
+  projectName: string;
+  projectPath: string;
+  workspaceName: string;
+  workspaceTitle?: string;
+  namedWorkspacePath: string;
+  runtimeConfig?: RuntimeConfig;
+  leftSidebarCollapsed: boolean;
+  onToggleLeftSidebarCollapsed: () => void;
+  /** Callback to open integrated terminal in sidebar (optional, falls back to popout) */
+  onOpenTerminal?: (options?: TerminalSessionCreateOptions) => void;
+}
+
+import {
+  buildArchiveConfirmDescription,
+  buildArchiveConfirmWarning,
+} from "@/browser/utils/archiveConfirmation";
+
+const COLLAPSED_LEFT_SIDEBAR_MENU_BAR_STYLE = {
+  paddingLeft: `${WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX}px`,
+} as const;
+
+export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
+  workspaceId,
+  projectName,
+  projectPath,
+  workspaceName,
+  workspaceTitle,
+  namedWorkspacePath,
+  runtimeConfig,
+  leftSidebarCollapsed,
+  onToggleLeftSidebarCollapsed,
+  onOpenTerminal,
+}) => {
+  const { api } = useAPI();
+  const { disableWorkspaceAgents } = useAgent();
+  const { preflightArchiveWorkspace, archiveWorkspace } = useWorkspaceActions();
+  const { workspaceMetadata } = useWorkspaceContext();
+  const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
+  const linkSharingEnabled = useLinkSharingEnabled();
+  const openTerminalPopout = useOpenTerminal();
+  const openInEditor = useOpenInEditor();
+  const gitStatus = useGitStatus(workspaceId);
+  const runtimeStatus = useRuntimeStatus(workspaceId);
+  const workspaceEntry = workspaceMetadata.get(workspaceId);
+  const showMultiProjectStatus = workspaceEntry != null && isMultiProject(workspaceEntry);
+  // The workspace's metadata.projectName is the parent project (since worktrees
+  // are owned by the top-most parent). When the workspace is scoped to a
+  // sub-project we surface the hierarchy as "parent / child" so the menu bar
+  // alone reveals the sub-project context.
+  const { userProjects } = useProjectContext();
+  const subProjectPath = workspaceEntry?.subProjectPath;
+  const projectLabel =
+    subProjectPath && userProjects.has(subProjectPath)
+      ? formatProjectHierarchyLabel(subProjectPath, userProjects)
+      : projectName;
+  const runtimeStatusStore = useRuntimeStatusStoreRaw();
+  const { canInterrupt, isStarting, awaitingUserQuestion, loadedSkills, skillLoadErrors } =
+    useWorkspaceSidebarState(workspaceId);
+  const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
+  const { startSequence: startTutorial } = useTutorial();
+  const [editorError, setEditorError] = useState<string | null>(null);
+  const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
+  const [mcpModalOpen, setMcpModalOpen] = useState(false);
+  const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
+  const [availableSkills, setAvailableSkills] = useState<AgentSkillDescriptor[]>([]);
+  const [invalidSkills, setInvalidSkills] = useState<AgentSkillIssue[]>([]);
+  const isSkillsMountedRef = useRef(true);
+  const moreActionsButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const skillsRequestIdRef = useRef(0);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  // Untracked paths from archive preflight that the user needs to acknowledge.
+  // When set, the confirmation dialog warns about permanent file deletion.
+  const [archiveUntrackedPaths, setArchiveUntrackedPaths] = useState<string[] | null>(null);
+  // Whether the confirmation includes an active-stream interruption warning.
+  const [archiveConfirmIsStreaming, setArchiveConfirmIsStreaming] = useState(false);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const archiveError = usePopoverError();
+  const forkError = usePopoverError();
+  const stopRuntimeError = usePopoverError();
+
+  const [rightSidebarCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
+    // This state is toggled from RightSidebar, so we need cross-component updates.
+    listener: true,
+  });
+
+  // Notification on response toggle (workspace-level) - defaults to disabled
+  const [notifyOnResponse, setNotifyOnResponse] = usePersistedState<boolean>(
+    getNotifyOnResponseKey(workspaceId),
+    false
+  );
+
+  // Auto-enable notifications for new workspaces (project-level)
+  const [autoEnableNotifications, setAutoEnableNotifications] = usePersistedState<boolean>(
+    getNotifyOnResponseAutoEnableKey(projectPath),
+    false
+  );
+
+  // Popover state for notification settings (interactive on click)
+  const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
+
+  const handleOpenTerminal = useCallback(() => {
+    // On mobile touch devices, always use popout since the right sidebar is hidden
+    const isMobileTouch = window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
+    if (onOpenTerminal && !isMobileTouch) {
+      onOpenTerminal();
+    } else {
+      // Fallback to popout if no integrated terminal callback provided or on mobile
+      void openTerminalPopout(workspaceId, runtimeConfig);
+    }
+  }, [workspaceId, openTerminalPopout, runtimeConfig, onOpenTerminal]);
+
+  const isTouchMobileScreen =
+    typeof window !== "undefined" &&
+    window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
+
+  const isDevcontainerWorkspace = isDevcontainerRuntime(runtimeConfig);
+  const isRuntimeRunning = isDevcontainerWorkspace && runtimeStatus === "running";
+  const devcontainerChip = isDevcontainerWorkspace
+    ? getDevcontainerStatusChip(runtimeStatus)
+    : null;
+
+  const getMoreMenuAnchor = useCallback(() => {
+    const rect = moreActionsButtonRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return undefined;
+    }
+
+    return {
+      top: rect.top + window.scrollY,
+      left: rect.right + 10,
+    };
+  }, []);
+
+  const handleOpenTouchFullscreenReview = useCallback(() => {
+    window.dispatchEvent(
+      createCustomEvent(CUSTOM_EVENTS.OPEN_TOUCH_REVIEW_IMMERSIVE, {
+        workspaceId,
+      })
+    );
+  }, [workspaceId]);
+
+  const handleEnterImmersiveReview = useCallback(() => {
+    window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_REVIEW_IMMERSIVE, { workspaceId }));
+  }, [workspaceId]);
+
+  const handleOpenInEditor = useCallback(async () => {
+    setEditorError(null);
+    const result = await openInEditor(workspaceId, namedWorkspacePath, runtimeConfig);
+    if (!result.success && result.error) {
+      setEditorError(result.error);
+      // Clear error after 3 seconds
+      setTimeout(() => setEditorError(null), 3000);
+    }
+  }, [workspaceId, namedWorkspacePath, openInEditor, runtimeConfig]);
+
+  // Mirror sidebar archive behavior so the workspace menu bar matches existing actions.
+  /**
+   * Execute the archive call (optionally with acknowledged untracked paths).
+   * Callers are responsible for the isArchiving guard — this function only does the RPC
+   * and error display. Called from handleArchiveChat (no-confirmation path) and from
+   * the confirmation modal's onConfirm.
+   */
+  const executeArchive = useCallback(
+    async (anchorEl?: HTMLElement, acknowledgedUntrackedPaths?: string[]) => {
+      setIsArchiving(true);
+      try {
+        const res = await archiveWorkspace(
+          workspaceId,
+          acknowledgedUntrackedPaths ? { acknowledgedUntrackedPaths } : undefined
+        );
+        if (res.success && res.data?.kind === "confirm-lossy-untracked-files") {
+          setArchiveUntrackedPaths(res.data.paths);
+          // The retry path already handled any earlier streaming warning. Only surface the
+          // interruption warning again when the archive attempt has not yet been confirmed.
+          setArchiveConfirmIsStreaming(acknowledgedUntrackedPaths == null ? isWorking : false);
+          setArchiveConfirmOpen(true);
+          return;
+        }
+        if (!res.success) {
+          const rect = anchorEl?.getBoundingClientRect();
+          archiveError.showError(
+            workspaceId,
+            res.error ?? "Failed to archive chat",
+            rect ? { top: rect.top + window.scrollY, left: rect.right + 10 } : undefined
+          );
+        }
+      } finally {
+        setIsArchiving(false);
+      }
+    },
+    [workspaceId, archiveWorkspace, archiveError, isWorking]
+  );
+
+  /**
+   * Entry point for the archive action. Runs a preflight check and either:
+   * - archives immediately (no warnings),
+   * - opens a combined confirmation dialog (streaming / untracked-file warnings), or
+   * - shows an error popover (unexpected backend failures).
+   */
+  const handleArchiveChat = useCallback(
+    async (anchorEl?: HTMLElement) => {
+      if (isArchiving) return;
+
+      // Set the in-flight guard before the async preflight call so duplicate clicks
+      // during the await are rejected.
+      setIsArchiving(true);
+      try {
+        // Run preflight to check for untracked files that can't be preserved.
+        const preflight = await preflightArchiveWorkspace(workspaceId);
+        if (!preflight.success) {
+          const rect = anchorEl?.getBoundingClientRect();
+          archiveError.showError(
+            workspaceId,
+            preflight.error ?? "Failed to check archive readiness",
+            rect ? { top: rect.top + window.scrollY, left: rect.right + 10 } : undefined
+          );
+          return;
+        }
+
+        const preflightData = preflight.data;
+        const untrackedPaths =
+          preflightData?.kind === "confirm-lossy-untracked-files" ? preflightData.paths : null;
+        const streamingNow = isWorking;
+
+        if (untrackedPaths || streamingNow) {
+          // Show a single combined confirmation dialog for all warnings.
+          setArchiveUntrackedPaths(untrackedPaths);
+          setArchiveConfirmIsStreaming(streamingNow);
+          setArchiveConfirmOpen(true);
+        } else {
+          // No warnings — archive immediately. Await so the finally block doesn't
+          // clear isArchiving before the archive call completes.
+          await executeArchive(anchorEl);
+        }
+      } finally {
+        setIsArchiving(false);
+      }
+    },
+    [workspaceId, preflightArchiveWorkspace, archiveError, isWorking, isArchiving, executeArchive]
+  );
+
+  const handleForkChat = useCallback(
+    async (anchorEl: HTMLElement) => {
+      if (!api) {
+        const rect = anchorEl.getBoundingClientRect();
+        forkError.showError(workspaceId, "Not connected to server", {
+          top: rect.top + window.scrollY,
+          left: rect.right + 10,
+        });
+        return;
+      }
+
+      const rect = anchorEl.getBoundingClientRect();
+      const anchor = { top: rect.top + window.scrollY, left: rect.right + 10 };
+
+      try {
+        const result = await forkWorkspace({
+          client: api,
+          sourceWorkspaceId: workspaceId,
+        });
+        if (!result.success) {
+          forkError.showError(workspaceId, result.error ?? "Failed to fork chat", anchor);
+        }
+      } catch (error) {
+        const message = getErrorMessage(error);
+        forkError.showError(workspaceId, message, anchor);
+      }
+    },
+    [api, forkError, workspaceId]
+  );
+
+  const handleStopRuntime = useCallback(async () => {
+    if (!api) {
+      stopRuntimeError.showError(workspaceId, "Not connected to server", getMoreMenuAnchor());
+      return;
+    }
+
+    try {
+      const result = await api.workspace.stopRuntime({ workspaceId });
+      if (!result.success) {
+        stopRuntimeError.showError(
+          workspaceId,
+          result.error ?? "Failed to stop container",
+          getMoreMenuAnchor()
+        );
+        return;
+      }
+
+      // Clear the cached running state immediately so both menu entry points converge
+      // on a fresh backend read after the container stop succeeds.
+      runtimeStatusStore.invalidateWorkspace(workspaceId);
+    } catch (error) {
+      stopRuntimeError.showError(workspaceId, getErrorMessage(error), getMoreMenuAnchor());
+    }
+  }, [api, getMoreMenuAnchor, runtimeStatusStore, stopRuntimeError, workspaceId]);
+
+  const loadSkills = useCallback(async () => {
+    const requestId = ++skillsRequestIdRef.current;
+
+    if (!api) {
+      if (!isSkillsMountedRef.current || requestId !== skillsRequestIdRef.current) return;
+      setAvailableSkills([]);
+      setInvalidSkills([]);
+      return;
+    }
+
+    try {
+      const diagnostics = await api.agentSkills.listDiagnostics({
+        workspaceId,
+        disableWorkspaceAgents: disableWorkspaceAgents || undefined,
+      });
+      if (!isSkillsMountedRef.current || requestId !== skillsRequestIdRef.current) return;
+      setAvailableSkills(Array.isArray(diagnostics.skills) ? diagnostics.skills : []);
+      setInvalidSkills(Array.isArray(diagnostics.invalidSkills) ? diagnostics.invalidSkills : []);
+    } catch (error) {
+      console.error("Failed to load available skills:", error);
+      if (isSkillsMountedRef.current && requestId === skillsRequestIdRef.current) {
+        setAvailableSkills([]);
+        setInvalidSkills([]);
+      }
+    }
+  }, [api, workspaceId, disableWorkspaceAgents]);
+
+  // Start workspace tutorial on first entry
+  useEffect(() => {
+    // Small delay to ensure UI is rendered
+    const timer = setTimeout(() => {
+      startTutorial("workspace");
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [startTutorial]);
+
+  // Listen for /debug-llm-request command to open modal
+  useEffect(() => {
+    const handler = () => setDebugLlmRequestOpen(true);
+    window.addEventListener(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST, handler);
+    return () => window.removeEventListener(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST, handler);
+  }, []);
+
+  // Keybind for toggling notifications
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.TOGGLE_NOTIFICATIONS)) {
+        e.preventDefault();
+        setNotifyOnResponse((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [setNotifyOnResponse]);
+
+  // Keybind for opening MCP configuration
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.CONFIGURE_MCP)) {
+        e.preventDefault();
+        setMcpModalOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  // Keybind for opening heartbeat configuration
+  useEffect(() => {
+    if (!workspaceHeartbeatsEnabled) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.CONFIGURE_HEARTBEAT)) {
+        e.preventDefault();
+        setHeartbeatModalOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [workspaceHeartbeatsEnabled]);
+
+  // Keybind for sharing transcript — lives here (not AgentListItem) so it
+  // works even when the left sidebar is collapsed and list items are unmounted.
+  useEffect(() => {
+    if (linkSharingEnabled !== true) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.SHARE_TRANSCRIPT)) {
+        e.preventDefault();
+        setShareTranscriptOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [linkSharingEnabled]);
+
+  useEffect(() => {
+    isSkillsMountedRef.current = true;
+
+    return () => {
+      isSkillsMountedRef.current = false;
+    };
+  }, []);
+
+  // Fetch available skills + diagnostics for this workspace.
+  useEffect(() => {
+    void loadSkills();
+  }, [loadSkills]);
+
+  useEffect(() => {
+    const handleFocus = () => {
+      void loadSkills();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [loadSkills]);
+
+  useEffect(() => {
+    const handleSkillsRefreshRequested = () => {
+      void loadSkills();
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.SKILLS_REFRESH_REQUESTED, handleSkillsRefreshRequested);
+    return () =>
+      window.removeEventListener(
+        CUSTOM_EVENTS.SKILLS_REFRESH_REQUESTED,
+        handleSkillsRefreshRequested
+      );
+  }, [loadSkills]);
+
+  // On Windows/Linux, the native window controls overlay the top-right of the app.
+  // When the right sidebar is collapsed (20px), this header stretches underneath
+  // those controls and the MCP/editor/terminal buttons become unclickable.
+  const isDesktop = isDesktopMode();
+
+  return (
+    <div
+      data-testid="workspace-menu-bar"
+      className={cn(
+        "bg-sidebar border-border-light flex items-center justify-between border-b px-2",
+        isDesktop ? DESKTOP_TITLEBAR_HEIGHT_CLASS : "h-8",
+        rightSidebarCollapsed && "titlebar-safe-right-minus-sidebar titlebar-safe-right-gutter-2",
+        // In desktop mode, make header draggable for window movement
+        isDesktop && "titlebar-drag",
+        // Keep header visible when iOS keyboard opens and causes scroll
+        "mobile-sticky-header"
+      )}
+      // Apply the collapsed-left-sidebar inset from props so the workspace header starts in
+      // the correct position on the very first paint instead of waiting for a later root-attr sync.
+      style={leftSidebarCollapsed ? COLLAPSED_LEFT_SIDEBAR_MENU_BAR_STYLE : undefined}
+    >
+      <div
+        className={cn(
+          "text-foreground flex min-w-0 items-center gap-2.5 overflow-hidden font-semibold",
+          isDesktop && "titlebar-no-drag"
+        )}
+      >
+        {leftSidebarCollapsed && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onToggleLeftSidebarCollapsed}
+                aria-label="Open sidebar menu"
+                className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
+              >
+                <Menu className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Open sidebar ({formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)})</TooltipContent>
+          </Tooltip>
+        )}
+        <RuntimeBadge
+          runtimeConfig={runtimeConfig}
+          isWorking={isWorking}
+          workspacePath={namedWorkspacePath}
+          workspaceName={workspaceName}
+          tooltipSide="bottom"
+        />
+        <span className="min-w-0 truncate font-mono text-xs">{projectLabel}</span>
+        <div className="flex items-center gap-1">
+          {/* BranchSelector keeps workspace-scoped local UI state (current branch fallback,
+              open popover contents, remote expansion). Key it by workspace identity so
+              switching workspaces resets that state instead of leaking the previous
+              workspace's branch presentation into the next one. */}
+          <BranchSelector
+            key={workspaceId}
+            workspaceId={workspaceId}
+            workspaceName={workspaceName}
+          />
+          {devcontainerChip && (
+            <span
+              className={cn(
+                "shrink-0 rounded px-1.5 py-0.5 text-[10px] leading-tight font-medium",
+                devcontainerChip.className
+              )}
+            >
+              {devcontainerChip.label}
+            </span>
+          )}
+          {showMultiProjectStatus ? (
+            <MultiProjectGitStatusIndicator
+              workspaceId={workspaceId}
+              tooltipPosition="bottom"
+              isWorking={isWorking}
+            />
+          ) : (
+            <GitStatusIndicator
+              gitStatus={gitStatus}
+              workspaceId={workspaceId}
+              projectPath={projectPath}
+              tooltipPosition="bottom"
+              isWorking={isWorking}
+            />
+          )}
+        </div>
+      </div>
+      <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
+        <WorkspaceLinks workspaceId={workspaceId} />
+        <Popover open={notificationPopoverOpen} onOpenChange={setNotificationPopoverOpen}>
+          <Tooltip {...(notificationPopoverOpen ? { open: false } : {})}>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setNotifyOnResponse((prev) => !prev)}
+                  className={cn(
+                    "flex h-6 w-6 shrink-0 items-center justify-center rounded",
+                    notifyOnResponse
+                      ? "text-foreground"
+                      : "text-muted hover:bg-sidebar-hover hover:text-foreground"
+                  )}
+                  data-testid="notify-on-response-button"
+                  aria-pressed={notifyOnResponse}
+                >
+                  {notifyOnResponse ? (
+                    <Bell className="h-3.5 w-3.5" />
+                  ) : (
+                    <BellOff className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="end">
+              <div className="flex flex-col gap-2">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <Checkbox
+                    checked={notifyOnResponse}
+                    onCheckedChange={(checked) => setNotifyOnResponse(checked === true)}
+                  />
+                  <span className="text-foreground">
+                    Notify on all responses{" "}
+                    <span className="text-muted-foreground">
+                      ({formatKeybind(KEYBINDS.TOGGLE_NOTIFICATIONS)})
+                    </span>
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-2">
+                  <Checkbox
+                    checked={autoEnableNotifications}
+                    onCheckedChange={(checked) => setAutoEnableNotifications(checked === true)}
+                  />
+                  <span className="text-muted-foreground">
+                    Auto-enable for new workspaces in this project
+                  </span>
+                </label>
+                <p className="text-muted-foreground border-separator-light border-t pt-2">
+                  Agents can also notify on specific events.{" "}
+                  <a
+                    href="https://mux.coder.com/config/notifications"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent hover:underline"
+                  >
+                    Learn more
+                  </a>
+                </p>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+
+          <PopoverContent
+            side="bottom"
+            align="end"
+            className="bg-modal-bg border-separator-light w-64 overflow-visible rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
+          >
+            <div className="flex flex-col gap-2">
+              <label className="flex cursor-pointer items-center gap-2">
+                <Checkbox
+                  checked={notifyOnResponse}
+                  onCheckedChange={(checked) => setNotifyOnResponse(checked === true)}
+                />
+                <span className="text-foreground">
+                  Notify on all responses{" "}
+                  <span className="text-muted-foreground">
+                    ({formatKeybind(KEYBINDS.TOGGLE_NOTIFICATIONS)})
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2">
+                <Checkbox
+                  checked={autoEnableNotifications}
+                  onCheckedChange={(checked) => setAutoEnableNotifications(checked === true)}
+                />
+                <span className="text-muted-foreground">
+                  Auto-enable for new workspaces in this project
+                </span>
+              </label>
+              <p className="text-muted-foreground border-separator-light border-t pt-2">
+                Agents can also notify on specific events.{" "}
+                <a
+                  href="https://mux.coder.com/config/notifications"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent hover:underline"
+                >
+                  Learn more
+                </a>
+              </p>
+            </div>
+          </PopoverContent>
+        </Popover>
+        <SkillIndicator
+          loadedSkills={loadedSkills}
+          availableSkills={availableSkills}
+          invalidSkills={invalidSkills}
+          skillLoadErrors={skillLoadErrors}
+        />
+        {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
+        <div className="max-[480px]:hidden">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void handleOpenInEditor()}
+                className="text-muted hover:text-foreground ml-1 h-6 w-6 shrink-0"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center">
+              Open in editor ({formatKeybind(KEYBINDS.OPEN_IN_EDITOR)})
+            </TooltipContent>
+          </Tooltip>
+        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleOpenTerminal}
+              className="text-muted hover:text-foreground ml-1 h-6 w-6 shrink-0 [&_svg]:h-4 [&_svg]:w-4"
+              data-tutorial="terminal-button"
+            >
+              <WorkspaceTerminalIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center">
+            New terminal ({formatKeybind(KEYBINDS.OPEN_TERMINAL)})
+          </TooltipContent>
+        </Tooltip>
+        {/* Mirror sidebar share/archive actions in the workspace menu bar for quick access. */}
+        <Popover open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
+          <Tooltip {...(moreMenuOpen ? { open: false } : {})}>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <Button
+                  ref={moreActionsButtonRef}
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted hover:text-foreground ml-1 h-6 w-6 shrink-0"
+                  aria-label="Workspace actions"
+                  data-testid="workspace-more-actions"
+                >
+                  <Ellipsis className="h-3.5 w-3.5" />
+                </Button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="end">
+              More actions
+            </TooltipContent>
+          </Tooltip>
+
+          <PopoverContent
+            side="bottom"
+            align="end"
+            sideOffset={6}
+            className="w-[240px] !min-w-0 p-1"
+            onClick={(event: React.MouseEvent<HTMLDivElement>) => {
+              event.stopPropagation();
+            }}
+          >
+            {/* Keep MCP configuration in the more actions menu to keep the workspace menu bar lean. */}
+            <WorkspaceActionsMenuContent
+              onConfigureMcp={() => setMcpModalOpen(true)}
+              onConfigureHeartbeat={
+                workspaceHeartbeatsEnabled ? () => setHeartbeatModalOpen(true) : null
+              }
+              onOpenTouchFullscreenReview={
+                isTouchMobileScreen ? handleOpenTouchFullscreenReview : null
+              }
+              onEnterImmersiveReview={isTouchMobileScreen ? null : handleEnterImmersiveReview}
+              onStopRuntime={isRuntimeRunning ? () => void handleStopRuntime() : null}
+              onForkChat={(anchorEl) => {
+                void handleForkChat(anchorEl);
+              }}
+              onShareTranscript={() => setShareTranscriptOpen(true)}
+              onArchiveChat={(anchorEl) => {
+                // handleArchiveChat runs preflight and opens a confirmation dialog
+                // when streaming or untracked files are detected.
+                void handleArchiveChat(anchorEl);
+              }}
+              onCloseMenu={() => setMoreMenuOpen(false)}
+              linkSharingEnabled={linkSharingEnabled === true}
+              shortcutClassName="mobile-hide-shortcut-hints"
+              configureMcpTestId="workspace-mcp-button"
+            />
+          </PopoverContent>
+        </Popover>
+      </div>
+      {workspaceHeartbeatsEnabled && (
+        <WorkspaceHeartbeatModal
+          workspaceId={workspaceId}
+          open={heartbeatModalOpen}
+          onOpenChange={setHeartbeatModalOpen}
+        />
+      )}
+      <WorkspaceMCPModal
+        workspaceId={workspaceId}
+        projectPath={projectPath}
+        open={mcpModalOpen}
+        onOpenChange={setMcpModalOpen}
+      />
+      <DebugLlmRequestModal
+        workspaceId={workspaceId}
+        open={debugLlmRequestOpen}
+        onOpenChange={setDebugLlmRequestOpen}
+      />
+      {linkSharingEnabled === true && (
+        <ShareTranscriptDialog
+          workspaceId={workspaceId}
+          workspaceName={workspaceName}
+          workspaceTitle={workspaceTitle}
+          open={shareTranscriptOpen}
+          onOpenChange={setShareTranscriptOpen}
+        />
+      )}
+      {/* Combined confirmation for archive warnings (streaming + untracked files). */}
+      <ConfirmationModal
+        isOpen={archiveConfirmOpen}
+        title={
+          archiveUntrackedPaths
+            ? "Archive workspace with untracked files?"
+            : workspaceTitle
+              ? `Archive "${workspaceTitle}" while streaming?`
+              : "Archive chat?"
+        }
+        description={buildArchiveConfirmDescription(
+          archiveConfirmIsStreaming,
+          archiveUntrackedPaths
+        )}
+        warning={buildArchiveConfirmWarning(archiveConfirmIsStreaming, archiveUntrackedPaths)}
+        confirmLabel={archiveUntrackedPaths ? "Archive and delete files" : "Archive"}
+        confirmVariant="destructive"
+        onConfirm={() => {
+          const paths = archiveUntrackedPaths;
+          setArchiveConfirmOpen(false);
+          setArchiveUntrackedPaths(null);
+          setArchiveConfirmIsStreaming(false);
+          void executeArchive(undefined, paths ?? undefined);
+        }}
+        onCancel={() => {
+          setArchiveConfirmOpen(false);
+          setArchiveUntrackedPaths(null);
+          setArchiveConfirmIsStreaming(false);
+        }}
+      />
+      <PopoverError
+        error={stopRuntimeError.error}
+        prefix="Failed to stop container"
+        onDismiss={stopRuntimeError.clearError}
+      />
+      <PopoverError
+        error={forkError.error}
+        prefix="Failed to fork chat"
+        onDismiss={forkError.clearError}
+      />
+      <PopoverError
+        error={archiveError.error}
+        prefix="Failed to archive chat"
+        onDismiss={archiveError.clearError}
+      />
+    </div>
+  );
+};
