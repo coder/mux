@@ -148,15 +148,16 @@ export const HyperActiveExpandedBundle: AppStory = {
       setup={() => {
         collapseLeftSidebar();
         setDensity("hyper");
+        const activeStartedAt = Date.now() - 40_000;
         return setupSimpleChatStory({
           messages: [
             createUserMessage("active-user-1", "Inspect the repository", {
               historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 40_000,
+              timestamp: activeStartedAt - 5_000,
             }),
             createAssistantMessage("active-assistant-1", "I'll read the key files now.", {
               historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 35_000,
+              timestamp: activeStartedAt,
               toolCalls: [
                 createPendingTool("active-read-1", "file_read", { path: "src/App.tsx" }),
                 createPendingTool("active-search-1", "web_search", {

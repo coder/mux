@@ -4,6 +4,22 @@ import { cn } from "@/common/lib/utils";
 import { ExpandIcon } from "@/browser/features/Tools/Shared/ToolPrimitives";
 import type { WorkBundleInfo } from "@/browser/utils/messages/transcriptRenderProjection";
 
+function useActiveNowMs(isActive: boolean): number {
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
+
+  React.useEffect(() => {
+    if (!isActive) {
+      return;
+    }
+
+    setNowMs(Date.now());
+    const intervalId = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(intervalId);
+  }, [isActive]);
+
+  return nowMs;
+}
+
 interface WorkBundleMessageProps {
   item: WorkBundleInfo;
   expanded: boolean;
@@ -11,13 +27,20 @@ interface WorkBundleMessageProps {
 }
 
 export function WorkBundleMessage(props: WorkBundleMessageProps): React.ReactElement {
-  const duration = props.item.durationMs;
-  const label =
-    props.item.state === "active"
+  const isActive = props.item.state === "active";
+  const nowMs = useActiveNowMs(isActive && props.item.startedAtMs !== undefined);
+  const duration = isActive
+    ? props.item.startedAtMs === undefined
+      ? undefined
+      : Math.max(0, nowMs - props.item.startedAtMs)
+    : props.item.durationMs;
+  const label = isActive
+    ? duration === undefined
       ? "Working..."
-      : duration === undefined
-        ? "Worked"
-        : `Worked for ${formatDuration(duration, "precise")}`;
+      : `Working for ${formatDuration(duration, "precise")}...`
+    : duration === undefined
+      ? "Worked"
+      : `Worked for ${formatDuration(duration, "precise")}`;
 
   return (
     <button
@@ -30,7 +53,7 @@ export function WorkBundleMessage(props: WorkBundleMessageProps): React.ReactEle
       aria-expanded={props.expanded}
       onClick={props.onToggle}
     >
-      <span className="min-w-0 truncate">{label}</span>
+      <span className="counter-nums min-w-0 truncate">{label}</span>
       <ExpandIcon expanded={props.expanded} className="text-muted shrink-0">
         ▶
       </ExpandIcon>

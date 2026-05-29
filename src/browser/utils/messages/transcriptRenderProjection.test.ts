@@ -312,6 +312,19 @@ describe("work bundle coalescing", () => {
     expect(infos.every((info) => info === undefined)).toBe(true);
   });
 
+  test("does not merge interrupted partial tools into a text-only next prompt", () => {
+    const messages = [
+      user("u1"),
+      tool({ id: "read-1", historyId: "history-a1", isPartial: true }),
+      user("u2"),
+      assistant("answer-2", { historyId: "history-a2" }),
+    ];
+
+    const infos = computeWorkBundleInfos(messages);
+
+    expect(infos.every((info) => info === undefined)).toBe(true);
+  });
+
   test("does not merge mixed partial tool and text interruptions across the next user prompt", () => {
     const messages = [
       user("u1"),

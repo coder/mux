@@ -35,6 +35,7 @@ export interface WorkBundleInfo {
   /** Render slot where the work-bundle header is placed. */
   headIndex: number;
   entries: readonly WorkBundleEntry[];
+  startedAtMs?: number;
   durationMs?: number;
   state: "active" | "settled";
   defaultExpanded: boolean;
@@ -156,7 +157,11 @@ export function computeWorkBundleInfos(
       position: "head",
       headIndex: span.headIndex,
       entries: frozenEntries,
-      durationMs: computeWorkBundleDurationMs(frozenEntries, finalMessage),
+      startedAtMs: getMessageTimestamp(frozenEntries[0].message),
+      durationMs:
+        span.state === "active"
+          ? undefined
+          : computeWorkBundleDurationMs(frozenEntries, finalMessage),
       state: span.state,
       defaultExpanded: span.state === "active",
     };
@@ -291,6 +296,7 @@ function findWorkBundleFinalIndex(
   const historyIds = new Set<string>([firstHistoryId]);
   let canCrossVisibleConversation = false;
   let sawVisibleConversationSinceLastAgent = false;
+  let sawAnyOperationalMessage = false;
   let sawOperationalMessage = false;
   let sawActiveMessage = false;
   let lastAgentIndex = startIndex;
@@ -316,6 +322,8 @@ function findWorkBundleFinalIndex(
         break;
       }
       sawVisibleConversationSinceLastAgent = true;
+      sawOperationalMessage = false;
+      sawActiveMessage = false;
       canCrossVisibleConversation = false;
       continue;
     }
@@ -337,6 +345,7 @@ function findWorkBundleFinalIndex(
     }
 
     if (isWorkBundleOperationalMessage(message)) {
+      sawAnyOperationalMessage = true;
       sawOperationalMessage = true;
     }
     canCrossVisibleConversation = canContinueWorkBundleAcrossConversation(message);
@@ -349,7 +358,7 @@ function findWorkBundleFinalIndex(
     canCrossVisibleConversation = false;
   }
 
-  if (!sawOperationalMessage) {
+  if (!sawAnyOperationalMessage) {
     return undefined;
   }
   if (finalIndex !== undefined && finalIndex >= startIndex) {
