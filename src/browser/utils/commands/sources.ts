@@ -5,7 +5,11 @@ import type { ConfirmDialogOptions } from "@/browser/contexts/ConfirmDialogConte
 import { getContextResetSuccessMessage } from "@/browser/utils/contextResetFeedback";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
-import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import {
+  enforceThinkingPolicy,
+  getAvailableThinkingLevels,
+  resolveMinimumThinkingLevel,
+} from "@/common/utils/thinking/policy";
 import assert from "@/common/utils/assert";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
@@ -75,6 +79,11 @@ export interface BuildSourcesParams {
   // UI actions
   getThinkingLevel: (workspaceId: string) => ThinkingLevel;
   onSetThinkingLevel: (workspaceId: string, level: ThinkingLevel) => void;
+  /**
+   * Explicit per-model minimum thinking override (undefined → built-in default floor).
+   * Used to hide off/low from the "Set Thinking Effort" picker, matching the slider.
+   */
+  getMinThinkingOverride?: (modelString: string) => ThinkingLevel | null | undefined;
 
   onStartWorkspaceCreation: (projectPath: string) => void;
   onStartMultiProjectWorkspaceCreation: () => void;
@@ -1147,7 +1156,20 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         xhigh: "Max — deepest possible reasoning",
         max: "Max — deepest possible reasoning",
       };
-      const currentLevel = p.getThinkingLevel(workspaceId);
+      // Display the floored level so it matches the slider (e.g. a stored "off" with a
+      // medium floor reads as "medium").
+      const currentModelString = p.selectedWorkspaceState?.currentModel;
+      const rawCurrentLevel = p.getThinkingLevel(workspaceId);
+      const currentLevel = currentModelString
+        ? enforceThinkingPolicy(
+            currentModelString,
+            rawCurrentLevel,
+            resolveMinimumThinkingLevel(
+              currentModelString,
+              p.getMinThinkingOverride?.(currentModelString)
+            )
+          )
+        : rawCurrentLevel;
 
       list.push({
         id: CommandIds.thinkingSetLevel(),
@@ -1166,11 +1188,18 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               label: "Thinking effort",
               placeholder: "Choose effort level…",
               getOptions: () => {
-                // Filter thinking levels by the active model's policy
-                // so users only see levels valid for the current model
+                // Filter thinking levels by the active model's policy AND its minimum
+                // floor, so users only see levels valid for the current model (matching
+                // the slider — off/low hidden unless the model's minimum is lowered).
                 const modelString = p.selectedWorkspaceState?.currentModel;
                 const allowedLevels = modelString
-                  ? getThinkingPolicyForModel(modelString)
+                  ? getAvailableThinkingLevels(
+                      modelString,
+                      resolveMinimumThinkingLevel(
+                        modelString,
+                        p.getMinThinkingOverride?.(modelString)
+                      )
+                    )
                   : THINKING_LEVELS;
                 return allowedLevels.map((level) => ({
                   id: level,

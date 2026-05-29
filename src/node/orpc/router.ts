@@ -724,6 +724,7 @@ export const router = (authToken?: string) => {
             muxGatewayModels: config.muxGatewayModels,
             routePriority: config.routePriority,
             routeOverrides: config.routeOverrides,
+            minThinkingLevelByModel: config.minThinkingLevelByModel,
             defaultModel: config.defaultModel,
             advisorModelString: config.advisorModelString ?? null,
             advisorThinkingLevel: config.advisorThinkingLevel ?? null,
@@ -873,6 +874,17 @@ export const router = (authToken?: string) => {
             ...config,
             routePriority: input.routePriority,
             routeOverrides,
+          }));
+        }),
+      updateMinThinkingLevels: t
+        .input(schemas.config.updateMinThinkingLevels.input)
+        .output(schemas.config.updateMinThinkingLevels.output)
+        .handler(async ({ context, input }) => {
+          // Full-map replacement; the frontend drops entries that match the default floor
+          // so the stored map stays sparse.
+          await context.config.editConfig((config) => ({
+            ...config,
+            minThinkingLevelByModel: input.minThinkingLevelByModel,
           }));
         }),
       updateModelPreferences: t

@@ -14,6 +14,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { useRouting } from "@/browser/hooks/useRouting";
+import { useMinThinkingLevels } from "@/browser/hooks/useMinThinkingLevels";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
@@ -49,6 +50,7 @@ function ModelsTableHeader() {
         <th className={`${headerCellBase} pl-2 text-left md:pl-3`}>Model</th>
         <th className={`${headerCellBase} w-16 text-right md:w-20`}>Context</th>
         <th className={`${headerCellBase} w-32 text-left md:w-40`}>Route</th>
+        <th className={`${headerCellBase} w-28 text-left md:w-32`}>Min Thinking</th>
         <th className={`${headerCellBase} w-28 text-right md:w-32 md:pr-3`}>Actions</th>
       </tr>
     </thead>
@@ -150,6 +152,7 @@ export function ModelsSection() {
   const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =
     useModelsFromSettings();
   const routing = useRouting();
+  const minThinking = useMinThinkingLevels();
   const { has1MContext, toggle1MContext } = useProviderOptions();
 
   // Read OAuth state from this component's provider config source to avoid
@@ -519,6 +522,10 @@ export function ModelsSection() {
                           ? (route) => routing.setRouteOverride(model.fullId, route)
                           : undefined
                       }
+                      minThinkingLevel={minThinking.getMinOverride(model.fullId)}
+                      onSetMinThinkingLevel={(level) =>
+                        minThinking.setMinThinkingLevel(model.fullId, level)
+                      }
                       onToggle1MContext={
                         supports1MContext(model.fullId)
                           ? () => toggle1MContext(model.fullId)
@@ -564,6 +571,10 @@ export function ModelsSection() {
                       : hideModel(model.fullId)
                   }
                   onSetRouteOverride={(route) => routing.setRouteOverride(model.fullId, route)}
+                  minThinkingLevel={minThinking.getMinOverride(model.fullId)}
+                  onSetMinThinkingLevel={(level) =>
+                    minThinking.setMinThinkingLevel(model.fullId, level)
+                  }
                   onToggle1MContext={
                     supports1MContext(model.fullId)
                       ? () => toggle1MContext(model.fullId)

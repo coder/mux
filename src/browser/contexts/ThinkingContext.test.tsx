@@ -559,8 +559,10 @@ describe("ThinkingContext", () => {
       );
     });
 
+    // gpt-4.1 defaults to a "medium" minimum-thinking floor, so cycling from the stored
+    // "off" starts at the floored "medium" and advances to "high" (off/low are hidden).
     await waitFor(() => {
-      expect(view.getByTestId("thinking-project").textContent).toBe("low");
+      expect(view.getByTestId("thinking-project").textContent).toBe("high");
     });
   });
 });

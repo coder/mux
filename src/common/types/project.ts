@@ -99,6 +99,12 @@ export interface ProjectsConfig {
   muxGatewayModels?: string[];
   routePriority?: string[];
   routeOverrides?: Record<string, string>;
+  /**
+   * Per-model minimum thinking level (keyed by canonical model id). Hides thinking
+   * levels below the floor in the thinking slider. Omitted entries fall back to the
+   * built-in default (medium for reasoning-capable models).
+   */
+  minThinkingLevelByModel?: Record<string, ThinkingLevel>;
 
   /**
    * Default model used for new workspaces (shared via ~/.mux/config.json).

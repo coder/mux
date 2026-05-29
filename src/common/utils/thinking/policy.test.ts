@@ -4,6 +4,9 @@ import {
   enforceThinkingPolicy,
   resolveThinkingInput,
   isGeminiFlashThinkingLevelModelName,
+  getDefaultMinimumThinkingLevel,
+  resolveMinimumThinkingLevel,
+  getAvailableThinkingLevels,
 } from "./policy";
 
 describe("getThinkingPolicyForModel", () => {
@@ -642,5 +645,90 @@ describe("resolveThinkingInput", () => {
     expect(resolveThinkingInput(5, "openai:gpt-5-pro")).toBe("high");
     // gpt-5.5-pro has 3 levels, index 4 clamps to "xhigh"
     expect(resolveThinkingInput(4, "openai:gpt-5.5-pro")).toBe("xhigh");
+  });
+});
+
+describe("getDefaultMinimumThinkingLevel", () => {
+  test("defaults to medium for reasoning-capable models", () => {
+    expect(getDefaultMinimumThinkingLevel("anthropic:claude-sonnet-4-5")).toBe("medium");
+    expect(getDefaultMinimumThinkingLevel("openai:gpt-5.2")).toBe("medium");
+  });
+
+  test("defaults to medium even when medium is not a native level (gemini-3, gpt-5-pro)", () => {
+    // gemini-3 capability is ["low","high"]; the default floor is still medium and the
+    // available set resolves up to "high" via getAvailableThinkingLevels.
+    expect(getDefaultMinimumThinkingLevel("google:gemini-3")).toBe("medium");
+    // gpt-5-pro is fixed to ["high"] but still supports reasoning.
+    expect(getDefaultMinimumThinkingLevel("openai:gpt-5-pro")).toBe("medium");
+  });
+});
+
+describe("resolveMinimumThinkingLevel", () => {
+  test("prefers the explicit override", () => {
+    expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-5", "off")).toBe("off");
+    expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-5", "high")).toBe("high");
+  });
+
+  test("falls back to the model default when override is null/undefined", () => {
+    expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-5", null)).toBe("medium");
+    expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-5")).toBe("medium");
+  });
+});
+
+describe("getAvailableThinkingLevels", () => {
+  test("returns the raw capability when no floor is provided", () => {
+    expect(getAvailableThinkingLevels("anthropic:claude-sonnet-4-5")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(getAvailableThinkingLevels("anthropic:claude-sonnet-4-5", null)).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
+
+  test("medium floor hides off/low", () => {
+    expect(getAvailableThinkingLevels("anthropic:claude-sonnet-4-5", "medium")).toEqual([
+      "medium",
+      "high",
+    ]);
+  });
+
+  test("floor with no exact match clamps by ordering (gemini-3 medium -> high only)", () => {
+    expect(getAvailableThinkingLevels("google:gemini-3", "medium")).toEqual(["high"]);
+  });
+
+  test("never returns empty: floor above the model's max locks to the highest level", () => {
+    // gpt-5.5-pro tops out at xhigh; a "max" floor locks to xhigh rather than emptying out.
+    expect(getAvailableThinkingLevels("openai:gpt-5.5-pro", "max")).toEqual(["xhigh"]);
+  });
+
+  test("off floor leaves the full capability intact", () => {
+    expect(getAvailableThinkingLevels("anthropic:claude-sonnet-4-5", "off")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
+});
+
+describe("enforceThinkingPolicy with a minimum floor", () => {
+  test("clamps a below-floor request up to the floor", () => {
+    // Stored "off" with a medium floor becomes "medium".
+    expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-5", "off", "medium")).toBe("medium");
+    expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-5", "low", "medium")).toBe("medium");
+  });
+
+  test("leaves at-or-above-floor requests untouched", () => {
+    expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-5", "high", "medium")).toBe("high");
+  });
+
+  test("omitting the floor preserves legacy capability-only behavior", () => {
+    expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-5", "off")).toBe("off");
   });
 });

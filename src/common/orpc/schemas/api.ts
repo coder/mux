@@ -1973,6 +1973,7 @@ export const config = {
       muxGatewayModels: z.array(z.string()).optional(),
       routePriority: z.array(z.string()).optional(),
       routeOverrides: z.record(z.string(), z.string()).optional(),
+      minThinkingLevelByModel: z.record(z.string(), ThinkingLevelSchema).optional(),
       defaultModel: z.string().optional(),
       advisorModelString: AdvisorModelStringSchema,
       advisorThinkingLevel: AdvisorThinkingLevelSchema,
@@ -2031,6 +2032,14 @@ export const config = {
     input: z.object({
       routePriority: z.array(z.string()),
       routeOverrides: z.record(z.string(), z.string()).optional(),
+    }),
+    output: z.void(),
+  },
+  updateMinThinkingLevels: {
+    input: z.object({
+      // Full replacement map keyed by canonical model id. Omit a model to fall back
+      // to the built-in default floor (medium for reasoning-capable models).
+      minThinkingLevelByModel: z.record(z.string(), ThinkingLevelSchema),
     }),
     output: z.void(),
   },

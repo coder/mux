@@ -6,9 +6,10 @@ import {
   type ThinkingLevel,
 } from "@/common/types/thinking";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
+import { useMinThinkingLevels } from "@/browser/hooks/useMinThinkingLevels";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import { enforceThinkingPolicy, getAvailableThinkingLevels } from "@/common/utils/thinking/policy";
 import { cn } from "@/common/lib/utils";
 
 // Uses CSS variable --color-thinking-mode for theme compatibility
@@ -41,8 +42,12 @@ interface ThinkingControlProps {
 
 export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelString }) => {
   const [thinkingLevel, setThinkingLevel] = useThinkingLevel();
-  const allowed = getThinkingPolicyForModel(modelString);
-  const effectiveThinkingLevel = enforceThinkingPolicy(modelString, thinkingLevel);
+  // Apply the per-model minimum floor so off/low are hidden unless the user lowers it
+  // in Models settings. The floor must match the backend send-path enforcement.
+  const { getMinimum } = useMinThinkingLevels();
+  const minimum = getMinimum(modelString);
+  const allowed = getAvailableThinkingLevels(modelString, minimum);
+  const effectiveThinkingLevel = enforceThinkingPolicy(modelString, thinkingLevel, minimum);
 
   // Map current level to index within the *allowed* subset
   const currentIndex = allowed.indexOf(effectiveThinkingLevel);

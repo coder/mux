@@ -85,6 +85,13 @@ export const AppConfigOnDiskSchema = z
     muxGatewayModels: z.array(z.string()).optional(),
     routePriority: z.array(z.string()).optional(),
     routeOverrides: z.record(z.string(), z.string()).optional(),
+    /**
+     * Per-model minimum thinking level (keyed by canonical model id). Hides thinking
+     * levels below the floor in the thinking slider so cycling is more efficient.
+     * Omitted entries fall back to the built-in default (medium for reasoning-capable
+     * models). See getDefaultMinimumThinkingLevel / getAvailableThinkingLevels.
+     */
+    minThinkingLevelByModel: z.record(z.string(), ThinkingLevelSchema).optional(),
     defaultModel: z.string().optional(),
     advisorModelString: z.string().optional(),
     advisorThinkingLevel: ThinkingLevelSchema.optional(),

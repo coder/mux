@@ -54,8 +54,8 @@ import {
 } from "@/node/services/utils/fileChangeTracker";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
-import { coerceThinkingLevel } from "@/common/types/thinking";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { enforceThinkingPolicy, resolveMinimumThinkingLevel } from "@/common/utils/thinking/policy";
 import {
   createMuxMessage,
   dedupeAgentSkillRefs,
@@ -3475,9 +3475,24 @@ export class AgentSession {
       postCompactionAttachments !== null && postCompactionAttachments.length > 0;
 
     // Enforce thinking policy for the specified model (single source of truth)
-    // This ensures model-specific requirements are met regardless of where the request originates
+    // This ensures model-specific requirements are met regardless of where the request originates.
+    // Apply the per-model minimum thinking floor here so every client (desktop, mobile, ACP)
+    // honors it: a stored/below-floor "off" is clamped up to the model's minimum (default medium).
+    // config may be a partial mock in tests, so read loadConfigOrDefault defensively.
+    const maybeConfig = this.config as Config & {
+      loadConfigOrDefault?: () => {
+        minThinkingLevelByModel?: Record<string, ThinkingLevel>;
+      } | null;
+    };
+    const minThinkingOverride =
+      typeof maybeConfig.loadConfigOrDefault === "function"
+        ? maybeConfig.loadConfigOrDefault()?.minThinkingLevelByModel?.[
+            normalizeToCanonical(modelString)
+          ]
+        : undefined;
+    const minThinkingLevel = resolveMinimumThinkingLevel(modelString, minThinkingOverride);
     const effectiveThinkingLevel = options?.thinkingLevel
-      ? enforceThinkingPolicy(modelString, options.thinkingLevel)
+      ? enforceThinkingPolicy(modelString, options.thinkingLevel, minThinkingLevel)
       : undefined;
 
     // Bind recordFileState to this session for the propose_plan tool

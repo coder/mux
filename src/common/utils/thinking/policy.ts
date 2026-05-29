@@ -14,6 +14,8 @@
 
 import {
   THINKING_LEVELS,
+  DEFAULT_THINKING_LEVEL,
+  THINKING_LEVEL_OFF,
   anthropicSupportsNativeXhigh,
   type ThinkingLevel,
   type ParsedThinkingInput,
@@ -124,6 +126,72 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
   return ["off", "low", "medium", "high"];
 }
 
+/** Canonical ordering index for a level (off=0 … max=5). */
+function thinkingLevelIndex(level: ThinkingLevel): number {
+  return THINKING_LEVELS.indexOf(level);
+}
+
+/**
+ * Default *minimum* thinking level (floor) for a model.
+ *
+ * Most users never want off/low thinking, so any model that supports reasoning
+ * defaults to a "medium" floor — hiding off/low in the thinking slider so cycling
+ * is more efficient. Models that don't support reasoning at all keep "off" (no floor).
+ *
+ * This is only a default; users can override it per-model on the Models settings page.
+ */
+export function getDefaultMinimumThinkingLevel(modelString: string): ThinkingLevel {
+  const capability = getThinkingPolicyForModel(modelString);
+  const supportsThinking = capability.some((level) => level !== "off");
+  return supportsThinking ? DEFAULT_THINKING_LEVEL : THINKING_LEVEL_OFF;
+}
+
+/**
+ * Resolve the effective minimum thinking level for a model, preferring an explicit
+ * per-model override (from config) and otherwise falling back to the built-in default.
+ * Always returns a concrete level (never null), so callers can pass the result straight
+ * into {@link getAvailableThinkingLevels} / {@link enforceThinkingPolicy}.
+ */
+export function resolveMinimumThinkingLevel(
+  modelString: string,
+  override?: ThinkingLevel | null
+): ThinkingLevel {
+  return override ?? getDefaultMinimumThinkingLevel(modelString);
+}
+
+/**
+ * Thinking levels available for a model after applying a minimum floor.
+ *
+ * - `minimum == null` → no floor; returns the raw capability policy.
+ * - Otherwise filters the capability policy to levels at or above `minimum` by
+ *   canonical ordering. For example a "medium" floor applied to gemini-3's
+ *   ["low", "high"] yields ["high"].
+ *
+ * Invariant: never returns an empty set. If the floor exceeds the model's maximum
+ * supported level, it locks to the highest supported level so the slider stays usable.
+ */
+export function getAvailableThinkingLevels(
+  modelString: string,
+  minimum?: ThinkingLevel | null
+): ThinkingPolicy {
+  const capability = getThinkingPolicyForModel(modelString);
+  if (minimum == null) {
+    return capability;
+  }
+
+  const minIndex = thinkingLevelIndex(minimum);
+  const filtered = capability.filter((level) => thinkingLevelIndex(level) >= minIndex);
+  if (filtered.length > 0) {
+    return filtered;
+  }
+
+  // Floor sits above the model's maximum capability: lock to the highest supported level.
+  const highest = [...capability]
+    .sort((left, right) => thinkingLevelIndex(left) - thinkingLevelIndex(right))
+    .at(-1);
+  return highest ? [highest] : capability;
+}
+
 /**
  * Enforce thinking policy by clamping requested level to allowed set.
  *
@@ -132,12 +200,18 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
  * 2. If the request is above the model's maximum, clamp to the highest allowed level.
  * 3. If the request is below the model's minimum, clamp to the lowest allowed level.
  * 4. Otherwise, pick the closest allowed level by order.
+ *
+ * When `minimum` is provided, the allowed set is the model's capability filtered to that
+ * floor (see {@link getAvailableThinkingLevels}). A below-floor request (e.g. a stored
+ * "off" with a "medium" floor) therefore clamps up to the floor. Omitting `minimum`
+ * preserves the legacy capability-only behavior.
  */
 export function enforceThinkingPolicy(
   modelString: string,
-  requested: ThinkingLevel
+  requested: ThinkingLevel,
+  minimum?: ThinkingLevel | null
 ): ThinkingLevel {
-  const allowed = getThinkingPolicyForModel(modelString);
+  const allowed = getAvailableThinkingLevels(modelString, minimum);
 
   if (allowed.includes(requested)) {
     return requested;

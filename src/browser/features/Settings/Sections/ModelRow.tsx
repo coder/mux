@@ -15,6 +15,12 @@ import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { cn } from "@/common/lib/utils";
 import type { AvailableRoute } from "@/common/routing";
 import { getModelStats, type ModelStats } from "@/common/utils/tokens/modelStats";
+import { getThinkingOptionLabel, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  getAvailableThinkingLevels,
+  getDefaultMinimumThinkingLevel,
+  getThinkingPolicyForModel,
+} from "@/common/utils/thinking/policy";
 
 /** Format tokens as human-readable string (e.g. 200000 -> "200k") */
 function formatTokenCount(tokens: number): string {
@@ -207,6 +213,10 @@ export interface ModelRowProps {
   onRemove?: () => void;
   /** Set/clear explicit route override (null = auto) */
   onSetRouteOverride?: (route: string | null) => void;
+  /** Explicit per-model minimum thinking override (null/undefined = built-in default floor) */
+  minThinkingLevel?: ThinkingLevel | null;
+  /** Set/clear the per-model minimum thinking override (null = use default) */
+  onSetMinThinkingLevel?: (level: ThinkingLevel | null) => void;
   /** Toggle 1M context for this model (only shown when defined, i.e. model supports it) */
   onToggle1MContext?: () => void;
   /** Toggle visibility in model selector */
@@ -235,11 +245,22 @@ export function ModelRow(props: ModelRowProps) {
   const routeSelectValue =
     props.resolvedRoute && !props.resolvedRoute.isAuto ? props.resolvedRoute.route : "auto";
 
+  // Per-model minimum thinking: the dropdown lists the model's full capability so users
+  // can pick any floor (including off/low), plus a "Default" option that resolves to the
+  // built-in floor (medium for most reasoning models). Models with a single fixed level
+  // (e.g. gpt-5-pro) have nothing to floor, so the control is hidden.
+  const thinkingCapability = getThinkingPolicyForModel(props.fullId);
+  const supportsMinThinking = thinkingCapability.length > 1;
+  const defaultFloorLevel =
+    getAvailableThinkingLevels(props.fullId, getDefaultMinimumThinkingLevel(props.fullId))[0] ??
+    thinkingCapability[0];
+  const minThinkingSelectValue = props.minThinkingLevel ?? "default";
+
   // Editing mode - render as a full-width row
   if (props.isEditing) {
     return (
       <tr className="border-border-medium border-b">
-        <td colSpan={4} className="px-2 py-1.5 md:px-3">
+        <td colSpan={5} className="px-2 py-1.5 md:px-3">
           <div>
             <div className="flex items-center gap-2">
               <ProviderWithIcon
@@ -408,6 +429,34 @@ export function ModelRow(props: ModelRowProps) {
           </Select>
         ) : (
           <span className="text-muted block text-xs">{routeDisplayName}</span>
+        )}
+      </td>
+
+      {/* Min Thinking */}
+      <td className="w-28 py-1.5 pr-2 md:w-32">
+        {supportsMinThinking && props.onSetMinThinkingLevel ? (
+          <Select
+            value={minThinkingSelectValue}
+            onValueChange={(value) =>
+              props.onSetMinThinkingLevel?.(value === "default" ? null : (value as ThinkingLevel))
+            }
+          >
+            <SelectTrigger className="h-7 min-w-0 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">
+                Default ({getThinkingOptionLabel(defaultFloorLevel, props.fullId)})
+              </SelectItem>
+              {thinkingCapability.map((level) => (
+                <SelectItem key={level} value={level}>
+                  {getThinkingOptionLabel(level, props.fullId)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <span className="text-muted block text-xs">—</span>
         )}
       </td>
 

@@ -231,6 +231,29 @@ function normalizeRouteOverridesRecord(value: unknown): Record<string, string> |
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/**
+ * Normalize the per-model minimum thinking level map. Keys are canonicalized and
+ * values that aren't valid thinking levels are dropped, keeping a malformed config
+ * from bricking startup (self-healing on load).
+ */
+function normalizeMinThinkingLevelByModel(
+  value: unknown
+): Record<string, ThinkingLevel> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const out: Record<string, ThinkingLevel> = {};
+  for (const [key, level] of Object.entries(value as Record<string, unknown>)) {
+    const coerced = coerceThinkingLevel(level);
+    if (coerced !== undefined) {
+      out[normalizeToCanonical(key)] = coerced;
+    }
+  }
+
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function areStringArraysEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) {
     return false;
@@ -757,6 +780,9 @@ export class Config {
         const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
         const routePriority = parseOptionalStringArray(parsed.routePriority);
         const routeOverrides = normalizeRouteOverridesRecord(parsed.routeOverrides);
+        const minThinkingLevelByModel = normalizeMinThinkingLevelByModel(
+          parsed.minThinkingLevelByModel
+        );
 
         const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
         const advisorModelString = parseOptionalNonEmptyString(parsed.advisorModelString);
@@ -887,6 +913,7 @@ export class Config {
           muxGatewayModels,
           routePriority,
           routeOverrides,
+          minThinkingLevelByModel,
           defaultModel,
           advisorModelString,
           advisorThinkingLevel,
@@ -1028,6 +1055,13 @@ export class Config {
       const routeOverrides = normalizeRouteOverridesRecord(config.routeOverrides);
       if (routeOverrides !== undefined) {
         data.routeOverrides = routeOverrides;
+      }
+
+      const minThinkingLevelByModel = normalizeMinThinkingLevelByModel(
+        config.minThinkingLevelByModel
+      );
+      if (minThinkingLevelByModel !== undefined) {
+        data.minThinkingLevelByModel = minThinkingLevelByModel;
       }
 
       const apiServerBindHost = parseOptionalNonEmptyString(config.apiServerBindHost);
