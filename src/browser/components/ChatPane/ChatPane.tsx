@@ -1321,23 +1321,20 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                                   key={`${workspaceId}:${workBundle.key}:${entry.message.id}`}
                                 >
                                   {renderNestedBundle && nestedOperationalBundle && (
-                                    <div className="ml-4">
-                                      <OperationalBundleMessage
-                                        item={nestedOperationalBundle}
-                                        expanded={isNestedExpanded}
-                                        onToggle={() =>
-                                          setOperationalBundleExpanded(
-                                            nestedOperationalBundle.key,
-                                            !isNestedExpanded
-                                          )
-                                        }
-                                      />
-                                    </div>
+                                    <OperationalBundleMessage
+                                      item={nestedOperationalBundle}
+                                      expanded={isNestedExpanded}
+                                      onToggle={() =>
+                                        setOperationalBundleExpanded(
+                                          nestedOperationalBundle.key,
+                                          !isNestedExpanded
+                                        )
+                                      }
+                                    />
                                   )}
                                   {renderNestedMessage &&
                                     renderMessageAtIndex(entry.message, entry.originalIndex, {
                                       key: `${workspaceId}:${workBundle.key}:${entry.message.id}:message`,
-                                      className: nestedOperationalBundle ? "ml-8" : "ml-4",
                                     })}
                                 </React.Fragment>
                               );

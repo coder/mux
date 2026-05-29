@@ -13,7 +13,11 @@ interface WorkBundleMessageProps {
 export function WorkBundleMessage(props: WorkBundleMessageProps): React.ReactElement {
   const duration = props.item.durationMs;
   const label =
-    duration === undefined ? "Worked" : `Worked for ${formatDuration(duration, "precise")}`;
+    props.item.state === "active"
+      ? "Working..."
+      : duration === undefined
+        ? "Worked"
+        : `Worked for ${formatDuration(duration, "precise")}`;
 
   return (
     <button

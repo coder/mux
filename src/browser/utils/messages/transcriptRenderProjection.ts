@@ -36,6 +36,7 @@ export interface WorkBundleInfo {
   headIndex: number;
   entries: readonly WorkBundleEntry[];
   durationMs?: number;
+  state: "active" | "settled";
   defaultExpanded: boolean;
 }
 
@@ -128,12 +129,15 @@ export function computeWorkBundleInfos(
     }
 
     const finalMessage = messages[span.finalIndex];
-    if (finalMessage?.type !== "assistant") {
+    if (span.state === "settled" && finalMessage?.type !== "assistant") {
       index = span.finalIndex + 1;
       continue;
     }
 
-    if (entries.some((entry) => isActiveWorkBundleMessage(entry.message))) {
+    if (
+      span.state === "settled" &&
+      entries.some((entry) => isActiveWorkBundleMessage(entry.message))
+    ) {
       index = span.finalIndex + 1;
       continue;
     }
@@ -153,7 +157,8 @@ export function computeWorkBundleInfos(
       headIndex: span.headIndex,
       entries: frozenEntries,
       durationMs: computeWorkBundleDurationMs(frozenEntries, finalMessage),
-      defaultExpanded: false,
+      state: span.state,
+      defaultExpanded: span.state === "active",
     };
 
     infos[span.headIndex] = info;
@@ -163,7 +168,7 @@ export function computeWorkBundleInfos(
         position:
           entry.originalIndex === span.headIndex
             ? "head"
-            : entry.originalIndex === span.finalIndex
+            : span.state === "settled" && entry.originalIndex === span.finalIndex
               ? "final"
               : "member",
       };
@@ -248,6 +253,7 @@ interface WorkBundleSpan {
   headIndex: number;
   firstEntryIndex: number;
   finalIndex: number;
+  state: "active" | "settled";
 }
 
 function findWorkBundleSpan(
@@ -269,14 +275,14 @@ function findWorkBundleSpan(
   return {
     headIndex: message?.type === "user" ? index : firstEntryIndex,
     firstEntryIndex,
-    finalIndex,
+    ...finalIndex,
   };
 }
 
 function findWorkBundleFinalIndex(
   messages: DisplayedMessage[],
   startIndex: number
-): number | undefined {
+): Pick<WorkBundleSpan, "finalIndex" | "state"> | undefined {
   const firstHistoryId = getWorkBundleAgentHistoryId(messages[startIndex]);
   if (firstHistoryId === undefined) {
     return undefined;
@@ -286,6 +292,8 @@ function findWorkBundleFinalIndex(
   let canCrossVisibleConversation = false;
   let sawVisibleConversationSinceLastAgent = false;
   let sawOperationalMessage = false;
+  let sawActiveMessage = false;
+  let lastAgentIndex = startIndex;
   let finalIndex: number | undefined;
 
   for (let index = startIndex; index < messages.length; index++) {
@@ -323,6 +331,10 @@ function findWorkBundleFinalIndex(
       historyIds.add(messageHistoryId);
     }
     sawVisibleConversationSinceLastAgent = false;
+    lastAgentIndex = index;
+    if (isActiveWorkBundleMessage(message)) {
+      sawActiveMessage = true;
+    }
 
     if (isWorkBundleOperationalMessage(message)) {
       sawOperationalMessage = true;
@@ -337,11 +349,17 @@ function findWorkBundleFinalIndex(
     canCrossVisibleConversation = false;
   }
 
-  if (!sawOperationalMessage || finalIndex === undefined || finalIndex < startIndex) {
+  if (!sawOperationalMessage) {
     return undefined;
   }
+  if (finalIndex !== undefined && finalIndex >= startIndex) {
+    return { finalIndex, state: "settled" };
+  }
+  if (sawActiveMessage && lastAgentIndex >= startIndex) {
+    return { finalIndex: lastAgentIndex, state: "active" };
+  }
 
-  return finalIndex;
+  return undefined;
 }
 
 function isSideQuestionStart(messages: DisplayedMessage[], index: number): boolean {

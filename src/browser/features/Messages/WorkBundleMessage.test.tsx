@@ -15,6 +15,7 @@ const item: WorkBundleInfo = {
   headIndex: 1,
   entries: [],
   durationMs: 180_000,
+  state: "settled",
   defaultExpanded: false,
 };
 
@@ -44,6 +45,18 @@ describe("WorkBundleMessage", () => {
     view.rerender(<WorkBundleMessage item={item} expanded={expanded} onToggle={onToggle} />);
 
     expect(view.getByRole("button", { expanded: true })).toBeDefined();
+  });
+
+  test("renders active working label", () => {
+    const view = render(
+      <WorkBundleMessage
+        item={{ ...item, state: "active", durationMs: undefined, defaultExpanded: true }}
+        expanded
+        onToggle={() => undefined}
+      />
+    );
+
+    expect(view.getByText("Working...")).toBeDefined();
   });
 
   test("renders fallback label without duration", () => {

@@ -407,16 +407,27 @@ describe("work bundle coalescing", () => {
     expect(infos[5]).toMatchObject({ key: "work:bash-1", position: "final" });
   });
 
-  test("leaves active work visible", () => {
+  test("wraps active work in an expanded working bundle", () => {
     const messages = [
-      reasoning({ id: "think-1", historyId: "history-a1" }),
+      user("u1"),
+      assistant("draft-1", { historyId: "history-a1" }),
       tool({ id: "read-1", historyId: "history-a1", status: "executing" }),
-      assistant("final-1", { historyId: "history-a1" }),
     ];
 
     const infos = computeWorkBundleInfos(messages);
 
-    expect(infos.every((info) => info === undefined)).toBe(true);
+    expect(infos[0]).toMatchObject({
+      key: "work:draft-1",
+      position: "head",
+      state: "active",
+      defaultExpanded: true,
+      entries: [
+        { message: messages[1], originalIndex: 1 },
+        { message: messages[2], originalIndex: 2 },
+      ],
+    });
+    expect(infos[1]).toMatchObject({ key: "work:draft-1", position: "member" });
+    expect(infos[2]).toMatchObject({ key: "work:draft-1", position: "member" });
   });
 
   test("collapses non-success tools before a final assistant row", () => {
