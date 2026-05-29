@@ -147,7 +147,9 @@ describe("Hyper transcript density", () => {
         return button;
       });
       expect(firstOperationalButton.textContent).toContain("Ran 5 operations");
+      expect(firstOperationalButton.getAttribute("aria-expanded")).toBe("false");
       expect(view.container.textContent).toContain("Please validate with typecheck too");
+      expect(view.container.textContent).not.toContain("src/auth.ts");
       expect(view.container.textContent).not.toContain("make typecheck");
       expectTextOrder(
         view.container,
@@ -170,6 +172,7 @@ describe("Hyper transcript density", () => {
         }
         return button;
       });
+      expect(failedOperationalButton.getAttribute("aria-expanded")).toBe("false");
       fireEvent.click(failedOperationalButton);
 
       await waitFor(() => {

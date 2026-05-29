@@ -701,7 +701,7 @@ describe("operational bundle coalescing", () => {
     expect(infos[4]).toMatchObject({ key: "bundle:search-1", position: "member" });
   });
 
-  test("active and just-settled tail bundles stay expanded until a visible event or turn end", () => {
+  test("keeps active bundles expanded while completed bundles default collapsed", () => {
     const active = computeOperationalBundleInfos(
       [reasoning({ id: "think-1", isStreaming: true })],
       {
@@ -721,7 +721,7 @@ describe("operational bundle coalescing", () => {
     expect(justSettledTail[0]).toMatchObject({
       position: "head",
       state: "settled",
-      defaultExpanded: true,
+      defaultExpanded: false,
     });
 
     const afterVisibleEvent = computeOperationalBundleInfos(

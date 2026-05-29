@@ -178,7 +178,7 @@ export function computeWorkBundleInfos(
 
 export function computeOperationalBundleInfos(
   messages: DisplayedMessage[],
-  options: ComputeBundleInfosOptions
+  _options: ComputeBundleInfosOptions
 ): Array<OperationalBundleInfo | undefined> {
   const infos = new Array<OperationalBundleInfo | undefined>(messages.length);
   let index = 0;
@@ -224,9 +224,7 @@ export function computeOperationalBundleInfos(
     const state = frozenEntries.some((entry) => isActiveOperationalMessage(entry.message))
       ? "active"
       : "settled";
-    const hasSubsequentVisibleEvent = hasVisibleEventAfter(messages, index);
-    const defaultExpanded =
-      state === "active" || (options.isTurnActive && !hasSubsequentVisibleEvent);
+    const defaultExpanded = state === "active";
     const key = `bundle:${first.id}`;
     const summary = summarizeOperationalBundle(frozenEntries.map((entry) => entry.message));
 
@@ -466,16 +464,6 @@ function computeWorkBundleDurationMs(
     return undefined;
   }
   return endTimestamp - startTimestamp;
-}
-
-function hasVisibleEventAfter(messages: DisplayedMessage[], startIndex: number): boolean {
-  for (let index = startIndex; index < messages.length; index++) {
-    if (!isOperationalBundleMemberMessage(messages[index])) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 export function summarizeOperationalBundle(
