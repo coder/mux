@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useAPI } from "@/browser/contexts/API";
+import { useOptionalAPI } from "@/browser/contexts/API";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import {
   getAvailableThinkingLevels,
@@ -30,7 +30,9 @@ export interface MinThinkingLevelsState {
  * command palette consult to hide thinking levels below the configured floor.
  */
 export function useMinThinkingLevels(): MinThinkingLevelsState {
-  const { api } = useAPI();
+  // Optional so providers that mount this (e.g. ThinkingProvider) don't crash when rendered
+  // outside an APIProvider in isolated test harnesses; without an api we degrade to defaults.
+  const api = useOptionalAPI()?.api ?? null;
   const [minThinkingLevelByModel, setMap] = useState<Record<string, ThinkingLevel>>({});
   // Ignore stale config fetches so backend refreshes can't overwrite newer optimistic edits.
   const fetchVersionRef = useRef(0);

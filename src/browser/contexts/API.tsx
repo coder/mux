@@ -698,3 +698,10 @@ export const useAPI = (): UseAPIResult => {
   }
   return context;
 };
+
+/**
+ * Like {@link useAPI} but returns null instead of throwing when there is no APIProvider.
+ * Use this in best-effort hooks that may render outside an APIProvider (e.g. isolated
+ * test harnesses) and should degrade gracefully rather than crash.
+ */
+export const useOptionalAPI = (): UseAPIResult | null => useContext(APIContext);
