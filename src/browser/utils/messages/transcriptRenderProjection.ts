@@ -327,9 +327,7 @@ function findWorkBundleFinalIndex(
     if (isWorkBundleOperationalMessage(message)) {
       sawOperationalMessage = true;
     }
-    if (canContinueWorkBundleAcrossConversation(message)) {
-      canCrossVisibleConversation = true;
-    }
+    canCrossVisibleConversation = canContinueWorkBundleAcrossConversation(message);
 
     if (message.type !== "assistant" || message.isPartial) {
       continue;
