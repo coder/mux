@@ -11,6 +11,7 @@ import React from "react";
 import {
   BugPlay,
   ExternalLink,
+  History,
   Monitor,
   Globe,
   Sparkles,
@@ -250,6 +251,13 @@ export const WorkflowsTabLabel: React.FC<WorkflowsTabLabelProps> = ({ workspaceI
     </span>
   );
 };
+
+export const PromptHistoryTabLabel: React.FC = () => (
+  <span className="inline-flex items-center gap-1">
+    <History className="h-3 w-3 shrink-0" />
+    History
+  </span>
+);
 
 export function OutputTabLabel() {
   return <>Output</>;

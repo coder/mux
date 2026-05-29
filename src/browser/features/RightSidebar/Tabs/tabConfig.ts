@@ -62,6 +62,12 @@ const TAB_CONFIG_DEF = {
     defaultOrder: 36,
     paletteKeywords: ["workflow", "workflows", "orchestration", "agents", "run"],
   },
+  history: {
+    name: "History",
+    contentClassName: "overflow-y-auto p-0",
+    defaultOrder: 37,
+    paletteKeywords: ["prompt", "message", "history", "reuse"],
+  },
   memory: {
     name: "Memory",
     contentClassName: "overflow-hidden p-0",

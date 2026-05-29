@@ -207,6 +207,8 @@ import { isGoalRunning } from "@/common/types/goal";
 import { appendStagedAttachmentNotice, getStagedAttachments } from "./stagedAttachments";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
+const AWAITING_NEW_ATTACHED_REVIEWS = Symbol("awaiting-new-attached-reviews");
+
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
 
@@ -509,6 +511,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // draftReviews takes precedence when restoring or editing message drafts.
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
+  const attachedReviewIdsSignature = attachedReviews.map((review) => review.id).join("\u0000");
+  const clearedAttachedReviewIdsRef = useRef<string | typeof AWAITING_NEW_ATTACHED_REVIEWS | null>(
+    null
+  );
   const draftReviewIdsByValueRef = useRef(new WeakMap<ReviewNoteDataForDisplay, string>());
   const nextDraftReviewIdRef = useRef(0);
   const isDraftReviewData = (value: unknown): value is ReviewNoteDataForDisplay =>
@@ -548,6 +554,31 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       next[reviewIndex] = updatedReview;
       return next;
     });
+
+  // Empty review replacements clear the current parent-attached reviews but should not hide
+  // reviews attached later from the Code Review tab.
+  useEffect(() => {
+    if (
+      draftReviews === null ||
+      draftReviews.length > 0 ||
+      clearedAttachedReviewIdsRef.current === null
+    ) {
+      return;
+    }
+
+    if (attachedReviews.length === 0) {
+      clearedAttachedReviewIdsRef.current = AWAITING_NEW_ATTACHED_REVIEWS;
+      return;
+    }
+
+    if (
+      clearedAttachedReviewIdsRef.current === AWAITING_NEW_ATTACHED_REVIEWS ||
+      clearedAttachedReviewIdsRef.current !== attachedReviewIdsSignature
+    ) {
+      clearedAttachedReviewIdsRef.current = null;
+      setDraftReviews(null);
+    }
+  }, [attachedReviewIdsSignature, attachedReviews.length, draftReviews]);
 
   // Creation sends can resolve after navigation; guard draft clears on unmounted inputs.
   const isMountedRef = useRef(true);
@@ -1780,12 +1811,21 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const hasFileParts = restoredPending.fileParts.length > 0;
       const hasStagedAttachments = restoredPending.stagedAttachments.length > 0;
       const hasReviews = restoredPending.reviews.length > 0;
+      const hasDraftReplacementPayload = fileParts !== undefined || reviews !== undefined;
 
       if (mode === "replace") {
         if (editingMessageForUi) {
           return;
         }
-        if (hasFileParts || hasStagedAttachments || hasReviews) {
+        if (hasDraftReplacementPayload) {
+          onDetachAllReviewsForComposerClear?.();
+          const clearsReviews = reviews === undefined || reviews.length === 0;
+          if (clearsReviews) {
+            clearedAttachedReviewIdsRef.current = attachedReviewIdsSignature;
+          } else {
+            clearedAttachedReviewIdsRef.current = null;
+          }
+
           restoreDraft(restoredPending);
         } else {
           restoreText(restoredPending.content);
@@ -1809,11 +1849,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       window.removeEventListener(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, handler as EventListener);
   }, [
     appendText,
-    restoreText,
-    restoreDraft,
     applyDraftFromPending,
-    getDraft,
+    attachedReviewIdsSignature,
     editingMessageForUi,
+    getDraft,
+    onDetachAllReviewsForComposerClear,
+    restoreDraft,
+    restoreText,
     workspaceIdForComposerClear,
   ]);
 
