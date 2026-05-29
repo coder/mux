@@ -121,12 +121,15 @@ describe("Hyper transcript density", () => {
       expect(workButton.getAttribute("aria-expanded")).toBe("false");
       expect(view.container.textContent).toContain("Please validate with typecheck too");
       expect(view.container.textContent).not.toContain("make typecheck");
+      expect(view.container.textContent).toContain("Implemented the auth audit fix.");
+      expect(view.container.textContent).not.toContain("I'll patch and validate now.");
       expect(view.container.textContent).not.toContain("I'll gather context first.");
       expectTextOrder(
         view.container,
         "Audit the auth module",
         "Worked for",
-        "Please validate with typecheck too"
+        "Please validate with typecheck too",
+        "Implemented the auth audit fix."
       );
       fireEvent.click(workButton);
 
