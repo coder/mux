@@ -12,6 +12,7 @@ import {
   createFileReadTool,
   createGenericTool,
   createPendingTool,
+  createProposePlanTool,
   createWebSearchTool,
 } from "@/browser/stories/mocks/tools";
 import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
@@ -119,6 +120,47 @@ export const NormalNoisyTranscript: AppStory = {
 export const HyperCollapsedBundles: AppStory = {
   parameters: { chromatic: { modes: CHROMATIC_SMOKE_MODES } },
   render: () => <AppWithMocks setup={() => setupTranscriptDensityStory("hyper")} />,
+};
+
+export const HyperTailProposePlanExpanded: AppStory = {
+  parameters: { chromatic: { modes: CHROMATIC_SMOKE_MODES } },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        collapseLeftSidebar();
+        setDensity("hyper");
+        return setupSimpleChatStory({
+          messages: [
+            createUserMessage("tail-plan-user-1", "Plan the transcript density fix", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 20_000,
+            }),
+            createAssistantMessage("tail-plan-assistant-1", "I'll draft the implementation plan.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 15_000,
+              toolCalls: [
+                createProposePlanTool(
+                  "tail-plan-tool-1",
+                  [
+                    "# Tail Plan",
+                    "",
+                    "## Acceptance",
+                    "",
+                    "- The tail propose_plan is visible in hyper density without expanding bundles.",
+                  ].join("\n")
+                ),
+                {
+                  type: "text",
+                  text: "Plan ready for review.",
+                  timestamp: STABLE_TIMESTAMP - 5_000,
+                },
+              ],
+            }),
+          ],
+        });
+      }}
+    />
+  ),
 };
 
 export const HyperExpandedBundle: AppStory = {
