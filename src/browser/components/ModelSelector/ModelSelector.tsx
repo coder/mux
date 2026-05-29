@@ -17,6 +17,8 @@ import { Check, ChevronDown, Eye, Settings, ShieldCheck, Star } from "lucide-rea
 
 import { ProviderIcon } from "../ProviderIcon/ProviderIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { ModelPricingTooltip } from "../ModelPricingTooltip/ModelPricingTooltip";
+import { getModelStats } from "@/common/utils/tokens/modelStats";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
@@ -367,133 +369,146 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                   const modelProvider = getModelProvider(model);
                   const showProviderLabel =
                     modelProvider.length > 0 && duplicateModelNames.has(modelName);
+                  const modelStats = getModelStats(model);
 
                   return (
-                    <div
-                      key={model}
-                      data-highlighted={index === highlightedIndex}
-                      onMouseEnter={() => setHighlightedIndex(index)}
-                      className={cn(
-                        "flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-xs cursor-pointer",
-                        index === highlightedIndex ? "bg-hover" : "hover:bg-hover",
-                        hiddenSet.has(model) && "opacity-50"
-                      )}
-                      onClick={() => handleSelectModel(model)}
-                      role="option"
-                      aria-selected={value === model}
-                    >
-                      <Check
-                        className={cn(
-                          "h-3 w-3 shrink-0",
-                          value === model ? "opacity-100" : "opacity-0"
-                        )}
-                      />
-                      <ProviderIcon
-                        provider={modelProvider}
-                        className="text-muted h-3 w-3 shrink-0"
-                      />
-                      <span className="flex min-w-0 flex-1 items-baseline gap-1">
-                        <span className="min-w-0 truncate">
-                          {formatModelDisplayName(modelName)}
-                        </span>
-                        {showProviderLabel && (
-                          <span className="text-muted shrink-0 text-[10px]">
-                            {formatProviderDisplayName(
-                              modelProvider,
-                              providersConfig?.[modelProvider]
+                    <Tooltip key={model} delayDuration={0}>
+                      <TooltipTrigger asChild>
+                        <div
+                          data-highlighted={index === highlightedIndex}
+                          onMouseEnter={() => setHighlightedIndex(index)}
+                          className={cn(
+                            "flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-xs cursor-pointer",
+                            index === highlightedIndex ? "bg-hover" : "hover:bg-hover",
+                            hiddenSet.has(model) && "opacity-50"
+                          )}
+                          onClick={() => handleSelectModel(model)}
+                          role="option"
+                          aria-selected={value === model}
+                        >
+                          <Check
+                            className={cn(
+                              "h-3 w-3 shrink-0",
+                              value === model ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                          <ProviderIcon
+                            provider={modelProvider}
+                            className="text-muted h-3 w-3 shrink-0"
+                          />
+                          <span className="flex min-w-0 flex-1 items-baseline gap-1">
+                            <span className="min-w-0 truncate">
+                              {formatModelDisplayName(modelName)}
+                            </span>
+                            {showProviderLabel && (
+                              <span className="text-muted shrink-0 text-[10px]">
+                                {formatProviderDisplayName(
+                                  modelProvider,
+                                  providersConfig?.[modelProvider]
+                                )}
+                              </span>
                             )}
                           </span>
-                        )}
-                      </span>
 
-                      {/* Visibility toggle - Eye with line-through when hidden */}
-                      {(onHideModel ?? onUnhideModel) && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                if (hiddenSet.has(model)) {
-                                  onUnhideModel?.(model);
-                                } else {
-                                  onHideModel?.(model);
-                                }
-                              }}
-                              className={cn(
-                                "relative flex h-5 w-5 items-center justify-center rounded-sm border transition-colors duration-150",
-                                hiddenSet.has(model)
-                                  ? "text-muted-light border-muted-light/40"
-                                  : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
-                              )}
-                              aria-label={
-                                hiddenSet.has(model)
+                          {/* Visibility toggle - Eye with line-through when hidden */}
+                          {(onHideModel ?? onUnhideModel) && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    if (hiddenSet.has(model)) {
+                                      onUnhideModel?.(model);
+                                    } else {
+                                      onHideModel?.(model);
+                                    }
+                                  }}
+                                  className={cn(
+                                    "relative flex h-5 w-5 items-center justify-center rounded-sm border transition-colors duration-150",
+                                    hiddenSet.has(model)
+                                      ? "text-muted-light border-muted-light/40"
+                                      : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
+                                  )}
+                                  aria-label={
+                                    hiddenSet.has(model)
+                                      ? "Show model in selector"
+                                      : "Hide model from selector"
+                                  }
+                                >
+                                  <Eye
+                                    className={cn(
+                                      "h-4 w-4 md:h-3 md:w-3",
+                                      hiddenSet.has(model) ? "opacity-30" : "opacity-70"
+                                    )}
+                                  />
+                                  {hiddenSet.has(model) && (
+                                    <span className="bg-muted-light absolute h-px w-3 rotate-45" />
+                                  )}
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent align="center">
+                                {hiddenSet.has(model)
                                   ? "Show model in selector"
-                                  : "Hide model from selector"
-                              }
-                            >
-                              <Eye
-                                className={cn(
-                                  "h-4 w-4 md:h-3 md:w-3",
-                                  hiddenSet.has(model) ? "opacity-30" : "opacity-70"
-                                )}
-                              />
-                              {hiddenSet.has(model) && (
-                                <span className="bg-muted-light absolute h-px w-3 rotate-45" />
-                              )}
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent align="center">
-                            {hiddenSet.has(model)
-                              ? "Show model in selector"
-                              : "Hide model from selector"}
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
+                                  : "Hide model from selector"}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
 
-                      {/* Default star */}
-                      {onSetDefaultModel ? (
-                        hiddenSet.has(model) ? (
-                          <span className="h-5 w-5" />
-                        ) : (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                type="button"
-                                onMouseDown={(e) => e.preventDefault()}
-                                onClick={(e) => handleSetDefault(e, model)}
-                                className={cn(
-                                  "flex h-5 w-5 items-center justify-center rounded-sm transition-colors duration-150 cursor-pointer",
-                                  defaultModel === model
-                                    ? "text-yellow-400 cursor-default"
-                                    : "text-muted-light hover:text-foreground"
-                                )}
-                                aria-label={
-                                  defaultModel === model
+                          {/* Default star */}
+                          {onSetDefaultModel ? (
+                            hiddenSet.has(model) ? (
+                              <span className="h-5 w-5" />
+                            ) : (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={(e) => handleSetDefault(e, model)}
+                                    className={cn(
+                                      "flex h-5 w-5 items-center justify-center rounded-sm transition-colors duration-150 cursor-pointer",
+                                      defaultModel === model
+                                        ? "text-yellow-400 cursor-default"
+                                        : "text-muted-light hover:text-foreground"
+                                    )}
+                                    aria-label={
+                                      defaultModel === model
+                                        ? "Current default model"
+                                        : "Set as default model"
+                                    }
+                                    disabled={defaultModel === model}
+                                  >
+                                    <Star
+                                      className="h-4 w-4 md:h-3 md:w-3"
+                                      fill={defaultModel === model ? "currentColor" : "none"}
+                                    />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent align="center">
+                                  {defaultModel === model
                                     ? "Current default model"
-                                    : "Set as default model"
-                                }
-                                disabled={defaultModel === model}
-                              >
-                                <Star
-                                  className="h-4 w-4 md:h-3 md:w-3"
-                                  fill={defaultModel === model ? "currentColor" : "none"}
-                                />
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent align="center">
-                              {defaultModel === model
-                                ? "Current default model"
-                                : "Set as default model"}
-                            </TooltipContent>
-                          </Tooltip>
-                        )
-                      ) : (
-                        <span className="h-5 w-5" />
-                      )}
-                    </div>
+                                    : "Set as default model"}
+                                </TooltipContent>
+                              </Tooltip>
+                            )
+                          ) : (
+                            <span className="h-5 w-5" />
+                          )}
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="right"
+                        align="start"
+                        sideOffset={8}
+                        collisionPadding={12}
+                        className="p-3"
+                      >
+                        <ModelPricingTooltip fullId={model} stats={modelStats} />
+                      </TooltipContent>
+                    </Tooltip>
                   );
                 })
               )}
