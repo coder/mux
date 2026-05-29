@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import {
-  DEFAULT_IMAGE_GENERATION_MODEL,
-  PINNED_IMAGE_GENERATION_MODEL,
-} from "@/common/types/imageGeneration";
 import { getModelStats, getModelStatsResolved, type ModelStats } from "./modelStats";
+
+const DEFAULT_IMAGE_MODEL = "openai:gpt-image-2";
+const PINNED_IMAGE_MODEL = "openai:gpt-image-2-2026-04-21";
 
 function expectStats(modelString: string): ModelStats {
   const stats = getModelStats(modelString);
@@ -109,12 +108,12 @@ describe("getModelStats", () => {
   });
 
   test("resolves the default image generation model pricing", () => {
-    const stats = expectStats(DEFAULT_IMAGE_GENERATION_MODEL);
+    const stats = expectStats(DEFAULT_IMAGE_MODEL);
 
     expect(stats.input_cost_per_token).toBe(0.000005);
     expect(stats.cache_read_input_token_cost).toBe(0.00000125);
     expect(stats.output_cost_per_token).toBe(0.00003);
-    expect(expectStats(PINNED_IMAGE_GENERATION_MODEL)).toEqual(stats);
+    expect(expectStats(PINNED_IMAGE_MODEL)).toEqual(stats);
   });
 
   test("returns null for unknown models across direct and gateway forms", () => {

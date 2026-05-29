@@ -67,7 +67,6 @@ import { isProviderAutoRouteEligible } from "@/node/utils/providerRequirements";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 import { deriveProjectHierarchy } from "@/common/utils/subProjects";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
-import { normalizeImageGenerationConfig } from "@/common/types/imageGeneration";
 
 // Re-export project/provider types from dedicated schema/types files (for preload usage)
 export type { Workspace, ProjectConfig, ProjectsConfig, ProviderConfig, CanonicalProvidersConfig };
@@ -771,7 +770,6 @@ export class Config {
             ? null
             : parseOptionalPositiveInteger(parsed.advisorMaxOutputTokens);
         const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
-        const imageGeneration = normalizeImageGenerationConfig(parsed.imageGeneration);
         let legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
         const agentAiDefaults =
           parsed.agentAiDefaults !== undefined
@@ -895,7 +893,6 @@ export class Config {
           advisorMaxUsesPerTurn,
           advisorMaxOutputTokens,
           hiddenModels,
-          imageGeneration,
           agentAiDefaults,
           // Subagent defaults: exec is canonical active storage, non-exec entries
           // support legacy mirror compatibility.
@@ -926,7 +923,6 @@ export class Config {
       taskSettings: DEFAULT_TASK_SETTINGS,
       agentAiDefaults: {},
       subagentAiDefaults: {},
-      imageGeneration: normalizeImageGenerationConfig(undefined),
       routePriority: this.seedRoutePriorityFromProviders(),
       coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
       worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
@@ -1023,8 +1019,6 @@ export class Config {
       if (hiddenModels !== undefined) {
         data.hiddenModels = hiddenModels;
       }
-
-      data.imageGeneration = normalizeImageGenerationConfig(config.imageGeneration);
 
       const routePriority = parseOptionalStringArray(config.routePriority);
       if (routePriority !== undefined) {

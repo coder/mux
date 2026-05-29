@@ -18,7 +18,6 @@ import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage
 import type { ServerAuthSession } from "@/common/orpc/types";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ProjectConfig } from "@/common/types/project";
-import type { ImageGenerationConfig } from "@/common/types/imageGeneration";
 import type { TaskSettings } from "@/common/types/tasks";
 import type { GoalDefaults } from "@/constants/goals";
 import type { LayoutPresetsConfig } from "@/common/types/uiLayouts";
@@ -109,8 +108,6 @@ interface SetupSettingsStoryOptions {
   providersList?: string[];
   agentAiDefaults?: AgentAiDefaults;
   taskSettings?: Partial<TaskSettings>;
-  /** Initial image generation config for config.getConfig */
-  imageGeneration?: Partial<ImageGenerationConfig>;
   /** Initial global heartbeat default prompt for config.getConfig */
   heartbeatDefaultPrompt?: string;
   /** Initial global heartbeat default interval for config.getConfig */
@@ -142,7 +139,6 @@ export function setupSettingsStory(options: SetupSettingsStoryOptions): APIClien
     providersConfig: options.providersConfig ?? {},
     agentAiDefaults: options.agentAiDefaults,
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
-    imageGeneration: options.imageGeneration,
     heartbeatDefaultPrompt: options.heartbeatDefaultPrompt,
     heartbeatDefaultIntervalMs: options.heartbeatDefaultIntervalMs,
     goalDefaults: options.goalDefaults,

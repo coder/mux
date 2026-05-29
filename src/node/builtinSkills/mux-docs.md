@@ -105,8 +105,6 @@ Use this index to find a page's:
     - Telemetry (`/reference/telemetry`) → `references/docs/reference/telemetry.mdx` — What Mux collects, what it doesn’t, and how to disable it
     - Storybook (`/reference/storybook`) → `references/docs/reference/storybook.mdx` — Develop and test Mux UI states in isolation
     - Terminal Benchmarking (`/reference/benchmarking`) → `references/docs/reference/benchmarking.mdx` — Run Terminal-Bench benchmarks with the Mux adapter
-    - Experimental Image Generation Tool (`/adr/0001-experimental-image-generation-tool`) → `references/docs/adr/0001-experimental-image-generation-tool.md` — Architecture decision for Mux's experimental image generation tool and generated-image display messages
-    - Image Editing Uses a Separate General-Purpose Tool (`/adr/0002-image-editing-visual-mockups`) → `references/docs/adr/0002-image-editing-visual-mockups.md` — Architecture decision for Mux's experimental image editing tool and edited image display messages
     - Context Boundaries for Compaction and Reset (`/adr/0003-context-boundaries-for-compaction-and-reset`) → `references/docs/adr/0003-context-boundaries-for-compaction-and-reset.md` — Architecture decision for modeling provider context windows separately from transcript history
     - CLI Goal Runs are not strict /goal aliases (`/adr/0004-cli-goal-runs-are-not-strict-goal-aliases`) → `references/docs/adr/0004-cli-goal-runs-are-not-strict-goal-aliases.md` — Architecture decision for giving mux run --goal CLI-specific completion and limit semantics
     - AGENTS.md (`/AGENTS`) → `references/docs/AGENTS.md` — Agent instructions for AI assistants working on the Mux codebase

@@ -72,26 +72,6 @@ describe("agent_skill_read_file", () => {
     }
   });
 
-  it("blocks built-in imagegen skill files when the image generation tool is unavailable", async () => {
-    using tempDir = new TestTempDir("test-agent-skill-read-file-imagegen-disabled");
-    const baseConfig = createTestToolConfig(tempDir.path, {
-      workspaceId: GLOBAL_WORKSPACE_ID,
-    });
-
-    const tool = createAgentSkillReadFileTool(baseConfig);
-
-    const result = await executeReadFile(tool, {
-      name: "imagegen",
-      filePath: "SKILL.md",
-      offset: 1,
-      limit: 25,
-    });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("Image Tools experiment");
-    }
-  });
-
   it("allows reading global skill files on disk in global-scope workspace", async () => {
     using tempDir = new TestTempDir("test-agent-skill-read-file-global");
     const previousMuxRoot = process.env.MUX_ROOT;

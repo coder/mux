@@ -41,10 +41,7 @@ import {
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
-import {
-  discoverAgentSkills,
-  filterUnavailableImagegenSkills,
-} from "@/node/services/agentSkills/agentSkillsService";
+import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import { buildSystemMessage } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
@@ -246,8 +243,6 @@ export interface BuildStreamSystemContextOptions {
   loadDesktopCapability?: () => Promise<DesktopCapability>;
   /** Whether the advisor tool is available for the current agent */
   advisorToolAvailable?: boolean;
-  /** Whether the image_generate tool is available as a direct tool for the current agent. */
-  imageGenerationToolAvailable?: boolean;
 }
 
 /** Result of system context assembly. */
@@ -471,7 +466,6 @@ export async function buildStreamSystemContext(
     muxScope,
     loadDesktopCapability,
     advisorToolAvailable,
-    imageGenerationToolAvailable,
   } = opts;
 
   const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
@@ -541,13 +535,6 @@ export async function buildStreamSystemContext(
     });
   } catch (error) {
     workspaceLog.warn("Failed to discover agent skills for tool description", { error });
-  }
-
-  if (availableSkills) {
-    availableSkills = filterUnavailableImagegenSkills(
-      availableSkills,
-      imageGenerationToolAvailable
-    );
   }
 
   const ancestorPlanContext = resolveAncestorPlanContext({

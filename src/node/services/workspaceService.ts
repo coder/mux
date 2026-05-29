@@ -1943,7 +1943,6 @@ export class WorkspaceService extends EventEmitter {
       aiService: this.aiService,
       telemetryService: this.telemetryService,
       initStateManager: this.initStateManager,
-      experimentsService: this.experimentsService,
       workspaceGoalService: this.workspaceGoalService,
       backgroundProcessManager: this.backgroundProcessManager,
       onCompactionComplete: () => {

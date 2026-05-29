@@ -27,7 +27,6 @@ import type { ApiServerStatus, DesktopPrereqStatus } from "@/common/orpc/types";
 import { Input } from "@/browser/components/Input/Input";
 import { useAPI, type APIClient } from "@/browser/contexts/API";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
-import { ImageGenerationExperimentConfig } from "./ImageGenerationExperimentConfig";
 import { AdvisorToolExperimentConfig } from "./AdvisorToolExperimentConfig";
 import { HeartbeatDefaultsControls } from "./HeartbeatSection";
 
@@ -664,7 +663,6 @@ export function ExperimentsSection() {
   const allExperiments = getExperimentList();
   const { api } = useAPI();
   const advisorToolEnabled = useExperimentValue(EXPERIMENT_IDS.ADVISOR_TOOL);
-  const imageGenerationToolEnabled = useExperimentValue(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const settingsConfigRequestRef = useRef<{
     api: APIClient;
@@ -752,9 +750,6 @@ export function ExperimentsSection() {
               />
               {exp.id === EXPERIMENT_IDS.ADVISOR_TOOL && advisorToolEnabled && (
                 <AdvisorToolExperimentConfig />
-              )}
-              {exp.id === EXPERIMENT_IDS.IMAGE_GENERATION_TOOL && imageGenerationToolEnabled && (
-                <ImageGenerationExperimentConfig enabled={imageGenerationToolEnabled} />
               )}
               {exp.id === EXPERIMENT_IDS.WORKSPACE_HEARTBEATS && workspaceHeartbeatsEnabled && (
                 <ExperimentSettingsPanel>

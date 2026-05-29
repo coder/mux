@@ -16,10 +16,6 @@ import {
   ADVISOR_DEFAULT_MAX_USES_PER_TURN,
   resolveAdvisorEnabledForAgent,
 } from "@/common/constants/advisor";
-import {
-  DEFAULT_IMAGE_GENERATION_MAX_IMAGES,
-  DEFAULT_IMAGE_GENERATION_MODEL,
-} from "@/common/types/imageGeneration";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 import type { GoalRecordV1 } from "@/common/types/goal";
@@ -105,7 +101,7 @@ import type {
   StreamAbortReason,
   StreamEndEvent,
 } from "@/common/types/stream";
-import { applyToolPolicyToNames, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { DEVTOOLS_RUN_METADATA_ID_HEADER } from "./devToolsHeaderCapture";
@@ -1133,9 +1129,6 @@ export class AIService extends EventEmitter {
       const advisorExperimentEnabled =
         experiments?.advisorTool ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL) === true;
-      const imageGenerationExperimentEnabled =
-        experiments?.imageGenerationTool ??
-        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL) === true;
       emitStartupBreadcrumb("loading_workspace_context");
       const resolveAgentForStreamStartedAt = Date.now();
       const agentResult = await resolveAgentForStream({
@@ -1279,14 +1272,6 @@ export class AIService extends EventEmitter {
               return desktopCapabilityPromise;
             };
 
-      const imageGenerationDirectToolAvailable =
-        imageGenerationExperimentEnabled &&
-        experiments?.programmaticToolCallingExclusive !== true &&
-        applyToolPolicyToNames(["image_generate"], effectiveToolPolicy).includes("image_generate");
-      const imageEditingEnabled =
-        imageGenerationExperimentEnabled &&
-        cfg.imageGeneration?.allowImageUploadsForEditing === true;
-
       const buildStreamSystemContextForAdvisor = (advisorToolAvailable: boolean) =>
         buildStreamSystemContext({
           runtime,
@@ -1305,7 +1290,6 @@ export class AIService extends EventEmitter {
           muxScope,
           loadDesktopCapability,
           advisorToolAvailable,
-          imageGenerationToolAvailable: imageGenerationDirectToolAvailable,
         });
 
       // Build provisional agent context before tool policy finalizes the toolset.
@@ -1514,17 +1498,6 @@ export class AIService extends EventEmitter {
           secrets: await secretsToRecord(projectSecrets, this.opResolver),
           muxEnv,
           runtimeTempDir,
-          ...(imageGenerationExperimentEnabled
-            ? {
-                imageGenerationRuntime: {
-                  modelString: cfg.imageGeneration?.modelString ?? DEFAULT_IMAGE_GENERATION_MODEL,
-                  maxImagesPerCall:
-                    cfg.imageGeneration?.maxImagesPerCall ?? DEFAULT_IMAGE_GENERATION_MAX_IMAGES,
-                  createImageModel: (ms: string) => this.providerModelFactory.createImageModel(ms),
-                },
-              }
-            : {}),
-          imageEditingEnabled,
           ...(advisorToolEligible
             ? {
                 advisorRuntime: {

@@ -410,29 +410,6 @@ describe("TOOL_DEFINITIONS", () => {
     expect(tools).toContain("skills_catalog_read");
   });
 
-  it("includes image_generate only when image generation is enabled", () => {
-    expect(getAvailableTools("openai:gpt-5")).not.toContain("image_generate");
-    expect(getAvailableTools("openai:gpt-5", { enableImageGeneration: true })).toContain(
-      "image_generate"
-    );
-  });
-
-  it("includes image_edit only when image tools and upload consent are both enabled", () => {
-    expect(getAvailableTools("openai:gpt-5")).not.toContain("image_edit");
-    expect(getAvailableTools("openai:gpt-5", { enableImageEditing: true })).not.toContain(
-      "image_edit"
-    );
-    expect(getAvailableTools("openai:gpt-5", { enableImageGeneration: true })).not.toContain(
-      "image_edit"
-    );
-    expect(
-      getAvailableTools("openai:gpt-5", {
-        enableImageGeneration: true,
-        enableImageEditing: true,
-      })
-    ).toContain("image_edit");
-  });
-
   it("agent_skill_write schema rejects an advertise tool argument (advertise is authored in content)", () => {
     const parsed = TOOL_DEFINITIONS.agent_skill_write.schema.safeParse({
       name: "demo-skill",

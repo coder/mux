@@ -252,7 +252,6 @@ describe("agentSkillsService", () => {
     expect(skills.map((s) => s.name)).toEqual([
       "bar",
       "foo",
-      "imagegen",
       "init",
       "mux-diagram",
       "mux-docs",
@@ -659,7 +658,6 @@ describe("agentSkillsService", () => {
 
     expect(diagnostics.skills.map((s) => s.name)).toEqual([
       "foo",
-      "imagegen",
       "init",
       "mux-diagram",
       "mux-docs",

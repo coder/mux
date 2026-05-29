@@ -5,11 +5,7 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { getErrorMessage } from "@/common/utils/errors";
 import { SkillNameSchema } from "@/common/orpc/schemas";
-import {
-  IMAGEGEN_SKILL_DISABLED_MESSAGE,
-  isBuiltInImagegenSkillUnavailable,
-  readAgentSkill,
-} from "@/node/services/agentSkills/agentSkillsService";
+import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import { MAX_FILE_SIZE, validateFileSize } from "@/node/services/tools/fileCommon";
 import { readBuiltInSkillFile } from "@/node/services/agentSkills/builtInSkillDefinitions";
@@ -144,18 +140,6 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
             containment: skillCtx.containment,
           }
         );
-
-        if (
-          isBuiltInImagegenSkillUnavailable(
-            resolvedSkill.package,
-            config.imageGenerationRuntime != null
-          )
-        ) {
-          return {
-            success: false,
-            error: IMAGEGEN_SKILL_DISABLED_MESSAGE,
-          };
-        }
 
         // Built-in skills are embedded in the app bundle (no filesystem access).
         if (resolvedSkill.package.scope === "built-in") {

@@ -43,10 +43,6 @@ import {
 } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import {
-  normalizeImageGenerationConfig,
-  type ImageGenerationConfig,
-} from "@/common/types/imageGeneration";
-import {
   DEFAULT_TASK_SETTINGS,
   normalizeSubagentAiDefaults,
   normalizeTaskSettings,
@@ -144,8 +140,6 @@ export interface MockORPCClientOptions {
   heartbeatDefaultPrompt?: string;
   /** Initial global heartbeat default interval for config.getConfig */
   heartbeatDefaultIntervalMs?: number;
-  /** Initial image generation config for config.getConfig */
-  imageGeneration?: Partial<ImageGenerationConfig>;
   /** Initial global goal defaults for config.getConfig */
   goalDefaults?: GoalDefaults;
   /**
@@ -377,7 +371,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     onePasswordAccountName: initialOnePasswordAccountName = null,
     heartbeatDefaultPrompt: initialHeartbeatDefaultPrompt,
     heartbeatDefaultIntervalMs: initialHeartbeatDefaultIntervalMs,
-    imageGeneration: initialImageGeneration,
     goalDefaults: initialGoalDefaults,
     goalBoardSnapshots = new Map<string, GoalBoardSnapshot>(),
     routePriority: initialRoutePriority = ["direct"],
@@ -514,7 +507,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let onePasswordAccountName: string | null = initialOnePasswordAccountName;
   let heartbeatDefaultPrompt = initialHeartbeatDefaultPrompt;
   let heartbeatDefaultIntervalMs = initialHeartbeatDefaultIntervalMs;
-  let imageGeneration = normalizeImageGenerationConfig(initialImageGeneration);
   let goalDefaults = normalizeGoalDefaults(initialGoalDefaults ?? DEFAULT_GOAL_DEFAULTS);
   let routePriority = [...initialRoutePriority];
   let routeOverrides = { ...initialRouteOverrides };
@@ -708,7 +700,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           onePasswordAccountName,
           heartbeatDefaultPrompt,
           heartbeatDefaultIntervalMs,
-          imageGeneration,
           goalDefaults,
           chatTranscriptFullWidth,
           muxGovernorEnrolled,
@@ -810,11 +801,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       updateHeartbeatDefaultIntervalMs: (input: { intervalMs?: number | null }) => {
         heartbeatDefaultIntervalMs = input.intervalMs ?? undefined;
-        notifyConfigChanged();
-        return Promise.resolve(undefined);
-      },
-      updateImageGenerationConfig: (input: { imageGeneration: ImageGenerationConfig }) => {
-        imageGeneration = normalizeImageGenerationConfig(input.imageGeneration);
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },

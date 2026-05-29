@@ -81,7 +81,6 @@ async function buildSystemContextForTest(args: {
   isSubagentWorkspace: boolean;
   effectiveAdditionalInstructions?: string;
   planFilePath?: string;
-  imageGenerationToolAvailable?: boolean;
 }) {
   return buildStreamSystemContext({
     runtime: args.runtime,
@@ -97,7 +96,6 @@ async function buildSystemContextForTest(args: {
     cfg: args.cfg,
     providersConfig: null,
     mcpServers: {},
-    imageGenerationToolAvailable: args.imageGenerationToolAvailable,
   });
 }
 
@@ -238,98 +236,6 @@ describe("buildPlanInstructions", () => {
 });
 
 describe("buildStreamSystemContext", () => {
-  test("omits built-in imagegen skill when image generation tool is unavailable", async () => {
-    using tempRoot = new DisposableTempDir("stream-system-context");
-
-    const projectPath = path.join(tempRoot.path, "project");
-    const muxHome = path.join(tempRoot.path, "mux-home");
-    await fs.mkdir(projectPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
-
-    const metadata = createWorkspaceMetadata({
-      id: "top-level-ws",
-      name: "top-level-workspace",
-      projectName: "project",
-      projectPath,
-    });
-    const cfg = createProjectsConfig({
-      projectPath,
-      workspaces: [{ id: metadata.id, name: metadata.name }],
-    });
-
-    const result = await buildSystemContextForTest({
-      runtime: new TestRuntime(projectPath, muxHome),
-      metadata,
-      workspacePath: projectPath,
-      cfg,
-      isSubagentWorkspace: false,
-      imageGenerationToolAvailable: false,
-    });
-
-    expect(result.availableSkills?.some((skill) => skill.name === "imagegen")).toBe(false);
-  });
-
-  test("omits built-in imagegen skill by default", async () => {
-    using tempRoot = new DisposableTempDir("stream-system-context");
-
-    const projectPath = path.join(tempRoot.path, "project");
-    const muxHome = path.join(tempRoot.path, "mux-home");
-    await fs.mkdir(projectPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
-
-    const metadata = createWorkspaceMetadata({
-      id: "top-level-ws",
-      name: "top-level-workspace",
-      projectName: "project",
-      projectPath,
-    });
-    const cfg = createProjectsConfig({
-      projectPath,
-      workspaces: [{ id: metadata.id, name: metadata.name }],
-    });
-
-    const result = await buildSystemContextForTest({
-      runtime: new TestRuntime(projectPath, muxHome),
-      metadata,
-      workspacePath: projectPath,
-      cfg,
-      isSubagentWorkspace: false,
-    });
-
-    expect(result.availableSkills?.some((skill) => skill.name === "imagegen")).toBe(false);
-  });
-
-  test("includes built-in imagegen skill when image generation tool is available", async () => {
-    using tempRoot = new DisposableTempDir("stream-system-context");
-
-    const projectPath = path.join(tempRoot.path, "project");
-    const muxHome = path.join(tempRoot.path, "mux-home");
-    await fs.mkdir(projectPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
-
-    const metadata = createWorkspaceMetadata({
-      id: "top-level-ws",
-      name: "top-level-workspace",
-      projectName: "project",
-      projectPath,
-    });
-    const cfg = createProjectsConfig({
-      projectPath,
-      workspaces: [{ id: metadata.id, name: metadata.name }],
-    });
-
-    const result = await buildSystemContextForTest({
-      runtime: new TestRuntime(projectPath, muxHome),
-      metadata,
-      workspacePath: projectPath,
-      cfg,
-      isSubagentWorkspace: false,
-      imageGenerationToolAvailable: true,
-    });
-
-    expect(result.availableSkills?.some((skill) => skill.name === "imagegen")).toBe(true);
-  });
-
   test("includes the direct parent plan path ahead of caller instructions", async () => {
     using tempRoot = new DisposableTempDir("stream-system-context");
 

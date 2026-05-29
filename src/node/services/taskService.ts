@@ -138,7 +138,6 @@ export interface TaskCreateArgs {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
     advisorTool?: boolean;
-    imageGenerationTool?: boolean;
     execSubagentHardRestart?: boolean;
   };
 }

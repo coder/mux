@@ -5,12 +5,7 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import { getErrorMessage } from "@/common/utils/errors";
-import {
-  filterUnavailableImagegenSkills,
-  IMAGEGEN_SKILL_DISABLED_MESSAGE,
-  isBuiltInImagegenSkillUnavailable,
-  readAgentSkill,
-} from "@/node/services/agentSkills/agentSkillsService";
+import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 
 /**
@@ -22,10 +17,7 @@ function buildSkillReadDescription(config: ToolConfiguration): string {
   const baseDescription = TOOL_DEFINITIONS.agent_skill_read.description;
   // Filter out unadvertised skills from the tool description.
   // Unadvertised skills can still be invoked via /skill-name or agent_skill_read.
-  const skills = filterUnavailableImagegenSkills(
-    config.availableSkills ?? [],
-    config.imageGenerationRuntime != null
-  ).filter((s) => s.advertise !== false);
+  const skills = (config.availableSkills ?? []).filter((s) => s.advertise !== false);
 
   if (skills.length === 0) {
     return baseDescription;
@@ -88,15 +80,6 @@ export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration)
             containment: skillCtx.containment,
           }
         );
-        if (
-          isBuiltInImagegenSkillUnavailable(resolved.package, config.imageGenerationRuntime != null)
-        ) {
-          return {
-            success: false,
-            error: IMAGEGEN_SKILL_DISABLED_MESSAGE,
-          };
-        }
-
         return {
           success: true,
           skill: resolved.package,

@@ -20,7 +20,6 @@ import {
   resolveAIProviderHeaderSource,
   resolveOpenAIWebSocketResponsesUrl,
   wrapFetchWithAnthropicCacheControl,
-  wrapFetchWithOpenAIImageResponseNormalization,
 } from "./providerModelFactory";
 import { MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER } from "@/common/utils/ai/providerOptions";
 import { hasLanguageModelCleanup } from "./languageModelCleanup";
@@ -227,90 +226,6 @@ describe("normalizeCodexResponsesBody", () => {
 
     expect(normalized.truncation).toBeUndefined();
     expect(normalized.store).toBe(false);
-  });
-});
-
-describe("wrapFetchWithOpenAIImageResponseNormalization", () => {
-  it("normalizes successful binary OpenAI image edit responses into AI SDK JSON", async () => {
-    const pngBytes = Buffer.from("tiny-png-bytes");
-    const calls: Array<{
-      input: Parameters<typeof fetch>[0];
-      init?: Parameters<typeof fetch>[1];
-    }> = [];
-    const baseFetch = Object.assign(
-      (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-        calls.push({ input, init });
-        return Promise.resolve(
-          new Response(pngBytes, {
-            status: 200,
-            statusText: "OK",
-            headers: {
-              "content-type": "image/png",
-              "content-length": String(pngBytes.length),
-            },
-          })
-        );
-      },
-      fetch
-    ) as typeof fetch;
-    const wrappedFetch = wrapFetchWithOpenAIImageResponseNormalization(baseFetch);
-    const form = new FormData();
-    form.set("model", "gpt-image-2");
-    form.set("n", "1");
-    form.set("output_format", "png");
-
-    const response = await wrappedFetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      body: form,
-    });
-
-    expect(calls).toHaveLength(1);
-    expect(response.headers.get("content-type")).toContain("application/json");
-    expect(response.headers.get("content-length")).toBeNull();
-    const body = (await response.json()) as {
-      created: number;
-      output_format: string;
-      data: Array<{ b64_json: string }>;
-    };
-    expect(Number.isInteger(body.created)).toBe(true);
-    expect(body.output_format).toBe("png");
-    expect(body.data).toEqual([{ b64_json: pngBytes.toString("base64") }]);
-  });
-
-  it("adds filenames to OpenAI image edit uploads before sending multipart requests", async () => {
-    let capturedImage: FormDataEntryValue | null = null;
-    const baseFetch = Object.assign(
-      (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-        if (init?.body instanceof FormData) {
-          capturedImage = init.body.get("image");
-        }
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({ data: [{ b64_json: Buffer.from("png").toString("base64") }] }),
-            {
-              status: 200,
-              headers: { "content-type": "application/json" },
-            }
-          )
-        );
-      },
-      fetch
-    ) as typeof fetch;
-    const wrappedFetch = wrapFetchWithOpenAIImageResponseNormalization(baseFetch);
-    const form = new FormData();
-    form.set("model", "gpt-image-1.5");
-    form.set("prompt", "make it blue");
-    form.set("image", new Blob([Buffer.from("png")], { type: "image/png" }));
-
-    await wrappedFetch("https://api.openai.com/v1/images/edits", {
-      method: "POST",
-      body: form,
-    });
-
-    if (capturedImage == null || typeof capturedImage === "string") {
-      throw new Error("Expected OpenAI image edit upload to be a file-like object");
-    }
-    expect((capturedImage as { name?: unknown }).name).toBe("image.png");
   });
 });
 
@@ -555,86 +470,6 @@ describe("ProviderModelFactory.createModel", () => {
         });
       }
     });
-  });
-});
-
-describe("ProviderModelFactory.createImageModel", () => {
-  it("creates an OpenAI image model when credentials are configured", async () => {
-    await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({ openai: { apiKey: "sk-test" } });
-
-      const result = await factory.createImageModel("openai:gpt-image-1.5");
-
-      expect(result.success).toBe(true);
-    });
-  });
-
-  it("rejects non-OpenAI image providers in v1", async () => {
-    await withTempConfig(async (_config, factory) => {
-      const result = await factory.createImageModel("google:imagen-test");
-
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toEqual({ type: "provider_not_supported", provider: "google" });
-      }
-    });
-  });
-
-  it("returns api_key_not_found when OpenAI credentials are missing", async () => {
-    const savedApiKey = process.env.OPENAI_API_KEY;
-    delete process.env.OPENAI_API_KEY;
-    try {
-      await withOpenAIBaseUrlEnvUnset(async () => {
-        await withTempConfig(async (_config, factory) => {
-          const result = await factory.createImageModel("openai:gpt-image-1.5");
-
-          expect(result.success).toBe(false);
-          if (!result.success) {
-            expect(result.error).toEqual({ type: "api_key_not_found", provider: "openai" });
-          }
-        });
-      });
-    } finally {
-      if (savedApiKey === undefined) {
-        delete process.env.OPENAI_API_KEY;
-      } else {
-        process.env.OPENAI_API_KEY = savedApiKey;
-      }
-    }
-  });
-
-  it("returns provider_disabled when OpenAI is disabled", async () => {
-    await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({ openai: { apiKey: "sk-test", enabled: false } });
-
-      const result = await factory.createImageModel("openai:gpt-image-1.5");
-
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toEqual({ type: "provider_disabled", provider: "openai" });
-      }
-    });
-  });
-
-  it("enforces provider and model policy for image models", async () => {
-    await withTempPolicyProviderFactory(
-      {
-        policy_format_version: "0.1",
-        provider_access: [{ id: "openai", model_access: ["gpt-image-1-mini"] }],
-      },
-      async (config, factory) => {
-        config.saveProvidersConfig({ openai: { apiKey: "sk-test" } });
-
-        const denied = await factory.createImageModel("openai:gpt-image-1.5");
-        expect(denied.success).toBe(false);
-        if (!denied.success) {
-          expect(denied.error.type).toBe("policy_denied");
-        }
-
-        const allowed = await factory.createImageModel("openai:gpt-image-1-mini");
-        expect(allowed.success).toBe(true);
-      }
-    );
   });
 });
 

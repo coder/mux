@@ -1,4 +1,4 @@
-import { type ImageModel, type LanguageModel, type Tool } from "ai";
+import { type LanguageModel, type Tool } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
@@ -11,8 +11,6 @@ import { createFileEditReplaceStringTool } from "@/node/services/tools/file_edit
 // DISABLED: import { createFileEditReplaceLinesTool } from "@/node/services/tools/file_edit_replace_lines";
 import { createFileEditInsertTool } from "@/node/services/tools/file_edit_insert";
 import { createAskUserQuestionTool } from "@/node/services/tools/ask_user_question";
-import { createImageGenerateTool } from "@/node/services/tools/image_generate";
-import { createImageEditTool } from "@/node/services/tools/image_edit";
 import { createAdvisorTool } from "@/node/services/tools/advisor";
 import { createProposePlanTool } from "@/node/services/tools/propose_plan";
 import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/todo";
@@ -59,11 +57,9 @@ import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessi
 import type { TaskService } from "@/node/services/taskService";
 import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
-import type { SendMessageError } from "@/common/types/errors";
 import type { FileState } from "@/node/services/agentSession";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
-import type { Result } from "@/common/types/result";
 import type { ModelMessage } from "@/common/types/message";
 import type { ProjectRef } from "@/common/types/workspace";
 
@@ -156,7 +152,6 @@ export interface ToolConfiguration {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
     advisorTool?: boolean;
-    imageGenerationTool?: boolean;
     execSubagentHardRestart?: boolean;
   };
   /** Available sub-agents for the task tool description (dynamic context) */
@@ -169,17 +164,6 @@ export interface ToolConfiguration {
   analyticsService?: {
     executeRawQuery(sql: string): Promise<unknown>;
   };
-  /** Runtime bundle for image tools (present only when the experiment is enabled). */
-  imageGenerationRuntime?: {
-    /** Configured image model string (e.g. "openai:gpt-image-2"). */
-    modelString: string;
-    /** Per-call image count cap configured by the user. */
-    maxImagesPerCall: number;
-    /** Creates an AI SDK image model for the configured image model string. */
-    createImageModel: (modelString: string) => Promise<Result<ImageModel, SendMessageError>>;
-  };
-  /** Whether image upload consent permits registering the image editing tool. */
-  imageEditingEnabled?: boolean;
   /** Runtime bundle for the advisor tool (present only when advisor is eligible for this stream). */
   advisorRuntime?: {
     /** The advisor model string (e.g. "anthropic:claude-sonnet-4-20250514") */
@@ -421,12 +405,6 @@ export async function getToolsForModel(
   // Runtime-dependent tools need to wait for workspace initialization
   // Wrap them to handle init waiting centrally instead of in each tool
   const runtimeTools: Record<string, Tool> = {
-    ...(config.imageGenerationRuntime
-      ? { image_generate: wrap(createImageGenerateTool(config)) }
-      : {}),
-    ...(config.imageEditingEnabled && config.imageGenerationRuntime
-      ? { image_edit: wrap(createImageEditTool(config)) }
-      : {}),
     file_read: wrap(createFileReadTool(config)),
     attach_file: wrap(createAttachFileTool(config)),
     agent_skill_read: wrap(createAgentSkillReadTool(config)),
@@ -589,8 +567,6 @@ export async function getToolsForModel(
       enableAgentReport: config.enableAgentReport,
       enableAnalyticsQuery: Boolean(config.analyticsService),
       enableAdvisor: Boolean(config.advisorRuntime),
-      enableImageGeneration: Boolean(config.imageGenerationRuntime),
-      enableImageEditing: Boolean(config.imageGenerationRuntime && config.imageEditingEnabled),
       // Mux global tools are always created; tool policy (agent frontmatter)
       // controls which agents can actually use them.
       enableMuxGlobalAgentsTools: true,

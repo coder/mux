@@ -18,7 +18,6 @@ import type { TaskSettings, SubagentAiDefaults } from "./tasks";
 import type { LayoutPresetsConfig } from "./uiLayouts";
 import type { ThinkingLevel } from "./thinking";
 import type { GoalDefaults } from "@/constants/goals";
-import type { ImageGenerationConfig } from "./imageGeneration";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
@@ -114,8 +113,6 @@ export interface ProjectsConfig {
   advisorMaxUsesPerTurn?: number | null;
   /** Positive max-output-tokens cap for advisor responses; null/undefined means unlimited. */
   advisorMaxOutputTokens?: number | null;
-  /** Global image-generation defaults for the experimental image generation tool. */
-  imageGeneration?: ImageGenerationConfig;
   /**
    * Hidden model IDs (shared via ~/.mux/config.json).
    * Mirrors the browser localStorage cache (HIDDEN_MODELS_KEY).

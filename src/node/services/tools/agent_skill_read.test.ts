@@ -148,30 +148,6 @@ describe("agent_skill_read", () => {
     }
   });
 
-  it("blocks the built-in imagegen skill when the image generation tool is unavailable", async () => {
-    using tempDir = new TestTempDir("test-agent-skill-read-imagegen-disabled");
-    const baseConfig = createTestToolConfig(tempDir.path, {
-      workspaceId: GLOBAL_WORKSPACE_ID,
-    });
-
-    const tool = createAgentSkillReadTool(baseConfig);
-
-    const raw: unknown = await Promise.resolve(
-      tool.execute!({ name: "imagegen" }, mockToolCallOptions)
-    );
-
-    const parsed = AgentSkillReadToolResultSchema.safeParse(raw);
-    expect(parsed.success).toBe(true);
-    if (!parsed.success) {
-      throw new Error(parsed.error.message);
-    }
-
-    expect(parsed.data.success).toBe(false);
-    if (!parsed.data.success) {
-      expect(parsed.data.error).toContain("Image Tools experiment");
-    }
-  });
-
   it("allows reading global skills on disk in global-scope workspace", async () => {
     using tempDir = new TestTempDir("test-agent-skill-read-global");
     const previousMuxRoot = process.env.MUX_ROOT;

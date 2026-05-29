@@ -91,50 +91,6 @@ function streamError(id: string, historyId: string): DisplayedMessage & { type: 
   };
 }
 
-function generatedImage(
-  id: string,
-  historyId: string
-): DisplayedMessage & { type: "generated-image" } {
-  return {
-    type: "generated-image",
-    id,
-    historyId,
-    toolCallId: `call-${id}`,
-    prompt: "Draw a chart",
-    model: "image-model",
-    images: [{ path: "/tmp/chart.png", filename: "chart.png", mediaType: "image/png" }],
-    historySequence: 1,
-    isPartial: false,
-  };
-}
-
-function editedImage(id: string, historyId: string): DisplayedMessage & { type: "edited-image" } {
-  return {
-    type: "edited-image",
-    id,
-    historyId,
-    toolCallId: `call-${id}`,
-    prompt: "Adjust the chart",
-    model: "image-model",
-    source: {
-      path: "/tmp/chart.png",
-      resolvedPath: "/tmp/chart.png",
-      sizeBytes: 100,
-      dimensions: { width: 10, height: 10 },
-    },
-    images: [
-      {
-        path: "/tmp/chart-edited.png",
-        filename: "chart-edited.png",
-        mediaType: "image/png",
-        outputDimensions: { width: 10, height: 10 },
-      },
-    ],
-    historySequence: 1,
-    isPartial: false,
-  };
-}
-
 function planDisplay(id: string, historyId: string): DisplayedMessage & { type: "plan-display" } {
   return {
     type: "plan-display",
@@ -531,14 +487,12 @@ describe("work bundle coalescing", () => {
     expect(infos[5]).toMatchObject({ key: "work:search-1", position: "final" });
   });
 
-  test("keeps visible artifacts and stream errors out of work bundles", () => {
+  test("keeps stream errors and plan displays out of work bundles", () => {
     const historyId = "history-a1";
     const messages = [
       reasoning({ id: "think-1", historyId }),
       tool({ id: "read-1", historyId }),
       streamError("error-1", historyId),
-      generatedImage("generated-1", historyId),
-      editedImage("edited-1", historyId),
       planDisplay("plan-1", historyId),
     ];
 

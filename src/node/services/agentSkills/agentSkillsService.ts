@@ -27,47 +27,6 @@ import { AgentSkillParseError, parseSkillMarkdown } from "./parseSkillMarkdown";
 import { getBuiltInSkillByName, getBuiltInSkillDescriptors } from "./builtInSkillDefinitions";
 import type { ProjectSkillContainment } from "./skillStorageContext";
 
-export const IMAGEGEN_BUILT_IN_SKILL_NAME = "imagegen" satisfies SkillName;
-
-export const IMAGEGEN_SKILL_DISABLED_MESSAGE =
-  "Built-in imagegen skill is only available when the Image Tools experiment is enabled.";
-
-export function isBuiltInImagegenSkill(
-  skill: Pick<AgentSkillDescriptor, "name" | "scope">
-): boolean {
-  return skill.scope === "built-in" && skill.name === IMAGEGEN_BUILT_IN_SKILL_NAME;
-}
-
-export function isBuiltInImagegenSkillPackage(skillPackage: AgentSkillPackage): boolean {
-  return (
-    skillPackage.scope === "built-in" &&
-    skillPackage.frontmatter.name === IMAGEGEN_BUILT_IN_SKILL_NAME
-  );
-}
-
-export function filterUnavailableImagegenSkills<
-  T extends Pick<AgentSkillDescriptor, "name" | "scope">,
->(skills: T[], imageGenerationToolAvailable: boolean | undefined): T[] {
-  if (imageGenerationToolAvailable === true) {
-    return skills;
-  }
-
-  return skills.filter((skill) => !isBuiltInImagegenSkill(skill));
-}
-
-/**
- * True iff the resolved skill package is the built-in imagegen skill AND the
- * image generation tool is not currently available. Centralizes the
- * "is-imagegen + experiment-off" check used by tools/services that need to
- * refuse loading the built-in skill when the tool is gated off.
- */
-export function isBuiltInImagegenSkillUnavailable(
-  skillPackage: AgentSkillPackage,
-  imageGenerationToolAvailable: boolean | undefined
-): boolean {
-  return isBuiltInImagegenSkillPackage(skillPackage) && imageGenerationToolAvailable !== true;
-}
-
 const UNIVERSAL_SKILLS_ROOT = "~/.agents/skills";
 
 export interface AgentSkillsRoots {

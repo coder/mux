@@ -23,8 +23,6 @@ import type {
   MuxAgentsWriteToolResultSchema,
   FileReadToolResultSchema,
   AttachFileToolResultSchema,
-  ImageGenerateToolResultSchema,
-  ImageEditToolResultSchema,
   TaskToolResultSchema,
   TaskAwaitToolResultSchema,
   TaskApplyGitPatchToolResultSchema,
@@ -39,14 +37,6 @@ export type BashToolArgs = z.infer<typeof TOOL_DEFINITIONS.bash.schema>;
 
 // BashToolResult derived from Zod schema (single source of truth)
 export type BashToolResult = z.infer<typeof BashToolResultSchema>;
-
-// Image generation tool types, derived from schema (avoid drift)
-export type ImageGenerateToolArgs = z.infer<typeof TOOL_DEFINITIONS.image_generate.schema>;
-export type ImageGenerateToolResult = z.infer<typeof ImageGenerateToolResultSchema>;
-
-// Image edit tool types, derived from schema (avoid drift)
-export type ImageEditToolArgs = z.infer<typeof TOOL_DEFINITIONS.image_edit.schema>;
-export type ImageEditToolResult = z.infer<typeof ImageEditToolResultSchema>;
 
 // File Read Tool Types, derived from schema (avoid drift)
 export type FileReadToolArgs = z.infer<typeof TOOL_DEFINITIONS.file_read.schema>;

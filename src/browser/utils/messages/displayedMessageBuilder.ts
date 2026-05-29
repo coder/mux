@@ -8,12 +8,6 @@ import type {
 } from "@/common/types/message";
 import { getCompactionFollowUpContent } from "@/common/types/message";
 import type { StreamErrorType } from "@/common/types/errors";
-import { extractHookOutput } from "@/common/utils/tools/hookOutput";
-import type { ImageEditToolResult, ImageGenerateToolResult } from "@/common/types/tools";
-import {
-  ImageEditToolResultSchema,
-  ImageGenerateToolResultSchema,
-} from "@/common/utils/tools/toolDefinitions";
 import { GOAL_BUDGET_LIMIT_KIND, GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import { getFollowUpContentText } from "@/browser/utils/compaction/format";
 import { getGoalClearedSummaryDisplayText } from "@/common/utils/goalClearedSummaryDisplay";
@@ -27,87 +21,6 @@ import {
   isSideQuestionAnswerMessage,
   isSideQuestionUserMessage,
 } from "@/common/utils/messages/sideQuestion";
-
-function isSuccessfulImageGenerateResult(
-  result: unknown
-): result is Extract<ImageGenerateToolResult, { success: true }> {
-  const parsed = ImageGenerateToolResultSchema.safeParse(result);
-  return parsed.success && parsed.data.success;
-}
-
-function isSuccessfulImageEditResult(
-  result: unknown
-): result is Extract<ImageEditToolResult, { success: true }> {
-  const parsed = ImageEditToolResultSchema.safeParse(result);
-  return parsed.success && parsed.data.success;
-}
-
-function hasVisibleHookOutput(result: unknown): boolean {
-  return extractHookOutput(result) !== null;
-}
-
-function appendGeneratedImageMessage(
-  displayedMessages: DisplayedMessage[],
-  options: {
-    id: string;
-    historyId: string;
-    toolCallId: string;
-    output: Extract<ImageGenerateToolResult, { success: true }>;
-    isPartial: boolean;
-    historySequence: number;
-    streamSequence: number;
-    isLastPartOfMessage: boolean;
-    timestamp?: number;
-  }
-): void {
-  displayedMessages.push({
-    type: "generated-image",
-    id: options.id,
-    historyId: options.historyId,
-    toolCallId: options.toolCallId,
-    prompt: options.output.prompt,
-    model: options.output.model,
-    images: options.output.images,
-    warnings: options.output.warnings,
-    isPartial: options.isPartial,
-    historySequence: options.historySequence,
-    streamSequence: options.streamSequence,
-    isLastPartOfMessage: options.isLastPartOfMessage,
-    timestamp: options.timestamp,
-  });
-}
-
-function appendEditedImageMessage(
-  displayedMessages: DisplayedMessage[],
-  options: {
-    id: string;
-    historyId: string;
-    toolCallId: string;
-    output: Extract<ImageEditToolResult, { success: true }>;
-    isPartial: boolean;
-    historySequence: number;
-    streamSequence: number;
-    isLastPartOfMessage: boolean;
-    timestamp?: number;
-  }
-): void {
-  displayedMessages.push({
-    type: "edited-image",
-    id: options.id,
-    historyId: options.historyId,
-    toolCallId: options.toolCallId,
-    prompt: options.output.prompt,
-    model: options.output.model,
-    source: options.output.source,
-    images: options.output.images,
-    warnings: options.output.warnings,
-    isPartial: options.isPartial,
-    historySequence: options.historySequence,
-    streamSequence: options.streamSequence,
-    isLastPartOfMessage: options.isLastPartOfMessage,
-    timestamp: options.timestamp,
-  });
-}
 
 /**
  * Check if a tool result indicates success (for tools that return { success: boolean })
@@ -550,112 +463,6 @@ function getNestedCallsForDisplay(part: DynamicToolPart): NestedToolCalls | unde
   return part.nestedCalls ?? reconstructCodeExecutionNestedCalls(part);
 }
 
-type NestedImageMessage =
-  | {
-      kind: "generated";
-      nestedCall: {
-        toolCallId: string;
-        timestamp?: number;
-        output: Extract<ImageGenerateToolResult, { success: true }>;
-      };
-    }
-  | {
-      kind: "edited";
-      nestedCall: {
-        toolCallId: string;
-        timestamp?: number;
-        output: Extract<ImageEditToolResult, { success: true }>;
-      };
-    };
-
-function collectNestedImageMessages(
-  nestedCalls: NestedToolCalls | undefined
-): NestedImageMessage[] {
-  const nestedImageMessages: NestedImageMessage[] = [];
-  if (!nestedCalls) {
-    return nestedImageMessages;
-  }
-
-  for (const nestedCall of nestedCalls) {
-    if (
-      nestedCall.toolName === "image_generate" &&
-      nestedCall.state === "output-available" &&
-      !hasVisibleHookOutput(nestedCall.output) &&
-      isSuccessfulImageGenerateResult(nestedCall.output)
-    ) {
-      nestedImageMessages.push({
-        kind: "generated",
-        nestedCall: {
-          toolCallId: nestedCall.toolCallId,
-          timestamp: nestedCall.timestamp,
-          output: nestedCall.output,
-        },
-      });
-      continue;
-    }
-    if (
-      nestedCall.toolName === "image_edit" &&
-      nestedCall.state === "output-available" &&
-      !hasVisibleHookOutput(nestedCall.output) &&
-      isSuccessfulImageEditResult(nestedCall.output)
-    ) {
-      nestedImageMessages.push({
-        kind: "edited",
-        nestedCall: {
-          toolCallId: nestedCall.toolCallId,
-          timestamp: nestedCall.timestamp,
-          output: nestedCall.output,
-        },
-      });
-    }
-  }
-
-  return nestedImageMessages;
-}
-
-function appendNestedImageRows(
-  displayedMessages: DisplayedMessage[],
-  options: {
-    message: MuxMessage;
-    part: DynamicToolPart;
-    partIndex: number;
-    nestedImageMessages: NestedImageMessage[];
-    isPartial: boolean;
-    historySequence: number;
-    isLastPartOfMessage: boolean;
-    baseTimestamp?: number;
-    nextStreamSequence: () => number;
-  }
-): void {
-  options.nestedImageMessages.forEach(({ kind, nestedCall }, nestedIndex) => {
-    const isLastNestedImage = nestedIndex === options.nestedImageMessages.length - 1;
-    const common = {
-      historyId: options.message.id,
-      toolCallId: nestedCall.toolCallId,
-      isPartial: options.isPartial,
-      historySequence: options.historySequence,
-      streamSequence: options.nextStreamSequence(),
-      isLastPartOfMessage: options.isLastPartOfMessage && isLastNestedImage,
-      timestamp: nestedCall.timestamp ?? options.part.timestamp ?? options.baseTimestamp,
-    };
-
-    if (kind === "generated") {
-      appendGeneratedImageMessage(displayedMessages, {
-        ...common,
-        id: `${options.message.id}-${options.partIndex}-nested-image-${nestedIndex}`,
-        output: nestedCall.output,
-      });
-      return;
-    }
-
-    appendEditedImageMessage(displayedMessages, {
-      ...common,
-      id: `${options.message.id}-${options.partIndex}-nested-edited-image-${nestedIndex}`,
-      output: nestedCall.output,
-    });
-  });
-}
-
 function appendToolRows(
   displayedMessages: DisplayedMessage[],
   options: {
@@ -672,58 +479,6 @@ function appendToolRows(
   const { message, part } = options;
   const status = getToolDisplayStatus(part, options.isPartial);
   const nestedCalls = getNestedCallsForDisplay(part);
-  const nestedImageMessages = options.isPartial ? [] : collectNestedImageMessages(nestedCalls);
-  const nestedImageMessageIds = new Set(
-    nestedImageMessages.map(({ nestedCall }) => nestedCall.toolCallId)
-  );
-  const nestedCallsForToolRow = nestedCalls?.filter(
-    (nestedCall) => !nestedImageMessageIds.has(nestedCall.toolCallId)
-  );
-
-  if (
-    part.toolName === "image_generate" &&
-    part.state === "output-available" &&
-    status === "completed" &&
-    !options.isPartial &&
-    !hasVisibleHookOutput(part.output) &&
-    isSuccessfulImageGenerateResult(part.output)
-  ) {
-    appendGeneratedImageMessage(displayedMessages, {
-      id: `${message.id}-${options.partIndex}`,
-      historyId: message.id,
-      toolCallId: part.toolCallId,
-      output: part.output,
-      isPartial: options.isPartial,
-      historySequence: options.historySequence,
-      streamSequence: options.nextStreamSequence(),
-      isLastPartOfMessage: options.isLastPartOfMessage,
-      timestamp: part.timestamp ?? options.baseTimestamp,
-    });
-    return;
-  }
-
-  if (
-    part.toolName === "image_edit" &&
-    part.state === "output-available" &&
-    status === "completed" &&
-    !options.isPartial &&
-    !hasVisibleHookOutput(part.output) &&
-    isSuccessfulImageEditResult(part.output)
-  ) {
-    appendEditedImageMessage(displayedMessages, {
-      id: `${message.id}-${options.partIndex}`,
-      historyId: message.id,
-      toolCallId: part.toolCallId,
-      output: part.output,
-      isPartial: options.isPartial,
-      historySequence: options.historySequence,
-      streamSequence: options.nextStreamSequence(),
-      isLastPartOfMessage: options.isLastPartOfMessage,
-      timestamp: part.timestamp ?? options.baseTimestamp,
-    });
-    return;
-  }
-
   displayedMessages.push({
     type: "tool",
     id: `${message.id}-${options.partIndex}`,
@@ -736,14 +491,9 @@ function appendToolRows(
     isPartial: options.isPartial,
     historySequence: options.historySequence,
     streamSequence: options.nextStreamSequence(),
-    isLastPartOfMessage: options.isLastPartOfMessage && nestedImageMessages.length === 0,
+    isLastPartOfMessage: options.isLastPartOfMessage,
     timestamp: part.timestamp ?? options.baseTimestamp,
-    nestedCalls: nestedCallsForToolRow,
-  });
-
-  appendNestedImageRows(displayedMessages, {
-    ...options,
-    nestedImageMessages,
+    nestedCalls,
   });
 }
 

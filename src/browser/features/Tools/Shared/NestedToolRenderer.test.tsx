@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
+import { TooltipProvider } from "@radix-ui/react-tooltip";
 
 import { NestedToolRenderer } from "./NestedToolRenderer";
 
@@ -23,12 +24,14 @@ afterEach(() => {
 describe("NestedToolRenderer", () => {
   test("renders hook output for nested tool results", () => {
     const { getByText } = render(
-      <NestedToolRenderer
-        toolName="image_generate"
-        input={{ prompt: "square" }}
-        output={{ success: true, hook_output: "post hook ran", hook_duration_ms: 42 }}
-        status="completed"
-      />
+      <TooltipProvider>
+        <NestedToolRenderer
+          toolName="bash"
+          input={{ script: "echo hook" }}
+          output={{ success: true, hook_output: "post hook ran", hook_duration_ms: 42 }}
+          status="completed"
+        />
+      </TooltipProvider>
     );
 
     expect(getByText("hook output")).toBeDefined();

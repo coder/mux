@@ -125,25 +125,6 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     expect(userText).toBe("do X");
   });
 
-  it("skips built-in imagegen snapshots when image generation is disabled", async () => {
-    const { workspacePath } = await createTestWorkspaceWithSkills({ skills: [] });
-    const { session, appendToHistory, messages } = await createSessionHarness({ workspacePath });
-
-    const result = await session.sendMessage("retry image generation", {
-      model: "anthropic:claude-3-5-sonnet-latest",
-      agentId: "exec",
-      experiments: { imageGenerationTool: false },
-      muxMetadata: {
-        agentSkillRefs: [{ skillName: "imagegen", scope: "built-in", source: "inline" }],
-      },
-    });
-
-    expect(result.success).toBe(true);
-    expect(appendToHistory.mock.calls).toHaveLength(1);
-    expect(messages[0]?.metadata?.agentSkillSnapshot).toBeUndefined();
-    expect(getMessageText(messages[0])).toBe("retry image generation");
-  });
-
   it("honors disableWorkspaceAgents when resolving skill snapshots", async () => {
     const workspaceId = "ws-test";
 

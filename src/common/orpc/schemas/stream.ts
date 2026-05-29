@@ -671,7 +671,6 @@ export const ExperimentsSchema = z.object({
   programmaticToolCallingExclusive: z.boolean().optional(),
   advisorTool: z.boolean().optional(),
   execSubagentHardRestart: z.boolean().optional(),
-  imageGenerationTool: z.boolean().optional(),
 });
 
 /**

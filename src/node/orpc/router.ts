@@ -67,11 +67,7 @@ import {
 import {
   discoverAgentSkills,
   discoverAgentSkillsDiagnostics,
-  filterUnavailableImagegenSkills,
-  IMAGEGEN_SKILL_DISABLED_MESSAGE,
-  isBuiltInImagegenSkillPackage,
   readAgentSkill,
-  type ResolvedAgentSkill,
 } from "@/node/services/agentSkills/agentSkillsService";
 import {
   discoverAgentDefinitions,
@@ -89,7 +85,6 @@ import * as path from "node:path";
 import type { DevToolsEvent } from "@/common/types/devtools";
 import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
-import { normalizeImageGenerationConfig } from "@/common/types/imageGeneration";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { log } from "@/node/services/log";
 import { BROWSER_BRIDGE_WS_PATH, DESKTOP_WS_PATH } from "@/node/orpc/wsPaths";
@@ -157,23 +152,6 @@ async function resolveAgentDiscoveryContext(
     { projectPath: input.projectPath! }
   );
   return { runtime, discoveryPath: input.projectPath! };
-}
-
-function isImageGenerationToolExperimentEnabled(context: ORPCContext): boolean {
-  return context.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.IMAGE_GENERATION_TOOL);
-}
-
-function assertImagegenSkillAvailable(
-  context: ORPCContext,
-  resolvedSkill: ResolvedAgentSkill
-): void {
-  if (!isBuiltInImagegenSkillPackage(resolvedSkill.package)) {
-    return;
-  }
-
-  if (!isImageGenerationToolExperimentEnabled(context)) {
-    throw new Error(IMAGEGEN_SKILL_DISABLED_MESSAGE);
-  }
 }
 
 function isTrustedProjectPath(context: ORPCContext, projectPath?: string | null): boolean {
@@ -751,7 +729,6 @@ export const router = (authToken?: string) => {
             advisorThinkingLevel: config.advisorThinkingLevel ?? null,
             advisorMaxUsesPerTurn: config.advisorMaxUsesPerTurn,
             advisorMaxOutputTokens: config.advisorMaxOutputTokens,
-            imageGeneration: normalizeImageGenerationConfig(config.imageGeneration),
             hiddenModels: config.hiddenModels,
             coderWorkspaceArchiveBehavior:
               config.coderWorkspaceArchiveBehavior ?? DEFAULT_CODER_ARCHIVE_BEHAVIOR,
@@ -896,15 +873,6 @@ export const router = (authToken?: string) => {
             ...config,
             routePriority: input.routePriority,
             routeOverrides,
-          }));
-        }),
-      updateImageGenerationConfig: t
-        .input(schemas.config.updateImageGenerationConfig.input)
-        .output(schemas.config.updateImageGenerationConfig.output)
-        .handler(async ({ context, input }) => {
-          await context.config.editConfig((config) => ({
-            ...config,
-            imageGeneration: normalizeImageGenerationConfig(input.imageGeneration),
           }));
         }),
       updateModelPreferences: t
@@ -1557,11 +1525,7 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          const skills = await discoverAgentSkills(runtime, discoveryPath);
-          return filterUnavailableImagegenSkills(
-            skills,
-            isImageGenerationToolExperimentEnabled(context)
-          );
+          return discoverAgentSkills(runtime, discoveryPath);
         }),
       listDiagnostics: t
         .input(schemas.agentSkills.listDiagnostics.input)
@@ -1573,13 +1537,7 @@ export const router = (authToken?: string) => {
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           const diagnostics = await discoverAgentSkillsDiagnostics(runtime, discoveryPath);
-          return {
-            ...diagnostics,
-            skills: filterUnavailableImagegenSkills(
-              diagnostics.skills,
-              isImageGenerationToolExperimentEnabled(context)
-            ),
-          };
+          return diagnostics;
         }),
       get: t
         .input(schemas.agentSkills.get.input)
@@ -1591,7 +1549,6 @@ export const router = (authToken?: string) => {
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           const result = await readAgentSkill(runtime, discoveryPath, input.skillName);
-          assertImagegenSkillAvailable(context, result);
           return result.package;
         }),
     },
