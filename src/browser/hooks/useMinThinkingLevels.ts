@@ -131,10 +131,13 @@ export function useMinThinkingLevels(): MinThinkingLevelsState {
       setMap(next);
 
       api?.config?.updateMinThinkingLevels({ minThinkingLevelByModel: next }).catch(() => {
-        // Best-effort only; backend config reload will reconcile state.
+        // If the write fails, re-fetch so the UI reverts to the backend's actual floor rather
+        // than displaying an override the send path (which reads config synchronously) never
+        // applied. On success, the onConfigChanged subscription already reconciles state.
+        void fetchConfig();
       });
     },
-    [api, minThinkingLevelByModel]
+    [api, fetchConfig, minThinkingLevelByModel]
   );
 
   return {
