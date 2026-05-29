@@ -532,6 +532,19 @@ const advisorOutputEvent = (
   timestamp: number
 ): WorkspaceChatMessage => ({ type: "advisor-output", workspaceId, toolCallId, text, timestamp });
 
+const advisorReasoningOutputEvent = (
+  workspaceId: string,
+  toolCallId: string,
+  text: string,
+  timestamp: number
+): WorkspaceChatMessage => ({
+  type: "advisor-reasoning-output",
+  workspaceId,
+  toolCallId,
+  text,
+  timestamp,
+});
+
 const taskCreatedEvent = (
   workspaceId: string,
   toolCallId: string,
@@ -1808,22 +1821,13 @@ describe("WorkspaceStore", () => {
     });
 
     it("stays in starting state when a streaming lifecycle event lands before the stream is interruptible", async () => {
-      // Regression guard for the starting -> streaming flash: the backend can emit a
-      // "streaming" lifecycle event a frame before stream-start makes the stream
-      // interruptible. In that window canInterrupt is still false, so isStreamStarting
-      // must remain true (keyed off the pending start, not the lifecycle phase).
-      // Otherwise shouldShowStreamingBarrier (isStreamStarting || canInterrupt) drops
-      // to false for a frame and the streaming barrier unmounts then remounts.
       const workspaceId = "stream-starting-lifecycle-gap";
 
       mockChatStreamFor(workspaceId, async function* () {
         yield { type: "caught-up" };
         await Promise.resolve();
-        // Trailing user message with no assistant reply -> optimistic pending start.
         yield createUserMessageEvent("lifecycle-gap-user", "hello", 1, 1_000);
         await Promise.resolve();
-        // Stream reports "streaming" but stream-start (which populates the
-        // interruptible active stream) has not been applied yet.
         yield {
           type: "stream-lifecycle",
           workspaceId,
@@ -1846,7 +1850,6 @@ describe("WorkspaceStore", () => {
 
       const state = store.getWorkspaceState(workspaceId);
       expect(state.canInterrupt).toBe(false);
-      // The key assertion: the barrier-visibility flag stays true across the gap.
       expect(state.isStreamStarting).toBe(true);
     });
 
@@ -4648,6 +4651,70 @@ describe("WorkspaceStore", () => {
           "buffered advice"
       );
       expect(hasLiveOutput).toBe(true);
+    });
+  });
+
+  describe("advisor-reasoning-output events", () => {
+    it("accumulates live advisor reasoning while the advisor tool is running", async () => {
+      const workspaceId = "advisor-reasoning-workspace-1";
+
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorReasoningOutputEvent(workspaceId, "call-advisor-reasoning-1", "thinking ", 1),
+        advisorReasoningOutputEvent(workspaceId, "call-advisor-reasoning-1", "through risk", 2),
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasLiveReasoning = await waitUntil(
+        () =>
+          store.getAdvisorToolLiveReasoning(workspaceId, "call-advisor-reasoning-1")?.text ===
+          "thinking through risk"
+      );
+      expect(hasLiveReasoning).toBe(true);
+
+      const live = store.getAdvisorToolLiveReasoning(workspaceId, "call-advisor-reasoning-1");
+      expect(live).toEqual({ text: "thinking through risk", timestamp: 2 });
+      expect(store.getAdvisorToolLiveReasoning(workspaceId, "call-advisor-reasoning-1")).toBe(live);
+    });
+
+    it("clears live advisor reasoning on advisor tool-call-end", async () => {
+      const workspaceId = "advisor-reasoning-workspace-2";
+      let releaseToolEnd: (() => void) | undefined;
+      const waitForToolEnd = new Promise<void>((resolve) => {
+        releaseToolEnd = resolve;
+      });
+
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        advisorReasoningOutputEvent(workspaceId, "call-advisor-reasoning-2", "partial thought", 1),
+        waitForToolEnd,
+        toolCallEndEvent(
+          workspaceId,
+          "call-advisor-reasoning-2",
+          "advisor",
+          { type: "advice", advice: "final advice" },
+          { messageId: "m-advisor-reasoning-2", timestamp: 2 }
+        ),
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+
+      const hasLiveReasoning = await waitUntil(
+        () =>
+          store.getAdvisorToolLiveReasoning(workspaceId, "call-advisor-reasoning-2")?.text ===
+          "partial thought"
+      );
+      expect(hasLiveReasoning).toBe(true);
+
+      releaseToolEnd?.();
+
+      const clearedLiveReasoning = await waitUntil(
+        () => store.getAdvisorToolLiveReasoning(workspaceId, "call-advisor-reasoning-2") === null
+      );
+      expect(clearedLiveReasoning).toBe(true);
     });
   });
 

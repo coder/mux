@@ -20,6 +20,13 @@ const useAdvisorToolLivePhaseMock = mock(
   ): WorkspaceStoreModule.AdvisorLivePhaseState | undefined => undefined
 );
 
+const useAdvisorToolLiveReasoningMock = mock(
+  (
+    _workspaceId: string | undefined,
+    _toolCallId: string | undefined
+  ): WorkspaceStoreModule.AdvisorLiveReasoningState | null => null
+);
+
 /* eslint-disable @typescript-eslint/no-require-imports */
 const actualWorkspaceStore =
   require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
@@ -29,6 +36,7 @@ void mock.module("@/browser/stores/WorkspaceStore", () => ({
   ...actualWorkspaceStore,
   useAdvisorToolLiveOutput: useAdvisorToolLiveOutputMock,
   useAdvisorToolLivePhase: useAdvisorToolLivePhaseMock,
+  useAdvisorToolLiveReasoning: useAdvisorToolLiveReasoningMock,
 }));
 
 void mock.module("./Shared/ElapsedTimeDisplay", () => ({
@@ -77,6 +85,7 @@ describe("AdvisorToolCall", () => {
 
     useAdvisorToolLiveOutputMock.mockReset();
     useAdvisorToolLivePhaseMock.mockReset();
+    useAdvisorToolLiveReasoningMock.mockReset();
   });
 
   afterEach(() => {
@@ -163,6 +172,29 @@ describe("AdvisorToolCall", () => {
     expect(useAdvisorToolLiveOutputMock).toHaveBeenCalledWith("workspace-1", "advisor-call-1");
     expect(view.getByText("Advice")).toBeTruthy();
     expect(view.getByText("Streamed partial advice")).toBeTruthy();
+  });
+
+  test("renders live advisor reasoning separately from live advice", () => {
+    useAdvisorToolLivePhaseMock.mockReturnValue({
+      phase: "waiting_for_response",
+      timestamp: 1,
+    });
+    useAdvisorToolLiveReasoningMock.mockReturnValue({
+      text: "Considering the risky edge case",
+      timestamp: 2,
+    });
+    useAdvisorToolLiveOutputMock.mockReturnValue({
+      text: "Prefer the safer path",
+      timestamp: 3,
+    });
+
+    const view = renderAdvisorToolCall({ status: "executing" });
+
+    expect(useAdvisorToolLiveReasoningMock).toHaveBeenCalledWith("workspace-1", "advisor-call-1");
+    expect(view.getByText("Thinking")).toBeTruthy();
+    expect(view.getByText("Considering the risky edge case")).toBeTruthy();
+    expect(view.getByText("Advice")).toBeTruthy();
+    expect(view.getByText("Prefer the safer path")).toBeTruthy();
   });
 
   test("collapses back to the settled default when execution completes", () => {

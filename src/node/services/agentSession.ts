@@ -3474,11 +3474,8 @@ export class AgentSession {
     this.activeStreamHadPostCompactionInjection =
       postCompactionAttachments !== null && postCompactionAttachments.length > 0;
 
-    // Enforce thinking policy for the specified model (single source of truth)
-    // This ensures model-specific requirements are met regardless of where the request originates.
-    // Apply the per-model minimum thinking floor here so every client (desktop, mobile, ACP)
-    // honors it: a stored/below-floor "off" is clamped up to the model's minimum (default medium).
-    // config may be a partial mock in tests, so read loadConfigOrDefault defensively.
+    // Apply per-model thinking floors once so desktop, mobile, and ACP requests match.
+    // Tests may provide partial config mocks, so read overrides only when available.
     const maybeConfig = this.config as Config & {
       loadConfigOrDefault?: () => {
         minThinkingLevelByModel?: Record<string, ThinkingLevel>;
@@ -4360,6 +4357,10 @@ export class AgentSession {
       this.emitChatEvent(payload);
     });
     forward("advisor-output", (payload) => {
+      this.markActiveStreamHadAnyOutput();
+      this.emitChatEvent(payload);
+    });
+    forward("advisor-reasoning-output", (payload) => {
       this.markActiveStreamHadAnyOutput();
       this.emitChatEvent(payload);
     });

@@ -44,6 +44,7 @@ import {
   isInitOutput,
   isInitStart,
   isAdvisorOutputEvent,
+  isAdvisorReasoningOutputEvent,
   isAdvisorPhaseEvent,
   isBashOutputEvent,
   isTaskCreatedEvent,
@@ -231,10 +232,13 @@ export interface AdvisorLivePhaseState {
   timestamp: number;
 }
 
-export interface AdvisorLiveOutputState {
+export interface AdvisorLiveTextState {
   text: string;
   timestamp: number;
 }
+
+export type AdvisorLiveOutputState = AdvisorLiveTextState;
+export type AdvisorLiveReasoningState = AdvisorLiveTextState;
 
 interface WorkspaceChatTransientState {
   caughtUp: boolean;
@@ -245,6 +249,7 @@ interface WorkspaceChatTransientState {
   queuedMessage: QueuedMessage | null;
   liveBashOutput: Map<string, LiveBashOutputInternal>;
   liveAdvisorOutput: Map<string, AdvisorLiveOutputState>;
+  liveAdvisorReasoning: Map<string, AdvisorLiveReasoningState>;
   liveAdvisorPhase: Map<string, AdvisorLivePhaseState>;
   liveTaskIds: Map<string, string[]>;
   autoRetryStatus: AutoRetryStatus | null;
@@ -342,6 +347,27 @@ function getBufferedActiveStreamStart(
   };
 }
 
+function appendAdvisorLiveText(
+  liveTextByToolCallId: Map<string, AdvisorLiveTextState>,
+  toolCallId: string,
+  chunk: string,
+  timestamp: number
+): boolean {
+  const prev = liveTextByToolCallId.get(toolCallId);
+  const appendedText = `${prev?.text ?? ""}${chunk}`;
+  const text =
+    appendedText.length > ADVISOR_LIVE_OUTPUT_MAX_CHARS
+      ? appendedText.slice(-ADVISOR_LIVE_OUTPUT_MAX_CHARS)
+      : appendedText;
+
+  if (prev?.text === text && prev.timestamp === timestamp) {
+    return false;
+  }
+
+  liveTextByToolCallId.set(toolCallId, { text, timestamp });
+  return true;
+}
+
 function createInitialChatTransientState(): WorkspaceChatTransientState {
   return {
     caughtUp: false,
@@ -352,6 +378,7 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
     queuedMessage: null,
     liveBashOutput: new Map(),
     liveAdvisorOutput: new Map(),
+    liveAdvisorReasoning: new Map(),
     liveAdvisorPhase: new Map(),
     liveTaskIds: new Map(),
     autoRetryStatus: null,
@@ -854,6 +881,7 @@ export class WorkspaceStore {
       // Cleanup ephemeral advisor/task state once the actual tool result is available.
       if (toolCallEnd.toolName === "advisor") {
         transient?.liveAdvisorOutput.delete(toolCallEnd.toolCallId);
+        transient?.liveAdvisorReasoning.delete(toolCallEnd.toolCallId);
         transient?.liveAdvisorPhase.delete(toolCallEnd.toolCallId);
       }
       if (toolCallEnd.toolName === "task") {
@@ -1600,7 +1628,13 @@ export class WorkspaceStore {
   ): void {
     const transient = this.chatTransientState.get(workspaceId);
     if (!transient) return;
-    if (transient.liveBashOutput.size === 0 && transient.liveAdvisorOutput.size === 0) return;
+    if (
+      transient.liveBashOutput.size === 0 &&
+      transient.liveAdvisorOutput.size === 0 &&
+      transient.liveAdvisorReasoning.size === 0
+    ) {
+      return;
+    }
 
     const activeBashToolCallIds = new Set<string>();
     const activeAdvisorToolCallIds = new Set<string>();
@@ -1618,6 +1652,12 @@ export class WorkspaceStore {
     for (const toolCallId of Array.from(transient.liveBashOutput.keys())) {
       if (!activeBashToolCallIds.has(toolCallId)) {
         transient.liveBashOutput.delete(toolCallId);
+      }
+    }
+
+    for (const toolCallId of Array.from(transient.liveAdvisorReasoning.keys())) {
+      if (!activeAdvisorToolCallIds.has(toolCallId)) {
+        transient.liveAdvisorReasoning.delete(toolCallId);
       }
     }
 
@@ -1658,6 +1698,15 @@ export class WorkspaceStore {
 
   getAdvisorToolLiveOutput(workspaceId: string, toolCallId: string): AdvisorLiveOutputState | null {
     const state = this.chatTransientState.get(workspaceId)?.liveAdvisorOutput.get(toolCallId);
+
+    return state ?? null;
+  }
+
+  getAdvisorToolLiveReasoning(
+    workspaceId: string,
+    toolCallId: string
+  ): AdvisorLiveReasoningState | null {
+    const state = this.chatTransientState.get(workspaceId)?.liveAdvisorReasoning.get(toolCallId);
 
     return state ?? null;
   }
@@ -1804,18 +1853,8 @@ export class WorkspaceStore {
         aggregatorRecency === null
           ? (activity?.recency ?? null)
           : Math.max(aggregatorRecency, activity?.recency ?? aggregatorRecency);
-      // User rationale: a brand-new chat should show its startup barrier immediately instead of
-      // flashing "Catching up"/"No Messages Yet" while the very first send is still in flight.
-      // The aggregator owns both normal user-message startup and the optimistic new-chat handoff,
-      // so the workspace only needs to ask whether the active transcript still has a pending start.
-      // A turn is "starting" from the optimistic pending-start until the stream
-      // becomes interruptible. Keying off pendingStreamStartTime — which every
-      // terminal handler (end/abort/error) clears — keeps the streaming barrier
-      // continuously mounted across the starting -> streaming handoff with no gap.
-      // Keying off streamLifecycle.phase instead would risk both a flash (a
-      // "streaming" lifecycle event can land a frame before stream-start populates
-      // the active stream, leaving neither flag set) and a stuck barrier
-      // (handleStreamEnd leaves the lifecycle snapshot non-idle).
+      // Keep the startup barrier mounted until stream-start makes the turn interruptible;
+      // stream-lifecycle can report "streaming" slightly earlier.
       const isStreamStarting =
         isActiveWorkspace &&
         !canInterrupt &&
@@ -1930,9 +1969,7 @@ export class WorkspaceStore {
         ? true
         : (activity?.streaming ?? hasInterruptibleActiveStream);
     const activePendingStreamStartTime = isActiveWorkspace ? pendingStreamStartTime : null;
-    // Mirror getWorkspaceState's starting derivation: pendingStreamStartTime is the
-    // gap-free, terminal-cleared signal that a turn is in flight but not yet
-    // interruptible. See the rationale in getWorkspaceState above.
+    // Match getWorkspaceState so the shell does not flash between lifecycle and stream-start.
     const isStreamStarting =
       isActiveWorkspace &&
       !canInterrupt &&
@@ -3869,6 +3906,7 @@ export class WorkspaceStore {
       data.type in this.bufferedEventHandlers ||
       data.type === "bash-output" ||
       data.type === "advisor-output" ||
+      data.type === "advisor-reasoning-output" ||
       data.type === "advisor-phase" ||
       data.type === "task-created"
     );
@@ -3949,6 +3987,7 @@ export class WorkspaceStore {
         // replaces history, reports no active stream, or reports a different stream ID.
         transient.liveBashOutput.clear();
         transient.liveAdvisorOutput.clear();
+        transient.liveAdvisorReasoning.clear();
         transient.liveAdvisorPhase.clear();
         transient.liveTaskIds.clear();
       }
@@ -4140,19 +4179,35 @@ export class WorkspaceStore {
       if (data.text.length === 0) return;
 
       const transient = this.assertChatTransientState(workspaceId);
-      const prev = transient.liveAdvisorOutput.get(data.toolCallId);
-      const appendedText = `${prev?.text ?? ""}${data.text}`;
-      const text =
-        appendedText.length > ADVISOR_LIVE_OUTPUT_MAX_CHARS
-          ? appendedText.slice(-ADVISOR_LIVE_OUTPUT_MAX_CHARS)
-          : appendedText;
+      if (
+        !appendAdvisorLiveText(
+          transient.liveAdvisorOutput,
+          data.toolCallId,
+          data.text,
+          data.timestamp
+        )
+      ) {
+        return;
+      }
 
-      if (prev?.text === text && prev.timestamp === data.timestamp) return;
+      this.scheduleStreamingStateBump(workspaceId);
+      return;
+    }
 
-      transient.liveAdvisorOutput.set(data.toolCallId, {
-        text,
-        timestamp: data.timestamp,
-      });
+    if (isAdvisorReasoningOutputEvent(data)) {
+      if (data.text.length === 0) return;
+
+      const transient = this.assertChatTransientState(workspaceId);
+      if (
+        !appendAdvisorLiveText(
+          transient.liveAdvisorReasoning,
+          data.toolCallId,
+          data.text,
+          data.timestamp
+        )
+      ) {
+        return;
+      }
 
       this.scheduleStreamingStateBump(workspaceId);
       return;
@@ -4432,6 +4487,27 @@ export function useAdvisorToolLiveOutput(
     () => {
       if (!workspaceId || !toolCallId) return null;
       return store.getAdvisorToolLiveOutput(workspaceId, toolCallId);
+    }
+  );
+}
+
+/**
+ * Hook to get UI-only live reasoning for a running advisor tool call.
+ */
+export function useAdvisorToolLiveReasoning(
+  workspaceId: string | undefined,
+  toolCallId: string | undefined
+): AdvisorLiveReasoningState | null {
+  const store = getStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => {
+      if (!workspaceId) return () => undefined;
+      return store.subscribeKey(workspaceId, listener);
+    },
+    () => {
+      if (!workspaceId || !toolCallId) return null;
+      return store.getAdvisorToolLiveReasoning(workspaceId, toolCallId);
     }
   );
 }

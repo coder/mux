@@ -232,7 +232,8 @@ describe("advisor tool", () => {
         { type: "text-delta", delta: "with " },
         { type: "text-delta", textDelta: "the risky edge first." },
         { type: "text-delta", text: "" },
-        { type: "reasoning-delta", delta: "hidden reasoning" },
+        { type: "reasoning", text: "hidden reasoning" },
+        { type: "reasoning-delta", delta: " plus delta" },
       ],
       usage: {
         inputTokens: 40,
@@ -270,6 +271,22 @@ describe("advisor tool", () => {
         .filter((call) => call[0].type === "advisor-output")
         .map((call) => call[0])
     ).toHaveLength(3);
+    expect(emitChatEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "advisor-reasoning-output",
+        workspaceId: "workspace-1",
+        toolCallId: "test-call-id",
+        text: "hidden reasoning",
+      })
+    );
+    expect(emitChatEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "advisor-reasoning-output",
+        workspaceId: "workspace-1",
+        toolCallId: "test-call-id",
+        text: " plus delta",
+      })
+    );
   });
 
   it("falls back to the raw transcript when there is no question or same-step snapshot", async () => {

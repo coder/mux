@@ -13,7 +13,11 @@ import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 import { getErrorMessage } from "@/common/utils/errors";
 import { sanitizeErrorMessageForDisplay } from "@/common/utils/providerOutputSanitization";
-import type { AdvisorOutputEvent, AdvisorPhaseEvent } from "@/common/types/stream";
+import type {
+  AdvisorOutputEvent,
+  AdvisorPhaseEvent,
+  AdvisorReasoningOutputEvent,
+} from "@/common/types/stream";
 import { AdvisorToolInputSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { AdvisorToolCallSnapshot, ToolConfiguration } from "@/common/utils/tools/tools";
 import { log } from "@/node/services/log";
@@ -78,18 +82,33 @@ function buildAdvisorHandoffMessage(
   };
 }
 
-function getAdvisorTextDelta(chunk: unknown): string | undefined {
+const ADVISOR_DELTA_TEXT_FIELDS = ["text", "delta", "textDelta"] as const;
+const ADVISOR_TEXT_DELTA_TYPES = ["text-delta", "text"] as const;
+const ADVISOR_REASONING_DELTA_TYPES = ["reasoning-delta", "reasoning"] as const;
+
+function getAdvisorChunkDelta(
+  chunk: unknown,
+  acceptedTypes: readonly string[]
+): string | undefined {
   if (typeof chunk !== "object" || chunk === null) {
     return undefined;
   }
 
   const record = chunk as Record<string, unknown>;
-  if (record.type !== "text-delta" && record.type !== "text") {
+  if (typeof record.type !== "string" || !acceptedTypes.includes(record.type)) {
     return undefined;
   }
 
-  const text = extractChunkDeltaText(record, ["text", "delta", "textDelta"]);
+  const text = extractChunkDeltaText(record, ADVISOR_DELTA_TEXT_FIELDS);
   return text.length > 0 ? text : undefined;
+}
+
+function getAdvisorTextDelta(chunk: unknown): string | undefined {
+  return getAdvisorChunkDelta(chunk, ADVISOR_TEXT_DELTA_TYPES);
+}
+
+function getAdvisorReasoningDelta(chunk: unknown): string | undefined {
+  return getAdvisorChunkDelta(chunk, ADVISOR_REASONING_DELTA_TYPES);
 }
 
 export function createAdvisorTool(config: ToolConfiguration): Tool {
@@ -171,6 +190,21 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
         } satisfies AdvisorOutputEvent);
       };
 
+      const emitAdvisorReasoningOutput = (text: string): void => {
+        assert(text.length > 0, "advisor reasoning output chunks must be non-empty");
+        if (!config.emitChatEvent || !config.workspaceId || !toolCallId) {
+          return;
+        }
+
+        config.emitChatEvent({
+          type: "advisor-reasoning-output",
+          workspaceId: config.workspaceId,
+          toolCallId,
+          text,
+          timestamp: Date.now(),
+        } satisfies AdvisorReasoningOutputEvent);
+      };
+
       emitAdvisorPhase("preparing_context");
 
       if (runtime.maxUsesPerTurn !== null && usesThisTurn >= runtime.maxUsesPerTurn) {
@@ -216,6 +250,12 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
             advisorStreamError = error;
           },
           onChunk: ({ chunk }) => {
+            const reasoningText = getAdvisorReasoningDelta(chunk);
+            if (reasoningText != null) {
+              emitAdvisorReasoningOutput(reasoningText);
+              return;
+            }
+
             const text = getAdvisorTextDelta(chunk);
             if (text == null) {
               return;

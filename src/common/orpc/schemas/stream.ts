@@ -392,6 +392,20 @@ export const AdvisorOutputEventSchema = z.object({
 });
 
 /**
+ * UI-only incremental reasoning from the advisor tool.
+ *
+ * This is intentionally NOT part of the tool result returned to the model.
+ * It is streamed over workspace.onChat so users can see advisor thinking while it is generated.
+ */
+export const AdvisorReasoningOutputEventSchema = z.object({
+  type: z.literal("advisor-reasoning-output"),
+  workspaceId: z.string(),
+  toolCallId: z.string(),
+  text: z.string(),
+  timestamp: z.number().meta({ description: "When reasoning output was received (Date.now())" }),
+});
+
+/**
  * UI-only notification that a task tool call has created a child workspace.
  *
  * This is intentionally NOT part of the tool result returned to the model.
@@ -603,6 +617,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   ToolCallEndEventSchema,
   BashOutputEventSchema,
   AdvisorOutputEventSchema,
+  AdvisorReasoningOutputEventSchema,
   TaskCreatedEventSchema,
   AdvisorPhaseEventSchema,
   // Reasoning events

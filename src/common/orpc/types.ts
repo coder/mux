@@ -11,6 +11,7 @@ import type {
   ToolCallDeltaEvent,
   ToolCallEndEvent,
   AdvisorOutputEvent,
+  AdvisorReasoningOutputEvent,
   AdvisorPhaseEvent,
   BashOutputEvent,
   TaskCreatedEvent,
@@ -107,6 +108,12 @@ export function isBashOutputEvent(msg: WorkspaceChatMessage): msg is BashOutputE
 
 export function isAdvisorOutputEvent(msg: WorkspaceChatMessage): msg is AdvisorOutputEvent {
   return (msg as { type?: string }).type === "advisor-output";
+}
+
+export function isAdvisorReasoningOutputEvent(
+  msg: WorkspaceChatMessage
+): msg is AdvisorReasoningOutputEvent {
+  return (msg as { type?: string }).type === "advisor-reasoning-output";
 }
 
 export function isTaskCreatedEvent(msg: WorkspaceChatMessage): msg is TaskCreatedEvent {

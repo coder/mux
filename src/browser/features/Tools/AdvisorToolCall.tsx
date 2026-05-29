@@ -7,6 +7,7 @@ import {
   type AdvisorLivePhaseState,
   useAdvisorToolLiveOutput,
   useAdvisorToolLivePhase,
+  useAdvisorToolLiveReasoning,
 } from "@/browser/stores/WorkspaceStore";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { getModelName } from "@/common/utils/ai/models";
@@ -258,9 +259,14 @@ const AdvisorToolCallContent: React.FC<AdvisorToolCallContentProps> = ({
   // Streamed chunks need expansion to be visible.
   // Remount on settle so completed rows keep their collapsed default.
   const { expanded, toggleExpanded } = useToolExpansion(isExecutingWithoutResult);
-  const livePhase = useAdvisorToolLivePhase(workspaceId, toolCallId);
-  const liveOutput = useAdvisorToolLiveOutput(workspaceId, toolCallId);
+  const liveWorkspaceId = isExecutingWithoutResult ? workspaceId : undefined;
+  const liveToolCallId = isExecutingWithoutResult ? toolCallId : undefined;
+  const livePhase = useAdvisorToolLivePhase(liveWorkspaceId, liveToolCallId);
+  const liveOutput = useAdvisorToolLiveOutput(liveWorkspaceId, liveToolCallId);
+  const liveReasoning = useAdvisorToolLiveReasoning(liveWorkspaceId, liveToolCallId);
   const liveAdviceText = isExecutingWithoutResult && liveOutput?.text ? liveOutput.text : undefined;
+  const liveReasoningText =
+    isExecutingWithoutResult && liveReasoning?.text ? liveReasoning.text : undefined;
   const detailsText =
     advisorResult?.type === "advice"
       ? advisorResult.advice
@@ -329,6 +335,15 @@ const AdvisorToolCallContent: React.FC<AdvisorToolCallContentProps> = ({
                 </DetailSection>
               )}
             </>
+          )}
+
+          {advisorResult === null && liveReasoningText && (
+            <DetailSection>
+              <DetailLabel>Thinking</DetailLabel>
+              <div className="bg-code-bg text-secondary rounded px-3 py-2 text-[12px] leading-relaxed">
+                <MarkdownRenderer content={liveReasoningText} preserveLineBreaks />
+              </div>
+            </DetailSection>
           )}
 
           {advisorResult === null && liveAdviceText && (

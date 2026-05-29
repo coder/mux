@@ -230,6 +230,7 @@ export {
   BashOutputEventSchema,
   TaskCreatedEventSchema,
   AdvisorOutputEventSchema,
+  AdvisorReasoningOutputEventSchema,
   AdvisorPhaseEventSchema,
   UpdateStatusSchema,
   UsageDeltaEventSchema,

@@ -1518,6 +1518,7 @@ export class MuxAgent implements Agent {
         event.type === "usage-delta" ||
         event.type === "session-usage-delta" ||
         event.type === "advisor-output" ||
+        event.type === "advisor-reasoning-output" ||
         event.type === "bash-output" ||
         event.type === "init-output" ||
         // Drop replay history messages under saturation, but keep live message
