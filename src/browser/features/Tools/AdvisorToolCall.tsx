@@ -144,16 +144,24 @@ function formatAdvisorModel(advisorModel: string): { displayName: string; rawMod
   };
 }
 
+// The `advice`, `error`, and executing/fallback cases all present their state
+// through the shared status-display helper and differ only in the status they
+// pass. Centralize that { status, content } shape so the three branches don't
+// each re-derive it; `limit_reached` keeps its custom warning content.
+function defaultAdvisorStatusPresentation(status: ToolStatus): AdvisorStatusPresentation {
+  return {
+    status,
+    content: getStatusDisplay(status),
+  };
+}
+
 function getAdvisorStatusPresentation(
   result: AdvisorToolResult | null,
   fallbackStatus: ToolStatus
 ): AdvisorStatusPresentation {
   switch (result?.type) {
     case "advice":
-      return {
-        status: "completed",
-        content: getStatusDisplay("completed"),
-      };
+      return defaultAdvisorStatusPresentation("completed");
     case "limit_reached":
       return {
         status: "completed",
@@ -166,15 +174,9 @@ function getAdvisorStatusPresentation(
         ),
       };
     case "error":
-      return {
-        status: "failed",
-        content: getStatusDisplay("failed"),
-      };
+      return defaultAdvisorStatusPresentation("failed");
     default:
-      return {
-        status: fallbackStatus,
-        content: getStatusDisplay(fallbackStatus),
-      };
+      return defaultAdvisorStatusPresentation(fallbackStatus);
   }
 }
 
