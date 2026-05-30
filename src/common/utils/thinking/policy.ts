@@ -125,6 +125,17 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
 }
 
 /**
+ * Canonical ordering index for a level (off=0 … max=5).
+ *
+ * `enforceThinkingPolicy` and `resolveThinkingInput` both rank levels by their position
+ * in `THINKING_LEVELS`; route every comparison through this helper so the ordering lives
+ * in one place. Pure dedup — `THINKING_LEVELS.indexOf` is unchanged.
+ */
+function thinkingLevelIndex(level: ThinkingLevel): number {
+  return THINKING_LEVELS.indexOf(level);
+}
+
+/**
  * Enforce thinking policy by clamping requested level to allowed set.
  *
  * Fallback strategy:
@@ -144,23 +155,23 @@ export function enforceThinkingPolicy(
   }
 
   const orderedAllowed = [...allowed].sort(
-    (left, right) => THINKING_LEVELS.indexOf(left) - THINKING_LEVELS.indexOf(right)
+    (left, right) => thinkingLevelIndex(left) - thinkingLevelIndex(right)
   );
   const minAllowed = orderedAllowed[0] ?? "off";
   const maxAllowed = orderedAllowed[orderedAllowed.length - 1] ?? minAllowed;
-  const requestedIndex = THINKING_LEVELS.indexOf(requested);
+  const requestedIndex = thinkingLevelIndex(requested);
 
-  if (requestedIndex <= THINKING_LEVELS.indexOf(minAllowed)) {
+  if (requestedIndex <= thinkingLevelIndex(minAllowed)) {
     return minAllowed;
   }
 
-  if (requestedIndex >= THINKING_LEVELS.indexOf(maxAllowed)) {
+  if (requestedIndex >= thinkingLevelIndex(maxAllowed)) {
     return maxAllowed;
   }
 
   const closest = orderedAllowed.reduce((nearest, level) => {
-    const nearestIndex = THINKING_LEVELS.indexOf(nearest);
-    const levelIndex = THINKING_LEVELS.indexOf(level);
+    const nearestIndex = thinkingLevelIndex(nearest);
+    const levelIndex = thinkingLevelIndex(level);
     return Math.abs(levelIndex - requestedIndex) < Math.abs(nearestIndex - requestedIndex)
       ? level
       : nearest;
@@ -186,9 +197,7 @@ export function resolveThinkingInput(
 
   // Numeric: index into the model's allowed levels (sorted lowest → highest)
   const policy = getThinkingPolicyForModel(modelString);
-  const sorted = [...policy].sort(
-    (a, b) => THINKING_LEVELS.indexOf(a) - THINKING_LEVELS.indexOf(b)
-  );
+  const sorted = [...policy].sort((a, b) => thinkingLevelIndex(a) - thinkingLevelIndex(b));
   const clamped = Math.max(0, Math.min(input, sorted.length - 1));
   return sorted[clamped] ?? sorted[0] ?? "off";
 }
