@@ -213,6 +213,25 @@ describe("ImmersiveReviewView", () => {
     expect(mockApi.workspace.executeBash).not.toHaveBeenCalled();
   });
 
+  test("shows the assisted-mode badge only while the Assisted filter is active", () => {
+    // Off by default: the badge must not appear when not filtering.
+    const off = renderImmersiveReview();
+    expect(off.queryByTestId("immersive-assisted-mode-badge")).toBeNull();
+    cleanup();
+
+    // On: the header surfaces the badge with the unread/total counts so the
+    // active filter mode is visible even though the control bar is hidden
+    // behind the immersive overlay.
+    const on = renderImmersiveReview({
+      assistedOnly: true,
+      assistedCount: 3,
+      assistedUnreadCount: 2,
+    });
+    const badge = on.getByTestId("immersive-assisted-mode-badge");
+    expect(badge.textContent ?? "").toContain("Assisted");
+    expect(badge.textContent ?? "").toContain("2/3");
+  });
+
   test("loads full-file context for an in-budget selected hunk even when another hunk is far away", async () => {
     const nearHunk = createHunk({
       id: "hunk-near",

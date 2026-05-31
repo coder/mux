@@ -1,0 +1,182 @@
+/**
+ * ImmersiveReviewAgentStatusBar — pinned to the top of full-screen immersive
+ * review. While the user reviews code in immersive mode the chat transcript and
+ * composer-adjacent status (TODO plan, streaming barrier) are hidden behind the
+ * opaque overlay, so a common workflow — reviewing while waiting on the agent —
+ * loses all signal about what the agent is doing.
+ *
+ * This bar restores that signal without leaving immersive:
+ *   - the agent's TODO plan in a vertical layout (collapsible, persisted), and
+ *   - live streaming status (starting / streaming / awaiting a question).
+ *
+ * Design notes:
+ *   - Subscriptions live in this leaf component (not in ImmersiveReviewView) so
+ *     per-token streaming/todo churn doesn't re-render the large diff tree.
+ *   - Flash-free: the streaming chip is gated on the *held* phase from
+ *     useWorkspaceStreamingStatusPhase (150ms), so brief starting<->streaming
+ *     handoffs don't blink. Because TODO plans persist across streams, the bar
+ *     stays mounted between turns and only unmounts once both the held phase
+ *     clears AND there are no todos left to show — no mid-review flicker.
+ *   - Crash-safe: when the workspace isn't registered in the store yet (tests,
+ *     storybook, teardown) the subscriptions fall back to empty/idle instead of
+ *     throwing, so the bar simply renders nothing.
+ */
+
+import React, { useSyncExternalStore } from "react";
+import { ChevronDown, ChevronRight, CircleHelp, List, Loader2 } from "lucide-react";
+import { TodoList } from "@/browser/components/TodoList/TodoList";
+import {
+  useOptionalWorkspaceSidebarState,
+  useWorkspaceStoreRaw,
+} from "@/browser/stores/WorkspaceStore";
+import {
+  getWorkspaceStreamingStatusPhase,
+  useWorkspaceStreamingStatusPhase,
+} from "@/browser/hooks/useWorkspaceStreamingStatusPhase";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { getImmersiveReviewAgentBarExpandedKey } from "@/common/constants/storage";
+import type { TodoItem } from "@/common/types/tools";
+
+// Stable empty reference so useSyncExternalStore's snapshot stays referentially
+// stable when the workspace isn't registered — returning a fresh [] each call
+// would trip the store's "getSnapshot should be cached" infinite-loop guard.
+const EMPTY_TODOS: TodoItem[] = [];
+
+interface ImmersiveReviewAgentStatusBarProps {
+  workspaceId: string;
+}
+
+export const ImmersiveReviewAgentStatusBar: React.FC<ImmersiveReviewAgentStatusBarProps> = ({
+  workspaceId,
+}) => {
+  const [expanded, setExpanded] = usePersistedState(
+    getImmersiveReviewAgentBarExpandedKey(workspaceId),
+    true
+  );
+
+  const workspaceStore = useWorkspaceStoreRaw();
+  const todos = useSyncExternalStore(
+    (callback) =>
+      workspaceStore.hasRegisteredWorkspace(workspaceId)
+        ? workspaceStore.subscribeKey(workspaceId, callback)
+        : () => undefined,
+    () =>
+      workspaceStore.hasRegisteredWorkspace(workspaceId)
+        ? workspaceStore.getWorkspaceState(workspaceId).todos
+        : EMPTY_TODOS
+  );
+
+  const sidebarState = useOptionalWorkspaceSidebarState(workspaceId);
+  const canInterrupt = sidebarState?.canInterrupt ?? false;
+  const isStarting = sidebarState?.isStarting ?? false;
+  const awaitingUserQuestion = sidebarState?.awaitingUserQuestion ?? false;
+
+  // Held phase keeps the streaming chip steady across the starting->streaming
+  // handoff so it doesn't blink out for a frame between adjacent state settles.
+  const phase = getWorkspaceStreamingStatusPhase({ canInterrupt, isStarting });
+  const phaseSource = canInterrupt ? "streaming" : isStarting ? "pre-stream" : null;
+  const { displayPhase } = useWorkspaceStreamingStatusPhase(phase, phaseSource);
+
+  const hasTodos = todos.length > 0;
+  const isStreamingStatusVisible = displayPhase !== null || awaitingUserQuestion;
+
+  // Nothing to surface: don't reserve any vertical space in the review viewport.
+  if (!hasTodos && !isStreamingStatusVisible) {
+    return null;
+  }
+
+  const inProgressCount = todos.filter((todo) => todo.status === "in_progress").length;
+  const pendingCount = todos.filter((todo) => todo.status === "pending").length;
+  const completedCount = todos.length - inProgressCount - pendingCount;
+  const summaryParts: string[] = [];
+  if (inProgressCount > 0) {
+    summaryParts.push(`${inProgressCount} in progress`);
+  }
+  if (pendingCount > 0) {
+    summaryParts.push(`${pendingCount} pending`);
+  }
+  if (summaryParts.length === 0 && hasTodos) {
+    summaryParts.push(`${completedCount} completed`);
+  }
+
+  // role=status + aria-live so screen readers announce streaming/question
+  // transitions while the user is focused on the diff.
+  const statusChip = (() => {
+    if (awaitingUserQuestion) {
+      return (
+        <span className="bg-plan-mode-alpha text-plan-mode-light flex items-center gap-1 rounded px-1.5 py-0.5 font-medium">
+          <CircleHelp aria-hidden="true" className="h-3 w-3 shrink-0" />
+          <span>Mux has a question</span>
+        </span>
+      );
+    }
+    if (displayPhase === "starting") {
+      return (
+        <span className="text-muted flex items-center gap-1">
+          <Loader2 aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin opacity-70" />
+          <span>Starting…</span>
+        </span>
+      );
+    }
+    if (displayPhase === "streaming") {
+      return (
+        <span className="text-muted flex items-center gap-1">
+          <Loader2 aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin opacity-70" />
+          <span>Streaming…</span>
+        </span>
+      );
+    }
+    return null;
+  })();
+
+  const trailingStatus = (
+    <div
+      className="ml-auto flex shrink-0 items-center gap-2"
+      role="status"
+      aria-live="polite"
+      data-testid="immersive-agent-status-chip"
+    >
+      {statusChip}
+    </div>
+  );
+
+  return (
+    <div
+      className="border-border-light bg-dark border-b text-[11px]"
+      data-testid="immersive-agent-status-bar"
+      data-component="ImmersiveReviewAgentStatusBar"
+    >
+      {hasTodos ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="group flex h-7 w-full items-center gap-2 px-3 text-left leading-none"
+          aria-expanded={expanded}
+        >
+          <List
+            aria-hidden="true"
+            className="text-muted group-hover:text-secondary size-3.5 shrink-0 transition-colors"
+          />
+          <span className="text-muted group-hover:text-secondary min-w-0 truncate transition-colors">
+            <span className="font-medium">TODO</span>
+            {summaryParts.length > 0 && <> · {summaryParts.join(" · ")}</>}
+          </span>
+          {trailingStatus}
+          {expanded ? (
+            <ChevronDown className="text-muted group-hover:text-secondary size-3.5 shrink-0 transition-colors" />
+          ) : (
+            <ChevronRight className="text-muted group-hover:text-secondary size-3.5 shrink-0 transition-colors" />
+          )}
+        </button>
+      ) : (
+        // Streaming/question only (no plan yet): static row, nothing to expand.
+        <div className="flex h-7 w-full items-center gap-2 px-3 leading-none">{trailingStatus}</div>
+      )}
+      {hasTodos && expanded && (
+        <div className="max-h-[240px] overflow-y-auto">
+          <TodoList todos={todos} />
+        </div>
+      )}
+    </div>
+  );
+};

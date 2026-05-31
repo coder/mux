@@ -637,6 +637,18 @@ export function getReviewImmersiveKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for the immersive-review agent status bar expansion
+ * state (the TODO plan + streaming-status bar pinned to the top of immersive
+ * review). Persisted per workspace so a user's collapse choice survives
+ * navigation. Mirrors getPinnedTodoExpandedKey — a transient UI preference, so
+ * intentionally NOT copied on fork.
+ * Format: "review-immersive-agentbar-expanded:{workspaceId}"
+ */
+export function getImmersiveReviewAgentBarExpandedKey(workspaceId: string): string {
+  return `review-immersive-agentbar-expanded:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for auto-compaction enabled preference per workspace
  * Format: "autoCompaction:enabled:{workspaceId}"
  */

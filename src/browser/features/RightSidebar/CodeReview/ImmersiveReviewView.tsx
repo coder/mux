@@ -21,6 +21,7 @@ import {
 import { cn } from "@/common/lib/utils";
 import { SelectableDiffRenderer } from "../../Shared/DiffRenderer";
 import { ImmersiveMinimap } from "./ImmersiveMinimap";
+import { ImmersiveReviewAgentStatusBar } from "./ImmersiveReviewAgentStatusBar";
 import {
   buildNewLineNumberToIndexMap,
   buildOldLineNumberToIndexMap,
@@ -92,6 +93,18 @@ interface ImmersiveReviewViewProps {
    * see in the side panel.
    */
   assistedCommentByHunkId?: Map<string, string>;
+  /**
+   * Whether the "Assisted" filter (show only agent-flagged hunks) is active.
+   * The control bar that hosts this toggle is hidden behind the immersive
+   * overlay, so we surface a header badge to keep the active filter mode
+   * visible. Distinct from the per-hunk assisted banner: this means "the
+   * worklist filter is on", not "this hunk was flagged".
+   */
+  assistedOnly?: boolean;
+  /** Total agent-flagged hunks (mirrors the control bar's Assisted count). */
+  assistedCount?: number;
+  /** Agent-flagged hunks still unread (mirrors the control bar's count). */
+  assistedUnreadCount?: number;
 }
 
 interface InlineComposerRequest {
@@ -1885,6 +1898,25 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             )}
           </div>
         )}
+        {/* Assisted-mode indicator — the control bar that hosts the Assisted
+            toggle is hidden behind the immersive overlay, so without this the
+            user has no way to tell the diff is filtered to agent-flagged hunks.
+            ml-auto anchors it to the row's trailing edge as a mode indicator. */}
+        {props.assistedOnly === true && (
+          <div
+            className="border-review-accent/40 bg-review-accent/10 text-review-accent ml-auto flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium"
+            data-testid="immersive-assisted-mode-badge"
+            role="status"
+          >
+            <Sparkles aria-hidden="true" className="h-3 w-3 shrink-0" />
+            <span>Assisted</span>
+            {(props.assistedCount ?? 0) > 0 && (
+              <span className="text-review-accent/70 counter-nums">
+                {props.assistedUnreadCount ?? 0}/{props.assistedCount ?? 0}
+              </span>
+            )}
+          </div>
+        )}
         {allHunks.length > 0 && (
           <div className="w-full pt-0.5">
             <TooltipIfPresent
@@ -1924,6 +1956,12 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           </div>
         )}
       </div>
+
+      {/* Agent status bar — keeps the TODO plan + live streaming status visible
+          while reviewing, since the chat transcript/composer are hidden behind
+          the immersive overlay. Self-subscribes so its updates don't re-render
+          the diff tree; renders nothing when there's no plan and no stream. */}
+      <ImmersiveReviewAgentStatusBar workspaceId={props.workspaceId} />
 
       {/* Assisted-review banner — surfaces the agent's flag + comment when
           the selected hunk is one the agent pinned for review. We render it

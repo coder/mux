@@ -289,6 +289,10 @@ interface ImmersiveReviewStoryProps {
   assistedHunkIds?: ReadonlySet<string>;
   /** Per-hunk agent comments — drives the immersive assisted-review banner. */
   assistedCommentByHunkId?: Map<string, string>;
+  /** Whether the Assisted worklist filter is active — drives the header badge. */
+  assistedOnly?: boolean;
+  assistedCount?: number;
+  assistedUnreadCount?: number;
 }
 
 function ImmersiveReviewStory(props: ImmersiveReviewStoryProps) {
@@ -340,6 +344,9 @@ function ImmersiveReviewStory(props: ImmersiveReviewStoryProps) {
         firstSeenMap={props.fixture.firstSeenMap}
         assistedHunkIds={props.assistedHunkIds}
         assistedCommentByHunkId={props.assistedCommentByHunkId}
+        assistedOnly={props.assistedOnly}
+        assistedCount={props.assistedCount}
+        assistedUnreadCount={props.assistedUnreadCount}
       />
     </ImmersiveStoryShell>
   );
@@ -542,6 +549,37 @@ export const ImmersiveWithAssistedBanner: Story = {
       () => {
         canvas.getByTestId("immersive-review-view");
         canvas.getByTestId("immersive-assisted-banner");
+      },
+      { timeout: 10_000 }
+    );
+  },
+};
+
+/**
+ * Immersive review with the Assisted worklist filter active. Locks in the
+ * header "Assisted unread/total" badge (Sparkles + review-accent) that tells
+ * the user the diff is filtered to agent-flagged hunks — the control bar that
+ * normally hosts this toggle is hidden behind the immersive overlay.
+ */
+export const ImmersiveWithAssistedMode: Story = {
+  render: () => (
+    <ImmersiveReviewStory
+      workspaceId={IMMERSIVE_ASSISTED_WORKSPACE_ID}
+      fixture={IMMERSIVE_ASSISTED_FIXTURE}
+      assistedHunkIds={IMMERSIVE_ASSISTED_HUNK_IDS}
+      assistedCommentByHunkId={IMMERSIVE_ASSISTED_COMMENT_BY_HUNK_ID}
+      assistedOnly
+      assistedCount={3}
+      assistedUnreadCount={2}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await waitFor(
+      () => {
+        canvas.getByTestId("immersive-review-view");
+        canvas.getByTestId("immersive-assisted-mode-badge");
       },
       { timeout: 10_000 }
     );
