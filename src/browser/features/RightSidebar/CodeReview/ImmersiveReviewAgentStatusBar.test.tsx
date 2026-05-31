@@ -1,14 +1,14 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { cleanup, fireEvent, render, type RenderResult } from "@testing-library/react";
-import { GlobalWindow } from "happy-dom";
 
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import {
-  useWorkspaceStoreRaw as getWorkspaceStoreRaw,
-  type WorkspaceSidebarState,
-  type WorkspaceState,
-} from "@/browser/stores/WorkspaceStore";
-import { getImmersiveReviewAgentBarExpandedKey } from "@/common/constants/storage";
+import { installDom } from "../../../../../tests/ui/dom";
+// Import the module namespace (not the hook directly) so we can spyOn the hook
+// per-test. The bar resolves the store via useWorkspaceStoreRaw(), and several
+// OTHER test files globally mock.module this store; spying here keeps this file
+// hermetic regardless of cross-file load order (grabbing the real singleton at
+// module top-level would crash if another file's stub were active first).
+import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import type { WorkspaceState, WorkspaceStore } from "@/browser/stores/WorkspaceStore";
 import type { TodoItem } from "@/common/types/tools";
 import { ImmersiveReviewAgentStatusBar } from "./ImmersiveReviewAgentStatusBar";
 
@@ -19,14 +19,11 @@ interface SeedInput {
   awaitingUserQuestion?: boolean;
 }
 
-interface SeedCache {
-  state: WorkspaceState;
-  sidebar: WorkspaceSidebarState;
-}
-
-// Cache the built snapshots per workspace so getWorkspaceState/getWorkspaceSidebarState
-// return referentially-stable objects (useSyncExternalStore would otherwise loop).
-const seeds = new Map<string, SeedCache>();
+// Cache the built state per workspace so getWorkspaceState returns a
+// referentially-stable object (useSyncExternalStore would otherwise loop).
+// The bar reads todos + streaming flags off a single getWorkspaceState read
+// (matching PinnedTodoList), so there's no separate sidebar-state mock.
+const seeds = new Map<string, WorkspaceState>();
 const subscribers = new Map<string, Set<() => void>>();
 
 function getSubscribers(workspaceId: string): Set<() => void> {
@@ -67,89 +64,52 @@ function buildState(workspaceId: string, input: SeedInput): WorkspaceState {
   };
 }
 
-function buildSidebar(input: SeedInput): WorkspaceSidebarState {
-  return {
-    canInterrupt: input.canInterrupt ?? false,
-    isStarting: input.isStarting ?? false,
-    awaitingUserQuestion: input.awaitingUserQuestion ?? false,
-    lastAbortReason: null,
-    currentModel: null,
-    pendingStreamModel: null,
-    recencyTimestamp: null,
-    loadedSkills: [],
-    skillLoadErrors: [],
-    agentStatus: undefined,
-    terminalActiveCount: 0,
-    terminalSessionCount: 0,
-    goal: null,
-  };
-}
-
 function seed(workspaceId: string, input: SeedInput): void {
-  seeds.set(workspaceId, {
-    state: buildState(workspaceId, input),
-    sidebar: buildSidebar(input),
-  });
+  seeds.set(workspaceId, buildState(workspaceId, input));
 }
 
-const store = getWorkspaceStoreRaw();
-const original = {
-  hasRegisteredWorkspace: store.hasRegisteredWorkspace.bind(store),
-  subscribeKey: store.subscribeKey.bind(store),
-  getWorkspaceState: store.getWorkspaceState.bind(store),
-  getWorkspaceSidebarState: store.getWorkspaceSidebarState.bind(store),
-};
+// Minimal fake exposing only the store methods the bar calls. Cast through
+// unknown because the bar uses just this slice of the WorkspaceStore surface.
+const fakeStore = {
+  hasRegisteredWorkspace: (id: string) => seeds.has(id),
+  subscribeKey: (id: string, cb: () => void) => {
+    const set = getSubscribers(id);
+    set.add(cb);
+    return () => {
+      set.delete(cb);
+    };
+  },
+  getWorkspaceState: (id: string) => {
+    const state = seeds.get(id);
+    if (!state) throw new Error(`Missing seed for ${id}`);
+    return state;
+  },
+} as unknown as WorkspaceStore;
 
 function renderBar(workspaceId: string): RenderResult {
   return render(<ImmersiveReviewAgentStatusBar workspaceId={workspaceId} />);
 }
 
 describe("ImmersiveReviewAgentStatusBar", () => {
-  let originalWindow: typeof globalThis.window;
-  let originalDocument: typeof globalThis.document;
-  let originalLocalStorage: typeof globalThis.localStorage;
+  // installDom snapshots + fully restores all DOM globals (window, document,
+  // localStorage, CustomEvent, …), so this file stays hermetic even when other
+  // test files in the same process leave the globals in a partial state.
+  let cleanupDom: (() => void) | null = null;
 
   beforeEach(() => {
-    originalWindow = globalThis.window;
-    originalDocument = globalThis.document;
-    originalLocalStorage = globalThis.localStorage;
-
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
-    globalThis.localStorage = globalThis.window.localStorage;
+    cleanupDom = installDom();
     globalThis.localStorage.clear();
     seeds.clear();
     subscribers.clear();
 
-    store.hasRegisteredWorkspace = (id: string) => seeds.has(id);
-    store.subscribeKey = (id: string, cb: () => void) => {
-      const set = getSubscribers(id);
-      set.add(cb);
-      return () => {
-        set.delete(cb);
-      };
-    };
-    store.getWorkspaceState = (id: string) => {
-      const cache = seeds.get(id);
-      if (!cache) throw new Error(`Missing seed for ${id}`);
-      return cache.state;
-    };
-    store.getWorkspaceSidebarState = (id: string) => {
-      const cache = seeds.get(id);
-      if (!cache) throw new Error(`Missing seed for ${id}`);
-      return cache.sidebar;
-    };
+    spyOn(WorkspaceStoreModule, "useWorkspaceStoreRaw").mockReturnValue(fakeStore);
   });
 
   afterEach(() => {
     cleanup();
-    store.hasRegisteredWorkspace = original.hasRegisteredWorkspace;
-    store.subscribeKey = original.subscribeKey;
-    store.getWorkspaceState = original.getWorkspaceState;
-    store.getWorkspaceSidebarState = original.getWorkspaceSidebarState;
-    globalThis.window = originalWindow;
-    globalThis.document = originalDocument;
-    globalThis.localStorage = originalLocalStorage;
+    mock.restore();
+    cleanupDom?.();
+    cleanupDom = null;
     seeds.clear();
     subscribers.clear();
   });
@@ -197,15 +157,26 @@ describe("ImmersiveReviewAgentStatusBar", () => {
     expect(result.queryByText("Streaming…")).toBeNull();
   });
 
-  test("collapsing hides the plan and persists the choice", () => {
+  test("collapsing hides the plan and the collapsed choice persists across remounts", () => {
     const workspaceId = "ws-collapse";
     seed(workspaceId, { todos });
-    const result = renderBar(workspaceId);
+    const first = renderBar(workspaceId);
 
-    fireEvent.click(result.getByRole("button", { name: /todo/i }));
-    expect(result.queryByText("Wire up status bar")).toBeNull();
-    expect(readPersistedState(getImmersiveReviewAgentBarExpandedKey(workspaceId), true)).toBe(
-      false
-    );
+    // Plan is expanded by default; collapsing hides the vertical list.
+    expect(first.getByText("Wire up status bar")).toBeTruthy();
+    fireEvent.click(first.getByRole("button", { name: /todo/i }));
+    expect(first.queryByText("Wire up status bar")).toBeNull();
+
+    // Remounting the bar for the same workspace must restore the collapsed
+    // choice (asserted via the user-visible re-render rather than reading the
+    // raw localStorage value, which keeps this resilient to the test-runner's
+    // shared-global quirks).
+    first.unmount();
+    const second = renderBar(workspaceId);
+    expect(second.queryByText("Wire up status bar")).toBeNull();
+
+    // Re-expanding brings the plan back, proving the toggle round-trips.
+    fireEvent.click(second.getByRole("button", { name: /todo/i }));
+    expect(second.getByText("Wire up status bar")).toBeTruthy();
   });
 });
