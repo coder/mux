@@ -716,6 +716,7 @@ const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> 
   getPendingWorkspaceSendErrorKey,
   getPlanContentKey, // Cache only, no need to preserve on fork
   getPostCompactionStateKey, // Cache only, no need to preserve on fork
+  getImmersiveReviewAgentBarExpandedKey, // Transient UI pref; clean up on removal, don't carry on fork
 ];
 
 /**
