@@ -75,6 +75,11 @@ import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import { findInlineSkillReferenceAtCursor } from "@/browser/utils/agentSkills/inlineSkillReferences";
 import {
+  convertGreekCommandAtCursor,
+  findGreekCommandAtCursor,
+  getGreekSuggestions,
+} from "@/browser/features/ChatInput/greekConversion";
+import {
   getInlineSkillInsertionTrailingText,
   getInlineSkillSuggestions,
   shouldRefreshInlineSkillSuggestions,
@@ -373,6 +378,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
 
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
+  // Greek-letter backslash autocomplete (e.g. typing "\alpha").
+  const [showGreekSuggestions, setShowGreekSuggestions] = useState(false);
+  const [greekSuggestions, setGreekSuggestions] = useState<SlashSuggestion[]>([]);
+  const lastGreekQueryRef = useRef<string>("");
   const [agentSkillDescriptors, setAgentSkillDescriptors] = useState<AgentSkillDescriptor[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   // State for destructive command confirmation modal (currently only /clear).
@@ -571,6 +580,25 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
       }
 
+      // Auto-convert a completed backslash command (e.g. "\alpha") into its Greek
+      // letter as soon as the full name is typed. Conversion only fires when the
+      // caret sits at the end of the token, so partial/mid-word edits are untouched.
+      const caret = caretFromEvent ?? inputRef.current?.selectionStart ?? next.length;
+      const converted = convertGreekCommandAtCursor(next, caret);
+      if (converted) {
+        setInput(converted.text);
+        const newCursor = converted.cursor;
+        requestAnimationFrame(() => {
+          const el = inputRef.current;
+          if (!el || el.disabled) {
+            return;
+          }
+          el.selectionStart = newCursor;
+          el.selectionEnd = newCursor;
+        });
+        return;
+      }
+
       setInput(next);
     },
     [powerMode, setInput]
@@ -620,6 +648,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const atMentionListId = useId();
   const skillListId = useId();
   const commandListId = useId();
+  const greekListId = useId();
   const telemetry = useTelemetry();
   const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
     listener: true,
@@ -1446,6 +1475,29 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     setShowCommandSuggestions(suggestions.length > 0);
   }, [input, agentSkillDescriptors, variant, workspaceHeartbeatsExperimentEnabled]);
 
+  // Watch input/cursor for `\greek` backslash commands and surface the menu.
+  useLayoutEffect(() => {
+    if (showAtMentionSuggestions) {
+      // File mentions win precedence if an edge-case token could match both menus.
+      setGreekSuggestions(clearSuggestions);
+      setShowGreekSuggestions(false);
+      return;
+    }
+
+    const cursor = Math.min(inputRef.current?.selectionStart ?? input.length, input.length);
+    const match = findGreekCommandAtCursor(input, cursor);
+    if (!match) {
+      setGreekSuggestions(clearSuggestions);
+      setShowGreekSuggestions(false);
+      return;
+    }
+
+    const suggestions = getGreekSuggestions(match.partial);
+    lastGreekQueryRef.current = match.partial;
+    setGreekSuggestions((prev) => replaceSuggestions(prev, suggestions));
+    setShowGreekSuggestions(suggestions.length > 0);
+  }, [input, showAtMentionSuggestions, atMentionCursorNonce]);
+
   // Derive ghost hint for slash-command argument syntax.
   // Show only when suggestions are hidden and the input is exactly "/command " with no args yet.
   const commandGhostHint = getCommandGhostHint(input, showCommandSuggestions, {
@@ -2145,6 +2197,38 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setInput]
   );
 
+  const handleGreekSelect = useCallback(
+    (suggestion: SlashSuggestion) => {
+      const cursor = Math.min(inputRef.current?.selectionStart ?? input.length, input.length);
+      const match = findGreekCommandAtCursor(input, cursor);
+      if (!match) {
+        return;
+      }
+
+      // Replace the whole `\name` token with the Greek letter; no trailing space
+      // so the user can keep typing (e.g. another letter or an exponent).
+      const next =
+        input.slice(0, match.startIndex) + suggestion.replacement + input.slice(match.endIndex);
+
+      setInput(next);
+      setGreekSuggestions(clearSuggestions);
+      setShowGreekSuggestions(false);
+
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (!el || el.disabled) {
+          return;
+        }
+
+        el.focus();
+        const newCursor = match.startIndex + suggestion.replacement.length;
+        el.selectionStart = newCursor;
+        el.selectionEnd = newCursor;
+      });
+    },
+    [input, setInput]
+  );
+
   const handleSend = async (overrides?: InternalSendOverrides) => {
     if (!canSend) {
       return;
@@ -2668,13 +2752,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const hasCommandSuggestionMenu = showCommandSuggestions && commandSuggestions.length > 0;
     const hasAtMentionSuggestionMenu = showAtMentionSuggestions && atMentionSuggestions.length > 0;
     const hasSkillSuggestionMenu = showSkillSuggestions && skillSuggestions.length > 0;
+    const hasGreekSuggestionMenu = showGreekSuggestions && greekSuggestions.length > 0;
 
     // Don't handle keys if suggestions are visible.
-    // Enter/Tab/arrows/Escape are handled by CommandSuggestions for slash, @file, and $skill menus.
+    // Enter/Tab/arrows/Escape are handled by CommandSuggestions for slash, @file, $skill, and \greek menus.
     if (
       (hasCommandSuggestionMenu && COMMAND_SUGGESTION_KEYS.includes(e.key)) ||
       (hasAtMentionSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key)) ||
-      (hasSkillSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key))
+      (hasSkillSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key)) ||
+      (hasGreekSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key))
     ) {
       return; // Let CommandSuggestions handle it
     }
@@ -2856,6 +2942,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             anchorRef={variant === "creation" ? inputRef : undefined}
           />
 
+          {/* Greek letter suggestions (\alpha -> α) */}
+          <CommandSuggestions
+            suggestions={greekSuggestions}
+            onSelectSuggestion={handleGreekSelect}
+            onDismiss={() => setShowGreekSuggestions(false)}
+            isVisible={showGreekSuggestions}
+            ariaLabel="Greek letter suggestions"
+            listId={greekListId}
+            anchorRef={variant === "creation" ? inputRef : undefined}
+            highlightQuery={lastGreekQueryRef.current}
+          />
+
           <div className="relative flex items-end pb-1" data-component="ChatInputControls">
             {/* Recording/transcribing overlay - replaces textarea when active */}
             {voiceInput.state !== "idle" ? (
@@ -2889,9 +2987,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       ? FILE_SUGGESTION_KEYS
                       : showSkillSuggestions
                         ? FILE_SUGGESTION_KEYS
-                        : showCommandSuggestions
-                          ? COMMAND_SUGGESTION_KEYS
-                          : undefined
+                        : showGreekSuggestions
+                          ? FILE_SUGGESTION_KEYS
+                          : showCommandSuggestions
+                            ? COMMAND_SUGGESTION_KEYS
+                            : undefined
                   }
                   placeholder={placeholder}
                   disabled={!editingMessageForUi && (disabled || sendInFlightBlocksInput)}
@@ -2902,14 +3002,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       ? atMentionListId
                       : showSkillSuggestions && skillSuggestions.length > 0
                         ? skillListId
-                        : showCommandSuggestions && commandSuggestions.length > 0
-                          ? commandListId
-                          : undefined
+                        : showGreekSuggestions && greekSuggestions.length > 0
+                          ? greekListId
+                          : showCommandSuggestions && commandSuggestions.length > 0
+                            ? commandListId
+                            : undefined
                   }
                   aria-expanded={
                     (showCommandSuggestions && commandSuggestions.length > 0) ||
                     (showAtMentionSuggestions && atMentionSuggestions.length > 0) ||
-                    (showSkillSuggestions && skillSuggestions.length > 0)
+                    (showSkillSuggestions && skillSuggestions.length > 0) ||
+                    (showGreekSuggestions && greekSuggestions.length > 0)
                   }
                   className={variant === "creation" ? "min-h-28" : "min-h-16"}
                 />
