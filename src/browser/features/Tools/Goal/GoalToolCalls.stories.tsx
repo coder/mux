@@ -51,7 +51,7 @@ function Frame({ children }: { children: React.ReactNode }) {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-2">
-      <div className="text-xs font-semibold uppercase tracking-wide text-secondary">{label}</div>
+      <div className="text-secondary text-xs font-semibold tracking-wide uppercase">{label}</div>
       {children}
     </div>
   );

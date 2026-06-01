@@ -162,7 +162,7 @@ export const EnrolledPolicyGallery: Story = {
     <div className="flex flex-col gap-8">
       {ENROLLED_POLICY_VARIANTS.map((variant) => (
         <section key={variant.label} className="flex flex-col gap-2">
-          <h3 className="text-foreground/70 px-6 text-xs font-semibold uppercase tracking-wide">
+          <h3 className="text-foreground/70 px-6 text-xs font-semibold tracking-wide uppercase">
             {variant.label}
           </h3>
           {renderGovernorSection(() => setupGovernorStory(variant.options))}

@@ -140,7 +140,7 @@ export const States: Story = {
     <div className="flex flex-col gap-6 p-3">
       {STATE_VARIANTS.map((variant) => (
         <section key={variant.label} className="flex flex-col gap-2">
-          <div className="text-xs font-medium uppercase tracking-wide opacity-60">
+          <div className="text-xs font-medium tracking-wide uppercase opacity-60">
             {variant.label}
           </div>
           <GoalTab goal={variant.goal} onCreate={variant.onCreate} />

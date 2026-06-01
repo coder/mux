@@ -42,7 +42,7 @@ function ToolStoryShell(props: { children: ReactNode }) {
 function GallerySection(props: { label: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
-      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
         {props.label}
       </div>
       {props.children}

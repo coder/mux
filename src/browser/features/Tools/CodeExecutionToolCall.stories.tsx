@@ -113,7 +113,7 @@ function GallerySection(props: {
 }) {
   return (
     <section className="flex flex-col gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <h3 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
         {props.label}
       </h3>
       <CodeExecutionToolCall {...props.cardProps} />
