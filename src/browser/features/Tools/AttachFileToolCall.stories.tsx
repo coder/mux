@@ -39,106 +39,104 @@ function ToolStoryShell(props: { children: ReactNode }) {
   );
 }
 
-export const ImageAttachment: Story = {
-  render: () => (
-    <ToolStoryShell>
-      <AttachFileToolCall
-        toolName="attach_file"
-        args={{ path: "screenshot.png" }}
-        result={{
-          type: "content",
-          value: [
-            { type: "text", text: "[Attachment prepared: screenshot.png]" },
-            {
-              type: "media",
-              data: samplePng,
-              mediaType: "image/png",
-              filename: "screenshot.png",
-            },
-          ],
-        }}
-        status="completed"
-      />
-    </ToolStoryShell>
-  ),
-};
+function GallerySection(props: { label: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {props.label}
+      </div>
+      {props.children}
+    </section>
+  );
+}
 
-export const DisplayOnlyVideo: Story = {
+// Gallery composite: folds the non-interactive "completed" attachment variants
+// (image, video, audio, markdown, generic file) into a single snapshot to keep
+// the Chromatic budget low while preserving every distinct visual state.
+export const Gallery: Story = {
   render: () => (
     <ToolStoryShell>
-      <AttachFileToolCall
-        toolName="attach_file"
-        args={{ path: "recording.webm" }}
-        result={createAttachFileResult(
-          createDisplayOnlyFilePart({
-            data: sampleBytes,
-            mediaType: "video/webm",
-            filename: "recording.webm",
-            size: 17_408,
-          })
-        )}
-        status="completed"
-      />
-    </ToolStoryShell>
-  ),
-};
-
-export const DisplayOnlyAudio: Story = {
-  render: () => (
-    <ToolStoryShell>
-      <AttachFileToolCall
-        toolName="attach_file"
-        args={{ path: "voice-note.mp3" }}
-        result={createAttachFileResult(
-          createDisplayOnlyFilePart({
-            data: sampleBytes,
-            mediaType: "audio/mpeg",
-            filename: "voice-note.mp3",
-            size: 8_192,
-          })
-        )}
-        status="completed"
-      />
-    </ToolStoryShell>
-  ),
-};
-
-export const DisplayOnlyMarkdown: Story = {
-  render: () => (
-    <ToolStoryShell>
-      <AttachFileToolCall
-        toolName="attach_file"
-        args={{ path: "release-notes.md" }}
-        result={createAttachFileResult(
-          createDisplayOnlyFilePart({
-            data: "IyBSZWxlYXNlIE5vdGVzCgotIEFkZGVkICoqbWFya2Rvd24qKiBwcmV2aWV3Lgo=",
-            mediaType: "text/markdown",
-            filename: "release-notes.md",
-            size: 47,
-          })
-        )}
-        status="completed"
-      />
-    </ToolStoryShell>
-  ),
-};
-
-export const DisplayOnlyGenericFile: Story = {
-  render: () => (
-    <ToolStoryShell>
-      <AttachFileToolCall
-        toolName="attach_file"
-        args={{ path: "archive.zip", filename: "support-bundle.zip" }}
-        result={createAttachFileResult(
-          createDisplayOnlyFilePart({
-            data: sampleBytes,
-            mediaType: "application/octet-stream",
-            filename: "support-bundle.zip",
-            size: 524_288,
-          })
-        )}
-        status="completed"
-      />
+      <div className="flex flex-col gap-6">
+        <GallerySection label="Image attachment">
+          <AttachFileToolCall
+            toolName="attach_file"
+            args={{ path: "screenshot.png" }}
+            result={{
+              type: "content",
+              value: [
+                { type: "text", text: "[Attachment prepared: screenshot.png]" },
+                {
+                  type: "media",
+                  data: samplePng,
+                  mediaType: "image/png",
+                  filename: "screenshot.png",
+                },
+              ],
+            }}
+            status="completed"
+          />
+        </GallerySection>
+        <GallerySection label="Display-only video">
+          <AttachFileToolCall
+            toolName="attach_file"
+            args={{ path: "recording.webm" }}
+            result={createAttachFileResult(
+              createDisplayOnlyFilePart({
+                data: sampleBytes,
+                mediaType: "video/webm",
+                filename: "recording.webm",
+                size: 17_408,
+              })
+            )}
+            status="completed"
+          />
+        </GallerySection>
+        <GallerySection label="Display-only audio">
+          <AttachFileToolCall
+            toolName="attach_file"
+            args={{ path: "voice-note.mp3" }}
+            result={createAttachFileResult(
+              createDisplayOnlyFilePart({
+                data: sampleBytes,
+                mediaType: "audio/mpeg",
+                filename: "voice-note.mp3",
+                size: 8_192,
+              })
+            )}
+            status="completed"
+          />
+        </GallerySection>
+        <GallerySection label="Display-only markdown">
+          <AttachFileToolCall
+            toolName="attach_file"
+            args={{ path: "release-notes.md" }}
+            result={createAttachFileResult(
+              createDisplayOnlyFilePart({
+                data: "IyBSZWxlYXNlIE5vdGVzCgotIEFkZGVkICoqbWFya2Rvd24qKiBwcmV2aWV3Lgo=",
+                mediaType: "text/markdown",
+                filename: "release-notes.md",
+                size: 47,
+              })
+            )}
+            status="completed"
+          />
+        </GallerySection>
+        <GallerySection label="Display-only generic file">
+          <AttachFileToolCall
+            toolName="attach_file"
+            args={{ path: "archive.zip", filename: "support-bundle.zip" }}
+            result={createAttachFileResult(
+              createDisplayOnlyFilePart({
+                data: sampleBytes,
+                mediaType: "application/octet-stream",
+                filename: "support-bundle.zip",
+                size: 524_288,
+              })
+            )}
+            status="completed"
+          />
+        </GallerySection>
+      </div>
     </ToolStoryShell>
   ),
 };
