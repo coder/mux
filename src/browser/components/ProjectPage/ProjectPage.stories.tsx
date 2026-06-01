@@ -104,9 +104,9 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
   parameters: {
     chromatic: {
       modes: {
+        // Two snapshots cover both themes AND both viewports without paying for
+        // the full 2x2 matrix: a dark desktop render plus a light mobile render.
         dark: { theme: "dark" },
-        light: { theme: "light" },
-        "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true },
         "light-mobile": { theme: "light", viewport: "mobile1", hasTouch: true },
       },
     },
@@ -144,9 +144,9 @@ export const CreateWorkspaceWithSections: AppStory = {
   parameters: {
     chromatic: {
       modes: {
+        // Two snapshots cover both themes AND both viewports without paying for
+        // the full 2x2 matrix: a dark desktop render plus a light mobile render.
         dark: { theme: "dark" },
-        light: { theme: "light" },
-        "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true },
         "light-mobile": { theme: "light", viewport: "mobile1", hasTouch: true },
       },
     },
