@@ -1,4 +1,4 @@
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { StreamingContext } from "./StreamingContext";
@@ -176,6 +176,38 @@ describe("Mermaid layout stability", () => {
       const out = sanitizeMermaidSvg(wrappedLabel);
       expect(out).not.toBeNull();
       expect(out).toContain("<svg");
+    });
+  });
+
+  test("zoom controls scale rendered diagrams", async () => {
+    const view = renderMermaid();
+
+    await waitFor(() => {
+      expect(view.container.querySelector(".mermaid-container svg")).not.toBeNull();
+    });
+
+    const container = view.container.querySelector<HTMLElement>(".mermaid-container");
+    expect(container).not.toBeNull();
+    expect(container?.style.getPropertyValue("--diagram-zoom")).toBe("1");
+
+    const buttons = Array.from(view.container.querySelectorAll("button"));
+    const zoomOutButton = buttons.find((button) => button.textContent === "−");
+    const zoomInButton = buttons.find((button) => button.textContent === "+");
+    if (!zoomOutButton || !zoomInButton) {
+      throw new Error("Expected Mermaid zoom controls to render");
+    }
+
+    fireEvent.click(zoomInButton);
+
+    await waitFor(() => {
+      expect(container?.style.getPropertyValue("--diagram-zoom")).toBe("1.1");
+    });
+    expect(window.localStorage.getItem("mermaid-diagram-zoom")).toBe("1.1");
+
+    fireEvent.click(zoomOutButton);
+
+    await waitFor(() => {
+      expect(container?.style.getPropertyValue("--diagram-zoom")).toBe("1");
     });
   });
 
