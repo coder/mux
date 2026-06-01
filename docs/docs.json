@@ -97,7 +97,8 @@
               "config/keybinds",
               "config/notifications",
               "config/server-access",
-              "config/vim-mode"
+              "config/vim-mode",
+              "config/symbol-shortcuts"
             ]
           },
 

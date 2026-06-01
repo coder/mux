@@ -61,6 +61,21 @@ describe("getSymbolSuggestions", () => {
     expect(upper.map((s) => s.display)).toEqual([cmd("Alpha")]);
   });
 
+  test("an exact match is the default (first) suggestion so Tab accepts it", () => {
+    // Regression: typing "\in" + Tab must yield ∈, not ∞/∫ — the exact match
+    // floats above its longer prefix-completions.
+    expect(getSymbolSuggestions("in")[0]?.display).toBe(cmd("in"));
+    expect(getSymbolSuggestions("in")[0]?.replacement).toBe("∈");
+    expect(getSymbolSuggestions("to")[0]?.display).toBe(cmd("to"));
+    expect(getSymbolSuggestions("subset")[0]?.display).toBe(cmd("subset"));
+  });
+
+  test("non-exact queries keep curated order (no shorter-sibling hijack)", () => {
+    // "\a" has no exact match, so the curated Greek-first ordering stands and
+    // \alpha remains the default rather than the shorter \ast.
+    expect(getSymbolSuggestions("a")[0]?.display).toBe(cmd("alpha"));
+  });
+
   test("prefix-colliding names all appear in the menu", () => {
     expect(
       getSymbolSuggestions("in")

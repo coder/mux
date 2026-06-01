@@ -303,9 +303,19 @@ export function findSymbolCommandAtCursor(text: string, cursor: number): SymbolC
  * Suggestions for the autocomplete menu. Matching is case-sensitive on purpose:
  * the case of the typed name selects the glyph case, so "a" offers "alpha"
  * while "A" offers "Alpha". An empty partial (just the trigger) lists everything.
+ *
+ * An exact (full-name) match is floated to the top so it wins the menu's
+ * default selection — e.g. "\in" + Tab yields ∈, not ∞/∫ even though "\infty"/
+ * "\int" also start with "in". All other matches keep curated table order
+ * (Array.sort is stable), so e.g. "\a" still defaults to "\alpha" rather than a
+ * shorter sibling like "\ast".
  */
 export function getSymbolSuggestions(partial: string): SlashSuggestion[] {
-  return SYMBOLS.filter((entry) => entry.name.startsWith(partial)).map((entry) => ({
+  const matches = SYMBOLS.filter((entry) => entry.name.startsWith(partial));
+  if (partial.length > 0) {
+    matches.sort((a, b) => Number(b.name === partial) - Number(a.name === partial));
+  }
+  return matches.map((entry) => ({
     id: `symbol:${entry.name}`,
     display: `${BACKSLASH}${entry.name}`,
     description: entry.char,
