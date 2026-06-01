@@ -97,8 +97,7 @@
               "config/keybinds",
               "config/notifications",
               "config/server-access",
-              "config/vim-mode",
-              "config/symbol-shortcuts"
+              "config/vim-mode"
             ]
           },
 
@@ -106,6 +105,7 @@
             "group": "Guides",
             "pages": [
               "guides/github-actions",
+              "guides/symbol-shortcuts",
               "config/agentic-git-identity",
               "agents/prompting-tips"
             ]

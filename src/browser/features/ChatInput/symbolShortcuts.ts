@@ -200,6 +200,9 @@ function toEntries(
   return pairs.map(([name, char]) => ({ name, char, category }));
 }
 
+// The full set of shortcuts. A representative subset is mirrored in the user
+// docs at docs/guides/symbol-shortcuts.mdx — update that table's examples when
+// adding or renaming categories/symbols here.
 const SYMBOLS: readonly SymbolEntry[] = [
   ...GREEK_ENTRIES,
   ...toEntries(MATH_ENTRIES, "math"),
