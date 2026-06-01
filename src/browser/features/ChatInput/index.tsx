@@ -75,10 +75,11 @@ import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import { findInlineSkillReferenceAtCursor } from "@/browser/utils/agentSkills/inlineSkillReferences";
 import {
-  convertGreekCommandAtCursor,
-  findGreekCommandAtCursor,
-  getGreekSuggestions,
-} from "@/browser/features/ChatInput/greekConversion";
+  convertSymbolCommandAtCursor,
+  convertTerminatedSymbolCommand,
+  findSymbolCommandAtCursor,
+  getSymbolSuggestions,
+} from "@/browser/features/ChatInput/symbolShortcuts";
 import {
   getInlineSkillInsertionTrailingText,
   getInlineSkillSuggestions,
@@ -378,10 +379,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
 
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
-  // Greek-letter backslash autocomplete (e.g. typing "\alpha").
-  const [showGreekSuggestions, setShowGreekSuggestions] = useState(false);
-  const [greekSuggestions, setGreekSuggestions] = useState<SlashSuggestion[]>([]);
-  const lastGreekQueryRef = useRef<string>("");
+  // Backslash symbol-shortcut autocomplete (e.g. typing "\alpha" or "\leq").
+  const [showSymbolSuggestions, setShowSymbolSuggestions] = useState(false);
+  const [symbolSuggestions, setSymbolSuggestions] = useState<SlashSuggestion[]>([]);
+  const lastSymbolQueryRef = useRef<string>("");
   const [agentSkillDescriptors, setAgentSkillDescriptors] = useState<AgentSkillDescriptor[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   // State for destructive command confirmation modal (currently only /clear).
@@ -580,11 +581,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
       }
 
-      // Auto-convert a completed backslash command (e.g. "\alpha") into its Greek
-      // letter as soon as the full name is typed. Conversion only fires when the
-      // caret sits at the end of the token, so partial/mid-word edits are untouched.
+      // Auto-convert a backslash symbol command (e.g. "\alpha" -> α, "\leq" -> ≤).
+      // Eager path fires only for unambiguous names; the terminator path accepts
+      // a completed name when a space/punctuation follows (e.g. "\in " -> "∈ ").
+      // Both only act at the caret, so partial/mid-word edits are left untouched.
       const caret = caretFromEvent ?? inputRef.current?.selectionStart ?? next.length;
-      const converted = convertGreekCommandAtCursor(next, caret);
+      const converted =
+        convertSymbolCommandAtCursor(next, caret) ?? convertTerminatedSymbolCommand(next, caret);
       if (converted) {
         setInput(converted.text);
         const newCursor = converted.cursor;
@@ -648,7 +651,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const atMentionListId = useId();
   const skillListId = useId();
   const commandListId = useId();
-  const greekListId = useId();
+  const symbolListId = useId();
   const telemetry = useTelemetry();
   const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
     listener: true,
@@ -1475,27 +1478,27 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     setShowCommandSuggestions(suggestions.length > 0);
   }, [input, agentSkillDescriptors, variant, workspaceHeartbeatsExperimentEnabled]);
 
-  // Watch input/cursor for `\greek` backslash commands and surface the menu.
+  // Watch input/cursor for `\symbol` backslash commands and surface the menu.
   useLayoutEffect(() => {
     if (showAtMentionSuggestions) {
       // File mentions win precedence if an edge-case token could match both menus.
-      setGreekSuggestions(clearSuggestions);
-      setShowGreekSuggestions(false);
+      setSymbolSuggestions(clearSuggestions);
+      setShowSymbolSuggestions(false);
       return;
     }
 
     const cursor = Math.min(inputRef.current?.selectionStart ?? input.length, input.length);
-    const match = findGreekCommandAtCursor(input, cursor);
+    const match = findSymbolCommandAtCursor(input, cursor);
     if (!match) {
-      setGreekSuggestions(clearSuggestions);
-      setShowGreekSuggestions(false);
+      setSymbolSuggestions(clearSuggestions);
+      setShowSymbolSuggestions(false);
       return;
     }
 
-    const suggestions = getGreekSuggestions(match.partial);
-    lastGreekQueryRef.current = match.partial;
-    setGreekSuggestions((prev) => replaceSuggestions(prev, suggestions));
-    setShowGreekSuggestions(suggestions.length > 0);
+    const suggestions = getSymbolSuggestions(match.partial);
+    lastSymbolQueryRef.current = match.partial;
+    setSymbolSuggestions((prev) => replaceSuggestions(prev, suggestions));
+    setShowSymbolSuggestions(suggestions.length > 0);
   }, [input, showAtMentionSuggestions, atMentionCursorNonce]);
 
   // Derive ghost hint for slash-command argument syntax.
@@ -2197,22 +2200,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setInput]
   );
 
-  const handleGreekSelect = useCallback(
+  const handleSymbolSelect = useCallback(
     (suggestion: SlashSuggestion) => {
       const cursor = Math.min(inputRef.current?.selectionStart ?? input.length, input.length);
-      const match = findGreekCommandAtCursor(input, cursor);
+      const match = findSymbolCommandAtCursor(input, cursor);
       if (!match) {
         return;
       }
 
-      // Replace the whole `\name` token with the Greek letter; no trailing space
-      // so the user can keep typing (e.g. another letter or an exponent).
+      // Replace the whole `\name` token with the symbol; no trailing space so the
+      // user can keep typing (e.g. another symbol, an exponent, or a number).
       const next =
         input.slice(0, match.startIndex) + suggestion.replacement + input.slice(match.endIndex);
 
       setInput(next);
-      setGreekSuggestions(clearSuggestions);
-      setShowGreekSuggestions(false);
+      setSymbolSuggestions(clearSuggestions);
+      setShowSymbolSuggestions(false);
 
       requestAnimationFrame(() => {
         const el = inputRef.current;
@@ -2752,15 +2755,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const hasCommandSuggestionMenu = showCommandSuggestions && commandSuggestions.length > 0;
     const hasAtMentionSuggestionMenu = showAtMentionSuggestions && atMentionSuggestions.length > 0;
     const hasSkillSuggestionMenu = showSkillSuggestions && skillSuggestions.length > 0;
-    const hasGreekSuggestionMenu = showGreekSuggestions && greekSuggestions.length > 0;
+    const hasSymbolSuggestionMenu = showSymbolSuggestions && symbolSuggestions.length > 0;
 
     // Don't handle keys if suggestions are visible.
-    // Enter/Tab/arrows/Escape are handled by CommandSuggestions for slash, @file, $skill, and \greek menus.
+    // Enter/Tab/arrows/Escape are handled by CommandSuggestions for slash, @file, $skill, and \symbol menus.
     if (
       (hasCommandSuggestionMenu && COMMAND_SUGGESTION_KEYS.includes(e.key)) ||
       (hasAtMentionSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key)) ||
       (hasSkillSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key)) ||
-      (hasGreekSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key))
+      (hasSymbolSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key))
     ) {
       return; // Let CommandSuggestions handle it
     }
@@ -2942,16 +2945,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             anchorRef={variant === "creation" ? inputRef : undefined}
           />
 
-          {/* Greek letter suggestions (\alpha -> α) */}
+          {/* Symbol shortcut suggestions (\alpha -> α, \leq -> ≤, \euro -> €) */}
           <CommandSuggestions
-            suggestions={greekSuggestions}
-            onSelectSuggestion={handleGreekSelect}
-            onDismiss={() => setShowGreekSuggestions(false)}
-            isVisible={showGreekSuggestions}
-            ariaLabel="Greek letter suggestions"
-            listId={greekListId}
+            suggestions={symbolSuggestions}
+            onSelectSuggestion={handleSymbolSelect}
+            onDismiss={() => setShowSymbolSuggestions(false)}
+            isVisible={showSymbolSuggestions}
+            ariaLabel="Symbol shortcuts"
+            listId={symbolListId}
             anchorRef={variant === "creation" ? inputRef : undefined}
-            highlightQuery={lastGreekQueryRef.current}
+            highlightQuery={lastSymbolQueryRef.current}
           />
 
           <div className="relative flex items-end pb-1" data-component="ChatInputControls">
@@ -2987,7 +2990,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       ? FILE_SUGGESTION_KEYS
                       : showSkillSuggestions
                         ? FILE_SUGGESTION_KEYS
-                        : showGreekSuggestions
+                        : showSymbolSuggestions
                           ? FILE_SUGGESTION_KEYS
                           : showCommandSuggestions
                             ? COMMAND_SUGGESTION_KEYS
@@ -3002,8 +3005,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       ? atMentionListId
                       : showSkillSuggestions && skillSuggestions.length > 0
                         ? skillListId
-                        : showGreekSuggestions && greekSuggestions.length > 0
-                          ? greekListId
+                        : showSymbolSuggestions && symbolSuggestions.length > 0
+                          ? symbolListId
                           : showCommandSuggestions && commandSuggestions.length > 0
                             ? commandListId
                             : undefined
@@ -3012,7 +3015,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     (showCommandSuggestions && commandSuggestions.length > 0) ||
                     (showAtMentionSuggestions && atMentionSuggestions.length > 0) ||
                     (showSkillSuggestions && skillSuggestions.length > 0) ||
-                    (showGreekSuggestions && greekSuggestions.length > 0)
+                    (showSymbolSuggestions && symbolSuggestions.length > 0)
                   }
                   className={variant === "creation" ? "min-h-28" : "min-h-16"}
                 />
