@@ -2847,13 +2847,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   onDrop={handleDrop}
                   onEscapeInNormalMode={handleEscapeInNormalMode}
                   suppressKeys={
-                    showAtMentionSuggestions
+                    // @file and $skill menus share the same key set; collapse the
+                    // duplicate FILE_SUGGESTION_KEYS branches into one condition.
+                    showAtMentionSuggestions || showSkillSuggestions
                       ? FILE_SUGGESTION_KEYS
-                      : showSkillSuggestions
-                        ? FILE_SUGGESTION_KEYS
-                        : showCommandSuggestions
-                          ? COMMAND_SUGGESTION_KEYS
-                          : undefined
+                      : showCommandSuggestions
+                        ? COMMAND_SUGGESTION_KEYS
+                        : undefined
                   }
                   placeholder={placeholder}
                   disabled={!editingMessageForUi && (disabled || sendInFlightBlocksInput)}
