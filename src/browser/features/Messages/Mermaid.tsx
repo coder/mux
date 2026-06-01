@@ -6,7 +6,10 @@ import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 
 const MIN_HEIGHT = 300;
-const MAX_HEIGHT = 1200;
+const DEFAULT_ZOOM = 1;
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 3;
+const ZOOM_STEP = 0.1;
 
 // Initialize mermaid
 mermaid.initialize({
@@ -188,6 +191,14 @@ export function sanitizeMermaidSvg(svg: string): string | null {
   return svgRoot.outerHTML;
 }
 
+function normalizeDiagramZoom(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_ZOOM;
+  }
+
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(value.toFixed(2))));
+}
+
 // Common button styles
 const getButtonStyle = (disabled = false): CSSProperties => ({
   background: disabled ? "rgba(255, 255, 255, 0.05)" : "rgba(255, 255, 255, 0.1)",
@@ -286,24 +297,26 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
     return () => clearTimeout(timer);
   }, [chart]);
 
-  const [diagramMaxHeight, setDiagramMaxHeight] = usePersistedState(
-    "mermaid-diagram-max-height",
-    MIN_HEIGHT,
+  const [storedDiagramZoom, setStoredDiagramZoom] = usePersistedState(
+    "mermaid-diagram-zoom",
+    DEFAULT_ZOOM,
     { listener: true }
   );
+  // The +/- controls are shown as zoom affordances, so scale the rendered SVG
+  // itself; changing only max-height is a no-op for diagrams already below the cap.
+  const diagramZoom = normalizeDiagramZoom(storedDiagramZoom);
+  const atMinZoom = diagramZoom <= MIN_ZOOM;
+  const atMaxZoom = diagramZoom >= MAX_ZOOM;
 
-  const atMinHeight = diagramMaxHeight <= MIN_HEIGHT;
-  const atMaxHeight = diagramMaxHeight >= MAX_HEIGHT;
-
-  const handleIncreaseHeight = () => {
-    if (!atMaxHeight) {
-      setDiagramMaxHeight((prev) => Math.min(MAX_HEIGHT, Math.round(prev * 1.1)));
+  const handleZoomIn = () => {
+    if (!atMaxZoom) {
+      setStoredDiagramZoom((prev) => normalizeDiagramZoom(normalizeDiagramZoom(prev) + ZOOM_STEP));
     }
   };
 
-  const handleDecreaseHeight = () => {
-    if (!atMinHeight) {
-      setDiagramMaxHeight((prev) => Math.max(MIN_HEIGHT, Math.round(prev * 0.9)));
+  const handleZoomOut = () => {
+    if (!atMinZoom) {
+      setStoredDiagramZoom((prev) => normalizeDiagramZoom(normalizeDiagramZoom(prev) - ZOOM_STEP));
     }
   };
 
@@ -395,21 +408,13 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
             gap: "4px",
           }}
         >
-          <TooltipIfPresent tooltip="Decrease diagram height" side="bottom">
-            <button
-              onClick={handleDecreaseHeight}
-              disabled={atMinHeight}
-              style={getButtonStyle(atMinHeight)}
-            >
+          <TooltipIfPresent tooltip="Zoom out diagram" side="bottom">
+            <button onClick={handleZoomOut} disabled={atMinZoom} style={getButtonStyle(atMinZoom)}>
               −
             </button>
           </TooltipIfPresent>
-          <TooltipIfPresent tooltip="Increase diagram height" side="bottom">
-            <button
-              onClick={handleIncreaseHeight}
-              disabled={atMaxHeight}
-              style={getButtonStyle(atMaxHeight)}
-            >
+          <TooltipIfPresent tooltip="Zoom in diagram" side="bottom">
+            <button onClick={handleZoomIn} disabled={atMaxZoom} style={getButtonStyle(atMaxZoom)}>
               +
             </button>
           </TooltipIfPresent>
@@ -424,7 +429,7 @@ export const Mermaid: React.FC<{ chart: string }> = ({ chart }) => {
           style={{
             maxWidth: "70%",
             margin: "0 auto",
-            ["--diagram-max-height" as string]: `${diagramMaxHeight}px`,
+            ["--diagram-zoom" as string]: `${diagramZoom}`,
             minHeight: `${MIN_HEIGHT}px`,
             ...(showPendingPlaceholder
               ? {

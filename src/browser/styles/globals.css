@@ -1993,7 +1993,7 @@ code {
   display: flex;
   justify-content: center;
   align-items: center;
-  overflow-x: auto;
+  overflow: auto;
   max-width: 100%;
 }
 
@@ -2002,6 +2002,8 @@ code {
   max-width: none;
   max-height: var(--diagram-max-height, 300px);
   height: auto;
+  /* Electron is Chromium-only; zoom affects layout/scrollbars, unlike transform. */
+  zoom: var(--diagram-zoom, 1);
 }
 
 /* Mermaid in modal - allow larger sizing */
