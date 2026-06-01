@@ -10,7 +10,7 @@
 
 [![Download](https://img.shields.io/badge/Download-Releases-purple)](https://github.com/coder/mux/releases)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
-[![Discord](https://img.shields.io/discord/1446553342699507907?logo=discord&label=Discord)](https://discord.gg/thkEdtwm8c)
+[![Discord](https://img.shields.io/discord/1446553342699507907?logo=discord&label=Discord)](https://cdr.co/mux-discord)
 [![X (formerly Twitter)](https://img.shields.io/badge/Follow-%40codermux-black?logo=x)](https://x.com/codermux)
 
 </div>
