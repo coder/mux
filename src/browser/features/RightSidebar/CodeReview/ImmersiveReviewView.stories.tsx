@@ -9,6 +9,9 @@ import { ExperimentsProvider } from "@/browser/contexts/ExperimentsContext";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { createReview } from "@/browser/stories/helpers/reviews";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import type { TodoItem } from "@/common/types/tools";
 import type { DiffHunk, Review } from "@/common/types/review";
 import { extractAllHunks, parseDiff } from "@/common/utils/git/diffParser";
 import {
@@ -265,6 +268,84 @@ function createImmersiveStoryClient(): APIClient {
   });
 }
 
+interface AgentStatusSeed {
+  /** TODO plan the agent has written (drives the vertical TODO list + summary). */
+  todos: TodoItem[];
+  /**
+   * When true, leaves the seeded stream open so the bar shows the live
+   * "Streaming…" chip alongside the plan. When false the stream is left
+   * un-started, so only the persisted (incomplete) plan shows.
+   */
+  streaming?: boolean;
+}
+
+/**
+ * Register a workspace in the singleton WorkspaceStore and push a `todo_write`
+ * tool call through its aggregator so the immersive view's
+ * ImmersiveReviewAgentStatusBar has real plan + streaming state to render.
+ * Seeds exactly once per workspace (addWorkspace is idempotent and the stream
+ * events are replayed only when the aggregator is freshly created), and runs
+ * during render before the child subscribes so the bar paints populated on the
+ * first frame (flash-free for Chromatic).
+ */
+function seedAgentStatus(
+  workspaceStore: ReturnType<typeof useWorkspaceStoreRaw>,
+  workspaceId: string,
+  seed: AgentStatusSeed
+): void {
+  const alreadyRegistered = workspaceStore.hasRegisteredWorkspace(workspaceId);
+  workspaceStore.addWorkspace({
+    id: workspaceId,
+    name: workspaceId,
+    projectName: "story-project",
+    projectPath: "/story/project",
+    namedWorkspacePath: "/story/workspace",
+    createdAt: new Date(0).toISOString(),
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+  });
+  if (alreadyRegistered) {
+    return;
+  }
+
+  const aggregator = workspaceStore.getAggregator(workspaceId);
+  if (!aggregator) {
+    return;
+  }
+
+  const messageId = `${workspaceId}-stream`;
+  aggregator.handleStreamStart({
+    type: "stream-start",
+    workspaceId,
+    messageId,
+    historySequence: 1,
+    model: "anthropic:claude-sonnet-4",
+    startTime: 0,
+  });
+  aggregator.handleToolCallStart({
+    type: "tool-call-start",
+    workspaceId,
+    messageId,
+    toolCallId: `${workspaceId}-todo`,
+    toolName: "todo_write",
+    args: { todos: seed.todos },
+    tokens: 10,
+    timestamp: 1,
+  });
+  aggregator.handleToolCallEnd({
+    type: "tool-call-end",
+    workspaceId,
+    messageId,
+    toolCallId: `${workspaceId}-todo`,
+    toolName: "todo_write",
+    result: { success: true },
+    timestamp: 2,
+  });
+  if (seed.streaming !== true) {
+    // Collapse the active stream so the chip clears; incomplete todos persist.
+    aggregator.clearActiveStreams();
+  }
+}
+
 const ImmersiveStoryShell: FC<{ client: APIClient; children: ReactNode }> = ({
   client,
   children,
@@ -293,6 +374,11 @@ interface ImmersiveReviewStoryProps {
   assistedOnly?: boolean;
   assistedCount?: number;
   assistedUnreadCount?: number;
+  /**
+   * Seeds the singleton WorkspaceStore so the immersive view's top status bar
+   * (ImmersiveReviewAgentStatusBar) renders a real TODO plan + streaming chip.
+   */
+  agentStatusSeed?: AgentStatusSeed;
 }
 
 function ImmersiveReviewStory(props: ImmersiveReviewStoryProps) {
@@ -303,6 +389,13 @@ function ImmersiveReviewStory(props: ImmersiveReviewStoryProps) {
   const [readHunkIds, setReadHunkIds] = useState<Set<string>>(
     () => new Set(props.initialReadHunkIds ?? [])
   );
+
+  // Seed agent status synchronously during render (before the child subscribes)
+  // so the top status bar paints with its plan/stream on the first frame.
+  const workspaceStore = useWorkspaceStoreRaw();
+  if (props.agentStatusSeed) {
+    seedAgentStatus(workspaceStore, props.workspaceId, props.agentStatusSeed);
+  }
 
   return (
     <ImmersiveStoryShell client={client}>
@@ -580,6 +673,46 @@ export const ImmersiveWithAssistedMode: Story = {
       () => {
         canvas.getByTestId("immersive-review-view");
         canvas.getByTestId("immersive-assisted-mode-badge");
+      },
+      { timeout: 10_000 }
+    );
+  },
+};
+
+const IMMERSIVE_AGENT_STATUS_WORKSPACE_ID = "ws-review-immersive-agent-status";
+const IMMERSIVE_AGENT_STATUS_TODOS: TodoItem[] = [
+  { content: "Audit immersive review layout", status: "completed" },
+  { content: "Scope assisted comment to the diff column", status: "completed" },
+  { content: "Add the top status bar (TODO + streaming)", status: "in_progress" },
+  { content: "Wire up flash-free loading states", status: "pending" },
+  { content: "Add Storybook + tests", status: "pending" },
+];
+
+/**
+ * Immersive review with the top agent status bar populated: the agent's TODO
+ * plan in a vertical layout plus the live "Streaming…" chip. This is the piece
+ * that keeps chat status visible while the user reviews code behind the
+ * full-screen overlay. Seeds the WorkspaceStore so the bar has real state.
+ */
+export const ImmersiveWithAgentStatusBar: Story = {
+  render: () => (
+    <ImmersiveReviewStory
+      workspaceId={IMMERSIVE_AGENT_STATUS_WORKSPACE_ID}
+      fixture={LINE_HEIGHT_FIXTURE}
+      agentStatusSeed={{ todos: IMMERSIVE_AGENT_STATUS_TODOS, streaming: true }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await waitFor(
+      () => {
+        canvas.getByTestId("immersive-review-view");
+        // The collapsible TODO bar + its vertical plan content render.
+        canvas.getByTestId("immersive-agent-status-bar");
+        canvas.getByText("Add the top status bar (TODO + streaming)");
+        // Live streaming chip is visible alongside the plan.
+        canvas.getByText("Streaming…");
       },
       { timeout: 10_000 }
     );

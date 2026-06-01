@@ -1963,99 +1963,107 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           the diff tree; renders nothing when there's no plan and no stream. */}
       <ImmersiveReviewAgentStatusBar workspaceId={props.workspaceId} />
 
-      {/* Assisted-review banner — surfaces the agent's flag + comment when
-          the selected hunk is one the agent pinned for review. We render it
-          between the header and the diff so the focus signal is impossible
-          to miss after entering immersive mode, where the side-panel cues
-          aren't visible. */}
-      {isSelectedAssisted && (
-        <div
-          className="border-review-accent/40 bg-review-accent/5 text-foreground flex items-start gap-2 border-b px-3 py-1.5 text-[11px] leading-[1.4]"
-          data-testid="immersive-assisted-banner"
-          role="status"
-          aria-live="polite"
-        >
-          <Sparkles aria-hidden="true" className="text-review-accent mt-[2px] h-3 w-3 shrink-0" />
-          {selectedAssistedComment ? (
-            <span className="min-w-0 break-words whitespace-pre-wrap">
-              {selectedAssistedComment}
-            </span>
-          ) : (
-            <span className="text-muted italic">Flagged by agent for review</span>
-          )}
-        </div>
-      )}
-
       {/* Unified whole-file diff with hunk overlays + notes sidebar */}
       <div className="flex min-h-0 flex-1">
-        {/* Avoid top padding here; it reads as a blank block between the controls and diff. */}
-        <div
-          ref={scrollContainerRef}
-          className="scrollbar-none min-h-0 min-w-0 flex-1 overflow-y-auto pb-3"
-        >
-          {props.isLoading && currentFileHunks.length === 0 ? (
-            <div className="text-muted flex items-center justify-center py-12 text-sm">
-              <span className="animate-pulse">Loading diff...</span>
-            </div>
-          ) : isReviewComplete ? (
-            <div className="flex min-h-full items-center justify-center px-6 py-12">
-              <div
-                data-testid="immersive-review-complete"
-                className="flex max-w-md flex-col items-center gap-4 text-center"
-              >
-                <div className="bg-accent/10 text-accent rounded-full p-3">
-                  <CheckCircle2 aria-hidden="true" className="h-8 w-8" />
-                </div>
-                <div className="space-y-2">
-                  <h2 className="text-foreground text-base font-medium">Review complete</h2>
-                  <p className="text-muted text-sm leading-relaxed">
-                    You have already reviewed all {reviewedHunkLabel} in this diff. Return to chat
-                    to keep going, or reopen reviewed hunks from the review panel if you want
-                    another pass.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={onExit}
-                  className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
-                >
-                  Return to chat
-                </button>
-              </div>
-            </div>
-          ) : currentFileHunks.length === 0 ? (
-            <div className="text-muted flex items-center justify-center py-12 text-sm">
-              {activeFilePath ? "No hunks for this file" : "No files to review"}
-            </div>
-          ) : (
-            <div className="bg-dark relative overflow-hidden">
-              {isActiveFileRevealPending && (
-                <div className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm">
-                  <span className="animate-pulse">Loading file...</span>
-                </div>
+        {/* Diff column. The assisted-review banner lives INSIDE this column (not
+            above the whole body) so the agent's per-hunk comment spans only the
+            diff width and lines up with the code it refers to — rather than
+            stretching across the minimap and notes sidebar. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {/* Assisted-review banner — surfaces the agent's flag + comment when
+              the selected hunk is one the agent pinned for review. Pinned to the
+              top of the diff column so the focus signal is impossible to miss
+              after entering immersive mode, where the side-panel cues aren't
+              visible. */}
+          {isSelectedAssisted && (
+            <div
+              className="border-review-accent/40 bg-review-accent/5 text-foreground flex shrink-0 items-start gap-2 border-b px-3 py-1.5 text-[11px] leading-[1.4]"
+              data-testid="immersive-assisted-banner"
+              role="status"
+              aria-live="polite"
+            >
+              <Sparkles
+                aria-hidden="true"
+                className="text-review-accent mt-[2px] h-3 w-3 shrink-0"
+              />
+              {selectedAssistedComment ? (
+                <span className="min-w-0 break-words whitespace-pre-wrap">
+                  {selectedAssistedComment}
+                </span>
+              ) : (
+                <span className="text-muted italic">Flagged by agent for review</span>
               )}
-              <div className={cn(isActiveFileRevealPending && "invisible")}>
-                <SelectableDiffRenderer
-                  content={overlayData.content}
-                  filePath={activeFilePath ?? currentFileHunks[0].filePath}
-                  inlineReviews={activeFileReviews}
-                  oldStart={1}
-                  newStart={1}
-                  fontSize="11px"
-                  maxHeight="none"
-                  className="rounded-none border-0 [&>div]:overflow-x-visible"
-                  onReviewNote={handleReviewNoteSubmit}
-                  onComposerCancel={handleInlineComposerCancel}
-                  reviewActions={diffReviewActions}
-                  enableHighlighting={shouldEnableHighlighting}
-                  selectedLineRange={selectedLineRange}
-                  onLineIndexSelect={handleLineIndexSelect}
-                  externalSelectionRequest={externalComposerSelectionRequest}
-                  externalEditRequest={inlineReviewEditRequest}
-                />
-              </div>
             </div>
           )}
+          {/* Avoid top padding here; it reads as a blank block between the controls and diff. */}
+          <div
+            ref={scrollContainerRef}
+            className="scrollbar-none min-h-0 min-w-0 flex-1 overflow-y-auto pb-3"
+          >
+            {props.isLoading && currentFileHunks.length === 0 ? (
+              <div className="text-muted flex items-center justify-center py-12 text-sm">
+                <span className="animate-pulse">Loading diff...</span>
+              </div>
+            ) : isReviewComplete ? (
+              <div className="flex min-h-full items-center justify-center px-6 py-12">
+                <div
+                  data-testid="immersive-review-complete"
+                  className="flex max-w-md flex-col items-center gap-4 text-center"
+                >
+                  <div className="bg-accent/10 text-accent rounded-full p-3">
+                    <CheckCircle2 aria-hidden="true" className="h-8 w-8" />
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-foreground text-base font-medium">Review complete</h2>
+                    <p className="text-muted text-sm leading-relaxed">
+                      You have already reviewed all {reviewedHunkLabel} in this diff. Return to chat
+                      to keep going, or reopen reviewed hunks from the review panel if you want
+                      another pass.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onExit}
+                    className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                  >
+                    Return to chat
+                  </button>
+                </div>
+              </div>
+            ) : currentFileHunks.length === 0 ? (
+              <div className="text-muted flex items-center justify-center py-12 text-sm">
+                {activeFilePath ? "No hunks for this file" : "No files to review"}
+              </div>
+            ) : (
+              <div className="bg-dark relative overflow-hidden">
+                {isActiveFileRevealPending && (
+                  <div className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm">
+                    <span className="animate-pulse">Loading file...</span>
+                  </div>
+                )}
+                <div className={cn(isActiveFileRevealPending && "invisible")}>
+                  <SelectableDiffRenderer
+                    content={overlayData.content}
+                    filePath={activeFilePath ?? currentFileHunks[0].filePath}
+                    inlineReviews={activeFileReviews}
+                    oldStart={1}
+                    newStart={1}
+                    fontSize="11px"
+                    maxHeight="none"
+                    className="rounded-none border-0 [&>div]:overflow-x-visible"
+                    onReviewNote={handleReviewNoteSubmit}
+                    onComposerCancel={handleInlineComposerCancel}
+                    reviewActions={diffReviewActions}
+                    enableHighlighting={shouldEnableHighlighting}
+                    selectedLineRange={selectedLineRange}
+                    onLineIndexSelect={handleLineIndexSelect}
+                    externalSelectionRequest={externalComposerSelectionRequest}
+                    externalEditRequest={inlineReviewEditRequest}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {!isReviewComplete && !isTouchExperience && (
