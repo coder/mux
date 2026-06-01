@@ -55,14 +55,6 @@ function StoryShell(props: { children: ReactNode }) {
   );
 }
 
-function renderCard(props: ComponentProps<typeof CodeExecutionToolCall>) {
-  return (
-    <StoryShell>
-      <CodeExecutionToolCall {...props} />
-    </StoryShell>
-  );
-}
-
 const completedResult: CodeExecutionResult = {
   success: true,
   result: "Done!",
@@ -115,96 +107,117 @@ const completedNestedCalls: NestedToolCall[] = [
   },
 ];
 
-/** completed execution with successful nested tool calls */
-export const Completed: Story = {
-  render: () =>
-    renderCard({
-      args: { code: SAMPLE_CODE },
-      result: completedResult,
-      status: "completed",
-      nestedCalls: completedNestedCalls,
-    }),
-};
+function GallerySection(props: {
+  label: string;
+  cardProps: ComponentProps<typeof CodeExecutionToolCall>;
+}) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {props.label}
+      </h3>
+      <CodeExecutionToolCall {...props.cardProps} />
+    </section>
+  );
+}
 
-/** executing state with one completed nested call and one in-progress call */
-export const Executing: Story = {
-  render: () =>
-    renderCard({
-      args: { code: SAMPLE_CODE },
-      status: "executing",
-      nestedCalls: [
-        {
-          toolCallId: "nested-1",
-          toolName: "file_read",
-          input: { path: "src/config.ts" },
-          output: { success: true, lines_read: 42, file_size: 1024 },
-          state: "output-available",
-        },
-        {
-          toolCallId: "nested-2",
-          toolName: "file_edit_replace_string",
-          input: {
-            path: "src/config.ts",
-            old_string: "debug: false",
-            new_string: "debug: true",
-          },
-          state: "input-available",
-        },
-      ],
-    }),
-};
-
-/** failed execution showing error result */
-export const Failed: Story = {
-  render: () =>
-    renderCard({
-      args: { code: `await mux.file_read({ path: "missing.ts" });` },
-      result: {
-        success: false,
-        error: "Tool execution failed: ENOENT: no such file or directory, open 'missing.ts'",
-        toolCalls: [
-          {
-            toolName: "file_read",
-            args: { path: "missing.ts" },
-            error: "ENOENT: no such file or directory",
-            duration_ms: 8,
-          },
-        ],
-        consoleOutput: [],
-        duration_ms: 20,
-      },
-      status: "failed",
-      nestedCalls: [
-        {
-          toolCallId: "nested-1",
-          toolName: "file_read",
-          input: { path: "missing.ts" },
-          output: { error: "ENOENT: no such file or directory" },
-          state: "output-available",
-        },
-      ],
-    }),
-};
-
-/** completed execution with no tool calls to showcase code syntax highlighting */
-export const SyntaxHighlighting: Story = {
-  render: () =>
-    renderCard({
-      args: { code: SYNTAX_HIGHLIGHT_CODE },
-      result: {
-        success: true,
-        result: [{ name: "alpha", score: 15 }],
-        toolCalls: [],
-        consoleOutput: [
-          {
-            level: "log",
-            args: ["Processed", 1, "items"],
-            timestamp: STABLE_TIMESTAMP,
-          },
-        ],
-        duration_ms: 45,
-      },
-      status: "completed",
-      nestedCalls: [],
-    }),
+/**
+ * Gallery of non-interactive CodeExecutionToolCall states stacked vertically in
+ * labeled sections. Folds the former Completed, Executing, Failed, and
+ * SyntaxHighlighting stories into a single snapshot to conserve the Chromatic
+ * budget while preserving each distinct visual state.
+ */
+export const Gallery: Story = {
+  render: () => (
+    <StoryShell>
+      <div className="flex flex-col gap-8">
+        <GallerySection
+          label="Completed (nested tool calls)"
+          cardProps={{
+            args: { code: SAMPLE_CODE },
+            result: completedResult,
+            status: "completed",
+            nestedCalls: completedNestedCalls,
+          }}
+        />
+        <GallerySection
+          label="Executing (one done, one in-progress)"
+          cardProps={{
+            args: { code: SAMPLE_CODE },
+            status: "executing",
+            nestedCalls: [
+              {
+                toolCallId: "nested-1",
+                toolName: "file_read",
+                input: { path: "src/config.ts" },
+                output: { success: true, lines_read: 42, file_size: 1024 },
+                state: "output-available",
+              },
+              {
+                toolCallId: "nested-2",
+                toolName: "file_edit_replace_string",
+                input: {
+                  path: "src/config.ts",
+                  old_string: "debug: false",
+                  new_string: "debug: true",
+                },
+                state: "input-available",
+              },
+            ],
+          }}
+        />
+        <GallerySection
+          label="Failed (error result)"
+          cardProps={{
+            args: { code: `await mux.file_read({ path: "missing.ts" });` },
+            result: {
+              success: false,
+              error: "Tool execution failed: ENOENT: no such file or directory, open 'missing.ts'",
+              toolCalls: [
+                {
+                  toolName: "file_read",
+                  args: { path: "missing.ts" },
+                  error: "ENOENT: no such file or directory",
+                  duration_ms: 8,
+                },
+              ],
+              consoleOutput: [],
+              duration_ms: 20,
+            },
+            status: "failed",
+            nestedCalls: [
+              {
+                toolCallId: "nested-1",
+                toolName: "file_read",
+                input: { path: "missing.ts" },
+                output: { error: "ENOENT: no such file or directory" },
+                state: "output-available",
+              },
+            ],
+          }}
+        />
+        <GallerySection
+          label="Syntax highlighting (no tool calls)"
+          cardProps={{
+            args: { code: SYNTAX_HIGHLIGHT_CODE },
+            result: {
+              success: true,
+              result: [{ name: "alpha", score: 15 }],
+              toolCalls: [],
+              consoleOutput: [
+                {
+                  level: "log",
+                  args: ["Processed", 1, "items"],
+                  timestamp: STABLE_TIMESTAMP,
+                },
+              ],
+              duration_ms: 45,
+            },
+            status: "completed",
+            nestedCalls: [],
+          }}
+        />
+      </div>
+    </StoryShell>
+  ),
 };
