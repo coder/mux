@@ -105,6 +105,7 @@
             "group": "Guides",
             "pages": [
               "guides/github-actions",
+              "guides/symbol-shortcuts",
               "config/agentic-git-identity",
               "agents/prompting-tips"
             ]
