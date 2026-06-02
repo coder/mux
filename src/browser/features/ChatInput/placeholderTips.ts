@@ -11,11 +11,13 @@
  * same bucket and you still see the same tip. The bucket boundary is the
  * only thing that advances the carousel.
  *
- * Every tip in this list must be wired up as a real slash command (registry
- * or built-in skill) AND ungated by experiments (no `experimentGate` on the
- * command definition). Advertising an unimplemented or feature-flag-locked
- * command sends the user into an unknown-command / experiment-required dead
- * end the moment they follow the suggestion. When adding a tip, grep
+ * Every tip in this list must surface a real, always-available input feature:
+ * either a slash command (registry or built-in skill) that is ungated by
+ * experiments (no `experimentGate` on the command definition), or a backslash
+ * symbol shortcut (see `symbolShortcuts.ts`, which is always on). Advertising
+ * an unimplemented or feature-flag-locked command sends the user into an
+ * unknown-command / experiment-required dead end the moment they follow the
+ * suggestion. When adding a slash-command tip, grep
  * `src/browser/utils/slashCommands/registry.ts` for `experimentGate` to make
  * sure the command you're surfacing isn't gated.
  */
@@ -50,6 +52,7 @@ export const PLACEHOLDER_TIPS: readonly string[] = [
   "Try /clear --soft to reset context while keeping the chat visible",
   "Try /new <start> to start a fresh workspace from the trunk branch",
   "Try /vim to toggle vim keybindings in the chat input",
+  "Try \\alpha or \\sum to insert LaTeX-style symbols like α and ∑ as you type",
 ];
 
 /**
