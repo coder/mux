@@ -36,24 +36,10 @@ import { getImmersiveReviewAgentBarExpandedKey } from "@/common/constants/storag
 import { cn } from "@/common/lib/utils";
 import type { TodoItem } from "@/common/types/tools";
 
-/** The slice of WorkspaceState this bar reads. */
-interface AgentStatusSnapshot {
-  todos: TodoItem[];
-  canInterrupt: boolean;
-  isStreamStarting: boolean;
-  awaitingUserQuestion: boolean;
-}
-
-// Stable idle snapshot returned when the workspace isn't registered yet (tests,
-// storybook, teardown). A module-level constant keeps the useSyncExternalStore
-// snapshot referentially stable so the store's "getSnapshot should be cached"
-// guard doesn't loop, and the bar simply renders nothing.
-const IDLE_SNAPSHOT: AgentStatusSnapshot = {
-  todos: [],
-  canInterrupt: false,
-  isStreamStarting: false,
-  awaitingUserQuestion: false,
-};
+// Stable empty-plan reference for the unregistered case (tests, storybook,
+// teardown). Module-level so the `todos` snapshot stays referentially stable
+// and useSyncExternalStore's "getSnapshot should be cached" guard doesn't loop.
+const EMPTY_TODOS: TodoItem[] = [];
 
 interface ImmersiveReviewAgentStatusBarProps {
   workspaceId: string;
@@ -67,27 +53,39 @@ export const ImmersiveReviewAgentStatusBar: React.FC<ImmersiveReviewAgentStatusB
     true
   );
 
-  // Single subscription to the cached WorkspaceState (same pattern as
-  // PinnedTodoList) — it already carries todos AND the streaming flags, so we
-  // avoid a second sidebar-state hook. getWorkspaceState returns a stable,
-  // version-cached reference, so reading several fields off it is cheap and
-  // referentially safe for useSyncExternalStore.
+  // Subscribe to each field this bar uses as its OWN snapshot rather than
+  // returning the whole WorkspaceState object. getWorkspaceState is version-
+  // cached, so its reference changes on EVERY state bump (e.g. each streamed
+  // message) — returning it wholesale would re-render the bar on every token.
+  // Per-field selectors keep the bar stable: primitives compare by value, and
+  // `todos` keeps a stable reference from the aggregator (same basis as
+  // PinnedTodoList reading only `.todos`).
   const workspaceStore = useWorkspaceStoreRaw();
-  const snapshot = useSyncExternalStore<AgentStatusSnapshot>(
-    (callback) =>
-      workspaceStore.hasRegisteredWorkspace(workspaceId)
-        ? workspaceStore.subscribeKey(workspaceId, callback)
-        : () => undefined,
-    () =>
-      workspaceStore.hasRegisteredWorkspace(workspaceId)
-        ? workspaceStore.getWorkspaceState(workspaceId)
-        : IDLE_SNAPSHOT
+  const subscribe = (callback: () => void) =>
+    workspaceStore.hasRegisteredWorkspace(workspaceId)
+      ? workspaceStore.subscribeKey(workspaceId, callback)
+      : () => undefined;
+  const todos = useSyncExternalStore(subscribe, () =>
+    workspaceStore.hasRegisteredWorkspace(workspaceId)
+      ? workspaceStore.getWorkspaceState(workspaceId).todos
+      : EMPTY_TODOS
   );
-  const todos = snapshot.todos;
-  const canInterrupt = snapshot.canInterrupt;
+  const canInterrupt = useSyncExternalStore(subscribe, () =>
+    workspaceStore.hasRegisteredWorkspace(workspaceId)
+      ? workspaceStore.getWorkspaceState(workspaceId).canInterrupt
+      : false
+  );
   // Sidebar derives `isStarting` directly from `isStreamStarting`.
-  const isStarting = snapshot.isStreamStarting;
-  const awaitingUserQuestion = snapshot.awaitingUserQuestion;
+  const isStarting = useSyncExternalStore(subscribe, () =>
+    workspaceStore.hasRegisteredWorkspace(workspaceId)
+      ? workspaceStore.getWorkspaceState(workspaceId).isStreamStarting
+      : false
+  );
+  const awaitingUserQuestion = useSyncExternalStore(subscribe, () =>
+    workspaceStore.hasRegisteredWorkspace(workspaceId)
+      ? workspaceStore.getWorkspaceState(workspaceId).awaitingUserQuestion
+      : false
+  );
 
   // Held phase keeps the streaming chip steady across the starting->streaming
   // handoff so it doesn't blink out for a frame between adjacent state settles.

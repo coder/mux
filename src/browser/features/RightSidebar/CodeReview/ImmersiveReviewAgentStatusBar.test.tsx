@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { cleanup, fireEvent, render, type RenderResult } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, type RenderResult } from "@testing-library/react";
+import { Profiler } from "react";
 
 import { installDom } from "../../../../../tests/ui/dom";
 // Import the module namespace (not the hook directly) so we can spyOn the hook
@@ -66,6 +67,31 @@ function buildState(workspaceId: string, input: SeedInput): WorkspaceState {
 
 function seed(workspaceId: string, input: SeedInput): void {
   seeds.set(workspaceId, buildState(workspaceId, input));
+}
+
+function notify(workspaceId: string): void {
+  getSubscribers(workspaceId).forEach((cb) => cb());
+}
+
+/**
+ * Replace the cached state with a NEW object reference whose watched fields
+ * (todos/canInterrupt/isStreamStarting/awaitingUserQuestion) are byte-identical
+ * (todos keeps the same array ref), then notify subscribers — models an
+ * unrelated WorkspaceState bump such as a streamed message arriving.
+ */
+function bumpUnrelated(workspaceId: string): void {
+  const prev = seeds.get(workspaceId);
+  if (!prev) throw new Error(`Missing seed for ${workspaceId}`);
+  seeds.set(workspaceId, { ...prev, name: `${prev.name}-bump`, messages: [...prev.messages] });
+  notify(workspaceId);
+}
+
+/** Patch a watched field on the cached state and notify subscribers. */
+function patchState(workspaceId: string, patch: Partial<WorkspaceState>): void {
+  const prev = seeds.get(workspaceId);
+  if (!prev) throw new Error(`Missing seed for ${workspaceId}`);
+  seeds.set(workspaceId, { ...prev, ...patch });
+  notify(workspaceId);
 }
 
 // Minimal fake exposing only the store methods the bar calls. Cast through
@@ -178,5 +204,40 @@ describe("ImmersiveReviewAgentStatusBar", () => {
     // Re-expanding brings the plan back, proving the toggle round-trips.
     fireEvent.click(second.getByRole("button", { name: /todo/i }));
     expect(second.getByText("Wire up status bar")).toBeTruthy();
+  });
+
+  test("does not re-render on unrelated workspace-state bumps, only on watched fields", () => {
+    const workspaceId = "ws-stable";
+    seed(workspaceId, { todos, canInterrupt: true });
+
+    let commits = 0;
+    const result = render(
+      <Profiler
+        id="bar"
+        onRender={() => {
+          commits += 1;
+        }}
+      >
+        <ImmersiveReviewAgentStatusBar workspaceId={workspaceId} />
+      </Profiler>
+    );
+    expect(result.getByText("Streaming…")).toBeTruthy();
+
+    // An unrelated state bump (new WorkspaceState ref, same watched fields)
+    // must NOT re-render the bar — this is the leaf-subscription guarantee that
+    // keeps streamed-message churn off the immersive diff's sibling bar.
+    const committedAfterMount = commits;
+    act(() => {
+      bumpUnrelated(workspaceId);
+      bumpUnrelated(workspaceId);
+    });
+    expect(commits).toBe(committedAfterMount);
+
+    // Changing a field the bar actually reads DOES re-render it.
+    act(() => {
+      patchState(workspaceId, { awaitingUserQuestion: true });
+    });
+    expect(commits).toBeGreaterThan(committedAfterMount);
+    expect(result.getByText("Mux has a question")).toBeTruthy();
   });
 });
