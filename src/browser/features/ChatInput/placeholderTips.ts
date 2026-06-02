@@ -20,8 +20,9 @@
  * sure the command you're surfacing isn't gated.
  */
 
-/** Bucket length for tip rotation. */
-const TIP_ROTATION_INTERVAL_MS = 20 * 60 * 1000; // 20 minutes
+/** Bucket length for tip rotation. Exported so tests anchor their bucket math
+ * to the real interval instead of a hardcoded copy that silently drifts. */
+export const TIP_ROTATION_INTERVAL_MS = 20 * 60 * 1000; // 20 minutes
 
 /**
  * Tip index pinned for Storybook/Chromatic snapshots.

@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { PLACEHOLDER_TIPS, getPlaceholderTip } from "./placeholderTips";
+import { PLACEHOLDER_TIPS, TIP_ROTATION_INTERVAL_MS, getPlaceholderTip } from "./placeholderTips";
 
 interface StorybookGlobal {
   __MUX_STORYBOOK__?: boolean;
 }
-
-const TWENTY_MIN_MS = 20 * 60 * 1000;
 
 describe("PLACEHOLDER_TIPS", () => {
   test("every tip references a slash command", () => {
@@ -43,25 +41,26 @@ describe("getPlaceholderTip", () => {
     // to the same tip. If they don't, switching workspaces / re-rendering
     // inside the same bucket would reshuffle the tip — which is the exact
     // flicker we're trying to prevent.
-    const bucketStart = TWENTY_MIN_MS * 100; // arbitrary aligned anchor
+    const bucketStart = TIP_ROTATION_INTERVAL_MS * 100; // arbitrary aligned anchor
     const tip = getPlaceholderTip(bucketStart);
     expect(getPlaceholderTip(bucketStart + 1)).toBe(tip);
-    expect(getPlaceholderTip(bucketStart + TWENTY_MIN_MS - 1)).toBe(tip);
+    expect(getPlaceholderTip(bucketStart + TIP_ROTATION_INTERVAL_MS - 1)).toBe(tip);
   });
 
   test("advances to the next tip when the bucket boundary crosses", () => {
     // Crossing the boundary must rotate — otherwise the carousel is silently
     // stuck and the discoverability rationale is broken.
-    const bucketStart = TWENTY_MIN_MS * 100;
+    const bucketStart = TIP_ROTATION_INTERVAL_MS * 100;
     const before = getPlaceholderTip(bucketStart);
-    const after = getPlaceholderTip(bucketStart + TWENTY_MIN_MS);
+    const after = getPlaceholderTip(bucketStart + TIP_ROTATION_INTERVAL_MS);
     expect(after).not.toBe(before);
   });
 
   test("wraps with modulo so long-running clocks never lose the placeholder", () => {
     // Far-future timestamps should still resolve to a tip rather than
     // undefined / out-of-bounds.
-    const bigFuture = TWENTY_MIN_MS * PLACEHOLDER_TIPS.length * 5 + TWENTY_MIN_MS * 3;
+    const bigFuture =
+      TIP_ROTATION_INTERVAL_MS * PLACEHOLDER_TIPS.length * 5 + TIP_ROTATION_INTERVAL_MS * 3;
     expect(PLACEHOLDER_TIPS).toContain(getPlaceholderTip(bigFuture));
   });
 
@@ -87,9 +86,9 @@ describe("getPlaceholderTip", () => {
     // Explicit nowMs must still rotate even with the flag set, otherwise
     // unit tests that depend on rotation math would silently no-op when
     // someone forgets to clear the flag.
-    const bucketStart = TWENTY_MIN_MS * 100;
+    const bucketStart = TIP_ROTATION_INTERVAL_MS * 100;
     const before = getPlaceholderTip(bucketStart);
-    const after = getPlaceholderTip(bucketStart + TWENTY_MIN_MS);
+    const after = getPlaceholderTip(bucketStart + TIP_ROTATION_INTERVAL_MS);
     expect(after).not.toBe(before);
   });
 });
