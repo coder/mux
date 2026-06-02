@@ -6,7 +6,8 @@
  * loses all signal about what the agent is doing.
  *
  * This bar restores that signal without leaving immersive:
- *   - the agent's TODO plan in a vertical layout (collapsible, persisted), and
+ *   - the agent's TODO plan as a single horizontal strip (collapsible,
+ *     persisted) so it reserves minimal review height, and
  *   - live streaming status (starting / streaming / awaiting a question).
  *
  * Design notes:
@@ -189,9 +190,9 @@ export const ImmersiveReviewAgentStatusBar: React.FC<ImmersiveReviewAgentStatusB
         <div className="flex h-7 w-full items-center gap-2 px-3 leading-none">{trailingStatus}</div>
       )}
       {hasTodos && expanded && (
-        <div className="max-h-[240px] overflow-y-auto">
-          <TodoList todos={todos} />
-        </div>
+        // Horizontal strip: one row tall (the list scrolls sideways), so the
+        // plan costs minimal vertical space in the review viewport.
+        <TodoList todos={todos} layout="horizontal" />
       )}
     </div>
   );

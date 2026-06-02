@@ -122,7 +122,7 @@ describe("ImmersiveReviewAgentStatusBar", () => {
   test("renders the TODO plan (expanded) when todos exist", () => {
     seed("ws-todos", { todos });
     const result = renderBar("ws-todos");
-    // Vertical TodoList content is visible by default.
+    // The horizontal TodoList strip is visible by default.
     expect(result.getByText("Wire up status bar")).toBeTruthy();
     expect(result.getByText("Add tests")).toBeTruthy();
     // Summary reflects the counts.
@@ -162,7 +162,7 @@ describe("ImmersiveReviewAgentStatusBar", () => {
     seed(workspaceId, { todos });
     const first = renderBar(workspaceId);
 
-    // Plan is expanded by default; collapsing hides the vertical list.
+    // Plan is expanded by default; collapsing hides the horizontal strip.
     expect(first.getByText("Wire up status bar")).toBeTruthy();
     fireEvent.click(first.getByRole("button", { name: /todo/i }));
     expect(first.queryByText("Wire up status bar")).toBeNull();
