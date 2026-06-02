@@ -2151,6 +2151,19 @@ export class StreamManager extends EventEmitter {
                   finishPart.finishReason === "other" &&
                   finishPart.rawFinishReason === undefined
                 ) {
+                  // Observability for the unaudited-adapter risk: if a future
+                  // provider adapter we haven't read source for legitimately
+                  // emits `(other, undefined)` as a real terminal finish, the
+                  // discriminator misfires and the user sees a spurious
+                  // truncated-stream retry. Surface a log so that misfires
+                  // are diagnosable instead of silent.
+                  workspaceLog.warn(
+                    "Treating synthesized-default (other, undefined) finish as truncated stream",
+                    {
+                      messageId: streamInfo.messageId,
+                      model: streamInfo.model,
+                    }
+                  );
                   break;
                 }
                 streamInfo.receivedTerminalEvent = true;
