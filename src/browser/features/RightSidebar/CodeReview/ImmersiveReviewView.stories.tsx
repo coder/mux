@@ -269,12 +269,16 @@ function createImmersiveStoryClient(): APIClient {
 }
 
 interface AgentStatusSeed {
-  /** TODO plan the agent has written (drives the vertical TODO list + summary). */
-  todos: TodoItem[];
+  /**
+   * TODO plan the agent has written (drives the horizontal TODO strip +
+   * summary). Omit (or pass an empty array) to model "streaming before any plan
+   * is written", where the bar shows only the streaming chip.
+   */
+  todos?: TodoItem[];
   /**
    * When true, leaves the seeded stream open so the bar shows the live
-   * "Streaming…" chip alongside the plan. When false the stream is left
-   * un-started, so only the persisted (incomplete) plan shows.
+   * "Streaming…" chip. When false the stream is left un-started, so only the
+   * persisted (incomplete) plan shows.
    */
   streaming?: boolean;
 }
@@ -321,25 +325,29 @@ function seedAgentStatus(
     model: "anthropic:claude-sonnet-4",
     startTime: 0,
   });
-  aggregator.handleToolCallStart({
-    type: "tool-call-start",
-    workspaceId,
-    messageId,
-    toolCallId: `${workspaceId}-todo`,
-    toolName: "todo_write",
-    args: { todos: seed.todos },
-    tokens: 10,
-    timestamp: 1,
-  });
-  aggregator.handleToolCallEnd({
-    type: "tool-call-end",
-    workspaceId,
-    messageId,
-    toolCallId: `${workspaceId}-todo`,
-    toolName: "todo_write",
-    result: { success: true },
-    timestamp: 2,
-  });
+  // Only push a plan when the seed has one; omitting it models "streaming
+  // before any TODO is written" so the bar renders the chip-only state.
+  if (seed.todos && seed.todos.length > 0) {
+    aggregator.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId,
+      messageId,
+      toolCallId: `${workspaceId}-todo`,
+      toolName: "todo_write",
+      args: { todos: seed.todos },
+      tokens: 10,
+      timestamp: 1,
+    });
+    aggregator.handleToolCallEnd({
+      type: "tool-call-end",
+      workspaceId,
+      messageId,
+      toolCallId: `${workspaceId}-todo`,
+      toolName: "todo_write",
+      result: { success: true },
+      timestamp: 2,
+    });
+  }
   if (seed.streaming !== true) {
     // Collapse the active stream so the chip clears; incomplete todos persist.
     aggregator.clearActiveStreams();
@@ -690,7 +698,7 @@ const IMMERSIVE_AGENT_STATUS_TODOS: TodoItem[] = [
 
 /**
  * Immersive review with the top agent status bar populated: the agent's TODO
- * plan in a vertical layout plus the live "Streaming…" chip. This is the piece
+ * plan as a horizontal strip plus the live "Streaming…" chip. This is the piece
  * that keeps chat status visible while the user reviews code behind the
  * full-screen overlay. Seeds the WorkspaceStore so the bar has real state.
  */
@@ -708,11 +716,46 @@ export const ImmersiveWithAgentStatusBar: Story = {
     await waitFor(
       () => {
         canvas.getByTestId("immersive-review-view");
-        // The collapsible TODO bar + its vertical plan content render.
+        // The collapsible TODO bar + its horizontal plan strip render.
         canvas.getByTestId("immersive-agent-status-bar");
         canvas.getByText("Add the top status bar (TODO + streaming)");
         // Live streaming chip is visible alongside the plan.
         canvas.getByText("Streaming…");
+      },
+      { timeout: 10_000 }
+    );
+  },
+};
+
+const IMMERSIVE_STREAMING_NO_TODO_WORKSPACE_ID = "ws-review-immersive-streaming-no-todo";
+
+/**
+ * Immersive review while the agent is streaming but has not written a TODO plan
+ * yet. Locks in the chip-only state of the status bar: with no plan on the left
+ * the "Streaming…" chip is left-aligned (reads as a status label) instead of
+ * floating alone on the far right of an otherwise-empty bar, and the bar stays
+ * a single row tall. Seeds an open stream with no `todo_write` call.
+ */
+export const ImmersiveWithStreamingNoTodo: Story = {
+  render: () => (
+    <ImmersiveReviewStory
+      workspaceId={IMMERSIVE_STREAMING_NO_TODO_WORKSPACE_ID}
+      fixture={LINE_HEIGHT_FIXTURE}
+      agentStatusSeed={{ streaming: true }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    await waitFor(
+      () => {
+        canvas.getByTestId("immersive-review-view");
+        // The bar renders the streaming chip with no TODO toggle/summary.
+        canvas.getByTestId("immersive-agent-status-bar");
+        canvas.getByText("Streaming…");
+        if (canvas.queryByText("TODO")) {
+          throw new Error("Expected the chip-only status bar with no TODO plan.");
+        }
       },
       { timeout: 10_000 }
     );

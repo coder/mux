@@ -33,6 +33,7 @@ import {
 } from "@/browser/hooks/useWorkspaceStreamingStatusPhase";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getImmersiveReviewAgentBarExpandedKey } from "@/common/constants/storage";
+import { cn } from "@/common/lib/utils";
 import type { TodoItem } from "@/common/types/tools";
 
 /** The slice of WorkspaceState this bar reads. */
@@ -146,9 +147,12 @@ export const ImmersiveReviewAgentStatusBar: React.FC<ImmersiveReviewAgentStatusB
     return null;
   })();
 
-  const trailingStatus = (
+  // `alignEnd` pushes the chip to the right with the TODO summary on its left;
+  // without a plan there's nothing on the left, so the chip is left-aligned
+  // instead of floating alone on the far right of an otherwise-empty bar.
+  const renderStatusChip = (alignEnd: boolean) => (
     <div
-      className="ml-auto flex shrink-0 items-center gap-2"
+      className={cn("flex shrink-0 items-center gap-2", alignEnd && "ml-auto")}
       role="status"
       aria-live="polite"
       data-testid="immersive-agent-status-chip"
@@ -178,7 +182,7 @@ export const ImmersiveReviewAgentStatusBar: React.FC<ImmersiveReviewAgentStatusB
             <span className="font-medium">TODO</span>
             {summaryParts.length > 0 && <> · {summaryParts.join(" · ")}</>}
           </span>
-          {trailingStatus}
+          {renderStatusChip(true)}
           {expanded ? (
             <ChevronDown className="text-muted group-hover:text-secondary size-3.5 shrink-0 transition-colors" />
           ) : (
@@ -187,7 +191,11 @@ export const ImmersiveReviewAgentStatusBar: React.FC<ImmersiveReviewAgentStatusB
         </button>
       ) : (
         // Streaming/question only (no plan yet): static row, nothing to expand.
-        <div className="flex h-7 w-full items-center gap-2 px-3 leading-none">{trailingStatus}</div>
+        // Chip is left-aligned here so it reads as a status label rather than
+        // hugging the far right of an otherwise-empty bar.
+        <div className="flex h-7 w-full items-center gap-2 px-3 leading-none">
+          {renderStatusChip(false)}
+        </div>
       )}
       {hasTodos && expanded && (
         // Horizontal strip: one row tall (the list scrolls sideways), so the
