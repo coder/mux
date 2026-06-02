@@ -48,6 +48,7 @@ import {
   moveLanguageModelCleanup,
 } from "@/node/services/languageModelCleanup";
 import { createOpenAIWebSocketTransportFetch } from "@/node/services/openAIWebSocketTransportFetch";
+import { wrapOpenAIModelToFilterSynthesizedFinish } from "@/node/services/openAISynthesizedFinishFilter";
 import { log } from "@/node/services/log";
 import {
   MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
@@ -1434,10 +1435,14 @@ export class ProviderModelFactory {
         });
         // OpenAI reasoning state is preserved via explicit history, so no extra
         // middleware is needed beyond the provider's standard Responses handling.
-        const model =
+        const rawModel =
           effectiveWireFormat === "chatCompletions"
             ? provider.chat(modelId)
             : provider.responses(modelId);
+        // Strip the @ai-sdk/openai adapter's synthesized-default finish part so
+        // StreamManager's missing-terminal-event guard can fire on a clean EOF.
+        // See openAISynthesizedFinishFilter.ts for the full rationale.
+        const model = wrapOpenAIModelToFilterSynthesizedFinish(rawModel);
         if (webSocketTransport.active) {
           attachLanguageModelCleanup(model, webSocketTransport.close);
         }
@@ -1901,7 +1906,11 @@ export class ProviderModelFactory {
           apiKey: "copilot", // placeholder, actual auth via custom fetch
           fetch: providerFetch,
         });
-        return Ok(provider.chat(outboundCopilotModelId));
+        // Same synthesized-default-finish filter as the direct OpenAI path:
+        // Copilot routes Responses/Chat Completions traffic through the same
+        // adapter, so a clean upstream EOF without a terminal event reaches
+        // StreamManager's guard via openAISynthesizedFinishFilter.ts.
+        return Ok(wrapOpenAIModelToFilterSynthesizedFinish(provider.chat(outboundCopilotModelId)));
       }
 
       // Generic handler for simple providers (standard API key + factory pattern)

@@ -2118,22 +2118,10 @@ export class StreamManager extends EventEmitter {
                 break;
 
               case "finish": {
-                const finishPart = part as {
-                  finishReason?: unknown;
-                  rawFinishReason?: unknown;
-                };
-                // The OpenAI Responses adapter in the AI SDK flushes its initial
-                // { unified: "other", raw: undefined } default when the SSE stream
-                // closes before a terminal event. Treat only that synthesized default
-                // as missing-terminal; a real unmapped "other" carries a raw reason.
-                const isSynthesizedOtherFinish =
-                  finishPart.finishReason === "other" && finishPart.rawFinishReason === undefined;
-
-                if (!isSynthesizedOtherFinish) {
-                  streamInfo.receivedTerminalEvent = true;
-                  if (typeof finishPart.finishReason === "string") {
-                    streamInfo.terminalFinishReason = finishPart.finishReason;
-                  }
+                const finishPart = part as { finishReason?: unknown };
+                streamInfo.receivedTerminalEvent = true;
+                if (typeof finishPart.finishReason === "string") {
+                  streamInfo.terminalFinishReason = finishPart.finishReason;
                 }
                 break;
               }
