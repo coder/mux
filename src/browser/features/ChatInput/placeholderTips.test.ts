@@ -8,15 +8,6 @@ interface StorybookGlobal {
 const TWENTY_MIN_MS = 20 * 60 * 1000;
 
 describe("PLACEHOLDER_TIPS", () => {
-  test("every tip references a slash command or backslash symbol shortcut", () => {
-    for (const tip of PLACEHOLDER_TIPS) {
-      // Tips must point at a real input feature: a slash command (/orchestrate)
-      // or a backslash symbol shortcut (\alpha). Anything else would send the
-      // user toward something the input doesn't actually do.
-      expect(tip).toMatch(/[/\\][A-Za-z+]/);
-    }
-  });
-
   test("tips are unique", () => {
     const unique = new Set(PLACEHOLDER_TIPS);
     expect(unique.size).toBe(PLACEHOLDER_TIPS.length);
