@@ -232,6 +232,75 @@ describe("ImmersiveReviewView", () => {
     expect(badge.textContent ?? "").toContain("2/3");
   });
 
+  test("reserves the assisted banner slot while iterating through hunks in one file", () => {
+    const assistedHunk = createHunk({
+      id: "hunk-assisted",
+      filePath: "src/example.ts",
+      oldStart: 1,
+      oldLines: 1,
+      newStart: 1,
+      newLines: 1,
+      header: "@@ -1 +1 @@",
+      content: "-old assisted\n+new assisted",
+    });
+    const regularHunk = createHunk({
+      id: "hunk-regular",
+      filePath: assistedHunk.filePath,
+      oldStart: 12,
+      oldLines: 1,
+      newStart: 12,
+      newLines: 1,
+      header: "@@ -12 +12 @@",
+      content: "-old regular\n+new regular",
+    });
+    const hunks = [assistedHunk, regularHunk];
+    const assistedComment = "Inspect this change\nThe full rationale should remain available.";
+    const assistedHunkIds = new Set([assistedHunk.id]);
+    const assistedCommentByHunkId = new Map([[assistedHunk.id, assistedComment]]);
+
+    const renderView = (selectedHunkId: string, visibleHunks: DiffHunk[] = hunks) => (
+      <ThemeProvider forcedTheme="dark">
+        <ImmersiveReviewView
+          workspaceId="workspace-1"
+          fileTree={createFileTree(assistedHunk.filePath)}
+          hunks={visibleHunks}
+          allHunks={hunks}
+          isRead={() => false}
+          onToggleRead={mock(() => undefined)}
+          onMarkFileAsRead={mock(() => undefined)}
+          selectedHunkId={selectedHunkId}
+          onSelectHunk={mock(() => undefined)}
+          onExit={mock(() => undefined)}
+          isTouchImmersive={true}
+          reviewsByFilePath={new Map()}
+          firstSeenMap={{}}
+          assistedHunkIds={assistedHunkIds}
+          assistedCommentByHunkId={assistedCommentByHunkId}
+        />
+      </ThemeProvider>
+    );
+
+    const view = render(renderView(assistedHunk.id));
+
+    expect(view.container.querySelector('[data-assisted-banner-slot="true"]')).toBeTruthy();
+    const banner = view.getByTestId("immersive-assisted-banner");
+    expect(banner.textContent ?? "").toContain("Inspect this change");
+    expect(banner.getAttribute("title")).toBe(assistedComment);
+
+    view.rerender(renderView(regularHunk.id));
+
+    // The fixed slot remains mounted for same-file hunk iteration, but the
+    // selected-hunk callout content disappears when the plain hunk is selected.
+    expect(view.getByTestId("immersive-assisted-banner-slot")).toBeTruthy();
+    expect(view.queryByTestId("immersive-assisted-banner")).toBeNull();
+
+    // Filters can hide the assisted hunk while the file remains active; reserve
+    // from allHunks so hide-read/search does not collapse the layout mid-file.
+    view.rerender(renderView(regularHunk.id, [regularHunk]));
+    expect(view.getByTestId("immersive-assisted-banner-slot")).toBeTruthy();
+    expect(view.queryByTestId("immersive-assisted-banner")).toBeNull();
+  });
+
   test("loads full-file context for an in-budget selected hunk even when another hunk is far away", async () => {
     const nearHunk = createHunk({
       id: "hunk-near",
