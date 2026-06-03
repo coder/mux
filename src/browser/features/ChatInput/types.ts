@@ -37,6 +37,7 @@ export interface ChatInputWorkspaceVariant {
   onResetContext: () => Promise<"reset" | "noop">;
   onTruncateHistory: (percentage?: number) => Promise<void>;
   onModelChange?: (model: string) => void;
+  isTranscriptCaughtUp?: boolean;
   isCompacting?: boolean;
   isStreamStarting?: boolean;
   editingMessage?: EditingMessageState;

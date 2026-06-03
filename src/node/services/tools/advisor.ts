@@ -22,6 +22,8 @@ import { AdvisorToolInputSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/t
 import type { AdvisorToolCallSnapshot, ToolConfiguration } from "@/common/utils/tools/tools";
 import { log } from "@/node/services/log";
 
+type StreamTextProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
+
 type AdvisorHandoffMessage = Extract<ModelMessage, { role: "user" }>;
 
 function hasNonWhitespaceContent(value: string | undefined): value is string {
@@ -149,7 +151,12 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
   assert(typeof runtime.createModel === "function", "advisor createModel must be a function");
 
   let usesThisTurn = 0;
-  const providerOptions = buildProviderOptions(advisorModelString, effectiveReasoningLevel);
+  // buildProviderOptions returns provider SDK option types; streamText accepts the
+  // same JSON-shaped values through its shared providerOptions slot.
+  const providerOptions = buildProviderOptions(
+    advisorModelString,
+    effectiveReasoningLevel
+  ) as unknown as StreamTextProviderOptions;
 
   return tool({
     description: TOOL_DEFINITIONS.advisor.description,

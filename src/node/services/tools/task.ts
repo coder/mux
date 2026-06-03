@@ -17,7 +17,13 @@ import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { buildTaskGroupLaunches, type TaskGroupKind } from "@/common/utils/tools/taskGroups";
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
 import { getErrorMessage } from "@/common/utils/errors";
-import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  coerceThinkingLevel,
+  parseThinkingInput,
+  type ParsedThinkingInput,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
+import { normalizeModelInput } from "@/common/utils/ai/normalizeModelInput";
 import { coerceNonEmptyString } from "@/node/services/taskUtils";
 
 /**
@@ -61,16 +67,53 @@ function buildParentRuntimeAiSettings(
   };
 }
 
+/**
+ * Parse the optional `model`/`thinking` overrides supplied on a task launch,
+ * reusing the exact parsing the UI uses (`normalizeModelInput` for model alias
+ * resolution; `parseThinkingInput` for named levels OR numeric indices). Numeric
+ * thinking indices stay deferred as a `ParsedThinkingInput` so they resolve
+ * against the sub-agent's chosen model in `resolveTaskAISettings`. Throws a
+ * descriptive error on invalid input so the model can correct the call.
+ */
+function parseTaskAiOverrides(args: { model?: string | null; thinking?: string | null }): {
+  modelString?: string;
+  thinkingLevel?: ParsedThinkingInput;
+} {
+  const overrides: { modelString?: string; thinkingLevel?: ParsedThinkingInput } = {};
+
+  if (args.model != null) {
+    const normalized = normalizeModelInput(args.model);
+    if (normalized.model == null) {
+      throw new Error(
+        `task tool: invalid model "${args.model}". Provide a known alias or a "provider:model" string.`
+      );
+    }
+    overrides.modelString = normalized.model;
+  }
+
+  if (args.thinking != null) {
+    const parsed = parseThinkingInput(args.thinking);
+    if (parsed == null) {
+      throw new Error(
+        `task tool: invalid thinking "${args.thinking}". Use a level name (off, low, medium, high, xhigh, max) or a numeric index.`
+      );
+    }
+    overrides.thinkingLevel = parsed;
+  }
+
+  return overrides;
+}
+
 interface SpawnedTaskInfo {
   taskId: string;
-  status: "queued" | "running";
+  status: "queued" | "starting" | "running";
   groupKind?: TaskGroupKind;
   label?: string;
 }
 
 interface PendingTaskInfo {
   taskId: string;
-  status: "queued" | "running" | "completed" | "interrupted";
+  status: "queued" | "starting" | "running" | "completed" | "interrupted";
   groupKind?: TaskGroupKind;
   label?: string;
 }
@@ -78,6 +121,7 @@ interface PendingTaskInfo {
 interface CompletedTaskInfo {
   taskId: string;
   reportMarkdown: string;
+  structuredOutput?: unknown;
   title?: string;
   agentId: string;
   agentType: string;
@@ -118,14 +162,17 @@ function emitTaskCreatedEvent(params: {
 
 function toAggregatePendingStatus(
   statuses: ReadonlyArray<PendingTaskInfo["status"]>
-): "queued" | "running" {
-  return statuses.every((status) => status === "queued") ? "queued" : "running";
+): "queued" | "starting" | "running" {
+  if (statuses.every((status) => status === "queued")) return "queued";
+  if (statuses.every((status) => status === "starting")) return "starting";
+  return "running";
 }
 
 function serializeCompletedReport(report: CompletedTaskInfo) {
   return {
     taskId: report.taskId,
     reportMarkdown: report.reportMarkdown,
+    structuredOutput: report.structuredOutput,
     title: report.title,
     agentId: report.agentId,
     agentType: report.agentType,
@@ -210,6 +257,7 @@ function buildCompletedTaskResult(params: {
       status: "completed",
       taskId: report.taskId,
       reportMarkdown: report.reportMarkdown,
+      structuredOutput: report.structuredOutput,
       title: report.title,
       agentId: report.agentId,
       agentType: report.agentType,
@@ -246,9 +294,11 @@ function normalizePendingTaskStatuses(params: {
       status:
         currentStatus === "queued"
           ? "queued"
-          : currentStatus === "interrupted"
-            ? "interrupted"
-            : "running",
+          : currentStatus === "starting"
+            ? "starting"
+            : currentStatus === "interrupted"
+              ? "interrupted"
+              : "running",
       groupKind: createdTask.groupKind,
       label: createdTask.label,
     };
@@ -280,13 +330,27 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error("Interrupted");
       }
 
-      const { agentId, subagent_type, prompt, title, run_in_background, n, variants } =
-        validatedArgs;
+      const {
+        agentId,
+        subagent_type,
+        prompt,
+        title,
+        run_in_background,
+        n,
+        variants,
+        model,
+        thinking,
+      } = validatedArgs;
       const requestedAgentId =
         typeof agentId === "string" && agentId.trim().length > 0 ? agentId : subagent_type;
       if (!requestedAgentId) {
         throw new Error("task tool input validation failed: expected agent task args");
       }
+
+      // Explicit per-launch model/thinking overrides. Omitted by default so the
+      // sub-agent keeps inheriting the parent's live settings (see precedence in
+      // taskService.resolveTaskAISettings).
+      const aiOverrides = parseTaskAiOverrides({ model, thinking });
 
       const workspaceId = requireWorkspaceId(config, "task");
       const taskService = requireTaskService(config, "task");
@@ -322,6 +386,10 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           prompt: launch.prompt,
           title,
           experiments: config.experiments,
+          ...(aiOverrides.modelString != null ? { modelString: aiOverrides.modelString } : {}),
+          ...(aiOverrides.thinkingLevel != null
+            ? { thinkingLevel: aiOverrides.thinkingLevel }
+            : {}),
           ...(parentRuntimeAiSettings != null ? { parentRuntimeAiSettings } : {}),
           bestOf:
             taskGroupId != null
@@ -397,6 +465,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
               report: {
                 taskId: createdTask.taskId,
                 reportMarkdown: report.reportMarkdown,
+                structuredOutput: report.structuredOutput,
                 title: report.title,
                 agentId: requestedAgentId,
                 agentType: requestedAgentId,

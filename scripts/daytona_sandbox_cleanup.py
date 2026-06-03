@@ -5,9 +5,9 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from daytona import Daytona
+from daytona import Daytona, ListSandboxesQuery
 
-ACTIVE_STATES = {"started", "creating", "starting"}
+DELETABLE_STATES = {"stopped", "error", "build_failed", "archived", "destroyed"}
 
 
 def sandbox_id(sandbox: Any) -> str:
@@ -17,19 +17,15 @@ def sandbox_id(sandbox: Any) -> str:
 
 
 def list_all_sandboxes(daytona: Daytona):
-    # Daytona SDK versions have returned either a generator/list or a paginated
-    # object. Handle both so workflow snapshot/cleanup stays best-effort.
-    page = 1
-    while True:
-        result = daytona.list(page=page)
-        if not hasattr(result, "items"):
-            yield from result
-            return
-        yield from result.items
-        total_pages = getattr(result, "total_pages", None) or 1
-        if page >= total_pages:
-            break
-        page += 1
+    # Daytona SDK 0.180.0 moved sandbox listing to cursor pagination.
+    # Iterate through the SDK so workflow snapshot/cleanup sees every sandbox.
+    yield from daytona.list(ListSandboxesQuery(limit=100))
+
+
+def normalized_state(sandbox: Any) -> str:
+    # Daytona returns SandboxState enums; use values so active sandboxes are never deleted.
+    state = getattr(sandbox, "state", "")
+    return str(getattr(state, "value", state)).lower()
 
 
 def snapshot(daytona: Daytona) -> None:
@@ -44,19 +40,15 @@ def cleanup(daytona: Daytona, pre_existing_file: Path) -> None:
         for sandbox in list_all_sandboxes(daytona)
         if sandbox_id(sandbox) not in pre_existing
     ]
-    to_delete = [
-        sandbox
-        for sandbox in candidates
-        if str(getattr(sandbox, "state", "")).lower() not in ACTIVE_STATES
-    ]
+    to_delete = [sandbox for sandbox in candidates if normalized_state(sandbox) in DELETABLE_STATES]
     skipped = len(candidates) - len(to_delete)
     if skipped:
-        print(f"Skipping {skipped} still-active sandbox(es)")
+        print(f"Skipping {skipped} active or transitional sandbox(es)")
     if not to_delete:
-        print("No stopped sandboxes to clean up")
+        print("No stopped or errored sandboxes to clean up")
         return
 
-    print(f"Cleaning up {len(to_delete)} stopped sandbox(es) from this run...")
+    print(f"Cleaning up {len(to_delete)} stopped or errored sandbox(es) from this run...")
     for sandbox in to_delete:
         sandbox_identifier = sandbox_id(sandbox)
         state = getattr(sandbox, "state", "unknown")

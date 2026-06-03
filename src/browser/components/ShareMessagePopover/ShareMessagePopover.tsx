@@ -80,7 +80,9 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   // Signing capabilities and enabled state
   const [signingCapabilities, setSigningCapabilities] = useState<SigningCapabilities | null>(null);
   const [signingCapabilitiesLoaded, setSigningCapabilitiesLoaded] = useState(false);
-  const [signingEnabled, setSigningEnabled] = usePersistedState(SHARE_SIGNING_KEY, true);
+  const [signingEnabled, setSigningEnabled] = usePersistedState(SHARE_SIGNING_KEY, true, {
+    listener: true,
+  });
 
   // Load signing capabilities on first popover open
   useEffect(() => {

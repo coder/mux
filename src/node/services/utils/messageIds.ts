@@ -36,6 +36,10 @@ export const createContextResetBoundaryMessageId = (): string =>
 export const createTaskReportMessageId = (): string =>
   `task-report-${Date.now()}-${randomSuffix(9)}`;
 
+/** Task terminal-failure message IDs: task-failure-{timestamp}-{random} */
+export const createTaskFailureMessageId = (): string =>
+  `task-failure-${Date.now()}-${randomSuffix(9)}`;
+
 /** File @mention block message IDs: file-at-mentions-{timestamp}-{index} */
 export const createFileAtMentionMessageId = (timestamp: number, index: number): string =>
   `file-at-mentions-${timestamp}-${index}`;

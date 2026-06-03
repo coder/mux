@@ -1176,8 +1176,8 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         title: "Set Thinking Effort…",
         subtitle: `Current: ${levelDescriptions[currentLevel] ?? currentLevel}`,
         section: section.mode,
-        // No shortcutHint: TOGGLE_THINKING (⌘⇧T) cycles to next level directly,
-        // but this action opens a level selection prompt — different behavior.
+        // No shortcutHint: INCREASE_THINKING / DECREASE_THINKING (⌘⇧] / ⌘⇧[) step
+        // the level directly, but this action opens a level selection prompt — different behavior.
         run: () => undefined,
         prompt: {
           title: "Select Thinking Effort",

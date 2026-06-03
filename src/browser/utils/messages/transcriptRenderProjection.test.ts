@@ -728,6 +728,20 @@ describe("operational bundle summary", () => {
     expect(summary.details).toBe("2 searches · 2 fetches");
   });
 
+  test("categorizes Google native search grounding as a search", () => {
+    const summary = summarizeOperationalBundle([
+      tool({
+        id: "gsearch-1",
+        toolName: "server:GOOGLE_SEARCH_WEB",
+        args: { queries: ["electron 34 release date"] },
+        result: { search_suggestions: "<div></div>" },
+      }),
+      tool({ id: "search-1", toolName: "web_search", result: [{ title: "one" }] }),
+    ]);
+
+    expect(summary.details).toBe("2 searches");
+  });
+
   test("all-miss completed search bundle gets neutral copy", () => {
     const allMiss = summarizeOperationalBundle([
       tool({ id: "search-1", toolName: "web_search", status: "completed", result: [] }),

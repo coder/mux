@@ -40,6 +40,12 @@ import { createMuxAgentsReadTool } from "@/node/services/tools/mux_agents_read";
 import { createMuxAgentsWriteTool } from "@/node/services/tools/mux_agents_write";
 import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
 import { createMuxConfigWriteTool } from "@/node/services/tools/mux_config_write";
+import {
+  createWorkflowActionListTool,
+  createWorkflowListTool,
+  createWorkflowReadTool,
+} from "@/node/services/tools/workflow_definitions";
+import { createWorkflowRunTool } from "@/node/services/tools/workflow_run";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
@@ -47,7 +53,10 @@ import { log } from "@/node/services/log";
 import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalToolResultFields";
 import { NotificationEngine } from "@/node/services/agentNotifications/NotificationEngine";
 import { TodoListReminderSource } from "@/node/services/agentNotifications/sources/TodoListReminderSource";
-import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
+import {
+  getAvailableTools,
+  supportsGoogleNativeToolsWithFunctionTools,
+} from "@/common/utils/tools/toolDefinitions";
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -138,6 +147,30 @@ export interface ToolConfiguration {
   reportModelUsage?: (event: ToolModelUsageEvent) => void;
   /** Task orchestration for sub-agent tasks */
   taskService?: TaskService;
+  /** Durable workflow lifecycle service for dynamic workflow tools. */
+  workflowService?: {
+    listDefinitions(options: { projectTrusted: boolean }): Promise<unknown[]>;
+    readDefinition(input: {
+      name: string;
+      projectTrusted: boolean;
+    }): Promise<{ descriptor: unknown; source: string }>;
+    listActions?(options: { projectTrusted: boolean }): Promise<unknown[]>;
+    getRun?(input: { workspaceId: string; runId: string }): Promise<unknown>;
+    listRuns?(input: { workspaceId: string }): Promise<unknown[]>;
+    startNamedWorkflowInBackground?(input: {
+      name: string;
+      workspaceId: string;
+      projectTrusted: boolean;
+      args: unknown;
+    }): Promise<{ runId: string; status: string; result: unknown }>;
+    startNamedWorkflow(input: {
+      name: string;
+      workspaceId: string;
+      projectTrusted: boolean;
+      args: unknown;
+      abortSignal?: AbortSignal;
+    }): Promise<{ runId: string; status: string; result: unknown }>;
+  };
   /** Workspace goal lifecycle service for model-facing goal tools. */
   goalService?: WorkspaceGoalService;
   /** Per-request goal tool gates derived from goal status and agent capabilities. */
@@ -145,6 +178,10 @@ export interface ToolConfiguration {
     getGoal: boolean;
     completeGoal: boolean;
   };
+  /** Optional JSON Schema subset required by a workflow-spawned task report. */
+  workflowAgentOutputSchema?: unknown;
+  /** When true, subagent reports are submitted by paths to report.md/structured-output.json. */
+  subagentReportFiles?: boolean;
   /** Enable agent_report tool (only valid for child task workspaces) */
   enableAgentReport?: boolean;
   /** Experiments inherited from parent (for subagent spawning) */
@@ -153,6 +190,8 @@ export interface ToolConfiguration {
     programmaticToolCallingExclusive?: boolean;
     advisorTool?: boolean;
     execSubagentHardRestart?: boolean;
+    dynamicWorkflows?: boolean;
+    subagentFileReports?: boolean;
   };
   /** Available sub-agents for the task tool description (dynamic context) */
   availableSubagents?: AgentDefinitionDescriptor[];
@@ -455,6 +494,14 @@ export async function getToolsForModel(
     // (workspaceStatusGenerator.ts), which create the tool inline. Exposing
     // them in the default toolset would let exec-derived agents see their
     // "call me immediately" descriptions.
+    ...(config.workflowService && config.experiments?.dynamicWorkflows
+      ? {
+          workflow_list: createWorkflowListTool(config),
+          workflow_read: createWorkflowReadTool(config),
+          workflow_action_list: createWorkflowActionListTool(config),
+          workflow_run: createWorkflowRunTool(config),
+        }
+      : {}),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
     ...(config.goalService && config.enableGoalTools?.getGoal
       ? { get_goal: createGetGoalTool(config) }
@@ -550,10 +597,20 @@ export async function getToolsForModel(
         break;
       }
 
-      // Note: Gemini 3 tool support:
-      // Combining native tools with function calling is currently only
-      // supported in the Live API. Thus no `google_search` or `url_context` added here.
-      // - https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#native-tools
+      case "google": {
+        if (supportsGoogleNativeToolsWithFunctionTools(modelId)) {
+          const { google } = await import("@ai-sdk/google");
+          allTools = {
+            ...baseTools,
+            ...(mcpTools ?? {}),
+            // Google exposes native Search and URL Context as provider-executed tools for
+            // Gemini 3+. These coexist with Mux function tools in the standard streaming API.
+            google_search: google.tools.googleSearch({}) as Tool,
+            url_context: google.tools.urlContext({}) as Tool,
+          };
+        }
+        break;
+      }
     }
   } catch (error) {
     // If tools aren't available, just use base tools
@@ -566,7 +623,15 @@ export async function getToolsForModel(
     getAvailableTools(modelString, {
       enableAgentReport: config.enableAgentReport,
       enableAnalyticsQuery: Boolean(config.analyticsService),
+      enableDynamicWorkflows: Boolean(
+        config.workflowService && config.experiments?.dynamicWorkflows
+      ),
       enableAdvisor: Boolean(config.advisorRuntime),
+      // The Review pane belongs to the user-facing parent workspace. config
+      // .enableAgentReport is the canonical "is sub-agent" signal (set true iff
+      // the workspace has a parentWorkspaceId), so withhold the review_pane_*
+      // tools from sub-agents to keep the toolset in sync with the system prompt.
+      enableReviewPane: !config.enableAgentReport,
       // Mux global tools are always created; tool policy (agent frontmatter)
       // controls which agents can actually use them.
       enableMuxGlobalAgentsTools: true,

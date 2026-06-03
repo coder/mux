@@ -26,6 +26,8 @@ interface TaskGroupListItemProps {
 }
 
 export function TaskGroupListItem(props: TaskGroupListItemProps) {
+  const hasRunningWork = props.runningCount > 0;
+  const statusDescriptionId = `task-group-status-${props.groupId}`;
   const paddingLeft = getSidebarItemPaddingLeft(props.depth);
   const statusParts: string[] = [];
   if (props.runningCount > 0) {
@@ -50,10 +52,13 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
       tabIndex={0}
       aria-expanded={props.isExpanded}
       aria-label={`${props.isExpanded ? "Collapse" : "Expand"} task group ${props.title}`}
+      aria-describedby={statusDescriptionId}
       data-testid={`task-group-${props.groupId}`}
+      data-running={hasRunningWork}
       className={cn(
         "bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-2 pl-1 select-none transition-all duration-150 hover:bg-surface-secondary",
         props.sectionId != null ? "ml-2" : "ml-0",
+        hasRunningWork && "bg-surface-secondary",
         props.isSelected && "bg-surface-secondary"
       )}
       style={{ paddingLeft }}
@@ -76,19 +81,33 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
           style={{ transform: props.isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
         />
       </span>
-      <div className="text-muted mt-[3px] flex h-4 w-4 shrink-0 items-center justify-center">
+      <div
+        className={cn(
+          "text-muted mt-[3px] flex h-4 w-4 shrink-0 items-center justify-center",
+          hasRunningWork && "text-content-success"
+        )}
+        data-testid="task-group-status-icon"
+      >
         <Layers3 className="h-3 w-3" />
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
-          <span className="text-foreground min-w-0 truncate text-left text-[14px] leading-6">
+          <span
+            className={cn(
+              "min-w-0 truncate text-left text-[14px] leading-6",
+              hasRunningWork ? "text-content-primary" : "text-foreground"
+            )}
+          >
             {formatTaskGroupHeader(props.kind, props.totalCount, props.title)}
           </span>
           <span className="text-muted text-[11px]">
             {props.completedCount}/{props.totalCount}
           </span>
         </div>
-        <div className="text-muted flex min-w-0 flex-wrap items-center gap-1.5 text-xs leading-4">
+        <div
+          id={statusDescriptionId}
+          className="text-muted flex min-w-0 flex-wrap items-center gap-1.5 text-xs leading-4"
+        >
           {statusParts.length > 0 ? (
             statusParts.map((part) => <span key={part}>{part}</span>)
           ) : (

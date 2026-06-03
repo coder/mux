@@ -1,7 +1,11 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
 import { describe, test, expect, beforeAll } from "bun:test";
 import { z } from "zod";
 import type { Tool } from "ai";
-import { validateTypes } from "./typeValidator";
+import { DisposableTempDir } from "@/node/services/tempDir";
+import { findBundledTypeScriptLibDir, validateTypes } from "./typeValidator";
 import { generateMuxTypes } from "./typeGenerator";
 
 /**
@@ -38,6 +42,17 @@ describe("validateTypes", () => {
       ),
     };
     muxTypes = await generateMuxTypes(tools);
+  });
+
+  test("finds bundled TypeScript libs from Docker server bundle layout", async () => {
+    using tmp = new DisposableTempDir("type-validator");
+    const runtimeDir = path.join(tmp.path, "dist", "runtime");
+    const libDir = path.join(tmp.path, "dist", "typescript-lib");
+    await fs.mkdir(runtimeDir, { recursive: true });
+    await fs.mkdir(libDir, { recursive: true });
+    await fs.writeFile(path.join(libDir, "lib.es2023.d.ts.txt"), "");
+
+    expect(findBundledTypeScriptLibDir(runtimeDir)).toBe(libDir);
   });
 
   test("accepts valid code with correct property names", () => {

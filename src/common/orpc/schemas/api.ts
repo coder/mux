@@ -72,6 +72,13 @@ import {
   SkillNameSchema,
 } from "./agentSkill";
 import {
+  WorkflowDefinitionDescriptorSchema,
+  WorkflowNameSchema,
+  WorkflowRunIdSchema,
+  WorkflowRunRecordSchema,
+  WorkflowRunStatusSchema,
+} from "./workflow";
+import {
   AgentDefinitionDescriptorSchema,
   AgentDefinitionPackageSchema,
   AgentIdSchema,
@@ -95,6 +102,7 @@ import {
 import { PolicyGetResponseSchema } from "./policy";
 import {
   AgentAiDefaultsSchema,
+  ModelFallbacksSchema,
   SubagentAiDefaultsSchema,
   UpdateChannelSchema,
 } from "../../config/schemas/appConfigOnDisk";
@@ -104,6 +112,7 @@ import {
   ServiceTierSchema,
 } from "../../config/schemas/providersConfig";
 import { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntry";
+import { UserPreferencesSchema } from "../../config/schemas/userPreferences";
 import { TaskSettingsSchema } from "../../config/schemas/taskSettings";
 import { ThinkingLevelSchema } from "../../types/thinking";
 
@@ -1649,7 +1658,7 @@ export const tasks = {
       z.object({
         taskId: z.string(),
         kind: z.literal("agent"),
-        status: z.enum(["queued", "running"]),
+        status: z.enum(["queued", "starting", "running"]),
       }),
       z.string()
     ),
@@ -1710,6 +1719,99 @@ export const agentSkills = {
   get: {
     input: AgentDiscoveryInputSchema.and(z.object({ skillName: SkillNameSchema })),
     output: AgentSkillPackageSchema,
+  },
+};
+
+const WorkflowDefinitionDiscoveryInputSchema = z
+  .object({
+    projectPath: z.string().min(1).optional(),
+    workspaceId: z.string().min(1).optional(),
+  })
+  .strict()
+  .refine((data) => Boolean(data.projectPath ?? data.workspaceId), {
+    message: "Either projectPath or workspaceId must be provided",
+  });
+
+// Workflows
+export const workflows = {
+  listDefinitions: {
+    input: WorkflowDefinitionDiscoveryInputSchema,
+    output: z.array(WorkflowDefinitionDescriptorSchema),
+  },
+  readDefinition: {
+    input: z.object({ workspaceId: z.string().min(1), name: WorkflowNameSchema }).strict(),
+    output: z.object({ descriptor: WorkflowDefinitionDescriptorSchema, source: z.string().min(1) }),
+  },
+  listRuns: {
+    input: z.object({ workspaceId: z.string().min(1) }).strict(),
+    output: z.array(WorkflowRunRecordSchema),
+  },
+  getRun: {
+    input: z.object({ workspaceId: z.string().min(1), runId: WorkflowRunIdSchema }).strict(),
+    output: WorkflowRunRecordSchema.nullable(),
+  },
+  interrupt: {
+    input: z.object({ workspaceId: z.string().min(1), runId: WorkflowRunIdSchema }).strict(),
+    output: WorkflowRunRecordSchema,
+  },
+  resume: {
+    input: z.object({ workspaceId: z.string().min(1), runId: WorkflowRunIdSchema }).strict(),
+    output: z.object({
+      runId: WorkflowRunIdSchema,
+      status: WorkflowRunStatusSchema,
+      result: z.unknown(),
+    }),
+  },
+  retryFromCheckpoint: {
+    input: z.object({ workspaceId: z.string().min(1), runId: WorkflowRunIdSchema }).strict(),
+    output: z.object({
+      runId: WorkflowRunIdSchema,
+      status: WorkflowRunStatusSchema,
+      result: z.unknown(),
+    }),
+  },
+  promoteScratchDefinition: {
+    input: z
+      .object({
+        workspaceId: z.string().min(1),
+        name: WorkflowNameSchema,
+        description: z.string().min(1).max(1024),
+        location: z.enum(["project", "global"]),
+        overwrite: z.boolean().optional(),
+      })
+      .strict(),
+    output: WorkflowDefinitionDescriptorSchema,
+  },
+  promoteScratch: {
+    input: z
+      .object({
+        workspaceId: z.string().min(1),
+        runId: WorkflowRunIdSchema,
+        name: WorkflowNameSchema,
+        description: z.string().min(1).max(1024),
+        location: z.enum(["project", "global"]),
+        overwrite: z.boolean().optional(),
+      })
+      .strict(),
+    output: WorkflowDefinitionDescriptorSchema,
+  },
+  start: {
+    input: z
+      .object({
+        workspaceId: z.string().min(1),
+        name: WorkflowNameSchema,
+        runInBackground: z.boolean().optional(),
+        args: z.unknown().optional(),
+        rawCommand: z.string().min(1).optional(),
+        continuationOptions: SendMessageOptionsSchema.optional(),
+      })
+      .strict(),
+    output: z.object({
+      runId: WorkflowRunIdSchema,
+      status: WorkflowRunStatusSchema,
+      result: z.unknown(),
+      invocationMessagePersisted: z.boolean().optional(),
+    }),
   },
 };
 
@@ -1968,12 +2070,15 @@ export const config = {
   getConfig: {
     input: z.void(),
     output: z.object({
+      userPreferencesInitialized: z.boolean(),
+      userPreferences: UserPreferencesSchema.optional(),
       taskSettings: ResolvedTaskSettingsSchema,
       muxGatewayEnabled: z.boolean().optional(),
       muxGatewayModels: z.array(z.string()).optional(),
       routePriority: z.array(z.string()).optional(),
       routeOverrides: z.record(z.string(), z.string()).optional(),
       minThinkingLevelByModel: z.record(z.string(), ThinkingLevelSchema).optional(),
+      modelFallbacks: ModelFallbacksSchema.optional(),
       defaultModel: z.string().optional(),
       advisorModelString: AdvisorModelStringSchema,
       advisorThinkingLevel: AdvisorThinkingLevelSchema,
@@ -2000,7 +2105,8 @@ export const config = {
   },
   saveConfig: {
     input: z.object({
-      taskSettings: ResolvedTaskSettingsSchema,
+      userPreferences: UserPreferencesSchema.nullish(),
+      taskSettings: ResolvedTaskSettingsSchema.nullish(),
       advisorModelString: AdvisorModelStringSchema.nullish(),
       advisorThinkingLevel: AdvisorThinkingLevelSchema.nullish(),
       advisorMaxUsesPerTurn: AdvisorMaxUsesPerTurnSchema.nullish(),
@@ -2047,6 +2153,15 @@ export const config = {
     input: z.object({
       defaultModel: z.string().optional(),
       hiddenModels: z.array(z.string()).optional(),
+    }),
+    output: z.void(),
+  },
+  updateModelFallbacks: {
+    input: z.object({
+      // Full-map replacement keyed by canonical source model. The backend
+      // sanitizes (canonical keys, drop self/dupes, cap chain length, drop
+      // empty chains) before persisting.
+      modelFallbacks: ModelFallbacksSchema,
     }),
     output: z.void(),
   },

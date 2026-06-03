@@ -8,6 +8,8 @@ export interface ExperimentValues {
   programmaticToolCallingExclusive: boolean | undefined;
   advisorTool: boolean | undefined;
   execSubagentHardRestart: boolean | undefined;
+  dynamicWorkflows: boolean | undefined;
+  subagentFileReports: boolean | undefined;
 }
 
 export interface SendMessageOptionsInput {

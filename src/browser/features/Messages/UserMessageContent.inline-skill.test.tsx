@@ -2,13 +2,13 @@ import "../../../../tests/ui/dom";
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import type { DisplayedUserMessage, InlineSkillSnapshotMap } from "@/common/types/message";
 import type { EditingMessageState } from "@/browser/utils/chatEditing";
 import { UserMessage } from "./UserMessage";
-import { UserMessageContent } from "./UserMessageContent";
+import { UserMessageContent, WorkflowDefinitionPreviewCard } from "./UserMessageContent";
 import { installDom } from "../../../../tests/ui/dom";
 
 function createSkillSnapshot(skillName: string): InlineSkillSnapshotMap[string] {
@@ -57,6 +57,101 @@ describe("UserMessageContent inline skill rendering", () => {
     // full-suite coverage runs.
     const badgeTexts = getSkillBadges(view.container).map((badge) => badge.textContent);
     expect(badgeTexts).toContain("/deep-review");
+  });
+
+  test("renders workflow command preview content from the run definition snapshot", () => {
+    const workflowSource = `// description: Review deeply\nexport default function workflow() {\n  return { reportMarkdown: "done" };\n}`;
+    const view = render(
+      <WorkflowDefinitionPreviewCard
+        preview={{
+          descriptor: {
+            name: "deep-review-workflow",
+            description: "Review deeply",
+            scope: "built-in",
+            executable: true,
+          },
+          source: workflowSource,
+        }}
+      />
+    );
+
+    expect(view.getByText("deep-review-workflow")).toBeTruthy();
+    expect(view.getByText("Review deeply")).toBeTruthy();
+    expect(view.container.textContent).toContain("export default function workflow");
+    expect(
+      view.getByRole("region", { name: "Source for workflow deep-review-workflow" }).tabIndex
+    ).toBe(0);
+  });
+
+  test("opens the slash workflow preview from the focusable command badge", async () => {
+    const view = render(
+      <UserMessageContent
+        content="/deep-review-workflow Check this"
+        commandPrefix="/deep-review-workflow"
+        workflowDefinitionPreview={{
+          descriptor: {
+            name: "deep-review-workflow",
+            description: "Review deeply",
+            scope: "built-in",
+            executable: true,
+          },
+          source: "export default function workflow() {}",
+        }}
+        variant="sent"
+      />
+    );
+
+    const trigger = view.getByRole("button", {
+      name: "Show workflow definition preview for deep-review-workflow",
+    });
+    expect(trigger.textContent).toBe("/deep-review-workflow");
+
+    fireEvent.focus(trigger);
+
+    await waitFor(() => {
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    });
+  });
+
+  test("toggles the slash workflow preview when the focused badge is clicked", async () => {
+    const view = render(
+      <UserMessageContent
+        content="/deep-review-workflow Check this"
+        commandPrefix="/deep-review-workflow"
+        workflowDefinitionPreview={{
+          descriptor: {
+            name: "deep-review-workflow",
+            description: "Review deeply",
+            scope: "built-in",
+            executable: true,
+          },
+          source: "export default function workflow() {}",
+        }}
+        variant="sent"
+      />
+    );
+
+    const trigger = view.getByRole("button", {
+      name: "Show workflow definition preview for deep-review-workflow",
+    });
+
+    fireEvent.focus(trigger);
+
+    await waitFor(() => {
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    fireEvent.click(trigger);
+
+    await waitFor(() => {
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    fireEvent.click(trigger);
+
+    await waitFor(() => {
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    });
   });
 
   test("keeps edit-mode textarea content as raw text", () => {

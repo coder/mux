@@ -1,0 +1,66 @@
+import "../../../../tests/ui/dom";
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { cleanup, render } from "@testing-library/react";
+import { installDom } from "../../../../tests/ui/dom";
+import { TaskGroupListItem } from "./TaskGroupListItem";
+
+function renderTaskGroup(overrides: Partial<React.ComponentProps<typeof TaskGroupListItem>> = {}) {
+  return render(
+    <TaskGroupListItem
+      groupId="best-of-demo"
+      title="Compare options"
+      kind="bestOf"
+      depth={1}
+      totalCount={3}
+      visibleCount={3}
+      completedCount={0}
+      runningCount={0}
+      queuedCount={0}
+      interruptedCount={0}
+      isExpanded={false}
+      isSelected={false}
+      onToggle={() => undefined}
+      {...overrides}
+    />
+  );
+}
+
+describe("TaskGroupListItem", () => {
+  let cleanupDom: (() => void) | null = null;
+
+  beforeEach(() => {
+    cleanupDom = installDom();
+  });
+
+  afterEach(() => {
+    cleanup();
+    cleanupDom?.();
+    cleanupDom = null;
+  });
+
+  test("marks groups with running members as in progress", () => {
+    const view = renderTaskGroup({ runningCount: 2, queuedCount: 1 });
+
+    const groupRow = view.getByTestId("task-group-best-of-demo");
+
+    expect(groupRow.dataset.running).toBe("true");
+    const descriptionId = groupRow.getAttribute("aria-describedby");
+    expect(descriptionId).toBe("task-group-status-best-of-demo");
+    expect(document.getElementById(descriptionId ?? "")?.textContent).toContain("2 running");
+    expect(view.getByTestId("task-group-status-icon").className).toContain("text-content-success");
+    expect(groupRow.textContent).toContain("2 running");
+  });
+
+  test("keeps queued-only groups pending instead of active", () => {
+    const view = renderTaskGroup({ queuedCount: 1 });
+
+    const groupRow = view.getByTestId("task-group-best-of-demo");
+
+    expect(groupRow.dataset.running).toBe("false");
+    expect(view.getByTestId("task-group-status-icon").className).not.toContain(
+      "text-content-success"
+    );
+    expect(groupRow.textContent).toContain("1 queued");
+  });
+});

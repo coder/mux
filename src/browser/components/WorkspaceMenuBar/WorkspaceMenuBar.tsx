@@ -149,13 +149,15 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   // Notification on response toggle (workspace-level) - defaults to disabled
   const [notifyOnResponse, setNotifyOnResponse] = usePersistedState<boolean>(
     getNotifyOnResponseKey(workspaceId),
-    false
+    false,
+    { listener: true }
   );
 
   // Auto-enable notifications for new workspaces (project-level)
   const [autoEnableNotifications, setAutoEnableNotifications] = usePersistedState<boolean>(
     getNotifyOnResponseAutoEnableKey(projectPath),
-    false
+    false,
+    { listener: true }
   );
 
   // Popover state for notification settings (interactive on click)

@@ -43,6 +43,7 @@ import { createPortal } from "react-dom";
 import { HunkViewer } from "./HunkViewer";
 import { InlineReviewNote, type ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
 import { ReviewControls } from "./ReviewControls";
+import { preloadHighlightedDiff } from "../../Shared/DiffRenderer";
 import { ImmersiveReviewView } from "./ImmersiveReviewView";
 import { FileTree } from "./FileTree";
 import { UntrackedStatus } from "./UntrackedStatus";
@@ -53,7 +54,12 @@ import {
   repoRootBashOptions,
   resolveRepoRootProjectPath,
 } from "@/browser/utils/executeBash";
-import { readPersistedString, usePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  readPersistedState,
+  readPersistedString,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import { STORAGE_KEYS, WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useReviewState } from "@/browser/hooks/useReviewState";
 import { useReviews } from "@/browser/hooks/useReviews";
@@ -66,7 +72,10 @@ import {
 import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
 import {
   getReviewImmersiveKey,
+  getReviewDefaultBaseKey,
+  getReviewSelectedHunkKey,
   getReviewSearchStateKey,
+  REVIEW_INCLUDE_UNCOMMITTED_KEY,
   REVIEW_SORT_ORDER_KEY,
 } from "@/common/constants/storage";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
@@ -91,6 +100,7 @@ import {
 import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
 import { findNextHunkId, findNextHunkIdAfterFileRemoval } from "@/browser/utils/review/navigation";
 import { cn } from "@/common/lib/utils";
+import { useTheme } from "@/browser/contexts/ThemeContext";
 import { useAPI, type APIClient } from "@/browser/contexts/API";
 import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
 import { workspaceStore, useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
@@ -656,7 +666,7 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     [assistedHunks, reviewPathContext]
   );
 
-  const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
+  const projectDefaultBaseKey = getReviewDefaultBaseKey(projectPath);
   const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
   const [defaultBase] = usePersistedState<string>(
     projectDefaultBaseKey,
@@ -664,7 +674,7 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     { listener: true }
   );
   const [diffBase] = usePersistedState(workspaceDiffBaseKey, defaultBase, { listener: true });
-  const [includeUncommitted] = usePersistedState("review-include-uncommitted", false, {
+  const [includeUncommitted] = usePersistedState(REVIEW_INCLUDE_UNCOMMITTED_KEY, false, {
     listener: true,
   });
 
@@ -782,19 +792,31 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 }) => {
   const originFetchRef = useRef<OriginFetchState | null>(null);
   const { api } = useAPI();
+  const { theme } = useTheme();
   const { workspaceMetadata } = useWorkspaceMetadata();
   const panelRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    // Review is a code-heavy surface; warm the worker/highlighter during diff loading
+    // so immersive mode does not reveal plain text before Shiki is ready.
+    preloadHighlightedDiff({
+      content: "+const muxReviewSyntaxWarmup = true;",
+      filePath: "review-warmup.ts",
+      themeMode: theme,
+    }).catch(() => undefined);
+  }, [theme]);
+
   // Unified diff state - discriminated union makes invalid states unrepresentable
   // Note: Parent renders with key={workspaceId}, so component remounts on workspace change.
   const [diffState, setDiffState] = useState<DiffState>({ status: "loading" });
 
-  // Persist selected hunk per workspace so navigation survives tab switches
-  const [selectedHunkId, setSelectedHunkId] = usePersistedState<string | null>(
-    `review-selected-hunk:${workspaceId}`,
-    null
+  const selectedHunkStorageKey = getReviewSelectedHunkKey(workspaceId);
+  // Keep hunk selection local during navigation; persisting every J/K step writes
+  // localStorage synchronously and dominates large immersive-review iteration.
+  const [selectedHunkId, setSelectedHunkId] = useState<string | null>(() =>
+    readPersistedState(selectedHunkStorageKey, null)
   );
   const [isLoadingTree, setIsLoadingTree] = useState(true);
   const [diagnosticInfo, setDiagnosticInfo] = useState<DiagnosticInfo | null>(null);
@@ -844,7 +866,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     selectedRepoRootProjectPath
   );
 
-  const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
+  const projectDefaultBaseKey = getReviewDefaultBaseKey(projectPath);
   const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
 
   // Per-project default base (shared across workspaces in the same project).
@@ -863,8 +885,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   // Persist includeUncommitted flag globally
   const [includeUncommitted, setIncludeUncommitted] = usePersistedState(
-    "review-include-uncommitted",
-    false
+    REVIEW_INCLUDE_UNCOMMITTED_KEY,
+    false,
+    { listener: true }
   );
 
   // Persist showReadHunks flag globally
@@ -955,6 +978,16 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   isReadRef.current = isRead;
   const selectedHunkIdRef = useRef(selectedHunkId);
   selectedHunkIdRef.current = selectedHunkId;
+
+  useEffect(() => {
+    updatePersistedState(selectedHunkStorageKey, selectedHunkId);
+  }, [selectedHunkStorageKey, selectedHunkId]);
+
+  useEffect(() => {
+    return () => {
+      updatePersistedState(selectedHunkStorageKey, selectedHunkIdRef.current);
+    };
+  }, [selectedHunkStorageKey]);
   const showReadHunksRef = useRef(false); // Will be updated after filters state is declared
 
   // Track hunk first-seen timestamps for LIFO sorting
@@ -1012,6 +1045,33 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       diffState.status === "loaded" || diffState.status === "refreshing" ? diffState.hunks : [],
     [diffState]
   );
+
+  const syntaxPrewarmHunk = useMemo(() => {
+    if (hunks.length === 0) {
+      return null;
+    }
+
+    return (
+      (selectedHunkId ? (hunks.find((hunk) => hunk.id === selectedHunkId) ?? null) : null) ??
+      hunks[0]
+    );
+  }, [hunks, selectedHunkId]);
+
+  useEffect(() => {
+    if (!syntaxPrewarmHunk) {
+      return;
+    }
+
+    // Start Shiki/language loading while the user is still in the review list so
+    // entering immersive review does not visibly repaint plain rows as colored tokens.
+    preloadHighlightedDiff({
+      content: syntaxPrewarmHunk.content,
+      filePath: syntaxPrewarmHunk.filePath,
+      oldStart: syntaxPrewarmHunk.oldStart,
+      newStart: syntaxPrewarmHunk.newStart,
+      themeMode: theme,
+    }).catch(() => undefined);
+  }, [syntaxPrewarmHunk, theme]);
 
   const orphanReviews = useMemo(() => {
     const diffFilePaths = new Set<string>();
@@ -2030,14 +2090,14 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       // with Assisted mode (which uses `assistedShowReadHunks`). Reading `filters.showReadHunks`
       // directly meant that marking a file read in Assisted mode left the selection on a now-
       // hidden hunk, breaking subsequent keyboard navigation when `currentIndex` became -1.
-      if (hunkId === selectedHunkId && !showReadHunksRef.current) {
+      if (hunkId === selectedHunkIdRef.current && !showReadHunksRef.current) {
         // Use ref to get current filtered/sorted list, then find next hunk not in same file
         setSelectedHunkId(
           findNextHunkIdAfterFileRemoval(filteredHunksRef.current, hunkId, hunk.filePath)
         );
       }
     },
-    [hunks, markAsRead, selectedHunkId, setSelectedHunkId]
+    [hunks, markAsRead, setSelectedHunkId]
   );
 
   // Count agent-flagged hunks the user hasn't acked. The panel still reports

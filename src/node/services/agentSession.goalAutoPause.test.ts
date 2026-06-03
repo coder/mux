@@ -639,7 +639,10 @@ describe("AgentSession goal safety hooks", () => {
     });
     expect(result.success).toBe(true);
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitForCondition(
+      async () => (await goalService.getGoal(workspaceId))?.status === "complete",
+      { timeoutMs: 5_000 }
+    );
     expect(await goalService.getGoal(workspaceId)).toMatchObject({
       status: "complete",
       completionSummary: "All wrapped up.",

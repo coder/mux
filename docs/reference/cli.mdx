@@ -1,7 +1,7 @@
 ---
 title: CLI
 sidebarTitle: CLI
-description: Run one-off agent tasks from the command line with `mux run`
+description: Run one-off agent tasks and durable workflows from the command line
 ---
 
 <Note>
@@ -132,6 +132,91 @@ mux run --json "Generate API documentation" > output.jsonl
 # Limit spending to $2.00
 mux run --budget 2.00 "Refactor the authentication module"
 ```
+
+## `mux workflow`
+
+Run durable workflow definitions from the command line without opening the desktop app. Workflows are JavaScript files discovered from built-in definitions, global mux workflow directories, and trusted project `.mux/workflows` directories. `mux wf` is a shorthand alias for `mux workflow`.
+
+<Note>
+  `mux workflow` is experimental. Invoking the command implicitly enables the `dynamic-workflows`
+  experiment for that invocation only. The initial CLI runner supports the `local` runtime only;
+  `worktree`, SSH, Docker, and devcontainer workflow execution are blocked until their
+  workflow/action isolation and cleanup semantics are implemented.
+</Note>
+
+```bash
+# List discovered workflows
+mux workflow list
+
+# Inspect a workflow and include its source
+mux workflow show deep-review-workflow --source
+
+# Run with positional text, mapped to { "input": "research workflow runners" }
+mux workflow run deep-research "research workflow runners"
+
+# Run with structured JSON args and machine-readable output
+mux workflow run deep-review-workflow --args-json '{"base":"main"}' --json
+
+# Same as above, using the alias
+mux wf run deep-research "research workflow runners"
+```
+
+### Workflow commands
+
+| Command                    | Description                                         |
+| -------------------------- | --------------------------------------------------- |
+| `mux workflow list`        | List built-in, global, and trusted workflows        |
+| `mux workflow show <name>` | Show descriptor metadata; add `--source` for source |
+| `mux workflow run <name>`  | Run a workflow in the foreground                    |
+
+### Workflow options
+
+| Option                       | Description                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------- |
+| `--dir <path>` / `-d`        | Project directory. When omitted, Mux uses the Git root for the current cwd. |
+| `--runtime <runtime>` / `-r` | Runtime selection. Currently only `local` is supported for workflow runs.   |
+| `--model <model>` / `-m`     | Model used by workflow-owned child agents.                                  |
+| `--thinking <level>` / `-t`  | Thinking level used by workflow-owned child agents.                         |
+| `--experiment <id>` / `-e`   | Enable an additional experiment for workflow-owned child agents.            |
+| `--json`                     | Emit the final workflow result as a JSON line on stdout.                    |
+| `--quiet` / `-q`             | Suppress progress output and print only the final report.                   |
+| `--verbose` / `-v`           | Show info-level logs while the workflow command runs.                       |
+| `--log-level <level>`        | Set log verbosity to `error`, `warn`, `info`, or `debug`.                   |
+
+### Workflow arguments
+
+Only one argument mode can be used per run:
+
+| Input mode                      | Workflow args value                       |
+| ------------------------------- | ----------------------------------------- |
+| No args                         | `{}`                                      |
+| Positional text                 | `{ "input": "..." }`                      |
+| `--arg key=value`               | Object with lightly coerced scalar values |
+| `--args-json '{"base":"main"}'` | Exact JSON value                          |
+| `--args-file args.json`         | Exact JSON value read from a file         |
+| `--args-stdin`                  | Exact JSON value read from stdin          |
+
+Project-local workflows are executable only after the project is trusted. If a matching `.mux/workflows/<name>.js` exists in an untrusted project, `mux workflow run` fails before executing repo-controlled workflow code, and `mux workflow list`/`show` print a warning on stderr when project workflows are skipped for missing trust. Linked git worktrees inherit trust from the main repository path, so workflows in mux workspace checkouts of a trusted project are discovered. Grant trust headlessly with [`mux trust`](#mux-trust).
+
+## `mux trust`
+
+Trust gates all repo-controlled automation: project workflows, hooks, and `.mux` configuration. The desktop app records trust via Settings → Security; `mux trust` writes the same entry in `~/.mux/config.json` headlessly — no desktop app or server required, registering the project if it was never added to mux. A running desktop instance picks the change up automatically.
+
+```bash
+# Trust the project containing the current directory (git toplevel)
+mux trust
+
+# Trust an explicit directory
+mux trust --dir /path/to/repo
+
+# Revoke trust
+mux trust --revoke
+
+# Machine-readable output
+mux trust --json
+```
+
+Run from a linked git worktree (for example a mux workspace checkout), trust is recorded for the main repository path rather than the ephemeral worktree path. Review a repository before trusting it: trusted projects can execute repo-controlled code.
 
 ## `mux server`
 

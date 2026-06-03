@@ -446,6 +446,17 @@ describe("isEligibleForAutoRetry", () => {
       ];
       expect(isEligibleForAutoRetry(messages)).toBe(false);
     });
+
+    it("returns false for model_refusal errors (retrying will refuse again)", () => {
+      const messages: DisplayedMessage[] = [
+        userMessage(),
+        streamErrorMessage({
+          error: "The model refused to respond",
+          errorType: "model_refusal",
+        }),
+      ];
+      expect(isEligibleForAutoRetry(messages)).toBe(false);
+    });
   });
 
   describe("retryable error types", () => {

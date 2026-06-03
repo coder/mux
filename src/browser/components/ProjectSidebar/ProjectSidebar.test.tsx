@@ -16,6 +16,7 @@ import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import * as DesktopTitlebarModule from "@/browser/hooks/useDesktopTitlebar";
 import * as ThemeContextModule from "@/browser/contexts/ThemeContext";
+import * as TelemetryEnabledContextModule from "@/browser/contexts/TelemetryEnabledContext";
 import * as APIModule from "@/browser/contexts/API";
 import * as ConfirmDialogContextModule from "@/browser/contexts/ConfirmDialogContext";
 import * as ProjectContextModule from "@/browser/contexts/ProjectContext";
@@ -118,6 +119,7 @@ interface MockAgentListItemProps {
   };
   depth?: number;
   rowRenderMeta?: AgentRowRenderMeta;
+  delegatedActivity?: { activeCount: number; queuedCount: number };
   subAgentConnectorLayout?: "default" | "task-group-member";
   completedChildrenExpanded?: boolean;
   onToggleCompletedChildren?: (workspaceId: string) => void;
@@ -126,6 +128,7 @@ interface MockAgentListItemProps {
 
 type HexColorPickerProps = ComponentProps<typeof ReactColorfulModule.HexColorPicker>;
 
+let renderRealAgentListItems = false;
 let latestArchiveWorkspaceHandler:
   | ((workspaceId: string, button: HTMLElement) => Promise<void>)
   | null = null;
@@ -228,6 +231,8 @@ function createProjectContextValue(
     resolveProjectPath: () => null,
     getProjectConfig: () => undefined,
     loading: false,
+    loaded: true,
+    loadError: null,
     refreshProjects: () => Promise.resolve(),
     addProject: () => undefined,
     removeProject: () => Promise.resolve({ success: true }),
@@ -260,6 +265,7 @@ function createProjectContextValue(
 let projectContextValue = createProjectContextValue();
 
 function installProjectSidebarTestDoubles() {
+  renderRealAgentListItems = false;
   archivePopoverShowErrorMock = mock(
     (_workspaceId: string, _error: string, _anchor?: { top: number; left: number }) => undefined
   );
@@ -298,6 +304,17 @@ function installProjectSidebarTestDoubles() {
       }
       const metadata = props.metadata;
 
+      if (renderRealAgentListItems) {
+        /* eslint-disable @typescript-eslint/no-require-imports */
+        const ActualAgentListItem = (
+          require("../AgentListItem/AgentListItem?project-sidebar-real-row=1") as {
+            AgentListItem: React.ComponentType<Record<string, unknown>>;
+          }
+        ).AgentListItem;
+        /* eslint-enable @typescript-eslint/no-require-imports */
+        return <ActualAgentListItem {...(props as unknown as Record<string, unknown>)} />;
+      }
+
       const hasCompletedChildren =
         (props.rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
         (props.rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
@@ -316,6 +333,8 @@ function installProjectSidebarTestDoubles() {
           data-row-kind={props.rowRenderMeta?.rowKind ?? "unknown"}
           data-connector-layout={props.subAgentConnectorLayout ?? "default"}
           data-completed-expanded={String(props.completedChildrenExpanded ?? false)}
+          data-delegated-active={String(props.delegatedActivity?.activeCount ?? 0)}
+          data-delegated-queued={String(props.delegatedActivity?.queuedCount ?? 0)}
         >
           <span>{displayTitle}</span>
           {hasCompletedChildren && props.onToggleCompletedChildren ? (
@@ -430,6 +449,7 @@ function installProjectSidebarTestDoubles() {
   )) as typeof ReactColorfulModule.HexColorPicker);
 
   spyOn(DesktopTitlebarModule, "isDesktopMode").mockImplementation(() => false);
+  spyOn(TelemetryEnabledContextModule, "useLinkSharingEnabled").mockImplementation(() => false);
   spyOn(ThemeContextModule, "useTheme").mockImplementation(() => ({
     theme: "light",
     themePreference: "light",
@@ -505,10 +525,30 @@ function installProjectSidebarTestDoubles() {
     lastReadTimestamp: null,
     recencyTimestamp: null,
   }));
+  spyOn(WorkspaceStoreModule, "useWorkspaceSidebarState").mockImplementation(() => ({
+    canInterrupt: false,
+    isStarting: false,
+    awaitingUserQuestion: false,
+    lastAbortReason: null,
+    currentModel: null,
+    pendingStreamModel: null,
+    recencyTimestamp: null,
+    loadedSkills: [],
+    skillLoadErrors: [],
+    agentStatus: undefined,
+    terminalActiveCount: 0,
+    terminalSessionCount: 0,
+  }));
   spyOn(WorkspaceStoreModule, "useWorkspaceStoreRaw").mockImplementation(
     () =>
       ({
         getWorkspaceMetadata: () => undefined,
+        getWorkspaceSidebarState: () => ({
+          canInterrupt: false,
+          isStarting: false,
+          awaitingUserQuestion: false,
+          lastAbortReason: null,
+        }),
         getAggregator: () => undefined,
         subscribeKey: () => () => undefined,
       }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceStoreRaw>
@@ -616,6 +656,7 @@ function createWorkspace(
     taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
     title?: string;
     bestOf?: FrontendWorkspaceMetadata["bestOf"];
+    workflowTask?: FrontendWorkspaceMetadata["workflowTask"];
   }
 ): FrontendWorkspaceMetadata {
   return {
@@ -633,6 +674,7 @@ function createWorkspace(
     parentWorkspaceId: opts?.parentWorkspaceId,
     taskStatus: opts?.taskStatus,
     bestOf: opts?.bestOf,
+    workflowTask: opts?.workflowTask,
   };
 }
 
@@ -852,6 +894,8 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       resolveProjectPath: () => null,
       getProjectConfig: () => projectConfig,
       loading: false,
+      loaded: true,
+      loadError: null,
       refreshProjects: () => Promise.resolve(),
       addProject: () => undefined,
       removeProject: () => Promise.resolve({ success: true }),
@@ -911,6 +955,166 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     });
   });
 
+  test("marks collapsed task groups running from live sidebar activity when metadata lags", () => {
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const parentWorkspace = {
+      ...createWorkspace("parent", { title: "Parent workspace" }),
+      projects: singleProjectRefs,
+    };
+    const bestOfGroup = { groupId: "best-of-live", index: 0, total: 2 } as const;
+    const childOne = {
+      ...createWorkspace("child-1", {
+        parentWorkspaceId: "parent",
+        title: "Compare implementation options",
+        bestOf: bestOfGroup,
+      }),
+      projects: singleProjectRefs,
+    };
+    const childTwo = {
+      ...createWorkspace("child-2", {
+        parentWorkspaceId: "parent",
+        taskStatus: "queued",
+        title: "Compare implementation options",
+        bestOf: { ...bestOfGroup, index: 1 },
+      }),
+      projects: singleProjectRefs,
+    };
+
+    spyOn(WorkspaceStoreModule, "useWorkspaceStoreRaw").mockImplementation(
+      () =>
+        ({
+          getWorkspaceMetadata: () => undefined,
+          getWorkspaceSidebarState: (workspaceId: string) => ({
+            canInterrupt: workspaceId === "child-1",
+            isStarting: false,
+            awaitingUserQuestion: false,
+            lastAbortReason: null,
+          }),
+          getAggregator: () => undefined,
+          subscribeKey: () => () => undefined,
+        }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceStoreRaw>
+    );
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    });
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={
+          new Map([["/projects/demo-project", [parentWorkspace, childOne, childTwo]]])
+        }
+        workspaceRecency={{ parent: Date.now(), "child-1": Date.now(), "child-2": Date.now() }}
+      />
+    );
+
+    const groupRow = view.getByTestId("task-group-best-of-live");
+    expect(groupRow.dataset.running).toBe("true");
+    expect(groupRow.textContent).toContain("1 running");
+  });
+
+  test("passes delegated activity from workflow descendants to parent rows", () => {
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const parentWorkspace = {
+      ...createWorkspace("parent", { title: "Parent workspace" }),
+      projects: singleProjectRefs,
+    };
+    const workflowChild = {
+      ...createWorkspace("workflow-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        title: "Workflow step",
+        workflowTask: { runId: "run-1", stepId: "step-1" },
+      }),
+      projects: singleProjectRefs,
+    };
+    const queuedGrandchild = {
+      ...createWorkspace("queued-grandchild", {
+        parentWorkspaceId: "workflow-child",
+        taskStatus: "queued",
+        title: "Queued follow-up",
+      }),
+      projects: singleProjectRefs,
+    };
+
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    });
+
+    const sortedWorkspacesByProject = new Map([
+      ["/projects/demo-project", [parentWorkspace, workflowChild, queuedGrandchild]],
+    ]);
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={sortedWorkspacesByProject}
+        workspaceRecency={{ parent: Date.now(), "workflow-child": Date.now() }}
+      />
+    );
+
+    const parentRow = view.getByTestId(agentItemTestId("parent"));
+    expect(parentRow.dataset.delegatedActive).toBe("1");
+    expect(parentRow.dataset.delegatedQueued).toBe("1");
+  });
+
+  test("renders delegated workflow status through the real workspace row", () => {
+    renderRealAgentListItems = true;
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const parentWorkspace = {
+      ...createWorkspace("parent", { title: "Parent workspace" }),
+      projects: singleProjectRefs,
+    };
+    const workflowChild = {
+      ...createWorkspace("workflow-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        title: "Workflow step",
+        workflowTask: { runId: "run-1", stepId: "step-1" },
+      }),
+      projects: singleProjectRefs,
+    };
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    });
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={
+          new Map([["/projects/demo-project", [parentWorkspace, workflowChild]]])
+        }
+        workspaceRecency={{ parent: Date.now(), "workflow-child": Date.now() }}
+      />
+    );
+
+    const parentRow = view.getByRole("button", { name: "Select workspace Parent workspace" });
+    expect(parentRow.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    expect(within(parentRow).getByText("Workflow running · 1 sub-agent active")).toBeTruthy();
+    expect(parentRow.getAttribute("aria-describedby")).toBe("workspace-status-description-parent");
+  });
+
   test("renders variants groups with a shared row and labeled members when expanded", async () => {
     window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
 
@@ -958,6 +1162,8 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       resolveProjectPath: () => null,
       getProjectConfig: () => projectConfig,
       loading: false,
+      loaded: true,
+      loadError: null,
       refreshProjects: () => Promise.resolve(),
       addProject: () => undefined,
       removeProject: () => Promise.resolve({ success: true }),
@@ -1069,6 +1275,8 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       resolveProjectPath: () => null,
       getProjectConfig: () => projectConfig,
       loading: false,
+      loaded: true,
+      loadError: null,
       refreshProjects: () => Promise.resolve(),
       addProject: () => undefined,
       removeProject: () => Promise.resolve({ success: true }),

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { getGoalToolAvailability } from "./toolAvailability";
+import { getGoalToolAvailability, getToolAvailabilityOptions } from "./toolAvailability";
 import type { GoalStatus } from "@/common/types/goal";
 
 const execAgent = {
@@ -75,5 +75,22 @@ describe("goal tool availability", () => {
         editingCapable: true,
       })
     ).toEqual(["get_goal", "complete_goal"]);
+  });
+});
+
+describe("getToolAvailabilityOptions", () => {
+  test("enables the Review pane for top-level workspaces", () => {
+    const options = getToolAvailabilityOptions({ workspaceId: "ws-1" });
+    expect(options.enableReviewPane).toBe(true);
+    expect(options.enableAgentReport).toBe(false);
+  });
+
+  test("withholds the Review pane (and enables agent_report) for sub-agents", () => {
+    const options = getToolAvailabilityOptions({
+      workspaceId: "ws-child",
+      parentWorkspaceId: "ws-parent",
+    });
+    expect(options.enableReviewPane).toBe(false);
+    expect(options.enableAgentReport).toBe(true);
   });
 });

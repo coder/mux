@@ -24,6 +24,7 @@ import type {
   WorkspaceChatMessage,
   WorkspaceStatsSnapshot,
   FrontendWorkspaceMetadataSchemaType,
+  SendMessageOptions,
 } from "@/common/orpc/types";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SshPromptEvent, SshPromptRequest } from "@/common/orpc/schemas/ssh";
@@ -39,8 +40,9 @@ import type { LogEntry } from "@/node/services/logBuffer";
 import { clearLogEntries, subscribeLogFeed } from "@/node/services/logBuffer";
 import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
+import { getRuntimeType } from "@/node/runtime/initHook";
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
-import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import { createRuntimeForWorkspace, resolveWorkspaceRootPath } from "@/node/runtime/runtimeHelpers";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
@@ -51,8 +53,10 @@ import {
   isLayoutPresetsConfigEmpty,
   normalizeLayoutPresetsConfig,
 } from "@/common/types/uiLayouts";
+import { normalizeUserPreferences } from "@/common/config/schemas/userPreferences";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isValidModelFormat, normalizeSelectedModel } from "@/common/utils/ai/models";
+import { sanitizeModelFallbacks } from "@/common/utils/ai/modelFallbacks";
 import {
   DEFAULT_TASK_SETTINGS,
   deriveLegacySubagentAiDefaultsFromAgentDefaults,
@@ -94,7 +98,25 @@ import {
   type SubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
 import { getErrorMessage } from "@/common/utils/errors";
+import { WorkflowActionRegistry } from "@/node/services/workflows/WorkflowActionRegistry";
+import {
+  shouldDisableHostWorkflowActions,
+  shouldUseRuntimeWorkflowProjectIO,
+  WorkflowDefinitionStore,
+} from "@/node/services/workflows/WorkflowDefinitionStore";
+import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
+import {
+  WorkflowService,
+  type WorkflowBackgroundRunTerminalEvent,
+} from "@/node/services/workflows/WorkflowService";
+import { WorkflowTaskServiceAdapter } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
+import { resolveWorkflowScratchRoots } from "@/node/services/workflows/workflowScratchRoots";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
+
+import {
+  WORKFLOW_RESULT_METADATA_TYPE,
+  buildWorkflowResultContextMessage,
+} from "@/common/utils/workflowRunMessages";
 
 const RAW_QUERY_USER_ERROR_PATTERNS = [
   /^parser error:/i,
@@ -111,6 +133,94 @@ const RAW_QUERY_USER_ERROR_PATTERNS = [
 function shouldExposeRawQueryError(error: unknown): boolean {
   const message = getErrorMessage(error);
   return RAW_QUERY_USER_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+const WORKFLOW_CONTINUATION_RETRY_DELAY_MS = 1_000;
+const WORKSPACE_BUSY_IDLE_ONLY_SEND_MESSAGE = "Workspace is busy; idle-only send was skipped.";
+
+function isWorkspaceBusyIdleOnlySend(error: { type: string; raw?: string }): boolean {
+  return (
+    error.type === "unknown" && error.raw?.includes(WORKSPACE_BUSY_IDLE_ONLY_SEND_MESSAGE) === true
+  );
+}
+
+async function sendWorkflowRunTerminalContinuation(input: {
+  context: ORPCContext;
+  workspaceId: string;
+  rawCommand: string;
+  name: string;
+  event: WorkflowBackgroundRunTerminalEvent;
+  continuationOptions?: SendMessageOptions;
+}): Promise<void> {
+  const { context, workspaceId, rawCommand, name, event } = input;
+  const { runId, status, result, run } = event;
+  const commandPrefix = rawCommand.split(/\s+/u)[0] ?? name;
+  const workflowResultMessage = buildWorkflowResultContextMessage({
+    rawCommand,
+    name,
+    runId,
+    status,
+    result,
+    run,
+  });
+  let continuationOptions = input.continuationOptions ?? null;
+
+  for (;;) {
+    const invocationCurrent = await context.workspaceService.isWorkflowInvocationCurrent(
+      workspaceId,
+      runId
+    );
+    if (!invocationCurrent) {
+      log.debug("Skipping superseded workflow continuation", { workspaceId, runId });
+      return;
+    }
+
+    continuationOptions ??=
+      context.workspaceService.getWorkflowContinuationSendOptions(workspaceId);
+    if (continuationOptions == null) {
+      log.warn("Skipping workflow continuation without send options", { workspaceId, runId });
+      return;
+    }
+
+    const sendResult = await context.workspaceService.sendMessage(
+      workspaceId,
+      workflowResultMessage,
+      {
+        ...continuationOptions,
+        skipAiSettingsPersistence: true,
+        muxMetadata: {
+          type: WORKFLOW_RESULT_METADATA_TYPE,
+          rawCommand,
+          commandPrefix,
+          runId,
+          requestedModel: continuationOptions.model,
+        },
+      },
+      {
+        skipAutoResumeReset: true,
+        synthetic: true,
+        agentInitiated: true,
+        requireIdle: true,
+        startStreamInBackground: true,
+      }
+    );
+    if (sendResult.success) {
+      return;
+    }
+    if (!isWorkspaceBusyIdleOnlySend(sendResult.error)) {
+      log.warn("Failed to continue workflow after completion", {
+        workspaceId,
+        runId,
+        error: sendResult.error,
+      });
+      return;
+    }
+    await waitForWorkflowContinuationRetry();
+  }
+}
+
+function waitForWorkflowContinuationRetry(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, WORKFLOW_CONTINUATION_RETRY_DELAY_MS));
 }
 
 /**
@@ -156,6 +266,97 @@ async function resolveAgentDiscoveryContext(
 
 function isTrustedProjectPath(context: ORPCContext, projectPath?: string | null): boolean {
   return isProjectTrusted(context.config, projectPath);
+}
+
+function assertDynamicWorkflowsEnabled(context: ORPCContext): void {
+  if (!context.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS)) {
+    throw new ORPCError("BAD_REQUEST", {
+      message: "Dynamic workflows are disabled",
+    });
+  }
+}
+
+async function resolveWorkflowContext(
+  context: ORPCContext,
+  workspaceId: string,
+  options: {
+    onBackgroundRunTerminal?: (event: WorkflowBackgroundRunTerminalEvent) => Promise<void> | void;
+  } = {}
+): Promise<{ service: WorkflowService; projectTrusted: boolean }> {
+  assert(workspaceId.length > 0, "resolveWorkflowContext: workspaceId is required");
+  assertDynamicWorkflowsEnabled(context);
+  await context.aiService.waitForInit(workspaceId);
+  const metadataResult = await context.aiService.getWorkspaceMetadata(workspaceId);
+  if (!metadataResult.success) {
+    throw new Error(metadataResult.error);
+  }
+  const metadata = metadataResult.data;
+  const projectTrusted = isTrustedProjectPath(context, metadata.projectPath);
+  const runtime = createRuntimeForWorkspace(metadata);
+  const workspacePath = resolveWorkspaceRootPath(metadata, runtime);
+  const runtimeType = getRuntimeType(metadata.runtimeConfig);
+  const useRuntimeProjectIO = shouldUseRuntimeWorkflowProjectIO(runtimeType);
+  const disableHostWorkflowActions = shouldDisableHostWorkflowActions(runtimeType);
+  const workflowScratchRoots = resolveWorkflowScratchRoots(context.config, workspaceId, {
+    workspaceRootPath: workspacePath,
+    normalizePath: runtime.normalizePath.bind(runtime),
+  });
+
+  const subagentFileReportsExperimentEnabled = context.experimentsService.isExperimentEnabled(
+    EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS
+  );
+
+  const workflowRuntimeTempDir = runtime.normalizePath(".mux/tmp", workspacePath);
+
+  return {
+    projectTrusted,
+    service: new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: runtime.normalizePath(".mux/workflows", workspacePath),
+        globalRoot: path.join(context.config.rootDir, "workflows"),
+        scratchRoot: workflowScratchRoots.scratchRoot,
+        projectRuntime: useRuntimeProjectIO ? runtime : undefined,
+        projectCwd: useRuntimeProjectIO ? workspacePath : undefined,
+      }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: runtime.normalizePath(".mux/actions", workspacePath),
+        globalRoot: path.join(context.config.rootDir, "actions"),
+        // Host-spawned action execution is unsafe for remote/devcontainer workspaces.
+        // Passing the runtime makes the registry hide/block actions until runtime-backed
+        // action execution exists.
+        projectRuntime: disableHostWorkflowActions ? runtime : undefined,
+        projectCwd: disableHostWorkflowActions ? workspacePath : undefined,
+      }),
+      defaultActionCwd: workspacePath,
+      runStore: new WorkflowRunStore({ sessionDir: context.config.getSessionDir(workspaceId) }),
+      runtimeFactory: context.workflowRuntimeFactory,
+      taskAdapterFactory: (runId) =>
+        new WorkflowTaskServiceAdapter({
+          taskService: context.taskService,
+          parentWorkspaceId: workspaceId,
+          workflowRunId: runId,
+          defaultAgentId: "explore",
+          patchToolConfig: {
+            workspaceId,
+            cwd: workspacePath,
+            runtime,
+            runtimeTempDir: workflowRuntimeTempDir,
+            workspaceSessionDir: context.config.getSessionDir(workspaceId),
+            trusted: projectTrusted,
+          },
+          getProjectTrusted: () => isTrustedProjectPath(context, metadata.projectPath),
+          experiments: {
+            dynamicWorkflows: true,
+            subagentFileReports: subagentFileReportsExperimentEnabled,
+          },
+        }),
+      ...(options.onBackgroundRunTerminal != null
+        ? { onBackgroundRunTerminal: options.onBackgroundRunTerminal }
+        : {}),
+      getCurrentProjectTrusted: () => isTrustedProjectPath(context, metadata.projectPath),
+      runnerId: `workflow-runner:${workspaceId}`,
+    }),
+  };
 }
 
 function normalizeOptionalConfigString(value: string | null | undefined): string | undefined {
@@ -719,12 +920,15 @@ export const router = (authToken?: string) => {
           const muxGovernorUrl = config.muxGovernorUrl ?? null;
           const muxGovernorEnrolled = Boolean(config.muxGovernorUrl && config.muxGovernorToken);
           return {
+            userPreferencesInitialized: config.migrations?.userPreferencesInitialized === true,
+            userPreferences: config.userPreferences,
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
             muxGatewayEnabled: config.muxGatewayEnabled,
             muxGatewayModels: config.muxGatewayModels,
             routePriority: config.routePriority,
             routeOverrides: config.routeOverrides,
             minThinkingLevelByModel: config.minThinkingLevelByModel,
+            modelFallbacks: config.modelFallbacks,
             defaultModel: config.defaultModel,
             advisorModelString: config.advisorModelString ?? null,
             advisorThinkingLevel: config.advisorThinkingLevel ?? null,
@@ -885,6 +1089,19 @@ export const router = (authToken?: string) => {
           await context.config.editConfig((config) => ({
             ...config,
             minThinkingLevelByModel: input.minThinkingLevelByModel,
+          }));
+        }),
+      updateModelFallbacks: t
+        .input(schemas.config.updateModelFallbacks.input)
+        .output(schemas.config.updateModelFallbacks.output)
+        .handler(async ({ context, input }) => {
+          // Full-map replacement. Strict-on-write sanitization: canonical keys,
+          // self-fallbacks/duplicates dropped, chain length capped, empty
+          // chains removed.
+          const sanitized = sanitizeModelFallbacks(input.modelFallbacks);
+          await context.config.editConfig((config) => ({
+            ...config,
+            modelFallbacks: Object.keys(sanitized).length > 0 ? sanitized : undefined,
           }));
         }),
       updateModelPreferences: t
@@ -1053,11 +1270,22 @@ export const router = (authToken?: string) => {
         .output(schemas.config.saveConfig.output)
         .handler(async ({ context, input }) => {
           await context.config.editConfig((config) => {
-            const normalizedTaskSettings = mergeTaskSettingsForConfigSave(
-              config.taskSettings,
-              input.taskSettings
-            );
-            const result = { ...config, taskSettings: normalizedTaskSettings };
+            const result = { ...config };
+
+            if (input.taskSettings != null) {
+              result.taskSettings = mergeTaskSettingsForConfigSave(
+                config.taskSettings,
+                input.taskSettings
+              );
+            }
+
+            if (input.userPreferences !== undefined) {
+              result.userPreferences = normalizeUserPreferences(input.userPreferences);
+              result.migrations = {
+                ...(result.migrations ?? {}),
+                userPreferencesInitialized: true,
+              };
+            }
 
             if (input.advisorModelString !== undefined) {
               result.advisorModelString = normalizeOptionalConfigString(input.advisorModelString);
@@ -1562,6 +1790,251 @@ export const router = (authToken?: string) => {
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           const result = await readAgentSkill(runtime, discoveryPath, input.skillName);
           return result.package;
+        }),
+    },
+    workflows: {
+      listDefinitions: t
+        .input(schemas.workflows.listDefinitions.input)
+        .output(schemas.workflows.listDefinitions.output)
+        .handler(async ({ context, input }) => {
+          if (input.workspaceId != null) {
+            const { service, projectTrusted } = await resolveWorkflowContext(
+              context,
+              input.workspaceId
+            );
+            return service.listDefinitions({ projectTrusted });
+          }
+
+          assertDynamicWorkflowsEnabled(context);
+          assert(
+            input.projectPath != null,
+            "Workflow definition discovery requires a project path"
+          );
+          const definitionStore = new WorkflowDefinitionStore({
+            projectRoot: path.join(input.projectPath, ".mux", "workflows"),
+            globalRoot: path.join(context.config.rootDir, "workflows"),
+          });
+          return definitionStore.listDefinitions({
+            projectTrusted: isTrustedProjectPath(context, input.projectPath),
+          });
+        }),
+      readDefinition: t
+        .input(schemas.workflows.readDefinition.input)
+        .output(schemas.workflows.readDefinition.output)
+        .handler(async ({ context, input }) => {
+          const { service, projectTrusted } = await resolveWorkflowContext(
+            context,
+            input.workspaceId
+          );
+          return service.readDefinition({ name: input.name, projectTrusted });
+        }),
+      listRuns: t
+        .input(schemas.workflows.listRuns.input)
+        .output(schemas.workflows.listRuns.output)
+        .handler(async ({ context, input }) => {
+          const { service, projectTrusted } = await resolveWorkflowContext(
+            context,
+            input.workspaceId
+          );
+          await service.resumeCrashedRuns({ workspaceId: input.workspaceId, projectTrusted });
+          return service.listRuns({ workspaceId: input.workspaceId });
+        }),
+      getRun: t
+        .input(schemas.workflows.getRun.input)
+        .output(schemas.workflows.getRun.output)
+        .handler(async ({ context, input }) => {
+          const { service } = await resolveWorkflowContext(context, input.workspaceId);
+          return service.getRun({ workspaceId: input.workspaceId, runId: input.runId });
+        }),
+      interrupt: t
+        .input(schemas.workflows.interrupt.input)
+        .output(schemas.workflows.interrupt.output)
+        .handler(async ({ context, input }) => {
+          const { service } = await resolveWorkflowContext(context, input.workspaceId);
+          return service.interruptRun({ workspaceId: input.workspaceId, runId: input.runId });
+        }),
+      resume: t
+        .input(schemas.workflows.resume.input)
+        .output(schemas.workflows.resume.output)
+        .handler(async ({ context, input }) => {
+          const { service, projectTrusted } = await resolveWorkflowContext(
+            context,
+            input.workspaceId
+          );
+          return service.resumeRunInBackground({
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            projectTrusted,
+          });
+        }),
+      // Retry actions arrive from a fresh oRPC request, so rebuild the terminal continuation
+      // callback here instead of relying on the original WorkflowService instance still existing.
+      retryFromCheckpoint: t
+        .input(schemas.workflows.retryFromCheckpoint.input)
+        .output(schemas.workflows.retryFromCheckpoint.output)
+        .handler(async ({ context, input }) => {
+          const { service, projectTrusted } = await resolveWorkflowContext(
+            context,
+            input.workspaceId,
+            {
+              onBackgroundRunTerminal: (event) =>
+                sendWorkflowRunTerminalContinuation({
+                  context,
+                  workspaceId: input.workspaceId,
+                  rawCommand: `workflow_run ${event.run.definition.name}`,
+                  name: event.run.definition.name,
+                  event,
+                }),
+            }
+          );
+          return service.retryRunFromCheckpointInBackground({
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            projectTrusted,
+          });
+        }),
+      promoteScratchDefinition: t
+        .input(schemas.workflows.promoteScratchDefinition.input)
+        .output(schemas.workflows.promoteScratchDefinition.output)
+        .handler(async ({ context, input }) => {
+          const { service, projectTrusted } = await resolveWorkflowContext(
+            context,
+            input.workspaceId
+          );
+          return service.promoteScratchDefinition({
+            workspaceId: input.workspaceId,
+            name: input.name,
+            description: input.description,
+            location: input.location,
+            overwrite: input.overwrite ?? false,
+            projectTrusted,
+          });
+        }),
+      promoteScratch: t
+        .input(schemas.workflows.promoteScratch.input)
+        .output(schemas.workflows.promoteScratch.output)
+        .handler(async ({ context, input }) => {
+          const { service, projectTrusted } = await resolveWorkflowContext(
+            context,
+            input.workspaceId
+          );
+          return service.promoteScratchWorkflow({
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            name: input.name,
+            description: input.description,
+            location: input.location,
+            overwrite: input.overwrite ?? false,
+            projectTrusted,
+          });
+        }),
+      start: t
+        .input(schemas.workflows.start.input)
+        .output(schemas.workflows.start.output)
+        .handler(async ({ context, input, signal }) => {
+          assertDynamicWorkflowsEnabled(context);
+          let invocationMessagePersisted: boolean | undefined;
+          let resolveInvocationPersistence: (persisted: boolean) => void = () => undefined;
+          const invocationPersistence = new Promise<boolean>((resolve) => {
+            resolveInvocationPersistence = resolve;
+          });
+          const rawCommandForContinuation = input.rawCommand;
+          const continuationOptions = input.continuationOptions;
+          const onBackgroundRunTerminal =
+            rawCommandForContinuation != null && continuationOptions != null
+              ? async (event: WorkflowBackgroundRunTerminalEvent) => {
+                  const persistedInvocation =
+                    invocationMessagePersisted === true ? true : await invocationPersistence;
+                  if (persistedInvocation !== true) {
+                    log.warn("Skipping slash workflow continuation without persisted invocation", {
+                      workspaceId: input.workspaceId,
+                      runId: event.runId,
+                    });
+                    return;
+                  }
+                  await sendWorkflowRunTerminalContinuation({
+                    context,
+                    workspaceId: input.workspaceId,
+                    rawCommand: rawCommandForContinuation,
+                    name: input.name,
+                    event,
+                    continuationOptions,
+                  });
+                }
+              : undefined;
+          if (input.rawCommand != null) {
+            // Slash workflow commands are user follow-ups, just like normal composer sends.
+            // Wait for the active chat turn (including compaction follow-ups and queued messages)
+            // to finish before starting the workflow or appending its invocation to history.
+            await context.workspaceService.waitForWorkspaceIdle(input.workspaceId, {
+              signal,
+              manualFollowUp: true,
+            });
+          }
+          const { service, projectTrusted } = await resolveWorkflowContext(
+            context,
+            input.workspaceId,
+            {
+              ...(onBackgroundRunTerminal != null ? { onBackgroundRunTerminal } : {}),
+            }
+          );
+          if (input.rawCommand != null) {
+            await context.workspaceService.prepareManualWorkflowInvocation(input.workspaceId);
+          }
+          const workflowStartArgs = {
+            name: input.name,
+            workspaceId: input.workspaceId,
+            projectTrusted,
+            args: input.args ?? {},
+          };
+          const persistInvocation = async (details: {
+            runId: string;
+            status: string;
+            result: unknown;
+            run?: NonNullable<Awaited<ReturnType<typeof service.getRun>>>;
+          }) => {
+            assert(input.rawCommand != null, "Workflow invocation persistence requires rawCommand");
+            try {
+              invocationMessagePersisted =
+                await context.workspaceService.appendWorkflowRunInvocation({
+                  workspaceId: input.workspaceId,
+                  rawCommand: input.rawCommand,
+                  name: input.name,
+                  args: workflowStartArgs.args,
+                  runId: details.runId,
+                  status: details.status,
+                  result: details.result,
+                  ...(details.run != null ? { run: details.run } : {}),
+                });
+            } finally {
+              resolveInvocationPersistence(invocationMessagePersisted === true);
+            }
+          };
+          const result =
+            input.runInBackground === true
+              ? await service.startNamedWorkflowInBackground({
+                  ...workflowStartArgs,
+                  ...(input.rawCommand != null
+                    ? { onBackgroundRunCreated: persistInvocation }
+                    : {}),
+                })
+              : await service.startNamedWorkflow({ ...workflowStartArgs, abortSignal: signal });
+          if (input.rawCommand == null) {
+            return result;
+          }
+          if (input.runInBackground !== true) {
+            const run = await service.getRun({
+              workspaceId: input.workspaceId,
+              runId: result.runId,
+            });
+            await persistInvocation({
+              runId: result.runId,
+              status: result.status,
+              result: result.result,
+              ...(run != null ? { run } : {}),
+            });
+          }
+          return { ...result, invocationMessagePersisted };
         }),
     },
     providers: {

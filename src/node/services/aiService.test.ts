@@ -37,6 +37,8 @@ import type { CodexOauthService } from "@/node/services/codexOauthService";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 
+import { addInterruptedSentinel } from "@/browser/utils/messages/modelMessageTransform";
+import { buildWorkflowRunCardMessage } from "@/common/utils/workflowRunMessages";
 import type { LanguageModel, Tool } from "ai";
 import { createMuxMessage } from "@/common/types/message";
 import type { ModelMessage, MuxMessage } from "@/common/types/message";
@@ -52,7 +54,7 @@ import type {
 } from "@/common/types/stream";
 import { log } from "./log";
 import type { SessionUsageService } from "./sessionUsageService";
-import type { StreamManager } from "./streamManager";
+import type { ModelFallbackOptions, StreamManager } from "./streamManager";
 import { ExperimentsService } from "./experimentsService";
 import type { DevToolsService } from "./devToolsService";
 import { TelemetryService } from "@/node/services/telemetryService";
@@ -254,6 +256,7 @@ function resolvedAgentResultFor(
         frontmatter: { name: "Exec" },
         body: "Exec agent body",
       },
+      agentDiscoveryRuntime: new LocalRuntime(metadata.projectPath),
       agentDiscoveryPath: metadata.projectPath,
       isSubagentWorkspace: false,
       agentInheritanceChain: [{ id: "exec", tools: { add: [".*"] } }],
@@ -431,6 +434,61 @@ describe("prepareProviderRequestMessages", () => {
     ]);
     expect(result.providerRequestMessages.map((message) => message.id)).toEqual([
       "main-user",
+      "next-user",
+    ]);
+  });
+
+  it("filters workflow display rows while keeping provider-visible workflow results", () => {
+    const trigger = createMuxMessage("workflow-command", "user", "/shallow-review mux", {
+      historySequence: 1,
+      muxMetadata: {
+        type: "workflow-trigger-display",
+        rawCommand: "/shallow-review mux",
+        commandPrefix: "/shallow-review",
+        runId: "wfr_1",
+      },
+    });
+    const card = buildWorkflowRunCardMessage(
+      { name: "shallow-review", args: { input: "mux" } },
+      { runId: "wfr_1", status: "running", result: null },
+      2
+    );
+    card.metadata = {
+      historySequence: 2,
+      synthetic: true,
+      uiVisible: true,
+      muxMetadata: { type: "workflow-run-card-display", runId: "wfr_1" },
+    };
+    const result = createMuxMessage(
+      "workflow-result",
+      "user",
+      "/shallow-review mux\n\n<mux_workflow_result>{}</mux_workflow_result>",
+      {
+        historySequence: 3,
+        muxMetadata: {
+          type: "workflow-result",
+          rawCommand: "/shallow-review mux",
+          commandPrefix: "/shallow-review",
+          runId: "wfr_1",
+        },
+      }
+    );
+    const nextUser = createMuxMessage("next-user", "user", "continue normal work", {
+      historySequence: 4,
+    });
+
+    const prepared = prepareProviderRequestMessages(
+      [trigger, card, result, nextUser],
+      "openai",
+      "off"
+    );
+
+    expect(prepared.activeContextMessages.map((message) => message.id)).toEqual([
+      "workflow-result",
+      "next-user",
+    ]);
+    expect(prepared.providerRequestMessages.map((message) => message.id)).toEqual([
+      "workflow-result",
       "next-user",
     ]);
   });
@@ -1107,6 +1165,9 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       allTools?: Record<string, Tool>;
       postPolicyTools?: Record<string, Tool>;
       sessionUsageService?: SessionUsageService;
+      effectiveModelString?: string;
+      canonicalProviderName?: ProviderName;
+      canonicalModelId?: string;
     }
   ): StreamMessageHarness {
     const { config, historyService, initStateManager, service } = createBasicAIService(
@@ -1131,6 +1192,9 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       startStreamCalls,
       routeProvider: options?.routeProvider,
       allTools: options?.allTools,
+      effectiveModelString: options?.effectiveModelString,
+      canonicalProviderName: options?.canonicalProviderName,
+      canonicalModelId: options?.canonicalModelId,
       onPlanPayloadMessageIds: (messageIds) => planPayloadMessageIds.push(messageIds),
       onBuildStreamSystemContext: (contextArgs) => {
         if (!contextArgs.muxScope) {
@@ -1168,6 +1232,8 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   const START_STREAM_ON_CHUNK_INDEX = 21;
   const START_STREAM_ON_STEP_MESSAGES_INDEX = 22;
   const START_STREAM_RUNTIME_TEMP_DIR_INDEX = 23;
+
+  const START_STREAM_MODEL_FALLBACK_INDEX = 24;
 
   interface AdvisorRuntimeForTests {
     createModel: (modelString: string) => Promise<LanguageModel>;
@@ -1270,6 +1336,121 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
   afterEach(() => {
     mock.restore();
+  });
+
+  it("prepares fallback continuation from partial assistant output with one sentinel", async () => {
+    using muxHome = new DisposableTempDir("ai-service-fallback-continuation");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-fallback-continuation";
+    const fallbackModel = KNOWN_MODELS.GPT.id;
+    await writeMainConfig(muxHome.path, {
+      modelFallbacks: {
+        [KNOWN_MODELS.SONNET.id]: { models: [fallbackModel] },
+      },
+    });
+
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, {
+      effectiveModelString: KNOWN_MODELS.SONNET.id,
+      canonicalProviderName: "anthropic",
+      canonicalModelId: "claude-sonnet-4-5",
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      workspaceId,
+      modelString: KNOWN_MODELS.SONNET.id,
+      thinkingLevel: "off",
+    });
+    expect(result.success).toBe(true);
+    expect(harness.startStreamCalls).toHaveLength(1);
+
+    const modelFallback = harness.startStreamCalls[0]?.[START_STREAM_MODEL_FALLBACK_INDEX] as
+      | ModelFallbackOptions
+      | undefined;
+    expect(modelFallback).toBeDefined();
+    if (!modelFallback) {
+      throw new Error("Expected modelFallback options on startStream");
+    }
+
+    const continuationAssistant: MuxMessage = {
+      id: "assistant-partial",
+      role: "assistant",
+      metadata: { partial: true, historySequence: 2 },
+      parts: [
+        { type: "text", text: "I checked the report." },
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          state: "output-available",
+          input: { script: "printf ok" },
+          output: { success: true, output: "ok" },
+        },
+      ],
+    };
+
+    const prepared = await modelFallback.prepare(fallbackModel, {
+      continuation: { assistantMessage: continuationAssistant },
+    });
+    expect(prepared.success).toBe(true);
+
+    expect(harness.preparedPayloadMessageIds).toHaveLength(2);
+    expect(harness.preparedPayloadMessageIds[1]).toEqual([
+      "latest-user",
+      "assistant-partial",
+      "interrupted-assistant-partial",
+    ]);
+    expect(
+      harness.preparedPayloadMessageIds[1]?.filter((id) => id === "interrupted-assistant-partial")
+    ).toHaveLength(1);
+  });
+
+  it("drops reasoning-only continuations before adding interrupted sentinels for non-Anthropic fallbacks", () => {
+    const continuationAssistant: MuxMessage = {
+      id: "assistant-reasoning-only",
+      role: "assistant",
+      metadata: { partial: true, historySequence: 2 },
+      parts: [{ type: "reasoning", text: "internal scratchpad" }],
+    };
+
+    const { providerRequestMessages } = prepareProviderRequestMessages(
+      [createMuxMessage("latest-user", "user", "fix the issue"), continuationAssistant],
+      "openai",
+      "off"
+    );
+    const messagesWithSentinel = addInterruptedSentinel(providerRequestMessages);
+
+    expect(messagesWithSentinel.map((message) => message.id)).toEqual(["latest-user"]);
+  });
+
+  it("keeps reasoning-only continuations and sentinels for Anthropic thinking fallbacks", () => {
+    const continuationAssistant: MuxMessage = {
+      id: "assistant-reasoning-only",
+      role: "assistant",
+      metadata: { partial: true, historySequence: 2 },
+      parts: [
+        {
+          type: "reasoning",
+          text: "signed thinking",
+        },
+      ],
+    };
+
+    const { providerRequestMessages } = prepareProviderRequestMessages(
+      [createMuxMessage("latest-user", "user", "fix the issue"), continuationAssistant],
+      "anthropic",
+      "medium"
+    );
+    const messagesWithSentinel = addInterruptedSentinel(providerRequestMessages);
+
+    expect(messagesWithSentinel.map((message) => message.id)).toEqual([
+      "latest-user",
+      "assistant-reasoning-only",
+      "interrupted-assistant-reasoning-only",
+    ]);
   });
 
   it("emits startup breadcrumbs as runtime-status events before stream start", async () => {

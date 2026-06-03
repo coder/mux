@@ -81,9 +81,9 @@ function isMouseDownExemptFromScrollIntent(
 export function useAutoScroll() {
   const [autoScroll, setAutoScroll] = useState(true);
   const contentRef = useRef<HTMLDivElement>(null);
-  // 0-height marker rendered as the last child of the scroll content, below the
-  // composer-clearance padding. See the hook doc comment: while locked it is the
-  // sole `overflow-anchor: auto` element so native anchoring pins the bottom.
+  // 0-height marker rendered between the transcript content and the in-flow
+  // composer dock. See the hook doc comment: while locked it is the sole
+  // `overflow-anchor: auto` element so native anchoring pins the bottom.
   const sentinelRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
   const programmaticDisableRef = useRef(false);
@@ -147,18 +147,6 @@ export function useAutoScroll() {
     // check honest.
     seedScrollDirectionBaseline();
   }, [seedScrollDirectionBaseline, setAutoScrollEnabled]);
-
-  // Re-establish the bottom after an external layout change the content
-  // ResizeObserver cannot see. The floating composer grows the scrollport's
-  // bottom *padding* (the composer clearance), which changes scrollHeight without
-  // resizing the scrollport's content box or the message content — so neither the
-  // safety-net observer nor native anchoring (the change is below the sentinel)
-  // re-pins. No-op unless locked, so a scrolled-up reader is never yanked down by
-  // composer growth.
-  const reanchorBottom = useCallback(() => {
-    if (!autoScrollRef.current) return;
-    stickToBottom();
-  }, [stickToBottom]);
 
   const markUserScrollIntent = useCallback(() => {
     programmaticDisableRef.current = false;
@@ -306,11 +294,14 @@ export function useAutoScroll() {
   );
 
   // Safety net behind native scroll anchoring. Anchoring (the sentinel) keeps us
-  // pinned as content appends, but a resize of the scrollport itself (e.g. the
-  // window, sidebars, or the composer-clearance padding changing) is not an
-  // "append above the anchor", so re-establish the bottom once per resize while
-  // locked. This is a single synchronous write — NOT a per-frame loop — so it
-  // cannot fight CSS transitions or font swaps the way the old settle loop did.
+  // pinned as content appends, but two layout changes are not an "append above
+  // the anchor": a resize of the scrollport itself (window, sidebars, onscreen
+  // keyboard) and growth of the in-flow composer dock, which sits BELOW the
+  // sentinel so anchoring cannot compensate. Observing the scrollport plus every
+  // direct child (transcript content, sentinel, composer dock) covers both:
+  // ResizeObserver delivers before paint, so this is a single synchronous
+  // pre-paint write per resize — NOT a per-frame loop — and cannot fight CSS
+  // transitions or font swaps the way the old settle loop did.
   useEffect(() => {
     if (!autoScroll) return;
     const scrollContainer = contentRef.current;
@@ -322,9 +313,8 @@ export function useAutoScroll() {
       stickToBottom();
     });
     observer.observe(scrollContainer);
-    const content = scrollContainer.firstElementChild;
-    if (content) {
-      observer.observe(content);
+    for (const child of Array.from(scrollContainer.children)) {
+      observer.observe(child);
     }
 
     return () => observer.disconnect();
@@ -336,7 +326,6 @@ export function useAutoScroll() {
     autoScroll,
     disableAutoScroll,
     jumpToBottom,
-    reanchorBottom,
     handleScroll,
     markUserScrollIntent,
     handleScrollContainerWheel,

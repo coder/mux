@@ -305,14 +305,22 @@ export class QuickJSRuntime implements IJSRuntime {
         };
       }
 
-      // With asyncify, evalCodeAsync suspends until async host functions complete.
-      // The result is already resolved - no need to resolve the promise.
-      const value: unknown = this.ctx.dump(evalResult.value) as unknown;
+      const resolvedValue = this.resolveReturnedValue(evalResult.value, deadline, timeoutMs);
       evalResult.value.dispose();
+
+      if (!resolvedValue.success) {
+        return {
+          success: false,
+          error: resolvedValue.error,
+          toolCalls: this.toolCalls,
+          consoleOutput: this.consoleOutput,
+          duration_ms: Date.now() - execStartTime,
+        };
+      }
 
       return {
         success: true,
-        result: value,
+        result: resolvedValue.value,
         toolCalls: this.toolCalls,
         consoleOutput: this.consoleOutput,
         duration_ms: Date.now() - execStartTime,
@@ -358,6 +366,44 @@ export class QuickJSRuntime implements IJSRuntime {
   private assertNotDisposed(method: string): void {
     if (this.disposed) {
       throw new Error(`Cannot call ${method} on disposed QuickJSRuntime`);
+    }
+  }
+
+  private resolveReturnedValue(
+    handle: QuickJSHandle,
+    deadline: number,
+    timeoutMs: number
+  ): { success: true; value: unknown } | { success: false; error: string } {
+    let promiseState = this.ctx.getPromiseState(handle);
+    while (promiseState.type === "pending" && this.ctx.runtime.hasPendingJob()) {
+      const pendingJobs = this.ctx.runtime.executePendingJobs();
+      if (pendingJobs.error) {
+        const errorObj: unknown = pendingJobs.error.context.dump(pendingJobs.error) as unknown;
+        const error = this.getErrorMessage(errorObj, deadline, timeoutMs);
+        pendingJobs.dispose();
+        return { success: false, error };
+      }
+      pendingJobs.dispose();
+      promiseState = this.ctx.getPromiseState(handle);
+    }
+
+    if (promiseState.type === "pending") {
+      return { success: false, error: "Execution returned a pending Promise" };
+    }
+    if (promiseState.type === "rejected") {
+      const errorObj: unknown = this.ctx.dump(promiseState.error) as unknown;
+      promiseState.error.dispose();
+      return { success: false, error: this.getErrorMessage(errorObj, deadline, timeoutMs) };
+    }
+
+    try {
+      const valueHandle = promiseState.notAPromise ? handle : promiseState.value;
+      const value: unknown = this.ctx.dump(valueHandle) as unknown;
+      return { success: true, value };
+    } finally {
+      if (!promiseState.notAPromise) {
+        promiseState.value.dispose();
+      }
     }
   }
 

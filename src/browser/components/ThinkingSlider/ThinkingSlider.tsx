@@ -157,7 +157,8 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
       <TooltipContent align="center">
         Thinking:{" "}
         <span className="mobile-hide-shortcut-hints">
-          {formatKeybind(KEYBINDS.TOGGLE_THINKING)} to cycle.{" "}
+          {formatKeybind(KEYBINDS.DECREASE_THINKING)} / {formatKeybind(KEYBINDS.INCREASE_THINKING)}{" "}
+          to adjust.{" "}
         </span>
         Saved per workspace.
       </TooltipContent>

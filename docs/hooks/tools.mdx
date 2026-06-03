@@ -227,12 +227,15 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
-<summary>agent_report (2)</summary>
+<summary>agent_report (5)</summary>
 
-| Env var                          | JSON path        | Type   | Description |
-| -------------------------------- | ---------------- | ------ | ----------- |
-| `MUX_TOOL_INPUT_REPORT_MARKDOWN` | `reportMarkdown` | string | —           |
-| `MUX_TOOL_INPUT_TITLE`           | `title`          | string | —           |
+| Env var                                 | JSON path              | Type    | Description                                                                          |
+| --------------------------------------- | ---------------------- | ------- | ------------------------------------------------------------------------------------ |
+| `MUX_TOOL_INPUT_REPORT_MARKDOWN`        | `reportMarkdown`       | string  | —                                                                                    |
+| `MUX_TOOL_INPUT_REPORT_MARKDOWN_PATH`   | `reportMarkdownPath`   | string  | Path to the markdown report file, usually report.md in the workspace root            |
+| `MUX_TOOL_INPUT_STRUCTURED_OUTPUT`      | `structuredOutput`     | unknown | —                                                                                    |
+| `MUX_TOOL_INPUT_STRUCTURED_OUTPUT_PATH` | `structuredOutputPath` | string  | Path to a JSON file containing the structured output, usually structured-output.json |
+| `MUX_TOOL_INPUT_TITLE`                  | `title`                | string  | —                                                                                    |
 
 </details>
 
@@ -597,15 +600,17 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
-<summary>task (8)</summary>
+<summary>task (10)</summary>
 
 | Env var                            | JSON path           | Type    | Description                                                                                                                                                                                                                                                                                                                                                                  |
 | ---------------------------------- | ------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `MUX_TOOL_INPUT_AGENT_ID`          | `agentId`           | string  | —                                                                                                                                                                                                                                                                                                                                                                            |
+| `MUX_TOOL_INPUT_MODEL`             | `model`             | string  | Optional model override for the sub-agent, parsed with the same alias logic as the UI (an alias or a full 'provider:model' string). Omit this unless the user explicitly instructed a specific model — by default the sub-agent inherits the parent's model. Do not assume any particular model is available.                                                                |
 | `MUX_TOOL_INPUT_N`                 | `n`                 | number  | Optional best-of count. Use n when several agents should try the same prompt independently. Mutually exclusive with variants; omit both for a single task. Only use grouped runs for sub-agents without interfering side effects, such as read-only agents like explore.                                                                                                     |
 | `MUX_TOOL_INPUT_PROMPT`            | `prompt`            | string  | —                                                                                                                                                                                                                                                                                                                                                                            |
 | `MUX_TOOL_INPUT_RUN_IN_BACKGROUND` | `run_in_background` | boolean | —                                                                                                                                                                                                                                                                                                                                                                            |
 | `MUX_TOOL_INPUT_SUBAGENT_TYPE`     | `subagent_type`     | string  | —                                                                                                                                                                                                                                                                                                                                                                            |
+| `MUX_TOOL_INPUT_THINKING`          | `thinking`          | string  | Optional thinking/reasoning-level override for the sub-agent. Accepts a level name (off, low, medium, high, xhigh, max) or a numeric index (resolved against the chosen model). Omit this unless the user explicitly instructed a specific thinking level — by default the sub-agent inherits the parent's thinking level.                                                   |
 | `MUX_TOOL_INPUT_TITLE`             | `title`             | string  | —                                                                                                                                                                                                                                                                                                                                                                            |
 | `MUX_TOOL_INPUT_VARIANTS_<INDEX>`  | `variants[<INDEX>]` | string  | Optional labels for sibling runs of the same prompt template. Use variants when the task should be repeated across labeled lanes such as issue numbers, commit windows, or frontend/backend/tests/docs review lanes. Mutually exclusive with n. When provided, Mux launches one sibling per label and substitutes ${variant} in the prompt.                                  |
 | `MUX_TOOL_INPUT_VARIANTS_COUNT`    | `variants.length`   | number  | Number of elements in variants (Optional labels for sibling runs of the same prompt template. Use variants when the task should be repeated across labeled lanes such as issue numbers, commit windows, or frontend/backend/tests/docs review lanes. Mutually exclusive with n. When provided, Mux launches one sibling per label and substitutes ${variant} in the prompt.) |
@@ -613,15 +618,16 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
-<summary>task_apply_git_patch (5)</summary>
+<summary>task_apply_git_patch (6)</summary>
 
-| Env var                       | JSON path      | Type    | Description                                                                                                                    |
-| ----------------------------- | -------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `MUX_TOOL_INPUT_DRY_RUN`      | `dry_run`      | boolean | When true, attempt to apply the patch in a temporary git worktree and then discard it (does not modify the current workspace). |
-| `MUX_TOOL_INPUT_FORCE`        | `force`        | boolean | When true, allow apply even if the patch was previously applied (and skip clean-tree checks).                                  |
-| `MUX_TOOL_INPUT_PROJECT_PATH` | `project_path` | string  | When provided, apply only the patch artifact for this project path.                                                            |
-| `MUX_TOOL_INPUT_TASK_ID`      | `task_id`      | string  | Child task ID whose patch artifact should be applied                                                                           |
-| `MUX_TOOL_INPUT_THREE_WAY`    | `three_way`    | boolean | When true, run git am with --3way                                                                                              |
+| Env var                            | JSON path           | Type    | Description                                                                                                                    |
+| ---------------------------------- | ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `MUX_TOOL_INPUT_DRY_RUN`           | `dry_run`           | boolean | When true, attempt to apply the patch in a temporary git worktree and then discard it (does not modify the current workspace). |
+| `MUX_TOOL_INPUT_EXPECTED_HEAD_SHA` | `expected_head_sha` | string  | When provided, refuse to apply unless the target repository HEAD matches this SHA.                                             |
+| `MUX_TOOL_INPUT_FORCE`             | `force`             | boolean | When true, allow apply even if the patch was previously applied (and skip clean-tree checks).                                  |
+| `MUX_TOOL_INPUT_PROJECT_PATH`      | `project_path`      | string  | When provided, apply only the patch artifact for this project path.                                                            |
+| `MUX_TOOL_INPUT_TASK_ID`           | `task_id`           | string  | Child task ID whose patch artifact should be applied                                                                           |
+| `MUX_TOOL_INPUT_THREE_WAY`         | `three_way`         | boolean | When true, run git am with --3way                                                                                              |
 
 </details>
 
@@ -633,19 +639,19 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 | `MUX_TOOL_INPUT_FILTER`           | `filter`            | string  | Optional regex to filter bash task output lines. By default, only matching lines are returned. When filter_exclude is true, matching lines are excluded instead. Non-matching lines are discarded and cannot be retrieved later.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `MUX_TOOL_INPUT_FILTER_EXCLUDE`   | `filter_exclude`    | boolean | When true, lines matching 'filter' are excluded instead of kept. Requires 'filter' to be set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `MUX_TOOL_INPUT_MIN_COMPLETED`    | `min_completed`     | number  | Number of awaited tasks that must complete before this call returns. Defaults to 1, so by default task_await returns as soon as the FIRST awaited task completes, letting you act on it while the rest keep running. The result still includes every task complete at that moment plus current status (running/queued) for the rest. Tasks that have not yet completed keep running and remain re-awaitable on a later task_await call. Raise this (e.g. set it to the total number of awaited tasks) when you genuinely need more before proceeding — for example best-of-N synthesis that must compare every candidate. Clamped to the number of awaited tasks; values above that behave like 'wait for all'. |
-| `MUX_TOOL_INPUT_TASK_IDS_<INDEX>` | `task_ids[<INDEX>]` | string  | List of task IDs to await — use only real IDs returned by prior task, bash, or task_list tool results; never fabricate an ID. When omitted, waits for all active descendant tasks of the current workspace.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `MUX_TOOL_INPUT_TASK_IDS_COUNT`   | `task_ids.length`   | number  | Number of elements in task_ids (List of task IDs to await — use only real IDs returned by prior task, bash, or task_list tool results; never fabricate an ID. When omitted, waits for all active descendant tasks of the current workspace.)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `MUX_TOOL_INPUT_TIMEOUT_SECS`     | `timeout_secs`      | number  | Maximum time to wait in seconds for each task. For bash tasks, this waits for NEW output (or process exit). If exceeded, the result returns status=queued\|running\|awaiting_report (task is still active). Defaults to 600 seconds (10 minutes) if not specified. Set to 0 for a non-blocking status check.                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `MUX_TOOL_INPUT_TASK_IDS_<INDEX>` | `task_ids[<INDEX>]` | string  | List of task IDs or workflow run IDs to await — use only real IDs returned by prior task, bash, or workflow_run results; never fabricate an ID. task_list can rediscover sub-agent/background bash IDs, but workflow run rediscovery is done by omitting task_ids. When omitted, waits for active descendant tasks and workflow runs of the current workspace, excluding workflow-owned sub-agents and their background bash tasks because those results are consumed through workflow runs.                                                                                                                                                                                                                    |
+| `MUX_TOOL_INPUT_TASK_IDS_COUNT`   | `task_ids.length`   | number  | Number of elements in task_ids (List of task IDs or workflow run IDs to await — use only real IDs returned by prior task, bash, or workflow_run results; never fabricate an ID. task_list can rediscover sub-agent/background bash IDs, but workflow run rediscovery is done by omitting task_ids. When omitted, waits for active descendant tasks and workflow runs of the current workspace, excluding workflow-owned sub-agents and their background bash tasks because those results are consumed through workflow runs.)                                                                                                                                                                                   |
+| `MUX_TOOL_INPUT_TIMEOUT_SECS`     | `timeout_secs`      | number  | Maximum time to wait in seconds for each task. For bash tasks, this waits for NEW output (or process exit). If exceeded, the result returns status=queued\|starting\|running\|awaiting_report (task is still active). Defaults to 600 seconds (10 minutes) if not specified. Set to 0 for a non-blocking status check.                                                                                                                                                                                                                                                                                                                                                                                          |
 
 </details>
 
 <details>
 <summary>task_list (2)</summary>
 
-| Env var                           | JSON path           | Type   | Description                                                                                                            |
-| --------------------------------- | ------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `MUX_TOOL_INPUT_STATUSES_<INDEX>` | `statuses[<INDEX>]` | enum   | Task statuses to include. Defaults to active tasks: queued, running, awaiting_report.                                  |
-| `MUX_TOOL_INPUT_STATUSES_COUNT`   | `statuses.length`   | number | Number of elements in statuses (Task statuses to include. Defaults to active tasks: queued, running, awaiting_report.) |
+| Env var                           | JSON path           | Type   | Description                                                                                                                      |
+| --------------------------------- | ------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_STATUSES_<INDEX>` | `statuses[<INDEX>]` | enum   | Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report.                                  |
+| `MUX_TOOL_INPUT_STATUSES_COUNT`   | `statuses.length`   | number | Number of elements in statuses (Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report.) |
 
 </details>
 
@@ -676,6 +682,26 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 | Env var              | JSON path | Type   | Description                      |
 | -------------------- | --------- | ------ | -------------------------------- |
 | `MUX_TOOL_INPUT_URL` | `url`     | string | The URL to fetch (http or https) |
+
+</details>
+
+<details>
+<summary>workflow_read (1)</summary>
+
+| Env var               | JSON path | Type   | Description |
+| --------------------- | --------- | ------ | ----------- |
+| `MUX_TOOL_INPUT_NAME` | `name`    | string | —           |
+
+</details>
+
+<details>
+<summary>workflow_run (3)</summary>
+
+| Env var                            | JSON path           | Type    | Description                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------- | ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MUX_TOOL_INPUT_ARGS`              | `args`              | unknown | —                                                                                                                                                                                                                                                                                                                                                                        |
+| `MUX_TOOL_INPUT_NAME`              | `name`              | string  | —                                                                                                                                                                                                                                                                                                                                                                        |
+| `MUX_TOOL_INPUT_RUN_IN_BACKGROUND` | `run_in_background` | boolean | Defaults to false. Prefer foreground mode for a single workflow; when the returned status is completed, the result is available directly. Set true only when you will start another workflow/task or do independent work while it runs. If workflow_run returns status=running or status=backgrounded, await the returned runId with task_await before using the result. |
 
 </details>
 

@@ -31,6 +31,7 @@ import {
   reorderProjects,
   normalizeOrder,
 } from "@/common/utils/projectOrdering";
+import { PROJECT_ORDER_KEY } from "@/common/constants/storage";
 import {
   matchesKeybind,
   formatKeybind,
@@ -50,6 +51,8 @@ import {
   formatDaysThreshold,
   AGE_THRESHOLDS_DAYS,
   computeWorkspaceDepthMap,
+  computeDelegatedActivityByWorkspaceId,
+  isWorkspaceDelegatedActivityActive,
   filterVisibleAgentRows,
   computeAgentRowRenderMeta,
   findNextNonEmptyTier,
@@ -57,6 +60,7 @@ import {
   getSectionExpandedKey,
   getSectionTierKey,
   resolveEffectiveSectionId,
+  isRunningOrStartingTaskStatus,
   type AgentRowRenderMeta,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
@@ -1579,7 +1583,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   ]);
 
   // UI preference: project order persists in localStorage
-  const [projectOrder, setProjectOrder] = usePersistedState<string[]>("mux:projectOrder", []);
+  const [projectOrder, setProjectOrder] = usePersistedState<string[]>(PROJECT_ORDER_KEY, []);
 
   // Build a stable signature of the project keys so effects don't fire on Map identity churn
   const projectPathsSignature = React.useMemo(() => {
@@ -1619,6 +1623,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     [projectPathsSignature, projectOrder]
   );
 
+  const isWorkspaceLiveActive = (workspaceId: string): boolean => {
+    const signal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
+    return signal?.isWorking === true;
+  };
+  const delegatedActivityByWorkspaceId = computeDelegatedActivityByWorkspaceId(
+    Array.from(sortedWorkspacesByProject.values()).flat(),
+    { isWorkspaceLiveActive }
+  );
+
   const singleProjectWorkspacesByProject = new Map<string, FrontendWorkspaceMetadata[]>();
   const multiProjectWorkspacesById = new Map<string, FrontendWorkspaceMetadata>();
   const workspaceAttentionById = new Map<string, boolean>();
@@ -1626,7 +1639,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   for (const [projectPath, workspaces] of sortedWorkspacesByProject) {
     const singleProjectWorkspaces: FrontendWorkspaceMetadata[] = [];
     for (const workspace of workspaces) {
-      workspaceAttentionById.set(workspace.id, workspaceHasAttention(workspace));
+      workspaceAttentionById.set(
+        workspace.id,
+        workspaceHasAttention(workspace) ||
+          (delegatedActivityByWorkspaceId.get(workspace.id)?.activeCount ?? 0) > 0
+      );
       if (isMultiProject(workspace)) {
         if (multiProjectWorkspacesEnabled) {
           multiProjectWorkspacesById.set(workspace.id, workspace);
@@ -1815,6 +1832,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 0
                               }
                               rowRenderMeta={rowRenderMeta}
+                              delegatedActivity={delegatedActivityByWorkspaceId.get(metadata.id)}
                               completedChildrenExpanded={expandedCompletedParentIds.has(
                                 metadata.id
                               )}
@@ -2174,6 +2192,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     sectionId={sectionId}
                                     rowRenderMeta={rowRenderMeta}
                                     subAgentConnectorLayout={subAgentConnectorLayout}
+                                    delegatedActivity={delegatedActivityByWorkspaceId.get(
+                                      metadata.id
+                                    )}
                                     completedChildrenExpanded={expandedCompletedParentIds.has(
                                       metadata.id
                                     )}
@@ -2342,8 +2363,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       continue;
                                     }
                                     if (
-                                      member.taskStatus === "running" ||
-                                      member.taskStatus === "awaiting_report"
+                                      isWorkspaceDelegatedActivityActive(member, {
+                                        isWorkspaceLiveActive,
+                                      })
                                     ) {
                                       runningCount += 1;
                                       continue;
@@ -2566,7 +2588,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                   let lastRunningSiblingIndex = -1;
                                   for (let index = siblings.length - 1; index >= 0; index -= 1) {
-                                    if (siblings[index]?.taskStatus === "running") {
+                                    if (
+                                      isRunningOrStartingTaskStatus(siblings[index]?.taskStatus)
+                                    ) {
                                       lastRunningSiblingIndex = index;
                                       break;
                                     }

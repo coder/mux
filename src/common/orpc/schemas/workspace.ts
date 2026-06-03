@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ThinkingLevelSchema } from "../../types/thinking";
 import { RuntimeConfigSchema } from "./runtime";
+import { WorkflowRunIdSchema } from "./workflow";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import { TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
 import { GoalSnapshotSchema } from "./goal";
@@ -86,6 +87,14 @@ export const WorkspaceHeartbeatSettingsSchema = z.object({
   }),
 });
 
+export const WorkflowTaskMetadataSchema = z.object({
+  runId: WorkflowRunIdSchema.meta({ description: "Workflow run that spawned this task." }),
+  stepId: z.string().min(1).meta({ description: "Workflow step that spawned this task." }),
+  outputSchema: z.unknown().optional().meta({
+    description: "Optional JSON Schema subset required for this task's structured output.",
+  }),
+});
+
 export const WorkspaceMetadataSchema = z.object({
   id: z.string().meta({
     description:
@@ -143,16 +152,22 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       'If set, selects an agent definition for this workspace (e.g., "explore" or "exec").',
   }),
+  workflowTask: WorkflowTaskMetadataSchema.optional().meta({
+    description: "Workflow run/step metadata for workflow-spawned child tasks.",
+  }),
   bestOf: BestOfGroupSchema.optional().meta({
     description: "Grouping metadata for child tasks spawned from the same parent tool call.",
   }),
   taskStatus: z
-    .enum(["queued", "running", "awaiting_report", "interrupted", "reported"])
+    .enum(["queued", "starting", "running", "awaiting_report", "interrupted", "reported"])
     .optional()
     .meta({
       description:
-        "Agent task lifecycle status for child workspaces (queued|running|awaiting_report|interrupted|reported).",
+        "Agent task lifecycle status for child workspaces (queued|starting|running|awaiting_report|interrupted|reported).",
     }),
+  taskLaunchError: z.string().optional().meta({
+    description: "Startup failure recorded before an agent task could begin streaming.",
+  }),
   reportedAt: z.string().optional().meta({
     description: "ISO 8601 timestamp for when an agent task reported completion (optional).",
   }),

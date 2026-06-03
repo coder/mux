@@ -120,6 +120,13 @@ import {
   type MuxMessageMetadata,
   type MuxMessage,
 } from "@/common/types/message";
+import type { WorkflowRunRecord } from "@/common/types/workflow";
+import {
+  WORKFLOW_RESULT_METADATA_TYPE,
+  WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
+  WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
+  buildWorkflowRunCardMessage,
+} from "@/common/utils/workflowRunMessages";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   hasSrcBaseDir,
@@ -256,6 +263,119 @@ type WorktreeArchiveSnapshotLifecycleService = Pick<
 >;
 // Trim and normalize a heartbeat message for storage. Accepts `unknown` so it safely handles
 // both user input (string | undefined) and persisted config values that may have been corrupted.
+function isWorkflowInvocationMessage(message: MuxMessage, runId: string): boolean {
+  if (
+    message.metadata?.muxMetadata?.type === WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE &&
+    message.metadata.muxMetadata.runId === runId
+  ) {
+    return true;
+  }
+
+  return message.parts.some((part) => {
+    if (part.type !== "dynamic-tool" || part.toolName !== "workflow_run") {
+      return false;
+    }
+    if (part.state !== "output-available") {
+      return false;
+    }
+    const output = part.output;
+    return (
+      output != null &&
+      typeof output === "object" &&
+      (output as Record<string, unknown>).runId === runId
+    );
+  });
+}
+
+function isInternalResumeAutoCompactionMessage(message: MuxMessage): boolean {
+  const muxMetadata = message.metadata?.muxMetadata;
+  if (muxMetadata?.type !== "compaction-request" || muxMetadata.source !== "auto-compaction") {
+    return false;
+  }
+  return muxMetadata.parsed.followUpContent?.dispatchOptions?.source === "internal-resume";
+}
+
+function isSyntheticManualSupersessionMessage(message: MuxMessage): boolean {
+  const muxMetadata = message.metadata?.muxMetadata;
+  return (
+    message.metadata?.synthetic === true &&
+    muxMetadata?.type === "compaction-request" &&
+    muxMetadata.source === "auto-compaction" &&
+    !isInternalResumeAutoCompactionMessage(message)
+  );
+}
+
+function isManualUserSupersessionMessage(message: MuxMessage): boolean {
+  return (
+    message.role === "user" &&
+    (message.metadata?.synthetic !== true || isSyntheticManualSupersessionMessage(message))
+  );
+}
+
+function isWorkflowResultContinuationMessage(message: MuxMessage, runId: string): boolean {
+  return (
+    message.metadata?.muxMetadata?.type === WORKFLOW_RESULT_METADATA_TYPE &&
+    message.metadata.muxMetadata.runId === runId
+  );
+}
+
+function isResetBoundaryMessage(message: MuxMessage): boolean {
+  return message.metadata?.contextBoundaryKind === CONTEXT_BOUNDARY_KINDS.RESET;
+}
+
+function isFailedWorkflowRunSnapshot(value: unknown, runId: string): boolean {
+  if (value == null || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return record.id === runId && record.status === "failed";
+}
+
+function isTerminalWorkflowTaskAwaitRecord(
+  record: Record<string, unknown>,
+  runId: string
+): boolean {
+  if (record.taskId !== runId) {
+    return false;
+  }
+  if (record.status === "completed" || record.status === "interrupted") {
+    return true;
+  }
+  if (record.status === "error") {
+    return isFailedWorkflowRunSnapshot(record.run, runId);
+  }
+  return false;
+}
+
+function isTerminalWorkflowTaskAwaitResultMessage(message: MuxMessage, runId: string): boolean {
+  if (message.role !== "assistant") {
+    return false;
+  }
+
+  return message.parts.some((part) => {
+    if (part.type !== "dynamic-tool" || part.toolName !== "task_await") {
+      return false;
+    }
+    if (part.state !== "output-available") {
+      return false;
+    }
+    const output = part.output;
+    if (output == null || typeof output !== "object") {
+      return false;
+    }
+    const results = (output as Record<string, unknown>).results;
+    if (!Array.isArray(results)) {
+      return false;
+    }
+    return results.some((result) => {
+      if (result == null || typeof result !== "object") {
+        return false;
+      }
+      return isTerminalWorkflowTaskAwaitRecord(result as Record<string, unknown>, runId);
+    });
+  });
+}
+
 function sanitizeHeartbeatMessage(message: unknown): string | undefined {
   if (typeof message !== "string") {
     return undefined;
@@ -351,6 +471,21 @@ function isArchiveLossyUntrackedFilesConfirmation(
     Array.isArray(maybeConfirmation.paths) &&
     maybeConfirmation.paths.every((path) => typeof path === "string")
   );
+}
+
+const WORKSPACE_IDLE_WAIT_CANCELED_MESSAGE =
+  "Workflow start canceled while waiting for workspace to become idle.";
+
+async function waitForAgentSessionIdle(session: AgentSession, signal?: AbortSignal): Promise<void> {
+  assert(session instanceof AgentSession, "waitForAgentSessionIdle requires an AgentSession");
+  try {
+    await session.waitForIdle(signal);
+  } catch (error) {
+    if (signal?.aborted === true) {
+      throw new Error(WORKSPACE_IDLE_WAIT_CANCELED_MESSAGE);
+    }
+    throw new Error(getErrorMessage(error));
+  }
 }
 
 interface FileCompletionsCacheEntry {
@@ -1998,6 +2133,37 @@ export class WorkspaceService extends EventEmitter {
     this.attachSessionSubscriptions(trimmed, session);
 
     return session;
+  }
+
+  async waitForWorkspaceIdle(
+    workspaceId: string,
+    options?: { signal?: AbortSignal; manualFollowUp?: boolean }
+  ): Promise<void> {
+    assert(typeof workspaceId === "string", "waitForWorkspaceIdle requires a workspaceId string");
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "waitForWorkspaceIdle requires a non-empty workspaceId");
+
+    let releaseManualFollowUp: (() => void) | undefined;
+    try {
+      for (;;) {
+        if (options?.signal?.aborted === true) {
+          throw new Error(WORKSPACE_IDLE_WAIT_CANCELED_MESSAGE);
+        }
+
+        const session =
+          this.sessions.get(trimmed) ?? this.transientStartupRecoverySessions.get(trimmed);
+        if (session?.isBusy() !== true) {
+          return;
+        }
+
+        if (options?.manualFollowUp === true && releaseManualFollowUp == null) {
+          releaseManualFollowUp = session.registerExternalManualFollowUp(options.signal);
+        }
+        await waitForAgentSessionIdle(session, options?.signal);
+      }
+    } finally {
+      releaseManualFollowUp?.();
+    }
   }
 
   /**
@@ -5772,6 +5938,165 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async prepareManualWorkflowInvocation(workspaceId: string): Promise<void> {
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "prepareManualWorkflowInvocation requires workspaceId");
+    const goalService = this.workspaceGoalService;
+    if (!goalService) {
+      return;
+    }
+
+    // Slash workflows are explicit user interventions, so they should preempt
+    // pending automatic goal continuations just like queued composer messages do.
+    goalService.clearPendingContinuationForManualUserMessage(trimmed);
+    const goal = await goalService.acknowledgeUser(trimmed);
+    if (goal?.status !== "active") {
+      return;
+    }
+
+    const result = await goalService.setGoal({
+      workspaceId: trimmed,
+      status: "paused",
+      initiator: "auto",
+    });
+    if (!result.success) {
+      log.warn("Failed to auto-pause goal for workflow slash invocation", {
+        workspaceId: trimmed,
+        error: result.error,
+      });
+    }
+  }
+
+  async appendWorkflowRunInvocation(input: {
+    workspaceId: string;
+    rawCommand: string;
+    name: string;
+    args: unknown;
+    runId: string;
+    status: string;
+    result: unknown;
+    run?: WorkflowRunRecord;
+  }): Promise<boolean> {
+    assert(input.workspaceId.length > 0, "appendWorkflowRunInvocation requires workspaceId");
+    assert(input.rawCommand.trim().length > 0, "appendWorkflowRunInvocation requires rawCommand");
+    assert(input.name.length > 0, "appendWorkflowRunInvocation requires workflow name");
+    assert(input.runId.length > 0, "appendWorkflowRunInvocation requires runId");
+
+    const now = Date.now();
+    void this.updateRecencyTimestamp(input.workspaceId, now);
+    const commandPrefix = input.rawCommand.trim().split(/\s+/u)[0] ?? `/${input.name}`;
+    const userMessage = createMuxMessage(
+      `workflow-run-command-${input.runId}`,
+      "user",
+      input.rawCommand,
+      {
+        timestamp: now,
+        muxMetadata: {
+          type: WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
+          rawCommand: input.rawCommand,
+          commandPrefix,
+          runId: input.runId,
+        },
+      }
+    );
+    const workflowMessage = buildWorkflowRunCardMessage(
+      { name: input.name, args: input.args },
+      {
+        runId: input.runId,
+        status: input.status,
+        result: input.result,
+        ...(input.run != null ? { run: input.run } : {}),
+      },
+      now
+    );
+    workflowMessage.metadata = {
+      timestamp: now,
+      synthetic: true,
+      uiVisible: true,
+      muxMetadata: {
+        type: WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
+        runId: input.runId,
+      },
+    };
+
+    const session = this.getOrCreateSession(input.workspaceId);
+    const userAppend = await this.historyService.appendToHistory(input.workspaceId, userMessage);
+    if (!userAppend.success) {
+      log.error("Failed to append workflow slash command to history", {
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        error: userAppend.error,
+      });
+      return false;
+    }
+    session.emitChatEvent({ ...userMessage, type: "message" });
+
+    const toolAppend = await this.historyService.appendToHistory(
+      input.workspaceId,
+      workflowMessage
+    );
+    if (!toolAppend.success) {
+      log.error("Failed to append workflow run card to history", {
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        error: toolAppend.error,
+      });
+      return false;
+    }
+    session.emitChatEvent({ ...workflowMessage, type: "message" });
+    return true;
+  }
+
+  async isWorkflowInvocationCurrent(workspaceId: string, runId: string): Promise<boolean> {
+    assert(workspaceId.length > 0, "isWorkflowInvocationCurrent requires workspaceId");
+    assert(runId.length > 0, "isWorkflowInvocationCurrent requires runId");
+
+    let current = false;
+    let foundDecision = false;
+    const historyResult = await this.historyService.iterateFullHistory(
+      workspaceId,
+      "backward",
+      (messages) => {
+        for (const message of messages) {
+          if (isManualUserSupersessionMessage(message)) {
+            current = false;
+            foundDecision = true;
+            return false;
+          }
+          if (isResetBoundaryMessage(message)) {
+            current = false;
+            foundDecision = true;
+            return false;
+          }
+          if (
+            isWorkflowResultContinuationMessage(message, runId) ||
+            isTerminalWorkflowTaskAwaitResultMessage(message, runId)
+          ) {
+            current = false;
+            foundDecision = true;
+            return false;
+          }
+          if (isWorkflowInvocationMessage(message, runId)) {
+            current = true;
+            foundDecision = true;
+            return false;
+          }
+        }
+        return undefined;
+      }
+    );
+    if (!historyResult.success) {
+      log.warn("Could not read history before workflow continuation", {
+        workspaceId,
+        runId,
+        error: historyResult.error,
+      });
+      return false;
+    }
+
+    return foundDecision && current;
+  }
+
   async sendMessage(
     workspaceId: string,
     message: string,
@@ -5847,14 +6172,17 @@ export class WorkspaceService extends EventEmitter {
         for (const [_projectPath, project] of config.projects) {
           const ws = project.workspaces.find((w) => w.id === workspaceId);
           if (!ws) continue;
-          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
-            taskQueueDebug("WorkspaceService.sendMessage blocked (queued task)", {
+          if (
+            ws.parentWorkspaceId &&
+            (ws.taskStatus === "queued" || ws.taskStatus === "starting")
+          ) {
+            taskQueueDebug("WorkspaceService.sendMessage blocked (queued/starting task)", {
               workspaceId,
               stack: new Error("sendMessage blocked").stack,
             });
             return Err({
               type: "unknown",
-              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+              raw: "This agent task is queued or starting and cannot accept generic messages yet.",
             });
           }
           break;
@@ -5951,8 +6279,12 @@ export class WorkspaceService extends EventEmitter {
           agentInitiated: internal?.agentInitiated,
         });
 
+        if (effectiveQueueDispatchMode != null && !internal?.skipAutoResumeReset) {
+          this.taskService?.resetAutoResumeCount?.(workspaceId);
+        }
+
         if (effectiveQueueDispatchMode === "tool-end") {
-          this.taskService?.backgroundForegroundWaitsForWorkspace(workspaceId);
+          this.taskService?.backgroundForegroundWaitsForWorkspace?.(workspaceId);
         }
 
         return Ok(undefined);
@@ -6128,14 +6460,17 @@ export class WorkspaceService extends EventEmitter {
         for (const [_projectPath, project] of config.projects) {
           const ws = project.workspaces.find((w) => w.id === workspaceId);
           if (!ws) continue;
-          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
-            taskQueueDebug("WorkspaceService.resumeStream blocked (queued task)", {
+          if (
+            ws.parentWorkspaceId &&
+            (ws.taskStatus === "queued" || ws.taskStatus === "starting")
+          ) {
+            taskQueueDebug("WorkspaceService.resumeStream blocked (queued/starting task)", {
               workspaceId,
               stack: new Error("resumeStream blocked").stack,
             });
             return Err({
               type: "unknown",
-              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+              raw: "This agent task is queued or starting and cannot resume through generic calls yet.",
             });
           }
           break;
@@ -7542,9 +7877,13 @@ export class WorkspaceService extends EventEmitter {
       isInitializing: initState?.status === "running",
       isRuntimeCompatible: true,
       isBusy: session?.isBusy() === true,
-      hasQueuedMessages: session?.hasQueuedMessages() === true,
+      hasQueuedMessages: session?.hasPendingManualFollowUp() === true,
       hasPendingFollowUp: false,
     };
+  }
+
+  getWorkflowContinuationSendOptions(workspaceId: string): SendMessageOptions | null {
+    return this.getGoalContinuationKickoffSendOptions(workspaceId);
   }
 
   getGoalContinuationKickoffSendOptions(workspaceId: string): SendMessageOptions | null {

@@ -25,6 +25,8 @@ import {
   DEFAULT_BASH_COLLAPSED_SUMMARY_MODE,
   TRANSCRIPT_DENSITIES,
   normalizeBashCollapsedSummaryMode,
+  normalizeEditorConfig,
+  normalizeTerminalFontConfig,
   normalizeTranscriptDensity,
   type BashCollapsedSummaryMode,
   type TranscriptDensity,
@@ -49,33 +51,6 @@ import {
   isWorktreeArchiveBehavior,
   type WorktreeArchiveBehavior,
 } from "@/common/config/worktreeArchiveBehavior";
-
-// Guard against corrupted/old persisted settings (e.g. from a downgraded build).
-const ALLOWED_EDITOR_TYPES: ReadonlySet<EditorType> = new Set([
-  "vscode",
-  "cursor",
-  "zed",
-  "custom",
-]);
-
-function normalizeEditorConfig(value: unknown): EditorConfig {
-  if (!value || typeof value !== "object") {
-    return DEFAULT_EDITOR_CONFIG;
-  }
-
-  const record = value as { editor?: unknown; customCommand?: unknown };
-  const editor =
-    typeof record.editor === "string" && ALLOWED_EDITOR_TYPES.has(record.editor as EditorType)
-      ? (record.editor as EditorType)
-      : DEFAULT_EDITOR_CONFIG.editor;
-
-  const customCommand =
-    typeof record.customCommand === "string" && record.customCommand.trim()
-      ? record.customCommand
-      : undefined;
-
-  return { editor, customCommand };
-}
 
 function getTerminalFontAvailabilityWarning(config: TerminalFontConfig): string | undefined {
   if (typeof document === "undefined") {
@@ -115,27 +90,6 @@ function getTerminalFontAvailabilityWarning(config: TerminalFontConfig): string 
   }
 
   return undefined;
-}
-
-function normalizeTerminalFontConfig(value: unknown): TerminalFontConfig {
-  if (!value || typeof value !== "object") {
-    return DEFAULT_TERMINAL_FONT_CONFIG;
-  }
-
-  const record = value as { fontFamily?: unknown; fontSize?: unknown };
-
-  const fontFamily =
-    typeof record.fontFamily === "string" && record.fontFamily.trim()
-      ? record.fontFamily
-      : DEFAULT_TERMINAL_FONT_CONFIG.fontFamily;
-
-  const fontSizeNumber = Number(record.fontSize);
-  const fontSize =
-    Number.isFinite(fontSizeNumber) && fontSizeNumber > 0
-      ? fontSizeNumber
-      : DEFAULT_TERMINAL_FONT_CONFIG.fontSize;
-
-  return { fontFamily, fontSize };
 }
 
 const EDITOR_OPTIONS: Array<{ value: EditorType; label: string }> = [

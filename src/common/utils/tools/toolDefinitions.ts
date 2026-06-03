@@ -27,7 +27,16 @@
  */
 
 import { z } from "zod";
-import { AgentIdSchema, AgentSkillPackageSchema, SkillNameSchema } from "@/common/orpc/schemas";
+import {
+  AgentIdSchema,
+  AgentSkillPackageSchema,
+  SkillNameSchema,
+  WorkflowActionDescriptorSchema,
+  WorkflowDefinitionDescriptorSchema,
+  WorkflowNameSchema,
+  WorkflowRunRecordSchema,
+  WorkflowRunStatusSchema,
+} from "@/common/orpc/schemas";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import {
   BASH_HARD_MAX_LINES,
@@ -175,6 +184,16 @@ const TaskAgentIdSchema = z.preprocess(
 
 const TaskToolBestOfCountSchema = z.number().int().min(1).max(20);
 
+// Model/thinking overrides for the spawned sub-agent. Accepted as free-form strings
+// so they can be parsed with the SAME logic as the UI (alias resolution for model;
+// named levels OR numeric indices for thinking). A numeric thinking value may arrive
+// as a JSON number, so coerce it to a string before parsing in the handler.
+const TaskToolModelSchema = z.string().trim().min(1);
+const TaskToolThinkingSchema = z.preprocess(
+  (value) => (typeof value === "number" ? String(value) : value),
+  z.string().trim().min(1)
+);
+
 const TaskToolVariantSchema = z.string().trim().min(1);
 
 const TaskToolVariantsSchema = z.array(TaskToolVariantSchema).min(1).max(20);
@@ -226,10 +245,12 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Do not also do a full parallel analysis in the parent. Call task_await when you are ready to act on child output; do not await reflexively just because tasks are running. " +
     "task_await returns as soon as the first awaited task completes by default (min_completed), so you can start dependent work on each result as it lands instead of blocking on the whole batch; for best-of-N synthesis that must compare every candidate, pass min_completed equal to the batch size (or use a foreground grouped spawn, below). " +
     "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
+    "Sub-agents observe the same system instructions as the parent (project/global AGENTS.md and custom instructions), so do not restate that shared context in the prompt; spend the prompt on task-specific information the sub-agent cannot infer from those instructions. " +
+    "Caveat: instruction files are read from the child's checkout, so uncommitted AGENTS.md edits in the parent follow the same runtime visibility rules above — commit them first or pass the relevant guidance in the prompt. " +
     "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
     "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When grouped sibling tasks are requested via n or variants, the completed result includes one report per spawned task. " +
-    "If the foreground wait times out, returns queued/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
-    "If run_in_background is true, returns immediately with queued/running task metadata; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
+    "If the foreground wait times out, returns queued/starting/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
+    "If run_in_background is true, returns immediately with queued/starting/running task metadata; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
     "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
     "Use run_in_background: true when launching multiple tasks in parallel so you can act on each as it completes via task_await (which returns on the first completion by default); a foreground grouped spawn (run_in_background: false) instead blocks until every sibling finishes and returns all reports at once. " +
     "Do not call task_await in the same parallel tool-call batch; wait for the returned task metadata first. " +
@@ -250,6 +271,12 @@ const TaskToolAgentArgsSchema = z
     ),
     variants: TaskToolVariantsSchema.nullish().describe(
       `Optional labels for sibling runs of the same prompt template. Use variants when the task should be repeated across labeled lanes such as issue numbers, commit windows, or frontend/backend/tests/docs review lanes. Mutually exclusive with n. When provided, Mux launches one sibling per label and substitutes ${TASK_VARIANT_PLACEHOLDER} in the prompt.`
+    ),
+    model: TaskToolModelSchema.nullish().describe(
+      "Optional model override for the sub-agent, parsed with the same alias logic as the UI (an alias or a full 'provider:model' string). Omit this unless the user explicitly instructed a specific model — by default the sub-agent inherits the parent's model. Do not assume any particular model is available."
+    ),
+    thinking: TaskToolThinkingSchema.nullish().describe(
+      "Optional thinking/reasoning-level override for the sub-agent. Accepts a level name (off, low, medium, high, xhigh, max) or a numeric index (resolved against the chosen model). Omit this unless the user explicitly instructed a specific thinking level — by default the sub-agent inherits the parent's thinking level."
     ),
   })
   .strict()
@@ -312,7 +339,7 @@ export const TaskToolArgsSchema = TaskToolAgentArgsSchema;
 const TaskToolSpawnedTaskSchema = z
   .object({
     taskId: z.string(),
-    status: z.enum(["queued", "running", "completed", "interrupted"]),
+    status: z.enum(["queued", "starting", "running", "completed", "interrupted"]),
     groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
     label: z.string().optional(),
   })
@@ -323,6 +350,7 @@ const TaskToolCompletedReportSchema = z
     taskId: z.string(),
     reportMarkdown: z.string(),
     title: z.string().optional(),
+    structuredOutput: z.unknown().optional(),
     agentId: z.string().optional(),
     agentType: z.string().optional(),
     groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
@@ -332,7 +360,7 @@ const TaskToolCompletedReportSchema = z
 
 export const TaskToolQueuedResultSchema = z
   .object({
-    status: z.enum(["queued", "running"]),
+    status: z.enum(["queued", "starting", "running"]),
     taskId: z.string().optional(),
     taskIds: z.array(z.string()).min(1).optional(),
     tasks: z.array(TaskToolSpawnedTaskSchema).min(1).optional(),
@@ -364,6 +392,7 @@ export const TaskToolCompletedResultSchema = z
     taskIds: z.array(z.string()).min(1).optional(),
     reportMarkdown: z.string().optional(),
     title: z.string().optional(),
+    structuredOutput: z.unknown().optional(),
     agentId: z.string().optional(),
     agentType: z.string().optional(),
     reports: z.array(TaskToolCompletedReportSchema).min(1).optional(),
@@ -419,8 +448,9 @@ export const TaskAwaitToolArgsSchema = z
       .array(z.string().min(1))
       .nullish()
       .describe(
-        "List of task IDs to await — use only real IDs returned by prior task, bash, or task_list tool results; never fabricate an ID. " +
-          "When omitted, waits for all active descendant tasks of the current workspace."
+        "List of task IDs or workflow run IDs to await — use only real IDs returned by prior task, bash, or workflow_run results; never fabricate an ID. " +
+          "task_list can rediscover sub-agent/background bash IDs, but workflow run rediscovery is done by omitting task_ids. " +
+          "When omitted, waits for active descendant tasks and workflow runs of the current workspace, excluding workflow-owned sub-agents and their background bash tasks because those results are consumed through workflow runs."
       ),
     filter: z
       .string()
@@ -445,7 +475,7 @@ export const TaskAwaitToolArgsSchema = z
       .describe(
         "Maximum time to wait in seconds for each task. " +
           "For bash tasks, this waits for NEW output (or process exit). " +
-          "If exceeded, the result returns status=queued|running|awaiting_report (task is still active). " +
+          "If exceeded, the result returns status=queued|starting|running|awaiting_report (task is still active). " +
           "Defaults to 600 seconds (10 minutes) if not specified. " +
           "Set to 0 for a non-blocking status check."
       ),
@@ -527,22 +557,32 @@ export const TaskAwaitToolCompletedResultSchema = z
     status: z.literal("completed"),
     taskId: z.string(),
     reportMarkdown: z.string(),
+    structuredOutput: z.unknown().optional(),
     title: z.string().optional(),
     output: z.string().optional(),
     elapsed_ms: z.number().optional(),
     exitCode: z.number().optional(),
     note: z.string().optional(),
+    run: WorkflowRunRecordSchema.optional(),
     artifacts: TaskAwaitToolArtifactsSchema.optional(),
   })
   .strict();
 
 export const TaskAwaitToolActiveResultSchema = z
   .object({
-    status: z.enum(["queued", "running", "awaiting_report"]),
+    status: z.enum([
+      "queued",
+      "starting",
+      "running",
+      "backgrounded",
+      "awaiting_report",
+      "interrupted",
+    ]),
     taskId: z.string(),
     output: z.string().optional(),
     elapsed_ms: z.number().optional(),
     note: z.string().optional(),
+    run: WorkflowRunRecordSchema.optional(),
   })
   .strict();
 
@@ -567,6 +607,7 @@ export const TaskAwaitToolErrorResultSchema = z
     status: z.literal("error"),
     taskId: z.string(),
     error: z.string(),
+    run: WorkflowRunRecordSchema.optional(),
   })
   .strict();
 
@@ -600,6 +641,13 @@ export const TaskApplyGitPatchToolArgsSchema = z
       .nullish()
       .describe(
         "When true, attempt to apply the patch in a temporary git worktree and then discard it (does not modify the current workspace)."
+      ),
+    expected_head_sha: z
+      .string()
+      .min(1)
+      .nullish()
+      .describe(
+        "When provided, refuse to apply unless the target repository HEAD matches this SHA."
       ),
     three_way: z.boolean().nullish().default(true).describe("When true, run git am with --3way"),
     force: z
@@ -731,6 +779,7 @@ export const TaskTerminateToolResultSchema = z
 
 const TaskListStatusSchema = z.enum([
   "queued",
+  "starting",
   "running",
   "awaiting_report",
   "interrupted",
@@ -744,7 +793,7 @@ export const TaskListToolArgsSchema = z
       .array(TaskListStatusSchema)
       .nullish()
       .describe(
-        "Task statuses to include. Defaults to active tasks: queued, running, awaiting_report."
+        "Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report."
       ),
   })
   .strict();
@@ -771,17 +820,121 @@ export const TaskListToolResultSchema = z
   .strict();
 
 // -----------------------------------------------------------------------------
+// workflow_run (durable workflow orchestration)
+// -----------------------------------------------------------------------------
+
+export const WorkflowListToolArgsSchema = z.object({}).strict();
+
+export const WorkflowListToolResultSchema = z
+  .object({
+    workflows: z.array(WorkflowDefinitionDescriptorSchema),
+  })
+  .strict();
+
+export const WorkflowReadToolArgsSchema = z
+  .object({
+    name: WorkflowNameSchema,
+  })
+  .strict();
+
+export const WorkflowReadToolResultSchema = z
+  .object({
+    descriptor: WorkflowDefinitionDescriptorSchema,
+    source: z.string().min(1),
+  })
+  .strict();
+
+export const WorkflowActionListToolArgsSchema = z.object({}).strict();
+
+export const WorkflowActionListToolResultSchema = z
+  .object({
+    actions: z.array(WorkflowActionDescriptorSchema),
+  })
+  .strict();
+
+export const WorkflowRunToolArgsSchema = z
+  .object({
+    name: WorkflowNameSchema,
+    args: z.unknown().nullish(),
+    run_in_background: z
+      .boolean()
+      .nullish()
+      .default(false)
+      .describe(
+        "Defaults to false. Prefer foreground mode for a single workflow; when the returned status is completed, the result is available directly. " +
+          "Set true only when you will start another workflow/task or do independent work while it runs. If workflow_run returns status=running or status=backgrounded, await the returned runId with task_await before using the result."
+      ),
+  })
+  .strict();
+
+export const WorkflowRunToolResultSchema = z
+  .object({
+    status: WorkflowRunStatusSchema,
+    runId: z.string().min(1),
+    result: z.unknown(),
+    run: WorkflowRunRecordSchema.optional(),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
 // agent_report (explicit subagent -> parent report)
 // -----------------------------------------------------------------------------
 
-export const AgentReportToolArgsSchema = z
+export const AgentReportInlineToolArgsSchema = z
   .object({
     reportMarkdown: z.string().min(1),
+    structuredOutput: z.unknown().nullish(),
     title: z.string().nullish(),
   })
   .strict();
 
-export const AgentReportToolResultSchema = z.object({ success: z.literal(true) }).strict();
+export const AgentReportFileToolArgsSchema = z
+  .object({
+    reportMarkdownPath: z
+      .string()
+      .min(1)
+      .nullish()
+      .describe("Path to the markdown report file, usually report.md in the workspace root"),
+    structuredOutputPath: z
+      .string()
+      .min(1)
+      .nullish()
+      .describe(
+        "Path to a JSON file containing the structured output, usually structured-output.json"
+      ),
+    title: z.string().nullish(),
+  })
+  .strict();
+
+export const AgentReportToolArgsSchema = z.union([
+  AgentReportInlineToolArgsSchema,
+  AgentReportFileToolArgsSchema,
+]);
+
+export const AgentReportSubmittedReportSchema = z
+  .object({
+    reportMarkdown: z.string().min(1),
+    structuredOutput: z.unknown().optional(),
+    title: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const AgentReportToolResultSchema = z.discriminatedUnion("success", [
+  z
+    .object({
+      success: z.literal(true),
+      message: z.string().min(1).optional(),
+      report: AgentReportSubmittedReportSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      success: z.literal(false),
+      message: z.string().min(1),
+      errors: z.array(z.object({ path: z.string().min(1), message: z.string().min(1) })).min(1),
+    })
+    .strict(),
+]);
 const FILE_TOOL_PATH = z
   .string()
   .describe("Path to the file to edit (absolute or relative to the current workspace)");
@@ -1407,14 +1560,15 @@ export const TOOL_DEFINITIONS = {
   },
   task_await: {
     description:
-      "Wait for one or more tasks to produce output. " +
+      "Wait for one or more tasks or workflow runs to produce output. " +
       "\n\nWHEN TO USE: only call task_await when the current user request depends on a task's output, or when synthesis/integration of a previously-spawned task is the next logical step. " +
       "Do not call task_await solely because active tasks exist; for unrelated user messages, respond directly and let tasks continue in the background. " +
-      "\n\nIMPORTANT: Do not call task_await in the same parallel tool-call batch as task or bash — " +
-      "the taskId is not available until the spawning tool returns. " +
-      "Always wait for the task/bash tool result first, then call task_await in a subsequent step. " +
-      "When omitting task_ids to await all active tasks, ensure at least one background task was already spawned in a prior step. " +
-      "\n\nAgent tasks return reports when completed. " +
+      "If a synthetic/system follow-up explicitly says active background tasks or workflow runs block your turn, treat that as a dependency and await the listed IDs. " +
+      "\n\nIMPORTANT: Do not call task_await in the same parallel tool-call batch as task, bash, or workflow_run — " +
+      "the taskId/runId is not available until the spawning tool returns. " +
+      "Always wait for the task/bash/workflow_run tool result first, then call task_await in a subsequent step. " +
+      "When omitting task_ids to await active tasks/workflows, ensure at least one background task or workflow was already spawned in a prior step. Omitted task_ids exclude workflow-owned sub-agents and their background bash tasks because those results are consumed through workflow runs. " +
+      "\n\nAgent tasks and workflow runs return reports when completed. " +
       "Bash tasks return incremental output while running and a final reportMarkdown when they exit. " +
       "For bash tasks, you may optionally pass filter/filter_exclude to include/exclude output lines by regex. " +
       "WARNING: when using filter, non-matching lines are permanently discarded. " +
@@ -1424,7 +1578,7 @@ export const TOOL_DEFINITIONS = {
       "Set min_completed higher (up to the number of awaited tasks) when you genuinely need more before proceeding — e.g. best-of-N synthesis that must compare every candidate should pass min_completed equal to the batch size. " +
       "The result always includes every task complete at the moment it returns, plus current status for the rest; not-yet-completed tasks keep running and stay re-awaitable on a later call. " +
       "You always get per-task results (like Promise.allSettled), just possibly before every task has finished. " +
-      "Possible statuses: completed, queued, running, awaiting_report, not_found, invalid_scope, error. " +
+      "Possible statuses: completed, queued, starting, running, backgrounded, awaiting_report, interrupted, not_found, invalid_scope, error. " +
       "Bash task outputs may be automatically filtered; when this happens, check each result's note for details and (if available) where the full output was saved.",
     schema: TaskAwaitToolArgsSchema,
   },
@@ -1439,10 +1593,35 @@ export const TOOL_DEFINITIONS = {
   task_list: {
     description:
       "List descendant tasks for the current workspace, including status + metadata. " +
-      "This includes sub-agent tasks and background bash tasks. " +
+      "This includes sub-agent tasks and background bash tasks, but omits workflow-owned sub-agents (and their background bash tasks) whose reports are consumed through their workflow run. " +
       "Use this after compaction or interruptions to rediscover which tasks are still active. " +
       "This is a discovery tool, NOT a waiting mechanism. If the current request actually depends on a task's output, call task_await with the specific task IDs you need; do not await all active tasks just because they appear here.",
     schema: TaskListToolArgsSchema,
+  },
+  workflow_list: {
+    description:
+      "List durable workflow definitions available in this workspace. Use this before workflow_run when you do not already know the workflow name. Before writing or editing workflow JS, read the built-in workflow-authoring skill. Scratch workflows are workspace files at .mux/workflows/.scratch/<name>.js and should be authored with file_read/file_edit_* tools.",
+    schema: WorkflowListToolArgsSchema,
+  },
+  workflow_read: {
+    description:
+      "Read a durable workflow definition's descriptor and source by name. Use this to inspect expected args or understand a workflow before running it. Before authoring new workflow JS, read the built-in workflow-authoring skill for available globals, schema limits, and replay rules.",
+    schema: WorkflowReadToolArgsSchema,
+  },
+  workflow_action_list: {
+    description:
+      "List workflow actions available in this workspace, including built-in, global, and trusted project actions. Use this before authoring workflow JS that calls action.<namespace>.<name>; each returned action includes metadata with inputSchema/outputSchema, effect, permissions, timeoutMs, and hasReconcile when executable.",
+    schema: WorkflowActionListToolArgsSchema,
+  },
+  workflow_run: {
+    // Prefer foreground workflows so callers do not waste a turn polling when no other work can proceed.
+    description:
+      "Start a durable workflow run by workflow name. Workflows coordinate delegated agent tasks and preserve run state for replay/resume. " +
+      "Prefer the default foreground mode (`run_in_background` omitted or false) so completed workflows return their result without an extra task_await round-trip. " +
+      "If workflow_run returns status=running or status=backgrounded, await the returned runId with task_await before using or reporting the workflow output. " +
+      "Use background mode only when you intend to start another workflow/task or do independent work while the workflow runs. " +
+      "To create a scratch workflow, first read the built-in workflow-authoring skill, then write .mux/workflows/.scratch/<name>.js with a // description: header and default exported function, then run it by name.",
+    schema: WorkflowRunToolArgsSchema,
   },
   agent_report: {
     description:
@@ -2164,6 +2343,19 @@ export function getToolSchemas(): Record<string, ToolSchema> {
 }
 
 /**
+ * Google's mixed built-in + function tool path is currently supported for Gemini 3.
+ * Keep native Google tools gated here so the prompt allowlist matches the actual toolset.
+ */
+export function supportsGoogleNativeToolsWithFunctionTools(modelId: string): boolean {
+  const bareModelId = modelId.split("/").pop() ?? modelId;
+  const match = /^gemini-(\d+)(?:[.-]|$)/.exec(bareModelId);
+  if (!match) return false;
+  const major = Number.parseInt(match[1], 10);
+  // The installed @ai-sdk/google mixed native/function serialization path is Gemini 3-only.
+  return major === 3;
+}
+
+/**
  * Get which tools are available for a given model
  * @param modelString The model string (e.g., "anthropic:claude-opus-4-1")
  * @returns Array of tool names available for the model
@@ -2174,14 +2366,24 @@ export function getAvailableTools(
     enableAgentReport?: boolean;
     enableAnalyticsQuery?: boolean;
     enableAdvisor?: boolean;
+    enableDynamicWorkflows?: boolean;
+    /**
+     * Whether the Review pane tools (review_pane_update/review_pane_get) are
+     * available. The Review pane belongs to the user-facing parent workspace,
+     * so sub-agents (child task workspaces) pass false to keep them from
+     * pinning code to a pane the user never sees. Defaults to true.
+     */
+    enableReviewPane?: boolean;
     /** @deprecated Mux global tools are always included. */
     enableMuxGlobalAgentsTools?: boolean;
   }
 ): string[] {
-  const [provider] = modelString.split(":");
+  const [provider, modelId = ""] = modelString.split(":");
   const enableAgentReport = options?.enableAgentReport ?? true;
   const enableAnalyticsQuery = options?.enableAnalyticsQuery ?? true;
   const enableAdvisor = options?.enableAdvisor ?? false;
+  const enableDynamicWorkflows = options?.enableDynamicWorkflows ?? false;
+  const enableReviewPane = options?.enableReviewPane ?? true;
 
   // Base tools available for all models
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
@@ -2219,13 +2421,15 @@ export function getAvailableTools(
     "task_apply_git_patch",
     "task_terminate",
     "task_list",
+    ...(enableDynamicWorkflows
+      ? ["workflow_list", "workflow_read", "workflow_action_list", "workflow_run"]
+      : []),
     ...(enableAgentReport ? ["agent_report"] : []),
     "get_goal",
     "complete_goal",
     "todo_write",
     "todo_read",
-    "review_pane_update",
-    "review_pane_get",
+    ...(enableReviewPane ? ["review_pane_update", "review_pane_get"] : []),
     "notify",
     ...(enableAnalyticsQuery ? ["analytics_query"] : []),
     "web_fetch",
@@ -2242,7 +2446,10 @@ export function getAvailableTools(
       }
       return baseTools;
     case "google":
-      return [...baseTools, "google_search"];
+      if (supportsGoogleNativeToolsWithFunctionTools(modelId)) {
+        return [...baseTools, "google_search", "url_context"];
+      }
+      return baseTools;
     default:
       return baseTools;
   }

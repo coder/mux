@@ -26,6 +26,9 @@ export interface SubagentReportArtifactIndexEntry {
   title?: string;
   /** Full ancestor chain (parent first). Used for descendant scope checks after cleanup. */
   ancestorWorkspaceIds: string[];
+  /** Ancestors for which this child is owned by a workflow step. */
+  workflowOwnedAncestorWorkspaceIds?: string[];
+  structuredOutput?: unknown;
   /** Estimated token count of delivered report markdown (~4 chars/token). */
   reportTokenEstimate?: number;
 }
@@ -135,6 +138,8 @@ export async function readSubagentReportArtifact(
       thinkingLevel?: unknown;
       title?: unknown;
       ancestorWorkspaceIds?: unknown;
+      workflowOwnedAncestorWorkspaceIds?: unknown;
+      structuredOutput?: unknown;
       reportMarkdown?: unknown;
     };
 
@@ -149,6 +154,10 @@ export async function readSubagentReportArtifact(
       typeof obj.model === "string" && obj.model.trim().length > 0 ? obj.model.trim() : undefined;
     const thinkingLevel = coerceThinkingLevel(obj.thinkingLevel);
 
+    const workflowOwnedAncestorWorkspaceIds = isStringArray(obj.workflowOwnedAncestorWorkspaceIds)
+      ? obj.workflowOwnedAncestorWorkspaceIds
+      : undefined;
+
     if (meta) {
       // Trust the index file for metadata (versioned), but allow per-task file to override title.
       return {
@@ -159,6 +168,7 @@ export async function readSubagentReportArtifact(
             : undefined,
         thinkingLevel: coerceThinkingLevel(meta.thinkingLevel),
         title: title ?? meta.title,
+        structuredOutput: obj.structuredOutput,
         reportMarkdown,
       };
     }
@@ -185,6 +195,8 @@ export async function readSubagentReportArtifact(
       thinkingLevel,
       title,
       ancestorWorkspaceIds,
+      workflowOwnedAncestorWorkspaceIds,
+      structuredOutput: obj.structuredOutput,
       reportMarkdown,
     };
   } catch (error) {
@@ -230,6 +242,8 @@ export async function upsertSubagentReportArtifact(params: {
   model?: string;
   /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
   thinkingLevel?: ThinkingLevel;
+  workflowOwnedAncestorWorkspaceIds?: string[];
+  structuredOutput?: unknown;
   title?: string;
   nowMs?: number;
 }): Promise<SubagentReportArtifactIndexEntry> {
@@ -267,6 +281,8 @@ export async function upsertSubagentReportArtifact(params: {
             thinkingLevel,
             title: params.title,
             ancestorWorkspaceIds: params.ancestorWorkspaceIds,
+            workflowOwnedAncestorWorkspaceIds: params.workflowOwnedAncestorWorkspaceIds,
+            structuredOutput: params.structuredOutput,
             reportMarkdown: params.reportMarkdown,
           },
           null,
@@ -290,6 +306,8 @@ export async function upsertSubagentReportArtifact(params: {
       model,
       thinkingLevel,
       title: params.title,
+      workflowOwnedAncestorWorkspaceIds: params.workflowOwnedAncestorWorkspaceIds,
+      structuredOutput: params.structuredOutput,
       ancestorWorkspaceIds: params.ancestorWorkspaceIds,
     };
     updated.reportTokenEstimate = Math.ceil(

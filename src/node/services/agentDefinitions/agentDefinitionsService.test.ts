@@ -458,6 +458,24 @@ Custom planning instructions.
     );
     expect(customPlanFrontmatter.tools?.require).toEqual(["propose_plan"]);
   });
+
+  test("built-in explore replaces exec prompt body while inheriting frontmatter", async () => {
+    using tempDir = new DisposableTempDir("agent-explore-guidance");
+    const runtime = new LocalRuntime(tempDir.path);
+
+    const [exploreBody, execBody] = await Promise.all([
+      resolveAgentBody(runtime, tempDir.path, "explore"),
+      resolveAgentBody(runtime, tempDir.path, "exec"),
+    ]);
+    expect(exploreBody.trim().length).toBeGreaterThan(0);
+    expect(execBody.trim().length).toBeGreaterThan(0);
+    expect(exploreBody).not.toContain(execBody.trim());
+
+    const exploreFrontmatter = await resolveAgentFrontmatter(runtime, tempDir.path, "explore");
+    expect(exploreFrontmatter.tools?.add).toContain(".*");
+    expect(exploreFrontmatter.tools?.remove).toContain("file_edit_.*");
+    expect(exploreFrontmatter.subagent?.runnable).toBe(true);
+  });
   test("same-name override: project agent with base: self extends built-in/global, not itself", async () => {
     using project = new DisposableTempDir("agent-same-name");
     using global = new DisposableTempDir("agent-same-name-global");

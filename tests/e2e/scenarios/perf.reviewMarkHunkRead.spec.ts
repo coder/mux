@@ -7,7 +7,7 @@ import {
   withChromeProfiles,
   writePerfArtifacts,
 } from "../utils/perfProfile";
-import { seedLargeReviewDiff } from "../utils/reviewPerfFixture";
+import { LARGE_CHANGE_ROOT, seedLargeReviewDiff } from "../utils/reviewPerfFixture";
 
 const shouldRunPerfScenarios = process.env.MUX_E2E_RUN_PERF === "1";
 
@@ -60,6 +60,12 @@ test.describe("immersive review performance profiling", () => {
     const immersiveReview = page.getByTestId("immersive-review-view");
     await expect(immersiveReview).toBeVisible({ timeout: 20_000 });
 
+    const firstFilePath = `${LARGE_CHANGE_ROOT}/group-01/bucket-01/probe-001.ts`;
+    const secondFilePath = `${LARGE_CHANGE_ROOT}/group-01/bucket-01/probe-002.ts`;
+    await expect(immersiveReview.getByText(firstFilePath)).toBeVisible({ timeout: 20_000 });
+    await expect(immersiveReview).toHaveAttribute("data-selected-hunk-position", "1", {
+      timeout: 20_000,
+    });
     const markReadButton = immersiveReview.getByRole("button", { name: "Mark hunk as read" });
     await expect(markReadButton).toBeVisible({ timeout: 20_000 });
 
@@ -68,9 +74,13 @@ test.describe("immersive review performance profiling", () => {
     const runLabel = `review-immersive-mark-read-${diffSummary.fileCount}-files-${diffSummary.hunkCount}-hunks`;
     const chromeProfile = await withChromeProfiles(page, { label: runLabel }, async () => {
       await markReadButton.dispatchEvent("click");
-      await expect(
-        immersiveReview.getByRole("button", { name: "Mark hunk as unread" })
-      ).toBeVisible({ timeout: 20_000 });
+      await expect(immersiveReview.getByText(secondFilePath)).toBeVisible({ timeout: 20_000 });
+      await expect(immersiveReview).toHaveAttribute("data-selected-hunk-position", "1", {
+        timeout: 20_000,
+      });
+      await expect(immersiveReview.getByRole("button", { name: "Mark hunk as read" })).toBeVisible({
+        timeout: 20_000,
+      });
       await expect
         .poll(
           () =>

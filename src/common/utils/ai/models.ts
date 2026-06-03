@@ -4,6 +4,7 @@
 
 import { DEFAULT_MODEL, MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
+import { formatModelDisplayName } from "./modelDisplay";
 
 export const defaultModel = DEFAULT_MODEL;
 
@@ -103,6 +104,16 @@ export function getModelName(modelString: string): string {
 }
 
 /**
+ * Format a full model string (e.g. "anthropic:claude-sonnet-4-5") into its
+ * human display name (e.g. "Sonnet 4.5"). Shared by ModelDisplay,
+ * ModelSelector, and ModelFallbackBadge. Lives here (not modelDisplay.ts) to
+ * avoid a modelDisplay -> knownModels -> modelDisplay import cycle.
+ */
+export function formatModelStringForDisplay(modelString: string): string {
+  return formatModelDisplayName(getModelName(modelString));
+}
+
+/**
  * Extract the provider from a model string (e.g., "anthropic:claude-sonnet-4-5" -> "anthropic")
  * @param modelString - Full model string in format "provider:model-name"
  * @returns The provider part (before the colon), or empty string if no colon is found
@@ -120,6 +131,9 @@ export type Anthropic1MContextMode = "none" | "beta" | "native";
 
 const OPTIONAL_VERSION_SUFFIX = String.raw`(?:-(?:\d{8}|\d{4}-\d{2}-\d{2}))?`;
 const ANTHROPIC_NATIVE_1M_PATTERNS = [
+  // Mythos-class models (Fable 5 / Mythos 5) ship 1M context as standard metadata.
+  new RegExp(`^claude-fable-5${OPTIONAL_VERSION_SUFFIX}$`, "i"),
+  new RegExp(`^claude-mythos-5${OPTIONAL_VERSION_SUFFIX}$`, "i"),
   new RegExp(`^claude-opus-4-8${OPTIONAL_VERSION_SUFFIX}$`, "i"),
   new RegExp(`^claude-opus-4-7${OPTIONAL_VERSION_SUFFIX}$`, "i"),
   new RegExp(`^claude-opus-4-6${OPTIONAL_VERSION_SUFFIX}$`, "i"),

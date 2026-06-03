@@ -46,6 +46,10 @@ export function getGoalToolAvailability(
 export function getToolAvailabilityOptions(context: ToolAvailabilityContext) {
   return {
     enableAgentReport: Boolean(context.parentWorkspaceId),
+    // The Review pane is a user-facing parent-workspace concept. Sub-agents
+    // (child task workspaces, identified by a parentWorkspaceId) shouldn't pin
+    // code to it, so withhold the review_pane_* tools from them.
+    enableReviewPane: !context.parentWorkspaceId,
     // skills_catalog_* tools are always available; agent tool policy controls access.
   } as const;
 }

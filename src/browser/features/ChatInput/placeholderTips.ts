@@ -12,15 +12,19 @@
  * only thing that advances the carousel.
  *
  * Every tip in this list must surface a real, always-available input feature:
- * either a slash command (registry or built-in skill) that is ungated by
- * experiments (no `experimentGate` on the command definition), or a backslash
- * symbol shortcut (see `symbolShortcuts.ts`, which is always on). Advertising
- * an unimplemented or feature-flag-locked command sends the user into an
- * unknown-command / experiment-required dead end the moment they follow the
- * suggestion. When adding a slash-command tip, grep
+ * a slash command (registry or built-in skill) that is ungated by experiments
+ * (no `experimentGate` on the command definition), a backslash symbol shortcut
+ * (see `symbolShortcuts.ts`, which is always on), or an always-available global
+ * keybind from `KEYBINDS` (ungated by experiments). Advertising an unimplemented
+ * or feature-flag-locked command sends the user into an unknown-command /
+ * experiment-required dead end the moment they follow the suggestion. When
+ * adding a slash-command tip, grep
  * `src/browser/utils/slashCommands/registry.ts` for `experimentGate` to make
- * sure the command you're surfacing isn't gated.
+ * sure the command you're surfacing isn't gated. Keybind tips are rendered via
+ * `formatKeybind` so they stay platform-correct (⌘ on macOS, Ctrl elsewhere).
  */
+
+import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 
 /** Bucket length for tip rotation. */
 const TIP_ROTATION_INTERVAL_MS = 20 * 60 * 1000; // 20 minutes
@@ -54,6 +58,8 @@ export const PLACEHOLDER_TIPS: readonly string[] = [
   "Try /new <start> to start a fresh workspace from the trunk branch",
   "Try /vim to toggle vim keybindings in the chat input",
   "Try \\alpha or \\sum to insert LaTeX-style symbols like α and ∑ as you type",
+  // Keybind tip (kept last so it never displaces the Storybook-pinned lead tip).
+  `Press ${formatKeybind(KEYBINDS.INCREASE_THINKING)} / ${formatKeybind(KEYBINDS.DECREASE_THINKING)} to raise or lower thinking effort`,
 ];
 
 /**

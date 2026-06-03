@@ -40,11 +40,19 @@ export class BackgroundBashStore {
   private processesStore = new MapStore<string, BackgroundProcessInfo[]>();
   private foregroundIdsStore = new MapStore<string, Set<string>>();
   private terminatingIdsStore = new MapStore<string, Set<string>>();
+  private stateKnownStore = new MapStore<string, boolean>();
 
   private processesCache = new Map<string, BackgroundProcessInfo[]>();
   private autoBackgroundFetches = new Map<string, Promise<void>>();
   private foregroundIdsCache = new Map<string, Set<string>>();
   private terminatingIdsCache = new Map<string, Set<string>>();
+  // Workspaces whose background-bash state is KNOWN (the live subscription
+  // delivered at least one snapshot, or it failed and we self-healed).
+  // The chat view's first-paint barrier (useChatViewDataReady) waits on this
+  // so the banner can never pop in after the transcript reveals: an empty
+  // process list is only renderable as "no banner" once it is known-empty
+  // rather than not-yet-loaded. Kept across unsubscribes (last-known state).
+  private stateKnownWorkspaces = new Set<string>();
 
   private subscriptions = new Map<
     string,
@@ -109,6 +117,34 @@ export class BackgroundBashStore {
       this.untrackSubscription(workspaceId);
     };
   };
+
+  /**
+   * Subscribe to the "state known" signal. Like the data subscriptions, this
+   * ref-counts the live backend subscription — so the chat view's readiness
+   * barrier both observes AND drives the initial snapshot fetch, keeping the
+   * per-workspace subscription warm for the whole chat pane lifetime even
+   * while the banner itself renders nothing.
+   */
+  subscribeStateKnown = (workspaceId: string, listener: () => void): (() => void) => {
+    this.trackSubscription(workspaceId);
+    const unsubscribe = this.stateKnownStore.subscribeKey(workspaceId, listener);
+    return () => {
+      unsubscribe();
+      this.untrackSubscription(workspaceId);
+    };
+  };
+
+  isStateKnown(workspaceId: string): boolean {
+    return this.stateKnownStore.get(workspaceId, () => this.stateKnownWorkspaces.has(workspaceId));
+  }
+
+  private markStateKnown(workspaceId: string): void {
+    if (this.stateKnownWorkspaces.has(workspaceId)) {
+      return;
+    }
+    this.stateKnownWorkspaces.add(workspaceId);
+    this.stateKnownStore.bump(workspaceId);
+  }
 
   getProcesses(workspaceId: string): BackgroundProcessInfo[] {
     return this.processesStore.get(
@@ -271,12 +307,12 @@ export class BackgroundBashStore {
 
     this.clearRetry(workspaceId);
 
-    this.processesCache.delete(workspaceId);
-    this.foregroundIdsCache.delete(workspaceId);
-    this.terminatingIdsCache.delete(workspaceId);
-    this.processesStore.delete(workspaceId);
-    this.foregroundIdsStore.delete(workspaceId);
-    this.terminatingIdsStore.delete(workspaceId);
+    // Intentionally KEEP the per-workspace caches and the state-known flag.
+    // Revisiting a workspace then renders the last-known state synchronously
+    // at first paint (the fresh subscription reconciles within a tick) instead
+    // of re-learning "are there background bashes?" after paint — which made
+    // the banner pop in and shift the transcript on every workspace switch.
+    // The retained data is a handful of small lists per visited workspace.
   }
 
   private clearRetry(workspaceId: string): void {
@@ -372,10 +408,18 @@ export class BackgroundBashStore {
               this.terminatingIdsStore.bump(workspaceId);
             }
           }
+
+          // Mark known AFTER applying the snapshot so observers that wake on
+          // the known-flip read fully-populated caches.
+          this.markStateKnown(workspaceId);
         }
       } catch (err) {
         if (!signal.aborted && !isAbortError(err)) {
           console.error("Failed to subscribe to background bash state:", err);
+          // Self-heal: a broken subscription must not hold the chat view's
+          // first-paint barrier — treat the state as known (empty) and let
+          // the retry deliver real data later.
+          this.markStateKnown(workspaceId);
         }
       } finally {
         void subscription.iterator?.return?.();
@@ -452,5 +496,19 @@ export function useBackgroundBashTerminatingIds(workspaceId: string | undefined)
     (listener) =>
       workspaceId ? store.subscribeTerminatingIds(workspaceId, listener) : () => undefined,
     () => (workspaceId ? store.getTerminatingIds(workspaceId) : EMPTY_SET)
+  );
+}
+
+/**
+ * True once this workspace's background-bash state is known (first snapshot
+ * received this app session, or self-healed after a subscription failure).
+ * Subscribing also keeps the live backend subscription alive — see
+ * subscribeStateKnown.
+ */
+export function useBackgroundBashStateKnown(workspaceId: string): boolean {
+  const store = getStoreInstance();
+  return useSyncExternalStore(
+    (listener) => store.subscribeStateKnown(workspaceId, listener),
+    () => store.isStateKnown(workspaceId)
   );
 }

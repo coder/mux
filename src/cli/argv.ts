@@ -116,8 +116,8 @@ export function isCommandAvailable(
   command: string,
   env: CliEnvironment = detectCliEnvironment()
 ): boolean {
-  if (command === "run") {
-    // run.ts is only available in bun/node, not bundled in Electron (dev or packaged)
+  if (command === "run" || command === "workflow" || command === "trust") {
+    // Headless CLI commands are only available in bun/node, not bundled in Electron.
     return !env.isElectron;
   }
   if (command === "desktop") {

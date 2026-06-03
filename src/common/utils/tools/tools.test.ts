@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await */
 import { describe, expect, mock, test } from "bun:test";
 import { z } from "zod";
 
@@ -89,6 +90,105 @@ describe("getToolsForModel", () => {
     expect(toolsWithReport.agent_report).toBeDefined();
   });
 
+  test("withholds review_pane_* tools from sub-agents (enableAgentReport=true)", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    // Top-level workspace (not a sub-agent): Review pane tools available.
+    const topLevelTools = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        enableAgentReport: false,
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(topLevelTools.review_pane_update).toBeDefined();
+    expect(topLevelTools.review_pane_get).toBeDefined();
+
+    // Sub-agent (child task workspace): can't pin code to the parent Review pane.
+    const subAgentTools = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        enableAgentReport: true,
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(subAgentTools.review_pane_update).toBeUndefined();
+    expect(subAgentTools.review_pane_get).toBeUndefined();
+  });
+
+  test("only includes workflow tools when dynamic workflows service and experiment are enabled", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    const withoutExperiment = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        workflowService: {
+          listDefinitions: mock(async () => []),
+          readDefinition: mock(async () => ({
+            descriptor: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+            source: "export default function workflow() { return null; }",
+          })),
+          listActions: mock(async () => []),
+          startNamedWorkflow: mock(async () => ({
+            runId: "wfr_1",
+            status: "completed" as const,
+            result: null,
+          })),
+        },
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(withoutExperiment.workflow_list).toBeUndefined();
+    expect(withoutExperiment.workflow_read).toBeUndefined();
+    expect(withoutExperiment.workflow_action_list).toBeUndefined();
+    expect(withoutExperiment.workflow_run).toBeUndefined();
+
+    const withExperiment = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        experiments: { dynamicWorkflows: true },
+        workflowService: {
+          listDefinitions: mock(async () => []),
+          readDefinition: mock(async () => ({
+            descriptor: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+            source: "export default function workflow() { return null; }",
+          })),
+          listActions: mock(async () => []),
+          startNamedWorkflow: mock(async () => ({
+            runId: "wfr_1",
+            status: "completed" as const,
+            result: null,
+          })),
+        },
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(withExperiment.workflow_list).toBeDefined();
+    expect(withExperiment.workflow_read).toBeDefined();
+    expect(withExperiment.workflow_action_list).toBeDefined();
+    expect(withExperiment.workflow_run).toBeDefined();
+  });
+
   test("includes desktop tools when workspace capability is available", async () => {
     const runtime = new LocalRuntime(process.cwd());
     const initStateManager = createInitStateManager();
@@ -156,6 +256,67 @@ describe("getToolsForModel", () => {
     );
 
     expect(Object.keys(tools).filter((toolName) => toolName.startsWith("desktop_"))).toEqual([]);
+  });
+
+  test("adds native Google Search and URL Context only for Gemini 3 models", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    const gemini25Tools = await getToolsForModel(
+      "google:gemini-2.5-pro",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(gemini25Tools.google_search).toBeUndefined();
+    expect(gemini25Tools.url_context).toBeUndefined();
+
+    const gemini4Tools = await getToolsForModel(
+      "google:gemini-4-pro",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(gemini4Tools.google_search).toBeUndefined();
+    expect(gemini4Tools.url_context).toBeUndefined();
+
+    const gemini35Tools = await getToolsForModel(
+      "google:gemini-3.5-flash",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+      },
+      "ws-1",
+      initStateManager
+    );
+    const namespacedGemini35Tools = await getToolsForModel(
+      "google:models/gemini-3.5-flash",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(namespacedGemini35Tools.google_search).toBeDefined();
+    expect(namespacedGemini35Tools.url_context).toBeDefined();
+
+    expect(gemini35Tools.google_search).toBeDefined();
+    expect(gemini35Tools.url_context).toBeDefined();
   });
 
   test("returns tool keys in sorted order", async () => {

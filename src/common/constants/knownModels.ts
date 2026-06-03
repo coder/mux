@@ -27,6 +27,19 @@ interface KnownModel extends KnownModelDefinition {
 // Model definitions. Note we avoid listing legacy models here. These represent the focal models
 // of the community.
 const MODEL_DEFINITIONS = {
+  // Claude Fable 5 - Mythos-class model (a tier above Opus) released June 9, 2026.
+  // It is the generally-available variant of the Mythos 5 model, shipped with safeguards
+  // enabled (a small fraction of flagged requests fall back to Opus 4.8 server-side, which
+  // is transparent to API clients). API id `claude-fable-5`; $10/M input, $50/M output.
+  FABLE: {
+    provider: "anthropic",
+    providerModelId: "claude-fable-5",
+    aliases: ["fable"],
+    warm: true,
+    // Fable tokenizer not published upstream; reuse Opus 4.5 (Claude tokenization is
+    // unchanged across the 4.x / Mythos line) for approximate counting.
+    tokenizerOverride: "anthropic/claude-opus-4.5",
+  },
   OPUS: {
     provider: "anthropic",
     providerModelId: "claude-opus-4-8",

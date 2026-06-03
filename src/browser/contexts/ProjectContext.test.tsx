@@ -124,6 +124,19 @@ describe("ProjectContext", () => {
     expect(ctx().userProjects.has("/alpha")).toBe(false);
   });
 
+  test("exposes project list load failures without marking projects as loaded", async () => {
+    createMockAPI({
+      list: () => Promise.reject(new Error("projects unavailable")),
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(ctx().loaded).toBe(false);
+    expect(ctx().loadError).toContain("projects unavailable");
+    expect(ctx().userProjects.size).toBe(0);
+  });
+
   test("exposes intent-based project resolvers for user/system project lookups", async () => {
     const systemProjectPath = "/path/to/system-project";
     createMockAPI({

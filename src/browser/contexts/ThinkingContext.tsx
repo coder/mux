@@ -172,20 +172,24 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
     ]
   );
 
-  // Global keybind: cycle thinking level (Ctrl/Cmd+Shift+T).
-  // Implemented at the ThinkingProvider level so it works in both the workspace view
+  // Global keybinds for adjusting the thinking level.
+  // Implemented at the ThinkingProvider level so they work in both the workspace view
   // and the "New Workspace" creation screen (which doesn't mount AIView).
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!matchesKeybind(e, KEYBINDS.TOGGLE_THINKING)) {
+      const isIncrease = matchesKeybind(e, KEYBINDS.INCREASE_THINKING);
+      const isDecrease = matchesKeybind(e, KEYBINDS.DECREASE_THINKING);
+      // TOGGLE_THINKING is deprecated but still honored for muscle memory.
+      const isCycle = matchesKeybind(e, KEYBINDS.TOGGLE_THINKING);
+      if (!isIncrease && !isDecrease && !isCycle) {
         return;
       }
 
       e.preventDefault();
 
-      // Keep cycling aligned with setThinkingLevel so startup metadata uses the matching policy.
+      // Keep stepping aligned with setThinkingLevel so startup metadata uses the matching policy.
       const model = getModelForThinkingUpdate(scopeId, metadataSettings.model, defaultModel);
-      // Cycle only within levels at or above the model's minimum floor.
+      // Step only within levels at or above the model's minimum floor.
       const minimum = getMinimum(model);
       const allowed = getAvailableThinkingLevels(model, minimum);
       if (allowed.length <= 1) {
@@ -194,8 +198,17 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
 
       const effectiveThinkingLevel = enforceThinkingPolicy(model, thinkingLevel, minimum);
       const currentIndex = allowed.indexOf(effectiveThinkingLevel);
-      const nextIndex = (currentIndex + 1) % allowed.length;
-      setThinkingLevel(allowed[nextIndex]);
+
+      // Increase/decrease are directional: clamp at the ends instead of wrapping,
+      // since stepping past "max"/"off" and looping around is surprising. The
+      // legacy cycle keybind keeps its wrap-around behavior.
+      const nextIndex = isCycle
+        ? (currentIndex + 1) % allowed.length
+        : Math.min(allowed.length - 1, Math.max(0, currentIndex + (isIncrease ? 1 : -1)));
+
+      if (nextIndex !== currentIndex) {
+        setThinkingLevel(allowed[nextIndex]);
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);

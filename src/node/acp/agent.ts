@@ -26,22 +26,33 @@ import type {
   SetSessionConfigOptionResponse,
   Usage,
 } from "@agentclientprotocol/sdk";
+import { RequestError } from "@agentclientprotocol/sdk";
 import {
   DEFAULT_COMPACTION_WORD_TARGET,
   WORDS_TO_TOKENS_RATIO,
   buildCompactionPrompt,
 } from "@/common/constants/ui";
+import { execFileAsync } from "@/node/utils/disposableExec";
 import { RuntimeConfigSchema } from "@/common/orpc/schemas";
 import type { OnChatMode, SendMessageOptions, WorkspaceChatMessage } from "@/common/orpc/types";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { CompactionRequestData } from "@/common/types/message";
 import { buildAgentSkillMetadata } from "@/common/types/message";
 import { isWorktreeRuntime, type RuntimeConfig, type RuntimeMode } from "@/common/types/runtime";
+import type { ProjectConfig } from "@/common/types/project";
+import {
+  deriveProjectHierarchy,
+  isPathDescendant,
+  resolveWorkspaceCreationScope,
+} from "@/common/utils/subProjects";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { negotiateCapabilities, type NegotiatedCapabilities } from "./capabilities";
 import { AGENT_MODE_CONFIG_ID, buildConfigOptions, handleSetConfigOption } from "./configOptions";
 import { forkSessionFromWorkspace } from "./experimental/sessionFork";
-import { loadSessionFromWorkspace } from "./experimental/sessionResume";
+import {
+  canonicalizePathForWorkspaceMatch,
+  loadSessionFromWorkspace,
+} from "./experimental/sessionResume";
 import { convertToAcpUsage } from "./experimental/sessionUsage";
 import { resolveAgentAiSettings, type ResolvedAiSettings } from "./resolveAgentAiSettings";
 import type { ServerConnection } from "./serverConnection";
@@ -74,8 +85,8 @@ const ACP_DELEGATION_CANDIDATE_TOOLS = [
 ] as const;
 const DEFAULT_DISCONNECT_CLEANUP_MAX_WAIT_MS = 10_000;
 /**
- * ACP currently has no session/close RPC. Keep idle sessions bounded so long-lived
- * editor connections cannot leak subscriptions and per-session caches forever.
+ * Mux does not implement the session/close RPC yet. Keep idle sessions bounded so
+ * long-lived editor connections cannot leak subscriptions and per-session caches forever.
  */
 const DEFAULT_SESSION_IDLE_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_TRACKED_SESSIONS = 24;
@@ -95,6 +106,11 @@ interface SessionState {
   runtimeMode: RuntimeMode;
   agentId: string;
   aiSettings: ResolvedAiSettings;
+}
+
+interface AcpWorkspaceCreationScope {
+  projectPath: string;
+  subProjectPath?: string;
 }
 
 interface NewSessionWorkspaceLifecycle {
@@ -297,24 +313,30 @@ export class MuxAgent implements Agent {
     this.inFlightNewSessionCount += 1;
     try {
       const meta = parseMuxMeta(params._meta);
-      const projectPath = meta.projectPath ?? params.cwd.trim();
-      assert(projectPath.length > 0, "newSession: projectPath/cwd must be non-empty");
+      const requestedProjectPath = await resolveAcpNewSessionProjectPath(
+        params.cwd,
+        meta.projectPath
+      );
+      const workspaceScope = await this.ensureAcpProjectTrusted(requestedProjectPath);
 
       // When the ACP client doesn't supply a trunk branch (typical — editors only
       // send `cwd`, not mux-specific `_meta`), derive it from the project's git
       // repo.  Worktree/SSH runtimes require a trunk branch for workspace creation.
       let trunkBranch = meta.trunkBranch;
       if (trunkBranch == null || trunkBranch.trim().length === 0) {
-        const branchInfo = await this.server.client.projects.listBranches({ projectPath });
+        const branchInfo = await this.server.client.projects.listBranches({
+          projectPath: workspaceScope.projectPath,
+        });
         trunkBranch = branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
       }
 
       const createResult = await this.server.client.workspace.create({
-        projectPath,
+        projectPath: workspaceScope.projectPath,
         branchName: meta.branchName ?? generateDefaultBranchName(),
         trunkBranch,
         title: meta.title,
         runtimeConfig: meta.runtimeConfig,
+        subProjectPath: workspaceScope.subProjectPath,
       });
 
       if (!createResult.success) {
@@ -404,9 +426,9 @@ export class MuxAgent implements Agent {
     return resumed.response;
   }
 
-  async unstable_listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
-    this.assertInitialized("unstable_listSessions");
-    assert(params != null, "unstable_listSessions: params are required");
+  async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
+    this.assertInitialized("listSessions");
+    assert(params != null, "listSessions: params are required");
 
     const normalizedCwd = normalizeOptionalPath(params.cwd);
     const offset = parseSessionListCursor(params.cursor);
@@ -433,8 +455,9 @@ export class MuxAgent implements Agent {
     return {
       sessions: page.map((workspace) => ({
         sessionId: workspace.id,
-        // Surface projectPath as cwd so session/list filtering matches editor cwd.
-        cwd: workspace.projectPath,
+        // Surface subProjectPath when present so ACP clients reconnecting from a
+        // package/sub-project cwd can list and resume the session they created.
+        cwd: workspace.subProjectPath ?? workspace.projectPath,
         title: workspace.title ?? workspace.name,
         updatedAt: toSessionUpdatedAt(workspace, workspaceActivity),
       })),
@@ -442,14 +465,14 @@ export class MuxAgent implements Agent {
     };
   }
 
-  async unstable_resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
-    this.assertInitialized("unstable_resumeSession");
+  async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
+    this.assertInitialized("resumeSession");
 
     const sessionId = params.sessionId.trim();
-    assert(sessionId.length > 0, "unstable_resumeSession: sessionId must be non-empty");
+    assert(sessionId.length > 0, "resumeSession: sessionId must be non-empty");
 
     const cwd = params.cwd.trim();
-    assert(cwd.length > 0, "unstable_resumeSession: cwd must be non-empty");
+    assert(cwd.length > 0, "resumeSession: cwd must be non-empty");
 
     const existingState = this.sessionStateById.get(sessionId);
     const resumed = await loadSessionFromWorkspace(
@@ -492,6 +515,17 @@ export class MuxAgent implements Agent {
     this.assertInitialized("unstable_forkSession");
 
     const meta = parseMuxMeta(params._meta);
+    const sourceWorkspaceId = this.sessionManager.getWorkspaceId(params.sessionId);
+    const sourceWorkspace = await this.server.client.workspace.getInfo({
+      workspaceId: sourceWorkspaceId,
+    });
+    if (!sourceWorkspace) {
+      throw new Error(
+        `unstable_forkSession: source workspace '${sourceWorkspaceId}' was not found`
+      );
+    }
+    await this.ensureAcpProjectTrusted(sourceWorkspace.projectPath);
+
     // Pass the source session's active agent so forks inherit mode switches
     const sourceSessionState = this.sessionStateById.get(params.sessionId);
     const forked = await forkSessionFromWorkspace(
@@ -595,6 +629,17 @@ export class MuxAgent implements Agent {
     const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
     const trimmedConfigId = params.configId.trim();
     assert(trimmedConfigId.length > 0, "setSessionConfigOption: configId must be non-empty");
+
+    // ACP supports boolean config options since schema 0.13, but mux only
+    // exposes select options; reject boolean values until one exists. Surface
+    // a spec-correct InvalidParams (-32602) error — matching what pre-0.25 SDK
+    // schemas returned for boolean values — instead of a generic internal error.
+    if (typeof params.value !== "string") {
+      throw RequestError.invalidParams(
+        { configId: trimmedConfigId },
+        `config option '${trimmedConfigId}' expects a select value`
+      );
+    }
 
     const activeAgentId = this.sessionStateById.get(sessionId)?.agentId;
     const configOptions = await handleSetConfigOption(
@@ -841,6 +886,15 @@ export class MuxAgent implements Agent {
       }
 
       case "fork": {
+        const workspaceInfo = await this.server.client.workspace.getInfo({ workspaceId });
+        if (workspaceInfo == null) {
+          return this.respondToCommand(
+            sessionId,
+            "Failed to fork workspace: current workspace metadata is unavailable."
+          );
+        }
+        await this.ensureAcpProjectTrusted(workspaceInfo.projectPath);
+
         const forkResult = await this.server.client.workspace.fork({
           sourceWorkspaceId: workspaceId,
           pendingAutoTitle:
@@ -884,10 +938,14 @@ export class MuxAgent implements Agent {
           );
         }
 
+        const workspaceScope = await this.ensureAcpProjectTrusted(
+          workspaceInfo.subProjectPath ?? workspaceInfo.projectPath
+        );
+
         // Resolve trunk from project defaults — /new no longer accepts overrides
         // (it now mirrors /fork's seamless flow).
         const branchInfo = await this.server.client.projects.listBranches({
-          projectPath: workspaceInfo.projectPath,
+          projectPath: workspaceScope.projectPath,
         });
         const trunkBranch = branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
 
@@ -895,12 +953,13 @@ export class MuxAgent implements Agent {
           parsedCommand.startMessage != null && parsedCommand.startMessage.trim().length > 0;
 
         const createResult = await this.server.client.workspace.create({
-          projectPath: workspaceInfo.projectPath,
+          projectPath: workspaceScope.projectPath,
           // branchName intentionally omitted — backend auto-generates (like /fork).
           trunkBranch,
           // Mirror /fork: when a start message accompanies /new, defer the title
           // selection until the first message can drive LLM-based generation.
           pendingAutoTitle: hasStartMessage,
+          subProjectPath: workspaceScope.subProjectPath,
         });
 
         if (!createResult.success) {
@@ -2086,9 +2145,180 @@ export class MuxAgent implements Agent {
     await this.disconnectCleanupPromise;
   }
 
+  private async ensureAcpProjectTrusted(projectPath: string): Promise<AcpWorkspaceCreationScope> {
+    const workspaceScope = await this.resolveAcpWorkspaceCreationScope(projectPath);
+    const trustPaths =
+      workspaceScope.subProjectPath != null
+        ? [workspaceScope.subProjectPath, workspaceScope.projectPath]
+        : [workspaceScope.projectPath];
+
+    // Launching mux as an ACP adapter from an editor for a concrete cwd is an
+    // explicit trust signal, matching other CLI-style ACP adapters that work in
+    // the selected directory without a separate desktop approval step.  For
+    // sub-projects, trust both the requested child entry (so it exists) and the
+    // owning parent entry that workspace creation/fork gates on.
+    for (const trustedProjectPath of trustPaths) {
+      await this.server.client.projects.setTrust({
+        projectPath: trustedProjectPath,
+        trusted: true,
+      });
+    }
+
+    return workspaceScope;
+  }
+
+  private async resolveAcpWorkspaceCreationScope(
+    projectPath: string
+  ): Promise<AcpWorkspaceCreationScope> {
+    const normalizedProjectPath = normalizePathForWorkspaceMatch(projectPath);
+    const projectEntries = await this.server.client.projects.list();
+    const projects = deriveProjectHierarchy(new Map<string, ProjectConfig>(projectEntries));
+    const existingProjectPath = findProjectPathByNormalizedPath(normalizedProjectPath, projects);
+
+    if (existingProjectPath != null) {
+      const scope = resolveWorkspaceCreationScope(existingProjectPath, projects);
+      assert(
+        scope.projectPath.trim().length > 0,
+        "resolveAcpWorkspaceCreationScope: owning project path must be non-empty"
+      );
+
+      return {
+        projectPath: scope.projectPath,
+        subProjectPath: scope.subProjectPath ?? undefined,
+      };
+    }
+
+    const parentProjectPath = findContainingTopLevelProjectPath(normalizedProjectPath, projects);
+    if (
+      parentProjectPath != null &&
+      (await pathsShareGitTopLevel(parentProjectPath, normalizedProjectPath))
+    ) {
+      return await this.registerAcpSubProject(parentProjectPath, normalizedProjectPath);
+    }
+
+    const gitTopLevel = await readGitTopLevelForAcpScope(normalizedProjectPath);
+    if (gitTopLevel != null && gitTopLevel !== normalizedProjectPath) {
+      const existingGitRootProjectPath = findProjectPathByNormalizedPath(gitTopLevel, projects);
+      const owningProjectPath =
+        existingGitRootProjectPath ?? (await this.registerAcpTopLevelProject(gitTopLevel));
+      return await this.registerAcpSubProject(owningProjectPath, normalizedProjectPath);
+    }
+
+    return { projectPath: normalizedProjectPath };
+  }
+
+  private async registerAcpTopLevelProject(projectPath: string): Promise<string> {
+    const createProjectResult = await this.server.client.projects.create({ projectPath });
+    if (!createProjectResult.success) {
+      throw new Error(
+        `resolveAcpWorkspaceCreationScope: failed to register project '${projectPath}': ${createProjectResult.error}`
+      );
+    }
+
+    return createProjectResult.data.normalizedPath;
+  }
+
+  private async registerAcpSubProject(
+    parentProjectPath: string,
+    subProjectPath: string
+  ): Promise<AcpWorkspaceCreationScope> {
+    const createProjectResult = await this.server.client.projects.create({
+      projectPath: subProjectPath,
+    });
+    if (!createProjectResult.success) {
+      throw new Error(
+        `resolveAcpWorkspaceCreationScope: failed to register sub-project '${subProjectPath}': ${createProjectResult.error}`
+      );
+    }
+
+    return {
+      projectPath: parentProjectPath,
+      subProjectPath: createProjectResult.data.normalizedPath,
+    };
+  }
+
   private assertInitialized(methodName: string): void {
     assert(this.initialized, `${methodName}: initialize must be called first`);
   }
+}
+
+async function pathsShareGitTopLevel(leftPath: string, rightPath: string): Promise<boolean> {
+  const [leftGitRoot, rightGitRoot] = await Promise.all([
+    readGitTopLevelForAcpScope(leftPath),
+    readGitTopLevelForAcpScope(rightPath),
+  ]);
+
+  return leftGitRoot != null && leftGitRoot === rightGitRoot;
+}
+
+async function readGitTopLevelForAcpScope(projectPath: string): Promise<string | null> {
+  try {
+    using proc = execFileAsync("git", ["-C", projectPath, "rev-parse", "--show-toplevel"]);
+    const { stdout } = await proc.result;
+    const trimmed = stdout.trim();
+    return trimmed.length > 0 ? normalizePathForWorkspaceMatch(trimmed) : null;
+  } catch {
+    return null;
+  }
+}
+
+function findProjectPathByNormalizedPath(
+  normalizedProjectPath: string,
+  projects: ReadonlyMap<string, ProjectConfig>
+): string | undefined {
+  for (const projectPath of projects.keys()) {
+    if (normalizePathForWorkspaceMatch(projectPath) === normalizedProjectPath) {
+      return projectPath;
+    }
+  }
+
+  return undefined;
+}
+
+function findContainingTopLevelProjectPath(
+  projectPath: string,
+  projects: ReadonlyMap<string, ProjectConfig>
+): string | undefined {
+  let closestParentPath: string | undefined;
+
+  for (const [candidatePath, candidateConfig] of projects) {
+    if (candidateConfig.parentProjectPath != null) {
+      continue;
+    }
+
+    if (!isPathDescendant(candidatePath, projectPath)) {
+      continue;
+    }
+
+    if (closestParentPath == null || candidatePath.length > closestParentPath.length) {
+      closestParentPath = candidatePath;
+    }
+  }
+
+  return closestParentPath;
+}
+
+async function resolveAcpNewSessionProjectPath(
+  cwd: string,
+  metaProjectPath: string | undefined
+): Promise<string> {
+  const cwdProjectPath = cwd.trim();
+  assert(cwdProjectPath.length > 0, "newSession: cwd must be non-empty");
+
+  if (metaProjectPath == null) {
+    return cwdProjectPath;
+  }
+
+  const [canonicalCwd, canonicalMetaProjectPath] = await Promise.all([
+    canonicalizePathForWorkspaceMatch(cwdProjectPath),
+    canonicalizePathForWorkspaceMatch(metaProjectPath),
+  ]);
+  assert(
+    canonicalCwd === canonicalMetaProjectPath,
+    "newSession: _meta.projectPath must match cwd before ACP can auto-trust the project"
+  );
+
+  return metaProjectPath;
 }
 
 function normalizeOptionalPath(value: string | null | undefined): string | undefined {
@@ -2134,10 +2364,10 @@ function parseSessionListCursor(cursor: string | null | undefined): number {
     return 0;
   }
 
-  assert(/^\d+$/.test(trimmed), `unstable_listSessions: invalid cursor '${cursor}'`);
+  assert(/^\d+$/.test(trimmed), `listSessions: invalid cursor '${cursor}'`);
 
   const parsed = Number(trimmed);
-  assert(Number.isSafeInteger(parsed), `unstable_listSessions: invalid cursor '${cursor}'`);
+  assert(Number.isSafeInteger(parsed), `listSessions: invalid cursor '${cursor}'`);
   return parsed;
 }
 
@@ -2158,11 +2388,19 @@ function dedupeWorkspacesById(workspaces: WorkspaceInfo[]): WorkspaceInfo[] {
 }
 
 function workspaceMatchesCwd(workspace: WorkspaceInfo, cwd: string): boolean {
-  // Match both projectPath and concrete workspace path so clients can filter by
-  // either the original project root or the runtime-specific working directory.
+  // Match project, sub-project, and concrete workspace paths so clients can
+  // filter by either their editor cwd or the runtime-specific working directory.
   const normalizedProjectPath = normalizePathForWorkspaceMatch(workspace.projectPath);
+  const normalizedSubProjectPath =
+    workspace.subProjectPath != null
+      ? normalizePathForWorkspaceMatch(workspace.subProjectPath)
+      : null;
   const normalizedWorkspacePath = normalizePathForWorkspaceMatch(workspace.namedWorkspacePath);
-  return normalizedProjectPath === cwd || normalizedWorkspacePath === cwd;
+  return (
+    normalizedProjectPath === cwd ||
+    normalizedSubProjectPath === cwd ||
+    normalizedWorkspacePath === cwd
+  );
 }
 
 function compareSessionRecency(

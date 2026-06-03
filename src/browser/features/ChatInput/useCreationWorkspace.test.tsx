@@ -246,6 +246,10 @@ type WorkspaceGetGoalArgs = Parameters<APIClient["workspace"]["getGoal"]>[0];
 type WorkspaceGetGoalResult = Awaited<ReturnType<APIClient["workspace"]["getGoal"]>>;
 type WorkspaceSetGoalArgs = Parameters<APIClient["workspace"]["setGoal"]>[0];
 type WorkspaceSetGoalResult = Awaited<ReturnType<APIClient["workspace"]["setGoal"]>>;
+type WorkflowStartArgs = Parameters<APIClient["workflows"]["start"]>[0];
+type WorkflowStartResult = Awaited<ReturnType<APIClient["workflows"]["start"]>>;
+type WorkflowGetRunArgs = Parameters<APIClient["workflows"]["getRun"]>[0];
+type WorkflowGetRunResult = Awaited<ReturnType<APIClient["workflows"]["getRun"]>>;
 type WorkspaceCreateResult = Awaited<ReturnType<APIClient["workspace"]["create"]>>;
 type NameGenerationArgs = Parameters<APIClient["nameGeneration"]["generate"]>[0];
 type NameGenerationResult = Awaited<ReturnType<APIClient["nameGeneration"]["generate"]>>;
@@ -257,6 +261,7 @@ type MockOrpcWorkspaceClient = Pick<
   APIClient["workspace"],
   "sendMessage" | "create" | "updateAgentAISettings" | "getGoal" | "setGoal"
 >;
+type MockOrpcWorkflowsClient = Pick<APIClient["workflows"], "start" | "getRun">;
 type MockOrpcNameGenerationClient = Pick<APIClient["nameGeneration"], "generate">;
 type WindowWithApi = Window & typeof globalThis;
 type WindowApi = WindowWithApi["api"];
@@ -276,6 +281,7 @@ const noopUnsubscribe = () => () => undefined;
 interface MockOrpcClient {
   projects: MockOrpcProjectsClient;
   workspace: MockOrpcWorkspaceClient;
+  workflows: MockOrpcWorkflowsClient;
   nameGeneration: MockOrpcNameGenerationClient;
 }
 interface SetupWindowOptions {
@@ -295,6 +301,12 @@ interface SetupWindowOptions {
   setGoal?: ReturnType<
     typeof mock<(args: WorkspaceSetGoalArgs) => Promise<WorkspaceSetGoalResult>>
   >;
+  workflowStart?: ReturnType<
+    typeof mock<(args: WorkflowStartArgs) => Promise<WorkflowStartResult>>
+  >;
+  workflowGetRun?: ReturnType<
+    typeof mock<(args: WorkflowGetRunArgs) => Promise<WorkflowGetRunResult>>
+  >;
   create?: ReturnType<typeof mock<(args: WorkspaceCreateArgs) => Promise<WorkspaceCreateResult>>>;
   nameGeneration?: ReturnType<
     typeof mock<(args: NameGenerationArgs) => Promise<NameGenerationResult>>
@@ -309,6 +321,8 @@ const setupWindow = ({
   updateAgentAISettings,
   getGoal,
   setGoal,
+  workflowStart,
+  workflowGetRun,
   nameGeneration,
 }: SetupWindowOptions = {}) => {
   // Sync the useProjectContext mock with the default trusted config.
@@ -368,6 +382,22 @@ const setupWindow = ({
       } as WorkspaceSetGoalResult);
     });
 
+  const workflowStartMock =
+    workflowStart ??
+    mock<(args: WorkflowStartArgs) => Promise<WorkflowStartResult>>(() => {
+      return Promise.resolve({
+        runId: "wfr_test",
+        status: "running",
+        result: null,
+      } as WorkflowStartResult);
+    });
+
+  const workflowGetRunMock =
+    workflowGetRun ??
+    mock<(args: WorkflowGetRunArgs) => Promise<WorkflowGetRunResult>>(() => {
+      return Promise.resolve(null as WorkflowGetRunResult);
+    });
+
   const createMock =
     create ??
     mock<(args: WorkspaceCreateArgs) => Promise<WorkspaceCreateResult>>(() => {
@@ -421,6 +451,10 @@ const setupWindow = ({
         updateAgentAISettingsMock(input),
       getGoal: (input: WorkspaceGetGoalArgs) => getGoalMock(input),
       setGoal: (input: WorkspaceSetGoalArgs) => setGoalMock(input),
+    },
+    workflows: {
+      start: (input: WorkflowStartArgs) => workflowStartMock(input),
+      getRun: (input: WorkflowGetRunArgs) => workflowGetRunMock(input),
     },
     nameGeneration: {
       generate: (input: NameGenerationArgs) => nameGenerationMock(input),
@@ -531,6 +565,7 @@ const setupWindow = ({
       getGoal: getGoalMock,
       setGoal: setGoalMock,
     },
+    workflowsApi: { start: workflowStartMock, getRun: workflowGetRunMock },
     nameGenerationApi: { generate: nameGenerationMock },
   };
 };
@@ -804,6 +839,156 @@ describe("useCreationWorkspace", () => {
       pendingStreamModel: "anthropic:claude-opus-4-8",
       markPendingInitialSend: false,
     });
+  });
+
+  test("handleSend creates workspace and sends initial workflow result to the agent", async () => {
+    const workflowResult = {
+      reportMarkdown: "# Workflow result\n\nCreation workflow complete.",
+      structuredOutput: { confidence: "high" },
+    };
+    const workflowStartMock = mock(
+      (_args: WorkflowStartArgs): Promise<WorkflowStartResult> =>
+        Promise.resolve({
+          runId: "wfr_creation",
+          status: "completed",
+          result: workflowResult,
+        })
+    );
+    const workflowGetRunMock = mock(
+      (_args: WorkflowGetRunArgs): Promise<WorkflowGetRunResult> =>
+        Promise.resolve({
+          id: "wfr_creation",
+          workspaceId: TEST_WORKSPACE_ID,
+          definition: {
+            name: "deep-research",
+            description: "Deep research",
+            scope: "built-in",
+            executable: true,
+          },
+          definitionSource: "export default function workflow() { return null; }",
+          definitionHash: "sha256:test",
+          args: { input: "mux workflows" },
+          status: "completed",
+          createdAt: "2026-05-29T00:00:00.000Z",
+          updatedAt: "2026-05-29T00:00:01.000Z",
+          events: [
+            {
+              sequence: 1,
+              type: "result",
+              at: "2026-05-29T00:00:01.000Z",
+              result: workflowResult,
+            },
+          ],
+          steps: [],
+        } as WorkflowGetRunResult)
+    );
+    const sendMessageMock = mock(
+      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
+        Promise.resolve({ success: true, data: {} } as WorkspaceSendMessageResult)
+    );
+    const { workspaceApi, workflowsApi } = setupWindow({
+      workflowStart: workflowStartMock,
+      workflowGetRun: workflowGetRunMock,
+      sendMessage: sendMessageMock,
+    });
+
+    const onWorkspaceCreated = mock((metadata: FrontendWorkspaceMetadata) => metadata);
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      dynamicWorkflowsEnabled: true,
+      onWorkspaceCreated,
+      message: "/deep-research mux workflows",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual([FALLBACK_BRANCH]));
+
+    let handleSendResult: CreationSendResult | undefined;
+    await act(async () => {
+      handleSendResult = await getHook().handleSend(
+        "/deep-research mux workflows",
+        undefined,
+        undefined,
+        {
+          type: "workflow-run",
+          name: "deep-research",
+          argsText: "mux workflows",
+        }
+      );
+    });
+
+    expect(handleSendResult).toEqual({ success: true });
+    expect(workspaceApi.create.mock.calls.length).toBe(1);
+    expect(workspaceApi.sendMessage.mock.calls.length).toBe(1);
+    const workflowStartInput = workflowsApi.start.mock.calls[0]?.[0];
+    expect(workflowStartInput).toMatchObject({
+      workspaceId: TEST_WORKSPACE_ID,
+      name: "deep-research",
+      runInBackground: true,
+      rawCommand: "/deep-research mux workflows",
+      args: { input: "mux workflows" },
+    });
+    expect(workflowStartInput?.continuationOptions?.agentId).toBe("exec");
+    expect(workflowsApi.getRun).toHaveBeenCalledWith({
+      workspaceId: TEST_WORKSPACE_ID,
+      runId: "wfr_creation",
+    });
+    const sendInput = workspaceApi.sendMessage.mock.calls[0]?.[0];
+    expect(sendInput?.message).toContain("/deep-research mux workflows");
+    expect(sendInput?.message).toContain("<mux_workflow_result>");
+    expect(sendInput?.message).toContain("Creation workflow complete");
+    const muxMetadata: unknown = sendInput?.options.muxMetadata;
+    expect(
+      typeof muxMetadata === "object" && muxMetadata !== null && "rawCommand" in muxMetadata
+        ? muxMetadata.rawCommand
+        : undefined
+    ).toBe("/deep-research mux workflows");
+  });
+
+  test("handleSend uses a deterministic workspace name when AI name generation fails", async () => {
+    const nameGenerationMock = mock(
+      (_args: NameGenerationArgs): Promise<NameGenerationResult> =>
+        Promise.resolve({
+          success: false,
+          error: { type: "permission_denied", provider: "anthropic", raw: "Forbidden" },
+        } as NameGenerationResult)
+    );
+    const createMock = mock(
+      (_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> =>
+        Promise.resolve({
+          success: true,
+          metadata: TEST_METADATA,
+        } as WorkspaceCreateResult)
+    );
+    const sendMessageMock = mock(
+      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
+        Promise.resolve({ success: true, data: {} } as WorkspaceSendMessageResult)
+    );
+    const { workspaceApi, nameGenerationApi } = setupWindow({
+      create: createMock,
+      sendMessage: sendMessageMock,
+      nameGeneration: nameGenerationMock,
+    });
+    const onWorkspaceCreated = mock((metadata: FrontendWorkspaceMetadata) => metadata);
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated,
+      message: "/security-scan",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual([FALLBACK_BRANCH]));
+    await waitFor(() => expect(nameGenerationApi.generate.mock.calls.length).toBe(1));
+
+    let handleSendResult: CreationSendResult | undefined;
+    await act(async () => {
+      handleSendResult = await getHook().handleSend("/security-scan");
+    });
+
+    expect(handleSendResult).toEqual({ success: true });
+    expect(workspaceApi.create.mock.calls.length).toBe(1);
+    const createRequest = workspaceApi.create.mock.calls[0]?.[0];
+    expect(createRequest?.branchName).toBe("security-scan");
+    expect(createRequest?.title).toBe("security-scan");
+    expect(workspaceApi.sendMessage.mock.calls.length).toBe(1);
   });
 
   test("handleSend shows trust dialog for untrusted projects", async () => {
@@ -1372,6 +1557,7 @@ interface HookOptions {
       markPendingInitialSend?: boolean;
     }
   ) => void;
+  dynamicWorkflowsEnabled?: boolean;
   message?: string;
   draftId?: string | null;
 }

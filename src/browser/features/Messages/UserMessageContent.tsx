@@ -1,6 +1,10 @@
 import React from "react";
 import { FileText } from "lucide-react";
-import type { InlineSkillSnapshotMap, ReviewNoteDataForDisplay } from "@/common/types/message";
+import type {
+  InlineSkillSnapshotMap,
+  ReviewNoteDataForDisplay,
+  WorkflowDefinitionPreviewForDisplay,
+} from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
 import { ReviewBlockFromData } from "../Shared/ReviewBlock";
 import {
@@ -11,8 +15,51 @@ import {
 } from "@/browser/components/HoverCard/HoverCard";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { HoverClickPopover } from "@/browser/components/HoverClickPopover/HoverClickPopover";
 import { AgentSkillBadge } from "./AgentSkillBadge";
 import { buildAgentSkillSnapshotMarkdown } from "./agentSkillSnapshotMarkdown";
+
+export function WorkflowDefinitionPreviewCard(props: {
+  preview: WorkflowDefinitionPreviewForDisplay;
+}) {
+  const descriptor = props.preview.descriptor;
+  const source = props.preview.source?.trimEnd();
+
+  return (
+    <div data-component="WorkflowDefinitionPreviewCard" className="space-y-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-foreground font-mono text-[13px] font-semibold">
+          {descriptor.name}
+        </span>
+        <span className="border-border-light text-plan-mode shrink-0 rounded border px-1.5 py-0.5 text-[10px] tracking-wide uppercase">
+          {descriptor.scope} workflow
+        </span>
+        {!descriptor.executable && (
+          <span className="border-warning/30 text-warning shrink-0 rounded border px-1.5 py-0.5 text-[10px] tracking-wide uppercase">
+            blocked
+          </span>
+        )}
+      </div>
+      <div className="text-muted text-[12px] leading-relaxed">{descriptor.description}</div>
+      {descriptor.sourcePath && (
+        <div className="text-muted truncate font-mono text-[10px]">{descriptor.sourcePath}</div>
+      )}
+      {descriptor.blockedReason && (
+        <div className="text-warning text-[11px]">{descriptor.blockedReason}</div>
+      )}
+      {source && (
+        <pre
+          aria-label={`Source for workflow ${descriptor.name}`}
+          className="border-border bg-code-bg focus-visible:ring-accent max-h-[260px] overflow-auto rounded border p-2 text-[11px] leading-relaxed focus-visible:ring-1 focus-visible:outline-none"
+          role="region"
+          tabIndex={0}
+        >
+          <code>{source}</code>
+        </pre>
+      )}
+    </div>
+  );
+}
 
 interface UserMessageContentProps {
   content: string;
@@ -22,6 +69,7 @@ interface UserMessageContentProps {
    * When present, the command prefix badge shows a hover preview.
    */
   agentSkillSnapshot?: { frontmatterYaml?: string; body?: string };
+  workflowDefinitionPreview?: WorkflowDefinitionPreviewForDisplay;
   inlineSkillSnapshots?: InlineSkillSnapshotMap;
   reviews?: ReviewNoteDataForDisplay[];
   fileParts?: FilePart[];
@@ -140,11 +188,18 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
     const hasNewlineAfterPrefix = charAfterPrefix === "\n";
 
     const snapshotMarkdown = buildAgentSkillSnapshotMarkdown(props.agentSkillSnapshot);
+    const workflowDefinitionPreview = props.workflowDefinitionPreview;
 
     const badge = snapshotMarkdown ? (
       <HoverCard openDelay={150}>
         <HoverCardTrigger asChild>
-          <AgentSkillBadge className="cursor-help">{shouldHighlightPrefix}</AgentSkillBadge>
+          <AgentSkillBadge
+            as="button"
+            aria-label={`Show skill preview for ${shouldHighlightPrefix}`}
+            className="cursor-help"
+          >
+            {shouldHighlightPrefix}
+          </AgentSkillBadge>
         </HoverCardTrigger>
         {/* Keep skill preview above chat chrome and fully opaque while hovering. */}
         <HoverCardPortal>
@@ -157,6 +212,23 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
           </HoverCardContent>
         </HoverCardPortal>
       </HoverCard>
+    ) : workflowDefinitionPreview ? (
+      <HoverClickPopover
+        align="start"
+        content={<WorkflowDefinitionPreviewCard preview={workflowDefinitionPreview} />}
+        contentClassName="border-border-medium bg-modal-bg z-[1600] max-h-[360px] w-[560px] max-w-[80vw] overflow-auto border-2 p-3"
+        interactiveContent
+        side="top"
+      >
+        {/* Workflow previews use the run record snapshot so old invocations show what actually ran. */}
+        <AgentSkillBadge
+          as="button"
+          aria-label={`Show workflow definition preview for ${workflowDefinitionPreview.descriptor.name}`}
+          className="cursor-help"
+        >
+          {shouldHighlightPrefix}
+        </AgentSkillBadge>
+      </HoverClickPopover>
     ) : (
       <AgentSkillBadge>{shouldHighlightPrefix}</AgentSkillBadge>
     );

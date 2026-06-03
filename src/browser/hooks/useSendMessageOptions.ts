@@ -61,6 +61,8 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   const execSubagentHardRestart = useExperimentOverrideValue(
     EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART
   );
+  const dynamicWorkflows = useExperimentOverrideValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
+  const subagentFileReports = useExperimentOverrideValue(EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS);
 
   // Prefer metadata over the global default until workspace localStorage seeding catches up.
   const metadataSettings = getWorkspaceAiSettingsFromMetadata(
@@ -82,6 +84,8 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
       programmaticToolCallingExclusive,
       advisorTool,
       execSubagentHardRestart,
+      dynamicWorkflows,
+      subagentFileReports,
     },
     disableWorkspaceAgents,
   });

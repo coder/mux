@@ -2,6 +2,7 @@ import { RUNTIME_MODE } from "@/common/types/runtime";
 import {
   buildTaskToolDescription,
   getAvailableTools,
+  supportsGoogleNativeToolsWithFunctionTools,
   TaskToolArgsSchema,
   TOOL_DEFINITIONS,
 } from "./toolDefinitions";
@@ -408,6 +409,61 @@ describe("TOOL_DEFINITIONS", () => {
 
     expect(tools).toContain("skills_catalog_search");
     expect(tools).toContain("skills_catalog_read");
+  });
+
+  it("only includes Review pane tools when enableReviewPane is not disabled", () => {
+    const defaultTools = getAvailableTools("openai:gpt-4o");
+    expect(defaultTools).toContain("review_pane_update");
+    expect(defaultTools).toContain("review_pane_get");
+
+    const enabledTools = getAvailableTools("openai:gpt-4o", { enableReviewPane: true });
+    expect(enabledTools).toContain("review_pane_update");
+    expect(enabledTools).toContain("review_pane_get");
+
+    // Sub-agents pass enableReviewPane: false so they can't pin code to the
+    // user-facing parent Review pane.
+    const subAgentTools = getAvailableTools("openai:gpt-4o", { enableReviewPane: false });
+    expect(subAgentTools).not.toContain("review_pane_update");
+    expect(subAgentTools).not.toContain("review_pane_get");
+  });
+
+  it("only includes workflow tools when dynamic workflows are enabled", () => {
+    const disabledTools = getAvailableTools("openai:gpt-4o", { enableDynamicWorkflows: false });
+    expect(disabledTools).not.toContain("workflow_list");
+    expect(disabledTools).not.toContain("workflow_read");
+    expect(disabledTools).not.toContain("workflow_action_list");
+    expect(disabledTools).not.toContain("workflow_run");
+
+    const enabledTools = getAvailableTools("openai:gpt-4o", { enableDynamicWorkflows: true });
+    expect(enabledTools).toContain("workflow_list");
+    expect(enabledTools).toContain("workflow_read");
+    expect(enabledTools).toContain("workflow_action_list");
+    expect(enabledTools).toContain("workflow_run");
+  });
+
+  it("gates native Google tools to Gemini 3 models", () => {
+    expect(getAvailableTools("google:gemini-2.5-pro")).not.toContain("google_search");
+    expect(getAvailableTools("google:gemini-2.5-pro")).not.toContain("url_context");
+    expect(getAvailableTools("google:gemini-4-pro")).not.toContain("google_search");
+    expect(getAvailableTools("google:gemini-4-pro")).not.toContain("url_context");
+
+    for (const modelString of [
+      "google:gemini-3.1-pro-preview",
+      "google:gemini-3.5-flash",
+      "google:models/gemini-3.5-flash",
+    ]) {
+      const tools = getAvailableTools(modelString);
+      expect(tools).toContain("google_search");
+      expect(tools).toContain("url_context");
+    }
+  });
+
+  it("classifies Gemini 3 as supporting mixed native Google and function tools", () => {
+    expect(supportsGoogleNativeToolsWithFunctionTools("gemini-2.5-pro")).toBe(false);
+    expect(supportsGoogleNativeToolsWithFunctionTools("gemini-3.1-pro-preview")).toBe(true);
+    expect(supportsGoogleNativeToolsWithFunctionTools("gemini-3.5-flash")).toBe(true);
+    expect(supportsGoogleNativeToolsWithFunctionTools("models/gemini-3.5-flash")).toBe(true);
+    expect(supportsGoogleNativeToolsWithFunctionTools("gemini-4-pro")).toBe(false);
   });
 
   it("agent_skill_write schema rejects an advertise tool argument (advertise is authored in content)", () => {

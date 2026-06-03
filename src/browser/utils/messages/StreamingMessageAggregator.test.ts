@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { createMuxMessage, type DisplayedMessage } from "@/common/types/message";
+import { buildWorkflowRunCardMessage } from "@/common/utils/workflowRunMessages";
 import { shouldNotifyOnResponseComplete } from "./responseCompletionMetadata";
 import { MAX_HISTORY_HIDDEN_SEGMENTS } from "./transcriptTruncationPlan";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
@@ -401,6 +402,36 @@ describe("StreamingMessageAggregator", () => {
   });
 
   describe("display flags", () => {
+    test("propagates modelFallback metadata to displayed assistant rows", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const fallback = createMuxMessage("a1", "assistant", "answer", {
+        timestamp: 1,
+        historySequence: 1,
+        model: "anthropic:claude-opus-4-8",
+        modelFallback: {
+          requestedModel: "openai:gpt-5.5",
+          refusedModels: ["openai:gpt-5.5"],
+        },
+      });
+      const plain = createMuxMessage("a2", "assistant", "no fallback", {
+        timestamp: 2,
+        historySequence: 2,
+        model: "anthropic:claude-opus-4-8",
+      });
+
+      aggregator.loadHistoricalMessages([fallback, plain], false);
+
+      const assistantRows = aggregator.getDisplayedMessages().filter((m) => m.type === "assistant");
+
+      expect(assistantRows).toHaveLength(2);
+      expect(assistantRows[0]?.modelFallback).toEqual({
+        requestedModel: "openai:gpt-5.5",
+        refusedModels: ["openai:gpt-5.5"],
+      });
+      expect(assistantRows[1]?.modelFallback).toBeUndefined();
+    });
+
     test("should hide synthetic messages by default", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
@@ -446,6 +477,216 @@ describe("StreamingMessageAggregator", () => {
       expect(userMessages[0]?.isSynthetic).toBe(true);
       expect(userMessages[1]?.content).toBe("hello");
       expect(userMessages[1]?.isSynthetic).toBeUndefined();
+    });
+
+    test("renders persisted workflow slash invocation before workflow card", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const command = createMuxMessage("workflow-command", "user", "/deep-research mux", {
+        timestamp: 1,
+        historySequence: 1,
+        muxMetadata: {
+          type: "workflow-trigger-display",
+          rawCommand: "/deep-research mux",
+          commandPrefix: "/deep-research",
+          runId: "wfr_123",
+        },
+      });
+      const card = buildWorkflowRunCardMessage(
+        { name: "deep-research", args: { input: "mux" } },
+        { runId: "wfr_123", status: "running", result: null },
+        2
+      );
+      card.metadata = {
+        timestamp: 2,
+        historySequence: 2,
+        synthetic: true,
+        uiVisible: true,
+        muxMetadata: { type: "workflow-run-card-display", runId: "wfr_123" },
+      };
+      const hiddenWorkflowResult = createMuxMessage(
+        "workflow-result",
+        "user",
+        '/deep-research mux\n\n<mux_workflow_result>{"reportMarkdown":"hidden"}</mux_workflow_result>',
+        {
+          timestamp: 3,
+          historySequence: 3,
+          muxMetadata: {
+            type: "workflow-result",
+            rawCommand: "/deep-research mux",
+            commandPrefix: "/deep-research",
+            runId: "wfr_123",
+          },
+        }
+      );
+      const assistant = createMuxMessage("assistant-1", "assistant", "Done", {
+        timestamp: 4,
+        historySequence: 4,
+      });
+
+      aggregator.loadHistoricalMessages([command, card, hiddenWorkflowResult, assistant], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed.map((message) => message.type)).toEqual(["user", "tool", "assistant"]);
+      expect(displayed[0]).toMatchObject({
+        type: "user",
+        content: "/deep-research mux",
+        commandPrefix: "/deep-research",
+      });
+      if (displayed[0]?.type !== "user") {
+        throw new Error("Expected workflow command to render as a user message");
+      }
+      expect(displayed[0].content).not.toContain("mux_workflow_result");
+      expect(displayed.some((message) => message.id === "workflow-result")).toBe(false);
+      expect(displayed[1]).toMatchObject({
+        type: "tool",
+        toolName: "workflow_run",
+        args: { name: "deep-research", args: { input: "mux" }, run_in_background: true },
+        result: { status: "running", runId: "wfr_123", result: null },
+      });
+    });
+
+    test("attaches workflow definition source preview to the persisted slash invocation", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const workflowSource = `// description: Review deeply\nexport default function deepReviewWorkflow() {\n  return { reportMarkdown: "done" };\n}`;
+      const command = createMuxMessage("workflow-command", "user", "/deep-review-workflow mux", {
+        timestamp: 1,
+        historySequence: 1,
+        muxMetadata: {
+          type: "workflow-trigger-display",
+          rawCommand: "/deep-review-workflow mux",
+          commandPrefix: "/deep-review-workflow",
+          runId: "wfr_preview",
+        },
+      });
+      const card = buildWorkflowRunCardMessage(
+        { name: "deep-review-workflow", args: { input: "mux" } },
+        {
+          runId: "wfr_preview",
+          status: "running",
+          result: null,
+          run: {
+            id: "wfr_preview",
+            workspaceId: "workspace-1",
+            definition: {
+              name: "deep-review-workflow",
+              description: "Review deeply",
+              scope: "built-in",
+              executable: true,
+            },
+            definitionSource: workflowSource,
+            definitionHash: "sha256-preview",
+            args: { input: "mux" },
+            status: "running",
+            createdAt: "2024-01-01T00:00:00.000Z",
+            updatedAt: "2024-01-01T00:00:01.000Z",
+            events: [],
+            steps: [],
+          },
+        },
+        2
+      );
+      card.metadata = {
+        timestamp: 2,
+        historySequence: 2,
+        synthetic: true,
+        uiVisible: true,
+        muxMetadata: { type: "workflow-run-card-display", runId: "wfr_preview" },
+      };
+
+      aggregator.loadHistoricalMessages([command, card], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed[0]).toMatchObject({
+        type: "user",
+        workflowDefinitionPreview: {
+          descriptor: {
+            name: "deep-review-workflow",
+            description: "Review deeply",
+            scope: "built-in",
+          },
+          source: workflowSource,
+        },
+      });
+    });
+
+    test("keeps workflow preview when unrelated run telemetry is malformed", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const workflowSource = `// description: Review deeply\nexport default function deepReviewWorkflow() {\n  return { reportMarkdown: "done" };\n}`;
+      const command = createMuxMessage("workflow-command", "user", "/deep-review-workflow mux", {
+        timestamp: 1,
+        historySequence: 1,
+        muxMetadata: {
+          type: "workflow-trigger-display",
+          rawCommand: "/deep-review-workflow mux",
+          commandPrefix: "/deep-review-workflow",
+          runId: "wfr_preview_malformed",
+        },
+      });
+      const card = buildWorkflowRunCardMessage(
+        { name: "deep-review-workflow", args: { input: "mux" } },
+        {
+          runId: "wfr_preview_malformed",
+          status: "running",
+          result: null,
+          run: {
+            id: "wfr_preview_malformed",
+            workspaceId: "workspace-1",
+            definition: {
+              name: "deep-review-workflow",
+              description: "Review deeply",
+              scope: "built-in",
+              executable: true,
+            },
+            definitionSource: workflowSource,
+            definitionHash: "sha256-preview",
+            args: { input: "mux" },
+            status: "running",
+            createdAt: "2024-01-01T00:00:00.000Z",
+            updatedAt: "2024-01-01T00:00:01.000Z",
+            events: [],
+            steps: [],
+          },
+        },
+        2
+      );
+      card.metadata = {
+        timestamp: 2,
+        historySequence: 2,
+        synthetic: true,
+        uiVisible: true,
+        muxMetadata: { type: "workflow-run-card-display", runId: "wfr_preview_malformed" },
+      };
+
+      const toolPart = card.parts[0];
+      if (toolPart?.type !== "dynamic-tool" || toolPart.state !== "output-available") {
+        throw new Error("Expected workflow card to contain an output-available tool part");
+      }
+      if (toolPart.output == null || typeof toolPart.output !== "object") {
+        throw new Error("Expected workflow card output object");
+      }
+      const run = (toolPart.output as { run?: { events?: unknown; steps?: unknown } }).run;
+      if (!run) {
+        throw new Error("Expected workflow card output to include a run");
+      }
+      // Workflow previews only render the definition snapshot; malformed telemetry should not
+      // hide historical source previews for otherwise usable workflow run records.
+      run.events = [{ sequence: 1, type: "future-event", at: "2024-01-01T00:00:01.000Z" }];
+      run.steps = [{ stepId: "step-1", status: "future-status" }];
+
+      aggregator.loadHistoricalMessages([command, card], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed[0]).toMatchObject({
+        type: "user",
+        workflowDefinitionPreview: {
+          descriptor: {
+            name: "deep-review-workflow",
+            description: "Review deeply",
+            scope: "built-in",
+          },
+          source: workflowSource,
+        },
+      });
     });
 
     test("should strip legacy goal-cleared label from displayed summaries", () => {
@@ -1261,6 +1502,65 @@ describe("StreamingMessageAggregator", () => {
       aggregator.handleMessage(msg2);
 
       expect(aggregator.getAllMessages()).toHaveLength(2);
+    });
+  });
+
+  describe("stream metadata", () => {
+    test("keeps derived agentId on the live assistant message when legacy mode is omitted", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: TEST_WORKSPACE_ID,
+        messageId: "explore-msg",
+        historySequence: 1,
+        model: TEST_MODEL,
+        startTime: Date.now(),
+        agentId: "explore",
+      });
+
+      const streamingMessage = aggregator
+        .getAllMessages()
+        .find((message) => message.id === "explore-msg");
+      expect(streamingMessage?.metadata?.agentId).toBe("explore");
+      expect(streamingMessage?.metadata?.mode).toBeUndefined();
+    });
+
+    test("preserves derived agentId when replay stream-start omits it", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: TEST_WORKSPACE_ID,
+        messageId: "explore-replay-msg",
+        historySequence: 1,
+        model: TEST_MODEL,
+        startTime: Date.now(),
+        agentId: "explore",
+      });
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: TEST_WORKSPACE_ID,
+        messageId: "explore-replay-msg",
+        delta: "hello",
+        tokens: 1,
+        timestamp: Date.now(),
+      });
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: TEST_WORKSPACE_ID,
+        messageId: "explore-replay-msg",
+        historySequence: 1,
+        model: TEST_MODEL,
+        startTime: Date.now(),
+        replay: true,
+      });
+
+      const streamingMessage = aggregator
+        .getAllMessages()
+        .find((message) => message.id === "explore-replay-msg");
+      expect(streamingMessage?.metadata?.agentId).toBe("explore");
     });
   });
 
@@ -2872,6 +3172,63 @@ describe("StreamingMessageAggregator", () => {
       const errorRows = displayed.filter((m) => m.type === "stream-error");
       expect(errorRows).toHaveLength(1);
       expect(errorRows[0]?.type === "stream-error" && errorRows[0].errorType).toBe("network");
+    });
+  });
+
+  describe("refusal finish reasons", () => {
+    test("synthesizes a visible refusal row for legacy content-filter completions", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.addMessage({
+        id: "asst-refused",
+        role: "assistant",
+        parts: [{ type: "text" as const, text: "I checked the security report." }],
+        metadata: {
+          historySequence: 1,
+          timestamp: 1,
+          model: "anthropic:claude-fable-5",
+          finishReason: "content-filter",
+          providerMetadata: {
+            anthropic: {
+              stopDetails: {
+                explanation: "This request triggered restrictions on cyber content.",
+              },
+            },
+          },
+        },
+      });
+
+      const displayed = aggregator.getDisplayedMessages();
+      const errorRow = displayed.find((message) => message.type === "stream-error");
+      expect(errorRow).toBeDefined();
+      if (errorRow?.type === "stream-error") {
+        expect(errorRow.errorType).toBe("model_refusal");
+        expect(errorRow.error).toContain("finishReason: content-filter");
+        expect(errorRow.error).toContain("triggered restrictions");
+      }
+    });
+
+    test("does not render a red refusal row for successful fallback completions", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.addMessage({
+        id: "asst-fallback-success",
+        role: "assistant",
+        parts: [{ type: "text" as const, text: "Fallback finished the response." }],
+        metadata: {
+          historySequence: 1,
+          timestamp: 1,
+          model: "openai:gpt-5.5",
+          finishReason: "stop",
+          modelFallback: {
+            requestedModel: "anthropic:claude-fable-5",
+            refusedModels: ["anthropic:claude-fable-5"],
+          },
+        },
+      });
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed.find((message) => message.type === "stream-error")).toBeUndefined();
     });
   });
 });

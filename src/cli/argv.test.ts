@@ -196,19 +196,22 @@ describe("isElectronLaunchArg", () => {
 });
 
 describe("isCommandAvailable", () => {
-  test("run is available in bun/node", () => {
+  test("run and workflow are available in bun/node", () => {
     const env = detectCliEnvironment({}, undefined);
     expect(isCommandAvailable("run", env)).toBe(true);
+    expect(isCommandAvailable("workflow", env)).toBe(true);
   });
 
-  test("run is NOT available in electron dev", () => {
+  test("run and workflow are NOT available in electron dev", () => {
     const env = detectCliEnvironment({ electron: "33.0.0" }, true);
     expect(isCommandAvailable("run", env)).toBe(false);
+    expect(isCommandAvailable("workflow", env)).toBe(false);
   });
 
-  test("run is NOT available in packaged electron", () => {
+  test("run and workflow are NOT available in packaged electron", () => {
     const env = detectCliEnvironment({ electron: "33.0.0" }, undefined);
     expect(isCommandAvailable("run", env)).toBe(false);
+    expect(isCommandAvailable("workflow", env)).toBe(false);
   });
 
   test("server is available everywhere", () => {

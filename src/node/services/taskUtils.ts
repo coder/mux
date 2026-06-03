@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import type { Config, Workspace as WorkspaceConfigEntry } from "@/node/config";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { execBuffered } from "@/node/utils/runtime/helpers";
+import { resolveModelFallbackChain } from "@/common/utils/ai/modelFallbacks";
 
 export function coerceNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -33,6 +34,27 @@ export async function tryReadGitHeadCommitSha(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Resolve the effective refusal-fallback chain for a workspace's turn.
+ * Task children can opt out via taskOnRefusal: "fail" (e.g. workflow verifier
+ * steps that demand an honest terminal failure instead of a silent model
+ * swap). Workspaces not found in config (non-task sends) keep the configured
+ * chain.
+ */
+export function resolveWorkspaceModelFallbackChain(
+  config: ReturnType<Config["loadConfigOrDefault"]>,
+  workspaceId: string,
+  canonicalModelString: string
+): string[] {
+  assert(workspaceId.length > 0, "resolveWorkspaceModelFallbackChain: workspaceId required");
+  const chain = resolveModelFallbackChain(config.modelFallbacks, canonicalModelString);
+  if (chain.length === 0) {
+    return chain;
+  }
+  const entry = findWorkspaceEntry(config, workspaceId);
+  return entry?.workspace.taskOnRefusal === "fail" ? [] : chain;
 }
 
 export function findWorkspaceEntry(

@@ -22,7 +22,9 @@ if [ -n "$PNG_FILES" ]; then
   exit 1
 fi
 
-ESLINT_PATTERN='src/**/*.{ts,tsx}'
+# Built-in workflow sources are executable JS embedded into the app; lint them
+# alongside the TS sources (they get a dedicated non-type-aware config block).
+ESLINT_PATTERNS=('src/**/*.{ts,tsx}' 'src/node/builtinWorkflows/*.js')
 
 get_cpu_count() {
   local cpu_count=""
@@ -83,9 +85,9 @@ ESLINT_ARGS=(
 
 if [ "${1:-}" = "--fix" ]; then
   echo "Running bun x eslint with --fix (concurrency=$ESLINT_CONCURRENCY)..."
-  bun x eslint "${ESLINT_ARGS[@]}" "$ESLINT_PATTERN" --fix
+  bun x eslint "${ESLINT_ARGS[@]}" "${ESLINT_PATTERNS[@]}" --fix
 else
   echo "Running eslint (concurrency=$ESLINT_CONCURRENCY)..."
-  bun x eslint "${ESLINT_ARGS[@]}" "$ESLINT_PATTERN"
+  bun x eslint "${ESLINT_ARGS[@]}" "${ESLINT_PATTERNS[@]}"
   echo "ESLint checks passed!"
 fi

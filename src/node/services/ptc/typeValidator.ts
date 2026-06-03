@@ -19,13 +19,13 @@ import ts from "typescript";
  * because electron-builder ignores .d.ts files by default (hardcoded, cannot override):
  * https://github.com/electron-userland/electron-builder/issues/5064
  *
- * These constants are computed once at module load time.
+ * These constants are computed once at module load time. The Docker server bundle runs from
+ * dist/runtime, while the unbundled Electron/main build runs from dist/node/services/ptc, so
+ * probe both relative layouts before falling back to the TypeScript package in development.
  */
-const BUNDLED_LIB_DIR = path.resolve(__dirname, "../../../typescript-lib");
-const IS_PRODUCTION = fs.existsSync(path.join(BUNDLED_LIB_DIR, "lib.es2023.d.ts.txt"));
-const LIB_DIR = IS_PRODUCTION
-  ? BUNDLED_LIB_DIR
-  : path.dirname(require.resolve("typescript/lib/lib.d.ts"));
+const BUNDLED_LIB_DIR = findBundledTypeScriptLibDir(__dirname);
+const IS_PRODUCTION = BUNDLED_LIB_DIR != null;
+const LIB_DIR = BUNDLED_LIB_DIR ?? path.dirname(require.resolve("typescript/lib/lib.d.ts"));
 
 export const WRAPPER_PREFIX = "function __agent__() {\n";
 const MUX_TYPES_FILE = "mux.d.ts";
@@ -149,6 +149,20 @@ function createProgramForCode(
 
   const program = ts.createProgram(ROOT_FILE_NAMES, compilerOptions, host);
   return { program, host, getSourceFile: () => sourceFile, setSourceFile };
+}
+
+function hasBundledTypeScriptLib(dir: string): boolean {
+  return fs.existsSync(path.join(dir, toProductionLibName("lib.es2023.d.ts")));
+}
+
+export function findBundledTypeScriptLibDir(baseDir: string): string | null {
+  const candidates = [
+    // Unbundled main/Electron build: dist/node/services/ptc -> dist/typescript-lib.
+    path.resolve(baseDir, "../../../typescript-lib"),
+    // Docker server bundle: dist/runtime -> dist/typescript-lib.
+    path.resolve(baseDir, "../typescript-lib"),
+  ];
+  return candidates.find(hasBundledTypeScriptLib) ?? null;
 }
 
 /** Convert lib filename for production: lib.X.d.ts → lib.X.d.ts.txt */

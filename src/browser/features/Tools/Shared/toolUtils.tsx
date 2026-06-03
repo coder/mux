@@ -1,6 +1,10 @@
-import React, { useState } from "react";
+import React from "react";
 import { AlertTriangle, Check, CircleDot, EyeOff, X } from "lucide-react";
 import type { ToolErrorResult } from "@/common/types/tools";
+import {
+  useStickyExpand,
+  type UseStickyExpandOptions,
+} from "@/browser/features/Messages/useStickyExpand";
 import { LoadingDots } from "./ToolPrimitives";
 
 /**
@@ -17,12 +21,15 @@ export type ToolStatus =
   | "redacted";
 
 /**
- * Hook for managing tool expansion state
+ * Hook for managing tool expansion state.
+ *
+ * Backed by the per-workspace sticky preference (see useStickyExpand): the intent is
+ * keyed by tool name (resolved from ToolNameContext), so each tool remembers its own
+ * expand/collapse choice. `initialExpanded` is only the fallback used until the user
+ * has expanded/collapsed that tool in this workspace.
  */
-export function useToolExpansion(initialExpanded = false) {
-  const [expanded, setExpanded] = useState(initialExpanded);
-  const toggleExpanded = () => setExpanded(!expanded);
-  return { expanded, setExpanded, toggleExpanded };
+export function useToolExpansion(initialExpanded = false, options?: UseStickyExpandOptions) {
+  return useStickyExpand("tools", initialExpanded, options);
 }
 
 /**
@@ -74,6 +81,23 @@ export function getStatusDisplay(status: ToolStatus): React.ReactNode {
     default:
       return <span className="status-text">pending</span>;
   }
+}
+
+/**
+ * Unwrap JSON container from streamManager's stripEncryptedContent.
+ * Results arrive as { type: "json", value: [...] } or direct array/object.
+ */
+export function unwrapResult(result: unknown): unknown {
+  if (
+    result !== null &&
+    typeof result === "object" &&
+    "type" in result &&
+    (result as { type: string }).type === "json" &&
+    "value" in result
+  ) {
+    return (result as { value: unknown }).value;
+  }
+  return result;
 }
 
 /**

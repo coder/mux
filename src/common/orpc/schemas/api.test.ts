@@ -277,13 +277,13 @@ describe("workspace.createMultiProject schema", () => {
 });
 
 describe("config.saveConfig schema", () => {
-  it("rejects payload missing taskSettings", () => {
+  it("accepts payloads that omit taskSettings", () => {
     const result = config.saveConfig.input.safeParse({ agentAiDefaults: {} });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("accepts payload with required taskSettings", () => {
+  it("accepts payload with taskSettings", () => {
     const result = config.saveConfig.input.safeParse({
       taskSettings: {
         maxParallelAgentTasks: 2,

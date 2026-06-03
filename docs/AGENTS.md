@@ -135,6 +135,7 @@ Mobile app tests live in `mobile/src/**/*.test.ts` and use Bun's built-in test r
 - For incrementing numeric UI (costs, timers, token counts, percentages), use semantic numeric typography utilities (`counter-nums` / `counter-nums-mono`) to prevent width jitter.
 - Choose `counter-nums-mono` only when monospace is an intentional visual style (e.g., terminal/telemetry), not merely as a workaround.
 - Use `min-w-[Nch]` only when reserving layout width is intentional and separate from tabular numeral stability.
+- **Always verify UI at mobile widths.** When adding or changing UI, check how it renders in a narrow/mobile viewport (~375px), not just desktop. Tool cards size via `@container` queries, so test the narrow container layout (Storybook `mobile1` viewport or a resized window). Watch for: badges/labels stretching to fill grid cells, `auto` grid columns inflated by `whitespace-nowrap` text (starves sibling columns and pushes content off-screen), and right-edge overflow. Truncating text belongs in `minmax(0,1fr)` cells. Add a pinned-viewport story per the Storybook responsive/Chromatic validation rule below when a breakpoint matters.
 
 ## Security: Renderer HTML & XSS
 
@@ -228,7 +229,7 @@ Freely make breaking changes, and reorganize / cleanup IPC as needed.
 - **Use conditional rendering for testability:** Components like `AgentModePicker` use `{isOpen && <div>...}` instead of Radix Portal. This renders inline and works in happy-dom.
 - When adding new dropdown/popover components that need tests/ui coverage, prefer the conditional rendering pattern over Radix Portal.
 - E2E tests (tests/e2e) work with Radix but are slow (~2min startup); reserve for scenarios that truly need real Electron.
-- **Storybook responsive/Chromatic validation:** Do not prove responsive snapshots by only resizing `iframe.html`; that bypasses Storybook/Chromatic viewport mode configuration. If a story depends on a breakpoint (wide gutters, mobile, touch), pin an explicit `parameters.chromatic.modes[*].viewport`, mirror it with story `globals.viewport` for local viewing, and validate through the Storybook manager or an equivalent Chromatic-mode check. Add a play/static contract when a missing mode would silently snapshot the wrong UI.
+- **Storybook responsive/Chromatic validation:** Do not prove responsive snapshots by only resizing `iframe.html`; that bypasses Storybook/Chromatic viewport mode configuration. If a story depends on a breakpoint (wide gutters, mobile, touch), pin an explicit `parameters.chromatic.modes[*].viewport`, mirror it with story `globals.viewport` for local viewing, and validate through the Storybook manager or an equivalent Chromatic-mode check. Add a play/static contract when a missing mode would silently snapshot the wrong UI. Caveat: the Storybook test-runner (CI `Test / Storybook`) applies neither `globals.viewport` nor Chromatic modes — plays execute at desktop window size — so breakpoint-dependent play assertions must force the narrow width themselves (fixed-width wrapper/decorator, as in `App.phoneViewports.stories.tsx`) or guard on the rendered width before asserting.
 - Only use `validateApiKeys()` in tests that actually make AI API calls.
 
 ## Tool: todo_write

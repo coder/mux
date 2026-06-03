@@ -41,6 +41,7 @@ const NON_RETRYABLE_STREAM_ERRORS = [
   "context_exceeded", // Message too long - user must reduce context
   "aborted", // User cancelled - should not auto-retry
   "runtime_not_ready", // Container/runtime unavailable - permanent failure
+  "model_refusal", // Provider declined to answer - retrying the same request will refuse again
 ] as const satisfies readonly StreamErrorType[];
 
 const NON_RETRYABLE_STREAM_ERROR_SET = new Set<string>(NON_RETRYABLE_STREAM_ERRORS);

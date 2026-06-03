@@ -7,10 +7,23 @@ import { CompleteGoalToolCall } from "../CompleteGoalToolCall";
 import { DesktopActionToolCall } from "../DesktopActionToolCall";
 import { DesktopScreenshotToolCall } from "../DesktopScreenshotToolCall";
 import { GenericToolCall } from "../GenericToolCall";
+import { GoogleSearchToolCall } from "../GoogleSearchToolCall";
+import { WorkflowRunToolCall } from "../WorkflowRunToolCall";
+import { WorkflowListToolCall, WorkflowReadToolCall } from "../WorkflowDefinitionToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
 import { getToolComponent } from "./getToolComponent";
 
 describe("getToolComponent", () => {
+  test("returns workflow definition tool components", () => {
+    expect(getToolComponent("workflow_list", {})).toBe(WorkflowListToolCall);
+    expect(getToolComponent("workflow_read", { name: "deep-research" })).toBe(WorkflowReadToolCall);
+  });
+
+  test("returns WorkflowRunToolCall for workflow_run", () => {
+    const component = getToolComponent("workflow_run", { name: "deep-research" });
+    expect(component).toBe(WorkflowRunToolCall);
+  });
+
   test("returns AgentReportToolCall for agent_report", () => {
     const component = getToolComponent("agent_report", { reportMarkdown: "# Hello" });
     expect(component).toBe(AgentReportToolCall);
@@ -57,5 +70,26 @@ describe("getToolComponent", () => {
   test("falls back to GenericToolCall when args validation fails", () => {
     const component = getToolComponent("agent_report", { reportMarkdown: "" });
     expect(component).toBe(GenericToolCall);
+  });
+
+  test("returns GoogleSearchToolCall for server:GOOGLE_SEARCH_WEB", () => {
+    expect(getToolComponent("server:GOOGLE_SEARCH_WEB", { queries: ["gemini 3 pricing"] })).toBe(
+      GoogleSearchToolCall
+    );
+    // Streaming/pending args (not yet parsed) must not bounce to the generic renderer.
+    expect(getToolComponent("server:GOOGLE_SEARCH_WEB", {})).toBe(GoogleSearchToolCall);
+  });
+
+  test("server:GOOGLE_SEARCH_WEB falls back to GenericToolCall when args don't conform", () => {
+    const component = getToolComponent("server:GOOGLE_SEARCH_WEB", { queries: "not-an-array" });
+    expect(component).toBe(GenericToolCall);
+  });
+
+  test("Object.prototype member names fall back to GenericToolCall instead of throwing", () => {
+    // toolName flows verbatim from persisted transcripts; inherited members of the
+    // registry object must not be treated as entries (self-healing invariant).
+    expect(getToolComponent("constructor", {})).toBe(GenericToolCall);
+    expect(getToolComponent("__proto__", {})).toBe(GenericToolCall);
+    expect(getToolComponent("toString", {})).toBe(GenericToolCall);
   });
 });

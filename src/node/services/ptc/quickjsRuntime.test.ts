@@ -51,6 +51,12 @@ describe("QuickJSRuntime", () => {
       expect(result.result).toBeNull();
     });
 
+    it("resolves returned promises", async () => {
+      const result = await runtime.eval("return (async () => ({ ok: true }))();");
+      expect(result.success).toBe(true);
+      expect(result.result).toEqual({ ok: true });
+    });
+
     it("handles syntax errors", async () => {
       const result = await runtime.eval("return {{{;");
       expect(result.success).toBe(false);
@@ -64,7 +70,7 @@ describe("QuickJSRuntime", () => {
     });
 
     // Note: With asyncify, async host functions appear SYNC to QuickJS.
-    // Native JS await/Promise is not supported - use sync calls to host functions.
+    // Call host functions directly unless the evaluated code intentionally returns a Promise.
     it("handles multiple statements", async () => {
       const result = await runtime.eval(`
         const x = 10;

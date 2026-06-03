@@ -35,4 +35,5 @@ export const WORKSPACE_ONLY_COMMAND_TYPES: ReadonlySet<string> = new Set([
   "goal-complete",
   "goal-clear",
   "side-question",
+  "workflow-run",
 ]);

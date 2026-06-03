@@ -32,6 +32,7 @@ export interface SimulationContext {
   systemMessageTokens: number;
   effectiveAgentId: string;
   effectiveMode: "plan" | "exec" | "compact";
+  metadataMode?: "plan" | "exec" | "compact";
   effectiveThinkingLevel: ThinkingLevel;
   /** Emit a typed stream event (stream-start, stream-delta, stream-end, error). */
   emit: (event: string, data: unknown) => void;
@@ -49,7 +50,7 @@ function createSimulatedStreamStart(ctx: SimulationContext): StreamStartEvent {
     historySequence: ctx.historySequence,
     startTime: Date.now(),
     agentId: ctx.effectiveAgentId,
-    mode: ctx.effectiveMode,
+    ...(ctx.metadataMode != null ? { mode: ctx.metadataMode } : {}),
     thinkingLevel: ctx.effectiveThinkingLevel,
   };
 }
@@ -82,6 +83,7 @@ export async function simulateContextLimitError(
       ...(ctx.routeProvider != null ? { routeProvider: ctx.routeProvider } : {}),
       systemMessageTokens: ctx.systemMessageTokens,
       agentId: ctx.effectiveAgentId,
+      ...(ctx.metadataMode != null ? { mode: ctx.metadataMode } : {}),
       thinkingLevel: ctx.effectiveThinkingLevel,
       partial: true,
       error: errorMessage,
@@ -125,6 +127,7 @@ export async function simulateToolPolicyNoop(
     ...(ctx.routeProvider != null ? { routeProvider: ctx.routeProvider } : {}),
     systemMessageTokens: ctx.systemMessageTokens,
     agentId: ctx.effectiveAgentId,
+    ...(ctx.metadataMode != null ? { mode: ctx.metadataMode } : {}),
     thinkingLevel: ctx.effectiveThinkingLevel,
     toolPolicy: effectiveToolPolicy,
   });
@@ -166,6 +169,7 @@ export async function simulateToolPolicyNoop(
     metadata: {
       model: ctx.canonicalModelString,
       agentId: ctx.effectiveAgentId,
+      ...(ctx.metadataMode != null ? { mode: ctx.metadataMode } : {}),
       thinkingLevel: ctx.effectiveThinkingLevel,
       routedThroughGateway: ctx.routedThroughGateway,
       ...(ctx.routeProvider != null ? { routeProvider: ctx.routeProvider } : {}),

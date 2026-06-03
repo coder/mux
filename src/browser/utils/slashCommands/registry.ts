@@ -16,7 +16,7 @@ import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
 import { assert } from "@/common/utils/assert";
 import { isExperimentEnabled as readExperimentEnabled } from "@/browser/hooks/useExperiments";
-import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
+import { normalizeModelInput } from "@/common/utils/ai/normalizeModelInput";
 import { parseGoalBudgetInputCents } from "@/common/utils/goals/budgetParser";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { WORKSPACE_ONLY_COMMAND_KEYS } from "@/constants/slashCommands";
@@ -657,6 +657,44 @@ const btwCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+const WORKFLOW_COMMAND_USAGE = "/workflow <name> [args]";
+
+const workflowCommandDefinition: SlashCommandDefinition = {
+  key: "workflow",
+  description: "Run an explicit workflow by name",
+  experimentGate: EXPERIMENT_IDS.DYNAMIC_WORKFLOWS,
+  inputHint: WORKFLOW_COMMAND_USAGE,
+  suggestions: ({ partialToken, context }) => {
+    const workflows: SuggestionDefinition[] = (context.workflows ?? [])
+      .filter((workflow) => workflow.executable)
+      .map((workflow) => ({
+        key: workflow.name,
+        description: `${workflow.description} (${workflow.scope} workflow)`,
+      }));
+    return filterAndMapSuggestions(workflows, partialToken, (workflow) => ({
+      id: `workflow-explicit:${workflow.key}`,
+      display: workflow.key,
+      description: workflow.description,
+      replacement: `/workflow ${workflow.key} `,
+      kind: "workflow",
+    }));
+  },
+  handler: ({ rawInput }): ParsedCommand => {
+    const trimmed = rawInput.trim();
+    if (!trimmed) {
+      return { type: "command-missing-args", command: "workflow", usage: WORKFLOW_COMMAND_USAGE };
+    }
+    const firstWhitespace = trimmed.search(/\s/u);
+    const name = firstWhitespace === -1 ? trimmed : trimmed.slice(0, firstWhitespace);
+    const argsText = firstWhitespace === -1 ? undefined : trimmed.slice(firstWhitespace).trim();
+    return {
+      type: "workflow-run",
+      name,
+      ...(argsText ? { argsText } : {}),
+    };
+  },
+};
+
 const debugLlmRequestCommandDefinition: SlashCommandDefinition = {
   key: "debug-llm-request",
   description: "Show the last LLM request sent (debug)",
@@ -677,6 +715,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   heartbeatCommandDefinition,
   goalCommandDefinition,
   btwCommandDefinition,
+  workflowCommandDefinition,
   debugLlmRequestCommandDefinition,
 ];
 

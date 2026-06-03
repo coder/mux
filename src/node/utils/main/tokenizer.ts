@@ -243,6 +243,17 @@ export function countTokensForData(data: unknown, tokenizer: Tokenizer): Promise
   return tokenizer.countTokens(serialized);
 }
 
+const TOOL_DEFINITION_FALLBACK_TOKENS: Record<string, number> = {
+  bash: 65,
+  file_read: 45,
+  file_edit_replace_string: 70,
+  file_edit_replace_lines: 80,
+  file_edit_insert: 50,
+  web_search: 50,
+  google_search: 50,
+  url_context: 50,
+};
+
 export async function getToolDefinitionTokens(
   toolName: string,
   modelString: string,
@@ -260,22 +271,13 @@ export async function getToolDefinitionTokens(
     const toolSchemas = getToolSchemas();
     const toolSchema = toolSchemas[toolName];
     if (!toolSchema) {
-      return 40;
+      return TOOL_DEFINITION_FALLBACK_TOKENS[toolName] ?? 40;
     }
 
     const tokenizerModel = metadataModelOverride ?? modelString;
     return countTokens(tokenizerModel, JSON.stringify(toolSchema));
   } catch {
-    const fallbackSizes: Record<string, number> = {
-      bash: 65,
-      file_read: 45,
-      file_edit_replace_string: 70,
-      file_edit_replace_lines: 80,
-      file_edit_insert: 50,
-      web_search: 50,
-      google_search: 50,
-    };
-    return fallbackSizes[toolName] ?? 40;
+    return TOOL_DEFINITION_FALLBACK_TOKENS[toolName] ?? 40;
   }
 }
 

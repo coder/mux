@@ -20,7 +20,10 @@ import {
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
-import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import {
+  createRuntimeContextForWorkspace,
+  createRuntimeForWorkspace,
+} from "@/node/runtime/runtimeHelpers";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, Runtime } from "@/node/runtime/Runtime";
@@ -49,6 +52,7 @@ import {
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import {
   createCompactionSummaryMessageId,
+  createTaskFailureMessageId,
   createTaskReportMessageId,
 } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeToCanonical } from "@/common/utils/ai/models";
@@ -57,23 +61,30 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { AgentIdSchema } from "@/common/orpc/schemas";
-import { normalizeAgentId } from "@/common/utils/agentIds";
+import {
+  normalizeAgentId,
+  resolvePersistedAgentId,
+  resolvePersistedAgentIdCandidates,
+} from "@/common/utils/agentIds";
 import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService";
 import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import { getTotalCost, sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { ParsedThinkingInput, ThinkingLevel } from "@/common/types/thinking";
 import type { ErrorEvent, StreamEndEvent } from "@/common/types/stream";
+import type { WorkflowRunStatus } from "@/common/types/workflow";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
+import { isWorkflowDisplayOnlyMessage } from "@/common/utils/workflowRunMessages";
 import {
-  AgentReportToolArgsSchema,
+  AgentReportInlineToolArgsSchema,
+  AgentReportSubmittedReportSchema,
   TaskToolResultSchema,
   TaskToolArgsSchema,
 } from "@/common/utils/tools/toolDefinitions";
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import { enforceThinkingPolicy, resolveThinkingInput } from "@/common/utils/thinking/policy";
 import { taskQueueDebug } from "@/node/services/taskQueueDebug";
 import { readSubagentGitPatchArtifact } from "@/node/services/subagentGitPatchArtifacts";
 import {
@@ -81,11 +92,20 @@ import {
   readSubagentReportArtifactsFile,
   upsertSubagentReportArtifact,
 } from "@/node/services/subagentReportArtifacts";
+import {
+  readSubagentFailureArtifact,
+  readSubagentFailureArtifactsFile,
+  upsertSubagentFailureArtifact,
+} from "@/node/services/subagentFailureArtifacts";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isNonRetryableStreamError } from "@/common/utils/messages/retryEligibility";
+import type { StreamErrorType } from "@/common/types/errors";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
+import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
+import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
 
 export type TaskKind = "agent";
 
@@ -123,8 +143,19 @@ export interface TaskCreateArgs {
   /** Human-readable title for the task (displayed in sidebar) */
   title: string;
   modelString?: string;
-  thinkingLevel?: ThinkingLevel;
+  /**
+   * Explicit thinking override. Named levels apply directly; a numeric index is
+   * deferred (ParsedThinkingInput) and resolved against the chosen model's policy
+   * in resolveTaskAISettings, mirroring the UI's `/model+level` semantics.
+   */
+  thinkingLevel?: ParsedThinkingInput;
   parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
+  /**
+   * Model-refusal policy persisted on the child workspace. "fail" opts the task
+   * out of configured model-fallback chains so a refusal settles terminally
+   * (workflow verifier steps demand honest failure). Defaults to "fallback".
+   */
+  onRefusal?: "fail" | "fallback";
   /** Shared grouping metadata when one tool call spawns multiple sibling tasks. */
   bestOf?: {
     groupId: string;
@@ -133,19 +164,205 @@ export interface TaskCreateArgs {
     kind?: TaskGroupKind;
     label?: string;
   };
+  workflowTask?: {
+    runId: string;
+    stepId: string;
+    outputSchema?: unknown;
+  };
   /** Experiments to inherit to subagent */
   experiments?: {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
     advisorTool?: boolean;
     execSubagentHardRestart?: boolean;
+    dynamicWorkflows?: boolean;
+    subagentFileReports?: boolean;
   };
+}
+
+function appendSubagentFileReportInstructions(
+  prompt: string,
+  workflowTask: TaskCreateArgs["workflowTask"]
+): string {
+  assert(prompt.trim().length > 0, "appendSubagentFileReportInstructions requires prompt");
+  const outputSchema = workflowTask?.outputSchema;
+  let schemaInstruction = "";
+  if (outputSchema !== undefined) {
+    const schemaJson = JSON.stringify(outputSchema, null, 2);
+    assert(
+      schemaJson !== undefined,
+      "appendSubagentFileReportInstructions requires JSON output schema"
+    );
+    schemaInstruction = [
+      "Write the required structured output as valid JSON to `structured-output.json`.",
+      // File-backed report mode only exposes file paths in the tool schema, so the prompt must carry
+      // the workflow output contract that inline `agent_report` arguments would otherwise describe.
+      "The structured output must match this JSON Schema:",
+      "```json",
+      schemaJson,
+      "```",
+    ].join("\n");
+  }
+
+  return [
+    prompt,
+    "Subagent file-backed report mode is enabled for this task. Before reporting, create or update `report.md` in the workspace root with your final markdown report.",
+    schemaInstruction,
+    "When complete, call agent_report with `reportMarkdownPath: null`, `structuredOutputPath: null`, and `title: null` so Mux uses the default report files.",
+  ]
+    .filter((instruction) => instruction.length > 0)
+    .join("\n\n");
+}
+
+function stringifyStructuredOutputForSubagentReport(structuredOutput: unknown): string {
+  const json = JSON.stringify(structuredOutput, null, 2);
+  assert(
+    json !== undefined,
+    "stringifyStructuredOutputForSubagentReport requires JSON-serializable structured output"
+  );
+  return json;
+}
+
+function formatSubagentReportUserMessage(params: {
+  childWorkspaceId: string;
+  agentType: string;
+  title: string;
+  reportMarkdown: string;
+  structuredOutput?: unknown;
+}): string {
+  assert(params.childWorkspaceId.length > 0, "subagent report message requires child id");
+  assert(params.agentType.length > 0, "subagent report message requires agent type");
+  assert(params.title.length > 0, "subagent report message requires title");
+  assert(params.reportMarkdown.length > 0, "subagent report message requires markdown");
+
+  const lines = [
+    "<mux_subagent_report>",
+    `<task_id>${params.childWorkspaceId}</task_id>`,
+    `<agent_type>${params.agentType}</agent_type>`,
+    `<title>${params.title}</title>`,
+    "<report_markdown>",
+    params.reportMarkdown,
+    "</report_markdown>",
+  ];
+
+  if (params.structuredOutput !== undefined) {
+    lines.push(
+      "<structured_output_json>",
+      "```json",
+      stringifyStructuredOutputForSubagentReport(params.structuredOutput),
+      "```",
+      "</structured_output_json>"
+    );
+  }
+
+  lines.push("</mux_subagent_report>");
+  return lines.join("\n");
+}
+
+// Failure twin of formatSubagentReportUserMessage: terminal child failures are
+// delivered into the parent context as an explicit failure block (never as a
+// report) so a later wake-up — by ANY sibling's settlement — cannot present the
+// fanout as fully successful.
+function formatSubagentFailureUserMessage(params: {
+  childWorkspaceId: string;
+  agentType: string;
+  errorType: string;
+  errorMessage: string;
+}): string {
+  assert(params.childWorkspaceId.length > 0, "subagent failure message requires child id");
+  assert(params.agentType.length > 0, "subagent failure message requires agent type");
+  assert(params.errorMessage.length > 0, "subagent failure message requires error message");
+
+  return [
+    "<mux_subagent_failure>",
+    `<task_id>${params.childWorkspaceId}</task_id>`,
+    `<agent_type>${params.agentType}</agent_type>`,
+    `<error_type>${params.errorType}</error_type>`,
+    "<error_message>",
+    params.errorMessage,
+    "</error_message>",
+    "This sub-agent task failed terminally and will not produce a report. Do not re-await it.",
+    "</mux_subagent_failure>",
+  ].join("\n");
+}
+
+// Completed background reports are already persisted into the parent context; asking the parent
+// to call task_await burns an extra model/tool turn before it can synthesize the final answer.
+const COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
+  "Background sub-agent task(s) have completed. Their accepted reports and any structured outputs " +
+  "are already injected into this workspace context as task tool results or synthetic user report " +
+  "messages. Write the final response now, integrating those results. If a required report appears " +
+  "missing, explain the missing context instead of waiting for another handoff.";
+
+// Failure twin of COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT: the failure details
+// were already appended to the parent context as synthetic mux_subagent_failure
+// messages, so the wake-up prompt itself stays generic.
+const FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
+  "Background sub-agent task(s) failed terminally and will not produce reports. The failure " +
+  "details are already injected into this workspace context as synthetic user messages. Do not " +
+  "re-await those tasks. Integrate the failures into your work now: adjust your approach (e.g. a " +
+  "different model, agent, or task design) or surface the failures in your response.";
+
+function getTaskCompletionInstruction(params: {
+  completionToolName: "agent_report" | "propose_plan";
+  subagentFileReports: boolean;
+}): string {
+  if (params.completionToolName === "propose_plan") {
+    return "Call propose_plan exactly once now. Base it only on the planning work already completed in this workspace.";
+  }
+
+  if (params.subagentFileReports) {
+    return (
+      "Create or update report.md with your final report, then call agent_report exactly once now with reportMarkdownPath, structuredOutputPath, and title all set to null. " +
+      "Base it only on the work already completed in this workspace."
+    );
+  }
+
+  return "Call agent_report exactly once now with your final report. Base it only on the work already completed in this workspace.";
 }
 
 export interface TaskCreateResult {
   taskId: string;
   kind: TaskKind;
-  status: "queued" | "running";
+  status: "queued" | "starting" | "running";
+}
+
+type TaskLaunchStart = { kind: "sendMessage"; prompt: string } | { kind: "resumeStream" };
+
+interface TaskLaunchPlan {
+  taskId: string;
+  parentWorkspaceId: string;
+  parentMeta: WorkspaceMetadata;
+  agentId: string;
+  agentType: string;
+  start: TaskLaunchStart;
+  title: string;
+  workspaceName: string;
+  createdAt: string;
+  taskRuntimeConfig: RuntimeConfig;
+  parentRuntimeConfig: RuntimeConfig;
+  taskModelString: string;
+  canonicalModel: string;
+  effectiveThinkingLevel?: ThinkingLevel;
+  skipInitHook: boolean;
+  preferredTrunkBranch?: string;
+  workflowTask?: TaskCreateArgs["workflowTask"];
+  bestOf?: TaskCreateArgs["bestOf"];
+  experiments?: TaskCreateArgs["experiments"];
+  onRefusal?: TaskCreateArgs["onRefusal"];
+}
+
+interface TaskCreateManyOptions {
+  onTaskReserved?: (index: number, result: TaskCreateResult) => Promise<void> | void;
+}
+
+interface MaterializedTaskLaunch {
+  workspacePath: string;
+  trunkBranch: string;
+  forkedRuntimeConfig: RuntimeConfig;
+  runtimeForTaskWorkspace: Runtime;
+  inheritedProjects: WorkspaceMetadata["projects"];
+  sourceRuntimeConfigUpdate?: RuntimeConfig;
 }
 
 export interface TerminateAgentTaskResult {
@@ -168,6 +385,26 @@ export interface DescendantAgentTaskInfo {
 
 type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 
+const WORKSPACE_BUSY_IDLE_ONLY_SEND_MESSAGE = "Workspace is busy; idle-only send was skipped.";
+
+function isWorkspaceBusyIdleOnlySend(error: unknown): boolean {
+  return (
+    error != null &&
+    typeof error === "object" &&
+    (error as { type?: unknown }).type === "unknown" &&
+    typeof (error as { raw?: unknown }).raw === "string" &&
+    (error as { raw: string }).raw.includes(WORKSPACE_BUSY_IDLE_ONLY_SEND_MESSAGE)
+  );
+}
+
+const WORKFLOW_RUN_ID_PREFIX = "wfr_";
+
+const ACTIVE_BACKGROUND_WORKFLOW_RUN_STATUSES = new Set<WorkflowRunStatus>([
+  "pending",
+  "running",
+  "backgrounded",
+]);
+
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 
 /** Maximum consecutive auto-resumes before stopping. Prevents infinite loops when descendants are stuck. */
@@ -175,7 +412,42 @@ const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 // workspace/default agent preferences evolve (e.g., auto router defaults).
 const TASK_RECOVERY_FALLBACK_AGENT_ID = "exec";
 
+function resolveTaskAgentIdForResume(workspace: {
+  agentId?: string;
+  agentType?: string;
+  parentWorkspaceId?: string | null;
+}): string {
+  return resolvePersistedAgentId(workspace, TASK_RECOVERY_FALLBACK_AGENT_ID);
+}
+
 const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
+
+/**
+ * Maximum completion-tool recovery prompts for a child task (since it last
+ * completed successfully) before the task is interrupted instead of prompted
+ * again. Unlike the in-memory
+ * parent auto-resume counter above, this budget is persisted on the workspace
+ * config entry (taskRecoveryAttempts) so crash/restart recovery loops stay
+ * bounded across app restarts. Covers terminal-but-unclassified outcomes such
+ * as repeated empty_output errors, repeated length-truncated turns, and models
+ * that never call their completion tool.
+ */
+const MAX_TASK_RECOVERY_ATTEMPTS = 5;
+
+/**
+ * Provider-terminal stream errors that settle a child task even while it is
+ * still `running` (before it owes its completion tool). Subset of
+ * NON_RETRYABLE_STREAM_ERRORS: errors with in-session recovery
+ * (context_exceeded) or user intent (aborted) must not terminally settle a
+ * running task.
+ */
+const RUNNING_TASK_TERMINAL_STREAM_ERRORS: ReadonlySet<StreamErrorType> = new Set([
+  "model_refusal",
+  "authentication",
+  "quota",
+  "model_not_found",
+  "runtime_not_ready",
+]);
 
 interface AgentTaskIndex {
   byId: Map<string, AgentTaskWorkspaceEntry>;
@@ -185,7 +457,7 @@ interface AgentTaskIndex {
 
 interface PendingTaskWaiter {
   taskId: string;
-  resolve: (report: { reportMarkdown: string; title?: string }) => void;
+  resolve: (report: { reportMarkdown: string; title?: string; structuredOutput?: unknown }) => void;
   reject: (error: Error) => void;
   cleanup: () => void;
   requestingWorkspaceId?: string;
@@ -199,10 +471,13 @@ interface PendingTaskStartWaiter {
 
 interface CompletedAgentReportCacheEntry {
   reportMarkdown: string;
+  structuredOutput?: unknown;
   title?: string;
   // Ancestor workspace IDs captured when the report was cached.
   // Used to keep descendant-scope checks working even if the task workspace is cleaned up.
   ancestorWorkspaceIds: string[];
+  // Ancestors for which the task report must only be consumed through a workflow run.
+  workflowOwnedAncestorWorkspaceIds?: string[];
 }
 
 interface ParentAutoResumeHint {
@@ -236,6 +511,14 @@ function hasAncestorWorkspaceId(
   return Array.isArray(ids) && ids.includes(ancestorWorkspaceId);
 }
 
+function hasWorkflowOwnedAncestorWorkspaceId(
+  entry: { workflowOwnedAncestorWorkspaceIds?: unknown } | null | undefined,
+  ancestorWorkspaceId: string
+): boolean {
+  const ids = entry?.workflowOwnedAncestorWorkspaceIds;
+  return Array.isArray(ids) && ids.includes(ancestorWorkspaceId);
+}
+
 function isSuccessfulToolResult(value: unknown): boolean {
   return (
     typeof value === "object" &&
@@ -243,6 +526,210 @@ function isSuccessfulToolResult(value: unknown): boolean {
     "success" in value &&
     (value as { success?: unknown }).success === true
   );
+}
+
+function formatBackgroundAwaitTargetList(label: string, ids: string[]): string | null {
+  if (ids.length === 0) {
+    return null;
+  }
+  return `${label} (${ids.join(", ")})`;
+}
+
+function buildBackgroundAwaitPrompt(params: {
+  taskIds: string[];
+  workflowRunIds: string[];
+}): string {
+  assert(
+    params.taskIds.length > 0 || params.workflowRunIds.length > 0,
+    "buildBackgroundAwaitPrompt requires at least one awaitable target"
+  );
+
+  const targetLabels = [
+    formatBackgroundAwaitTargetList("sub-agent task(s)", params.taskIds),
+    formatBackgroundAwaitTargetList("workflow run(s)", params.workflowRunIds),
+  ].filter((label): label is string => label != null);
+  const taskIds = [...params.taskIds, ...params.workflowRunIds];
+
+  return (
+    `You have active background ${targetLabels.join(" and ")}. ` +
+    "You MUST NOT end your turn while any listed sub-agent tasks are queued/starting/running/awaiting_report or workflow runs are pending/running/backgrounded. " +
+    `Call task_await now with task_ids: ${JSON.stringify(taskIds)} to wait for them. ` +
+    "If any are still queued/starting/running/awaiting_report/backgrounded after that, call task_await again. " +
+    "Only once all listed work is terminal should you write your final response, integrating any reports or workflow results."
+  );
+}
+
+function isWorkflowRunId(value: unknown): value is string {
+  return typeof value === "string" && value.startsWith(WORKFLOW_RUN_ID_PREFIX);
+}
+
+function collectWorkflowRunIdsFromToolOutput(output: unknown): string[] {
+  if (output == null || typeof output !== "object") {
+    return [];
+  }
+
+  const record = output as Record<string, unknown>;
+  if (isWorkflowRunId(record.runId)) {
+    return [record.runId];
+  }
+
+  const results = record.results;
+  if (!Array.isArray(results)) {
+    return [];
+  }
+
+  const runIds: string[] = [];
+  for (const result of results) {
+    if (result == null || typeof result !== "object") {
+      continue;
+    }
+    const taskId = (result as Record<string, unknown>).taskId;
+    if (isWorkflowRunId(taskId)) {
+      runIds.push(taskId);
+    }
+  }
+  return runIds;
+}
+
+function collectWorkflowRunIdsFromTaskAwaitInput(input: unknown): string[] {
+  if (input == null || typeof input !== "object") {
+    return [];
+  }
+  const taskIds = (input as Record<string, unknown>).task_ids;
+  if (!Array.isArray(taskIds)) {
+    return [];
+  }
+  return taskIds.filter(isWorkflowRunId);
+}
+
+function collectAgentReferencedWorkflowRunIdsFromParts(
+  parts: readonly unknown[],
+  knownAgentRunIds: ReadonlySet<string>
+): string[] {
+  const runIds = new Set<string>();
+
+  for (const part of parts) {
+    if (!isDynamicToolPart(part) || part.state !== "output-available") {
+      continue;
+    }
+    if (part.toolName !== "workflow_run") {
+      continue;
+    }
+    for (const runId of collectWorkflowRunIdsFromToolOutput(part.output)) {
+      runIds.add(runId);
+    }
+  }
+
+  const allowedTaskAwaitRunIds = new Set([...knownAgentRunIds, ...runIds]);
+  for (const part of parts) {
+    if (!isDynamicToolPart(part) || part.state !== "output-available") {
+      continue;
+    }
+    if (part.toolName !== "task_await") {
+      continue;
+    }
+
+    // Omitted task_ids makes task_await discover every active run in the workspace, including
+    // slash-command runs. Only treat task_await output as agent provenance when the model either
+    // explicitly awaited that workflow ID in this turn or we already know the run was agent-started.
+    for (const runId of collectWorkflowRunIdsFromTaskAwaitInput(part.input)) {
+      runIds.add(runId);
+      allowedTaskAwaitRunIds.add(runId);
+    }
+    for (const runId of collectWorkflowRunIdsFromToolOutput(part.output)) {
+      if (allowedTaskAwaitRunIds.has(runId)) {
+        runIds.add(runId);
+      }
+    }
+  }
+
+  return Array.from(runIds);
+}
+
+function isInternalResumeAutoCompactionMessage(message: MuxMessage): boolean {
+  const muxMetadata = message.metadata?.muxMetadata;
+  if (muxMetadata?.type !== "compaction-request" || muxMetadata.source !== "auto-compaction") {
+    return false;
+  }
+  return muxMetadata.parsed.followUpContent?.dispatchOptions?.source === "internal-resume";
+}
+
+function isSyntheticManualSupersessionMessage(message: MuxMessage): boolean {
+  const muxMetadata = message.metadata?.muxMetadata;
+  return (
+    message.metadata?.synthetic === true &&
+    muxMetadata?.type === "compaction-request" &&
+    muxMetadata.source === "auto-compaction" &&
+    !isInternalResumeAutoCompactionMessage(message)
+  );
+}
+
+function isManualUserSupersessionMessage(message: MuxMessage): boolean {
+  return (
+    message.role === "user" &&
+    (message.metadata?.synthetic !== true || isSyntheticManualSupersessionMessage(message))
+  );
+}
+
+function isResetBoundaryMessage(message: MuxMessage): boolean {
+  return message.metadata?.contextBoundaryKind === CONTEXT_BOUNDARY_KINDS.RESET;
+}
+
+function isWorkflowSupersessionMessage(message: MuxMessage): boolean {
+  return isManualUserSupersessionMessage(message) || isResetBoundaryMessage(message);
+}
+
+function isTerminalWorkflowRunStatus(status: WorkflowRunStatus): boolean {
+  return status === "completed" || status === "failed" || status === "interrupted";
+}
+
+function isFailedWorkflowRunSnapshot(value: unknown, runId: string): boolean {
+  if (value == null || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return record.id === runId && record.status === "failed";
+}
+
+function isTerminalWorkflowTaskAwaitRecord(
+  record: Record<string, unknown>,
+  runId: string
+): boolean {
+  if (record.taskId !== runId) {
+    return false;
+  }
+  if (record.status === "completed" || record.status === "interrupted") {
+    return true;
+  }
+  if (record.status === "error") {
+    return isFailedWorkflowRunSnapshot(record.run, runId);
+  }
+  return false;
+}
+
+function hasTerminalWorkflowTaskAwaitInParts(parts: readonly unknown[], runId: string): boolean {
+  return parts.some((part) => {
+    if (!isDynamicToolPart(part) || part.toolName !== "task_await") {
+      return false;
+    }
+    if (part.state !== "output-available") {
+      return false;
+    }
+    const output = part.output;
+    if (output == null || typeof output !== "object") {
+      return false;
+    }
+    const results = (output as Record<string, unknown>).results;
+    if (!Array.isArray(results)) {
+      return false;
+    }
+    return results.some((result) => {
+      if (result == null || typeof result !== "object") {
+        return false;
+      }
+      return isTerminalWorkflowTaskAwaitRecord(result as Record<string, unknown>, runId);
+    });
+  });
 }
 
 function sanitizeAgentTypeForName(agentType: string): string {
@@ -272,6 +759,16 @@ function buildAgentWorkspaceName(agentType: string, workspaceId: string): string
 
 function getIsoNow(): string {
   return new Date().toISOString();
+}
+
+async function runtimePathExists(runtime: Runtime, path: string): Promise<boolean> {
+  assert(path.length > 0, "runtimePathExists: path must be non-empty");
+  try {
+    await runtime.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function readTaskBaseCommitShaByProjectPath(params: {
@@ -321,6 +818,11 @@ export class TaskService {
   // safe even when the parent stream-end already holds workspaceEventLocks for the parent itself.
   private readonly deferredBestOfLocks = new MutexMap<string>();
   private readonly mutex = new AsyncMutex();
+  private maybeStartQueuedTasksInFlight: Promise<void> | undefined;
+  private maybeStartQueuedTasksRerunRequested = false;
+  // Git worktree creation touches per-repository metadata; serialize that narrow phase per project
+  // while allowing post-fork init/send startup work for sibling tasks to overlap.
+  private readonly reservedTaskLaunchByProjectPath = new Map<string, Promise<void>>();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
   private readonly pendingStartWaitersByTaskId = new Map<string, PendingTaskStartWaiter[]>();
   // Tracks workspaces currently blocked in a foreground wait (e.g. a task tool call awaiting
@@ -345,6 +847,186 @@ export class TaskService {
   private interruptedParentWorkspaceIds = new Set<string>();
   /** Tracks consecutive auto-resumes per workspace. Reset when a user message is sent. */
   private consecutiveAutoResumes = new Map<string, number>();
+
+  private async findLatestWorkflowSupersession(workspaceId: string): Promise<{
+    found: boolean;
+    timestamp?: number;
+  }> {
+    assert(workspaceId.length > 0, "findLatestWorkflowSupersession requires workspaceId");
+    let latest: { found: boolean; timestamp?: number } = { found: false };
+    const historyResult = await this.historyService.iterateFullHistory(
+      workspaceId,
+      "backward",
+      (messages) => {
+        for (const message of messages) {
+          if (!isWorkflowSupersessionMessage(message)) {
+            continue;
+          }
+          const timestamp = message.metadata?.timestamp;
+          latest = {
+            found: true,
+            ...(typeof timestamp === "number" ? { timestamp } : {}),
+          };
+          return false;
+        }
+        return undefined;
+      }
+    );
+
+    if (!historyResult.success) {
+      log.warn("Failed to read full history for workflow supersession", {
+        workspaceId,
+        error: historyResult.error,
+      });
+    }
+    return latest;
+  }
+
+  private async listAgentReferencedWorkflowRunIds(
+    workspaceId: string,
+    currentParts: readonly unknown[],
+    currentMessageId?: string
+  ): Promise<string[]> {
+    assert(workspaceId.length > 0, "listAgentReferencedWorkflowRunIds requires workspaceId");
+
+    const latestSupersession = await this.findLatestWorkflowSupersession(workspaceId);
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    let historyMessages: MuxMessage[] = [];
+    let historyScanStartIndex = 0;
+    let trustCurrentParts = true;
+    if (historyResult.success) {
+      historyMessages = historyResult.data;
+      const latestSupersessionIndex = historyMessages.findLastIndex(isWorkflowSupersessionMessage);
+      if (latestSupersessionIndex !== -1) {
+        historyScanStartIndex = latestSupersessionIndex + 1;
+        const currentMessageIndex =
+          currentMessageId == null
+            ? -1
+            : historyMessages.findIndex((message) => message.id === currentMessageId);
+        if (currentMessageIndex !== -1 && currentMessageIndex < latestSupersessionIndex) {
+          trustCurrentParts = false;
+        }
+      }
+    } else {
+      log.warn("Failed to read history for workflow run references", {
+        workspaceId,
+        error: historyResult.error,
+      });
+    }
+
+    const runIds = new Set<string>();
+    const references = await readAgentWorkflowRunReferences(this.config.getSessionDir(workspaceId));
+    for (const reference of references) {
+      // If the latest user/reset supersession has no durable timestamp, fail safe: only trust
+      // workflow provenance re-established by current/post-supersession assistant output below.
+      if (latestSupersession.found && latestSupersession.timestamp === undefined) {
+        continue;
+      }
+      if (
+        latestSupersession.timestamp !== undefined &&
+        reference.createdAtMs <= latestSupersession.timestamp
+      ) {
+        continue;
+      }
+      runIds.add(reference.runId);
+    }
+
+    if (trustCurrentParts) {
+      for (const runId of collectAgentReferencedWorkflowRunIdsFromParts(currentParts, runIds)) {
+        runIds.add(runId);
+      }
+    }
+
+    for (const message of historyMessages.slice(historyScanStartIndex)) {
+      if (message.role !== "assistant" || isWorkflowDisplayOnlyMessage(message)) {
+        continue;
+      }
+      for (const runId of collectAgentReferencedWorkflowRunIdsFromParts(message.parts, runIds)) {
+        runIds.add(runId);
+      }
+    }
+
+    return Array.from(runIds);
+  }
+
+  private async listActiveBackgroundWorkflowRunIds(
+    workspaceId: string,
+    referencedWorkflowRunIds: readonly string[]
+  ): Promise<string[]> {
+    assert(workspaceId.length > 0, "listActiveBackgroundWorkflowRunIds requires workspaceId");
+    if (referencedWorkflowRunIds.length === 0) {
+      return [];
+    }
+
+    try {
+      const referencedRunIdSet = new Set(referencedWorkflowRunIds);
+      const runStore = new WorkflowRunStore({ sessionDir: this.config.getSessionDir(workspaceId) });
+      const runs = await runStore.listRuns();
+      return runs
+        .filter(
+          (run) =>
+            referencedRunIdSet.has(run.id) &&
+            run.workspaceId === workspaceId &&
+            ACTIVE_BACKGROUND_WORKFLOW_RUN_STATUSES.has(run.status)
+        )
+        .map((run) => run.id);
+    } catch (error: unknown) {
+      // Workflow state should never make stream-end cleanup fail; task_await can still discover
+      // runs on a later turn once storage is readable again.
+      log.warn("Failed to list active background workflow runs", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+      return [];
+    }
+  }
+
+  private async listBlockingBackgroundWorkflowRunIds(
+    workspaceId: string,
+    referencedWorkflowRunIds: readonly string[],
+    currentParts: readonly unknown[]
+  ): Promise<string[]> {
+    assert(workspaceId.length > 0, "listBlockingBackgroundWorkflowRunIds requires workspaceId");
+    if (referencedWorkflowRunIds.length === 0) {
+      return [];
+    }
+
+    try {
+      const referencedRunIdSet = new Set(referencedWorkflowRunIds);
+      const runStore = new WorkflowRunStore({ sessionDir: this.config.getSessionDir(workspaceId) });
+      const runs = await runStore.listRuns();
+      const blockingRunIds: string[] = [];
+      for (const run of runs) {
+        if (!referencedRunIdSet.has(run.id) || run.workspaceId !== workspaceId) {
+          continue;
+        }
+        if (ACTIVE_BACKGROUND_WORKFLOW_RUN_STATUSES.has(run.status)) {
+          blockingRunIds.push(run.id);
+          continue;
+        }
+        if (!isTerminalWorkflowRunStatus(run.status)) {
+          continue;
+        }
+        if (hasTerminalWorkflowTaskAwaitInParts(currentParts, run.id)) {
+          continue;
+        }
+        const isCurrent = await this.workspaceService.isWorkflowInvocationCurrent(
+          workspaceId,
+          run.id
+        );
+        if (isCurrent) {
+          blockingRunIds.push(run.id);
+        }
+      }
+      return blockingRunIds;
+    } catch (error: unknown) {
+      log.warn("Failed to list blocking background workflow runs", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+      return [];
+    }
+  }
 
   private markTaskQueueBackgrounded(taskId: string): void {
     this.userBackgroundedTaskIds.add(taskId);
@@ -422,7 +1104,7 @@ export class TaskService {
     };
     agentId: string;
     modelString?: string;
-    thinkingLevel?: ThinkingLevel;
+    thinkingLevel?: ParsedThinkingInput;
     parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
   }): {
     taskModelString: string;
@@ -445,8 +1127,14 @@ export class TaskService {
     const canonicalModel = normalizeToCanonical(taskModelString).trim();
     assert(canonicalModel.length > 0, "resolveTaskAISettings: resolved model must be non-empty");
 
+    // Resolve an explicit override first so numeric thinking indices map into the
+    // chosen model's allowed levels (named levels pass through unchanged).
+    const overrideThinkingLevel =
+      params.thinkingLevel != null
+        ? resolveThinkingInput(params.thinkingLevel, canonicalModel)
+        : undefined;
     const requestedThinkingLevel: ThinkingLevel =
-      params.thinkingLevel ??
+      overrideThinkingLevel ??
       subagentDefault?.thinkingLevel ??
       agentDefault?.thinkingLevel ??
       parentRuntimeAiSettings?.thinkingLevel ??
@@ -512,57 +1200,98 @@ export class TaskService {
     projectPath: string;
     workspace: Pick<
       WorkspaceConfigEntry,
-      "id" | "name" | "path" | "runtimeConfig" | "agentId" | "agentType"
+      "id" | "name" | "path" | "runtimeConfig" | "agentId" | "agentType" | "parentWorkspaceId"
     >;
   }): Promise<boolean> {
     assert(entry.projectPath.length > 0, "isPlanLikeTaskWorkspace: projectPath must be non-empty");
 
-    const rawAgentId = coerceNonEmptyString(entry.workspace.agentId ?? entry.workspace.agentType);
-    if (!rawAgentId) {
+    const agentIdCandidates = resolvePersistedAgentIdCandidates(entry.workspace);
+    if (agentIdCandidates.length === 0) {
       return false;
-    }
-
-    const normalizedAgentId = rawAgentId.trim().toLowerCase();
-    const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
-    if (!parsedAgentId.success) {
-      return normalizedAgentId === "plan";
     }
 
     const workspacePath = coerceNonEmptyString(entry.workspace.path);
     const workspaceName = coerceNonEmptyString(entry.workspace.name) ?? entry.workspace.id;
     const runtimeConfig = entry.workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
     if (!workspacePath || !workspaceName) {
-      return parsedAgentId.data === "plan";
+      return agentIdCandidates.includes("plan");
     }
 
-    try {
-      const runtime = createRuntimeForWorkspace({
-        runtimeConfig,
-        projectPath: entry.projectPath,
-        name: workspaceName,
-      });
-      const agentDefinition = await readAgentDefinition(runtime, workspacePath, parsedAgentId.data);
-      const chain = await resolveAgentInheritanceChain({
-        runtime,
-        workspacePath,
-        agentId: agentDefinition.id,
-        agentDefinition,
-        workspaceId: entry.workspace.id ?? workspaceName,
-      });
+    const cfg = this.config.loadConfigOrDefault();
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig,
+      projectPath: entry.projectPath,
+      name: workspaceName,
+    });
+    const agentDiscoveryCandidates: Array<{ runtime: Runtime; workspacePath: string }> = [
+      { runtime, workspacePath },
+    ];
 
-      if (agentDefinition.id === "compact") {
-        return false;
+    const parentEntry = entry.workspace.parentWorkspaceId
+      ? findWorkspaceEntry(cfg, entry.workspace.parentWorkspaceId)
+      : null;
+    const parentWorkspaceName = coerceNonEmptyString(parentEntry?.workspace.name);
+    if (parentEntry != null && parentWorkspaceName != null) {
+      try {
+        agentDiscoveryCandidates.push(
+          createRuntimeContextForWorkspace({
+            runtimeConfig: parentEntry.workspace.runtimeConfig ?? runtimeConfig,
+            projectPath: parentEntry.projectPath,
+            name: parentWorkspaceName,
+            namedWorkspacePath: coerceNonEmptyString(parentEntry.workspace.path),
+          })
+        );
+      } catch (error: unknown) {
+        log.debug("Failed to build parent task agent-discovery runtime", {
+          workspaceId: entry.workspace.id,
+          parentWorkspaceId: entry.workspace.parentWorkspaceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    for (const agentId of agentIdCandidates) {
+      let fallbackChain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
+      let fallbackAgentId: string | undefined;
+      for (const discovery of agentDiscoveryCandidates) {
+        try {
+          const agentDefinition = await readAgentDefinition(
+            discovery.runtime,
+            discovery.workspacePath,
+            agentId
+          );
+          const chain = await resolveAgentInheritanceChain({
+            runtime: discovery.runtime,
+            workspacePath: discovery.workspacePath,
+            agentId: agentDefinition.id,
+            agentDefinition,
+            workspaceId: entry.workspace.id ?? workspaceName,
+          });
+
+          if (agentDefinition.scope === "project") {
+            return agentDefinition.id === "compact" ? false : isPlanLikeInResolvedChain(chain);
+          }
+          fallbackChain ??= chain;
+          fallbackAgentId ??= agentDefinition.id;
+        } catch (error: unknown) {
+          log.debug("Failed to resolve task agent mode from discovery path", {
+            workspaceId: entry.workspace.id,
+            agentId,
+            agentDiscoveryPath: discovery.workspacePath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
 
-      return isPlanLikeInResolvedChain(chain);
-    } catch (error: unknown) {
-      log.debug("Failed to resolve task agent mode; falling back to agentId check", {
-        workspaceId: entry.workspace.id,
-        agentId: parsedAgentId.data,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return parsedAgentId.data === "plan";
+      if (fallbackChain != null) {
+        if (fallbackAgentId === "compact") {
+          return false;
+        }
+        return isPlanLikeInResolvedChain(fallbackChain);
+      }
     }
+
+    return agentIdCandidates.includes("plan");
   }
 
   private async emitWorkspaceMetadata(workspaceId: string): Promise<void> {
@@ -633,6 +1362,46 @@ export class TaskService {
       queuedTaskCountAtStartup,
     });
 
+    const staleStartingTasks = this.listAgentTaskWorkspaces(startupConfig).filter(
+      (task) => task.taskStatus === "starting" && typeof task.id === "string"
+    );
+    if (staleStartingTasks.length > 0) {
+      const recoveries = new Map<
+        string,
+        { status: Extract<AgentTaskStatus, "queued" | "running">; acceptedPrompt: boolean }
+      >();
+      for (const task of staleStartingTasks) {
+        assert(task.id != null && task.id.length > 0, "stale starting task id is required");
+        const isStreaming = this.aiService.isStreaming(task.id);
+        recoveries.set(task.id, {
+          status: isStreaming ? "running" : "queued",
+          acceptedPrompt: !isStreaming && (await this.hasAcceptedInitialTaskPrompt(task.id)),
+        });
+      }
+
+      await this.config.editConfig((config) => {
+        for (const task of staleStartingTasks) {
+          assert(task.id != null && task.id.length > 0, "stale starting task id is required");
+          const recovery = recoveries.get(task.id);
+          assert(recovery != null, "stale starting task recovery is required");
+          const entry = findWorkspaceEntry(config, task.id);
+          if (!entry) continue;
+          entry.workspace.taskStatus = recovery.status;
+          if (recovery.acceptedPrompt) {
+            // The initial prompt is already durable in chat history; clearing taskPrompt makes the
+            // queued recovery path resume that accepted turn instead of appending a duplicate user turn.
+            entry.workspace.taskPrompt = undefined;
+          }
+        }
+        return config;
+      });
+      log.info("[startup] Recovered stale starting agent tasks", {
+        count: staleStartingTasks.length,
+        acceptedPromptCount: [...recoveries.values()].filter((recovery) => recovery.acceptedPrompt)
+          .length,
+      });
+    }
+
     const maybeStartQueuedTasksStartedAt = Date.now();
     await this.maybeStartQueuedTasks();
     const maybeStartQueuedTasksMs = Date.now() - maybeStartQueuedTasksStartedAt;
@@ -690,7 +1459,7 @@ export class TaskService {
       });
 
       const model = task.taskModelString ?? defaultModel;
-      const agentId = task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
+      const agentId = resolveTaskAgentIdForResume(task);
       log.info("[startup] Resuming running task", {
         taskId: task.id,
         taskName: task.name,
@@ -700,13 +1469,15 @@ export class TaskService {
         isPlanLike,
       });
       const resumeStartedAt = Date.now();
+      const restartCompletionInstruction = isPlanLike
+        ? "When you have a final plan, call propose_plan exactly once."
+        : task.taskExperiments?.subagentFileReports === true
+          ? "When you have a final answer, create or update report.md, then call agent_report with reportMarkdownPath, structuredOutputPath, and title all set to null."
+          : "When you have a final answer, call agent_report exactly once.";
       const sendResult = await this.workspaceService.sendMessage(
         task.id,
-        isPlanLike
-          ? "Mux restarted while this task was running. Continue where you left off. " +
-              "When you have a final plan, call propose_plan exactly once."
-          : "Mux restarted while this task was running. Continue where you left off. " +
-              "When you have a final answer, call agent_report exactly once.",
+        "Mux restarted while this task was running. Continue where you left off. " +
+          restartCompletionInstruction,
         {
           model,
           agentId,
@@ -818,6 +1589,21 @@ export class TaskService {
     });
   }
 
+  private async hasAcceptedInitialTaskPrompt(workspaceId: string): Promise<boolean> {
+    assert(workspaceId.length > 0, "hasAcceptedInitialTaskPrompt: workspaceId must be non-empty");
+
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      log.warn("Failed to inspect task history during stale starting recovery", {
+        workspaceId,
+        error: historyResult.error,
+      });
+      return false;
+    }
+
+    return historyResult.data.some((message) => message.role === "user");
+  }
+
   private startWorkspaceInit(workspaceId: string, projectPath: string): InitLogger {
     assert(workspaceId.length > 0, "startWorkspaceInit: workspaceId must be non-empty");
     assert(projectPath.length > 0, "startWorkspaceInit: projectPath must be non-empty");
@@ -832,6 +1618,643 @@ export class TaskService {
     };
   }
 
+  async createMany(
+    argsList: TaskCreateArgs[],
+    options: TaskCreateManyOptions = {}
+  ): Promise<Result<TaskCreateResult[], string>> {
+    if (argsList.length === 0) {
+      return Ok([]);
+    }
+
+    const plans: Array<TaskLaunchPlan & { status: "queued" | "starting" }> = [];
+    const results: TaskCreateResult[] = [];
+
+    await using _lock = await this.mutex.acquire();
+
+    const cfg = this.config.loadConfigOrDefault();
+    const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
+    let reservedActiveCount = this.countActiveAgentTasks(cfg);
+
+    for (const args of argsList) {
+      const parentWorkspaceId = coerceNonEmptyString(args.parentWorkspaceId);
+      if (!parentWorkspaceId) return Err("Task.createMany: parentWorkspaceId is required");
+      if (args.kind !== "agent") return Err("Task.createMany: unsupported kind");
+
+      const basePrompt = coerceNonEmptyString(args.prompt);
+      if (!basePrompt) return Err("Task.createMany: prompt is required");
+      const prompt =
+        args.experiments?.subagentFileReports === true
+          ? appendSubagentFileReportInstructions(basePrompt, args.workflowTask)
+          : basePrompt;
+
+      const normalizedAgentId = normalizeAgentId(args.agentId ?? args.agentType, "");
+      if (!normalizedAgentId) return Err("Task.createMany: agentId is required");
+      const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
+      if (!parsedAgentId.success) {
+        return Err(`Task.createMany: invalid agentId (${normalizedAgentId})`);
+      }
+      const agentId = parsedAgentId.data;
+      const agentType = agentId;
+
+      let normalizedBestOf: TaskCreateArgs["bestOf"];
+      const bestOf = args.bestOf;
+      if (bestOf) {
+        const groupId = coerceNonEmptyString(bestOf.groupId);
+        if (!groupId)
+          return Err("Task.createMany: bestOf.groupId is required when bestOf is provided");
+        if (!Number.isInteger(bestOf.index) || bestOf.index < 0) {
+          return Err("Task.createMany: bestOf.index must be a non-negative integer");
+        }
+        if (!Number.isInteger(bestOf.total) || bestOf.total < 2) {
+          return Err("Task.createMany: bestOf.total must be an integer >= 2");
+        }
+        if (bestOf.index >= bestOf.total) {
+          return Err("Task.createMany: bestOf.index must be less than bestOf.total");
+        }
+        const kind = normalizeTaskGroupKind(bestOf.kind);
+        const label = normalizeTaskGroupLabel(bestOf.label);
+        if (kind === TASK_GROUP_KIND.VARIANTS && !label) {
+          return Err("Task.createMany: bestOf.label is required when bestOf.kind is variants");
+        }
+        if (kind !== TASK_GROUP_KIND.VARIANTS && label) {
+          return Err("Task.createMany: bestOf.label is only allowed when bestOf.kind is variants");
+        }
+        normalizedBestOf = {
+          groupId,
+          index: bestOf.index,
+          total: bestOf.total,
+          kind,
+          ...(label ? { label } : {}),
+        };
+      }
+
+      const parentMetaResult = await this.aiService.getWorkspaceMetadata(parentWorkspaceId);
+      if (!parentMetaResult.success) {
+        return Err(`Task.createMany: parent workspace not found (${parentMetaResult.error})`);
+      }
+      const parentMeta = parentMetaResult.data;
+
+      const taskProjectConfig = cfg.projects.get(stripTrailingSlashes(parentMeta.projectPath));
+      if (!taskProjectConfig?.trusted) {
+        return Err(
+          "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
+        );
+      }
+
+      const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
+      if (parentEntry?.workspace.taskStatus === "reported") {
+        return Err("Task.createMany: cannot spawn new tasks after agent_report");
+      }
+
+      const requestedDepth = this.getTaskDepth(cfg, parentWorkspaceId) + 1;
+      if (requestedDepth > taskSettings.maxTaskNestingDepth) {
+        return Err(
+          `Task.createMany: maxTaskNestingDepth exceeded (requestedDepth=${requestedDepth}, max=${taskSettings.maxTaskNestingDepth})`
+        );
+      }
+
+      const taskId = this.config.generateStableId();
+      const workspaceName = buildAgentWorkspaceName(agentId, taskId);
+      const nameValidation = validateWorkspaceName(workspaceName);
+      if (!nameValidation.valid) {
+        return Err(
+          `Task.createMany: generated workspace name invalid (${nameValidation.error ?? "unknown error"})`
+        );
+      }
+
+      const { taskModelString, canonicalModel, effectiveThinkingLevel } =
+        this.resolveTaskAISettings({
+          cfg,
+          parentMeta,
+          agentId,
+          modelString: args.modelString,
+          thinkingLevel: args.thinkingLevel,
+          parentRuntimeAiSettings: args.parentRuntimeAiSettings,
+        });
+
+      const parentRuntimeConfig = parentMeta.runtimeConfig;
+      const taskRuntimeConfig: RuntimeConfig = parentRuntimeConfig;
+      const runtime = createRuntimeForWorkspace({
+        runtimeConfig: taskRuntimeConfig,
+        projectPath: parentMeta.projectPath,
+        name: parentMeta.name,
+      });
+      const isInPlace = parentMeta.projectPath === parentMeta.name;
+      const parentWorkspacePath = isInPlace
+        ? parentMeta.projectPath
+        : runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name);
+
+      const getRunnableHint = async (): Promise<string> => {
+        try {
+          const allAgents = await discoverAgentDefinitions(runtime, parentWorkspacePath);
+          const runnableIds = (
+            await Promise.all(
+              allAgents.map(async (agent) => {
+                try {
+                  const frontmatter = await resolveAgentFrontmatter(
+                    runtime,
+                    parentWorkspacePath,
+                    agent.id,
+                    { skipScopesAbove: getSkipScopesAboveForKnownScope(agent.scope) }
+                  );
+                  if (frontmatter.subagent?.runnable !== true) return null;
+                  return isAgentEffectivelyDisabled({
+                    cfg,
+                    agentId: agent.id,
+                    resolvedFrontmatter: frontmatter,
+                  })
+                    ? null
+                    : agent.id;
+                } catch {
+                  return null;
+                }
+              })
+            )
+          ).filter((id): id is string => typeof id === "string");
+          return runnableIds.length > 0
+            ? `Runnable agentIds: ${runnableIds.join(", ")}`
+            : "No runnable agents available";
+        } catch {
+          return "Could not discover available agents";
+        }
+      };
+
+      let skipInitHook = false;
+      try {
+        const frontmatter = await resolveAgentFrontmatter(runtime, parentWorkspacePath, agentId);
+        if (frontmatter.subagent?.runnable !== true) {
+          const hint = await getRunnableHint();
+          return Err(
+            `Task.createMany: agentId is not runnable as a sub-agent (${agentId}). ${hint}`
+          );
+        }
+        if (isAgentEffectivelyDisabled({ cfg, agentId, resolvedFrontmatter: frontmatter })) {
+          const hint = await getRunnableHint();
+          return Err(`Task.createMany: agentId is disabled (${agentId}). ${hint}`);
+        }
+        skipInitHook = frontmatter.subagent?.skip_init_hook === true;
+      } catch {
+        const hint = await getRunnableHint();
+        return Err(`Task.createMany: unknown agentId (${agentId}). ${hint}`);
+      }
+
+      const status: "queued" | "starting" =
+        reservedActiveCount >= taskSettings.maxParallelAgentTasks ? "queued" : "starting";
+      if (status === "starting") reservedActiveCount += 1;
+
+      const createdAt = getIsoNow();
+      plans.push({
+        taskId,
+        parentWorkspaceId,
+        parentMeta,
+        agentId,
+        agentType,
+        start: { kind: "sendMessage", prompt },
+        title: args.title,
+        workspaceName,
+        createdAt,
+        taskRuntimeConfig,
+        parentRuntimeConfig,
+        taskModelString,
+        canonicalModel,
+        effectiveThinkingLevel,
+        skipInitHook,
+        workflowTask: args.workflowTask,
+        bestOf: normalizedBestOf,
+        experiments: args.experiments,
+        onRefusal: args.onRefusal,
+        status,
+      });
+      results.push({ taskId, kind: "agent", status });
+    }
+
+    for (const [index, result] of results.entries()) {
+      // Workflow callers durably checkpoint returned task IDs before task records are persisted.
+      // If config persistence fails afterward, replay sees a started step whose task is not found
+      // and restarts it instead of duplicating an already-launched child after a crash.
+      await options.onTaskReserved?.(index, result);
+    }
+
+    await this.config.editConfig((config) => {
+      for (const plan of plans) {
+        const runtime = createRuntimeForWorkspace({
+          runtimeConfig: plan.taskRuntimeConfig,
+          projectPath: plan.parentMeta.projectPath,
+          name: plan.parentMeta.name,
+        });
+        const workspacePath = runtime.getWorkspacePath(
+          plan.parentMeta.projectPath,
+          plan.workspaceName
+        );
+        const trunkBranch = coerceNonEmptyString(plan.parentMeta.name);
+        if (!trunkBranch) {
+          throw new Error("Task.createMany: parent workspace name missing");
+        }
+        let projectConfig = config.projects.get(plan.parentMeta.projectPath);
+        if (!projectConfig) {
+          projectConfig = { workspaces: [] };
+          config.projects.set(plan.parentMeta.projectPath, projectConfig);
+        }
+        projectConfig.workspaces.push({
+          path: workspacePath,
+          id: plan.taskId,
+          name: plan.workspaceName,
+          title: plan.title,
+          createdAt: plan.createdAt,
+          runtimeConfig: plan.taskRuntimeConfig,
+          aiSettings:
+            plan.effectiveThinkingLevel !== undefined
+              ? { model: plan.canonicalModel, thinkingLevel: plan.effectiveThinkingLevel }
+              : undefined,
+          parentWorkspaceId: plan.parentWorkspaceId,
+          agentId: plan.agentId,
+          agentType: plan.agentType,
+          workflowTask: plan.workflowTask,
+          bestOf: plan.bestOf,
+          taskStatus: plan.status,
+          taskPrompt: plan.start.kind === "sendMessage" ? plan.start.prompt : undefined,
+          taskTrunkBranch: trunkBranch,
+          taskModelString: plan.taskModelString,
+          taskThinkingLevel: plan.effectiveThinkingLevel,
+          taskOnRefusal: plan.onRefusal,
+          taskExperiments: plan.experiments,
+          projects: plan.parentMeta.projects,
+        });
+      }
+      return config;
+    });
+
+    for (const result of results) {
+      await this.emitWorkspaceMetadata(result.taskId);
+    }
+    for (const plan of plans) {
+      if (plan.status === "starting") {
+        this.scheduleReservedTaskLaunch(plan);
+      }
+    }
+    if (plans.some((plan) => plan.status === "queued")) {
+      this.scheduleMaybeStartQueuedTasks();
+    }
+
+    return Ok(results);
+  }
+
+  private async cleanupMaterializedTaskWorkspace(
+    runtime: Runtime,
+    projectPath: string,
+    workspaceName: string,
+    taskId: string
+  ): Promise<void> {
+    assert(projectPath.length > 0, "cleanupMaterializedTaskWorkspace requires projectPath");
+    assert(workspaceName.length > 0, "cleanupMaterializedTaskWorkspace requires workspaceName");
+    assert(taskId.length > 0, "cleanupMaterializedTaskWorkspace requires taskId");
+
+    try {
+      const deleteResult = await runtime.deleteWorkspace(projectPath, workspaceName, true);
+      if (!deleteResult.success) {
+        log.error("Task launch cleanup: failed to delete materialized workspace", {
+          taskId,
+          error: deleteResult.error,
+        });
+      }
+    } catch (error: unknown) {
+      log.error("Task launch cleanup: runtime.deleteWorkspace threw", {
+        taskId,
+        error: getErrorMessage(error),
+      });
+    }
+
+    try {
+      const sessionDir = this.config.getSessionDir(taskId);
+      await fsPromises.rm(sessionDir, { recursive: true, force: true });
+    } catch (error: unknown) {
+      log.error("Task launch cleanup: failed to remove session directory", {
+        taskId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  private async getExistingMaterializedTaskLaunch(
+    plan: TaskLaunchPlan,
+    sourceRuntime: Runtime,
+    workspace: WorkspaceConfigEntry
+  ): Promise<MaterializedTaskLaunch | null> {
+    const workspacePath =
+      coerceNonEmptyString(workspace.path) ??
+      sourceRuntime.getWorkspacePath(plan.parentMeta.projectPath, plan.workspaceName);
+    if (!(await runtimePathExists(sourceRuntime, workspacePath))) {
+      return null;
+    }
+
+    const forkedRuntimeConfig = workspace.runtimeConfig ?? plan.taskRuntimeConfig;
+    const runtimeForTaskWorkspace = createRuntimeForWorkspace({
+      runtimeConfig: forkedRuntimeConfig,
+      projectPath: plan.parentMeta.projectPath,
+      name: plan.workspaceName,
+      namedWorkspacePath: workspacePath,
+    });
+    const trunkBranch =
+      coerceNonEmptyString(workspace.taskTrunkBranch) ??
+      coerceNonEmptyString(plan.preferredTrunkBranch) ??
+      coerceNonEmptyString(plan.parentMeta.name) ??
+      plan.workspaceName;
+
+    return {
+      workspacePath,
+      trunkBranch,
+      forkedRuntimeConfig,
+      runtimeForTaskWorkspace,
+      inheritedProjects: workspace.projects ?? plan.parentMeta.projects,
+    };
+  }
+
+  private async runProjectForkExclusive<T>(projectPath: string, fn: () => Promise<T>): Promise<T> {
+    assert(projectPath.length > 0, "runProjectForkExclusive requires projectPath");
+
+    const previousLaunch =
+      this.reservedTaskLaunchByProjectPath.get(projectPath) ?? Promise.resolve();
+    const run = previousLaunch.catch(() => undefined).then(fn);
+    const trackedLaunch = run
+      .then(
+        () => undefined,
+        () => undefined
+      )
+      .finally(() => {
+        if (this.reservedTaskLaunchByProjectPath.get(projectPath) === trackedLaunch) {
+          this.reservedTaskLaunchByProjectPath.delete(projectPath);
+        }
+      });
+    this.reservedTaskLaunchByProjectPath.set(projectPath, trackedLaunch);
+    return await run;
+  }
+
+  private async materializeReservedTaskWorkspace(
+    plan: TaskLaunchPlan,
+    sourceRuntime: Runtime,
+    initLogger: InitLogger
+  ): Promise<MaterializedTaskLaunch | null> {
+    const entry = findWorkspaceEntry(this.config.loadConfigOrDefault(), plan.taskId);
+    if (entry?.workspace.taskStatus !== "starting") {
+      return null;
+    }
+
+    const existing = await this.getExistingMaterializedTaskLaunch(
+      plan,
+      sourceRuntime,
+      entry.workspace
+    );
+    if (existing) {
+      taskQueueDebug("TaskService.startReservedAgentTask reusing materialized workspace", {
+        taskId: plan.taskId,
+        workspacePath: existing.workspacePath,
+      });
+      return existing;
+    }
+
+    const projectPath = stripTrailingSlashes(plan.parentMeta.projectPath);
+    return await this.runProjectForkExclusive(projectPath, async () => {
+      const entryBeforeFork = findWorkspaceEntry(this.config.loadConfigOrDefault(), plan.taskId);
+      if (entryBeforeFork?.workspace.taskStatus !== "starting") {
+        return null;
+      }
+
+      const forkResult = await orchestrateFork({
+        sourceRuntime,
+        projectPath: plan.parentMeta.projectPath,
+        sourceWorkspaceName: plan.parentMeta.name,
+        newWorkspaceName: plan.workspaceName,
+        initLogger,
+        config: this.config,
+        sourceWorkspaceId: plan.parentWorkspaceId,
+        sourceRuntimeConfig: plan.parentRuntimeConfig,
+        parentMetadata: plan.parentMeta,
+        allowCreateFallback: true,
+        ...(plan.preferredTrunkBranch != null
+          ? { preferredTrunkBranch: plan.preferredTrunkBranch }
+          : {}),
+        trusted:
+          this.config
+            .loadConfigOrDefault()
+            .projects.get(stripTrailingSlashes(plan.parentMeta.projectPath))?.trusted ?? false,
+        multiProjectExperimentEnabled: this.workspaceService.isExperimentEnabled(
+          EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
+        ),
+      });
+
+      if (!forkResult.success) {
+        throw new Error(`Task fork failed: ${forkResult.error}`);
+      }
+
+      return {
+        workspacePath: forkResult.data.workspacePath,
+        trunkBranch: forkResult.data.trunkBranch,
+        forkedRuntimeConfig: forkResult.data.forkedRuntimeConfig,
+        runtimeForTaskWorkspace: forkResult.data.targetRuntime,
+        inheritedProjects: forkResult.data.projects,
+        ...(forkResult.data.sourceRuntimeConfigUpdate != null
+          ? { sourceRuntimeConfigUpdate: forkResult.data.sourceRuntimeConfigUpdate }
+          : {}),
+      };
+    });
+  }
+
+  private scheduleReservedTaskLaunch(plan: TaskLaunchPlan): void {
+    assert(plan.taskId.length > 0, "scheduleReservedTaskLaunch requires taskId");
+    void this.enqueueReservedTaskLaunch(plan).catch((error: unknown) => {
+      log.error("Failed to launch reserved task", { taskId: plan.taskId, error });
+      void this.markTaskLaunchFailed(plan.taskId, getErrorMessage(error));
+    });
+  }
+
+  private scheduleMaybeStartQueuedTasks(): void {
+    void this.maybeStartQueuedTasks().catch((error: unknown) => {
+      log.error("TaskService.maybeStartQueuedTasks failed", { error });
+    });
+  }
+
+  private async markTaskLaunchFailed(taskId: string, message: string): Promise<void> {
+    assert(taskId.length > 0, "markTaskLaunchFailed requires taskId");
+    await this.editWorkspaceEntry(
+      taskId,
+      (ws) => {
+        ws.taskStatus = "interrupted";
+        ws.taskLaunchError = message;
+      },
+      { allowMissing: true }
+    );
+    await this.emitWorkspaceMetadata(taskId);
+    this.rejectWaiters(taskId, new Error(message));
+    this.scheduleMaybeStartQueuedTasks();
+  }
+
+  private async startReservedAgentTask(plan: TaskLaunchPlan): Promise<void> {
+    assert(plan.taskId.length > 0, "startReservedAgentTask requires taskId");
+    assert(plan.parentWorkspaceId.length > 0, "startReservedAgentTask requires parentWorkspaceId");
+    if (plan.start.kind === "sendMessage") {
+      assert(plan.start.prompt.length > 0, "startReservedAgentTask requires prompt");
+    }
+
+    const entryAtStart = findWorkspaceEntry(this.config.loadConfigOrDefault(), plan.taskId);
+    if (entryAtStart?.workspace.taskStatus !== "starting") {
+      return;
+    }
+
+    const initLogger = this.startWorkspaceInit(plan.taskId, plan.parentMeta.projectPath);
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig: plan.taskRuntimeConfig,
+      projectPath: plan.parentMeta.projectPath,
+      name: plan.parentMeta.name,
+    });
+
+    let materialized: MaterializedTaskLaunch | null;
+    try {
+      materialized = await this.materializeReservedTaskWorkspace(plan, runtime, initLogger);
+    } catch (error: unknown) {
+      initLogger.logComplete(-1);
+      throw error;
+    }
+    if (!materialized) {
+      initLogger.logComplete(-1);
+      return;
+    }
+
+    const entryAfterMaterialize = findWorkspaceEntry(
+      this.config.loadConfigOrDefault(),
+      plan.taskId
+    );
+    if (!entryAfterMaterialize) {
+      initLogger.logComplete(-1);
+      await this.cleanupMaterializedTaskWorkspace(
+        materialized.runtimeForTaskWorkspace,
+        plan.parentMeta.projectPath,
+        plan.workspaceName,
+        plan.taskId
+      );
+      return;
+    }
+    if (entryAfterMaterialize.workspace.taskStatus !== "starting") {
+      initLogger.logComplete(-1);
+      return;
+    }
+
+    if (materialized.sourceRuntimeConfigUpdate) {
+      await this.config.updateWorkspaceMetadata(plan.parentWorkspaceId, {
+        runtimeConfig: materialized.sourceRuntimeConfigUpdate,
+      });
+      await this.emitWorkspaceMetadata(plan.parentWorkspaceId);
+    }
+
+    const {
+      workspacePath,
+      trunkBranch,
+      forkedRuntimeConfig,
+      runtimeForTaskWorkspace,
+      inheritedProjects,
+    } = materialized;
+
+    this.configureMultiProjectRuntimeEnvResolver(runtimeForTaskWorkspace);
+    const taskBaseCommitShaByProjectPath = await readTaskBaseCommitShaByProjectPath({
+      workspaceId: plan.taskId,
+      workspaceName: plan.workspaceName,
+      workspacePath,
+      runtimeConfig: forkedRuntimeConfig,
+      projectPath: plan.parentMeta.projectPath,
+      projectName: plan.parentMeta.projectName,
+      projects: inheritedProjects,
+      runtime: runtimeForTaskWorkspace,
+    });
+    const taskBaseCommitSha = taskBaseCommitShaByProjectPath[plan.parentMeta.projectPath];
+
+    await this.editWorkspaceEntry(
+      plan.taskId,
+      (ws) => {
+        if (ws.taskStatus !== "starting") {
+          return;
+        }
+        ws.path = workspacePath;
+        ws.runtimeConfig = forkedRuntimeConfig;
+        ws.taskTrunkBranch = trunkBranch;
+        ws.taskBaseCommitSha = taskBaseCommitSha ?? undefined;
+        ws.taskBaseCommitShaByProjectPath = taskBaseCommitShaByProjectPath;
+        ws.projects = inheritedProjects;
+      },
+      { allowMissing: true }
+    );
+    await this.emitWorkspaceMetadata(plan.taskId);
+
+    const entryBeforeSend = findWorkspaceEntry(this.config.loadConfigOrDefault(), plan.taskId);
+    if (!entryBeforeSend) {
+      initLogger.logComplete(-1);
+      await this.cleanupMaterializedTaskWorkspace(
+        runtimeForTaskWorkspace,
+        plan.parentMeta.projectPath,
+        plan.workspaceName,
+        plan.taskId
+      );
+      return;
+    }
+    if (entryBeforeSend.workspace.taskStatus !== "starting") {
+      initLogger.logComplete(-1);
+      return;
+    }
+
+    const secrets = await secretsToRecord(
+      this.config.getEffectiveSecrets(plan.parentMeta.projectPath),
+      this.opResolver
+    );
+    runBackgroundInit(
+      runtimeForTaskWorkspace,
+      {
+        projectPath: plan.parentMeta.projectPath,
+        branchName: plan.workspaceName,
+        trunkBranch,
+        workspacePath,
+        initLogger,
+        env: secrets,
+        skipInitHook: plan.skipInitHook,
+        trusted:
+          this.config
+            .loadConfigOrDefault()
+            .projects.get(stripTrailingSlashes(plan.parentMeta.projectPath))?.trusted ?? false,
+      },
+      plan.taskId
+    );
+
+    const startOptions = {
+      model: plan.taskModelString,
+      agentId: plan.agentId,
+      thinkingLevel: plan.effectiveThinkingLevel,
+      experiments: plan.experiments,
+    };
+    const sendResult =
+      plan.start.kind === "sendMessage"
+        ? await this.workspaceService.sendMessage(plan.taskId, plan.start.prompt, startOptions, {
+            allowQueuedAgentTask: true,
+            agentInitiated: true,
+          })
+        : await this.workspaceService.resumeStream(plan.taskId, startOptions, {
+            allowQueuedAgentTask: true,
+            agentInitiated: true,
+          });
+    if (!sendResult.success) {
+      const message =
+        typeof sendResult.error === "string"
+          ? sendResult.error
+          : formatSendMessageError(sendResult.error).message;
+      await this.cleanupMaterializedTaskWorkspace(
+        runtimeForTaskWorkspace,
+        plan.parentMeta.projectPath,
+        plan.workspaceName,
+        plan.taskId
+      );
+      throw new Error(message);
+    }
+
+    await this.setTaskStatus(plan.taskId, "running");
+    this.scheduleMaybeStartQueuedTasks();
+  }
+
   async create(args: TaskCreateArgs): Promise<Result<TaskCreateResult, string>> {
     const parentWorkspaceId = coerceNonEmptyString(args.parentWorkspaceId);
     if (!parentWorkspaceId) {
@@ -841,17 +2264,20 @@ export class TaskService {
       return Err("Task.create: unsupported kind");
     }
 
-    const prompt = coerceNonEmptyString(args.prompt);
-    if (!prompt) {
+    const basePrompt = coerceNonEmptyString(args.prompt);
+    if (!basePrompt) {
       return Err("Task.create: prompt is required");
     }
+    const prompt =
+      args.experiments?.subagentFileReports === true
+        ? appendSubagentFileReportInstructions(basePrompt, args.workflowTask)
+        : basePrompt;
 
-    const agentIdRaw = coerceNonEmptyString(args.agentId ?? args.agentType);
-    if (!agentIdRaw) {
+    const normalizedAgentId = normalizeAgentId(args.agentId ?? args.agentType, "");
+    if (!normalizedAgentId) {
       return Err("Task.create: agentId is required");
     }
 
-    const normalizedAgentId = normalizeAgentId(agentIdRaw, "");
     const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
     if (!parsedAgentId.success) {
       return Err(`Task.create: invalid agentId (${normalizedAgentId})`);
@@ -1048,6 +2474,8 @@ export class TaskService {
       maxParallelAgentTasks: taskSettings.maxParallelAgentTasks,
       shouldQueue,
       runtimeType: taskRuntimeConfig.type,
+      workflowRunId: args.workflowTask?.runId,
+      workflowStepId: args.workflowTask?.stepId,
       promptLength: prompt.length,
       model: taskModelString,
       thinkingLevel: effectiveThinkingLevel,
@@ -1090,12 +2518,14 @@ export class TaskService {
           parentWorkspaceId,
           agentId,
           agentType,
+          workflowTask: args.workflowTask,
           bestOf: normalizedBestOf,
           taskStatus: "queued",
           taskPrompt: prompt,
           taskTrunkBranch: trunkBranch,
           taskModelString,
           taskThinkingLevel: effectiveThinkingLevel,
+          taskOnRefusal: args.onRefusal,
           taskExperiments: args.experiments,
           projects: parentMeta.projects,
         });
@@ -1207,6 +2637,7 @@ export class TaskService {
         agentId,
         parentWorkspaceId,
         agentType,
+        workflowTask: args.workflowTask,
         bestOf: normalizedBestOf,
         taskStatus: "running",
         taskTrunkBranch: trunkBranch,
@@ -1214,6 +2645,7 @@ export class TaskService {
         taskBaseCommitShaByProjectPath,
         taskModelString,
         taskThinkingLevel: effectiveThinkingLevel,
+        taskOnRefusal: args.onRefusal,
         taskExperiments: args.experiments,
         projects: inheritedProjects,
       });
@@ -1358,7 +2790,10 @@ export class TaskService {
    * Legacy naming note: this method retains the original "terminate" name for
    * compatibility with existing call sites.
    */
-  async terminateAllDescendantAgentTasks(workspaceId: string): Promise<string[]> {
+  async terminateAllDescendantAgentTasks(
+    workspaceId: string,
+    options?: { workflowRunId?: string }
+  ): Promise<string[]> {
     assert(
       workspaceId.length > 0,
       "terminateAllDescendantAgentTasks: workspaceId must be non-empty"
@@ -1371,7 +2806,11 @@ export class TaskService {
 
       const cfg = this.config.loadConfigOrDefault();
       const index = this.buildAgentTaskIndex(cfg);
-      const descendants = this.listDescendantAgentTaskIdsFromIndex(index, workspaceId);
+      const descendants = this.listDescendantAgentTaskIdsFromIndex(index, workspaceId).filter(
+        (taskId) =>
+          options?.workflowRunId == null ||
+          this.isWorkflowRunDescendant(index, taskId, options.workflowRunId)
+      );
       if (descendants.length === 0) {
         return interruptedTaskIds;
       }
@@ -1647,14 +3086,18 @@ export class TaskService {
       requestingWorkspaceId?: string;
       backgroundOnMessageQueued?: boolean;
     }
-  ): Promise<{ reportMarkdown: string; title?: string }> {
+  ): Promise<{ reportMarkdown: string; title?: string; structuredOutput?: unknown }> {
     assert(taskId.length > 0, "waitForAgentReport: taskId must be non-empty");
 
     // Report monotonicity invariant: check the in-memory cache before any status-based
     // interruption handling so a finalized report stays awaitable once observed.
     const cached = this.completedReportsByTaskId.get(taskId);
     if (cached) {
-      return { reportMarkdown: cached.reportMarkdown, title: cached.title };
+      return {
+        reportMarkdown: cached.reportMarkdown,
+        title: cached.title,
+        structuredOutput: cached.structuredOutput,
+      };
     }
 
     const timeoutMs = options?.timeoutMs ?? 10 * 60 * 1000; // 10 minutes
@@ -1668,6 +3111,7 @@ export class TaskService {
 
     const tryReadPersistedReport = async (): Promise<{
       reportMarkdown: string;
+      structuredOutput?: unknown;
       title?: string;
     } | null> => {
       if (!requestingWorkspaceId) {
@@ -1684,11 +3128,29 @@ export class TaskService {
       this.completedReportsByTaskId.set(taskId, {
         reportMarkdown: artifact.reportMarkdown,
         title: artifact.title,
+        structuredOutput: artifact.structuredOutput,
+        workflowOwnedAncestorWorkspaceIds: artifact.workflowOwnedAncestorWorkspaceIds,
         ancestorWorkspaceIds: artifact.ancestorWorkspaceIds,
       });
       this.enforceCompletedReportCacheLimit();
 
-      return { reportMarkdown: artifact.reportMarkdown, title: artifact.title };
+      return {
+        reportMarkdown: artifact.reportMarkdown,
+        title: artifact.title,
+        structuredOutput: artifact.structuredOutput,
+      };
+    };
+
+    // Persisted terminal failures (e.g. model_refusal) are checked AFTER reports —
+    // report monotonicity — and surface as rejections, never as reportMarkdown.
+    const tryReadPersistedFailureError = async (): Promise<Error | null> => {
+      if (!requestingWorkspaceId) {
+        return null;
+      }
+
+      const sessionDir = this.config.getSessionDir(requestingWorkspaceId);
+      const failure = await readSubagentFailureArtifact(sessionDir, taskId);
+      return failure ? new Error(failure.errorMessage) : null;
     };
 
     // Fast-path: if the task is already gone (cleanup) or already reported (restart), return the
@@ -1703,6 +3165,11 @@ export class TaskService {
         return persisted;
       }
 
+      const persistedFailure = await tryReadPersistedFailureError();
+      if (persistedFailure) {
+        throw persistedFailure;
+      }
+
       throw new Error("Task not found");
     }
 
@@ -1715,11 +3182,15 @@ export class TaskService {
       // Report monotonicity: interrupted tasks can still be streaming while stream-end
       // finalization persists agent_report. Waiters should keep waiting in that window.
       if (!this.aiService.isStreaming(taskId)) {
-        throw new Error("Task interrupted");
+        throw new Error(taskWorkspaceEntry.workspace.taskLaunchError ?? "Task interrupted");
       }
     }
 
-    return await new Promise<{ reportMarkdown: string; title?: string }>((resolve, reject) => {
+    return await new Promise<{
+      reportMarkdown: string;
+      title?: string;
+      structuredOutput?: unknown;
+    }>((resolve, reject) => {
       void (async () => {
         // Validate existence early to avoid waiting on never-resolving task IDs.
         const cfg = this.config.loadConfigOrDefault();
@@ -1731,7 +3202,8 @@ export class TaskService {
             return;
           }
 
-          reject(new Error("Task not found"));
+          const persistedFailure = await tryReadPersistedFailureError();
+          reject(persistedFailure ?? new Error("Task not found"));
           return;
         }
 
@@ -1742,7 +3214,8 @@ export class TaskService {
             return;
           }
 
-          reject(new Error("Task not found"));
+          const persistedFailure = await tryReadPersistedFailureError();
+          reject(persistedFailure ?? new Error("Task not found"));
           return;
         }
 
@@ -1756,7 +3229,7 @@ export class TaskService {
           // Report monotonicity: an interrupted task may still be in stream-end teardown,
           // so keep the waiter alive while the stream is active.
           if (!this.aiService.isStreaming(taskId)) {
-            reject(new Error("Task interrupted"));
+            reject(new Error(taskWorkspaceEntry.workspace.taskLaunchError ?? "Task interrupted"));
             return;
           }
         }
@@ -1771,8 +3244,14 @@ export class TaskService {
         const startReportTimeout = () => {
           if (timeout) return;
           timeout = setTimeout(() => {
-            entry.cleanup();
-            reject(new Error("Timed out waiting for agent_report"));
+            // Prefer a persisted terminal failure over a generic timeout so late
+            // awaits surface the typed failure (e.g. model_refusal) even when the
+            // live rejection was missed (restart/cleanup windows).
+            void (async () => {
+              const persistedFailure = await tryReadPersistedFailureError().catch(() => null);
+              entry.cleanup();
+              reject(persistedFailure ?? new Error("Timed out waiting for agent_report"));
+            })();
           }, timeoutMs);
         };
 
@@ -1845,10 +3324,10 @@ export class TaskService {
           this.registerBackgroundableForegroundWaiter(requestingWorkspaceId, entry);
         }
 
-        // Don't start the execution timeout while the task is still queued.
-        // The timer starts once the child actually begins running (queued -> running).
+        // Don't start the execution timeout while the task is still queued/starting.
+        // The timer starts once the child actually begins running (queued/starting -> running).
         const initialStatus = taskWorkspaceEntry.workspace.taskStatus;
-        if (initialStatus === "queued") {
+        if (initialStatus === "queued" || initialStatus === "starting") {
           const startWaiterEntry: PendingTaskStartWaiter = {
             start: startReportTimeout,
             cleanup: () => {
@@ -1872,7 +3351,10 @@ export class TaskService {
           // Close the race where the task starts between the initial config read and registering the waiter.
           const cfgAfterRegister = this.config.loadConfigOrDefault();
           const afterEntry = findWorkspaceEntry(cfgAfterRegister, taskId);
-          if (afterEntry?.workspace.taskStatus !== "queued") {
+          if (
+            afterEntry?.workspace.taskStatus !== "queued" &&
+            afterEntry?.workspace.taskStatus !== "starting"
+          ) {
             cleanupStartWaiter();
             startReportTimeout();
           }
@@ -1881,7 +3363,7 @@ export class TaskService {
           // scheduler runs after the waiter is registered. This avoids deadlocks when
           // maxParallelAgentTasks is low.
           if (requestingWorkspaceId) {
-            void this.maybeStartQueuedTasks();
+            this.scheduleMaybeStartQueuedTasks();
           }
         } else {
           startReportTimeout();
@@ -2006,7 +3488,10 @@ export class TaskService {
     return this.listCompletedDescendantAgentTaskIds(index, workspaceId).length > 0;
   }
 
-  listActiveDescendantAgentTaskIds(workspaceId: string): string[] {
+  listActiveDescendantAgentTaskIds(
+    workspaceId: string,
+    options: { excludeWorkflowTasks?: boolean } = {}
+  ): string[] {
     assert(
       workspaceId.length > 0,
       "listActiveDescendantAgentTaskIds: workspaceId must be non-empty"
@@ -2015,19 +3500,35 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const index = this.buildAgentTaskIndex(cfg);
 
-    const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
+    const activeStatuses = new Set<AgentTaskStatus>([
+      "queued",
+      "starting",
+      "running",
+      "awaiting_report",
+    ]);
     const result: string[] = [];
-    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
+    const stack: Array<{ taskId: string; workflowOwned: boolean }> = [
+      ...(index.childrenByParent.get(workspaceId) ?? []).map((taskId) => ({
+        taskId,
+        workflowOwned: false,
+      })),
+    ];
     while (stack.length > 0) {
       const next = stack.pop()!;
-      const status = index.byId.get(next)?.taskStatus;
-      if (status && activeStatuses.has(status)) {
-        result.push(next);
+      const entry = index.byId.get(next.taskId);
+      const workflowOwned = next.workflowOwned || entry?.workflowTask != null;
+      const status = entry?.taskStatus;
+      if (
+        status &&
+        activeStatuses.has(status) &&
+        !(options.excludeWorkflowTasks && workflowOwned)
+      ) {
+        result.push(next.taskId);
       }
-      const children = index.childrenByParent.get(next);
+      const children = index.childrenByParent.get(next.taskId);
       if (children) {
         for (const child of children) {
-          stack.push(child);
+          stack.push({ taskId: child, workflowOwned });
         }
       }
     }
@@ -2036,7 +3537,7 @@ export class TaskService {
 
   listDescendantAgentTasks(
     workspaceId: string,
-    options?: { statuses?: AgentTaskStatus[] }
+    options?: { statuses?: AgentTaskStatus[]; excludeWorkflowTasks?: boolean }
   ): DescendantAgentTaskInfo[] {
     assert(workspaceId.length > 0, "listDescendantAgentTasks: workspaceId must be non-empty");
 
@@ -2048,9 +3549,9 @@ export class TaskService {
 
     const result: DescendantAgentTaskInfo[] = [];
 
-    const stack: Array<{ taskId: string; depth: number }> = [];
+    const stack: Array<{ taskId: string; depth: number; workflowOwned: boolean }> = [];
     for (const childTaskId of index.childrenByParent.get(workspaceId) ?? []) {
-      stack.push({ taskId: childTaskId, depth: 1 });
+      stack.push({ taskId: childTaskId, depth: 1, workflowOwned: false });
     }
 
     while (stack.length > 0) {
@@ -2063,8 +3564,12 @@ export class TaskService {
         `listDescendantAgentTasks: task ${next.taskId} is missing parentWorkspaceId`
       );
 
+      const workflowOwned = next.workflowOwned || entry.workflowTask != null;
       const status: AgentTaskStatus = entry.taskStatus ?? "running";
-      if (!statusFilter || statusFilter.has(status)) {
+      if (
+        (!statusFilter || statusFilter.has(status)) &&
+        !(options?.excludeWorkflowTasks === true && workflowOwned)
+      ) {
         result.push({
           taskId: next.taskId,
           status,
@@ -2080,7 +3585,7 @@ export class TaskService {
       }
 
       for (const childTaskId of index.childrenByParent.get(next.taskId) ?? []) {
-        stack.push({ taskId: childTaskId, depth: next.depth + 1 });
+        stack.push({ taskId: childTaskId, depth: next.depth + 1, workflowOwned });
       }
     }
 
@@ -2133,12 +3638,21 @@ export class TaskService {
       return result;
     }
 
+    // Terminal failures persist in a separate artifacts file (a failure must
+    // never masquerade as a completed report), so scope checks must consult
+    // BOTH: a background-failed child that was cleaned up or lost to a restart
+    // must stay in scope for task_await so waitForAgentReport can surface the
+    // persisted typed failure instead of degrading to invalid_scope/not_found.
     const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
-    const persisted = await readSubagentReportArtifactsFile(sessionDir);
+    const [reports, failures] = await Promise.all([
+      readSubagentReportArtifactsFile(sessionDir),
+      readSubagentFailureArtifactsFile(sessionDir),
+    ]);
     for (const taskId of maybePersisted) {
-      const entry = persisted.artifactsByChildTaskId[taskId];
-      if (!entry) continue;
-      if (hasAncestorWorkspaceId(entry, ancestorWorkspaceId)) {
+      if (
+        hasAncestorWorkspaceId(reports.artifactsByChildTaskId[taskId], ancestorWorkspaceId) ||
+        hasAncestorWorkspaceId(failures.failuresByChildTaskId[taskId], ancestorWorkspaceId)
+      ) {
         result.push(taskId);
       }
     }
@@ -2170,6 +3684,22 @@ export class TaskService {
     return result;
   }
 
+  private isWorkflowRunDescendant(
+    index: AgentTaskIndex,
+    taskId: string,
+    workflowRunId: string
+  ): boolean {
+    let current: string | undefined = taskId;
+    for (let i = 0; current != null && i < 32; i++) {
+      const entry = index.byId.get(current);
+      if (entry?.workflowTask?.runId === workflowRunId) {
+        return true;
+      }
+      current = index.parentById.get(current);
+    }
+    return false;
+  }
+
   private listCompletedDescendantAgentTaskIds(
     index: AgentTaskIndex,
     workspaceId: string
@@ -2178,6 +3708,74 @@ export class TaskService {
       const entry = index.byId.get(taskId);
       return entry != null && hasCompletedAgentReport(entry);
     });
+  }
+
+  async isWorkflowOwnedDescendantAgentTask(
+    ancestorWorkspaceId: string,
+    taskId: string
+  ): Promise<boolean> {
+    assert(
+      ancestorWorkspaceId.length > 0,
+      "isWorkflowOwnedDescendantAgentTask: ancestorWorkspaceId required"
+    );
+    assert(taskId.length > 0, "isWorkflowOwnedDescendantAgentTask: taskId required");
+
+    const cfg = this.config.loadConfigOrDefault();
+    const indexResult = this.getWorkflowOwnedDescendantAgentTaskUsingIndex(
+      this.buildAgentTaskIndex(cfg),
+      ancestorWorkspaceId,
+      taskId
+    );
+    if (indexResult != null) {
+      return indexResult;
+    }
+
+    const cached = this.completedReportsByTaskId.get(taskId);
+    if (hasWorkflowOwnedAncestorWorkspaceId(cached, ancestorWorkspaceId)) {
+      return true;
+    }
+    if (hasAncestorWorkspaceId(cached, ancestorWorkspaceId)) {
+      return false;
+    }
+
+    const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
+    const persisted = await readSubagentReportArtifactsFile(sessionDir);
+    const entry = persisted.artifactsByChildTaskId[taskId];
+    if (entry != null) {
+      return hasWorkflowOwnedAncestorWorkspaceId(entry, ancestorWorkspaceId);
+    }
+
+    // A workflow-owned child that failed terminally leaves only a failure
+    // artifact. It must stay excluded from direct task_await after cleanup,
+    // matching live behavior: its failure is consumed through the workflow run.
+    const failures = await readSubagentFailureArtifactsFile(sessionDir);
+    return hasWorkflowOwnedAncestorWorkspaceId(
+      failures.failuresByChildTaskId[taskId],
+      ancestorWorkspaceId
+    );
+  }
+
+  private getWorkflowOwnedDescendantAgentTaskUsingIndex(
+    index: AgentTaskIndex,
+    ancestorWorkspaceId: string,
+    taskId: string
+  ): boolean | null {
+    let current = taskId;
+    let workflowOwned = false;
+
+    for (let i = 0; i < 32; i++) {
+      const entry = index.byId.get(current);
+      workflowOwned ||= entry?.workflowTask != null;
+
+      const parent = index.parentById.get(current);
+      if (!parent) return null;
+      if (parent === ancestorWorkspaceId) return workflowOwned;
+      current = parent;
+    }
+
+    throw new Error(
+      `getWorkflowOwnedDescendantAgentTaskUsingIndex: possible parentWorkspaceId cycle starting at ${taskId}`
+    );
   }
 
   async isDescendantAgentTask(ancestorWorkspaceId: string, taskId: string): Promise<boolean> {
@@ -2190,17 +3788,23 @@ export class TaskService {
       return true;
     }
 
-    // The task workspace may have been removed after it reported (cleanup/restart). Preserve scope
-    // checks by consulting persisted report artifacts in the ancestor session dir.
+    // The task workspace may have been removed after it settled (cleanup/restart). Preserve scope
+    // checks by consulting persisted report AND failure artifacts in the ancestor session dir —
+    // a terminally-failed child must stay awaitable so its typed failure can be surfaced.
     const cached = this.completedReportsByTaskId.get(taskId);
     if (hasAncestorWorkspaceId(cached, ancestorWorkspaceId)) {
       return true;
     }
 
     const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
-    const persisted = await readSubagentReportArtifactsFile(sessionDir);
-    const entry = persisted.artifactsByChildTaskId[taskId];
-    return hasAncestorWorkspaceId(entry, ancestorWorkspaceId);
+    const [reports, failures] = await Promise.all([
+      readSubagentReportArtifactsFile(sessionDir),
+      readSubagentFailureArtifactsFile(sessionDir),
+    ]);
+    return (
+      hasAncestorWorkspaceId(reports.artifactsByChildTaskId[taskId], ancestorWorkspaceId) ||
+      hasAncestorWorkspaceId(failures.failuresByChildTaskId[taskId], ancestorWorkspaceId)
+    );
   }
 
   private isDescendantAgentTaskUsingParentById(
@@ -2307,7 +3911,7 @@ export class TaskService {
       if (status === "running" && task.id && this.isForegroundAwaiting(task.id)) {
         continue;
       }
-      if (status === "running" || status === "awaiting_report") {
+      if (status === "starting" || status === "running" || status === "awaiting_report") {
         activeCount += 1;
         continue;
       }
@@ -2331,7 +3935,12 @@ export class TaskService {
 
     const index = this.buildAgentTaskIndex(config);
 
-    const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
+    const activeStatuses = new Set<AgentTaskStatus>([
+      "queued",
+      "starting",
+      "running",
+      "awaiting_report",
+    ]);
     const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
     while (stack.length > 0) {
       const next = stack.pop()!;
@@ -2392,475 +4001,236 @@ export class TaskService {
   }
 
   async maybeStartQueuedTasks(): Promise<void> {
-    await using _lock = await this.mutex.acquire();
+    const existingRun = this.maybeStartQueuedTasksInFlight;
+    if (existingRun != null) {
+      this.maybeStartQueuedTasksRerunRequested = true;
+      await existingRun;
+      return;
+    }
 
-    const configAtStart = this.config.loadConfigOrDefault();
-    const taskSettingsAtStart: TaskSettings = configAtStart.taskSettings ?? DEFAULT_TASK_SETTINGS;
+    // A foreground task waiter registers itself in waitForAgentReport's async setup. Yield once so
+    // immediate scheduler calls from the same turn see that foreground-awaiting state and avoid a
+    // nested-task deadlock at maxParallelAgentTasks=1.
+    await Promise.resolve();
+    const existingRunAfterYield = this.maybeStartQueuedTasksInFlight;
+    if (existingRunAfterYield != null) {
+      this.maybeStartQueuedTasksRerunRequested = true;
+      await existingRunAfterYield;
+      return;
+    }
 
-    const activeCount = this.countActiveAgentTasks(configAtStart);
-    const availableSlots = Math.max(0, taskSettingsAtStart.maxParallelAgentTasks - activeCount);
-    taskQueueDebug("TaskService.maybeStartQueuedTasks summary", {
-      activeCount,
-      maxParallelAgentTasks: taskSettingsAtStart.maxParallelAgentTasks,
-      availableSlots,
+    const run = (async () => {
+      do {
+        this.maybeStartQueuedTasksRerunRequested = false;
+        await this.maybeStartQueuedTasksFromReservations();
+      } while (this.maybeStartQueuedTasksRerunRequested);
+    })().finally(() => {
+      if (this.maybeStartQueuedTasksInFlight === run) {
+        this.maybeStartQueuedTasksInFlight = undefined;
+      }
     });
-    if (availableSlots === 0) return;
+    this.maybeStartQueuedTasksInFlight = run;
+    await run;
+  }
 
-    const queuedTaskIds = this.listAgentTaskWorkspaces(configAtStart)
-      .filter((t) => t.taskStatus === "queued" && typeof t.id === "string")
-      .sort((a, b) => {
-        const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
-        const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
-        return aTime - bTime;
-      })
-      .map((t) => t.id!);
+  private async maybeStartQueuedTasksFromReservations(): Promise<void> {
+    const plans: TaskLaunchPlan[] = [];
 
-    taskQueueDebug("TaskService.maybeStartQueuedTasks candidates", {
-      queuedCount: queuedTaskIds.length,
-      queuedIds: queuedTaskIds,
-    });
+    {
+      await using _lock = await this.mutex.acquire();
 
-    for (const taskId of queuedTaskIds) {
       const config = this.config.loadConfigOrDefault();
       const taskSettings: TaskSettings = config.taskSettings ?? DEFAULT_TASK_SETTINGS;
-      assert(
-        Number.isFinite(taskSettings.maxParallelAgentTasks) &&
-          taskSettings.maxParallelAgentTasks > 0,
-        "TaskService.maybeStartQueuedTasks: maxParallelAgentTasks must be a positive number"
+      const availableSlots = Math.max(
+        0,
+        taskSettings.maxParallelAgentTasks - this.countActiveAgentTasks(config)
       );
-
-      const activeCount = this.countActiveAgentTasks(config);
-      if (activeCount >= taskSettings.maxParallelAgentTasks) {
-        break;
-      }
-
-      const taskEntry = findWorkspaceEntry(config, taskId);
-      if (!taskEntry?.workspace.parentWorkspaceId) continue;
-      const task = taskEntry.workspace;
-      if (task.taskStatus !== "queued") continue;
-
-      // Defensive: tasks can begin streaming before taskStatus flips to "running".
-      if (this.aiService.isStreaming(taskId)) {
-        taskQueueDebug("TaskService.maybeStartQueuedTasks queued-but-streaming; marking running", {
-          taskId,
-        });
-        await this.setTaskStatus(taskId, "running");
-        continue;
-      }
-
-      assert(typeof task.name === "string" && task.name.trim().length > 0, "Task name missing");
-
-      const parentId = coerceNonEmptyString(task.parentWorkspaceId);
-      if (!parentId) {
-        log.error("Queued task missing parentWorkspaceId; cannot start", { taskId });
-        continue;
-      }
-
-      const parentEntry = findWorkspaceEntry(config, parentId);
-      if (!parentEntry) {
-        log.error("Queued task parent not found; cannot start", { taskId, parentId });
-        continue;
-      }
-
-      const parentWorkspaceName = coerceNonEmptyString(parentEntry.workspace.name);
-      if (!parentWorkspaceName) {
-        log.error("Queued task parent missing workspace name; cannot start", {
-          taskId,
-          parentId,
-        });
-        continue;
-      }
-
-      const taskRuntimeConfig = task.runtimeConfig ?? parentEntry.workspace.runtimeConfig;
-      if (!taskRuntimeConfig) {
-        log.error("Queued task missing runtimeConfig; cannot start", { taskId });
-        continue;
-      }
-
-      const parentRuntimeConfig = parentEntry.workspace.runtimeConfig ?? taskRuntimeConfig;
-      const workspaceName = task.name.trim();
-      const runtime = createRuntimeForWorkspace({
-        runtimeConfig: taskRuntimeConfig,
-        projectPath: taskEntry.projectPath,
-        name: workspaceName,
+      taskQueueDebug("TaskService.maybeStartQueuedTasks reservation summary", {
+        maxParallelAgentTasks: taskSettings.maxParallelAgentTasks,
+        availableSlots,
       });
-      let runtimeForTaskWorkspace = runtime;
-      let forkedRuntimeConfig = taskRuntimeConfig;
+      if (availableSlots === 0) return;
 
-      let workspacePath =
-        coerceNonEmptyString(task.path) ??
-        runtime.getWorkspacePath(taskEntry.projectPath, workspaceName);
-
-      let workspaceExists = false;
-      try {
-        await runtime.stat(workspacePath);
-        workspaceExists = true;
-      } catch {
-        workspaceExists = false;
-      }
-
-      const inMemoryInit = this.initStateManager.getInitState(taskId);
-      const persistedInit = inMemoryInit
-        ? null
-        : await this.initStateManager.readInitStatus(taskId);
-
-      // Re-check capacity after awaiting IO to avoid dequeuing work (worktree creation/init) when
-      // another task became active in the meantime.
-      const latestConfig = this.config.loadConfigOrDefault();
-      const latestTaskSettings: TaskSettings = latestConfig.taskSettings ?? DEFAULT_TASK_SETTINGS;
-      const latestActiveCount = this.countActiveAgentTasks(latestConfig);
-      if (latestActiveCount >= latestTaskSettings.maxParallelAgentTasks) {
-        taskQueueDebug("TaskService.maybeStartQueuedTasks became full mid-loop", {
-          taskId,
-          activeCount: latestActiveCount,
-          maxParallelAgentTasks: latestTaskSettings.maxParallelAgentTasks,
+      const queuedTasks = this.listAgentTaskWorkspaces(config)
+        .filter((task) => task.taskStatus === "queued" && typeof task.id === "string")
+        .sort((a, b) => {
+          const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
+          const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
+          return aTime - bTime;
         });
-        break;
-      }
 
-      // Ensure the workspace exists before starting. Queued tasks should not create worktrees/directories
-      // until they are actually dequeued.
-      let trunkBranch =
-        typeof task.taskTrunkBranch === "string" && task.taskTrunkBranch.trim().length > 0
-          ? task.taskTrunkBranch.trim()
-          : parentWorkspaceName;
-      if (trunkBranch.length === 0) {
-        trunkBranch = "main";
-      }
-
-      let shouldRunInit = !inMemoryInit && !persistedInit;
-      let initLogger: InitLogger | null = null;
-      const getInitLogger = (): InitLogger => {
-        if (initLogger) return initLogger;
-        initLogger = this.startWorkspaceInit(taskId, taskEntry.projectPath);
-        return initLogger;
-      };
-
-      taskQueueDebug("TaskService.maybeStartQueuedTasks start attempt", {
-        taskId,
-        workspaceName,
-        parentId,
-        parentWorkspaceName,
-        runtimeType: taskRuntimeConfig.type,
-        workspacePath,
-        workspaceExists,
-        trunkBranch,
-        shouldRunInit,
-        inMemoryInit: Boolean(inMemoryInit),
-        persistedInit: Boolean(persistedInit),
-      });
-
-      // Trust gate: skip dequeued tasks if the project lost trust since queuing.
-      const dequeueCfg = this.config.loadConfigOrDefault();
-      const normalizedTaskProjectPath = stripTrailingSlashes(taskEntry.projectPath);
-      const dequeueProjectConfig = dequeueCfg.projects.get(normalizedTaskProjectPath);
-      if (!dequeueProjectConfig?.trusted) {
-        log.warn("Skipping queued task for untrusted project", {
-          taskId,
-          projectPath: taskEntry.projectPath,
-        });
-        taskQueueDebug("TaskService.maybeStartQueuedTasks skipped (untrusted)", { taskId });
-        await this.setTaskStatus(taskId, "interrupted");
-        this.rejectWaiters(taskId, new Error("Task skipped: project is not trusted"));
-        continue;
-      }
-
-      // Multi-project queued tasks persist every constituent project. Re-check those secondary
-      // refs here so trust revocations terminate the task instead of retrying the same fork forever.
-      const untrustedSecondaryProject =
-        Array.isArray(task.projects) && task.projects.length > 1
-          ? task.projects.find((project) => {
-              const normalizedProjectPath = stripTrailingSlashes(project.projectPath);
-              if (normalizedProjectPath === normalizedTaskProjectPath) {
-                return false;
-              }
-              return !(dequeueCfg.projects.get(normalizedProjectPath)?.trusted ?? false);
-            })
-          : undefined;
-      if (untrustedSecondaryProject) {
-        log.warn("Skipping queued multi-project task for untrusted project", {
-          taskId,
-          projectPath: untrustedSecondaryProject.projectPath,
-          projects: task.projects,
-        });
-        taskQueueDebug("TaskService.maybeStartQueuedTasks skipped (secondary untrusted)", {
-          taskId,
-          projectPath: untrustedSecondaryProject.projectPath,
-        });
-        await this.setTaskStatus(taskId, "interrupted");
-        this.rejectWaiters(
-          taskId,
-          new Error(`Task skipped: project ${untrustedSecondaryProject.projectPath} is not trusted`)
-        );
-        continue;
-      }
-
-      // If the workspace doesn't exist yet, create it now (fork preferred, else createWorkspace).
-      if (!workspaceExists) {
-        shouldRunInit = true;
-        const initLogger = getInitLogger();
-
-        const parentMetadataResult = await this.aiService.getWorkspaceMetadata(parentId);
-        let parentMetadataForFork = parentMetadataResult.success
-          ? parentMetadataResult.data
-          : undefined;
-
-        if (!parentMetadataForFork && Array.isArray(task.projects) && task.projects.length > 1) {
-          // Queued tasks persist the parent's project refs at queue time. If the parent metadata lookup
-          // fails later (for example, parent workspace deleted while queued), synthesize enough metadata
-          // for orchestrateFork to preserve multi-project behavior instead of falling back to single-project.
-          const primaryProjectRef =
-            task.projects.find(
-              (project) =>
-                stripTrailingSlashes(project.projectPath) ===
-                stripTrailingSlashes(taskEntry.projectPath)
-            ) ?? task.projects[0];
-          const projectName =
-            coerceNonEmptyString(primaryProjectRef?.projectName) ??
-            coerceNonEmptyString(taskEntry.projectPath.split("/").filter(Boolean).at(-1)) ??
-            taskEntry.projectPath;
-
-          parentMetadataForFork = {
-            id: parentId,
-            name: parentWorkspaceName,
-            projectPath: taskEntry.projectPath,
-            projectName,
-            runtimeConfig: parentRuntimeConfig,
-            projects: task.projects,
-          } satisfies WorkspaceMetadata;
+      let reservedSlots = 0;
+      for (const task of queuedTasks) {
+        if (reservedSlots >= availableSlots) {
+          break;
         }
-
-        const forkOrchestratorResult = await orchestrateFork({
-          sourceRuntime: runtime,
-          projectPath: taskEntry.projectPath,
-          sourceWorkspaceName: parentWorkspaceName,
-          newWorkspaceName: workspaceName,
-          initLogger,
-          config: this.config,
-          sourceWorkspaceId: parentId,
-          sourceRuntimeConfig: parentRuntimeConfig,
-          parentMetadata: parentMetadataForFork,
-          allowCreateFallback: true,
-          preferredTrunkBranch: trunkBranch,
-          trusted:
-            this.config
-              .loadConfigOrDefault()
-              .projects.get(stripTrailingSlashes(taskEntry.projectPath))?.trusted ?? false,
-          multiProjectExperimentEnabled: this.workspaceService.isExperimentEnabled(
-            EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
-          ),
-        });
-
-        if (
-          forkOrchestratorResult.success &&
-          forkOrchestratorResult.data.sourceRuntimeConfigUpdate
-        ) {
-          await this.config.updateWorkspaceMetadata(parentId, {
-            runtimeConfig: forkOrchestratorResult.data.sourceRuntimeConfigUpdate,
-          });
-          // Ensure UI gets the updated runtimeConfig for the parent workspace.
-          await this.emitWorkspaceMetadata(parentId);
-        }
-
-        if (!forkOrchestratorResult.success) {
-          initLogger.logComplete(-1);
-          log.error("Task fork failed", { taskId, error: forkOrchestratorResult.error });
-          taskQueueDebug("TaskService.maybeStartQueuedTasks fork failed", {
-            taskId,
-            error: forkOrchestratorResult.error,
-          });
+        const taskId = task.id;
+        assert(taskId != null && taskId.length > 0, "queued task id is required");
+        if (this.aiService.isStreaming(taskId)) {
+          await this.setTaskStatus(taskId, "running");
+          reservedSlots += 1;
           continue;
         }
 
-        const {
-          forkedRuntimeConfig: resolvedForkedRuntimeConfig,
-          targetRuntime,
-          workspacePath: resolvedWorkspacePath,
-          trunkBranch: resolvedTrunkBranch,
-          forkedFromSource,
-          projects: inheritedProjects,
-        } = forkOrchestratorResult.data;
-
-        forkedRuntimeConfig = resolvedForkedRuntimeConfig;
-        runtimeForTaskWorkspace = targetRuntime;
-        workspacePath = resolvedWorkspacePath;
-        trunkBranch = resolvedTrunkBranch;
-        workspaceExists = true;
-
-        taskQueueDebug("TaskService.maybeStartQueuedTasks workspace created", {
-          taskId,
-          workspacePath,
-          forkSuccess: forkedFromSource,
-          trunkBranch,
-        });
-
-        // Persist any corrected path/trunkBranch for restart-safe init.
-        await this.editWorkspaceEntry(
-          taskId,
-          (ws) => {
-            ws.path = workspacePath;
-            ws.taskTrunkBranch = trunkBranch;
-            ws.runtimeConfig = forkedRuntimeConfig;
-            ws.projects = inheritedProjects;
-          },
-          { allowMissing: true }
-        );
-      }
-
-      // If init has not yet run for this workspace, start it now (best-effort, async).
-      // This is intentionally coupled to task start so queued tasks don't run init hooks
-      // Capture base commit for git-format-patch generation before the agent starts.
-      // This must reflect the *actual* workspace HEAD after creation/fork, not the parent's current HEAD
-      // (queued tasks can start much later).
-      if (
-        !coerceNonEmptyString(task.taskBaseCommitSha) ||
-        Object.keys(task.taskBaseCommitShaByProjectPath ?? {}).length === 0
-      ) {
-        const taskBaseCommitShaByProjectPath = await readTaskBaseCommitShaByProjectPath({
-          workspaceId: taskId,
-          workspaceName: task.name,
-          workspacePath,
-          runtimeConfig: forkedRuntimeConfig,
-          projectPath: taskEntry.projectPath,
-          projectName:
-            task.projects?.find((project) => project.projectPath === taskEntry.projectPath)
-              ?.projectName ??
-            taskEntry.projectPath.split("/").filter(Boolean).at(-1) ??
-            taskEntry.projectPath,
-          projects: task.projects,
-          runtime: runtimeForTaskWorkspace,
-        });
-        const taskBaseCommitSha = taskBaseCommitShaByProjectPath[taskEntry.projectPath];
-        if (taskBaseCommitSha || Object.keys(taskBaseCommitShaByProjectPath).length > 0) {
-          await this.editWorkspaceEntry(
+        const queuedPrompt = coerceNonEmptyString(task.taskPrompt);
+        const start: TaskLaunchStart = queuedPrompt
+          ? { kind: "sendMessage", prompt: queuedPrompt }
+          : { kind: "resumeStream" };
+        if (start.kind === "resumeStream") {
+          // Older queued task records stored the initial prompt only in chat history.
+          // Keep those upgrade-safe by resuming the existing pending stream instead of failing launch.
+          taskQueueDebug("TaskService.maybeStartQueuedTasks legacy resumeStream reservation", {
             taskId,
-            (ws) => {
-              ws.taskBaseCommitSha = taskBaseCommitSha;
-              ws.taskBaseCommitShaByProjectPath = taskBaseCommitShaByProjectPath;
-            },
-            { allowMissing: true }
+          });
+        }
+
+        const parentWorkspaceId = coerceNonEmptyString(task.parentWorkspaceId);
+        if (!parentWorkspaceId) {
+          await this.markTaskLaunchFailed(taskId, "Queued task missing parentWorkspaceId");
+          continue;
+        }
+
+        const parentEntry = findWorkspaceEntry(config, parentWorkspaceId);
+        if (!parentEntry) {
+          await this.markTaskLaunchFailed(taskId, "Queued task parent not found");
+          continue;
+        }
+        const parentWorkspaceName = coerceNonEmptyString(parentEntry.workspace.name);
+        if (!parentWorkspaceName) {
+          await this.markTaskLaunchFailed(taskId, "Queued task parent missing workspace name");
+          continue;
+        }
+
+        const taskRuntimeConfig = task.runtimeConfig ?? parentEntry.workspace.runtimeConfig;
+        const parentRuntimeConfig = parentEntry.workspace.runtimeConfig ?? taskRuntimeConfig;
+        if (!taskRuntimeConfig || !parentRuntimeConfig) {
+          await this.markTaskLaunchFailed(taskId, "Queued task missing runtimeConfig");
+          continue;
+        }
+
+        const normalizedTaskProjectPath = stripTrailingSlashes(task.projectPath);
+        const taskProjectConfig = config.projects.get(normalizedTaskProjectPath);
+        if (!taskProjectConfig?.trusted) {
+          await this.markTaskLaunchFailed(taskId, "Task skipped: project is not trusted");
+          continue;
+        }
+        const untrustedSecondaryProject =
+          Array.isArray(task.projects) && task.projects.length > 1
+            ? task.projects.find((project) => {
+                const normalizedProjectPath = stripTrailingSlashes(project.projectPath);
+                if (normalizedProjectPath === normalizedTaskProjectPath) {
+                  return false;
+                }
+                return !(config.projects.get(normalizedProjectPath)?.trusted ?? false);
+              })
+            : undefined;
+        if (untrustedSecondaryProject) {
+          await this.markTaskLaunchFailed(
+            taskId,
+            `Task skipped: project ${untrustedSecondaryProject.projectPath} is not trusted`
           );
+          continue;
         }
-      }
 
-      // (SSH sync, .mux/init scripts, etc.) until they actually begin execution.
-      if (shouldRunInit) {
-        const initLogger = getInitLogger();
-        taskQueueDebug("TaskService.maybeStartQueuedTasks initWorkspace starting", {
-          taskId,
-          workspacePath,
-          trunkBranch,
-        });
-        // Multi-project forks need per-project secrets for each runtime's init hook.
-        this.configureMultiProjectRuntimeEnvResolver(runtimeForTaskWorkspace);
-        const secrets = await secretsToRecord(
-          this.config.getEffectiveSecrets(taskEntry.projectPath),
-          this.opResolver
-        );
+        const parentMetaResult = await this.aiService.getWorkspaceMetadata(parentWorkspaceId);
+        const parentMeta = parentMetaResult.success
+          ? parentMetaResult.data
+          : ({
+              id: parentWorkspaceId,
+              name: parentWorkspaceName,
+              projectPath: parentEntry.projectPath,
+              projectName:
+                parentEntry.workspace.projects?.find(
+                  (project) =>
+                    stripTrailingSlashes(project.projectPath) ===
+                    stripTrailingSlashes(parentEntry.projectPath)
+                )?.projectName ??
+                parentEntry.projectPath.split("/").filter(Boolean).at(-1) ??
+                parentEntry.projectPath,
+              runtimeConfig: parentRuntimeConfig,
+              projects: parentEntry.workspace.projects,
+            } satisfies WorkspaceMetadata);
+
+        const agentId = resolveTaskAgentIdForResume(task);
+        assert(agentId.length > 0, "queued task agentId is required");
         let skipInitHook = false;
-        const agentIdRaw = coerceNonEmptyString(task.agentId ?? task.agentType);
-        if (agentIdRaw) {
-          const parsedAgentId = AgentIdSchema.safeParse(normalizeAgentId(agentIdRaw, ""));
-          if (parsedAgentId.success) {
-            const isInPlace = taskEntry.projectPath === parentWorkspaceName;
-            const parentWorkspacePath =
-              coerceNonEmptyString(parentEntry.workspace.path) ??
-              (isInPlace
-                ? taskEntry.projectPath
-                : runtime.getWorkspacePath(taskEntry.projectPath, parentWorkspaceName));
-
-            try {
-              const frontmatter = await resolveAgentFrontmatter(
-                runtime,
-                parentWorkspacePath,
-                parsedAgentId.data
-              );
-              skipInitHook = frontmatter.subagent?.skip_init_hook === true;
-            } catch (error: unknown) {
-              log.debug("Queued task: failed to read agent definition for skip_init_hook", {
-                taskId,
-                agentId: parsedAgentId.data,
-                error: getErrorMessage(error),
-              });
-            }
-          }
+        try {
+          const parentRuntime = createRuntimeForWorkspace({
+            runtimeConfig: parentRuntimeConfig,
+            projectPath: parentEntry.projectPath,
+            name: parentWorkspaceName,
+          });
+          const parentWorkspacePath =
+            coerceNonEmptyString(parentEntry.workspace.path) ??
+            parentRuntime.getWorkspacePath(parentEntry.projectPath, parentWorkspaceName);
+          const frontmatter = await resolveAgentFrontmatter(
+            parentRuntime,
+            parentWorkspacePath,
+            agentId
+          );
+          skipInitHook = frontmatter.subagent?.skip_init_hook === true;
+        } catch (error: unknown) {
+          log.debug("Queued task: failed to resolve skip_init_hook during reservation", {
+            taskId,
+            agentId,
+            error: getErrorMessage(error),
+          });
         }
 
-        runBackgroundInit(
-          runtimeForTaskWorkspace,
-          {
-            projectPath: taskEntry.projectPath,
-            branchName: workspaceName,
-            trunkBranch,
-            workspacePath,
-            initLogger,
-            env: secrets,
-            skipInitHook,
-            trusted:
-              this.config
-                .loadConfigOrDefault()
-                .projects.get(stripTrailingSlashes(taskEntry.projectPath))?.trusted ?? false,
-          },
-          taskId
-        );
-      }
-
-      const model = task.taskModelString ?? defaultModel;
-      const queuedPrompt = coerceNonEmptyString(task.taskPrompt);
-      if (queuedPrompt) {
-        taskQueueDebug("TaskService.maybeStartQueuedTasks sendMessage starting (dequeue)", {
-          taskId,
-          model,
-          promptLength: queuedPrompt.length,
-        });
-        const sendResult = await this.workspaceService.sendMessage(
-          taskId,
-          queuedPrompt,
-          {
-            model,
-            agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
-            thinkingLevel: task.taskThinkingLevel,
-            experiments: task.taskExperiments,
-          },
-          { allowQueuedAgentTask: true, agentInitiated: true }
-        );
-        if (!sendResult.success) {
-          log.error("Failed to start queued task via sendMessage", {
-            taskId,
-            error: sendResult.error,
-          });
+        const workspaceName = coerceNonEmptyString(task.name);
+        if (!workspaceName) {
+          await this.markTaskLaunchFailed(taskId, "Queued task missing workspace name");
           continue;
         }
-      } else {
-        // Backward compatibility: older queued tasks persisted their prompt in chat history.
-        taskQueueDebug("TaskService.maybeStartQueuedTasks resumeStream starting (legacy dequeue)", {
-          taskId,
-          model,
+
+        const canonicalModel =
+          coerceNonEmptyString(task.aiSettings?.model) ??
+          normalizeToCanonical(task.taskModelString ?? defaultModel);
+        const createdAt = task.createdAt ?? getIsoNow();
+        await this.editWorkspaceEntry(taskId, (workspace) => {
+          workspace.taskStatus = "starting";
         });
-        const resumeResult = await this.workspaceService.resumeStream(
+        reservedSlots += 1;
+
+        plans.push({
           taskId,
-          {
-            model,
-            agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
-            thinkingLevel: task.taskThinkingLevel,
-            experiments: task.taskExperiments,
-          },
-          { allowQueuedAgentTask: true, agentInitiated: true }
-        );
-
-        if (!resumeResult.success) {
-          log.error("Failed to start queued task", { taskId, error: resumeResult.error });
-          taskQueueDebug("TaskService.maybeStartQueuedTasks resumeStream failed", {
-            taskId,
-            error: resumeResult.error,
-          });
-          continue;
-        }
+          parentWorkspaceId,
+          parentMeta,
+          agentId,
+          agentType: task.agentType ?? agentId,
+          start,
+          title: task.title ?? workspaceName,
+          workspaceName,
+          createdAt,
+          taskRuntimeConfig,
+          parentRuntimeConfig,
+          taskModelString: task.taskModelString ?? defaultModel,
+          canonicalModel,
+          effectiveThinkingLevel: task.taskThinkingLevel,
+          skipInitHook,
+          preferredTrunkBranch: task.taskTrunkBranch,
+          workflowTask: task.workflowTask,
+          bestOf: task.bestOf,
+          experiments: task.taskExperiments,
+        });
       }
-
-      await this.setTaskStatus(taskId, "running");
-      taskQueueDebug("TaskService.maybeStartQueuedTasks started", { taskId });
     }
+
+    await Promise.allSettled(
+      plans.map(async (plan) => {
+        try {
+          await this.enqueueReservedTaskLaunch(plan);
+        } catch (error: unknown) {
+          log.error("Failed to launch dequeued task", { taskId: plan.taskId, error });
+          await this.markTaskLaunchFailed(plan.taskId, getErrorMessage(error));
+        }
+      })
+    );
+  }
+
+  private async enqueueReservedTaskLaunch(plan: TaskLaunchPlan): Promise<void> {
+    assert(plan.taskId.length > 0, "enqueueReservedTaskLaunch requires taskId");
+    await this.startReservedAgentTask(plan);
   }
 
   private async setTaskStatus(workspaceId: string, status: AgentTaskStatus): Promise<void> {
@@ -2939,6 +4309,9 @@ export class TaskService {
         // prompt in config. If send/resume fails, restoreInterruptedTaskAfterResumeFailure
         // must be able to retain that original prompt for inspection/retry.
         ws.taskStatus = "running";
+        // A user-initiated resume is a fresh chance: clear the recovery budget so a
+        // breaker-tripped task doesn't instantly re-fail on its first recovery prompt.
+        delete ws.taskRecoveryAttempts;
         transitionedToRunning = true;
       },
       { allowMissing: true }
@@ -2992,14 +4365,15 @@ export class TaskService {
     options?: {
       reason?: "startup" | "stream_end" | "error";
       error?: Pick<ErrorEvent, "error" | "errorType">;
+      subagentFileReports?: boolean;
     }
   ): string {
     const completionToolLabel =
       completionToolName === "propose_plan" ? "propose_plan" : "agent_report";
-    const completionInstruction =
-      completionToolName === "propose_plan"
-        ? "Call propose_plan exactly once now. Base it only on the planning work already completed in this workspace."
-        : "Call agent_report exactly once now with your final report. Base it only on the work already completed in this workspace.";
+    const completionInstruction = getTaskCompletionInstruction({
+      completionToolName,
+      subagentFileReports: options?.subagentFileReports === true,
+    });
     const noExtraWorkInstruction =
       completionToolName === "propose_plan"
         ? "Do not continue planning or call other tools."
@@ -3049,16 +4423,56 @@ export class TaskService {
 
     const isPlanLike = await this.isPlanLikeTaskWorkspace(entry);
     const completionToolName = isPlanLike ? "propose_plan" : "agent_report";
+
+    // Persisted circuit breaker: a task that keeps consuming recovery prompts
+    // without ever completing is stuck (repeated empty output, repeated
+    // length-truncated turns, or a model that never calls its completion
+    // tool). Interrupt it with a descriptive error instead of prompting
+    // forever. The counter lives on the workspace entry so restart loops stay
+    // bounded too; finalizeAgentTaskReport clears it on success.
+    const recoveryAttempts = entry.workspace.taskRecoveryAttempts ?? 0;
+    if (recoveryAttempts >= MAX_TASK_RECOVERY_ATTEMPTS) {
+      const lastError = options?.error
+        ? ` Last error (${options.error.errorType ?? "unknown"}): ${options.error.error}`
+        : "";
+      log.error("Task exceeded its recovery attempt budget; interrupting task", {
+        workspaceId,
+        taskName: entry.workspace.name,
+        recoveryAttempts,
+        limit: MAX_TASK_RECOVERY_ATTEMPTS,
+        reason: options?.reason,
+      });
+      await this.failAgentTaskTerminally(workspaceId, entry, {
+        errorType: "task_recovery_limit",
+        errorMessage: `Task interrupted after ${MAX_TASK_RECOVERY_ATTEMPTS} recovery attempts without a successful ${completionToolName}.${lastError} The task model may be unable to complete this request; try a different model or a simpler prompt.`,
+      });
+      return false;
+    }
+    // Consume budget before sending so a crash mid-send still counts the attempt.
+    // Read the fresh value inside the mutator (not the entry-time snapshot above)
+    // so concurrent edits cannot lose an increment.
+    await this.editWorkspaceEntry(
+      workspaceId,
+      (ws) => {
+        ws.taskRecoveryAttempts = (ws.taskRecoveryAttempts ?? 0) + 1;
+      },
+      { allowMissing: true }
+    );
+
     const model = entry.workspace.taskModelString ?? defaultModel;
-    const agentId = entry.workspace.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
+    const agentId = resolveTaskAgentIdForResume(entry.workspace);
     const startedAt = Date.now();
     const sendResult = await this.workspaceService.sendMessage(
       workspaceId,
-      this.buildCompletionToolRecoveryMessage(completionToolName, options),
+      this.buildCompletionToolRecoveryMessage(completionToolName, {
+        ...options,
+        subagentFileReports: entry.workspace.taskExperiments?.subagentFileReports === true,
+      }),
       {
         model,
         agentId,
         thinkingLevel: entry.workspace.taskThinkingLevel,
+        experiments: entry.workspace.taskExperiments,
         toolPolicy: [{ regex_match: `^${completionToolName}$`, action: "require" }],
       },
       { synthetic: true, agentInitiated: true }
@@ -3094,6 +4508,46 @@ export class TaskService {
     return true;
   }
 
+  private async promptTaskForBackgroundWorkflowAwait(
+    workspaceId: string,
+    workflowRunIds: string[]
+  ): Promise<boolean> {
+    assert(workspaceId.length > 0, "promptTaskForBackgroundWorkflowAwait requires workspaceId");
+    assert(workflowRunIds.length > 0, "promptTaskForBackgroundWorkflowAwait requires run IDs");
+
+    const cfg = this.config.loadConfigOrDefault();
+    const entry = findWorkspaceEntry(cfg, workspaceId);
+    if (!entry?.workspace.parentWorkspaceId) {
+      return false;
+    }
+
+    const model = entry.workspace.taskModelString ?? defaultModel;
+    const agentId = entry.workspace.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
+    const sendResult = await this.workspaceService.sendMessage(
+      workspaceId,
+      buildBackgroundAwaitPrompt({ taskIds: [], workflowRunIds }),
+      {
+        model,
+        agentId,
+        thinkingLevel: entry.workspace.taskThinkingLevel,
+        experiments: entry.workspace.taskExperiments,
+      },
+      { synthetic: true, agentInitiated: true }
+    );
+    if (!sendResult.success) {
+      log.error("Failed to prompt task for active background workflow runs", {
+        workspaceId,
+        taskName: entry.workspace.name,
+        workflowRunIds,
+        model,
+        agentId,
+        error: sendResult.error,
+      });
+      return false;
+    }
+    return true;
+  }
+
   private async handleStreamEnd(event: StreamEndEvent): Promise<void> {
     const workspaceId = event.workspaceId;
 
@@ -3101,17 +4555,29 @@ export class TaskService {
     const entry = findWorkspaceEntry(cfg, workspaceId);
     if (!entry) return;
 
-    // Parent workspaces must not end while they have active background tasks.
-    // Enforce by auto-resuming the stream with a directive to await outstanding tasks.
+    // Parent workspaces must not end while they have active background tasks/workflows.
+    // Enforce by auto-resuming the stream with a directive to await outstanding work.
     if (!entry.workspace.parentWorkspaceId) {
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, workspaceId);
+      const referencedWorkflowRunIds = await this.listAgentReferencedWorkflowRunIds(
+        workspaceId,
+        event.parts,
+        event.messageId
+      );
+      let activeWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
+        workspaceId,
+        referencedWorkflowRunIds
+      );
       if (!hasActiveDescendants) {
         // Foreground best-of children can finish while the parent task tool call is still pending,
         // which temporarily blocks their leaf cleanup and may defer synthetic fallback delivery.
         // Recheck both once the parent stream reaches a descendant-free stream-end.
         await this.deliverDeferredBestOfReportsForParent(workspaceId);
         await this.requestReportedChildCleanupRechecks(workspaceId);
-        return;
+        if (activeWorkflowRunIds.length === 0) {
+          this.consecutiveAutoResumes.delete(workspaceId);
+          return;
+        }
       }
 
       if (this.aiService.isStreaming(workspaceId)) {
@@ -3123,19 +4589,28 @@ export class TaskService {
         return;
       }
 
-      // Foreground waits can be backgrounded at runtime when users queue another message.
-      // Those task IDs are tracked in-memory and excluded from parent auto-resume nudges.
-      const activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId);
-      const blockingTaskIds = activeTaskIds.filter((id) => !this.isTaskQueueBackgrounded(id));
+      // Workflow-owned descendants report through the workflow runner; parent nudges must not
+      // bypass that journal/final-result path by asking the model to task_await those child tasks
+      // directly. Instead, await the owning workflow run when one is still active.
+      // Foreground waits can also be backgrounded at runtime when users queue another message.
+      let activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId, {
+        excludeWorkflowTasks: true,
+      });
+      const queueBackgroundedTaskIds = new Set(
+        activeTaskIds.filter((id) => this.isTaskQueueBackgrounded(id))
+      );
+      const getBlockingTaskIds = (taskIds: string[]) =>
+        taskIds.filter((id) => !queueBackgroundedTaskIds.has(id));
+      const consumeQueueBackgroundedExemptions = () => {
+        for (const taskId of new Set([...activeTaskIds, ...queueBackgroundedTaskIds])) {
+          this.markTaskForegroundRelevant(taskId);
+        }
+      };
+      let blockingTaskIds = getBlockingTaskIds(activeTaskIds);
 
-      // One-shot semantics: consume exemptions after this stream-end's decision.
-      // The immediate stream-end after queue-backgrounding is suppressed, but any
-      // subsequent voluntary stream-end must nudge if tasks are still active.
-      for (const taskId of activeTaskIds) {
-        this.markTaskForegroundRelevant(taskId);
-      }
-
-      if (blockingTaskIds.length === 0) {
+      if (blockingTaskIds.length === 0 && activeWorkflowRunIds.length === 0) {
+        this.consecutiveAutoResumes.delete(workspaceId);
+        consumeQueueBackgroundedExemptions();
         log.debug("Skipping parent auto-resume: all active descendants were queue-backgrounded", {
           workspaceId,
         });
@@ -3145,24 +4620,12 @@ export class TaskService {
       // If the parent already has a follow-up turn queued or starting (for example, the user
       // interrupted with new context), do not inject a synthetic task_await warning mid-handoff.
       if (this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId)) {
+        consumeQueueBackgroundedExemptions();
         log.debug("Skipping parent auto-resume: follow-up turn already queued or preparing", {
           workspaceId,
         });
         return;
       }
-
-      // Check for auto-resume flood protection
-      const resumeCount = this.consecutiveAutoResumes.get(workspaceId) ?? 0;
-      if (resumeCount >= MAX_CONSECUTIVE_PARENT_AUTO_RESUMES) {
-        log.warn("Auto-resume limit reached for parent workspace with active descendants", {
-          workspaceId,
-          resumeCount,
-          activeTaskIds: blockingTaskIds,
-          limit: MAX_CONSECUTIVE_PARENT_AUTO_RESUMES,
-        });
-        return;
-      }
-      this.consecutiveAutoResumes.set(workspaceId, resumeCount + 1);
 
       const resumeOptions = await this.resolveParentAutoResumeOptions(
         workspaceId,
@@ -3171,23 +4634,114 @@ export class TaskService {
         event.metadata
       );
 
-      const sendResult = await this.workspaceService.sendMessage(
+      activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId, {
+        excludeWorkflowTasks: true,
+      });
+      blockingTaskIds = getBlockingTaskIds(activeTaskIds);
+      activeWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
         workspaceId,
-        `You have active background sub-agent task(s) (${blockingTaskIds.join(", ")}). ` +
-          "You MUST NOT end your turn while any sub-agent tasks are queued/running/awaiting_report. " +
-          "Call task_await now to wait for them to finish (omit timeout_secs to wait up to 10 minutes). " +
-          "If any tasks are still queued/running/awaiting_report after that, call task_await again. " +
-          "Only once all tasks are completed should you write your final response, integrating their reports.",
-        {
-          model: resumeOptions.model,
-          agentId: resumeOptions.agentId,
-          thinkingLevel: resumeOptions.thinkingLevel,
-        },
-        // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
-        { skipAutoResumeReset: true, synthetic: true, agentInitiated: true }
+        activeWorkflowRunIds
       );
+      if (blockingTaskIds.length === 0 && activeWorkflowRunIds.length === 0) {
+        this.consecutiveAutoResumes.delete(workspaceId);
+        consumeQueueBackgroundedExemptions();
+        return;
+      }
+      if (
+        this.aiService.isStreaming(workspaceId) ||
+        this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId)
+      ) {
+        consumeQueueBackgroundedExemptions();
+        log.debug("Skipping parent auto-resume: workspace is no longer idle", { workspaceId });
+        return;
+      }
+
+      // Check for auto-resume flood protection after the final active-work recheck so stale
+      // workflow completions do not consume the retry budget.
+      const resumeCount = this.consecutiveAutoResumes.get(workspaceId) ?? 0;
+      if (resumeCount >= MAX_CONSECUTIVE_PARENT_AUTO_RESUMES) {
+        consumeQueueBackgroundedExemptions();
+        log.warn("Auto-resume limit reached for parent workspace with active background work", {
+          workspaceId,
+          resumeCount,
+          activeTaskIds: blockingTaskIds,
+          activeWorkflowRunIds,
+          limit: MAX_CONSECUTIVE_PARENT_AUTO_RESUMES,
+        });
+        return;
+      }
+      this.consecutiveAutoResumes.set(workspaceId, resumeCount + 1);
+
+      const prompt = buildBackgroundAwaitPrompt({
+        taskIds: blockingTaskIds,
+        workflowRunIds: activeWorkflowRunIds,
+      });
+      const sendOptions = {
+        model: resumeOptions.model,
+        agentId: resumeOptions.agentId,
+        thinkingLevel: resumeOptions.thinkingLevel,
+      };
+      let sendResult = await this.workspaceService.sendMessage(
+        workspaceId,
+        prompt,
+        sendOptions,
+        // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
+        { skipAutoResumeReset: true, synthetic: true, agentInitiated: true, requireIdle: true }
+      );
+      if (!sendResult.success && isWorkspaceBusyIdleOnlySend(sendResult.error)) {
+        activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId, {
+          excludeWorkflowTasks: true,
+        });
+        blockingTaskIds = getBlockingTaskIds(activeTaskIds);
+        activeWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
+          workspaceId,
+          activeWorkflowRunIds
+        );
+        if (blockingTaskIds.length === 0 && activeWorkflowRunIds.length === 0) {
+          this.consecutiveAutoResumes.delete(workspaceId);
+          consumeQueueBackgroundedExemptions();
+          return;
+        }
+        if (
+          this.aiService.isStreaming(workspaceId) ||
+          this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId)
+        ) {
+          if (resumeCount === 0) {
+            this.consecutiveAutoResumes.delete(workspaceId);
+          } else {
+            this.consecutiveAutoResumes.set(workspaceId, resumeCount);
+          }
+          consumeQueueBackgroundedExemptions();
+          log.debug("Skipping parent auto-resume fallback: workspace is no longer idle", {
+            workspaceId,
+          });
+          return;
+        }
+
+        // AgentSession can still be in COMPLETING when StreamManager has emitted stream-end.
+        // Queue this nudge rather than dropping the only await prompt for active background work.
+        sendResult = await this.workspaceService.sendMessage(
+          workspaceId,
+          buildBackgroundAwaitPrompt({
+            taskIds: blockingTaskIds,
+            workflowRunIds: activeWorkflowRunIds,
+          }),
+          sendOptions,
+          {
+            skipAutoResumeReset: true,
+            synthetic: true,
+            agentInitiated: true,
+          }
+        );
+      }
+      consumeQueueBackgroundedExemptions();
       if (!sendResult.success) {
-        log.error("Failed to resume parent with active background tasks", {
+        if (resumeCount === 0) {
+          this.consecutiveAutoResumes.delete(workspaceId);
+        } else {
+          this.consecutiveAutoResumes.set(workspaceId, resumeCount);
+        }
+        log.error("Failed to resume parent with active background work", {
           workspaceId,
           error: sendResult.error,
         });
@@ -3218,6 +4772,24 @@ export class TaskService {
       if (status === "awaiting_report") {
         await this.setTaskStatus(workspaceId, "running");
       }
+      return;
+    }
+
+    const taskReferencedWorkflowRunIds = await this.listAgentReferencedWorkflowRunIds(
+      workspaceId,
+      event.parts,
+      event.messageId
+    );
+    const taskActiveWorkflowRunIds = await this.listBlockingBackgroundWorkflowRunIds(
+      workspaceId,
+      taskReferencedWorkflowRunIds,
+      event.parts
+    );
+    if (taskActiveWorkflowRunIds.length > 0) {
+      if (status === "awaiting_report") {
+        await this.setTaskStatus(workspaceId, "running");
+      }
+      await this.promptTaskForBackgroundWorkflowAwait(workspaceId, taskActiveWorkflowRunIds);
       return;
     }
 
@@ -3264,7 +4836,10 @@ export class TaskService {
       return;
     }
 
-    if (entry.workspace.taskStatus !== "awaiting_report") {
+    const status = entry.workspace.taskStatus;
+    // Stream errors only need settlement handling while the task is mid-run
+    // (running) or waiting on its completion tool (awaiting_report).
+    if (status !== "running" && status !== "awaiting_report") {
       return;
     }
 
@@ -3272,17 +4847,38 @@ export class TaskService {
       return;
     }
 
-    if (event.errorType && isNonRetryableStreamError({ type: event.errorType })) {
-      log.error(
-        "Task awaiting required completion tool hit a non-retryable stream error; interrupting task",
-        {
-          workspaceId,
-          errorType: event.errorType,
-          error: event.error,
-        }
-      );
-      await this.setTaskStatus(workspaceId, "interrupted");
-      await this.settleInterruptedTaskAtStreamEnd(workspaceId, entry, null);
+    const isNonRetryable =
+      event.errorType != null && isNonRetryableStreamError({ type: event.errorType });
+
+    // Terminal provider outcomes (e.g. model_refusal) settle the task even during its
+    // first `running` turn — previously only awaiting_report settled, leaving the
+    // parent's waitForAgentReport to block until timeout. Deliberately an allow-list
+    // rather than "all non-retryable":
+    // - `aborted` is a steerable user pause, not a terminal failure.
+    // - `context_exceeded` has in-session recovery (compaction retry, post-compaction
+    //   retry, exec-subagent hard restart in AgentSession.handleStreamError) listening
+    //   on the same error event; settling here would race that recovery and interrupt
+    //   a child that was about to continue.
+    const settlesRunningTask =
+      event.errorType != null && RUNNING_TASK_TERMINAL_STREAM_ERRORS.has(event.errorType);
+
+    if (isNonRetryable && (status === "awaiting_report" || settlesRunningTask)) {
+      log.error("Task hit a non-retryable stream error; interrupting task", {
+        workspaceId,
+        taskStatus: status,
+        errorType: event.errorType,
+        error: event.error,
+      });
+      await this.failAgentTaskTerminally(workspaceId, entry, {
+        errorType: event.errorType ?? "unknown",
+        errorMessage: event.error,
+      });
+      return;
+    }
+
+    if (status !== "awaiting_report") {
+      // Retryable errors during `running` are handled by the agent session's
+      // retry loop; TaskService only intervenes once the task owes its report.
       return;
     }
 
@@ -3302,6 +4898,212 @@ export class TaskService {
   }
 
   /**
+   * Terminal settlement for a child task whose stream failed with a
+   * non-retryable error: mark interrupted with a descriptive launch error,
+   * persist a durable failure artifact in every ancestor session dir (so
+   * background children, restarts, and post-cleanup task_awaits observe the
+   * typed failure), then reject pending waiters with the failure message.
+   */
+  private async failAgentTaskTerminally(
+    workspaceId: string,
+    entry: { projectPath: string; workspace: WorkspaceConfigEntry },
+    failure: { errorType: string; errorMessage: string }
+  ): Promise<void> {
+    assert(workspaceId.length > 0, "failAgentTaskTerminally: workspaceId must be non-empty");
+    assert(
+      failure.errorMessage.length > 0,
+      "failAgentTaskTerminally: errorMessage must be non-empty"
+    );
+
+    await this.editWorkspaceEntry(
+      workspaceId,
+      (ws) => {
+        ws.taskStatus = "interrupted";
+        ws.taskLaunchError = failure.errorMessage;
+      },
+      { allowMissing: true }
+    );
+    await this.emitWorkspaceMetadata(workspaceId);
+
+    const parentWorkspaceId = entry.workspace.parentWorkspaceId;
+    if (parentWorkspaceId) {
+      const cfg = this.config.loadConfigOrDefault();
+      const index = this.buildAgentTaskIndex(cfg);
+      const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(
+        index.parentById,
+        workspaceId
+      );
+      const workflowOwnedAncestorWorkspaceIds = ancestorWorkspaceIds.filter(
+        (ancestorWorkspaceId) =>
+          this.getWorkflowOwnedDescendantAgentTaskUsingIndex(
+            index,
+            ancestorWorkspaceId,
+            workspaceId
+          ) === true
+      );
+
+      const persistedAtMs = Date.now();
+      for (const ancestorWorkspaceId of ancestorWorkspaceIds) {
+        try {
+          await upsertSubagentFailureArtifact({
+            workspaceId: ancestorWorkspaceId,
+            workspaceSessionDir: this.config.getSessionDir(ancestorWorkspaceId),
+            childTaskId: workspaceId,
+            parentWorkspaceId,
+            ancestorWorkspaceIds,
+            workflowOwnedAncestorWorkspaceIds,
+            errorType: failure.errorType,
+            errorMessage: failure.errorMessage,
+            model: entry.workspace.taskModelString,
+            nowMs: persistedAtMs,
+          });
+        } catch (error: unknown) {
+          log.error("Failed to persist subagent failure artifact", {
+            workspaceId: ancestorWorkspaceId,
+            childTaskId: workspaceId,
+            error,
+          });
+        }
+      }
+    }
+
+    // Captured before settlement: rejectWaiters consumes the pending waiters
+    // that prove a parent turn is actively listening for this task.
+    const hadForegroundWaiters = (this.pendingWaitersByTaskId.get(workspaceId)?.length ?? 0) > 0;
+
+    await this.settleInterruptedTaskAtStreamEnd(workspaceId, entry, null, {
+      rejectionError: new Error(failure.errorMessage),
+    });
+
+    // Free this task's concurrency slot for queued siblings.
+    this.scheduleMaybeStartQueuedTasks();
+
+    await this.maybeResumeParentAfterTerminalChildFailure(
+      workspaceId,
+      entry,
+      failure,
+      hadForegroundWaiters
+    );
+  }
+
+  /**
+   * Background-spawned children may have no pending waiter to reject, and the
+   * parent stream typically already returned early because the child was still
+   * active. The report path delivers into the parent context and wakes idle
+   * parents (deliverReportToParent + post-report auto-resume), so terminal
+   * failures must too — otherwise an idle parent stays at taskStatus "running"
+   * until a timeout or manual task_await, or worse: a later sibling's report
+   * wakes it with COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT and the fanout
+   * looks fully successful. Two mirrored halves:
+   *
+   * 1. Always append a synthetic mux_subagent_failure message to the parent
+   *    history (the durable context delivery — survives any wake-up ordering).
+   * 2. Auto-resume the parent only when this was the last active child and the
+   *    parent is idle (same gates as the post-report auto-resume).
+   */
+  private async maybeResumeParentAfterTerminalChildFailure(
+    childWorkspaceId: string,
+    childEntry: { projectPath: string; workspace: WorkspaceConfigEntry },
+    failure: { errorType: string; errorMessage: string },
+    hadForegroundWaiters: boolean
+  ): Promise<void> {
+    const parentWorkspaceId = childEntry.workspace.parentWorkspaceId;
+    if (!parentWorkspaceId) {
+      return;
+    }
+    // An active waiter (foreground task tool call or task_await) already
+    // surfaced the rejection to the parent's in-flight turn.
+    if (hadForegroundWaiters) {
+      return;
+    }
+    // Workflow-owned children propagate failures through the WorkflowRunner
+    // step result; do not also deliver a generic failure handoff.
+    if (childEntry.workspace.workflowTask != null) {
+      return;
+    }
+
+    const cfg = this.config.loadConfigOrDefault();
+    const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
+    if (!parentEntry) {
+      return;
+    }
+
+    // Durable context delivery, mirroring deliverReportToParent's synthetic
+    // append: the failure must be visible to the parent's next turn regardless
+    // of whether THIS settlement wakes it or a later sibling report/failure
+    // (whose handoff prompt won't restate this child's details) does.
+    const failureMessage = createMuxMessage(
+      createTaskFailureMessageId(),
+      "user",
+      formatSubagentFailureUserMessage({
+        childWorkspaceId,
+        agentType: coerceNonEmptyString(childEntry.workspace.agentType) ?? "agent",
+        errorType: failure.errorType,
+        errorMessage: failure.errorMessage,
+      }),
+      { timestamp: Date.now(), synthetic: true }
+    );
+    const appendResult = await this.historyService.appendToHistory(
+      parentWorkspaceId,
+      failureMessage
+    );
+    if (!appendResult.success) {
+      log.error("Failed to append synthetic subagent failure to parent history", {
+        parentWorkspaceId,
+        childWorkspaceId,
+        error: appendResult.error,
+      });
+    }
+
+    const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, parentWorkspaceId);
+    if (!hasActiveDescendants) {
+      this.consecutiveAutoResumes.delete(parentWorkspaceId);
+    }
+    if (this.interruptedParentWorkspaceIds.has(parentWorkspaceId)) {
+      log.debug("Skipping terminal-failure parent auto-resume after hard interrupt", {
+        parentWorkspaceId,
+        childWorkspaceId,
+      });
+      return;
+    }
+    if (hasActiveDescendants) {
+      // Remaining active children wake the parent when the last one settles
+      // (report delivery or another terminal failure); the failure message
+      // appended above keeps this child's outcome in that turn's context.
+      return;
+    }
+    if (this.aiService.isStreaming(parentWorkspaceId)) {
+      // A streaming parent picks the appended failure message up on its next
+      // turn (or sooner via a task_await rejection / persisted artifact).
+      return;
+    }
+
+    const resumeOptions = await this.resolveParentAutoResumeOptions(
+      parentWorkspaceId,
+      parentEntry,
+      childEntry.workspace.taskModelString ?? defaultModel
+    );
+    const sendResult = await this.workspaceService.sendMessage(
+      parentWorkspaceId,
+      FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT,
+      {
+        model: resumeOptions.model,
+        agentId: resumeOptions.agentId,
+        thinkingLevel: resumeOptions.thinkingLevel,
+      },
+      // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
+      { skipAutoResumeReset: true, synthetic: true, agentInitiated: true }
+    );
+    if (!sendResult.success) {
+      log.error("Failed to auto-resume parent after terminal child failure", {
+        parentWorkspaceId,
+        childWorkspaceId,
+        error: sendResult.error,
+      });
+    }
+  }
+
+  /**
    * Stream-end settlement for interrupted tasks. Guarantees every pending waiter
    * is settled exactly once: resolved if an agent_report exists, rejected otherwise.
    * No waiter should depend on timeout to discover terminal interruption.
@@ -3309,14 +5111,15 @@ export class TaskService {
   private async settleInterruptedTaskAtStreamEnd(
     workspaceId: string,
     entry: { projectPath: string; workspace: WorkspaceConfigEntry },
-    reportArgs: { reportMarkdown: string; title?: string } | null
+    reportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown } | null,
+    options?: { rejectionError?: Error }
   ): Promise<void> {
     if (reportArgs) {
       await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
       return;
     }
 
-    this.rejectWaiters(workspaceId, new Error("Task interrupted"));
+    this.rejectWaiters(workspaceId, options?.rejectionError ?? new Error("Task interrupted"));
 
     const parentWorkspaceId = entry.workspace.parentWorkspaceId;
     const bestOf = entry.workspace.bestOf;
@@ -3440,6 +5243,10 @@ export class TaskService {
         workspace.aiSettings = { model: canonicalModel, thinkingLevel: effectiveThinkingLevel };
         workspace.taskModelString = taskModelString;
         workspace.taskThinkingLevel = effectiveThinkingLevel;
+        // A successful propose_plan is a successful completion-tool outcome: the
+        // exec phase starts with a fresh recovery budget rather than inheriting
+        // whatever the plan phase consumed.
+        delete workspace.taskRecoveryAttempts;
       });
 
       await this.setTaskStatus(args.workspaceId, "running");
@@ -3629,9 +5436,7 @@ export class TaskService {
           continue;
         }
 
-        const workspaceAgentId = coerceNonEmptyString(
-          workspace.agentId ?? workspace.agentType
-        )?.toLowerCase();
+        const workspaceAgentId = resolvePersistedAgentId(workspace, "");
         if (requestedAgentId && workspaceAgentId && workspaceAgentId !== requestedAgentId) {
           continue;
         }
@@ -3773,7 +5578,13 @@ export class TaskService {
           params.parentWorkspaceId,
           sibling.taskId,
           findWorkspaceEntry(cfg, sibling.taskId),
-          { reportMarkdown: artifact.reportMarkdown, title: artifact.title }
+          {
+            reportMarkdown: artifact.reportMarkdown,
+            ...(artifact.title !== undefined ? { title: artifact.title } : {}),
+            ...(artifact.structuredOutput !== undefined
+              ? { structuredOutput: artifact.structuredOutput }
+              : {}),
+          }
         );
         for (const taskId of siblingCleanupTaskIds) {
           cleanupTaskIds.add(taskId);
@@ -3846,7 +5657,7 @@ export class TaskService {
   private async finalizeAgentTaskReport(
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
-    reportArgs: { reportMarkdown: string; title?: string }
+    reportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
   ): Promise<void> {
     this.markTaskForegroundRelevant(childWorkspaceId);
 
@@ -3872,6 +5683,8 @@ export class TaskService {
       (ws) => {
         ws.taskStatus = "reported";
         ws.reportedAt = getIsoNow();
+        // Successful completion resets the persisted recovery circuit breaker.
+        delete ws.taskRecoveryAttempts;
       },
       { allowMissing: true }
     );
@@ -3901,10 +5714,20 @@ export class TaskService {
       return;
     }
 
-    const parentById = this.buildAgentTaskIndex(cfgAfterReport).parentById;
+    const isWorkflowOwnedChildReport = latestChildEntry?.workspace.workflowTask != null;
+
+    const indexAfterReport = this.buildAgentTaskIndex(cfgAfterReport);
     const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(
-      parentById,
+      indexAfterReport.parentById,
       childWorkspaceId
+    );
+    const workflowOwnedAncestorWorkspaceIds = ancestorWorkspaceIds.filter(
+      (ancestorWorkspaceId) =>
+        this.getWorkflowOwnedDescendantAgentTaskUsingIndex(
+          indexAfterReport,
+          ancestorWorkspaceId,
+          childWorkspaceId
+        ) === true
     );
 
     // Persist the completed report in the session dirs of all ancestors so `task_await` can
@@ -3919,10 +5742,12 @@ export class TaskService {
           childTaskId: childWorkspaceId,
           parentWorkspaceId,
           ancestorWorkspaceIds,
+          workflowOwnedAncestorWorkspaceIds,
           reportMarkdown: reportArgs.reportMarkdown,
           model: latestChildEntry?.workspace.taskModelString,
           thinkingLevel: latestChildEntry?.workspace.taskThinkingLevel,
           title: reportArgs.title,
+          structuredOutput: reportArgs.structuredOutput,
           nowMs: persistedAtMs,
         });
       } catch (error: unknown) {
@@ -3992,6 +5817,16 @@ export class TaskService {
       });
     }
 
+    if (isWorkflowOwnedChildReport) {
+      // Workflow-owned tasks report through WorkflowRunner's journal/final-result path. Do not
+      // also nudge the parent model with a generic background-subagent handoff.
+      log.debug("Skipping post-report parent auto-resume for workflow-owned child", {
+        parentWorkspaceId,
+        childWorkspaceId,
+      });
+      return;
+    }
+
     if (
       !hadForegroundWaiters &&
       !hasActiveDescendants &&
@@ -4004,7 +5839,7 @@ export class TaskService {
       );
       const sendResult = await this.workspaceService.sendMessage(
         parentWorkspaceId,
-        "Your background sub-agent task(s) have completed. Use task_await to retrieve their reports and integrate the results.",
+        COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT,
         {
           model: resumeOptions.model,
           agentId: resumeOptions.agentId,
@@ -4032,18 +5867,28 @@ export class TaskService {
 
   private resolveWaiters(
     taskId: string,
-    report: { reportMarkdown: string; title?: string }
+    report: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
   ): boolean {
     this.markTaskForegroundRelevant(taskId);
 
     const cfg = this.config.loadConfigOrDefault();
-    const parentById = this.buildAgentTaskIndex(cfg).parentById;
-    const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(parentById, taskId);
+    const index = this.buildAgentTaskIndex(cfg);
+    const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(
+      index.parentById,
+      taskId
+    );
+    const workflowOwnedAncestorWorkspaceIds = ancestorWorkspaceIds.filter(
+      (ancestorWorkspaceId) =>
+        this.getWorkflowOwnedDescendantAgentTaskUsingIndex(index, ancestorWorkspaceId, taskId) ===
+        true
+    );
 
     this.completedReportsByTaskId.set(taskId, {
       reportMarkdown: report.reportMarkdown,
       title: report.title,
+      structuredOutput: report.structuredOutput,
       ancestorWorkspaceIds,
+      workflowOwnedAncestorWorkspaceIds,
     });
     this.enforceCompletedReportCacheLimit();
 
@@ -4125,18 +5970,34 @@ export class TaskService {
 
   private findAgentReportArgsInParts(
     parts: readonly unknown[]
-  ): { reportMarkdown: string; title?: string } | null {
+  ): { reportMarkdown: string; title?: string; structuredOutput?: unknown } | null {
     for (let i = parts.length - 1; i >= 0; i--) {
       const part = parts[i];
       if (!isDynamicToolPart(part)) continue;
       if (part.toolName !== "agent_report") continue;
       if (part.state !== "output-available") continue;
       if (!isSuccessfulToolResult(part.output)) continue;
-      const parsed = AgentReportToolArgsSchema.safeParse(part.input);
+      const outputReport = AgentReportSubmittedReportSchema.safeParse(
+        typeof part.output === "object" && part.output !== null && "report" in part.output
+          ? (part.output as { report?: unknown }).report
+          : undefined
+      );
+      if (outputReport.success) {
+        return outputReport.data;
+      }
+
+      const parsed = AgentReportInlineToolArgsSchema.safeParse(part.input);
       if (!parsed.success) continue;
       // Normalize null → undefined at the schema boundary so downstream
       // code that expects `title?: string` doesn't need to handle null.
-      return { reportMarkdown: parsed.data.reportMarkdown, title: parsed.data.title ?? undefined };
+      const report: { reportMarkdown: string; title?: string; structuredOutput?: unknown } = {
+        reportMarkdown: parsed.data.reportMarkdown,
+        title: parsed.data.title ?? undefined,
+      };
+      if (Object.prototype.hasOwnProperty.call(parsed.data, "structuredOutput")) {
+        report.structuredOutput = parsed.data.structuredOutput;
+      }
+      return report;
     }
     return null;
   }
@@ -4226,6 +6087,7 @@ export class TaskService {
     const reports: Array<{
       taskId: string;
       reportMarkdown: string;
+      structuredOutput?: unknown;
       title?: string;
       agentId?: string;
       agentType?: string;
@@ -4243,6 +6105,7 @@ export class TaskService {
         taskId: sibling.taskId,
         reportMarkdown: artifact.reportMarkdown,
         title: artifact.title,
+        structuredOutput: artifact.structuredOutput,
         agentId: sibling.agentId,
         agentType: sibling.agentType,
         groupKind: sibling.kind,
@@ -4355,6 +6218,7 @@ export class TaskService {
     const hasRecoverableSibling = siblings.some((sibling) => {
       return (
         sibling.taskStatus === "queued" ||
+        sibling.taskStatus === "starting" ||
         sibling.taskStatus === "running" ||
         sibling.taskStatus === "awaiting_report"
       );
@@ -4376,7 +6240,7 @@ export class TaskService {
     parentWorkspaceId: string,
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
-    report: { reportMarkdown: string; title?: string }
+    report: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
   ): Promise<void> {
     assert(
       childWorkspaceId.length > 0,
@@ -4412,15 +6276,16 @@ export class TaskService {
     parentWorkspaceId: string,
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
-    report: { reportMarkdown: string; title?: string }
+    report: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
   ): Promise<readonly string[]> {
-    const agentType = childEntry?.workspace.agentType ?? "agent";
+    const agentType = coerceNonEmptyString(childEntry?.workspace.agentType) ?? "agent";
 
     const output = {
       status: "completed" as const,
       taskId: childWorkspaceId,
       reportMarkdown: report.reportMarkdown,
       title: report.title,
+      structuredOutput: report.structuredOutput,
       agentType,
     };
     const parsedOutput = TaskToolResultSchema.safeParse(output);
@@ -4436,6 +6301,14 @@ export class TaskService {
       if (waiters && waiters.length > 0) {
         return [];
       }
+    }
+
+    if (childEntry?.workspace.workflowTask != null) {
+      log.debug("Skipping generic parent report delivery for workflow-owned child", {
+        parentWorkspaceId,
+        childWorkspaceId,
+      });
+      return [];
     }
 
     // Restart-safe: if the parent has a pending task tool call in partial.json (interrupted stream),
@@ -4476,20 +6349,22 @@ export class TaskService {
 
     // Background tasks: append a synthetic user message containing the report so earlier history
     // remains immutable (append-only) and prompt caches can still reuse the prefix.
-    const titlePrefix = report.title ?? `Subagent (${agentType}) report`;
-    const xml = [
-      "<mux_subagent_report>",
-      `<task_id>${childWorkspaceId}</task_id>`,
-      `<agent_type>${agentType}</agent_type>`,
-      `<title>${titlePrefix}</title>`,
-      "<report_markdown>",
-      report.reportMarkdown,
-      "</report_markdown>",
-      "</mux_subagent_report>",
-    ].join("\n");
+    const titlePrefix =
+      typeof report.title === "string" && report.title.trim().length > 0
+        ? report.title
+        : `Subagent (${agentType}) report`;
+    const reportContent = formatSubagentReportUserMessage({
+      childWorkspaceId,
+      agentType,
+      title: titlePrefix,
+      reportMarkdown: report.reportMarkdown,
+      ...(report.structuredOutput !== undefined
+        ? { structuredOutput: report.structuredOutput }
+        : {}),
+    });
 
     const messageId = createTaskReportMessageId();
-    const reportMessage = createMuxMessage(messageId, "user", xml, {
+    const reportMessage = createMuxMessage(messageId, "user", reportContent, {
       timestamp: Date.now(),
       synthetic: true,
     });

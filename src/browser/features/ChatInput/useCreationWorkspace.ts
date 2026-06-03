@@ -53,7 +53,7 @@ import {
   getModelCapabilities,
   getModelCapabilitiesResolved,
 } from "@/common/utils/ai/modelCapabilities";
-import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
+import { normalizeModelInput } from "@/common/utils/ai/normalizeModelInput";
 import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
 import { getErrorMessage } from "@/common/utils/errors";
 import { normalizeAgentId } from "@/common/utils/agentIds";
@@ -61,7 +61,10 @@ import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 export type CreationSendResult = { success: true } | { success: false; error?: SendMessageError };
-export type CreationInitialSlashCommand = Extract<ParsedCommand, { type: "goal-set" }>;
+export type CreationInitialSlashCommand = Extract<
+  ParsedCommand,
+  { type: "goal-set" } | { type: "workflow-run" }
+>;
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -75,6 +78,8 @@ interface UseCreationWorkspaceOptions {
   subProjectPath?: string | null;
   /** Draft ID for UI-only workspace creation drafts (from URL) */
   draftId?: string | null;
+  /** Dynamic workflows gate used when an initial creation command starts a workflow. */
+  dynamicWorkflowsEnabled?: boolean;
   /** User's currently selected model (for name generation fallback) */
   userModel?: string;
 }
@@ -214,6 +219,7 @@ export function useCreationWorkspace({
   message,
   subProjectPath,
   draftId,
+  dynamicWorkflowsEnabled = false,
   userModel,
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
   const workspaceContext = useOptionalWorkspaceContext();
@@ -355,6 +361,15 @@ export function useCreationWorkspace({
       initialSlashCommand?: CreationInitialSlashCommand
     ): Promise<CreationSendResult> => {
       if (!messageText.trim() || isSending || !api) {
+        return { success: false };
+      }
+
+      if (initialSlashCommand?.type === "workflow-run" && !dynamicWorkflowsEnabled) {
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: "Dynamic workflows are disabled",
+        });
         return { success: false };
       }
 
@@ -592,6 +607,8 @@ export function useCreationWorkspace({
             workspaceId: metadata.id,
             variant: "workspace",
             projectPath,
+            rawInput: messageText,
+            dynamicWorkflowsEnabled,
             sendMessageOptions,
             setInput: () => undefined,
             setAttachments: () => undefined,
@@ -609,15 +626,17 @@ export function useCreationWorkspace({
             return { success: false };
           }
 
-          const openGoalTab = () => {
-            window.dispatchEvent(
-              createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId: metadata.id })
-            );
-          };
-          if (typeof window.requestAnimationFrame === "function") {
-            window.requestAnimationFrame(openGoalTab);
-          } else {
-            openGoalTab();
+          if (initialSlashCommand.type === "goal-set") {
+            const openGoalTab = () => {
+              window.dispatchEvent(
+                createCustomEvent(CUSTOM_EVENTS.OPEN_GOAL_TAB, { workspaceId: metadata.id })
+              );
+            };
+            if (typeof window.requestAnimationFrame === "function") {
+              window.requestAnimationFrame(openGoalTab);
+            } else {
+              openGoalTab();
+            }
           }
           return { success: true };
         }
@@ -690,6 +709,7 @@ export function useCreationWorkspace({
       workspaceNameState.autoGenerate,
       workspaceNameState.name,
       subProjectPath,
+      dynamicWorkflowsEnabled,
       draftId,
       promoteWorkspaceDraft,
       deleteWorkspaceDraft,

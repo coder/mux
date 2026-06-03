@@ -74,4 +74,16 @@ describe("tokenizer", () => {
     );
     expect(tokens).toBeGreaterThan(0);
   });
+
+  test("uses native Google tool token fallbacks for Gemini 3", async () => {
+    await expect(
+      getToolDefinitionTokens("url_context", "google:gemini-2.5-pro", undefined, undefined)
+    ).resolves.toBe(0);
+    await expect(
+      getToolDefinitionTokens("url_context", "google:gemini-3.5-flash", undefined, undefined)
+    ).resolves.toBe(50);
+    await expect(
+      getToolDefinitionTokens("google_search", "google:gemini-3.5-flash", undefined, undefined)
+    ).resolves.toBe(50);
+  });
 });

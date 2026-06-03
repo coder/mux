@@ -6,6 +6,7 @@ import React from "react";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { getProvidersConfigStore } from "@/browser/stores/ProvidersConfigStore";
 
 import { useRouting } from "./useRouting";
 
@@ -60,6 +61,7 @@ describe("useRouting", () => {
 
   afterEach(() => {
     cleanup();
+    getProvidersConfigStore().setClient(null);
   });
 
   test("resolveRoute and availableRoutes honor gateway model accessibility", async () => {
@@ -72,6 +74,12 @@ describe("useRouting", () => {
         models: [KNOWN_MODELS.GPT_54_MINI.providerModelId],
       },
     };
+
+    // useProvidersConfig reads the shared ProvidersConfigStore (wired by
+    // AppLoader in the real app); this hook test bypasses AppLoader, so wire
+    // it manually AFTER the stubbed config is in place so the store's fetch
+    // observes it.
+    getProvidersConfigStore().setClient(stubClient);
 
     const { result } = renderHook(() => useRouting(), { wrapper });
 

@@ -18,6 +18,7 @@ import {
 } from "./Shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { useOptionalMessageListContext } from "../Messages/MessageListContext";
+import { useStickyExpand } from "../Messages/useStickyExpand";
 import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
@@ -55,6 +56,7 @@ import {
   normalizeTaskGroupLabel,
   type TaskGroupKind,
 } from "@/common/utils/tools/taskGroups";
+import { resolvePersistedAgentId } from "@/common/utils/agentIds";
 import { formatDuration } from "@/common/utils/formatDuration";
 import { ElapsedTimeDisplay } from "./Shared/ElapsedTimeDisplay";
 
@@ -98,6 +100,7 @@ const TaskStatusBadge: React.FC<{
       case "reported":
         return "bg-success/20 text-success";
       case "running":
+      case "backgrounded":
         return "bg-pending/20 text-pending";
       case "awaiting_report":
         return "bg-warning/20 text-warning";
@@ -208,7 +211,12 @@ interface TaskRowProps {
 }
 
 function isTaskRowElapsedActive(status: string): boolean {
-  return status === "queued" || status === "running" || status === "awaiting_report";
+  return (
+    status === "queued" ||
+    status === "running" ||
+    status === "backgrounded" ||
+    status === "awaiting_report"
+  );
 }
 
 const TaskRowElapsed: React.FC<{ startedAtMs: number | undefined; status: string }> = (props) => {
@@ -465,7 +473,7 @@ function recoverTaskGroupTaskIdsFromWorkspaceMetadata(params: {
       continue;
     }
     if (requestedAgentType) {
-      const metadataAgentType = normalizeTaskAgent(metadata.agentId ?? metadata.agentType);
+      const metadataAgentType = normalizeTaskAgent(resolvePersistedAgentId(metadata, ""));
       if (metadataAgentType && metadataAgentType !== requestedAgentType) {
         continue;
       }
@@ -821,10 +829,12 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
           ? "backgrounded"
           : status;
 
-  const shouldAutoExpand = !!errorResult;
-  const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
-  const expanded = userExpandedChoice ?? shouldAutoExpand;
-  const toggleExpanded = () => setUserExpandedChoice(!expanded);
+  // Base state follows the sticky tools preference. Errors can arrive after mount, so
+  // pass them as a live forceExpanded signal (latched) to open the row when one lands
+  // instead of seeding once and hiding the failure behind the header.
+  const { expanded, toggleExpanded } = useStickyExpand("tools", false, {
+    forceExpanded: !!errorResult,
+  });
 
   const [transcriptTaskId, setTranscriptTaskId] = useState<string | null>(null);
   const preview = prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
@@ -1028,7 +1038,8 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
         continue;
       }
 
-      const agentType = (metadata.agentId ?? metadata.agentType)?.trim();
+      const resolvedAgentType = resolvePersistedAgentId(metadata, "");
+      const agentType = resolvedAgentType.length > 0 ? resolvedAgentType : undefined;
       const title = metadata.title?.trim().length ? metadata.title : metadata.name;
 
       awaitedRows.push({
@@ -1045,12 +1056,13 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
     }
   }
 
-  // Keep task_await collapsed by default, but auto-expand when failures are present.
-  // This avoids hiding failures behind a "completed" badge in the header.
-  const shouldAutoExpand = failedCount > 0;
-  const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
-  const expanded = userExpandedChoice ?? shouldAutoExpand;
-  const toggleExpanded = () => setUserExpandedChoice(!expanded);
+  // Keep task_await collapsed by default (following the sticky tools preference), but
+  // auto-expand when failures are present so they aren't hidden behind a "completed"
+  // badge. failedCount is usually 0 at mount and only rises once awaited results land,
+  // so pass it as a live forceExpanded signal (latched) rather than a one-time seed.
+  const { expanded, toggleExpanded } = useStickyExpand("tools", false, {
+    forceExpanded: failedCount > 0,
+  });
 
   const effectiveStatus: ToolStatus = status === "completed" && failedCount > 0 ? "failed" : status;
 

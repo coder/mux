@@ -78,6 +78,7 @@ describe("TokenizerService", () => {
       expect(result).toBe(mockResult);
       expect(statsSpy).toHaveBeenCalledWith(messages, "gpt-4", null, {
         enableAgentReport: false,
+        enableReviewPane: true,
       });
       expect(persistSpy).toHaveBeenCalledWith(
         "test-workspace",
@@ -122,6 +123,7 @@ describe("TokenizerService", () => {
 
       expect(statsSpy).toHaveBeenCalledWith([messages[1]], "gpt-4", null, {
         enableAgentReport: false,
+        enableReviewPane: true,
       });
       expect(persistSpy).toHaveBeenCalledWith(
         "test-workspace",
@@ -152,9 +154,11 @@ describe("TokenizerService", () => {
 
       expect(statsSpy).toHaveBeenNthCalledWith(1, messages, "gpt-4", null, {
         enableAgentReport: false,
+        enableReviewPane: true,
       });
       expect(statsSpy).toHaveBeenNthCalledWith(2, messages, "gpt-4", null, {
         enableAgentReport: false,
+        enableReviewPane: true,
       });
 
       statsSpy.mockRestore();
@@ -177,6 +181,7 @@ describe("TokenizerService", () => {
 
       expect(statsSpy).toHaveBeenCalledWith(messages, "gpt-4", null, {
         enableAgentReport: true,
+        enableReviewPane: false,
       });
 
       statsSpy.mockRestore();

@@ -67,6 +67,30 @@ function HighlightedText({
   return <span className={className}>{parts}</span>;
 }
 
+const SUGGESTION_KIND_BADGES = {
+  workflow: { label: "Workflow", className: "text-plan-mode" },
+  skill: { label: "Skill", className: "text-medium" },
+} satisfies Partial<
+  Record<NonNullable<SlashSuggestion["kind"]>, { label: string; className: string }>
+>;
+
+function SuggestionKindBadge(props: { kind: SlashSuggestion["kind"] }) {
+  if (props.kind !== "workflow" && props.kind !== "skill") {
+    return null;
+  }
+  const badge = SUGGESTION_KIND_BADGES[props.kind];
+  return (
+    <span
+      className={cn(
+        "border-border-light shrink-0 rounded border px-1 py-0.5 text-[9px] tracking-wide uppercase",
+        badge.className
+      )}
+    >
+      {badge.label}
+    </span>
+  );
+}
+
 // Props interface
 interface CommandSuggestionsProps {
   suggestions: SlashSuggestion[];
@@ -285,6 +309,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           >
             <HighlightedText text={suggestion.display} query={highlightQuery} />
           </div>
+          <SuggestionKindBadge kind={suggestion.kind} />
           <div
             className={cn(
               "text-secondary min-w-0 truncate text-[11px]",

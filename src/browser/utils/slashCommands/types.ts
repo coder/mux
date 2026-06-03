@@ -11,6 +11,7 @@
 
 import type { ExperimentId } from "@/common/constants/experiments";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { WorkflowDefinitionDescriptor } from "@/common/types/workflow";
 import type { ParsedThinkingInput } from "@/common/types/thinking";
 
 export type ParsedCommand =
@@ -31,6 +32,7 @@ export type ParsedCommand =
   | { type: "vim-toggle" }
   | { type: "plan-show" }
   | { type: "plan-open" }
+  | { type: "workflow-run"; name: string; argsText?: string }
   | { type: "debug-llm-request" }
   | { type: "unknown-command"; command: string; subcommand?: string }
   | { type: "command-unknown-flag"; command: string; flag: string; usage?: string }
@@ -94,10 +96,12 @@ export interface SlashSuggestion {
   id: string;
   display: string;
   description: string;
+  kind?: "command" | "skill" | "workflow" | "model";
   replacement: string;
 }
 
 export interface SlashSuggestionContext extends SlashCommandVisibilityContext {
+  workflows?: WorkflowDefinitionDescriptor[];
   agentSkills?: AgentSkillDescriptor[];
 }
 

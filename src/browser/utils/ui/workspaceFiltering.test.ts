@@ -6,6 +6,7 @@ import {
   buildSortedWorkspacesByProject,
   computeWorkspaceDepthMap,
   computeAgentRowRenderMeta,
+  computeDelegatedActivityByWorkspaceId,
   filterVisibleAgentRows,
 } from "./workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -19,6 +20,7 @@ interface WorkspaceFixtureOptions {
   parentWorkspaceId?: string;
   taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
   reportedAt?: string;
+  workflowTask?: FrontendWorkspaceMetadata["workflowTask"];
 }
 
 const createWorkspace = (
@@ -48,6 +50,7 @@ const createWorkspace = (
     parentWorkspaceId: options.parentWorkspaceId,
     taskStatus: options.taskStatus,
     reportedAt: options.reportedAt,
+    workflowTask: options.workflowTask,
   };
 };
 
@@ -614,6 +617,130 @@ describe("buildSortedWorkspacesByProject", () => {
     const result = buildSortedWorkspacesByProject(projects, metadata, {});
 
     expect(result.get("/project/a")).toHaveLength(0);
+  });
+});
+
+describe("delegated workspace activity roll-up", () => {
+  it("rolls active workflow-owned descendants up to every ancestor", () => {
+    const workflowTask = { runId: "run-1", stepId: "step-1" };
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("workflow-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        workflowTask,
+      }),
+      createWorkspace("grandchild", {
+        parentWorkspaceId: "workflow-child",
+        taskStatus: "awaiting_report",
+      }),
+      createWorkspace("queued-grandchild", {
+        parentWorkspaceId: "workflow-child",
+        taskStatus: "queued",
+      }),
+      createWorkspace("reported-grandchild", {
+        parentWorkspaceId: "workflow-child",
+        taskStatus: "reported",
+      }),
+    ];
+
+    const activityByWorkspaceId = computeDelegatedActivityByWorkspaceId(workspaces);
+
+    expect(activityByWorkspaceId.get("parent")).toEqual({
+      activeCount: 2,
+      queuedCount: 1,
+      workflowActiveCount: 2,
+      workflowQueuedCount: 1,
+    });
+    expect(activityByWorkspaceId.get("workflow-child")).toEqual({
+      activeCount: 1,
+      queuedCount: 1,
+      workflowActiveCount: 1,
+      workflowQueuedCount: 1,
+    });
+    expect(activityByWorkspaceId.has("reported-grandchild")).toBe(false);
+  });
+
+  it("deduplicates duplicate workspace metadata and ignores cycles", () => {
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("child", { parentWorkspaceId: "parent", taskStatus: "running" }),
+      createWorkspace("child", { parentWorkspaceId: "parent", taskStatus: "running" }),
+      createWorkspace("cycle-a", { parentWorkspaceId: "cycle-b", taskStatus: "running" }),
+      createWorkspace("cycle-b", { parentWorkspaceId: "cycle-a", taskStatus: "running" }),
+    ];
+
+    const activityByWorkspaceId = computeDelegatedActivityByWorkspaceId(workspaces);
+
+    expect(activityByWorkspaceId.get("parent")?.activeCount).toBe(1);
+    expect(activityByWorkspaceId.has("cycle-a")).toBe(false);
+    expect(activityByWorkspaceId.has("cycle-b")).toBe(false);
+  });
+
+  it("keeps resumed descendants active even when reportedAt is stale", () => {
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("resumed-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        reportedAt: new Date(0).toISOString(),
+      }),
+    ];
+
+    const activityByWorkspaceId = computeDelegatedActivityByWorkspaceId(workspaces);
+
+    expect(activityByWorkspaceId.get("parent")?.activeCount).toBe(1);
+  });
+
+  it("keeps live interrupted descendants active until report finalization", () => {
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("interrupted-live-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "interrupted",
+      }),
+    ];
+
+    const activityByWorkspaceId = computeDelegatedActivityByWorkspaceId(workspaces, {
+      isWorkspaceLiveActive: (workspaceId) => workspaceId === "interrupted-live-child",
+    });
+
+    expect(activityByWorkspaceId.get("parent")?.activeCount).toBe(1);
+  });
+
+  it("does not resurrect terminal descendants from stale live sidebar activity", () => {
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("reported-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "reported",
+      }),
+      createWorkspace("interrupted-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "interrupted",
+        reportedAt: new Date(0).toISOString(),
+      }),
+    ];
+
+    const activityByWorkspaceId = computeDelegatedActivityByWorkspaceId(workspaces, {
+      isWorkspaceLiveActive: (workspaceId) =>
+        workspaceId === "reported-child" || workspaceId === "interrupted-child",
+    });
+
+    expect(activityByWorkspaceId.has("parent")).toBe(false);
+  });
+
+  it("uses live sidebar activity when task metadata lags", () => {
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("child", { parentWorkspaceId: "parent" }),
+    ];
+
+    const activityByWorkspaceId = computeDelegatedActivityByWorkspaceId(workspaces, {
+      isWorkspaceLiveActive: (workspaceId) => workspaceId === "child",
+    });
+
+    expect(activityByWorkspaceId.get("parent")?.activeCount).toBe(1);
   });
 });
 

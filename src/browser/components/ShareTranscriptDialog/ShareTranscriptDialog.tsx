@@ -102,7 +102,9 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
   // Signing capabilities and enabled state (matching per-message sharing)
   const [signingCapabilities, setSigningCapabilities] = useState<SigningCapabilities | null>(null);
   const [signingCapabilitiesLoaded, setSigningCapabilitiesLoaded] = useState(false);
-  const [signingEnabled, setSigningEnabled] = usePersistedState(SHARE_SIGNING_KEY, true);
+  const [signingEnabled, setSigningEnabled] = usePersistedState(SHARE_SIGNING_KEY, true, {
+    listener: true,
+  });
   const [signed, setSigned] = useState(false);
 
   const urlInputRef = useRef<HTMLInputElement>(null);

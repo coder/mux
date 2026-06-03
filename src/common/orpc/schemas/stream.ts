@@ -6,6 +6,7 @@ import { ChatUsageDisplaySchema } from "./chatStats";
 import { StreamErrorTypeSchema } from "./errors";
 import {
   FilePartSchema,
+  ModelFallbackRecordSchema,
   MuxMessageSchema,
   MuxReasoningPartSchema,
   MuxTextPartSchema,
@@ -230,9 +231,12 @@ export const StreamEndEventSchema = z.object({
       model: z.string(),
       metadataModel: z.string().optional(),
       agentId: AgentIdSchema.optional().catch(undefined),
+      mode: AgentModeSchema.optional().catch(undefined),
       thinkingLevel: ThinkingLevelSchema.optional(),
       routedThroughGateway: z.boolean().optional(),
       routeProvider: z.string().optional(),
+      // Present when a fallback model answered after the requested model refused.
+      modelFallback: ModelFallbackRecordSchema.optional(),
       // Total usage across all steps (for cost calculation)
       usage: LanguageModelV2UsageSchema.optional(),
       // Last step's usage only (for context window display - inputTokens = current context size)
@@ -685,6 +689,8 @@ export const ExperimentsSchema = z.object({
   programmaticToolCalling: z.boolean().optional(),
   programmaticToolCallingExclusive: z.boolean().optional(),
   advisorTool: z.boolean().optional(),
+  dynamicWorkflows: z.boolean().optional(),
+  subagentFileReports: z.boolean().optional(),
   execSubagentHardRestart: z.boolean().optional(),
 });
 

@@ -10,6 +10,7 @@ import {
   DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
   WORKTREE_ARCHIVE_BEHAVIORS,
 } from "@/common/config/worktreeArchiveBehavior";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { type ExternalSecretResolver, secretsToRecord } from "@/common/types/secrets";
 
@@ -51,6 +52,90 @@ describe("Config", () => {
       expect(projectPaths).toContain("/home/user/clean");
       expect(projectPaths).not.toContain("/home/user/project/");
       expect(projectPaths).not.toContain("/home/user/another//");
+    });
+  });
+
+  describe("userPreferences", () => {
+    it("loads and saves user preferences", async () => {
+      await config.editConfig((cfg) => ({
+        ...cfg,
+        userPreferences: {
+          appearance: { theme: "dark" },
+          navigation: { projectOrder: ["/repo"] },
+        },
+      }));
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.loadConfigOrDefault().userPreferences).toEqual({
+        appearance: { theme: "dark" },
+        navigation: { projectOrder: ["/repo"] },
+      });
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        migrations?: { userPreferencesInitialized?: unknown };
+        userPreferences?: unknown;
+      };
+      expect(raw.migrations?.userPreferencesInitialized).toBe(true);
+      expect(raw.userPreferences).toEqual({
+        appearance: { theme: "dark" },
+        navigation: { projectOrder: ["/repo"] },
+      });
+    });
+
+    it("preserves user preferences during unrelated saves", async () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          userPreferences: {
+            appearance: { theme: "flexoki-dark" },
+          },
+        })
+      );
+
+      await config.editConfig((cfg) => ({
+        ...cfg,
+        llmDebugLogs: true,
+      }));
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        userPreferences?: unknown;
+        llmDebugLogs?: unknown;
+      };
+      expect(raw.userPreferences).toEqual({ appearance: { theme: "flexoki-dark" } });
+      expect(raw.llmDebugLogs).toBe(true);
+    });
+
+    it("treats existing user preferences as initialized for cross-origin sync", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          userPreferences: {
+            appearance: { theme: "flexoki-dark" },
+          },
+        })
+      );
+
+      expect(config.loadConfigOrDefault().migrations?.userPreferencesInitialized).toBe(true);
+    });
+
+    it("normalizes invalid user preference values on load", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          userPreferences: {
+            appearance: { theme: "legacy-light", transcriptDensity: "wide" },
+            notifications: { notifyOnResponseByWorkspace: { "ws-1": true, "ws-2": "yes" } },
+          },
+        })
+      );
+
+      expect(config.loadConfigOrDefault().userPreferences).toEqual({
+        appearance: { theme: "light" },
+        notifications: { notifyOnResponseByWorkspace: { "ws-1": true } },
+      });
     });
   });
 
@@ -150,6 +235,200 @@ describe("Config", () => {
 
       const loaded = config.loadConfigOrDefault();
       expect(loaded.projects.get("/repo")?.projectKind).toBe("system");
+    });
+  });
+
+  describe("modelFallbacks normalization", () => {
+    it("self-heals malformed modelFallbacks on load instead of breaking sends", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          // Keep this test focused on normalization, not default seeding.
+          migrations: { defaultModelFallbacksSeeded: true },
+          modelFallbacks: {
+            // Gateway-prefixed key + non-string chain entries + unknown trigger.
+            "openrouter:anthropic/claude-opus-4-6": {
+              models: [42, null, "openai:gpt-5.5", { nested: true }],
+              triggers: ["future_trigger", 7],
+            },
+            // models is not an array: entry dropped entirely.
+            "openai:gpt-5.5": { models: "openai:gpt-5.5-codex" },
+            // Chain empties after dropping the self-fallback: entry dropped.
+            "google:gemini-3-pro": { models: ["google:gemini-3-pro"] },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.modelFallbacks).toEqual({
+        "anthropic:claude-opus-4-6": {
+          models: ["openai:gpt-5.5"],
+          // Unknown triggers are dropped rather than coerced into refusal
+          // triggers. The surviving empty list intentionally disables the
+          // chain (it no longer fires on model_refusal).
+          triggers: [],
+        },
+      });
+    });
+  });
+
+  describe("default model fallbacks seeding", () => {
+    const FABLE = KNOWN_MODELS.FABLE.id;
+    const OPUS = KNOWN_MODELS.OPUS.id;
+    const configFilePath = () => path.join(tempDir, "config.json");
+
+    it("seeds the default chain once on first load and persists the migration flag", () => {
+      fs.writeFileSync(configFilePath(), JSON.stringify({ projects: [] }));
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.modelFallbacks).toEqual({ [FABLE]: { models: [OPUS] } });
+      expect(loaded.migrations?.defaultModelFallbacksSeeded).toBe(true);
+
+      // Seed is written back so the flag survives restarts even without saves.
+      const raw = JSON.parse(fs.readFileSync(configFilePath(), "utf-8")) as {
+        modelFallbacks?: unknown;
+        migrations?: { defaultModelFallbacksSeeded?: unknown };
+      };
+      expect(raw.modelFallbacks).toEqual({ [FABLE]: { models: [OPUS] } });
+      expect(raw.migrations?.defaultModelFallbacksSeeded).toBe(true);
+    });
+
+    it("does not re-seed after the user deletes the default chain", () => {
+      fs.writeFileSync(
+        configFilePath(),
+        JSON.stringify({
+          projects: [],
+          migrations: { defaultModelFallbacksSeeded: true },
+        })
+      );
+
+      expect(config.loadConfigOrDefault().modelFallbacks).toBeUndefined();
+    });
+
+    it("merges the seeded default with pre-existing chains for other source models", () => {
+      fs.writeFileSync(
+        configFilePath(),
+        JSON.stringify({
+          projects: [],
+          modelFallbacks: {
+            "anthropic:claude-opus-4-6": { models: ["openai:gpt-5.5"] },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.modelFallbacks).toEqual({
+        "anthropic:claude-opus-4-6": { models: ["openai:gpt-5.5"] },
+        [FABLE]: { models: [OPUS] },
+      });
+
+      // The user's chain must survive the seed write-back on disk unchanged.
+      const raw = JSON.parse(fs.readFileSync(configFilePath(), "utf-8")) as {
+        modelFallbacks?: unknown;
+        migrations?: { defaultModelFallbacksSeeded?: unknown };
+      };
+      expect(raw.modelFallbacks).toEqual({
+        "anthropic:claude-opus-4-6": { models: ["openai:gpt-5.5"] },
+        [FABLE]: { models: [OPUS] },
+      });
+      expect(raw.migrations?.defaultModelFallbacksSeeded).toBe(true);
+    });
+
+    it("does not double-seed when the user chain uses a gateway-prefixed Fable key", () => {
+      fs.writeFileSync(
+        configFilePath(),
+        JSON.stringify({
+          projects: [],
+          modelFallbacks: {
+            "openrouter:anthropic/claude-fable-5": { models: ["openai:gpt-5.5"] },
+          },
+        })
+      );
+
+      // The gateway-prefixed key canonicalizes to the same source model, so
+      // the seed must treat it as configured and leave the user's chain alone.
+      expect(config.loadConfigOrDefault().modelFallbacks).toEqual({
+        [FABLE]: { models: ["openai:gpt-5.5"] },
+      });
+    });
+
+    it("respects a hand-edited tombstone whose chain sanitizes away", () => {
+      fs.writeFileSync(
+        configFilePath(),
+        JSON.stringify({
+          projects: [],
+          modelFallbacks: {
+            [FABLE]: { enabled: false, models: [] },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      // The entry sanitizes to nothing at runtime (no fallback fires), but it
+      // is still user intent: the seed must not replace it with an enabled
+      // default chain, and the raw on-disk form must survive.
+      expect(loaded.modelFallbacks).toBeUndefined();
+      expect(loaded.migrations?.defaultModelFallbacksSeeded).toBe(true);
+
+      const raw = JSON.parse(fs.readFileSync(configFilePath(), "utf-8")) as {
+        modelFallbacks?: unknown;
+      };
+      expect(raw.modelFallbacks).toEqual({ [FABLE]: { enabled: false, models: [] } });
+    });
+
+    it("preserves unknown migration flags from newer app versions across saves", async () => {
+      fs.writeFileSync(
+        configFilePath(),
+        JSON.stringify({
+          projects: [],
+          migrations: { defaultModelFallbacksSeeded: true, futureFlag: true },
+        })
+      );
+
+      await config.editConfig((cfg) => cfg);
+
+      // A downgrade to this version + save must not strip flags it does not
+      // know, or the corresponding one-time migrations re-run on re-upgrade.
+      const raw = JSON.parse(fs.readFileSync(configFilePath(), "utf-8")) as {
+        migrations?: Record<string, unknown>;
+      };
+      expect(raw.migrations?.futureFlag).toBe(true);
+      expect(raw.migrations?.defaultModelFallbacksSeeded).toBe(true);
+    });
+
+    it("preserves a pre-existing user chain for the seeded source model", () => {
+      fs.writeFileSync(
+        configFilePath(),
+        JSON.stringify({
+          projects: [],
+          modelFallbacks: {
+            [FABLE]: { enabled: false, models: ["openai:gpt-5.5"] },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.modelFallbacks).toEqual({
+        [FABLE]: { enabled: false, models: ["openai:gpt-5.5"] },
+      });
+      expect(loaded.migrations?.defaultModelFallbacksSeeded).toBe(true);
+    });
+
+    it("applies the defaults to fresh installs and locks the flag on first save", async () => {
+      expect(config.loadConfigOrDefault().modelFallbacks).toEqual({
+        [FABLE]: { models: [OPUS] },
+      });
+
+      await config.editConfig((cfg) => cfg);
+
+      const raw = JSON.parse(fs.readFileSync(configFilePath(), "utf-8")) as {
+        modelFallbacks?: unknown;
+        migrations?: { defaultModelFallbacksSeeded?: unknown };
+      };
+      expect(raw.modelFallbacks).toEqual({ [FABLE]: { models: [OPUS] } });
+      expect(raw.migrations?.defaultModelFallbacksSeeded).toBe(true);
     });
   });
 
@@ -1006,6 +1285,9 @@ describe("Config", () => {
           routeOverrides: {
             "openai:gpt-4o": "direct",
           },
+          // Without this flag the one-time default-fallbacks seed would write
+          // the file, which is not the rewrite this test guards against.
+          migrations: { defaultModelFallbacksSeeded: true },
         })
       );
 

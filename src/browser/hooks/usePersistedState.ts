@@ -10,6 +10,31 @@ interface Subscriber {
   listener: boolean;
 }
 
+export type PersistedStateWriteSource = "local" | "backend";
+
+export interface PersistedStateWriteEvent {
+  key: string;
+  newValue: unknown;
+  source: PersistedStateWriteSource;
+}
+
+type PersistedStateWriteListener = (event: PersistedStateWriteEvent) => void;
+
+const writeListeners = new Set<PersistedStateWriteListener>();
+
+export function subscribePersistedStateWrites(listener: PersistedStateWriteListener): () => void {
+  writeListeners.add(listener);
+  return () => {
+    writeListeners.delete(listener);
+  };
+}
+
+function notifyWriteListeners(event: PersistedStateWriteEvent): void {
+  for (const listener of writeListeners) {
+    listener(event);
+  }
+}
+
 const subscribersByKey = new Map<string, Set<Subscriber>>();
 
 function addSubscriber(key: string, subscriber: Subscriber): () => void {
@@ -27,13 +52,13 @@ function addSubscriber(key: string, subscriber: Subscriber): () => void {
   };
 }
 
-function notifySubscribers(key: string, origin?: string) {
+function notifySubscribers(key: string, origin?: string, includeNonListeners = false) {
   const subs = subscribersByKey.get(key);
   if (!subs) return;
 
   for (const sub of subs) {
-    // If listener=false, only react to updates originating from this hook instance.
-    if (!sub.listener) {
+    // If listener=false, only react to this hook instance or explicit cache hydration.
+    if (!includeNonListeners && !sub.listener) {
       if (!origin || origin !== sub.componentId) continue;
     }
     sub.callback();
@@ -143,6 +168,8 @@ export function updatePersistedState<T>(
       window.localStorage.setItem(key, JSON.stringify(newValue));
     }
 
+    notifyWriteListeners({ key, newValue, source: "local" });
+
     // Notify same-tab subscribers (usePersistedState) immediately.
     notifySubscribers(key);
 
@@ -154,6 +181,30 @@ export function updatePersistedState<T>(
     window.dispatchEvent(customEvent);
   } catch (error) {
     console.warn(`Error writing to localStorage key "${key}":`, error);
+  }
+}
+
+export function syncPersistedStateFromBackend(key: string, newValue: unknown): void {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+
+  try {
+    if (newValue === undefined || newValue === null) {
+      window.localStorage.removeItem(key);
+    } else {
+      window.localStorage.setItem(key, JSON.stringify(newValue));
+    }
+
+    notifyWriteListeners({ key, newValue, source: "backend" });
+    notifySubscribers(key, undefined, true);
+
+    const customEvent = new CustomEvent(getStorageChangeEvent(key), {
+      detail: { key, newValue, source: "backend" },
+    });
+    window.dispatchEvent(customEvent);
+  } catch (error) {
+    console.warn(`Error writing backend preference cache key "${key}":`, error);
   }
 }
 
@@ -256,6 +307,8 @@ export function usePersistedState<T>(
         } else {
           window.localStorage.setItem(key, JSON.stringify(newValue));
         }
+
+        notifyWriteListeners({ key, newValue, source: "local" });
 
         // Notify hook subscribers synchronously (keeps UI responsive).
         notifySubscribers(key, componentIdRef.current);

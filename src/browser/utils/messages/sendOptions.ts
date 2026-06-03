@@ -84,6 +84,8 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
       ),
       advisorTool: isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL),
       execSubagentHardRestart: isExperimentEnabled(EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART),
+      dynamicWorkflows: isExperimentEnabled(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS),
+      subagentFileReports: isExperimentEnabled(EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS),
     },
   });
 }

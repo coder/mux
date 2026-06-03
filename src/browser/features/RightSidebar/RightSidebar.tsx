@@ -321,7 +321,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
   // Content container class comes from tab registry - each tab defines its own padding/overflow
   const tabsetContentClassName = cn(
-    "relative flex-1 min-h-0",
+    "relative flex-1 min-h-0 min-w-0",
     getTabContentClassName(props.node.activeTab)
   );
 

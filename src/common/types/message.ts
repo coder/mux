@@ -12,6 +12,7 @@ import type { SendMessageOptions } from "@/common/orpc/types";
 import type { z } from "zod";
 import type { AgentMode } from "./mode";
 import type { AgentSkillScope } from "./agentSkill";
+import type { WorkflowDefinitionDescriptor } from "./workflow";
 import type { ThinkingLevel } from "./thinking";
 import { type ReviewNoteData, formatReviewForModel } from "./review";
 
@@ -197,6 +198,12 @@ export function prepareUserMessageForSend(
   return { finalText, metadata };
 }
 
+export interface WorkflowDefinitionPreviewForDisplay {
+  descriptor: WorkflowDefinitionDescriptor;
+  source?: string;
+  definitionHash?: string;
+}
+
 export interface InlineSkillSnapshotForDisplay {
   skillName: string;
   scope: AgentSkillScope;
@@ -374,6 +381,26 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         rawCommand?: string;
       }
     | {
+        // Durable UI-only row that shows the slash command that launched a workflow run.
+        // Provider requests filter this out; the completed workflow result is sent later.
+        type: "workflow-trigger-display";
+        rawCommand: string;
+        runId: string;
+      }
+    | {
+        // Durable UI-only assistant row containing the workflow_run card.
+        // Provider requests filter this out; the completed workflow result is sent later.
+        type: "workflow-run-card-display";
+        runId: string;
+      }
+    | {
+        // Provider-visible workflow result message. The transcript hides this row because the
+        // user already sees the original slash command plus the workflow card.
+        type: "workflow-result";
+        rawCommand: string;
+        runId: string;
+      }
+    | {
         // /btw — user-side marker for a side question.
         //
         // The forked, single-turn, read-only side branch is created by the
@@ -473,6 +500,17 @@ export interface PersistedToolModelUsage {
   providerMetadata?: Record<string, unknown>;
 }
 
+/**
+ * Record of a model-fallback chain application. `requestedModel` is the model
+ * originally asked for; `refusedModels` lists every model that refused, in
+ * chain order (the requested model is always the first entry). The effective
+ * (answering) model is recorded separately as the message's `model`.
+ */
+export interface ModelFallbackRecord {
+  requestedModel: string;
+  refusedModels: string[];
+}
+
 // Our custom metadata type
 export interface MuxMetadata {
   historySequence?: number; // Assigned by backend for global message ordering (required when writing to history)
@@ -503,6 +541,13 @@ export interface MuxMetadata {
   providerMetadata?: Record<string, unknown>;
   // Per-tool invocation usage snapshots recorded during this assistant turn.
   toolModelUsages?: PersistedToolModelUsage[];
+  /**
+   * Present when a configured model-fallback chain was applied after a
+   * provider refusal. `model` records the effective (answering) model; this
+   * records the originally requested model and the models that refused, in
+   * order. Refused-attempt token usage is attributed via toolModelUsages.
+   */
+  modelFallback?: ModelFallbackRecord;
   // Last step's provider metadata (for context window cache display)
   contextProviderMetadata?: Record<string, unknown>;
   systemMessageTokens?: number; // Token count for system message sent with this request (calculated by AIService)
@@ -672,6 +717,8 @@ export type DisplayedMessage =
        * They are not persisted on the user message itself.
        */
       inlineSkillSnapshots?: InlineSkillSnapshotMap;
+      /** Present when this message launched a workflow and the run record has definition content to preview. */
+      workflowDefinitionPreview?: WorkflowDefinitionPreviewForDisplay;
       /** Present when this message is a /compact command */
       compactionRequest?: {
         parsed: CompactionRequestData;
@@ -704,6 +751,8 @@ export type DisplayedMessage =
       model?: string;
       routedThroughGateway?: boolean;
       routeProvider?: string;
+      /** Present when a fallback model answered after the requested model refused. */
+      modelFallback?: ModelFallbackRecord;
       agentId?: string; // Agent id active when this message was sent (assistant messages only)
       /** @deprecated Legacy base mode derived from agent definition. */
       mode?: AgentMode;

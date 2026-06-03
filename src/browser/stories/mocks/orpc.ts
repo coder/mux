@@ -62,6 +62,10 @@ import type {
 } from "@/common/orpc/schemas/coder";
 import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
 import type { WorktreeArchiveBehavior } from "@/common/config/worktreeArchiveBehavior";
+import {
+  normalizeUserPreferences,
+  type UserPreferences,
+} from "@/common/config/schemas/userPreferences";
 import type { z } from "zod";
 import type { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
 import { isWorkspaceArchived } from "@/common/utils/archive";
@@ -116,6 +120,8 @@ export interface MockORPCClientOptions {
   projectGitStatusesByWorkspace?: Map<string, ApiProjectGitStatusResult[]>;
   /** Pre-seeded workspace activity snapshots for sidebar status/streaming stories. */
   workspaceActivitySnapshots?: Record<string, WorkspaceActivitySnapshot>;
+  /** Initial backend-synced user preferences for config.getConfig. */
+  userPreferences?: UserPreferences;
   /** Initial task settings for config.getConfig (e.g., Settings → Tasks section) */
   taskSettings?: Partial<TaskSettings>;
   /** Initial unified AI defaults for agents (plan/exec/compact + subagents) */
@@ -360,6 +366,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     mcpOverrides = new Map<string, MockMcpOverrides>(),
     mcpTestResults = new Map<string, MockMcpTestResult>(),
     mcpOauthAuthStatus = new Map<string, MCPOAuthAuthStatus>(),
+    userPreferences: initialUserPreferences,
     taskSettings: initialTaskSettings,
     subagentAiDefaults: initialSubagentAiDefaults,
     agentAiDefaults: initialAgentAiDefaults,
@@ -483,6 +490,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
     ] satisfies AgentDefinitionDescriptor[]);
 
+  let userPreferences = normalizeUserPreferences(initialUserPreferences);
+  let userPreferencesInitialized = initialUserPreferences !== undefined;
   let taskSettings = normalizeTaskSettings(initialTaskSettings ?? DEFAULT_TASK_SETTINGS);
 
   let agentAiDefaults = normalizeAgentAiDefaults(
@@ -685,6 +694,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     config: {
       getConfig: () =>
         Promise.resolve({
+          userPreferencesInitialized,
+          userPreferences,
           taskSettings,
           muxGatewayEnabled,
           muxGatewayModels,
@@ -706,11 +717,19 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           llmDebugLogs: false,
         }),
       saveConfig: (input: {
-        taskSettings: unknown;
+        taskSettings?: unknown;
+        userPreferences?: unknown;
         agentAiDefaults?: unknown;
         subagentAiDefaults?: unknown;
       }) => {
-        taskSettings = normalizeTaskSettings(input.taskSettings);
+        if (input.taskSettings != null) {
+          taskSettings = normalizeTaskSettings(input.taskSettings);
+        }
+
+        if (input.userPreferences !== undefined) {
+          userPreferences = normalizeUserPreferences(input.userPreferences);
+          userPreferencesInitialized = true;
+        }
 
         if (input.agentAiDefaults !== undefined) {
           agentAiDefaults = normalizeAgentAiDefaults(input.agentAiDefaults);

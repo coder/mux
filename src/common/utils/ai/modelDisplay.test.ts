@@ -11,6 +11,11 @@ describe("formatModelDisplayName", () => {
     test("formats Opus models", () => {
       expect(formatModelDisplayName("claude-opus-4-1")).toBe("Opus 4.1");
     });
+
+    test("formats Mythos-class Fable / Mythos models", () => {
+      expect(formatModelDisplayName("claude-fable-5")).toBe("Fable 5");
+      expect(formatModelDisplayName("claude-mythos-5")).toBe("Mythos 5");
+    });
   });
 
   describe("GPT models", () => {

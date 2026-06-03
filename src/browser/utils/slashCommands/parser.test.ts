@@ -304,6 +304,14 @@ describe("plan commands", () => {
 });
 
 describe("init command", () => {
+  it("parses explicit workflow invocation", () => {
+    expect(parseCommand('/workflow deep-research {"topic":"mux"}')).toEqual({
+      type: "workflow-run",
+      name: "deep-research",
+      argsText: '{"topic":"mux"}',
+    });
+  });
+
   it("should parse /init as unknown-command (handled as a skill invocation)", () => {
     expectParse("/init", {
       type: "unknown-command",

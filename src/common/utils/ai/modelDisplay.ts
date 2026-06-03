@@ -36,8 +36,9 @@ export function formatModelDisplayName(modelName: string): string {
   if (lower.startsWith("claude-")) {
     const parts = lower.replace("claude-", "").split("-");
 
-    // Known tiers for Claude models
-    const tiers = ["sonnet", "opus", "haiku"];
+    // Known tiers for Claude models. Fable / Mythos are the Mythos-class tier that
+    // sits above Opus (e.g. "claude-fable-5" -> "Fable 5", "claude-mythos-5" -> "Mythos 5").
+    const tiers = ["sonnet", "opus", "haiku", "fable", "mythos"];
 
     // Format: claude-{tier}-{major}-{minor} (newer naming)
     // e.g., "claude-sonnet-4-5" -> "Sonnet 4.5"

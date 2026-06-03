@@ -6,8 +6,9 @@
  * loses all signal about what the agent is doing.
  *
  * This bar restores that signal without leaving immersive:
- *   - the agent's TODO plan as a single horizontal strip (collapsible,
- *     persisted) so it reserves minimal review height, and
+ *   - the agent's TODO plan on a single line — a "TODO" label and the plan as a
+ *     horizontally-scrolling strip share one row with the streaming chip, so it
+ *     reserves minimal review height, and
  *   - live streaming status (starting / streaming / awaiting a question).
  *
  * Design notes:
@@ -24,15 +25,13 @@
  */
 
 import React, { useSyncExternalStore } from "react";
-import { ChevronDown, ChevronRight, CircleHelp, List, Loader2 } from "lucide-react";
+import { CircleHelp, List, Loader2 } from "lucide-react";
 import { TodoList } from "@/browser/components/TodoList/TodoList";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   getWorkspaceStreamingStatusPhase,
   useWorkspaceStreamingStatusPhase,
 } from "@/browser/hooks/useWorkspaceStreamingStatusPhase";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { getImmersiveReviewAgentBarExpandedKey } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
 import type { TodoItem } from "@/common/types/tools";
 
@@ -48,11 +47,6 @@ interface ImmersiveReviewAgentStatusBarProps {
 export const ImmersiveReviewAgentStatusBar: React.FC<ImmersiveReviewAgentStatusBarProps> = ({
   workspaceId,
 }) => {
-  const [expanded, setExpanded] = usePersistedState(
-    getImmersiveReviewAgentBarExpandedKey(workspaceId),
-    true
-  );
-
   // Subscribe to each field this bar uses as its OWN snapshot rather than
   // returning the whole WorkspaceState object. getWorkspaceState is version-
   // cached, so its reference changes on EVERY state bump (e.g. each streamed
@@ -61,28 +55,27 @@ export const ImmersiveReviewAgentStatusBar: React.FC<ImmersiveReviewAgentStatusB
   // `todos` keeps a stable reference from the aggregator (same basis as
   // PinnedTodoList reading only `.todos`).
   const workspaceStore = useWorkspaceStoreRaw();
+  const hasRegisteredWorkspace = () =>
+    // Some unit tests mock only the store selectors they exercise; keep the
+    // immersive status bar crash-safe in those partial-store environments too.
+    typeof workspaceStore.hasRegisteredWorkspace === "function" &&
+    workspaceStore.hasRegisteredWorkspace(workspaceId);
   const subscribe = (callback: () => void) =>
-    workspaceStore.hasRegisteredWorkspace(workspaceId)
-      ? workspaceStore.subscribeKey(workspaceId, callback)
-      : () => undefined;
+    hasRegisteredWorkspace() ? workspaceStore.subscribeKey(workspaceId, callback) : () => undefined;
   const todos = useSyncExternalStore(subscribe, () =>
-    workspaceStore.hasRegisteredWorkspace(workspaceId)
-      ? workspaceStore.getWorkspaceState(workspaceId).todos
-      : EMPTY_TODOS
+    hasRegisteredWorkspace() ? workspaceStore.getWorkspaceState(workspaceId).todos : EMPTY_TODOS
   );
   const canInterrupt = useSyncExternalStore(subscribe, () =>
-    workspaceStore.hasRegisteredWorkspace(workspaceId)
-      ? workspaceStore.getWorkspaceState(workspaceId).canInterrupt
-      : false
+    hasRegisteredWorkspace() ? workspaceStore.getWorkspaceState(workspaceId).canInterrupt : false
   );
   // Sidebar derives `isStarting` directly from `isStreamStarting`.
   const isStarting = useSyncExternalStore(subscribe, () =>
-    workspaceStore.hasRegisteredWorkspace(workspaceId)
+    hasRegisteredWorkspace()
       ? workspaceStore.getWorkspaceState(workspaceId).isStreamStarting
       : false
   );
   const awaitingUserQuestion = useSyncExternalStore(subscribe, () =>
-    workspaceStore.hasRegisteredWorkspace(workspaceId)
+    hasRegisteredWorkspace()
       ? workspaceStore.getWorkspaceState(workspaceId).awaitingUserQuestion
       : false
   );
@@ -99,20 +92,6 @@ export const ImmersiveReviewAgentStatusBar: React.FC<ImmersiveReviewAgentStatusB
   // Nothing to surface: don't reserve any vertical space in the review viewport.
   if (!hasTodos && !isStreamingStatusVisible) {
     return null;
-  }
-
-  const inProgressCount = todos.filter((todo) => todo.status === "in_progress").length;
-  const pendingCount = todos.filter((todo) => todo.status === "pending").length;
-  const completedCount = todos.length - inProgressCount - pendingCount;
-  const summaryParts: string[] = [];
-  if (inProgressCount > 0) {
-    summaryParts.push(`${inProgressCount} in progress`);
-  }
-  if (pendingCount > 0) {
-    summaryParts.push(`${pendingCount} pending`);
-  }
-  if (summaryParts.length === 0 && hasTodos) {
-    summaryParts.push(`${completedCount} completed`);
   }
 
   // role=status + aria-live so screen readers announce streaming/question
@@ -166,27 +145,24 @@ export const ImmersiveReviewAgentStatusBar: React.FC<ImmersiveReviewAgentStatusB
       data-component="ImmersiveReviewAgentStatusBar"
     >
       {hasTodos ? (
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          className="group flex h-7 w-full items-center gap-2 px-3 text-left leading-none"
-          aria-expanded={expanded}
-        >
-          <List
-            aria-hidden="true"
-            className="text-muted group-hover:text-secondary size-3.5 shrink-0 transition-colors"
-          />
-          <span className="text-muted group-hover:text-secondary min-w-0 truncate transition-colors">
+        // Single-row layout: a static "TODO" label, the plan, and the streaming
+        // chip all share one line so the bar reserves a single row of review
+        // height. The plan renders as a horizontally-scrolling strip. min-h-7
+        // (not a fixed h-7) lets the row grow to the strip's natural height so
+        // the chips aren't vertically clipped.
+        <div className="flex min-h-7 w-full items-center gap-2 px-3 leading-none">
+          <div className="text-muted flex shrink-0 items-center gap-1.5">
+            <List aria-hidden="true" className="size-3.5 shrink-0" />
             <span className="font-medium">TODO</span>
-            {summaryParts.length > 0 && <> · {summaryParts.join(" · ")}</>}
-          </span>
+          </div>
+          {/* Horizontal strip fills the remaining width and scrolls sideways
+              when the plan is longer than the bar; min-w-0 lets it shrink so
+              the scroll container is bounded instead of pushing the chip off. */}
+          <div className="min-w-0 flex-1">
+            <TodoList todos={todos} layout="horizontal" />
+          </div>
           {renderStatusChip(true)}
-          {expanded ? (
-            <ChevronDown className="text-muted group-hover:text-secondary size-3.5 shrink-0 transition-colors" />
-          ) : (
-            <ChevronRight className="text-muted group-hover:text-secondary size-3.5 shrink-0 transition-colors" />
-          )}
-        </button>
+        </div>
       ) : (
         // Streaming/question only (no plan yet): static row, nothing to expand.
         // Chip is left-aligned here so it reads as a status label rather than
@@ -194,11 +170,6 @@ export const ImmersiveReviewAgentStatusBar: React.FC<ImmersiveReviewAgentStatusB
         <div className="flex h-7 w-full items-center gap-2 px-3 leading-none">
           {renderStatusChip(false)}
         </div>
-      )}
-      {hasTodos && expanded && (
-        // Horizontal strip: one row tall (the list scrolls sideways), so the
-        // plan costs minimal vertical space in the review viewport.
-        <TodoList todos={todos} layout="horizontal" />
       )}
     </div>
   );

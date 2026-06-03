@@ -737,6 +737,18 @@ export default defineConfig([
     },
   },
   {
+    // Built-in workflow sources are plain self-contained JS evaluated inside
+    // the QuickJS workflow sandbox (no imports, sloppy mode), so type-aware
+    // rules cannot apply. Lint them with the core untyped rules so typos and
+    // dead helpers fail loudly instead of becoming silent sandbox globals.
+    files: ["src/node/builtinWorkflows/*.js"],
+    extends: [tseslint.configs.disableTypeChecked],
+    rules: {
+      "no-undef": "error",
+      "no-unused-vars": "error",
+    },
+  },
+  {
     // Test file configuration
     files: ["**/*.test.ts", "**/*.test.tsx"],
     languageOptions: {

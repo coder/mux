@@ -44,4 +44,36 @@ describe("AgentReportToolCall", () => {
     expect(view.getByText(/Hello/)).toBeTruthy();
     expect(view.getByText(/World/)).toBeTruthy();
   });
+
+  test("renders file-backed report payload from tool output", () => {
+    const view = render(
+      <TooltipProvider>
+        <AgentReportToolCall
+          args={{
+            reportMarkdownPath: "report.md",
+            structuredOutputPath: "structured-output.json",
+          }}
+          result={{
+            success: true,
+            message: "Report submitted successfully.",
+            report: { reportMarkdown: "# File Report\n\nFrom disk" },
+          }}
+          status="completed"
+        />
+      </TooltipProvider>
+    );
+
+    expect(view.getByText(/File Report/)).toBeTruthy();
+    expect(view.getByText(/From disk/)).toBeTruthy();
+  });
+
+  test("renders default file-backed report placeholder before tool output", () => {
+    const view = render(
+      <TooltipProvider>
+        <AgentReportToolCall args={{}} status="executing" />
+      </TooltipProvider>
+    );
+
+    expect(view.getByText(/Report file: report\.md/)).toBeTruthy();
+  });
 });

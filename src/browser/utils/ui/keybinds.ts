@@ -276,6 +276,15 @@ export function formatKeybind(keybind: Keybind): string {
 }
 
 /**
+ * Whether a keybind is deprecated. Deprecated keybinds still match/fire, but
+ * generated keybind references (e.g. Settings → Keybinds) filter them out so we
+ * don't advertise legacy shortcuts to users.
+ */
+export function isKeybindDeprecated(keybind: Keybind): boolean {
+  return keybind.deprecated === true;
+}
+
+/**
  * Centralized registry of application keybinds.
  * Single source of truth for all keyboard shortcuts.
  * In general we try to use shortcuts the user would naturally expect.
@@ -383,10 +392,24 @@ export const KEYBINDS = {
   // F4 avoids browser-level collisions with Ctrl/Cmd+Shift+P in Firefox.
   OPEN_COMMAND_PALETTE_ACTIONS: { key: "F4" },
 
-  /** Toggle thinking level between off and last-used value for current model */
-  // Saves/restores thinking level per model (defaults to "medium" if not found)
+  /**
+   * @deprecated Superseded by INCREASE_THINKING / DECREASE_THINKING.
+   * Cycles the thinking level forward, wrapping at the ends. Still honored so
+   * existing muscle memory keeps working, but marked `deprecated` so it stays
+   * out of generated keybind references (Settings → Keybinds, docs).
+   */
   // macOS: Cmd+Shift+T, Win/Linux: Ctrl+Shift+T
-  TOGGLE_THINKING: { key: "T", ctrl: true, shift: true },
+  TOGGLE_THINKING: { key: "T", ctrl: true, shift: true, deprecated: true },
+
+  /** Increase thinking level by one step (clamps at the model's maximum) */
+  // macOS: Cmd+Shift+], Win/Linux: Ctrl+Shift+]
+  // `code` pins the physical bracket key so Shift producing "}" doesn't break matching.
+  INCREASE_THINKING: { key: "]", code: "BracketRight", ctrl: true, shift: true },
+
+  /** Decrease thinking level by one step (clamps at the model's minimum / off) */
+  // macOS: Cmd+Shift+[, Win/Linux: Ctrl+Shift+[
+  // `code` pins the physical bracket key so Shift producing "{" doesn't break matching.
+  DECREASE_THINKING: { key: "[", code: "BracketLeft", ctrl: true, shift: true },
 
   /** Focus chat input from anywhere */
   // Works even when focus is already in an input field

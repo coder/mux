@@ -222,7 +222,12 @@ export function AskUserQuestionToolCall(props: {
 }): JSX.Element {
   const { api } = useAPI();
 
-  const { expanded, toggleExpanded } = useToolExpansion(props.status === "executing");
+  // A live, blocking question must never be hidden behind a collapsed "tools"
+  // preference, so force it open while executing. forceExpanded only overrides the
+  // initial seed; once answered the row follows the sticky preference like any tool.
+  const { expanded, toggleExpanded } = useToolExpansion(false, {
+    forceExpanded: props.status === "executing",
+  });
   const statusDisplay = getStatusDisplay(props.status);
 
   const argsAnswers = props.args.answers ?? {};

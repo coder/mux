@@ -2,12 +2,7 @@ import assert from "node:assert/strict";
 import type { AvailableCommand } from "@agentclientprotocol/sdk";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
-import {
-  getExplicitGatewayPrefix,
-  isValidModelFormat,
-  normalizeToCanonical,
-  resolveModelAlias,
-} from "@/common/utils/ai/models";
+import { normalizeModelInput } from "@/common/utils/ai/normalizeModelInput";
 import minimist from "minimist";
 
 const CLEAR_COMMAND_NAME = "clear";
@@ -315,29 +310,9 @@ function parseSkillCommand(
 }
 
 function normalizeModelForCommand(modelInput: string): string | null {
-  const trimmed = modelInput.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-
-  const resolved = resolveModelAlias(trimmed);
-  // Explicit gateway scoping is user intent — preserve it for the backend to honor.
-  const normalized = getExplicitGatewayPrefix(resolved)
-    ? resolved.trim()
-    : normalizeToCanonical(resolved).trim();
-
-  if (!isValidModelFormat(normalized)) {
-    return null;
-  }
-
-  // Keep ACP slash commands aligned with the rest of model input handling by rejecting
-  // malformed provider::model strings that happen to satisfy the first-colon check.
-  const separatorIndex = normalized.indexOf(":");
-  if (normalized.slice(separatorIndex + 1).startsWith(":")) {
-    return null;
-  }
-
-  return normalized;
+  // Share the single model-input parser (alias resolution + gateway preservation +
+  // format validation) used by the UI and the task tool instead of duplicating it.
+  return normalizeModelInput(modelInput).model;
 }
 
 function parseMultilineCommand(rawInput: string): ParsedMultilineCommand {

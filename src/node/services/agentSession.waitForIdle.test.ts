@@ -1,0 +1,108 @@
+import { describe, expect, test } from "bun:test";
+
+import { createAgentSessionHarness } from "./agentSession.testHarness";
+
+interface IdleWaiterTestSession {
+  setTurnPhase(next: "idle" | "preparing"): void;
+  idleWaiters: Array<() => void>;
+}
+
+const WAIT_FOR_IDLE_CANCELED_MESSAGE = "Waiting for session idle canceled.";
+
+function captureWaitForIdleResult(promise: Promise<void>): Promise<unknown> {
+  return promise.then(
+    () => undefined,
+    (error: unknown) => error
+  );
+}
+
+describe("AgentSession.waitForIdle", () => {
+  test("removes an aborted idle waiter while the session stays busy", async () => {
+    const { session, cleanup } = await createAgentSessionHarness({
+      workspaceId: "wait-for-idle-abort",
+    });
+    const internalSession = session as unknown as IdleWaiterTestSession;
+
+    try {
+      internalSession.setTurnPhase("preparing");
+      const controller = new AbortController();
+      const waitResult = captureWaitForIdleResult(session.waitForIdle(controller.signal));
+
+      expect(session.isBusy()).toBe(true);
+      expect(internalSession.idleWaiters).toHaveLength(1);
+
+      controller.abort();
+
+      const error = await waitResult;
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(WAIT_FOR_IDLE_CANCELED_MESSAGE);
+      expect(session.isBusy()).toBe(true);
+      expect(internalSession.idleWaiters).toHaveLength(0);
+    } finally {
+      internalSession.setTurnPhase("idle");
+      session.dispose();
+      await cleanup();
+    }
+  });
+
+  test("counts external manual follow-ups separately from queued message text", async () => {
+    const { session, cleanup } = await createAgentSessionHarness({
+      workspaceId: "wait-for-idle-external-manual-follow-up",
+    });
+
+    try {
+      expect(session.hasQueuedMessages()).toBe(false);
+      expect(session.hasPendingManualFollowUp()).toBe(false);
+
+      const controller = new AbortController();
+      const release = session.registerExternalManualFollowUp(controller.signal);
+      expect(session.hasQueuedMessages()).toBe(false);
+      expect(session.hasPendingManualFollowUp()).toBe(true);
+
+      controller.abort();
+      expect(session.hasPendingManualFollowUp()).toBe(false);
+
+      release();
+      expect(session.hasPendingManualFollowUp()).toBe(false);
+    } finally {
+      session.dispose();
+      await cleanup();
+    }
+  });
+
+  test("removes repeated aborted idle waiters during one busy turn", async () => {
+    const { session, cleanup } = await createAgentSessionHarness({
+      workspaceId: "wait-for-idle-repeated-aborts",
+    });
+    const internalSession = session as unknown as IdleWaiterTestSession;
+
+    try {
+      internalSession.setTurnPhase("preparing");
+      const waits = Array.from({ length: 3 }, () => {
+        const controller = new AbortController();
+        return {
+          controller,
+          result: captureWaitForIdleResult(session.waitForIdle(controller.signal)),
+        };
+      });
+
+      expect(internalSession.idleWaiters).toHaveLength(waits.length);
+
+      for (const wait of waits) {
+        wait.controller.abort();
+      }
+
+      const errors = await Promise.all(waits.map((wait) => wait.result));
+      for (const error of errors) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe(WAIT_FOR_IDLE_CANCELED_MESSAGE);
+      }
+      expect(session.isBusy()).toBe(true);
+      expect(internalSession.idleWaiters).toHaveLength(0);
+    } finally {
+      internalSession.setTurnPhase("idle");
+      session.dispose();
+      await cleanup();
+    }
+  });
+});

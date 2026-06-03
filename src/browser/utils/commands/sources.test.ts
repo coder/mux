@@ -524,6 +524,7 @@ function makeWorkspaceState(goal: WorkspaceState["goal"]): WorkspaceState {
     isStreamStarting: false,
     awaitingUserQuestion: false,
     loading: false,
+    isTranscriptCaughtUp: true,
     isHydratingTranscript: false,
     hasOlderHistory: false,
     loadingOlderHistory: false,

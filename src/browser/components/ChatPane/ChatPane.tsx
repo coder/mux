@@ -23,6 +23,7 @@ import { StreamingBarrier } from "@/browser/features/Messages/ChatBarrier/Stream
 import { RetryBarrier } from "@/browser/features/Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "../PinnedTodoList/PinnedTodoList";
 import { ChatInputDecorationStackLane, TranscriptTailStackLane } from "./LayoutStackLane";
+import { computeChatViewReveal, useChatViewDataReady } from "./useChatViewDataReady";
 import { TranscriptHydrationSkeleton } from "./TranscriptHydrationSkeleton";
 import {
   createChatInputDecorationStackItem,
@@ -106,6 +107,7 @@ import {
   computeOperationalBundleInfos,
   computeWorkBundleInfos,
 } from "@/browser/utils/messages/transcriptRenderProjection";
+import { isBlockedPreStreamTaskStatus } from "@/browser/utils/ui/workspaceFiltering";
 import { recordSyntheticReactRenderSample } from "@/browser/utils/perf/reactProfileCollector";
 
 // Perf e2e runs load the production bundle where React's onRender profiler callbacks may not
@@ -199,19 +201,14 @@ type ReviewsState = ReturnType<typeof useReviews>;
 const TRANSCRIPT_CONTENT_NO_ANCHOR_STYLE = { overflowAnchor: "none" } as const;
 // The sentinel is the sole anchor candidate while locked.
 const TRANSCRIPT_BOTTOM_SENTINEL_STYLE = { overflowAnchor: "auto" } as const;
-// The composer floats over the bottom of the transcript region so its height
-// changes never resize the scrollport's clientHeight (the root cause of the
-// send-time "viewport resize from below" flash). The scrollport instead reserves
-// clearance via bottom padding equal to the live composer height (--composer-h,
-// published by a ResizeObserver in ChatPaneContent); 15px matches the original
-// uniform p-[15px] inset.
-const TRANSCRIPT_SCROLLPORT_STYLE: React.CSSProperties = {
-  paddingBottom: "calc(15px + var(--composer-h, 0px))",
-};
-// Keep the jump-to-bottom chip just above the floating composer (8px gap).
-const JUMP_TO_BOTTOM_CHIP_STYLE: React.CSSProperties = {
-  bottom: "calc(var(--composer-h, 0px) + 8px)",
-};
+// The composer dock is normal scroll content (sticky to the scrollport bottom),
+// so the transcript's bottom clearance is reserved by flow layout in the SAME
+// layout pass a decoration/textarea height change happens — there is no
+// measured channel (the old --composer-h ResizeObserver) that could lag actual
+// layout by a frame and tear. The dock must never be a scroll-anchoring
+// candidate: while locked the sentinel owns anchoring, and while released the
+// browser must anchor to a transcript row, not the sticky dock.
+const COMPOSER_DOCK_STYLE = { overflowAnchor: "none" } as const;
 
 function findTranscriptMessageElement(
   scrollContainer: HTMLElement,
@@ -254,10 +251,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         ref={chatAreaRef}
         aria-hidden={immersiveHidden || undefined}
         className={cn(
-          // `relative` is the positioning context for the floating composer dock
-          // (absolute bottom of this column); it overlays the bottom of the flex-1
-          // transcript region without taking flex space, so composer height changes
-          // never resize the transcript scrollport.
           "bg-surface-primary relative flex min-w-96 flex-1 flex-col",
           // Immersive review overlays the entire workspace, so hiding the chat pane removes
           // its layout cost while preserving component state for the return transition.
@@ -321,9 +314,13 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   // so the transcript stays readable while new sends remain disabled.
   const meta = workspaceMetadata.get(workspaceId);
   const transcriptOnly = meta?.transcriptOnly ?? false;
-  const isQueuedAgentTask = Boolean(meta?.parentWorkspaceId) && meta?.taskStatus === "queued";
+  const isPreStreamAgentTask =
+    Boolean(meta?.parentWorkspaceId) && isBlockedPreStreamTaskStatus(meta?.taskStatus);
+  const preStreamAgentTaskLabel = meta?.taskStatus === "starting" ? "Starting" : "Queued";
   const queuedAgentTaskPrompt =
-    isQueuedAgentTask && typeof meta?.taskPrompt === "string" && meta.taskPrompt.trim().length > 0
+    isPreStreamAgentTask &&
+    typeof meta?.taskPrompt === "string" &&
+    meta.taskPrompt.trim().length > 0
       ? meta.taskPrompt
       : null;
   const shouldShowQueuedAgentTaskPrompt =
@@ -341,6 +338,11 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   const use1M = has1MContext(pendingModel);
 
   const { config: providersConfig } = useProvidersConfig();
+
+  // First-paint readiness barrier: all decoration data sources known (or the
+  // resilience deadline passed). Gates the reveal so decorations can't pop in
+  // after the transcript is visible.
+  const chatViewDataReady = useChatViewDataReady(workspaceId);
 
   const { threshold: autoCompactionThreshold } = useAutoCompactionSettings(
     workspaceId,
@@ -410,6 +412,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     isStreamStarting,
     loading,
     isHydratingTranscript,
+    isTranscriptCaughtUp,
     hasOlderHistory,
     loadingOlderHistory,
   } = workspaceState;
@@ -544,7 +547,6 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     autoScroll,
     disableAutoScroll,
     jumpToBottom,
-    reanchorBottom,
     handleScroll,
     markUserScrollIntent,
     handleScrollContainerWheel,
@@ -554,30 +556,17 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     handleScrollContainerKeyDown,
   } = useAutoScroll();
 
-  // The composer floats over the transcript region (see TRANSCRIPT_SCROLLPORT_STYLE).
-  // Publish its measured height as `--composer-h` on the transcript region so the
-  // scrollport can reserve matching bottom clearance, and re-pin when it grows
-  // (composer growth only changes the scrollport's bottom padding, which neither
-  // native anchoring nor the content ResizeObserver can see — see reanchorBottom).
-  const transcriptRegionRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const region = transcriptRegionRef.current;
-    const composer = composerRef.current;
-    const ResizeObserverCtor = typeof window !== "undefined" ? window.ResizeObserver : undefined;
-    if (!region || !composer || !ResizeObserverCtor) return;
-
-    const applyComposerHeight = () => {
-      const heightPx = Math.ceil(composer.getBoundingClientRect().height);
-      region.style.setProperty("--composer-h", `${heightPx}px`);
-      reanchorBottom();
-    };
-
-    applyComposerHeight();
-    const observer = new ResizeObserverCtor(applyComposerHeight);
-    observer.observe(composer);
-    return () => observer.disconnect();
-  }, [reanchorBottom]);
+  // The composer dock lives inside the scrollport (sticky to its bottom), so
+  // mousedown/keydown events from the composer bubble to the transcript
+  // handlers. They must not open a scroll-intent window or clear the
+  // side-question hold: typing or clicking in the composer is not transcript
+  // scroll intent. Wheel/touch are intentionally NOT filtered — those gestures
+  // really do scroll the transcript (native scroll chaining), so they must keep
+  // marking user intent or the bottom lock would fight the user's scroll.
+  const composerDockRef = useRef<HTMLDivElement>(null);
+  const isComposerDockEvent = useCallback((target: EventTarget | null): boolean => {
+    return target instanceof Node && (composerDockRef.current?.contains(target) ?? false);
+  }, []);
 
   const sideQuestionScrollHoldRef = useRef<SideQuestionScrollHoldState>({
     initialized: false,
@@ -692,10 +681,13 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 
   const handleTranscriptMouseDown = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
+      if (isComposerDockEvent(event.target)) {
+        return;
+      }
       clearActiveSideQuestionScrollHold();
       handleScrollContainerMouseDown(event);
     },
-    [clearActiveSideQuestionScrollHold, handleScrollContainerMouseDown]
+    [clearActiveSideQuestionScrollHold, handleScrollContainerMouseDown, isComposerDockEvent]
   );
 
   const handleTranscriptTouchMove = useCallback(() => {
@@ -705,10 +697,13 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 
   const handleTranscriptKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (isComposerDockEvent(event.target)) {
+        return;
+      }
       clearActiveSideQuestionScrollHold();
       handleScrollContainerKeyDown(event);
     },
-    [clearActiveSideQuestionScrollHold, handleScrollContainerKeyDown]
+    [clearActiveSideQuestionScrollHold, handleScrollContainerKeyDown, isComposerDockEvent]
   );
 
   const handleJumpToBottom = useCallback(() => {
@@ -983,9 +978,16 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   const shouldShowStreamingBarrier = isStreamStarting || canInterrupt;
   // Keep rendering cached transcript rows during incremental catch-up so workspace switches
   // feel stable, but active stream-start/interrupt states should keep their barrier visible
-  // instead of flashing full-height transcript placeholders.
-  const showTranscriptHydrationPlaceholder =
-    isHydratingTranscript && deferredMessages.length === 0 && !shouldShowStreamingBarrier;
+  // instead of flashing full-height transcript placeholders. The skeleton additionally holds
+  // until decoration data sources are known so the transcript and all composer decorations
+  // reveal in ONE commit — see useChatViewDataReady for the contract.
+  const { showHydrationPlaceholder: showTranscriptHydrationPlaceholder, revealDecorations } =
+    computeChatViewReveal({
+      isHydratingTranscript,
+      chatViewDataReady,
+      hasRenderableMessages: deferredMessages.length > 0,
+      shouldShowStreamingBarrier,
+    });
   const showEmptyTranscriptPlaceholder =
     deferredMessages.length === 0 &&
     !showTranscriptHydrationPlaceholder &&
@@ -1047,7 +1049,9 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
         node: (
           <div className="mt-4 mb-1 ml-auto w-fit max-w-full">
             <div className="rounded-lg border border-[var(--color-user-border)] bg-[var(--color-user-surface)] px-3 py-2 text-sm">
-              <div className="text-muted mb-1 text-[11px] font-medium">Queued</div>
+              <div className="text-muted mb-1 text-[11px] font-medium">
+                {preStreamAgentTaskLabel}
+              </div>
               <MarkdownRenderer
                 content={queuedAgentTaskPrompt ?? ""}
                 className="user-message-markdown text-foreground"
@@ -1227,13 +1231,10 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     <>
       <PerfRenderMarker id="chat-pane.transcript">
         {/* Spacer for fixed mobile header - mobile-header-spacer adds padding-top on touch devices.
-            `flex-1` keeps this region filling all space below the header regardless of the floating
-            composer (which is out of flow), so the scrollport's clientHeight never changes when the
-            composer resizes. `--composer-h` is published here for the scrollport clearance + jump chip. */}
-        <div
-          ref={transcriptRegionRef}
-          className="mobile-header-spacer relative flex-1 overflow-hidden"
-        >
+            The composer dock is IN-FLOW scroll content (sticky to the scrollport
+            bottom), so this region — and therefore the scrollport's clientHeight —
+            never resizes when the composer grows or shrinks. */}
+        <div className="mobile-header-spacer relative flex-1 overflow-hidden">
           <div
             ref={contentRef}
             onWheel={handleTranscriptWheel}
@@ -1244,40 +1245,51 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
             onKeyDown={handleTranscriptKeyDown}
             onScroll={handleScroll}
             onContextMenu={transcriptContextMenu.onContextMenu}
-            role="log"
-            aria-live={canInterrupt ? "polite" : "off"}
-            aria-busy={canInterrupt || isHydratingTranscript}
-            aria-label="Conversation transcript"
             tabIndex={0}
             data-testid="message-window"
-            data-loaded={!loading && !isHydratingTranscript}
+            // Settled marker for perf tests and story play helpers: includes
+            // decoration data readiness so waiting on it observes the chat
+            // view's final (post-reveal) layout.
+            data-loaded={!loading && !isHydratingTranscript && chatViewDataReady}
             // Browser scroll anchoring stays ENABLED on the scrollport; the
             // overflow-anchor policy lives on the inner content (opt rows out while
-            // locked so the bottom sentinel is the sole anchor). `paddingBottom`
-            // reserves clearance for the floating composer (--composer-h) so the
-            // last message scrolls clear of it instead of resizing the viewport.
-            style={TRANSCRIPT_SCROLLPORT_STYLE}
+            // locked so the bottom sentinel is the sole anchor). No bottom padding:
+            // clearance for the composer is the in-flow dock itself, so it is always
+            // exact and reserved in the same layout pass as any dock height change.
+            // The flex column makes the transcript content stretch (flex-1) so the
+            // dock sits at the scrollport bottom even when the transcript is short.
             // The named `transcript` container is what the sticky plan TOC queries
             // for visibility — using a container query rather than a viewport media
             // query means sidebars opening/closing correctly hide the TOC even when
             // the viewport width is unchanged. See `.plan-toc-aside` in globals.css.
-            className="@container/transcript h-full overflow-x-hidden overflow-y-auto px-[15px] pt-[15px] leading-[1.5] break-words whitespace-pre-wrap"
+            className="@container/transcript flex h-full flex-col overflow-x-hidden overflow-y-auto px-[15px] pt-[15px] leading-[1.5] break-words whitespace-pre-wrap"
           >
             <div
               // While locked, opt the whole transcript subtree out of scroll
               // anchoring so the only anchor candidate is the sibling bottom
               // sentinel below — native anchoring then pins the bottom on append.
               style={autoScroll ? TRANSCRIPT_CONTENT_NO_ANCHOR_STYLE : undefined}
+              role="log"
+              aria-live={canInterrupt ? "polite" : "off"}
+              aria-busy={canInterrupt || isHydratingTranscript}
+              aria-label="Conversation transcript"
               className={cn(
                 // `plan-toc-aware` opts only the centered max-w transcript into the
                 // sticky plan TOC layout. In `chatTranscriptFullWidth` mode the plan
                 // already fills the available width, so the TOC would either
                 // overlap content or get clipped by `overflow-x-hidden`.
-                chatTranscriptFullWidth ? "w-full" : "plan-toc-aware max-w-4xl mx-auto",
-                // Only the empty/centered placeholder fills height. The hydration
+                // `w-full` is required in the centered mode because auto cross-axis
+                // margins disable flex-item stretch.
+                chatTranscriptFullWidth ? "w-full" : "plan-toc-aware max-w-4xl mx-auto w-full",
+                // `flex-1` pushes the dock to the scrollport bottom for short
+                // transcripts; `pb-[15px]` keeps the original gap between the last
+                // message and the composer.
+                "flex-1 pb-[15px]",
+                // Only the empty/centered placeholder fills height (as a flex column
+                // so the placeholder's flex-1 centering works). The hydration
                 // skeleton renders in normal top-aligned transcript flow so it sits
                 // where real messages will, avoiding a jump when hydration completes.
-                showEmptyTranscriptPlaceholder && "h-full"
+                showEmptyTranscriptPlaceholder && "flex flex-col"
               )}
             >
               {showTranscriptHydrationPlaceholder ? (
@@ -1466,18 +1478,16 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                   </MessageListProvider>
                 </BashCollapsedSummaryModeProvider>
               )}
-              <TranscriptTailStackLane
-                workspaceId={workspaceId}
-                isHydrating={isHydratingTranscript}
-                items={transcriptTailItems}
-              />
+              <TranscriptTailStackLane items={transcriptTailItems} />
             </div>
             {/* Bottom anchor: a 0-height sibling of the transcript content. While
                 locked it is the sole `overflow-anchor: auto` element, so native CSS
                 scroll anchoring keeps it (and therefore the bottom) pinned as rows
-                append above it. It sits below the inner content but above the
-                scrollport's composer-clearance padding, so the last message clears
-                the floating composer. */}
+                append above it. It sits between the transcript content and the
+                in-flow composer dock: appends grow content ABOVE it (anchoring
+                compensates), while dock growth happens BELOW it (covered by the
+                scrollport-children ResizeObserver in useAutoScroll, which re-pins
+                before paint). */}
             <div
               ref={sentinelRef}
               data-testid="transcript-bottom-sentinel"
@@ -1485,76 +1495,87 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
               className="h-0 w-full"
               style={TRANSCRIPT_BOTTOM_SENTINEL_STYLE}
             />
+            <PerfRenderMarker id="chat-pane.input">
+              {/* The composer dock is in-flow scroll content stuck to the scrollport
+                  bottom: clearance for the last message is reserved by normal flow
+                  layout in the same pass as any dock height change (no measured
+                  --composer-h channel to lag a frame behind and tear), while
+                  `sticky` keeps the composer visually pinned over the transcript
+                  when the user scrolls up. `mx-[-15px]` cancels the scrollport's
+                  horizontal padding so the dock stays full-bleed; `whitespace-normal
+                  break-normal` reset the transcript text inheritance. clientHeight
+                  of the scrollport never changes with dock height (send-flash
+                  invariant). `bg-surface-primary` keeps transcript content from
+                  showing through gaps between decoration banners. */}
+              <div
+                ref={composerDockRef}
+                data-testid="chat-composer-dock"
+                className="bg-surface-primary sticky bottom-0 z-10 mx-[-15px] break-normal whitespace-normal"
+                style={COMPOSER_DOCK_STYLE}
+              >
+                {!autoScroll && (
+                  <button
+                    onClick={handleJumpToBottom}
+                    type="button"
+                    // Sit just above the composer dock (8px gap), tracking its live
+                    // height through normal layout instead of a measured offset.
+                    className="assistant-chip font-primary text-foreground hover:assistant-chip-hover absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2 cursor-pointer rounded-[20px] px-2 py-1 text-xs font-medium shadow-[0_4px_12px_rgba(0,0,0,0.3)] backdrop-blur-[1px] transition-transform duration-200 hover:scale-105 active:scale-95"
+                  >
+                    Jump to bottom{" "}
+                    <span className="mobile-hide-shortcut-hints">
+                      ({formatKeybind(KEYBINDS.JUMP_TO_BOTTOM)})
+                    </span>
+                  </button>
+                )}
+                {transcriptOnly ? (
+                  // Transcript-only workspaces keep their historical transcript, but the whole
+                  // composer surface is replaced with a single read-only notice.
+                  <TranscriptOnlyNoticePane />
+                ) : (
+                  <ChatInputPane
+                    workspaceId={workspaceId}
+                    projectName={projectName}
+                    workspaceName={workspaceName}
+                    revealDecorations={revealDecorations}
+                    isStreamStarting={isStreamStarting}
+                    isTranscriptCaughtUp={isTranscriptCaughtUp}
+                    runtimeConfig={runtimeConfig}
+                    isPreStreamAgentTask={isPreStreamAgentTask}
+                    preStreamAgentTaskStatus={
+                      meta?.taskStatus === "starting" ? "starting" : "queued"
+                    }
+                    isCompacting={isCompacting}
+                    shouldShowPinnedTodoList={shouldShowPinnedTodoList}
+                    shouldShowReviewsBanner={shouldShowReviewsBanner}
+                    concurrentLocalStreamingWorkspaceName={concurrentLocalStreamingWorkspaceName}
+                    canInterrupt={canInterrupt}
+                    autoCompactionResult={autoCompactionResult}
+                    shouldShowCompactionWarning={shouldShowCompactionWarning}
+                    contextSwitchWarning={contextSwitchWarning}
+                    onContextSwitchCompact={handleContextSwitchCompact}
+                    onContextSwitchDismiss={handleContextSwitchDismiss}
+                    onModelChange={handleModelChange}
+                    onMessageSendStarted={handleMessageSendStarted}
+                    onMessageSent={handleMessageSent}
+                    onResetContext={handleResetContext}
+                    onTruncateHistory={handleClearHistory}
+                    editingMessage={editingMessage}
+                    onCancelEdit={handleCancelEdit}
+                    onEditLastUserMessage={handleEditLastUserMessageClick}
+                    onChatInputReady={handleChatInputReady}
+                    queuedMessage={workspaceState?.queuedMessage ?? null}
+                    onEditQueuedMessage={() => void handleEditQueuedMessage()}
+                    onSendQueuedImmediately={
+                      workspaceState?.canInterrupt ? handleSendQueuedImmediately : undefined
+                    }
+                    reviews={reviews}
+                    onCheckReviews={handleCheckReviews}
+                  />
+                )}
+              </div>
+            </PerfRenderMarker>
           </div>
           {transcriptContextMenu.menu}
-          {!autoScroll && (
-            <button
-              onClick={handleJumpToBottom}
-              type="button"
-              // Sit just above the floating composer rather than the region bottom.
-              style={JUMP_TO_BOTTOM_CHIP_STYLE}
-              className="assistant-chip font-primary text-foreground hover:assistant-chip-hover absolute left-1/2 z-20 -translate-x-1/2 cursor-pointer rounded-[20px] px-2 py-1 text-xs font-medium shadow-[0_4px_12px_rgba(0,0,0,0.3)] backdrop-blur-[1px] transition-transform duration-200 hover:scale-105 active:scale-95"
-            >
-              Jump to bottom{" "}
-              <span className="mobile-hide-shortcut-hints">
-                ({formatKeybind(KEYBINDS.JUMP_TO_BOTTOM)})
-              </span>
-            </button>
-          )}
-        </div>
-      </PerfRenderMarker>
-      <PerfRenderMarker id="chat-pane.input">
-        {/* The composer floats over the bottom of the chat column instead of taking
-            flex space, so its height changes never resize the transcript scrollport
-            (the send-time "viewport resize from below" flash). `bg-surface-primary`
-            keeps transcript content from showing through gaps between decoration
-            banners. `composerRef` feeds the scrollport clearance (--composer-h). */}
-        <div
-          ref={composerRef}
-          data-testid="chat-composer-dock"
-          className="bg-surface-primary absolute right-0 bottom-0 left-0 z-10"
-        >
-          {transcriptOnly ? (
-            // Transcript-only workspaces keep their historical transcript, but the whole
-            // composer surface is replaced with a single read-only notice.
-            <TranscriptOnlyNoticePane />
-          ) : (
-            <ChatInputPane
-              workspaceId={workspaceId}
-              projectName={projectName}
-              workspaceName={workspaceName}
-              isStreamStarting={isStreamStarting}
-              isHydratingTranscript={isHydratingTranscript}
-              runtimeConfig={runtimeConfig}
-              isQueuedAgentTask={isQueuedAgentTask}
-              isCompacting={isCompacting}
-              shouldShowPinnedTodoList={shouldShowPinnedTodoList}
-              shouldShowReviewsBanner={shouldShowReviewsBanner}
-              concurrentLocalStreamingWorkspaceName={concurrentLocalStreamingWorkspaceName}
-              canInterrupt={canInterrupt}
-              autoCompactionResult={autoCompactionResult}
-              shouldShowCompactionWarning={shouldShowCompactionWarning}
-              contextSwitchWarning={contextSwitchWarning}
-              onContextSwitchCompact={handleContextSwitchCompact}
-              onContextSwitchDismiss={handleContextSwitchDismiss}
-              onModelChange={handleModelChange}
-              onMessageSendStarted={handleMessageSendStarted}
-              onMessageSent={handleMessageSent}
-              onResetContext={handleResetContext}
-              onTruncateHistory={handleClearHistory}
-              editingMessage={editingMessage}
-              onCancelEdit={handleCancelEdit}
-              onEditLastUserMessage={handleEditLastUserMessageClick}
-              onChatInputReady={handleChatInputReady}
-              queuedMessage={workspaceState?.queuedMessage ?? null}
-              onEditQueuedMessage={() => void handleEditQueuedMessage()}
-              onSendQueuedImmediately={
-                workspaceState?.canInterrupt ? handleSendQueuedImmediately : undefined
-              }
-              reviews={reviews}
-              onCheckReviews={handleCheckReviews}
-            />
-          )}
         </div>
       </PerfRenderMarker>
     </>
@@ -1577,11 +1598,18 @@ interface ChatInputPaneProps {
   workspaceId: string;
   projectName: string;
   workspaceName: string;
+  /**
+   * False until the chat view's one-commit reveal (transcript + decorations
+   * together). The decoration lane stays empty before that so a decoration
+   * can never mount after paint and shift the transcript.
+   */
+  revealDecorations: boolean;
   runtimeConfig?: RuntimeConfig;
-  isQueuedAgentTask: boolean;
+  isPreStreamAgentTask: boolean;
+  preStreamAgentTaskStatus: "queued" | "starting";
   isCompacting: boolean;
   isStreamStarting: boolean;
-  isHydratingTranscript: boolean;
+  isTranscriptCaughtUp: boolean;
   shouldShowPinnedTodoList: boolean;
   shouldShowReviewsBanner: boolean;
   concurrentLocalStreamingWorkspaceName: string | null;
@@ -1692,27 +1720,29 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
       ),
     });
   }
-  if (props.isQueuedAgentTask) {
+  if (props.isPreStreamAgentTask) {
     addDecorationEntry({
-      key: "queued-agent-task",
+      key: "pre-stream-agent-task",
       node: (
         <div className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs">
-          This agent task is queued and will start automatically when a parallel slot is available.
+          {props.preStreamAgentTaskStatus === "starting"
+            ? "This agent task is starting and will become editable after launch accepts the initial prompt."
+            : "This agent task is queued and will start automatically when a parallel slot is available."}
         </div>
       ),
     });
   }
-  // The decoration lane lives inside the floating composer dock, so its height is
-  // captured by the composer ResizeObserver (--composer-h) and never resizes the
-  // transcript scrollport; the bottom stays pinned via native anchoring + reanchorBottom.
+  // The decoration lane lives inside the in-flow sticky composer dock, so a
+  // decoration mounting/unmounting reflows the transcript clearance in the same
+  // layout pass; the bottom stays pinned via native anchoring plus the
+  // scrollport-children ResizeObserver in useAutoScroll. Until the one-commit
+  // reveal the lane renders empty: readiness is monotonic per mounted
+  // workspace, so this only ever delays the initial mount — it never unmounts
+  // visible decorations.
 
   return (
     <>
-      <ChatInputDecorationStackLane
-        workspaceId={props.workspaceId}
-        isHydrating={props.isHydratingTranscript}
-        items={decorationEntries}
-      />
+      <ChatInputDecorationStackLane items={props.revealDecorations ? decorationEntries : []} />
       <ChatInput
         key={props.workspaceId}
         variant="workspace"
@@ -1723,12 +1753,15 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onResetContext={props.onResetContext}
         onTruncateHistory={props.onTruncateHistory}
         onModelChange={props.onModelChange}
-        disabled={!props.projectName || !props.workspaceName || props.isQueuedAgentTask}
+        disabled={!props.projectName || !props.workspaceName || props.isPreStreamAgentTask}
         disabledReason={
-          props.isQueuedAgentTask
-            ? "Queued - waiting for an available parallel task slot. This will start automatically."
+          props.isPreStreamAgentTask
+            ? props.preStreamAgentTaskStatus === "starting"
+              ? "Starting - waiting for launch to accept the initial prompt."
+              : "Queued - waiting for an available parallel task slot. This will start automatically."
             : undefined
         }
+        isTranscriptCaughtUp={props.isTranscriptCaughtUp}
         isStreamStarting={props.isStreamStarting}
         isCompacting={props.isCompacting}
         editingMessage={props.editingMessage}

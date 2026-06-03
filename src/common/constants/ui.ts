@@ -11,6 +11,11 @@ export const AUTO_COMPACTION_THRESHOLD_MIN = 0;
 export const AUTO_COMPACTION_THRESHOLD_MAX = 90;
 
 /**
+ * Stored threshold upper bound. A value of 100 disables auto-compaction.
+ */
+export const AUTO_COMPACTION_THRESHOLD_STORAGE_MAX = 100;
+
+/**
  * Default auto-compaction threshold percentage (50-90 range)
  * Applied when creating new workspaces
  */

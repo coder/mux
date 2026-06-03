@@ -15,6 +15,7 @@ import {
 } from "@/browser/stories/mocks/coder";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { getProvidersConfigStore } from "@/browser/stores/ProvidersConfigStore";
 import {
   RUNTIME_MODE,
   type ParsedRuntime,
@@ -295,8 +296,12 @@ function CreationControlsStoryShell(props: { children: ReactNode }) {
 
   useEffect(() => {
     workspaceStore.setClient(client);
+    // useProvidersConfig consumers read the shared store, which gets its
+    // client from AppLoader in the real app — wire it manually here too.
+    getProvidersConfigStore().setClient(client);
     return () => {
       workspaceStore.setClient(null);
+      getProvidersConfigStore().setClient(null);
     };
   }, [client, workspaceStore]);
 

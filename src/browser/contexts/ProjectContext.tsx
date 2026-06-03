@@ -69,8 +69,12 @@ export interface ProjectContext {
   resolveProjectPath: (query: ProjectQuery) => string | null;
   /** Read project config from the full project map (includes system projects). */
   getProjectConfig: (projectPath: string) => ProjectConfig | undefined;
-  /** True while initial project list is loading */
+  /** True while the initial project list request is in flight. */
   loading: boolean;
+  /** True after at least one project list request completes successfully. */
+  loaded: boolean;
+  /** Last project list load failure, if the latest completed request failed. */
+  loadError: string | null;
   refreshProjects: () => Promise<void>;
   addProject: (normalizedPath: string, projectConfig: ProjectConfig) => void;
   removeProject: (path: string, options?: { force?: boolean }) => Promise<ProjectRemoveResult>;
@@ -136,6 +140,8 @@ export function ProjectProvider(props: { children: ReactNode }) {
     [allProjectsInternal]
   );
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [projectCreateInitialPath, setProjectCreateInitialPath] = useState<string | undefined>();
   const [isProjectCreateModalOpen, setProjectCreateModalOpen] = useState(false);
   const [workspaceModalState, setWorkspaceModalState] = useState<WorkspaceModalState>({
@@ -159,7 +165,11 @@ export function ProjectProvider(props: { children: ReactNode }) {
   const latestAppliedProjectsRefreshSeqRef = useRef(0);
 
   const refreshProjects = useCallback(async () => {
-    if (!api) return;
+    if (!api) {
+      setLoaded(false);
+      setLoadError("API not connected");
+      return;
+    }
 
     const refreshSeq = projectsRefreshSeqRef.current + 1;
     projectsRefreshSeqRef.current = refreshSeq;
@@ -174,22 +184,42 @@ export function ProjectProvider(props: { children: ReactNode }) {
 
       latestAppliedProjectsRefreshSeqRef.current = refreshSeq;
       setAllProjectsInternal(new Map(projectsList));
+      setLoaded(true);
+      setLoadError(null);
     } catch (error) {
       // Ignore out-of-date refreshes so an older error can't clobber a newer success.
       if (refreshSeq < latestAppliedProjectsRefreshSeqRef.current) {
         return;
       }
 
-      // Keep the previous project list on error to avoid emptying the sidebar.
+      // Keep the previous project list on error so scoped user preferences are not pruned.
       console.error("Failed to load projects:", error);
+      setLoadError(getErrorMessage(error));
     }
   }, [api]);
 
   useEffect(() => {
-    void (async () => {
+    let cancelled = false;
+    setLoading(true);
+
+    const initialRefresh = async () => {
       await refreshProjects();
-      setLoading(false);
-    })();
+      if (!cancelled) {
+        setLoading(false);
+      }
+    };
+
+    const refreshPromise = initialRefresh();
+    refreshPromise.catch((error) => {
+      if (!cancelled) {
+        setLoadError(getErrorMessage(error));
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [refreshProjects]);
 
   const addProject = useCallback((normalizedPath: string, projectConfig: ProjectConfig) => {
@@ -502,6 +532,8 @@ export function ProjectProvider(props: { children: ReactNode }) {
       resolveNewChatProjectPath,
       getProjectConfig,
       loading,
+      loaded,
+      loadError,
       refreshProjects,
       addProject,
       removeProject,
@@ -533,6 +565,8 @@ export function ProjectProvider(props: { children: ReactNode }) {
       resolveNewChatProjectPath,
       getProjectConfig,
       loading,
+      loaded,
+      loadError,
       refreshProjects,
       addProject,
       removeProject,

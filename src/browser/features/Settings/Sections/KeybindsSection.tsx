@@ -1,5 +1,5 @@
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
-import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
+import { KEYBINDS, formatKeybind, isKeybindDeprecated } from "@/browser/utils/ui/keybinds";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 /**
@@ -37,6 +37,8 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   OPEN_COMMAND_PALETTE: "Command palette",
   OPEN_COMMAND_PALETTE_ACTIONS: "Command palette (alternate)",
   TOGGLE_THINKING: "Toggle thinking",
+  INCREASE_THINKING: "Increase thinking level",
+  DECREASE_THINKING: "Decrease thinking level",
   FOCUS_CHAT: "Focus chat input",
   CLOSE_TAB: "Close tab",
   SIDEBAR_TAB_1: "Tab 1",
@@ -96,7 +98,8 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "OPEN_ANALYTICS",
       "TOGGLE_SIDEBAR",
       "CYCLE_MODEL",
-      "TOGGLE_THINKING",
+      "DECREASE_THINKING",
+      "INCREASE_THINKING",
       "TOGGLE_NOTIFICATIONS",
       "SHARE_TRANSCRIPT",
       "CONFIGURE_MCP",
@@ -198,7 +201,12 @@ export function KeybindsSection() {
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const visibleKeybindGroups = KEYBIND_GROUPS.map((group) => ({
     ...group,
-    keys: group.keys.filter((key) => key !== "CONFIGURE_HEARTBEAT" || workspaceHeartbeatsEnabled),
+    // Hide deprecated keybinds from the generated reference, plus experiment-gated rows.
+    keys: group.keys.filter(
+      (key) =>
+        !isKeybindDeprecated(KEYBINDS[key]) &&
+        (key !== "CONFIGURE_HEARTBEAT" || workspaceHeartbeatsEnabled)
+    ),
   })).filter((group) => group.keys.length > 0);
 
   return (

@@ -256,9 +256,14 @@ const AdvisorToolCallContent: React.FC<AdvisorToolCallContentProps> = ({
   hasUnrecognizedResult,
   isExecutingWithoutResult,
 }) => {
-  // Streamed chunks need expansion to be visible.
-  // Remount on settle so completed rows keep their collapsed default.
-  const { expanded, toggleExpanded } = useToolExpansion(isExecutingWithoutResult);
+  // A live advisor streams chunks that are only visible while expanded, so force the
+  // row open while executing — otherwise a stored `tools: false` preference would mount
+  // it collapsed and hide the live output. The key={… "executing"/"settled"} remount
+  // above means a settled row mounts fresh (forceExpanded=false) and then follows the
+  // sticky preference / collapsed default.
+  const { expanded, toggleExpanded } = useToolExpansion(false, {
+    forceExpanded: isExecutingWithoutResult,
+  });
   const liveWorkspaceId = isExecutingWithoutResult ? workspaceId : undefined;
   const liveToolCallId = isExecutingWithoutResult ? toolCallId : undefined;
   const livePhase = useAdvisorToolLivePhase(liveWorkspaceId, liveToolCallId);
