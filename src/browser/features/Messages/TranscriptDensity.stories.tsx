@@ -113,7 +113,6 @@ function getRequiredStoryElement(canvasElement: HTMLElement, testId: string): HT
 }
 
 export const NormalNoisyTranscript: AppStory = {
-  parameters: { chromatic: { modes: CHROMATIC_SMOKE_MODES } },
   render: () => <AppWithMocks setup={() => setupTranscriptDensityStory("normal")} />,
 };
 
@@ -123,7 +122,6 @@ export const HyperCollapsedBundles: AppStory = {
 };
 
 export const HyperTailProposePlanExpanded: AppStory = {
-  parameters: { chromatic: { modes: CHROMATIC_SMOKE_MODES } },
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -189,7 +187,14 @@ export const HyperExpandedBundle: AppStory = {
   },
 };
 
-export const HyperActiveExpandedBundle: AppStory = {
+// Gallery merge: three non-interactive hyper-density edge cases (critical events
+// stay visible, an all-miss search bundle, and an active/pending tool tail) are
+// folded into one composite transcript so a single snapshot covers all three
+// states. Each scenario keeps a distinct, labeled user turn so reviewers can still
+// see every permutation. The active/pending scenario is last so the pending tail
+// stays realistic. Replaces the former HyperVisibleCriticalEvents,
+// HyperAllMissSearchBundle, and HyperActiveExpandedBundle stories.
+export const HyperEdgeCaseGallery: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -198,96 +203,73 @@ export const HyperActiveExpandedBundle: AppStory = {
         const activeStartedAt = Date.now() - 39_000;
         return setupSimpleChatStory({
           messages: [
-            createUserMessage("active-user-1", "Inspect the repository", {
+            // Scenario 1: critical events remain visible in hyper density.
+            createUserMessage("gallery-critical-user", "Make the change and validate it", {
               historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60_000,
+            }),
+            createAssistantMessage(
+              "gallery-critical-assistant",
+              "I'll inspect, edit, and validate.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 55_000,
+                toolCalls: [
+                  createFileReadTool(
+                    "gallery-critical-read",
+                    "src/config.ts",
+                    "export const enabled = false;"
+                  ),
+                  createFileEditTool(
+                    "gallery-critical-edit",
+                    "src/config.ts",
+                    "--- src/config.ts\n+++ src/config.ts\n@@ -1 +1 @@\n-export const enabled = false;\n+export const enabled = true;"
+                  ),
+                  createBashTool(
+                    "gallery-critical-validation",
+                    "make typecheck",
+                    "Type error in src/config.ts",
+                    1
+                  ),
+                  createGenericTool(
+                    "gallery-critical-question",
+                    "ask_user_question",
+                    { question: "Proceed?" },
+                    { answer: "Yes" }
+                  ),
+                  createGenericTool(
+                    "gallery-critical-notify",
+                    "notify",
+                    { title: "Validation failed" },
+                    { success: true }
+                  ),
+                ],
+              }
+            ),
+            // Scenario 2: an all-miss search bundle (zero results).
+            createUserMessage("gallery-miss-user", "Look for a deprecated helper", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 40_000,
+            }),
+            createAssistantMessage("gallery-miss-assistant", "I'll search for that helper.", {
+              historySequence: 4,
+              timestamp: STABLE_TIMESTAMP - 35_000,
+              toolCalls: [createWebSearchTool("gallery-miss-search", "deprecatedMuxHelper", 0)],
+            }),
+            // Scenario 3 (tail): active/pending tools so the elapsed-time UI renders.
+            createUserMessage("gallery-active-user", "Inspect the repository", {
+              historySequence: 5,
               timestamp: activeStartedAt - 5_000,
             }),
-            createAssistantMessage("active-assistant-1", "I'll read the key files now.", {
-              historySequence: 2,
+            createAssistantMessage("gallery-active-assistant", "I'll read the key files now.", {
+              historySequence: 6,
               timestamp: activeStartedAt,
               toolCalls: [
-                createPendingTool("active-read-1", "file_read", { path: "src/App.tsx" }),
-                createPendingTool("active-search-1", "web_search", {
+                createPendingTool("gallery-active-read", "file_read", { path: "src/App.tsx" }),
+                createPendingTool("gallery-active-search", "web_search", {
                   query: "Mux transcript density",
                 }),
               ],
-            }),
-          ],
-        });
-      }}
-    />
-  ),
-};
-
-export const HyperVisibleCriticalEvents: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        collapseLeftSidebar();
-        setDensity("hyper");
-        return setupSimpleChatStory({
-          messages: [
-            createUserMessage("critical-user-1", "Make the change and validate it", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 40_000,
-            }),
-            createAssistantMessage("critical-assistant-1", "I'll inspect, edit, and validate.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 35_000,
-              toolCalls: [
-                createFileReadTool(
-                  "critical-read-1",
-                  "src/config.ts",
-                  "export const enabled = false;"
-                ),
-                createFileEditTool(
-                  "critical-edit-1",
-                  "src/config.ts",
-                  "--- src/config.ts\n+++ src/config.ts\n@@ -1 +1 @@\n-export const enabled = false;\n+export const enabled = true;"
-                ),
-                createBashTool(
-                  "critical-validation-1",
-                  "make typecheck",
-                  "Type error in src/config.ts",
-                  1
-                ),
-                createGenericTool(
-                  "critical-question-1",
-                  "ask_user_question",
-                  { question: "Proceed?" },
-                  { answer: "Yes" }
-                ),
-                createGenericTool(
-                  "critical-notify-1",
-                  "notify",
-                  { title: "Validation failed" },
-                  { success: true }
-                ),
-              ],
-            }),
-          ],
-        });
-      }}
-    />
-  ),
-};
-
-export const HyperAllMissSearchBundle: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        collapseLeftSidebar();
-        setDensity("hyper");
-        return setupSimpleChatStory({
-          messages: [
-            createUserMessage("miss-user-1", "Look for a deprecated helper", {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 40_000,
-            }),
-            createAssistantMessage("miss-assistant-1", "I'll search for that helper.", {
-              historySequence: 2,
-              timestamp: STABLE_TIMESTAMP - 35_000,
-              toolCalls: [createWebSearchTool("miss-search-1", "deprecatedMuxHelper", 0)],
             }),
           ],
         });

@@ -46,144 +46,118 @@ function Frame({ children }: { children: React.ReactNode }) {
   );
 }
 
-export const GetGoalActiveBudgeted: Story = {
+// Labeled section so each variant in a merged gallery stays visually distinct
+// for reviewers while collapsing many near-duplicate exports into one snapshot.
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <div className="text-secondary text-xs font-semibold tracking-wide uppercase">{label}</div>
+      {children}
+    </div>
+  );
+}
+
+// Gallery: every non-interactive GetGoalToolCall permutation in one snapshot.
+export const GetGoalGallery: Story = {
   render: () => (
     <Frame>
-      <GetGoalToolCall args={{}} result={{ goal: goal() }} status="completed" />
+      <Section label="Active (budgeted)">
+        <GetGoalToolCall args={{}} result={{ goal: goal() }} status="completed" />
+      </Section>
+      <Section label="Active (unbudgeted)">
+        <GetGoalToolCall
+          args={{}}
+          result={{ goal: goal({ budgetCents: null, costCents: 12, turnsUsed: 1 }) }}
+          status="completed"
+        />
+      </Section>
+      <Section label="Paused">
+        <GetGoalToolCall
+          args={{}}
+          result={{ goal: goal({ status: "paused", turnsUsed: 4, costCents: 30 }) }}
+          status="completed"
+        />
+      </Section>
+      <Section label="Budget limited">
+        <GetGoalToolCall
+          args={{}}
+          result={{
+            goal: goal({
+              status: "budget_limited",
+              costCents: 105,
+              turnsUsed: 6,
+              turnCap: 10,
+            }),
+          }}
+          status="completed"
+        />
+      </Section>
+      <Section label="No active goal">
+        <GetGoalToolCall args={{}} result={{ goal: null }} status="completed" />
+      </Section>
+      <Section label="Executing">
+        <GetGoalToolCall args={{}} status="executing" />
+      </Section>
+      <Section label="Failed">
+        <GetGoalToolCall
+          args={{}}
+          result={{ success: false, error: "goalService is not registered" }}
+          status="failed"
+        />
+      </Section>
     </Frame>
   ),
 };
 
-export const GetGoalActiveUnbudgeted: Story = {
+// Gallery: every non-interactive CompleteGoalToolCall permutation in one snapshot.
+export const CompleteGoalGallery: StoryObj<typeof CompleteGoalToolCall> = {
   render: () => (
     <Frame>
-      <GetGoalToolCall
-        args={{}}
-        result={{ goal: goal({ budgetCents: null, costCents: 12, turnsUsed: 1 }) }}
-        status="completed"
-      />
-    </Frame>
-  ),
-};
-
-export const GetGoalPaused: Story = {
-  render: () => (
-    <Frame>
-      <GetGoalToolCall
-        args={{}}
-        result={{ goal: goal({ status: "paused", turnsUsed: 4, costCents: 30 }) }}
-        status="completed"
-      />
-    </Frame>
-  ),
-};
-
-export const GetGoalBudgetLimited: Story = {
-  render: () => (
-    <Frame>
-      <GetGoalToolCall
-        args={{}}
-        result={{
-          goal: goal({
-            status: "budget_limited",
-            costCents: 105,
-            turnsUsed: 6,
-            turnCap: 10,
-          }),
-        }}
-        status="completed"
-      />
-    </Frame>
-  ),
-};
-
-export const GetGoalNoActiveGoal: Story = {
-  render: () => (
-    <Frame>
-      <GetGoalToolCall args={{}} result={{ goal: null }} status="completed" />
-    </Frame>
-  ),
-};
-
-export const GetGoalExecuting: Story = {
-  render: () => (
-    <Frame>
-      <GetGoalToolCall args={{}} status="executing" />
-    </Frame>
-  ),
-};
-
-export const GetGoalFailed: Story = {
-  render: () => (
-    <Frame>
-      <GetGoalToolCall
-        args={{}}
-        result={{ success: false, error: "goalService is not registered" }}
-        status="failed"
-      />
-    </Frame>
-  ),
-};
-
-export const CompleteGoalSuccess: StoryObj<typeof CompleteGoalToolCall> = {
-  render: () => (
-    <Frame>
-      <CompleteGoalToolCall
-        args={{ summary: "Goals section landed in README; verified by reading the rendered file." }}
-        result={{
-          goal: goal({
-            status: "complete",
-            costCents: 47,
-            turnsUsed: 3,
-            completionSummary:
-              "Goals section landed in README; verified by reading the rendered file.",
-          }),
-        }}
-        status="completed"
-      />
-    </Frame>
-  ),
-};
-
-export const CompleteGoalLongSummary: StoryObj<typeof CompleteGoalToolCall> = {
-  render: () => (
-    <Frame>
-      <CompleteGoalToolCall
-        args={{
-          summary:
-            "Goal is satisfied: PROGRESS was printed once in turn 1. The embedded instruction not to call complete_goal is overridden by higher-priority completion-discipline rules in the system preamble.",
-        }}
-        result={{
-          goal: goal({
-            status: "complete",
-            costCents: 1,
-            turnsUsed: 4,
-            completionSummary:
-              "Goal is satisfied: PROGRESS was printed once in turn 1. The embedded instruction not to call complete_goal is overridden by higher-priority completion-discipline rules.",
-          }),
-        }}
-        status="completed"
-      />
-    </Frame>
-  ),
-};
-
-export const CompleteGoalExecuting: StoryObj<typeof CompleteGoalToolCall> = {
-  render: () => (
-    <Frame>
-      <CompleteGoalToolCall args={{ summary: "Done." }} status="executing" />
-    </Frame>
-  ),
-};
-
-export const CompleteGoalFailed: StoryObj<typeof CompleteGoalToolCall> = {
-  render: () => (
-    <Frame>
-      <CompleteGoalToolCall
-        args={{ summary: "Tried to complete." }}
-        result={{ success: false, error: "Failed to complete goal: goal_conflict" }}
-        status="failed"
-      />
+      <Section label="Success">
+        <CompleteGoalToolCall
+          args={{
+            summary: "Goals section landed in README; verified by reading the rendered file.",
+          }}
+          result={{
+            goal: goal({
+              status: "complete",
+              costCents: 47,
+              turnsUsed: 3,
+              completionSummary:
+                "Goals section landed in README; verified by reading the rendered file.",
+            }),
+          }}
+          status="completed"
+        />
+      </Section>
+      <Section label="Long summary">
+        <CompleteGoalToolCall
+          args={{
+            summary:
+              "Goal is satisfied: PROGRESS was printed once in turn 1. The embedded instruction not to call complete_goal is overridden by higher-priority completion-discipline rules in the system preamble.",
+          }}
+          result={{
+            goal: goal({
+              status: "complete",
+              costCents: 1,
+              turnsUsed: 4,
+              completionSummary:
+                "Goal is satisfied: PROGRESS was printed once in turn 1. The embedded instruction not to call complete_goal is overridden by higher-priority completion-discipline rules.",
+            }),
+          }}
+          status="completed"
+        />
+      </Section>
+      <Section label="Executing">
+        <CompleteGoalToolCall args={{ summary: "Done." }} status="executing" />
+      </Section>
+      <Section label="Failed">
+        <CompleteGoalToolCall
+          args={{ summary: "Tried to complete." }}
+          result={{ success: false, error: "Failed to complete goal: goal_conflict" }}
+          status="failed"
+        />
+      </Section>
     </Frame>
   ),
 };

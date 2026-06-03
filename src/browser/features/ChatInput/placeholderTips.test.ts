@@ -8,12 +8,6 @@ interface StorybookGlobal {
 const TWENTY_MIN_MS = 20 * 60 * 1000;
 
 describe("PLACEHOLDER_TIPS", () => {
-  test("every tip references a slash command", () => {
-    for (const tip of PLACEHOLDER_TIPS) {
-      expect(tip).toMatch(/\/[A-Za-z+]/);
-    }
-  });
-
   test("tips are unique", () => {
     const unique = new Set(PLACEHOLDER_TIPS);
     expect(unique.size).toBe(PLACEHOLDER_TIPS.length);

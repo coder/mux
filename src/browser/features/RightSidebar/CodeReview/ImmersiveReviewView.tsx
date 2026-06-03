@@ -21,6 +21,7 @@ import {
 import { cn } from "@/common/lib/utils";
 import { SelectableDiffRenderer } from "../../Shared/DiffRenderer";
 import { ImmersiveMinimap } from "./ImmersiveMinimap";
+import { ImmersiveReviewAgentStatusBar } from "./ImmersiveReviewAgentStatusBar";
 import {
   buildNewLineNumberToIndexMap,
   buildOldLineNumberToIndexMap,
@@ -92,6 +93,18 @@ interface ImmersiveReviewViewProps {
    * see in the side panel.
    */
   assistedCommentByHunkId?: Map<string, string>;
+  /**
+   * Whether the "Assisted" filter (show only agent-flagged hunks) is active.
+   * The control bar that hosts this toggle is hidden behind the immersive
+   * overlay, so we surface a header badge to keep the active filter mode
+   * visible. Distinct from the per-hunk assisted banner: this means "the
+   * worklist filter is on", not "this hunk was flagged".
+   */
+  assistedOnly?: boolean;
+  /** Total agent-flagged hunks (mirrors the control bar's Assisted count). */
+  assistedCount?: number;
+  /** Agent-flagged hunks still unread (mirrors the control bar's count). */
+  assistedUnreadCount?: number;
 }
 
 interface InlineComposerRequest {
@@ -446,6 +459,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     selectedHunkId !== null ? (assistedCommentByHunkId?.get(selectedHunkId) ?? null) : null;
   const isSelectedAssisted =
     selectedHunkId !== null && (assistedHunkIds?.has(selectedHunkId) ?? false);
+  const selectedAssistedLabel = selectedAssistedComment ?? "Flagged by agent for review";
   const isTouchExperience = isTouchImmersive === true;
 
   // Flatten file tree into ordered file list
@@ -519,6 +533,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     return null;
   }, [selectedHunkId, hunks, allHunks, fileList, isReviewComplete]);
 
+  const activeFilePathRef = useRef<string | null>(null);
+  activeFilePathRef.current = activeFilePath;
+
   const selectedHunkFromAll = useMemo(
     () => (selectedHunkId ? (allHunks.find((item) => item.id === selectedHunkId) ?? null) : null),
     [selectedHunkId, allHunks]
@@ -549,6 +566,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
     return currentFileHunks[0] ?? null;
   }, [selectedHunkId, currentFileHunks]);
+
+  const shouldReserveAssistedBannerSlot =
+    assistedHunkIds != null &&
+    activeFilePath != null &&
+    getFileHunks(allHunks, activeFilePath).some((hunk) => assistedHunkIds.has(hunk.id));
 
   // Ensure we always have a selected hunk when the active file has hunks.
   useEffect(() => {
@@ -585,7 +607,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   );
 
   // Hold diff reveal during file switches until the initial scroll is complete.
-  const [pendingRevealFilePath, setPendingRevealFilePath] = useState<string | null>(null);
+  // Track the last revealed file instead of setting "pending" from an effect so
+  // a newly selected file is hidden on its first render rather than for one frame after paint.
+  const [revealedFilePath, setRevealedFilePath] = useState<string | null>(null);
   const revealAnimationFrameRef = useRef<number | null>(null);
 
   // Load full file context only when it is cheap. The hunk overlay remains visible
@@ -804,21 +828,24 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // hide-read auto-advance without changing the main review panel's unread shortcut semantics.
   const readUndoStackRef = useRef<string[]>([]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (revealAnimationFrameRef.current !== null) {
       cancelAnimationFrame(revealAnimationFrameRef.current);
       revealAnimationFrameRef.current = null;
     }
 
     if (!activeFilePath) {
-      setPendingRevealFilePath(null);
+      setRevealedFilePath(null);
       return;
     }
 
-    // Keep the splash visible for each file switch until we have scrolled to the target hunk.
-    setPendingRevealFilePath(activeFilePath);
-    hunkJumpRef.current = true;
-  }, [activeFilePath]);
+    if (revealedFilePath !== activeFilePath) {
+      // Keep the splash visible for each file switch until we have scrolled to the target hunk.
+      // The pending state is derived during render so cross-file hunk iteration never flashes
+      // the new file at the old scroll position before this effect runs.
+      hunkJumpRef.current = true;
+    }
+  }, [activeFilePath, revealedFilePath]);
 
   useEffect(() => {
     return () => {
@@ -830,21 +857,21 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   const selectedHunkRevealTargetLineIndex =
     selectedHunkRange?.firstModifiedIndex ?? selectedHunkRange?.startIndex ?? null;
-  const isActiveFileRevealPending = pendingRevealFilePath === activeFilePath;
+  const isActiveFileRevealPending = activeFilePath !== null && revealedFilePath !== activeFilePath;
   const revealTargetLineIndex = isActiveFileRevealPending
     ? selectedHunkRevealTargetLineIndex
     : (activeLineIndex ?? selectedHunkRevealTargetLineIndex);
   const hasResolvedSelectedHunkForReveal =
     selectedHunkId !== null && currentFileHunks.some((hunk) => hunk.id === selectedHunkId);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isActiveFileRevealPending) {
       return;
     }
 
     // Fail open so the UI cannot get stuck if a file has no hunks.
     if (currentFileHunks.length === 0) {
-      setPendingRevealFilePath(null);
+      setRevealedFilePath(activeFilePath);
       return;
     }
 
@@ -855,9 +882,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
     // Fail open once selection is stable if we still cannot resolve a reveal target.
     if (selectedHunkRevealTargetLineIndex === null) {
-      setPendingRevealFilePath(null);
+      setRevealedFilePath(activeFilePath);
     }
   }, [
+    activeFilePath,
     currentFileHunks.length,
     hasResolvedSelectedHunkForReveal,
     isActiveFileRevealPending,
@@ -927,6 +955,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const onSelectHunkRef = useRef(onSelectHunk);
   const allHunksRef = useRef(allHunks);
   const hunkLineRangesRef = useRef(overlayData.hunkLineRanges);
+  const previousSelectedHunkIdRef = useRef<string | null>(null);
+  const previousSelectedHunkRangeRef = useRef<HunkLineRange | null>(null);
+  const skipScrollUntilCursorSettlesRef = useRef(false);
   const highlightedLineElementRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -961,12 +992,19 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     hunkLineRangesRef.current = overlayData.hunkLineRanges;
   }, [overlayData.hunkLineRanges]);
 
-  // Keep cursor and selection aligned to the selected hunk when hunk navigation changes.
-  useEffect(() => {
+  // Keep cursor and selection aligned to the selected hunk before paint so J/K hunk
+  // iteration does not flash the previous cursor/selection for a frame.
+  useLayoutEffect(() => {
     const resolvedSelectedHunkId = selectedHunk?.id ?? null;
+    const previousSelectedHunkId = previousSelectedHunkIdRef.current;
+    const previousSelectedHunkRange = previousSelectedHunkRangeRef.current;
+
+    previousSelectedHunkIdRef.current = resolvedSelectedHunkId;
+    previousSelectedHunkRangeRef.current = selectedHunkRange;
 
     if (!selectedHunkRange || !resolvedSelectedHunkId) {
       pendingJumpSelectAllHunkIdRef.current = null;
+      skipScrollUntilCursorSettlesRef.current = false;
       setActiveLineIndex(null);
       setSelectedLineRange(null);
       return;
@@ -978,6 +1016,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // Use actual modified boundaries (without context padding) for the highlight
       const modifiedStart = selectedHunkRange.firstModifiedIndex ?? selectedHunkRange.startIndex;
       const modifiedEnd = selectedHunkRange.lastModifiedIndex ?? selectedHunkRange.endIndex;
+      skipScrollUntilCursorSettlesRef.current = activeLineIndexRef.current !== modifiedEnd;
       setActiveLineIndex(modifiedEnd);
       setSelectedLineRange({
         startIndex: modifiedStart,
@@ -985,6 +1024,34 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       });
       return;
     }
+
+    const cursorLineIndex = activeLineIndexRef.current;
+    const cursorWasInPreviousSelectedHunk = Boolean(
+      cursorLineIndex !== null &&
+      previousSelectedHunkRange &&
+      cursorLineIndex >= previousSelectedHunkRange.startIndex &&
+      cursorLineIndex <= previousSelectedHunkRange.endIndex
+    );
+    const shouldPreserveContextCursor = Boolean(
+      cursorLineIndex !== null &&
+      previousSelectedHunkRange &&
+      previousSelectedHunkId === resolvedSelectedHunkId &&
+      !cursorWasInPreviousSelectedHunk
+    );
+
+    if (shouldPreserveContextCursor) {
+      // Full-file context can arrive after the user has intentionally moved the
+      // cursor onto an unchanged/context row. Preserve that cursor instead of
+      // snapping back to the selected hunk just because overlay indices changed.
+      skipScrollUntilCursorSettlesRef.current = false;
+      return;
+    }
+
+    skipScrollUntilCursorSettlesRef.current = Boolean(
+      cursorLineIndex !== null &&
+      (cursorLineIndex < selectedHunkRange.startIndex ||
+        cursorLineIndex > selectedHunkRange.endIndex)
+    );
 
     setActiveLineIndex((previousLineIndex) => {
       if (
@@ -1119,6 +1186,19 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       const targetHunkId = findReviewHunkId(review, fileHunks) ?? fileHunks[0].id;
       pendingJumpSelectAllHunkIdRef.current = null;
       hunkJumpRef.current = true;
+      const targetRange =
+        activeFilePath === review.data.filePath
+          ? (overlayData.hunkLineRanges.get(targetHunkId) ?? null)
+          : null;
+      if (targetRange) {
+        // Note/sidebar jumps are explicit hunk navigation, even when the note maps
+        // to the already-selected hunk. Reset any context-row cursor first so the
+        // centered jump lands on the note's hunk instead of a stale context line.
+        skipScrollUntilCursorSettlesRef.current = false;
+        setSelectedLineRange(null);
+        setActiveLineIndex(targetRange.firstModifiedIndex ?? targetRange.startIndex);
+      }
+
       onSelectHunk(targetHunkId);
       // Force scroll effect to re-fire even when activeLineIndex is unchanged
       // (for example when the cursor is already inside the selected hunk).
@@ -1132,7 +1212,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         });
       }
     },
-    [allHunks, onSelectHunk, props.reviewActions?.onEditComment]
+    [
+      activeFilePath,
+      allHunks,
+      onSelectHunk,
+      overlayData.hunkLineRanges,
+      props.reviewActions?.onEditComment,
+    ]
   );
 
   const diffReviewActions = useMemo<ReviewActionCallbacks | undefined>(() => {
@@ -1611,8 +1697,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const previousContentRef = useRef(overlayData.content);
 
   // Keep the active line visible while moving with keyboard shortcuts, without
-  // forcing the full diff tree to re-render on every cursor move.
-  useEffect(() => {
+  // forcing the full diff tree to re-render on every cursor move. This is a layout
+  // effect because scroll/outline writes must happen before paint to avoid hunk
+  // navigation flashing at the previous viewport position.
+  useLayoutEffect(() => {
     const contentChanged = previousContentRef.current !== overlayData.content;
     previousContentRef.current = overlayData.content;
 
@@ -1625,10 +1713,23 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
     // When overlay content structure changes (fallback hunks -> full-file view),
     // defer regular scrolling until the selected-hunk effect has recalculated
-    // activeLineIndex. During a file-switch reveal gate we still need one initial
-    // scroll so the diff appears already positioned at the selected hunk.
+    // activeLineIndex. Preserve ordinary context-row cursor movement: if the user
+    // is already outside the selected hunk and no hunk sync is pending, do not arm
+    // a center jump for the next scroll.
     if (contentChanged) {
-      hunkJumpRef.current = true;
+      const cursorIsInsideSelectedHunk = Boolean(
+        activeLineIndex !== null &&
+        selectedHunkRange &&
+        activeLineIndex >= selectedHunkRange.startIndex &&
+        activeLineIndex <= selectedHunkRange.endIndex
+      );
+      hunkJumpRef.current = Boolean(
+        isActiveFileRevealPending ||
+        skipScrollUntilCursorSettlesRef.current ||
+        activeLineIndex === null ||
+        !selectedHunkRange ||
+        cursorIsInsideSelectedHunk
+      );
       if (!isActiveFileRevealPending) {
         return;
       }
@@ -1637,6 +1738,26 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     const lineIndexForScroll = isActiveFileRevealPending ? revealTargetLineIndex : activeLineIndex;
     if (lineIndexForScroll === null) {
       return;
+    }
+
+    if (skipScrollUntilCursorSettlesRef.current) {
+      const cursorHasSettled =
+        isActiveFileRevealPending ||
+        activeLineIndex === null ||
+        !selectedHunkRange ||
+        (activeLineIndex >= selectedHunkRange.startIndex &&
+          activeLineIndex <= selectedHunkRange.endIndex);
+
+      if (!cursorHasSettled) {
+        // A hunk jump renders once with the previous hunk's activeLineIndex before
+        // the selected-hunk layout effect commits the new cursor. Do not issue a
+        // stale scrollIntoView in that intermediate commit; the next layout pass
+        // will scroll directly to the selected hunk. Plain line-cursor movement to
+        // full-file context lines never sets this ref, so it still scrolls normally.
+        return;
+      }
+
+      skipScrollUntilCursorSettlesRef.current = false;
     }
 
     const lineElement = containerRef.current?.querySelector<HTMLElement>(
@@ -1653,8 +1774,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
       const revealFilePath = activeFilePath;
       revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
-        setPendingRevealFilePath((pendingFilePath) =>
-          pendingFilePath === revealFilePath ? null : pendingFilePath
+        setRevealedFilePath((currentRevealedFilePath) =>
+          activeFilePathRef.current === revealFilePath ? revealFilePath : currentRevealedFilePath
         );
         revealAnimationFrameRef.current = null;
       });
@@ -1684,8 +1805,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
     const revealFilePath = activeFilePath;
     revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
-      setPendingRevealFilePath((pendingFilePath) =>
-        pendingFilePath === revealFilePath ? null : pendingFilePath
+      setRevealedFilePath((currentRevealedFilePath) =>
+        activeFilePathRef.current === revealFilePath ? revealFilePath : currentRevealedFilePath
       );
       revealAnimationFrameRef.current = null;
     });
@@ -1696,6 +1817,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     overlayData.content,
     revealTargetLineIndex,
     scrollNonce,
+    selectedHunkRange,
   ]);
 
   useEffect(() => {
@@ -1885,6 +2007,25 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             )}
           </div>
         )}
+        {/* Assisted-mode indicator — the control bar that hosts the Assisted
+            toggle is hidden behind the immersive overlay, so without this the
+            user has no way to tell the diff is filtered to agent-flagged hunks.
+            ml-auto anchors it to the row's trailing edge as a mode indicator. */}
+        {props.assistedOnly === true && (
+          <div
+            className="border-review-accent/40 bg-review-accent/10 text-review-accent ml-auto flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium"
+            data-testid="immersive-assisted-mode-badge"
+            role="status"
+          >
+            <Sparkles aria-hidden="true" className="h-3 w-3 shrink-0" />
+            <span>Assisted</span>
+            {(props.assistedCount ?? 0) > 0 && (
+              <span className="text-review-accent/70 counter-nums">
+                {props.assistedUnreadCount ?? 0}/{props.assistedCount ?? 0}
+              </span>
+            )}
+          </div>
+        )}
         {allHunks.length > 0 && (
           <div className="w-full pt-0.5">
             <TooltipIfPresent
@@ -1925,99 +2066,123 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         )}
       </div>
 
-      {/* Assisted-review banner — surfaces the agent's flag + comment when
-          the selected hunk is one the agent pinned for review. We render it
-          between the header and the diff so the focus signal is impossible
-          to miss after entering immersive mode, where the side-panel cues
-          aren't visible. */}
-      {isSelectedAssisted && (
-        <div
-          className="border-review-accent/40 bg-review-accent/5 text-foreground flex items-start gap-2 border-b px-3 py-1.5 text-[11px] leading-[1.4]"
-          data-testid="immersive-assisted-banner"
-          role="status"
-          aria-live="polite"
-        >
-          <Sparkles aria-hidden="true" className="text-review-accent mt-[2px] h-3 w-3 shrink-0" />
-          {selectedAssistedComment ? (
-            <span className="min-w-0 break-words whitespace-pre-wrap">
-              {selectedAssistedComment}
-            </span>
-          ) : (
-            <span className="text-muted italic">Flagged by agent for review</span>
-          )}
-        </div>
-      )}
+      {/* Agent status bar — keeps the TODO plan + live streaming status visible
+          while reviewing, since the chat transcript/composer are hidden behind
+          the immersive overlay. Self-subscribes so its updates don't re-render
+          the diff tree; renders nothing when there's no plan and no stream. */}
+      <ImmersiveReviewAgentStatusBar workspaceId={props.workspaceId} />
 
       {/* Unified whole-file diff with hunk overlays + notes sidebar */}
       <div className="flex min-h-0 flex-1">
-        {/* Avoid top padding here; it reads as a blank block between the controls and diff. */}
-        <div
-          ref={scrollContainerRef}
-          className="scrollbar-none min-h-0 min-w-0 flex-1 overflow-y-auto pb-3"
-        >
-          {props.isLoading && currentFileHunks.length === 0 ? (
-            <div className="text-muted flex items-center justify-center py-12 text-sm">
-              <span className="animate-pulse">Loading diff...</span>
-            </div>
-          ) : isReviewComplete ? (
-            <div className="flex min-h-full items-center justify-center px-6 py-12">
-              <div
-                data-testid="immersive-review-complete"
-                className="flex max-w-md flex-col items-center gap-4 text-center"
+        {/* Diff column. The assisted-review callout lives INSIDE this column (not
+            above the whole body) so the agent's per-hunk comment spans only the
+            diff width and lines up with the code it refers to — rather than
+            stretching across the minimap and notes sidebar. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {shouldReserveAssistedBannerSlot &&
+            (isSelectedAssisted ? (
+              <TooltipIfPresent
+                tooltip={<span className="whitespace-pre-wrap">{selectedAssistedLabel}</span>}
+                side="bottom"
+                align="start"
               >
-                <div className="bg-accent/10 text-accent rounded-full p-3">
-                  <CheckCircle2 aria-hidden="true" className="h-8 w-8" />
-                </div>
-                <div className="space-y-2">
-                  <h2 className="text-foreground text-base font-medium">Review complete</h2>
-                  <p className="text-muted text-sm leading-relaxed">
-                    You have already reviewed all {reviewedHunkLabel} in this diff. Return to chat
-                    to keep going, or reopen reviewed hunks from the review panel if you want
-                    another pass.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={onExit}
-                  className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                <div
+                  className="border-review-accent/40 bg-review-accent/5 text-foreground flex h-[calc(1lh+0.75rem+1px)] shrink-0 cursor-help items-start gap-2 overflow-hidden border-b px-3 py-1.5 text-[11px] leading-[1.4]"
+                  data-assisted-banner-slot="true"
+                  data-testid="immersive-assisted-banner"
+                  role="status"
+                  aria-live="polite"
+                  aria-label={selectedAssistedLabel}
+                  title={selectedAssistedLabel}
                 >
-                  Return to chat
-                </button>
-              </div>
-            </div>
-          ) : currentFileHunks.length === 0 ? (
-            <div className="text-muted flex items-center justify-center py-12 text-sm">
-              {activeFilePath ? "No hunks for this file" : "No files to review"}
-            </div>
-          ) : (
-            <div className="bg-dark relative overflow-hidden">
-              {isActiveFileRevealPending && (
-                <div className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm">
-                  <span className="animate-pulse">Loading file...</span>
+                  {/* Reserve a stable row for files that contain assisted hunks so J/K
+                      iteration doesn't reflow the diff when the selected hunk enters
+                      or leaves the agent's focus. */}
+                  <Sparkles
+                    aria-hidden="true"
+                    className="text-review-accent mt-[2px] h-3 w-3 shrink-0"
+                  />
+                  <span className="min-w-0 break-words whitespace-pre-wrap">
+                    {selectedAssistedLabel}
+                  </span>
                 </div>
-              )}
-              <div className={cn(isActiveFileRevealPending && "invisible")}>
-                <SelectableDiffRenderer
-                  content={overlayData.content}
-                  filePath={activeFilePath ?? currentFileHunks[0].filePath}
-                  inlineReviews={activeFileReviews}
-                  oldStart={1}
-                  newStart={1}
-                  fontSize="11px"
-                  maxHeight="none"
-                  className="rounded-none border-0 [&>div]:overflow-x-visible"
-                  onReviewNote={handleReviewNoteSubmit}
-                  onComposerCancel={handleInlineComposerCancel}
-                  reviewActions={diffReviewActions}
-                  enableHighlighting={shouldEnableHighlighting}
-                  selectedLineRange={selectedLineRange}
-                  onLineIndexSelect={handleLineIndexSelect}
-                  externalSelectionRequest={externalComposerSelectionRequest}
-                  externalEditRequest={inlineReviewEditRequest}
-                />
+              </TooltipIfPresent>
+            ) : (
+              <div
+                className="border-border-light bg-dark h-[calc(1lh+0.75rem+1px)] shrink-0 border-b text-[11px] leading-[1.4]"
+                data-assisted-banner-slot="true"
+                data-testid="immersive-assisted-banner-slot"
+              />
+            ))}
+          {/* Avoid top padding here; it reads as a blank block between the controls and diff. */}
+          <div
+            ref={scrollContainerRef}
+            className="scrollbar-none min-h-0 min-w-0 flex-1 overflow-y-auto pb-3"
+          >
+            {props.isLoading && currentFileHunks.length === 0 ? (
+              <div className="text-muted flex items-center justify-center py-12 text-sm">
+                <span className="animate-pulse">Loading diff...</span>
               </div>
-            </div>
-          )}
+            ) : isReviewComplete ? (
+              <div className="flex min-h-full items-center justify-center px-6 py-12">
+                <div
+                  data-testid="immersive-review-complete"
+                  className="flex max-w-md flex-col items-center gap-4 text-center"
+                >
+                  <div className="bg-accent/10 text-accent rounded-full p-3">
+                    <CheckCircle2 aria-hidden="true" className="h-8 w-8" />
+                  </div>
+                  <div className="space-y-2">
+                    <h2 className="text-foreground text-base font-medium">Review complete</h2>
+                    <p className="text-muted text-sm leading-relaxed">
+                      You have already reviewed all {reviewedHunkLabel} in this diff. Return to chat
+                      to keep going, or reopen reviewed hunks from the review panel if you want
+                      another pass.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onExit}
+                    className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                  >
+                    Return to chat
+                  </button>
+                </div>
+              </div>
+            ) : currentFileHunks.length === 0 ? (
+              <div className="text-muted flex items-center justify-center py-12 text-sm">
+                {activeFilePath ? "No hunks for this file" : "No files to review"}
+              </div>
+            ) : (
+              <div className="bg-dark relative overflow-hidden">
+                {isActiveFileRevealPending && (
+                  <div className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm">
+                    <span className="animate-pulse">Loading file...</span>
+                  </div>
+                )}
+                <div className={cn(isActiveFileRevealPending && "invisible")}>
+                  <SelectableDiffRenderer
+                    content={overlayData.content}
+                    filePath={activeFilePath ?? currentFileHunks[0].filePath}
+                    inlineReviews={activeFileReviews}
+                    oldStart={1}
+                    newStart={1}
+                    fontSize="11px"
+                    maxHeight="none"
+                    className="rounded-none border-0 [&>div]:overflow-x-visible"
+                    onReviewNote={handleReviewNoteSubmit}
+                    onComposerCancel={handleInlineComposerCancel}
+                    reviewActions={diffReviewActions}
+                    enableHighlighting={shouldEnableHighlighting}
+                    selectedLineRange={selectedLineRange}
+                    onLineIndexSelect={handleLineIndexSelect}
+                    externalSelectionRequest={externalComposerSelectionRequest}
+                    externalEditRequest={inlineReviewEditRequest}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {!isReviewComplete && !isTouchExperience && (

@@ -208,12 +208,21 @@ const preview: Preview = {
         },
       },
     },
-    chromatic: {
-      modes: {
-        dark: { theme: "dark" },
-        light: { theme: "light" },
-      },
-    },
+    // Chromatic modes STACK across project → component → story levels (they are
+    // NOT overridden by more specific levels). A project-level `modes` map here
+    // would therefore be added to EVERY story's snapshot set on top of whatever
+    // each meta/story declares, multiplying the whole budget. Concretely, a
+    // global { dark, light } stacked onto appMeta's `dark-desktop` produced 3
+    // snapshots per App story (dark + light + dark-desktop) instead of the 1 the
+    // meta intended — silently inflating the Chromatic snapshot budget.
+    //
+    // We intentionally declare NO project-level modes. Stories then snapshot in:
+    //   - the modes their meta/story explicitly declare (e.g. CHROMATIC_SINGLE_MODE,
+    //     CHROMATIC_SMOKE_MODES), or
+    //   - a single default snapshot (the default `theme: "dark"` global) when none
+    //     are declared.
+    // Dual-theme coverage is opt-in per file/story via CHROMATIC_SMOKE_MODES, which
+    // matches the documented policy in src/browser/stories/meta.tsx.
   },
 };
 

@@ -2595,6 +2595,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
               firstSeenMap={firstSeenMap}
               assistedHunkIds={assistedHunkIdSet}
               assistedCommentByHunkId={assistedCommentByHunkId}
+              assistedOnly={filters.assistedOnly}
+              assistedCount={assistedHunks.length}
+              assistedUnreadCount={unreadAssistedInDiff}
             />,
             root
           );
