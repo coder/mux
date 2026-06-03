@@ -1,3 +1,5 @@
+import { clamp } from "@/common/utils/clamp";
+
 interface Particle {
   x: number;
   y: number;
@@ -69,7 +71,7 @@ export class PowerModeEngine {
   }
 
   burst(x: number, y: number, intensity = 1, options?: BurstOptions): void {
-    const normalizedIntensity = Math.max(1, Math.min(12, Math.floor(intensity)));
+    const normalizedIntensity = clamp(Math.floor(intensity), 1, 12);
     const kind = options?.kind ?? "insert";
 
     this.maybeShake(normalizedIntensity);
@@ -167,7 +169,7 @@ export class PowerModeEngine {
 
     const lastFrameTimeMs = (this.lastFrameTimeMs ??= nowMs);
 
-    const dtMs = Math.min(34, Math.max(0, nowMs - lastFrameTimeMs));
+    const dtMs = clamp(nowMs - lastFrameTimeMs, 0, 34);
     this.lastFrameTimeMs = nowMs;
 
     this.step(dtMs);
@@ -213,7 +215,7 @@ export class PowerModeEngine {
     ctx.globalCompositeOperation = "lighter";
 
     for (const p of this.particles) {
-      const alpha = Math.max(0, Math.min(1, p.lifeMs / p.ttlMs));
+      const alpha = clamp(p.lifeMs / p.ttlMs, 0, 1);
       ctx.globalAlpha = alpha;
       ctx.fillStyle = p.color;
       ctx.fillRect(p.x, p.y, p.size, p.size);
@@ -445,7 +447,7 @@ export class PowerModeEngine {
     this.tryResumeAudioContext(ctx);
 
     const t0 = ctx.currentTime;
-    const intensityT = (Math.max(1, Math.min(12, intensity)) - 1) / 11;
+    const intensityT = (clamp(intensity, 1, 12) - 1) / 11;
 
     const noiseSource = ctx.createBufferSource();
     noiseSource.buffer = noiseBuffer;
@@ -506,7 +508,7 @@ export class PowerModeEngine {
     this.tryResumeAudioContext(ctx);
 
     const t0 = ctx.currentTime;
-    const intensityT = (Math.max(1, Math.min(12, intensity)) - 1) / 11;
+    const intensityT = (clamp(intensity, 1, 12) - 1) / 11;
 
     const noiseSource = ctx.createBufferSource();
     noiseSource.buffer = noiseBuffer;
