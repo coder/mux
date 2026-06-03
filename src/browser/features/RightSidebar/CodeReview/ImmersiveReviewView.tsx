@@ -1561,6 +1561,22 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     const contentChanged = previousContentRef.current !== overlayData.content;
     previousContentRef.current = overlayData.content;
 
+    // Clear the file-switch reveal gate on the next frame once the initial scroll
+    // has been issued. Both the no-line-element retry path and the post-scroll path
+    // need the identical "cancel any pending frame, then schedule a one-shot clear
+    // guarded by the captured file path" sequence, so keep it in one place.
+    const scheduleRevealCompletion = (revealFilePath: string) => {
+      if (revealAnimationFrameRef.current !== null) {
+        cancelAnimationFrame(revealAnimationFrameRef.current);
+      }
+      revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        setPendingRevealFilePath((pendingFilePath) =>
+          pendingFilePath === revealFilePath ? null : pendingFilePath
+        );
+        revealAnimationFrameRef.current = null;
+      });
+    };
+
     const previousLineElement = highlightedLineElementRef.current;
     if (previousLineElement) {
       previousLineElement.style.outline = "";
@@ -1596,17 +1612,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
 
-      if (revealAnimationFrameRef.current !== null) {
-        cancelAnimationFrame(revealAnimationFrameRef.current);
-      }
-
-      const revealFilePath = activeFilePath;
-      revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
-        setPendingRevealFilePath((pendingFilePath) =>
-          pendingFilePath === revealFilePath ? null : pendingFilePath
-        );
-        revealAnimationFrameRef.current = null;
-      });
+      scheduleRevealCompletion(activeFilePath);
       return;
     }
 
@@ -1627,17 +1633,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       return;
     }
 
-    if (revealAnimationFrameRef.current !== null) {
-      cancelAnimationFrame(revealAnimationFrameRef.current);
-    }
-
-    const revealFilePath = activeFilePath;
-    revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
-      setPendingRevealFilePath((pendingFilePath) =>
-        pendingFilePath === revealFilePath ? null : pendingFilePath
-      );
-      revealAnimationFrameRef.current = null;
-    });
+    scheduleRevealCompletion(activeFilePath);
   }, [
     activeFilePath,
     activeLineIndex,
