@@ -505,8 +505,21 @@ function renderSubAgentGallery() {
   // ws-active (index 1) carries persisted status state, so its rows render the
   // status-text treatment from the former "...With Status Text" stories.
   const active = STORY_WORKSPACES[1];
+  // Own ws-idle's last-read state. IdleSeen/IdleNotSeen write the same persisted
+  // key, so without pinning it here the idle rows inherit whichever sibling story
+  // rendered last and flip between "idle" (primary title) and "seen" (tertiary
+  // title) — a non-deterministic Chromatic diff. Pin to unread (matching the
+  // workspace's "idle" semantics) so the gallery is stable regardless of order.
+  const idleCreatedAtMs = Date.parse(idle.createdAt ?? new Date(NOW).toISOString());
+  updatePersistedState(getWorkspaceLastReadKey(idle.id), idleCreatedAtMs - 60_000);
   return (
-    <StoryScaffold activeWorkspaceId="ws-active">
+    // storybook-static-subagent-connectors freezes the active sub-agent connector
+    // animation for this gallery (see globals.css) so snapshots don't race the
+    // infinite stroke-dashoffset/translate animation to a random frame.
+    <StoryScaffold
+      activeWorkspaceId="ws-active"
+      rowContainerClassName="storybook-static-subagent-connectors space-y-1"
+    >
       <GallerySection label="Middle">
         <WorkspaceRow workspace={idle} rowRenderMeta={createSubAgentRowRenderMeta("middle")} />
       </GallerySection>
@@ -584,6 +597,19 @@ export const SubAgentStates: Story = {
   args: undefined as never,
   name: "SubAgent States/Gallery",
   render: renderSubAgentGallery,
+  // ws-active streams asynchronously: the scaffold's onChat emits stream-start
+  // through a fire-and-forget store subscription (ensureActiveOnChatSubscription
+  // → void runOnChatSubscription), which flips its rows to the "active" visual
+  // state (success-colored status dot). With no play() Chromatic races that
+  // async transition and captures the dot as active-or-not at random. Wait for
+  // the settled signal so every snapshot captures the same frame.
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      if (!canvasElement.querySelector(".workspace-status-dot-active")) {
+        throw new Error("ws-active streaming status dot has not settled yet");
+      }
+    });
+  },
 };
 
 export const AppSidebarThreeActiveSubAgents: Story = {
