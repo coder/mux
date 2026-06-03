@@ -1,5 +1,5 @@
 import { describe, it, expect, test } from "bun:test";
-import { isMac, matchesKeybind, KEYBINDS } from "./keybinds";
+import { isMac, matchesKeybind, isKeybindDeprecated, KEYBINDS } from "./keybinds";
 import type { Keybind } from "@/common/types/keybind";
 
 // Helper to create a minimal keyboard event
@@ -82,6 +82,47 @@ describe("CYCLE_AGENT keybind (Ctrl/Cmd+.)", () => {
     globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
     const event = createEvent({ key: ">", code: "Period", metaKey: true, shiftKey: true });
     expect(matchesKeybind(event, KEYBINDS.CYCLE_AGENT)).toBe(true);
+  });
+});
+
+describe("thinking adjustment keybinds (Ctrl/Cmd+Shift+[ and ])", () => {
+  it("INCREASE_THINKING matches Ctrl+Shift+] via the BracketRight code", () => {
+    globalThis.window = { api: { platform: "linux" } } as unknown as Window & typeof globalThis;
+    // Shift turns "]" into "}", so matching must key off event.code, not event.key.
+    const event = createEvent({ key: "}", code: "BracketRight", ctrlKey: true, shiftKey: true });
+    expect(matchesKeybind(event, KEYBINDS.INCREASE_THINKING)).toBe(true);
+  });
+
+  it("DECREASE_THINKING matches Cmd+Shift+[ via the BracketLeft code on macOS", () => {
+    globalThis.window = { api: { platform: "darwin" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: "{", code: "BracketLeft", metaKey: true, shiftKey: true });
+    expect(matchesKeybind(event, KEYBINDS.DECREASE_THINKING)).toBe(true);
+  });
+
+  it("requires Shift (plain Ctrl+] does not increase)", () => {
+    globalThis.window = { api: { platform: "linux" } } as unknown as Window & typeof globalThis;
+    const event = createEvent({ key: "]", code: "BracketRight", ctrlKey: true });
+    expect(matchesKeybind(event, KEYBINDS.INCREASE_THINKING)).toBe(false);
+  });
+
+  it("does not collide with NAVIGATE_BACK/FORWARD (which omit Shift)", () => {
+    globalThis.window = { api: { platform: "linux" } } as unknown as Window & typeof globalThis;
+    // Ctrl+[ (history back) must not trigger a thinking decrease...
+    const back = createEvent({ key: "[", code: "BracketLeft", ctrlKey: true });
+    expect(matchesKeybind(back, KEYBINDS.NAVIGATE_BACK)).toBe(true);
+    expect(matchesKeybind(back, KEYBINDS.DECREASE_THINKING)).toBe(false);
+    // ...and Ctrl+Shift+[ (thinking decrease) must not trigger history back.
+    const decrease = createEvent({ key: "{", code: "BracketLeft", ctrlKey: true, shiftKey: true });
+    expect(matchesKeybind(decrease, KEYBINDS.DECREASE_THINKING)).toBe(true);
+    expect(matchesKeybind(decrease, KEYBINDS.NAVIGATE_BACK)).toBe(false);
+  });
+});
+
+describe("isKeybindDeprecated", () => {
+  it("flags the legacy TOGGLE_THINKING cycle but not the directional keybinds", () => {
+    expect(isKeybindDeprecated(KEYBINDS.TOGGLE_THINKING)).toBe(true);
+    expect(isKeybindDeprecated(KEYBINDS.INCREASE_THINKING)).toBe(false);
+    expect(isKeybindDeprecated(KEYBINDS.DECREASE_THINKING)).toBe(false);
   });
 });
 
