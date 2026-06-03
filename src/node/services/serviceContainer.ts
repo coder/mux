@@ -57,6 +57,7 @@ import {
   createCoderUnarchiveHook,
 } from "@/node/runtime/coderLifecycleHooks";
 import { createWorktreeArchiveHook } from "@/node/runtime/worktreeLifecycleHooks";
+import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
 import { setSshPromptService } from "@/node/runtime/sshConnectionPool";
 import { setSshPromptService as setSSH2SshPromptService } from "@/node/runtime/SSH2ConnectionPool";
@@ -79,6 +80,7 @@ import type { ExternalSecretResolver } from "@/common/types/secrets";
  * Services are accessed via the ORPC context object.
  */
 export class ServiceContainer {
+  public readonly workflowRuntimeFactory = new QuickJSRuntimeFactory();
   public readonly config: Config;
   // Core services — instantiated by createCoreServices (shared with `mux run` CLI)
   private readonly historyService: CoreServices["historyService"];
@@ -484,6 +486,7 @@ export class ServiceContainer {
     const resolveOnePasswordService = () => this.onePasswordService;
 
     return {
+      workflowRuntimeFactory: this.workflowRuntimeFactory,
       config: this.config,
       aiService: this.aiService,
       projectService: this.projectService,

@@ -14,6 +14,12 @@ import {
   createUserMessage,
 } from "@/browser/stories/mocks/messages";
 import {
+  WORKFLOW_RESULT_METADATA_TYPE,
+  WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
+  WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
+  buildWorkflowRunCardMessage,
+} from "@/common/utils/workflowRunMessages";
+import {
   createFileEditTool,
   createFileReadTool,
   createWebSearchTool,
@@ -193,6 +199,90 @@ export const Conversation: AppStory = {
         ];
 
         return setupSimpleChatStory({ messages });
+      }}
+    />
+  ),
+};
+
+export const WorkflowTriggeredCommand: AppStory = {
+  parameters: { chromatic: { disableSnapshot: true } },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        collapseLeftSidebar();
+        const rawCommand = "/shallow-review what do you think of workflows";
+        const runId = "wfr_workflow_trigger_story";
+        const workflowRun = {
+          id: runId,
+          workspaceId: "ws-workflow-trigger",
+          definition: {
+            name: "shallow-review",
+            description: "Quick workflow review",
+            scope: "scratch" as const,
+            sourcePath: "/tmp/mux/sessions/workspace/workflows/shallow-review.js",
+            executable: true,
+          },
+          definitionSource: "export default function workflow() { return null; }",
+          definitionHash: "sha256:workflow-trigger-story",
+          args: { input: "what do you think of workflows" },
+          status: "running" as const,
+          createdAt: "2026-05-29T00:00:00.000Z",
+          updatedAt: "2026-05-29T00:00:01.000Z",
+          events: [
+            {
+              sequence: 1,
+              type: "status" as const,
+              at: "2026-05-29T00:00:00.000Z",
+              status: "running" as const,
+            },
+            { sequence: 2, type: "phase" as const, at: "2026-05-29T00:00:01.000Z", name: "gather" },
+          ],
+          steps: [],
+        };
+        const workflowCard = buildWorkflowRunCardMessage(
+          { name: "shallow-review", args: workflowRun.args },
+          { runId, status: workflowRun.status, result: null, run: workflowRun },
+          STABLE_TIMESTAMP - 295000
+        ) as ChatMuxMessage;
+        workflowCard.type = "message";
+        workflowCard.metadata = {
+          historySequence: 2,
+          timestamp: STABLE_TIMESTAMP - 295000,
+          synthetic: true,
+          uiVisible: true,
+          muxMetadata: { type: WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE, runId },
+        };
+
+        return setupSimpleChatStory({
+          workspaceId: "ws-workflow-trigger",
+          messages: [
+            createUserMessage("workflow-command", rawCommand, {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+              muxMetadata: {
+                type: WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
+                rawCommand,
+                commandPrefix: "/shallow-review",
+                runId,
+              },
+            }),
+            workflowCard,
+            createUserMessage(
+              "workflow-result-hidden",
+              `${rawCommand}\n\n<mux_workflow_result>{}</mux_workflow_result>`,
+              {
+                historySequence: 3,
+                timestamp: STABLE_TIMESTAMP - 290000,
+                muxMetadata: {
+                  type: WORKFLOW_RESULT_METADATA_TYPE,
+                  rawCommand,
+                  commandPrefix: "/shallow-review",
+                  runId,
+                },
+              }
+            ),
+          ],
+        });
       }}
     />
   ),

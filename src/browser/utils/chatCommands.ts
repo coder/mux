@@ -23,6 +23,7 @@ import {
 } from "@/common/types/message";
 import type { GoalRecordV1, GoalSetError, GoalStatus } from "@/common/types/goal";
 import type { ReviewNoteData } from "@/common/types/review";
+import type { WorkflowRunRecord } from "@/common/types/workflow";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { RUNTIME_MODE, parseRuntimeModeAndHost } from "@/common/types/runtime";
@@ -78,6 +79,10 @@ import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
 import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
 import { SIDE_QUESTION_COMMAND } from "@/common/utils/messages/sideQuestion";
+import {
+  WORKFLOW_RESULT_METADATA_TYPE,
+  buildWorkflowResultContextMessage,
+} from "@/common/utils/workflowRunMessages";
 
 const BUILT_IN_MODEL_SET = new Set<string>(Object.values(KNOWN_MODELS).map((model) => model.id));
 
@@ -158,6 +163,12 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   projectPath?: string | null;
   openSettings?: (section?: string) => void;
 
+  /** Original slash command text as typed, for durable command display. */
+  rawInput?: string;
+
+  /** Current dynamic-workflows experiment assignment for executable workflow commands. */
+  dynamicWorkflowsEnabled?: boolean;
+
   // Global Actions
   setPreferredModel: (model: string) => void;
   setVimEnabled: (cb: (prev: boolean) => boolean) => void;
@@ -180,6 +191,68 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   onCheckReviews?: (reviewIds: string[]) => void;
   /** Review IDs that are attached (for marking as checked on success) */
   attachedReviewIds?: string[];
+}
+
+const WORKFLOW_COMMAND_SUPERSEDED_MESSAGE = "Workflow command was superseded.";
+const WORKFLOW_TERMINAL_STATUSES = new Set(["completed", "failed", "interrupted"]);
+const WORKFLOW_POLL_INTERVAL_MS = 2_000;
+const WORKFLOW_POLL_TIMEOUT_MS = 30 * 60_000;
+
+function isWorkflowTerminalStatus(status: string): boolean {
+  return WORKFLOW_TERMINAL_STATUSES.has(status);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function waitForWorkflowTerminalRun(input: {
+  client: RouterClient<AppRouter>;
+  workspaceId: string;
+  runId: string;
+  initialStatus: string;
+  isCurrent?: () => boolean;
+}): Promise<WorkflowRunRecord | null> {
+  const startedAt = Date.now();
+  let run = await input.client.workflows.getRun({
+    workspaceId: input.workspaceId,
+    runId: input.runId,
+  });
+  let status = run?.status ?? input.initialStatus;
+
+  while (!isWorkflowTerminalStatus(status)) {
+    if (input.isCurrent?.() === false) {
+      throw new Error(WORKFLOW_COMMAND_SUPERSEDED_MESSAGE);
+    }
+    if (Date.now() - startedAt > WORKFLOW_POLL_TIMEOUT_MS) {
+      throw new Error(`Timed out waiting for workflow ${input.runId} to finish.`);
+    }
+    await delay(WORKFLOW_POLL_INTERVAL_MS);
+    run = await input.client.workflows.getRun({
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+    });
+    status = run?.status ?? status;
+  }
+
+  if (input.isCurrent?.() === false) {
+    throw new Error(WORKFLOW_COMMAND_SUPERSEDED_MESSAGE);
+  }
+
+  return run;
+}
+
+function parseWorkflowSlashArgs(argsText: string | undefined): unknown {
+  const trimmed = argsText?.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    return JSON.parse(trimmed) as unknown;
+  }
+
+  return { input: trimmed };
 }
 
 // ============================================================================
@@ -316,6 +389,132 @@ export async function processSlashCommand(
       message: "Model one-shot is handled in the chat input.",
     });
     return { clearInput: false, toastShown: true };
+  }
+
+  if (parsed.type === "workflow-run") {
+    const workflowsEnabled =
+      context.dynamicWorkflowsEnabled ??
+      isExperimentEnabled(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS) === true;
+    if (!workflowsEnabled) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: "Dynamic workflows are disabled",
+      });
+      return { clearInput: false, toastShown: true };
+    }
+
+    const activeClient = requireClient();
+    if (!activeClient) {
+      return { clearInput: false, toastShown: true };
+    }
+    if (!context.workspaceId) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: "No workspace selected",
+      });
+      return { clearInput: false, toastShown: true };
+    }
+
+    let args: unknown;
+    try {
+      args = parseWorkflowSlashArgs(parsed.argsText);
+    } catch (error) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: error instanceof Error ? error.message : "Invalid workflow arguments",
+      });
+      return { clearInput: false, toastShown: true };
+    }
+
+    const workspaceId = context.workspaceId;
+    const rawInput = context.rawInput?.trim();
+    const rawCommand = rawInput && rawInput.length > 0 ? rawInput : `/${parsed.name}`;
+    const commandPrefix = rawCommand.split(/\s+/u)[0] ?? `/${parsed.name}`;
+    const isCurrent =
+      context.asyncCommandToken != null && context.isAsyncCommandCurrent != null
+        ? () => context.isAsyncCommandCurrent?.(context.asyncCommandToken!, workspaceId) !== false
+        : undefined;
+
+    setInput("");
+    context.setSendingState(true);
+    try {
+      const result = await activeClient.workflows.start({
+        workspaceId,
+        name: parsed.name,
+        runInBackground: true,
+        args,
+        rawCommand,
+      });
+      const run = await waitForWorkflowTerminalRun({
+        client: activeClient,
+        workspaceId,
+        runId: result.runId,
+        initialStatus: result.status,
+        isCurrent,
+      });
+      const terminalStatus = run?.status ?? result.status;
+      if (terminalStatus === "interrupted") {
+        trackCommandUsed("workflow");
+        setToast({
+          id: Date.now().toString(),
+          type: "success",
+          message: `Workflow ${parsed.name} interrupted`,
+        });
+        return { clearInput: true, toastShown: true };
+      }
+      const workflowResultMessage = buildWorkflowResultContextMessage({
+        rawCommand,
+        name: parsed.name,
+        runId: result.runId,
+        status: terminalStatus,
+        result: result.result,
+        run,
+      });
+      // Keep workflow outputs model-visible but UI-hidden: rawCommand drives transcript display,
+      // while the XML block below gives the main agent the completed workflow result.
+      const sendResult = await activeClient.workspace.sendMessage({
+        workspaceId,
+        message: workflowResultMessage,
+        options: {
+          ...context.sendMessageOptions,
+          muxMetadata: {
+            type: WORKFLOW_RESULT_METADATA_TYPE,
+            rawCommand,
+            commandPrefix,
+            runId: result.runId,
+            requestedModel: context.sendMessageOptions.model,
+          },
+        },
+      });
+      if (!sendResult.success) {
+        throw new Error("Failed to send workflow result to the agent");
+      }
+      context.onMessageSent?.(context.sendMessageOptions.queueDispatchMode ?? "tool-end");
+      trackCommandUsed("workflow");
+      setToast({
+        id: Date.now().toString(),
+        type: "success",
+        message: `Workflow ${parsed.name} ${terminalStatus}`,
+      });
+      return { clearInput: true, toastShown: true };
+    } catch (error) {
+      if (error instanceof Error && error.message === WORKFLOW_COMMAND_SUPERSEDED_MESSAGE) {
+        return { clearInput: true, toastShown: false };
+      }
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to run workflow",
+      });
+      const currentInput = context.getInput?.();
+      const shouldRestoreCommand = currentInput === undefined || currentInput.trim().length === 0;
+      return { clearInput: !shouldRestoreCommand, toastShown: true };
+    } finally {
+      context.setSendingState(false);
+    }
   }
 
   if (parsed.type === "debug-llm-request") {

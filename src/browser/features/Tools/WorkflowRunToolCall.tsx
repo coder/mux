@@ -1,0 +1,759 @@
+import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+
+import { APIContext, type APIClient } from "@/browser/contexts/API";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
+import {
+  useOptionalCommandRegistry,
+  type CommandAction,
+} from "@/browser/contexts/CommandRegistryContext";
+import type {
+  WorkflowDefinitionDescriptor,
+  WorkflowRunEvent,
+  WorkflowRunRecord,
+  WorkflowStepRecord,
+} from "@/common/types/workflow";
+import type {
+  WorkflowRunToolArgs,
+  WorkflowRunToolResult,
+  WorkflowRunToolSuccessResult,
+} from "@/common/types/tools";
+import assert from "@/common/utils/assert";
+
+import {
+  ToolContainer,
+  ToolHeader,
+  ExpandIcon,
+  ToolName,
+  StatusIndicator,
+  ToolDetails,
+  ToolIcon,
+  ErrorBox,
+} from "./Shared/ToolPrimitives";
+import {
+  getStatusDisplay,
+  isToolErrorResult,
+  type ToolStatus,
+  useToolExpansion,
+} from "./Shared/toolUtils";
+import { HighlightedCode } from "./Shared/HighlightedCode";
+import {
+  WorkflowDefinitionCard,
+  WorkflowJsonBlock,
+  WorkflowKindBadge,
+  WorkflowSection,
+  WORKFLOW_ACTION_BUTTON_CLASS,
+  formatWorkflowSavedMessage,
+  type WorkflowPromotionTarget,
+} from "./WorkflowDefinitionToolCall";
+import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
+
+interface WorkflowRunToolCallProps {
+  args: WorkflowRunToolArgs;
+  result?: WorkflowRunToolResult;
+  status?: ToolStatus;
+}
+
+type WorkflowRunAction = "interrupt" | "resume";
+
+async function updateWorkflowRunFromAction(input: {
+  api: APIClient;
+  workspaceId: string;
+  runId: string;
+  action: WorkflowRunAction;
+  setActionError: React.Dispatch<React.SetStateAction<string | null>>;
+  setRefreshedRun: React.Dispatch<React.SetStateAction<WorkflowRunRecord | null>>;
+  setResumingRunId: React.Dispatch<React.SetStateAction<string | null>>;
+}) {
+  input.setActionError(null);
+  let resumeRequestAccepted = false;
+  try {
+    const nextRun =
+      input.action === "interrupt"
+        ? await input.api.workflows.interrupt({
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+          })
+        : await input.api.workflows.resume({
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+          });
+    if (input.action === "resume") {
+      resumeRequestAccepted = true;
+      input.setResumingRunId(input.runId);
+    }
+    if ("id" in nextRun) {
+      input.setRefreshedRun(nextRun);
+      if (nextRun.status !== "interrupted") {
+        input.setResumingRunId(null);
+      }
+      return;
+    }
+    const refreshed = await input.api.workflows.getRun({
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+    });
+    if (refreshed != null) {
+      input.setRefreshedRun(refreshed);
+      if (refreshed.status !== "interrupted") {
+        input.setResumingRunId(null);
+      }
+    }
+  } catch (error) {
+    if (input.action === "resume" && !resumeRequestAccepted) {
+      input.setResumingRunId(null);
+    }
+    input.setActionError(
+      error instanceof Error ? error.message : `Failed to ${input.action} workflow`
+    );
+  }
+}
+
+function isWorkflowRunSuccessResult(
+  value: WorkflowRunToolResult | undefined
+): value is WorkflowRunToolSuccessResult {
+  return value != null && !isToolErrorResult(value);
+}
+
+function getReportMarkdown(value: unknown): string | null {
+  if (value != null && typeof value === "object") {
+    const reportMarkdown = (value as Record<string, unknown>).reportMarkdown;
+    if (typeof reportMarkdown === "string" && reportMarkdown.trim().length > 0) {
+      return reportMarkdown;
+    }
+  }
+  return null;
+}
+
+function getStructuredOutput(value: unknown): unknown {
+  if (value != null && typeof value === "object") {
+    return (value as Record<string, unknown>).structuredOutput;
+  }
+  return undefined;
+}
+
+function getEventKey(event: WorkflowRunEvent): string {
+  return `${event.sequence}:${event.type}`;
+}
+
+function getWorkflowEventLabel(event: WorkflowRunEvent): string {
+  switch (event.type) {
+    case "phase":
+      return event.name;
+    case "log":
+      return event.message;
+    case "task":
+      return `${event.stepId} / ${event.taskId} / ${event.status}`;
+    case "validation": {
+      const verdict = event.success ? "passed" : "failed";
+      return event.message
+        ? `${event.stepId} validation ${verdict}: ${event.message}`
+        : `${event.stepId} validation ${verdict}`;
+    }
+    case "error":
+      return event.message;
+    case "status":
+      return event.status;
+    case "result":
+      return "Result recorded";
+  }
+}
+
+function getWorkflowEventDetail(event: WorkflowRunEvent): unknown {
+  switch (event.type) {
+    case "phase":
+      return event.details;
+    case "log":
+      return event.data;
+    case "result":
+      return event.result;
+    case "task":
+    case "validation":
+    case "error":
+    case "status":
+      return undefined;
+  }
+}
+
+function getEventTone(event: WorkflowRunEvent): "normal" | "success" | "warning" {
+  if (event.type === "error") {
+    return "warning";
+  }
+  if (event.type === "validation") {
+    return event.success ? "success" : "warning";
+  }
+  if (event.type === "result") {
+    return "success";
+  }
+  return "normal";
+}
+
+function getEventToneClass(event: WorkflowRunEvent): string {
+  switch (getEventTone(event)) {
+    case "success":
+      return "text-success";
+    case "warning":
+      return "text-warning";
+    case "normal":
+      return "text-muted";
+  }
+}
+
+function WorkflowDisclosureSection(props: {
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <details className={`group mb-2 ${props.className ?? ""}`}>
+      <summary className="text-muted hover:text-foreground flex cursor-pointer list-none items-center gap-2 text-[10px] tracking-wide uppercase [&::-webkit-details-marker]:hidden">
+        <span className="transition-transform group-open:rotate-90">▶</span>
+        <span>{props.title}</span>
+      </summary>
+      <div className="mt-1">{props.children}</div>
+    </details>
+  );
+}
+
+function getEventRowClass(event: WorkflowRunEvent): string {
+  if (event.type === "phase") {
+    return "border-l-2 border-plan-mode/70 bg-plan-mode-alpha";
+  }
+  return "border-l-2 border-transparent";
+}
+
+function getEventTypeClass(event: WorkflowRunEvent): string {
+  if (event.type === "phase") {
+    return "rounded border border-plan-mode/40 bg-plan-mode-alpha px-1 py-0.5 text-plan-mode-light";
+  }
+  return getEventToneClass(event);
+}
+
+function findTaskStepForEvent(
+  event: WorkflowRunEvent,
+  steps: readonly WorkflowStepRecord[]
+): WorkflowStepRecord | null {
+  if (event.type !== "task") {
+    return null;
+  }
+
+  const byTaskId = steps.find((step) => step.taskId === event.taskId);
+  if (byTaskId != null) {
+    return byTaskId;
+  }
+  return steps.find((step) => step.stepId === event.stepId) ?? null;
+}
+
+function getTaskReportMarkdown(
+  event: WorkflowRunEvent,
+  steps: readonly WorkflowStepRecord[]
+): string | null {
+  const step = findTaskStepForEvent(event, steps);
+  const reportMarkdown = step?.result?.reportMarkdown;
+  return typeof reportMarkdown === "string" && reportMarkdown.trim().length > 0
+    ? reportMarkdown
+    : null;
+}
+
+function WorkflowEventTooltip(props: {
+  event: WorkflowRunEvent;
+  displayIndex: number;
+  label: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="text-muted counter-nums-mono text-[10px]">
+        Display #{props.displayIndex} · Raw event #{props.event.sequence}
+      </div>
+      <div className="text-foreground text-[11px] leading-snug">{props.label}</div>
+    </div>
+  );
+}
+
+function WorkflowEventRow(props: {
+  event: WorkflowRunEvent;
+  displayIndex: number;
+  steps: readonly WorkflowStepRecord[];
+}) {
+  const event = props.event;
+  const detail = getWorkflowEventDetail(event);
+  const taskReportMarkdown = getTaskReportMarkdown(event, props.steps);
+  const isExpandable = detail !== undefined || taskReportMarkdown != null;
+  const clickableCursorClass = isExpandable ? "cursor-pointer" : "";
+  const label = getWorkflowEventLabel(event);
+  const row = (
+    <div
+      className={`grid ${clickableCursorClass} grid-cols-[3rem_4.75rem_minmax(0,1fr)] items-center gap-2 px-2 py-1 text-[10px] ${getEventRowClass(event)}`}
+    >
+      {/* Keep the tooltip trigger on the sequence cell so expandable row text still advertises clickability. */}
+      <TooltipIfPresent
+        tooltip={
+          <WorkflowEventTooltip event={event} displayIndex={props.displayIndex} label={label} />
+        }
+        side="top"
+        align="start"
+      >
+        <span
+          className="text-muted counter-nums-mono w-fit cursor-help"
+          aria-label={`Raw event #${event.sequence}`}
+        >
+          #{props.displayIndex}
+        </span>
+      </TooltipIfPresent>
+      <span
+        className={`w-fit ${clickableCursorClass} font-mono uppercase ${getEventTypeClass(event)}`}
+      >
+        {event.type}
+      </span>
+      <span className={`text-foreground ${clickableCursorClass} truncate`}>{label}</span>
+    </div>
+  );
+
+  if (!isExpandable) {
+    return <li className="hover:bg-background/50">{row}</li>;
+  }
+
+  return (
+    <li className="hover:bg-background/50">
+      <details className="group">
+        <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+          {row}
+        </summary>
+        {taskReportMarkdown != null ? (
+          <div className="border-border bg-background/40 mx-2 mb-2 rounded border p-2 text-[11px]">
+            <MarkdownRenderer content={taskReportMarkdown} />
+          </div>
+        ) : (
+          <WorkflowJsonBlock value={detail} className="mx-2 mb-2 max-h-[140px]" />
+        )}
+      </details>
+    </li>
+  );
+}
+
+const AUTO_COLLAPSE_WORKFLOW_STATUSES = new Set(["completed"]);
+
+const REFRESHING_WORKFLOW_STATUSES = new Set(["pending", "running", "backgrounded"]);
+
+function getLatestResultEvent(run: WorkflowRunRecord | null | undefined): unknown {
+  return run?.events.findLast((event) => event.type === "result")?.result;
+}
+
+function shouldRefreshWorkflow(status: string): boolean {
+  return REFRESHING_WORKFLOW_STATUSES.has(status);
+}
+
+function toToolStatus(status: string): ToolStatus {
+  if (status === "running") {
+    return "executing";
+  }
+  if (
+    status === "pending" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "interrupted" ||
+    status === "backgrounded"
+  ) {
+    return status;
+  }
+  return "pending";
+}
+
+export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
+  args,
+  result,
+  status = "pending",
+}) => {
+  const apiState = useContext(APIContext);
+  const commandRegistry = useOptionalCommandRegistry();
+  const { expanded, setExpanded, toggleExpanded } = useToolExpansion(true);
+  const userToggledExpansionRef = useRef(false);
+  const autoCollapseRunIdRef = useRef<string | undefined>(undefined);
+  const registerCommandSource = commandRegistry?.registerSource;
+  const errorResult = isToolErrorResult(result) ? result : null;
+  const successResult = isWorkflowRunSuccessResult(result) ? result : null;
+  const [refreshedRun, setRefreshedRun] = useState<WorkflowRunRecord | null>(null);
+  const [resumingRunId, setResumingRunId] = useState<string | null>(null);
+  const baseRun = successResult?.run;
+  const runId = successResult?.runId ?? baseRun?.id;
+  const run = refreshedRun?.id === runId ? refreshedRun : baseRun;
+  const displayStatus = run?.status ?? successResult?.status ?? status;
+  const resultValue = successResult?.result ?? getLatestResultEvent(run);
+  const reportMarkdown = getReportMarkdown(resultValue);
+  const structuredOutput = getStructuredOutput(resultValue);
+  const invocationArgs = run?.args ?? args.args ?? {};
+  const events = run?.events ?? [];
+  const interestingEvents = events.filter(
+    (event) => event.type !== "status" && event.type !== "result"
+  );
+  const headerStatus = toToolStatus(displayStatus);
+
+  const toggleWorkflowExpanded = () => {
+    userToggledExpansionRef.current = true;
+    toggleExpanded();
+  };
+  useLayoutEffect(() => {
+    if (autoCollapseRunIdRef.current !== runId) {
+      autoCollapseRunIdRef.current = runId;
+      userToggledExpansionRef.current = false;
+    }
+    // Completed workflow runs can contain large reports and event logs. Collapse them once for
+    // scanability, but never override an explicit user expansion/collapse choice.
+    if (AUTO_COLLAPSE_WORKFLOW_STATUSES.has(displayStatus) && !userToggledExpansionRef.current) {
+      setExpanded(false);
+    }
+  }, [displayStatus, runId, setExpanded]);
+
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [promotedDefinition, setPromotedDefinition] = useState<WorkflowDefinitionDescriptor | null>(
+    null
+  );
+  const [savingPromotionTarget, setSavingPromotionTarget] =
+    useState<WorkflowPromotionTarget | null>(null);
+  const savingPromotionTargetRef = useRef<WorkflowPromotionTarget | null>(null);
+  const displayDefinition = promotedDefinition ?? run?.definition;
+  const canInterrupt =
+    apiState?.api != null &&
+    run?.workspaceId != null &&
+    (displayStatus === "running" || displayStatus === "backgrounded");
+  const canResume =
+    apiState?.api != null && run?.workspaceId != null && displayStatus === "interrupted";
+  const canPromote =
+    run?.workspaceId != null && run.definition.scope === "scratch" && promotedDefinition == null;
+  const canSavePromotedWorkflow =
+    apiState?.api != null &&
+    runId != null &&
+    canPromote &&
+    savingPromotionTarget == null &&
+    savingPromotionTargetRef.current == null;
+
+  const updateRunFromAction = async (action: WorkflowRunAction) => {
+    if (apiState?.api == null || run?.workspaceId == null || runId == null) {
+      return;
+    }
+    await updateWorkflowRunFromAction({
+      api: apiState.api,
+      workspaceId: run.workspaceId,
+      runId,
+      action,
+      setActionError,
+      setRefreshedRun,
+      setResumingRunId,
+    });
+  };
+
+  const saveScratchWorkflow = (location: WorkflowPromotionTarget) => {
+    const api = apiState?.api;
+    const sourceDefinition = run?.definition;
+    if (
+      api == null ||
+      run?.workspaceId == null ||
+      runId == null ||
+      sourceDefinition == null ||
+      !canPromote ||
+      savingPromotionTargetRef.current != null
+    ) {
+      return;
+    }
+
+    assert(sourceDefinition.scope === "scratch", "Only scratch workflow runs can be saved");
+    setActionError(null);
+    setSavingPromotionTarget(location);
+    savingPromotionTargetRef.current = location;
+    api.workflows
+      .promoteScratch({
+        workspaceId: run.workspaceId,
+        runId,
+        name: sourceDefinition.name,
+        description: sourceDefinition.description,
+        location,
+        overwrite: false,
+      })
+      .then((descriptor) => {
+        assert(
+          descriptor.scope === location,
+          "promoteScratch returned a descriptor for a different location"
+        );
+        setPromotedDefinition(descriptor);
+      })
+      .catch((error: unknown) => {
+        setActionError(error instanceof Error ? error.message : "Failed to save workflow");
+      })
+      .finally(() => {
+        savingPromotionTargetRef.current = null;
+        setSavingPromotionTarget(null);
+      });
+  };
+
+  const saveScratchWorkflowRef = useRef(saveScratchWorkflow);
+  saveScratchWorkflowRef.current = saveScratchWorkflow;
+
+  useEffect(() => {
+    if (registerCommandSource == null || runId == null || run?.workspaceId == null) {
+      return;
+    }
+
+    const workflowApi = apiState?.api;
+    const workspaceId = run.workspaceId;
+    const runWorkflowAction = async (action: WorkflowRunAction) => {
+      if (workflowApi == null) {
+        return;
+      }
+      await updateWorkflowRunFromAction({
+        api: workflowApi,
+        workspaceId,
+        runId,
+        action,
+        setActionError,
+        setRefreshedRun,
+        setResumingRunId,
+      });
+    };
+
+    const unregister = registerCommandSource(() => {
+      const subtitle = `${args.name} • ${runId}`;
+      const actions: CommandAction[] = [];
+      if (canInterrupt) {
+        actions.push({
+          id: `workflow:${runId}:interrupt`,
+          title: `Interrupt workflow: ${args.name}`,
+          subtitle,
+          section: "Workflows",
+          keywords: ["workflow", "interrupt", "stop", args.name, runId],
+          run: () => runWorkflowAction("interrupt"),
+        });
+      }
+      if (canResume) {
+        actions.push({
+          id: `workflow:${runId}:resume`,
+          title: `Resume workflow: ${args.name}`,
+          subtitle,
+          section: "Workflows",
+          keywords: ["workflow", "resume", "continue", args.name, runId],
+          run: () => runWorkflowAction("resume"),
+        });
+      }
+      if (canPromote) {
+        actions.push(
+          {
+            id: `workflow:${runId}:save-project`,
+            title: `Save workflow to project workflows: ${args.name}`,
+            subtitle,
+            section: "Workflows",
+            keywords: ["workflow", "save", "project", "scratch", args.name, runId],
+            run: () => {
+              userToggledExpansionRef.current = true;
+              setExpanded(true);
+              saveScratchWorkflowRef.current("project");
+            },
+          },
+          {
+            id: `workflow:${runId}:save-global`,
+            title: `Save workflow to global workflows: ${args.name}`,
+            subtitle,
+            section: "Workflows",
+            keywords: ["workflow", "save", "global", "scratch", args.name, runId],
+            run: () => {
+              userToggledExpansionRef.current = true;
+              setExpanded(true);
+              saveScratchWorkflowRef.current("global");
+            },
+          }
+        );
+      }
+      return actions;
+    });
+
+    return unregister;
+  }, [
+    apiState?.api,
+    args.name,
+    canInterrupt,
+    canPromote,
+    canResume,
+    registerCommandSource,
+    run?.workspaceId,
+    runId,
+    setExpanded,
+  ]);
+
+  useEffect(() => {
+    if (
+      apiState?.api == null ||
+      runId == null ||
+      run?.workspaceId == null ||
+      (!shouldRefreshWorkflow(displayStatus) && resumingRunId !== runId)
+    ) {
+      return;
+    }
+
+    let ignore = false;
+    const refresh = async () => {
+      try {
+        const nextRun = await apiState.api.workflows.getRun({
+          workspaceId: run.workspaceId,
+          runId,
+        });
+        if (!ignore && nextRun != null) {
+          setRefreshedRun(nextRun);
+          if (nextRun.status !== "interrupted") {
+            setResumingRunId(null);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to refresh workflow run:", error);
+      }
+    };
+
+    void refresh();
+    const interval = window.setInterval(() => {
+      void refresh();
+    }, 2_000);
+    return () => {
+      ignore = true;
+      window.clearInterval(interval);
+    };
+  }, [apiState?.api, displayStatus, resumingRunId, run?.workspaceId, runId]);
+
+  return (
+    <ToolContainer expanded={expanded}>
+      <ToolHeader onClick={toggleWorkflowExpanded}>
+        <ExpandIcon expanded={expanded}>▶</ExpandIcon>
+        <ToolIcon toolName="workflow_run" />
+        <WorkflowKindBadge />
+        <ToolName>{args.name}</ToolName>
+        <StatusIndicator status={headerStatus}>{getStatusDisplay(headerStatus)}</StatusIndicator>
+      </ToolHeader>
+
+      {expanded && (
+        <ToolDetails>
+          <div className="text-muted mb-2 flex flex-wrap items-center gap-2 text-[10px]">
+            {runId && <span className="font-mono">{runId}</span>}
+            <span>{displayStatus}</span>
+            {displayDefinition?.scope && <span>{displayDefinition.scope}</span>}
+          </div>
+
+          {displayDefinition && (
+            <WorkflowSection title="Definition">
+              <WorkflowDefinitionCard descriptor={displayDefinition} compact />
+            </WorkflowSection>
+          )}
+
+          {/* Large workflow payloads stay collapsed so completed runs remain scannable. */}
+          <WorkflowDisclosureSection title="Arguments">
+            <WorkflowJsonBlock value={invocationArgs} className="max-h-[180px]" />
+          </WorkflowDisclosureSection>
+
+          {run?.definitionSource && (
+            <WorkflowDisclosureSection title="Definition source">
+              <div className="border-border bg-code-bg max-h-[260px] overflow-auto rounded border p-2">
+                <HighlightedCode
+                  language="javascript"
+                  code={run.definitionSource.trimEnd()}
+                  showLineNumbers
+                />
+              </div>
+            </WorkflowDisclosureSection>
+          )}
+
+          {(canInterrupt || canResume || canPromote) && (
+            <div className="mb-2 flex flex-wrap gap-2 text-[10px]">
+              {canInterrupt && (
+                <button
+                  type="button"
+                  className={WORKFLOW_ACTION_BUTTON_CLASS}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void updateRunFromAction("interrupt");
+                  }}
+                >
+                  Interrupt workflow
+                </button>
+              )}
+              {canResume && (
+                <button
+                  type="button"
+                  className={WORKFLOW_ACTION_BUTTON_CLASS}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void updateRunFromAction("resume");
+                  }}
+                >
+                  Resume workflow
+                </button>
+              )}
+              {canPromote && (
+                <>
+                  <button
+                    type="button"
+                    className={WORKFLOW_ACTION_BUTTON_CLASS}
+                    disabled={!canSavePromotedWorkflow}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      saveScratchWorkflow("project");
+                    }}
+                  >
+                    {savingPromotionTarget === "project"
+                      ? "Saving workflow..."
+                      : "Save to project workflows"}
+                  </button>
+                  <button
+                    type="button"
+                    className={WORKFLOW_ACTION_BUTTON_CLASS}
+                    disabled={!canSavePromotedWorkflow}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      saveScratchWorkflow("global");
+                    }}
+                  >
+                    {savingPromotionTarget === "global"
+                      ? "Saving workflow..."
+                      : "Save to global workflows"}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {(promotedDefinition?.scope === "project" || promotedDefinition?.scope === "global") && (
+            <div className="text-success mb-2 text-[10px]">
+              {formatWorkflowSavedMessage(promotedDefinition.scope)}
+            </div>
+          )}
+
+          {actionError && <ErrorBox className="mb-2">{actionError}</ErrorBox>}
+
+          {interestingEvents.length > 0 && (
+            <WorkflowSection title={`Workflow events (${interestingEvents.length})`}>
+              <div className="border-border bg-background/20 max-h-[220px] overflow-y-auto rounded border">
+                <ol className="divide-border/60 divide-y">
+                  {interestingEvents.map((event, index) => (
+                    <WorkflowEventRow
+                      key={getEventKey(event)}
+                      event={event}
+                      displayIndex={index + 1}
+                      steps={run?.steps ?? []}
+                    />
+                  ))}
+                </ol>
+              </div>
+            </WorkflowSection>
+          )}
+
+          {structuredOutput !== undefined && (
+            <WorkflowDisclosureSection title="Structured output" className="mt-2">
+              <WorkflowJsonBlock value={structuredOutput} className="max-h-[220px]" />
+            </WorkflowDisclosureSection>
+          )}
+
+          {reportMarkdown && (
+            <div className="text-[11px]">
+              <MarkdownRenderer content={reportMarkdown} />
+            </div>
+          )}
+
+          {errorResult && <ErrorBox className="mt-2">{errorResult.error}</ErrorBox>}
+        </ToolDetails>
+      )}
+    </ToolContainer>
+  );
+};

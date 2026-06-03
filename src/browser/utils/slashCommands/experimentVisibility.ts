@@ -2,6 +2,7 @@ import { EXPERIMENT_IDS, type ExperimentId } from "@/common/constants/experiment
 
 export interface SlashCommandExperimentSnapshot {
   workspaceHeartbeats: boolean;
+  dynamicWorkflows?: boolean;
 }
 
 export function resolveSlashCommandExperimentValue(
@@ -11,6 +12,8 @@ export function resolveSlashCommandExperimentValue(
   switch (experimentId) {
     case EXPERIMENT_IDS.WORKSPACE_HEARTBEATS:
       return snapshot.workspaceHeartbeats;
+    case EXPERIMENT_IDS.DYNAMIC_WORKFLOWS:
+      return snapshot.dynamicWorkflows;
     default:
       return undefined;
   }

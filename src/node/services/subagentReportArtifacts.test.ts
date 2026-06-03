@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 
 import {
+  readSubagentReportArtifact,
   readSubagentReportArtifactsFile,
   upsertSubagentReportArtifact,
 } from "@/node/services/subagentReportArtifacts";
@@ -40,5 +41,26 @@ describe("subagentReportArtifacts", () => {
 
     expect(entry).toBeDefined();
     expect(entry?.reportTokenEstimate).toBe(100);
+  });
+
+  test("upsertSubagentReportArtifact preserves structured output", async () => {
+    const workspaceId = "parent-1";
+    const childTaskId = "child-structured";
+    const structuredOutput = { claims: ["durable"], confidence: 0.8 };
+
+    await upsertSubagentReportArtifact({
+      workspaceId,
+      workspaceSessionDir: testDir,
+      childTaskId,
+      parentWorkspaceId: workspaceId,
+      ancestorWorkspaceIds: [workspaceId],
+      reportMarkdown: "structured report",
+      structuredOutput,
+      nowMs: Date.now(),
+    });
+
+    const artifact = await readSubagentReportArtifact(testDir, childTaskId);
+
+    expect(artifact?.structuredOutput).toEqual(structuredOutput);
   });
 });

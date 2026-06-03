@@ -410,6 +410,18 @@ describe("TOOL_DEFINITIONS", () => {
     expect(tools).toContain("skills_catalog_read");
   });
 
+  it("only includes workflow tools when dynamic workflows are enabled", () => {
+    const disabledTools = getAvailableTools("openai:gpt-4o", { enableDynamicWorkflows: false });
+    expect(disabledTools).not.toContain("workflow_list");
+    expect(disabledTools).not.toContain("workflow_read");
+    expect(disabledTools).not.toContain("workflow_run");
+
+    const enabledTools = getAvailableTools("openai:gpt-4o", { enableDynamicWorkflows: true });
+    expect(enabledTools).toContain("workflow_list");
+    expect(enabledTools).toContain("workflow_read");
+    expect(enabledTools).toContain("workflow_run");
+  });
+
   it("agent_skill_write schema rejects an advertise tool argument (advertise is authored in content)", () => {
     const parsed = TOOL_DEFINITIONS.agent_skill_write.schema.safeParse({
       name: "demo-skill",

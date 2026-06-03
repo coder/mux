@@ -15,6 +15,7 @@ import {
 import type { Toast } from "@/browser/features/ChatInput/ChatInputToast";
 import { ConnectionStatusToast } from "@/browser/components/ConnectionStatusToast/ConnectionStatusToast";
 import { ChatInputToast } from "@/browser/features/ChatInput/ChatInputToast";
+import type { WorkflowDefinitionDescriptor } from "@/common/types/workflow";
 import type { SendMessageError } from "@/common/types/errors";
 import { createErrorToast } from "@/browser/features/ChatInput/ChatInputToasts";
 import { ConfirmationModal } from "@/browser/components/ConfirmationModal/ConfirmationModal";
@@ -69,6 +70,10 @@ import {
   processSlashCommand,
   type SlashCommandContext,
 } from "@/browser/utils/chatCommands";
+import {
+  addWorkflowRunCardMessageForRun,
+  getWorkflowRunCardProjection,
+} from "@/browser/utils/workflowRunMessages";
 import { Button } from "@/browser/components/Button/Button";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -97,6 +102,7 @@ import { AgentModePicker } from "@/browser/components/AgentModePicker/AgentModeP
 import { ContextUsageIndicatorButton } from "@/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
 import {
   useOptionalWorkspaceSidebarState,
+  useWorkspaceStoreRaw,
   useWorkspaceUsage,
 } from "@/browser/stores/WorkspaceStore";
 import { getPlaceholderTip } from "./placeholderTips";
@@ -257,6 +263,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const creationProject =
     variant === "creation" ? userProjects.get(creationParentProjectPath) : undefined;
   const [thinkingLevel] = useThinkingLevel();
+  const dynamicWorkflowsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const workspaceHeartbeatsExperimentEnabled = useExperimentValue(
     EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
   );
@@ -272,6 +279,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     asyncCommandScopeRef.current = { variant, workspaceId };
   }, [variant, workspaceId]);
 
+  const store = useWorkspaceStoreRaw();
   const workspaceSidebarState = useOptionalWorkspaceSidebarState(workspaceId);
   const workspaceGoal = workspaceSidebarState?.goal ?? null;
 
@@ -367,6 +375,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [atMentionSuggestions, setAtMentionSuggestions] = useState<SlashSuggestion[]>([]);
   const [showSkillSuggestions, setShowSkillSuggestions] = useState(false);
   const [skillSuggestions, setSkillSuggestions] = useState<SlashSuggestion[]>([]);
+  const projectedWorkflowRunCardKeysRef = useRef(new Set<string>());
+  const workflowsRequestIdRef = useRef(0);
   const agentSkillsRequestIdRef = useRef(0);
   const atMentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const atMentionRequestIdRef = useRef(0);
@@ -383,6 +393,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [showSymbolSuggestions, setShowSymbolSuggestions] = useState(false);
   const [symbolSuggestions, setSymbolSuggestions] = useState<SlashSuggestion[]>([]);
   const lastSymbolQueryRef = useRef<string>("");
+  const [workflowDefinitionDescriptors, setWorkflowDefinitionDescriptors] = useState<
+    WorkflowDefinitionDescriptor[]
+  >([]);
   const [agentSkillDescriptors, setAgentSkillDescriptors] = useState<AgentSkillDescriptor[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   // State for destructive command confirmation modal (currently only /clear).
@@ -890,6 +903,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           subProjectPath: creationSubProjectPath,
           onWorkspaceCreated: props.onWorkspaceCreated,
           message: creationNameMessage,
+          dynamicWorkflowsEnabled: dynamicWorkflowsExperimentEnabled,
           draftId: props.pendingDraftId,
           userModel: preferredModel,
         }
@@ -1468,15 +1482,24 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   useLayoutEffect(() => {
     const suggestions = getSlashCommandSuggestions(input, {
       agentSkills: agentSkillDescriptors,
+      workflows: dynamicWorkflowsExperimentEnabled ? workflowDefinitionDescriptors : [],
       variant,
       isExperimentEnabled: (experimentId) =>
         resolveSlashCommandExperimentValue(experimentId, {
           workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
+          dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
         }),
     });
     setCommandSuggestions((prev) => replaceSuggestions(prev, suggestions));
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, agentSkillDescriptors, variant, workspaceHeartbeatsExperimentEnabled]);
+  }, [
+    input,
+    agentSkillDescriptors,
+    workflowDefinitionDescriptors,
+    variant,
+    workspaceHeartbeatsExperimentEnabled,
+    dynamicWorkflowsExperimentEnabled,
+  ]);
 
   // Watch input/cursor for `\symbol` backslash commands and surface the menu.
   useLayoutEffect(() => {
@@ -1508,8 +1531,74 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     isExperimentEnabled: (experimentId) =>
       resolveSlashCommandExperimentValue(experimentId, {
         workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
+        dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
       }),
   });
+
+  // Load workflow definitions for slash suggestions and slash invocation.
+  useEffect(() => {
+    let isMounted = true;
+    const requestId = ++workflowsRequestIdRef.current;
+
+    const loadWorkflows = async () => {
+      const discoveryInput =
+        variant === "workspace" && workspaceId
+          ? { workspaceId }
+          : variant === "creation" && atMentionProjectPath
+            ? { projectPath: atMentionProjectPath }
+            : null;
+
+      if (!api || !discoveryInput || !dynamicWorkflowsExperimentEnabled) {
+        if (isMounted && workflowsRequestIdRef.current === requestId) {
+          setWorkflowDefinitionDescriptors([]);
+        }
+        return;
+      }
+
+      try {
+        const workflows = await api.workflows.listDefinitions(discoveryInput);
+        const discoveryWorkspaceId = variant === "workspace" && workspaceId ? workspaceId : null;
+        const runs =
+          discoveryWorkspaceId != null
+            ? await api.workflows.listRuns({ workspaceId: discoveryWorkspaceId })
+            : [];
+        if (!isMounted || workflowsRequestIdRef.current !== requestId) {
+          return;
+        }
+        setWorkflowDefinitionDescriptors(Array.isArray(workflows) ? workflows : []);
+        if (discoveryWorkspaceId == null) {
+          return;
+        }
+        const muxMessages = store.getWorkspaceState(discoveryWorkspaceId).muxMessages;
+        for (const run of runs) {
+          const projection = getWorkflowRunCardProjection(muxMessages, run);
+          if (!projection.shouldProject) {
+            continue;
+          }
+          const cardKey = `${discoveryWorkspaceId}:${run.id}:${run.updatedAt}:${run.status}`;
+          if (projectedWorkflowRunCardKeysRef.current.has(cardKey)) {
+            continue;
+          }
+          projectedWorkflowRunCardKeysRef.current.add(cardKey);
+          addWorkflowRunCardMessageForRun(discoveryWorkspaceId, run, {
+            existingMessage: projection.existingMessage,
+          });
+        }
+      } catch (error) {
+        console.error("Failed to load workflow definitions:", error);
+        if (!isMounted || workflowsRequestIdRef.current !== requestId) {
+          return;
+        }
+        setWorkflowDefinitionDescriptors([]);
+      }
+    };
+
+    void loadWorkflows();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [api, variant, workspaceId, atMentionProjectPath, dynamicWorkflowsExperimentEnabled, store]);
 
   // Load agent skills for suggestions
   useEffect(() => {
@@ -2011,6 +2100,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       variant,
       workspaceId: commandWorkspaceId,
       projectPath: commandProjectPath,
+      rawInput: restoreInput,
+      dynamicWorkflowsEnabled: dynamicWorkflowsExperimentEnabled,
       openSettings: open,
       currentModel: workspaceSidebarState?.currentModel ?? null,
       sendMessageOptions: commandSendMessageOptions,
@@ -2255,6 +2346,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const { parsed, skillInvocation } = await parseCommandWithSkillInvocation({
       messageText,
       agentSkillDescriptors,
+      workflowDefinitions: dynamicWorkflowsExperimentEnabled ? workflowDefinitionDescriptors : [],
       api,
       discovery: skillDiscovery,
     });
@@ -2268,15 +2360,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
-      const initialGoalCommand = parsed?.type === "goal-set" ? parsed : undefined;
-      if (!initialGoalCommand) {
+      const initialSlashCommand =
+        parsed?.type === "goal-set" ||
+        (parsed?.type === "workflow-run" && dynamicWorkflowsExperimentEnabled)
+          ? parsed
+          : undefined;
+      if (!initialSlashCommand) {
         const commandHandled = await executeParsedCommand(parsed, input);
         if (commandHandled) {
           return;
         }
       }
 
-      let creationMessageTextForSend = initialGoalCommand?.objective ?? messageText;
+      let creationMessageTextForSend =
+        initialSlashCommand?.type === "goal-set" ? initialSlashCommand.objective : messageText;
       let creationOptionsOverride: Partial<SendMessageOptions> | undefined;
 
       if (skillInvocation) {
@@ -2321,7 +2418,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         creationMessageTextForSend,
         creationFileParts.length > 0 ? creationFileParts : undefined,
         creationOptionsOverride,
-        initialGoalCommand
+        initialSlashCommand
       );
 
       if (creationResult.success) {

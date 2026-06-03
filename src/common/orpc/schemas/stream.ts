@@ -685,6 +685,8 @@ export const ExperimentsSchema = z.object({
   programmaticToolCalling: z.boolean().optional(),
   programmaticToolCallingExclusive: z.boolean().optional(),
   advisorTool: z.boolean().optional(),
+  dynamicWorkflows: z.boolean().optional(),
+  subagentFileReports: z.boolean().optional(),
   execSubagentHardRestart: z.boolean().optional(),
 });
 

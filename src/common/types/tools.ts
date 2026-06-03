@@ -30,6 +30,9 @@ import type {
   TaskTerminateToolResultSchema,
   TOOL_DEFINITIONS,
   WebFetchToolResultSchema,
+  WorkflowListToolResultSchema,
+  WorkflowReadToolResultSchema,
+  WorkflowRunToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
 
 // Bash Tool Types, derived from schema (avoid drift)
@@ -258,6 +261,26 @@ export type TaskListToolSuccessResult = z.infer<typeof TaskListToolResultSchema>
 export type TaskTerminateToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_terminate.schema>;
 
 export type TaskTerminateToolSuccessResult = z.infer<typeof TaskTerminateToolResultSchema>;
+
+// Workflow Definition Tool Types
+export type WorkflowListToolArgs = z.infer<typeof TOOL_DEFINITIONS.workflow_list.schema>;
+
+export type WorkflowListToolSuccessResult = z.infer<typeof WorkflowListToolResultSchema>;
+
+export type WorkflowListToolResult = WorkflowListToolSuccessResult | ToolErrorResult;
+
+export type WorkflowReadToolArgs = z.infer<typeof TOOL_DEFINITIONS.workflow_read.schema>;
+
+export type WorkflowReadToolSuccessResult = z.infer<typeof WorkflowReadToolResultSchema>;
+
+export type WorkflowReadToolResult = WorkflowReadToolSuccessResult | ToolErrorResult;
+
+// Workflow Run Tool Types
+export type WorkflowRunToolArgs = z.infer<typeof TOOL_DEFINITIONS.workflow_run.schema>;
+
+export type WorkflowRunToolSuccessResult = z.infer<typeof WorkflowRunToolResultSchema>;
+
+export type WorkflowRunToolResult = WorkflowRunToolSuccessResult | ToolErrorResult;
 
 // Agent Report Tool Types
 export type AgentReportToolArgs = z.infer<typeof TOOL_DEFINITIONS.agent_report.schema>;

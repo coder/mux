@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/require-await, @typescript-eslint/restrict-template-expressions, local/no-sync-fs-methods */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createRouterClient } from "@orpc/server";
 import * as fs from "fs";
@@ -5,6 +6,8 @@ import * as os from "os";
 import * as path from "path";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import { Config } from "@/node/config";
+import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
+import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import type { ORPCContext } from "./context";
 import { router } from "./router";
 
@@ -49,6 +52,263 @@ describe("router workspace goal validation", () => {
     expect(getGoal).not.toHaveBeenCalled();
     expect(setGoal).not.toHaveBeenCalled();
     expect(clearGoal).not.toHaveBeenCalled();
+  });
+});
+
+async function waitForRouterWorkflowStatus(
+  client: {
+    workflows: {
+      getRun(input: { workspaceId: string; runId: string }): Promise<{ status: string } | null>;
+    };
+  },
+  workspaceId: string,
+  runId: string,
+  status: string
+): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    const run = await client.workflows.getRun({ workspaceId, runId });
+    if (run?.status === status) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  const run = await client.workflows.getRun({ workspaceId, runId });
+  throw new Error(`Timed out waiting for ${runId} to become ${status}; got ${run?.status}`);
+}
+
+describe("router workflow routes", () => {
+  let tempDir: string;
+  let config: Config;
+  let projectPath: string;
+
+  beforeEach(async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-router-workflows-test-"));
+    config = new Config(tempDir);
+    projectPath = path.join(tempDir, "project");
+    fs.mkdirSync(path.join(projectPath, ".mux", "workflows"), { recursive: true });
+    fs.writeFileSync(
+      path.join(projectPath, ".mux", "workflows", "demo.js"),
+      `// description: Demo workflow\nexport default function workflow({ args }) { return { reportMarkdown: args.topic }; }\n`
+    );
+    await config.editConfig((current) => {
+      current.projects.set(projectPath, { workspaces: [], trusted: true });
+      return current;
+    });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  function createContext(options: { enabled: boolean }): ORPCContext {
+    return {
+      workflowRuntimeFactory: new QuickJSRuntimeFactory(),
+      config,
+      aiService: {
+        waitForInit: mock(async () => undefined),
+        getWorkspaceMetadata: mock(async () => ({
+          success: true,
+          data: {
+            id: "workspace-1",
+            name: "workspace-1",
+            projectPath,
+            namedWorkspacePath: projectPath,
+            runtimeConfig: { type: "local", srcBaseDir: tempDir },
+          },
+        })),
+      },
+      workspaceService: {
+        appendWorkflowRunInvocation: mock(async () => true),
+      },
+      taskService: {},
+      experimentsService: {
+        isExperimentEnabled: mock(() => options.enabled),
+      },
+    } as unknown as ORPCContext;
+  }
+
+  test("lists workflow definitions only when dynamic workflows are enabled", async () => {
+    const disabledClient = createRouterClient(router(), {
+      context: createContext({ enabled: false }),
+    });
+    await expect(
+      disabledClient.workflows.listDefinitions({ workspaceId: "workspace-1" })
+    ).rejects.toThrow(/Dynamic workflows are disabled/);
+
+    const enabledClient = createRouterClient(router(), {
+      context: createContext({ enabled: true }),
+    });
+    await expect(
+      enabledClient.workflows.readDefinition({ workspaceId: "workspace-1", name: "demo" })
+    ).resolves.toMatchObject({
+      descriptor: expect.objectContaining({ name: "demo", scope: "project" }),
+      source: expect.stringContaining("reportMarkdown: args.topic"),
+    });
+    await expect(enabledClient.workflows.listDefinitions({ projectPath })).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "demo", scope: "project", executable: true }),
+      ])
+    );
+    await expect(
+      enabledClient.workflows.listDefinitions({ workspaceId: "workspace-1" })
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "demo", scope: "project", executable: true }),
+      ])
+    );
+  });
+
+  test("promotes a scratch workflow run through the API", async () => {
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir("workspace-1") });
+    await runStore.createRun({
+      id: "wfr_scratch_api",
+      workspaceId: "workspace-1",
+      definition: { name: "scratch", description: "Scratch", scope: "scratch", executable: true },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'scratch api' }; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    await expect(
+      client.workflows.promoteScratch({
+        workspaceId: "workspace-1",
+        runId: "wfr_scratch_api",
+        name: "scratch-api",
+        description: "Scratch API workflow",
+        location: "project",
+        overwrite: false,
+      })
+    ).resolves.toMatchObject({ name: "scratch-api", scope: "project", executable: true });
+    expect(
+      fs.readFileSync(path.join(projectPath, ".mux", "workflows", "scratch-api.js"), "utf-8")
+    ).toContain("Scratch API workflow");
+  });
+
+  test("promotes a workspace scratch workflow definition through the API without a run", async () => {
+    const scratchRoot = path.join(projectPath, ".mux", "workflows", ".scratch");
+    fs.mkdirSync(scratchRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(scratchRoot, "scratch-draft.js"),
+      "// description: Scratch draft\nexport default function workflow() { return { reportMarkdown: 'scratch api' }; }\n",
+      "utf-8"
+    );
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    await expect(
+      client.workflows.promoteScratchDefinition({
+        workspaceId: "workspace-1",
+        name: "scratch-draft",
+        description: "Reusable draft workflow",
+        location: "project",
+        overwrite: false,
+      })
+    ).resolves.toMatchObject({ name: "scratch-draft", scope: "project", executable: true });
+    expect(
+      fs.readFileSync(path.join(projectPath, ".mux", "workflows", "scratch-draft.js"), "utf-8")
+    ).toContain("Reusable draft workflow");
+  });
+
+  test("interrupts and resumes workflow runs through the API", async () => {
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir("workspace-1") });
+    await runStore.createRun({
+      id: "wfr_api_resume",
+      workspaceId: "workspace-1",
+      definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'resumed via api' }; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    await expect(
+      client.workflows.interrupt({ workspaceId: "workspace-1", runId: "wfr_api_resume" })
+    ).resolves.toMatchObject({ id: "wfr_api_resume", status: "interrupted" });
+    await expect(
+      client.workflows.resume({ workspaceId: "workspace-1", runId: "wfr_api_resume" })
+    ).resolves.toEqual({
+      runId: "wfr_api_resume",
+      status: "running",
+      result: null,
+    });
+    await waitForRouterWorkflowStatus(client, "workspace-1", "wfr_api_resume", "completed");
+  });
+
+  test("starts a trusted project-local workflow through the API", async () => {
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    const result = await client.workflows.start({
+      workspaceId: "workspace-1",
+      name: "demo",
+      args: { topic: "workflow routes" },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.runId).toMatch(/^wfr_/);
+    expect(result.result).toEqual({ reportMarkdown: "workflow routes" });
+
+    await expect(
+      client.workflows.getRun({ workspaceId: "workspace-1", runId: result.runId })
+    ).resolves.toMatchObject({
+      id: result.runId,
+      workspaceId: "workspace-1",
+      definition: expect.objectContaining({ name: "demo" }),
+      status: "completed",
+    });
+    await expect(client.workflows.listRuns({ workspaceId: "workspace-1" })).resolves.toEqual([
+      expect.objectContaining({ id: result.runId, status: "completed" }),
+    ]);
+  });
+
+  test("persists workflow slash invocations before returning", async () => {
+    const context = createContext({ enabled: true });
+    const workspaceService = context.workspaceService as unknown as {
+      appendWorkflowRunInvocation: ReturnType<typeof mock>;
+    };
+    const client = createRouterClient(router(), { context });
+
+    const result = await client.workflows.start({
+      workspaceId: "workspace-1",
+      name: "demo",
+      runInBackground: true,
+      args: { input: "workflow routes" },
+      rawCommand: "/demo workflow routes",
+    });
+
+    expect(result).toMatchObject({
+      status: "running",
+      invocationMessagePersisted: true,
+    });
+    expect(workspaceService.appendWorkflowRunInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        rawCommand: "/demo workflow routes",
+        name: "demo",
+        args: { input: "workflow routes" },
+        runId: result.runId,
+        status: "running",
+      })
+    );
+  });
+
+  test("starts a workflow in the background when requested through the API", async () => {
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    const result = await client.workflows.start({
+      workspaceId: "workspace-1",
+      name: "demo",
+      runInBackground: true,
+      args: { topic: "background workflow routes" },
+    });
+
+    expect(result.status).toBe("running");
+    expect(result.runId).toMatch(/^wfr_/);
+    expect(result.result).toBeNull();
+    await waitForRouterWorkflowStatus(client, "workspace-1", result.runId, "completed");
   });
 });
 

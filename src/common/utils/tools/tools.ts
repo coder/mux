@@ -40,6 +40,11 @@ import { createMuxAgentsReadTool } from "@/node/services/tools/mux_agents_read";
 import { createMuxAgentsWriteTool } from "@/node/services/tools/mux_agents_write";
 import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
 import { createMuxConfigWriteTool } from "@/node/services/tools/mux_config_write";
+import {
+  createWorkflowListTool,
+  createWorkflowReadTool,
+} from "@/node/services/tools/workflow_definitions";
+import { createWorkflowRunTool } from "@/node/services/tools/workflow_run";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
@@ -138,6 +143,29 @@ export interface ToolConfiguration {
   reportModelUsage?: (event: ToolModelUsageEvent) => void;
   /** Task orchestration for sub-agent tasks */
   taskService?: TaskService;
+  /** Durable workflow lifecycle service for dynamic workflow tools. */
+  workflowService?: {
+    listDefinitions(options: { projectTrusted: boolean }): Promise<unknown[]>;
+    readDefinition(input: {
+      name: string;
+      projectTrusted: boolean;
+    }): Promise<{ descriptor: unknown; source: string }>;
+    getRun?(input: { workspaceId: string; runId: string }): Promise<unknown>;
+    listRuns?(input: { workspaceId: string }): Promise<unknown[]>;
+    startNamedWorkflowInBackground?(input: {
+      name: string;
+      workspaceId: string;
+      projectTrusted: boolean;
+      args: unknown;
+    }): Promise<{ runId: string; status: string; result: unknown }>;
+    startNamedWorkflow(input: {
+      name: string;
+      workspaceId: string;
+      projectTrusted: boolean;
+      args: unknown;
+      abortSignal?: AbortSignal;
+    }): Promise<{ runId: string; status: string; result: unknown }>;
+  };
   /** Workspace goal lifecycle service for model-facing goal tools. */
   goalService?: WorkspaceGoalService;
   /** Per-request goal tool gates derived from goal status and agent capabilities. */
@@ -145,6 +173,10 @@ export interface ToolConfiguration {
     getGoal: boolean;
     completeGoal: boolean;
   };
+  /** Optional JSON Schema subset required by a workflow-spawned task report. */
+  workflowAgentOutputSchema?: unknown;
+  /** When true, subagent reports are submitted by paths to report.md/structured-output.json. */
+  subagentReportFiles?: boolean;
   /** Enable agent_report tool (only valid for child task workspaces) */
   enableAgentReport?: boolean;
   /** Experiments inherited from parent (for subagent spawning) */
@@ -153,6 +185,8 @@ export interface ToolConfiguration {
     programmaticToolCallingExclusive?: boolean;
     advisorTool?: boolean;
     execSubagentHardRestart?: boolean;
+    dynamicWorkflows?: boolean;
+    subagentFileReports?: boolean;
   };
   /** Available sub-agents for the task tool description (dynamic context) */
   availableSubagents?: AgentDefinitionDescriptor[];
@@ -455,6 +489,13 @@ export async function getToolsForModel(
     // (workspaceStatusGenerator.ts), which create the tool inline. Exposing
     // them in the default toolset would let exec-derived agents see their
     // "call me immediately" descriptions.
+    ...(config.workflowService && config.experiments?.dynamicWorkflows
+      ? {
+          workflow_list: createWorkflowListTool(config),
+          workflow_read: createWorkflowReadTool(config),
+          workflow_run: createWorkflowRunTool(config),
+        }
+      : {}),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
     ...(config.goalService && config.enableGoalTools?.getGoal
       ? { get_goal: createGetGoalTool(config) }
@@ -566,6 +607,9 @@ export async function getToolsForModel(
     getAvailableTools(modelString, {
       enableAgentReport: config.enableAgentReport,
       enableAnalyticsQuery: Boolean(config.analyticsService),
+      enableDynamicWorkflows: Boolean(
+        config.workflowService && config.experiments?.dynamicWorkflows
+      ),
       enableAdvisor: Boolean(config.advisorRuntime),
       // Mux global tools are always created; tool policy (agent frontmatter)
       // controls which agents can actually use them.

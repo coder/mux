@@ -145,6 +145,326 @@ function createGoalCommandContext(api: SlashCommandContext["api"]): SlashCommand
   });
 }
 
+describe("processSlashCommand - workflow", () => {
+  test("rejects workflow execution when dynamic workflows are disabled", async () => {
+    const start = mock(() =>
+      Promise.resolve({ runId: "wfr_123", status: "running", result: null })
+    );
+    const context = createSlashCommandContext({
+      api: {
+        workflows: { start },
+      } as unknown as SlashCommandContext["api"],
+      dynamicWorkflowsEnabled: false,
+    });
+
+    const result = await processSlashCommand(
+      { type: "workflow-run", name: "deep-research", argsText: "mux" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(start).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", message: "Dynamic workflows are disabled" })
+    );
+  });
+
+  test("sends completed workflow slash output to the main agent as hidden context", async () => {
+    const workflowResult = {
+      reportMarkdown: "# Research\n\nFindings",
+      structuredOutput: { confidence: "high" },
+    };
+    const start = mock(() =>
+      Promise.resolve({
+        runId: "wfr_123",
+        status: "completed",
+        result: workflowResult,
+      })
+    );
+    const getRun = mock(() =>
+      Promise.resolve({
+        id: "wfr_123",
+        workspaceId: "test-ws",
+        definition: {
+          name: "deep-research",
+          description: "Deep research",
+          scope: "built-in",
+          executable: true,
+        },
+        definitionSource: "export default function workflow() { return null; }",
+        definitionHash: "sha256:test",
+        args: { input: "mux" },
+        status: "completed",
+        createdAt: "2026-05-29T00:00:00.000Z",
+        updatedAt: "2026-05-29T00:00:01.000Z",
+        events: [
+          {
+            sequence: 1,
+            type: "result",
+            at: "2026-05-29T00:00:01.000Z",
+            result: workflowResult,
+          },
+        ],
+        steps: [],
+      })
+    );
+    interface SentWorkflowMessage {
+      message: string;
+      options: { muxMetadata?: { type?: string; rawCommand?: string; commandPrefix?: string } };
+    }
+    const sentMessages: SentWorkflowMessage[] = [];
+    const sendMessage = mock((input: SentWorkflowMessage) => {
+      sentMessages.push(input);
+      return Promise.resolve({ success: true });
+    });
+    const onMessageSent = mock(() => undefined);
+    const context = createSlashCommandContext({
+      api: {
+        workflows: { start, getRun },
+        workspace: { sendMessage },
+      } as unknown as SlashCommandContext["api"],
+      rawInput: "/deep-research mux",
+      dynamicWorkflowsEnabled: true,
+      onMessageSent,
+    });
+
+    const result = await processSlashCommand(
+      { type: "workflow-run", name: "deep-research", argsText: "mux" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(start).toHaveBeenCalledWith({
+      workspaceId: "test-ws",
+      name: "deep-research",
+      runInBackground: true,
+      args: { input: "mux" },
+      rawCommand: "/deep-research mux",
+    });
+    expect(getRun).toHaveBeenCalledWith({ workspaceId: "test-ws", runId: "wfr_123" });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const sendInput = sentMessages[0];
+    expect(sendInput).toBeDefined();
+    expect(sendInput.message).toContain("/deep-research mux");
+    expect(sendInput.message).toContain("<mux_workflow_result>");
+    expect(sendInput.message).toContain("Findings");
+    expect(sendInput.message).toContain("confidence");
+    expect(sendInput.options.muxMetadata?.type).toBe("workflow-result");
+    expect(sendInput.options.muxMetadata?.rawCommand).toBe("/deep-research mux");
+    expect(sendInput.options.muxMetadata?.commandPrefix).toBe("/deep-research");
+    expect(onMessageSent).toHaveBeenCalledWith("tool-end");
+  });
+
+  test("does not send terminal workflow results for superseded slash commands", async () => {
+    const workflowResult = { reportMarkdown: "done" };
+    const start = mock(() =>
+      Promise.resolve({
+        runId: "wfr_completed",
+        status: "completed",
+        result: workflowResult,
+      })
+    );
+    const getRun = mock(() =>
+      Promise.resolve({
+        id: "wfr_completed",
+        workspaceId: "test-ws",
+        definition: {
+          name: "deep-research",
+          description: "Deep research",
+          scope: "built-in",
+          executable: true,
+        },
+        definitionSource: "export default function workflow() { return null; }",
+        definitionHash: "sha256:test",
+        args: { input: "mux" },
+        status: "completed",
+        createdAt: "2026-05-29T00:00:00.000Z",
+        updatedAt: "2026-05-29T00:00:01.000Z",
+        events: [
+          { sequence: 1, type: "result", at: "2026-05-29T00:00:01.000Z", result: workflowResult },
+        ],
+        steps: [],
+      })
+    );
+    const sendMessage = mock(() => Promise.resolve({ success: true }));
+    const context = createSlashCommandContext({
+      api: {
+        workflows: { start, getRun },
+        workspace: { sendMessage },
+      } as unknown as SlashCommandContext["api"],
+      rawInput: "/deep-research mux",
+      dynamicWorkflowsEnabled: true,
+      asyncCommandToken: 1,
+      isAsyncCommandCurrent: mock(() => false),
+    });
+
+    const result = await processSlashCommand(
+      { type: "workflow-run", name: "deep-research", argsText: "mux" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: false });
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(context.setToast).not.toHaveBeenCalled();
+  });
+
+  test("does not restore a superseded workflow slash command", async () => {
+    const start = mock(() =>
+      Promise.resolve({
+        runId: "wfr_running",
+        status: "running",
+        result: null,
+      })
+    );
+    const getRun = mock(() =>
+      Promise.resolve({
+        id: "wfr_running",
+        workspaceId: "test-ws",
+        definition: {
+          name: "deep-research",
+          description: "Deep research",
+          scope: "built-in",
+          executable: true,
+        },
+        definitionSource: "export default function workflow() { return null; }",
+        definitionHash: "sha256:test",
+        args: { input: "mux" },
+        status: "running",
+        createdAt: "2026-05-29T00:00:00.000Z",
+        updatedAt: "2026-05-29T00:00:01.000Z",
+        events: [],
+        steps: [],
+      })
+    );
+    const sendMessage = mock(() => Promise.resolve({ success: true }));
+    const context = createSlashCommandContext({
+      api: {
+        workflows: { start, getRun },
+        workspace: { sendMessage },
+      } as unknown as SlashCommandContext["api"],
+      rawInput: "/deep-research mux",
+      dynamicWorkflowsEnabled: true,
+      asyncCommandToken: 1,
+      isAsyncCommandCurrent: mock(() => false),
+    });
+
+    const result = await processSlashCommand(
+      { type: "workflow-run", name: "deep-research", argsText: "mux" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: false });
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(context.setToast).not.toHaveBeenCalled();
+  });
+
+  test("does not restore failed workflow slash commands over newer drafts", async () => {
+    const start = mock(() =>
+      Promise.resolve({
+        runId: "wfr_failed_send",
+        status: "completed",
+        result: { reportMarkdown: "done" },
+      })
+    );
+    const getRun = mock(() =>
+      Promise.resolve({
+        id: "wfr_failed_send",
+        workspaceId: "test-ws",
+        definition: {
+          name: "deep-research",
+          description: "Deep research",
+          scope: "built-in",
+          executable: true,
+        },
+        definitionSource: "export default function workflow() { return null; }",
+        definitionHash: "sha256:test",
+        args: { input: "mux" },
+        status: "completed",
+        createdAt: "2026-05-29T00:00:00.000Z",
+        updatedAt: "2026-05-29T00:00:01.000Z",
+        events: [],
+        steps: [],
+      })
+    );
+    const sendMessage = mock(() => Promise.resolve({ success: false }));
+    const context = createSlashCommandContext({
+      api: {
+        workflows: { start, getRun },
+        workspace: { sendMessage },
+      } as unknown as SlashCommandContext["api"],
+      rawInput: "/deep-research mux",
+      dynamicWorkflowsEnabled: true,
+      getInput: mock(() => "newer draft"),
+    });
+
+    const result = await processSlashCommand(
+      { type: "workflow-run", name: "deep-research", argsText: "mux" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        message: "Failed to send workflow result to the agent",
+      })
+    );
+  });
+
+  test("does not continue the agent after an interrupted workflow slash run", async () => {
+    const start = mock(() =>
+      Promise.resolve({
+        runId: "wfr_interrupted",
+        status: "interrupted",
+        result: null,
+      })
+    );
+    const getRun = mock(() =>
+      Promise.resolve({
+        id: "wfr_interrupted",
+        workspaceId: "test-ws",
+        definition: {
+          name: "deep-research",
+          description: "Deep research",
+          scope: "built-in",
+          executable: true,
+        },
+        definitionSource: "export default function workflow() { return null; }",
+        definitionHash: "sha256:test",
+        args: { input: "mux" },
+        status: "interrupted",
+        createdAt: "2026-05-29T00:00:00.000Z",
+        updatedAt: "2026-05-29T00:00:01.000Z",
+        events: [],
+        steps: [],
+      })
+    );
+    const sendMessage = mock(() => Promise.resolve({ success: true }));
+    const onMessageSent = mock(() => undefined);
+    const context = createSlashCommandContext({
+      api: {
+        workflows: { start, getRun },
+        workspace: { sendMessage },
+      } as unknown as SlashCommandContext["api"],
+      rawInput: "/deep-research mux",
+      dynamicWorkflowsEnabled: true,
+      onMessageSent,
+    });
+
+    const result = await processSlashCommand(
+      { type: "workflow-run", name: "deep-research", argsText: "mux" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(onMessageSent).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", message: "Workflow deep-research interrupted" })
+    );
+  });
+});
+
 describe("processSlashCommand - side-question", () => {
   function createSideQuestionContext(
     sideQuestion: (input: {

@@ -62,6 +62,10 @@ interface CommandRegistryContextValue {
 
 const CommandRegistryContext = createContext<CommandRegistryContextValue | null>(null);
 
+export function useOptionalCommandRegistry(): CommandRegistryContextValue | null {
+  return useContext(CommandRegistryContext);
+}
+
 export function useCommandRegistry(): CommandRegistryContextValue {
   const ctx = useContext(CommandRegistryContext);
   if (!ctx) throw new Error("useCommandRegistry must be used within CommandRegistryProvider");

@@ -72,6 +72,13 @@ import {
   SkillNameSchema,
 } from "./agentSkill";
 import {
+  WorkflowDefinitionDescriptorSchema,
+  WorkflowNameSchema,
+  WorkflowRunIdSchema,
+  WorkflowRunRecordSchema,
+  WorkflowRunStatusSchema,
+} from "./workflow";
+import {
   AgentDefinitionDescriptorSchema,
   AgentDefinitionPackageSchema,
   AgentIdSchema,
@@ -1710,6 +1717,90 @@ export const agentSkills = {
   get: {
     input: AgentDiscoveryInputSchema.and(z.object({ skillName: SkillNameSchema })),
     output: AgentSkillPackageSchema,
+  },
+};
+
+const WorkflowDefinitionDiscoveryInputSchema = z
+  .object({
+    projectPath: z.string().min(1).optional(),
+    workspaceId: z.string().min(1).optional(),
+  })
+  .strict()
+  .refine((data) => Boolean(data.projectPath ?? data.workspaceId), {
+    message: "Either projectPath or workspaceId must be provided",
+  });
+
+// Workflows
+export const workflows = {
+  listDefinitions: {
+    input: WorkflowDefinitionDiscoveryInputSchema,
+    output: z.array(WorkflowDefinitionDescriptorSchema),
+  },
+  readDefinition: {
+    input: z.object({ workspaceId: z.string().min(1), name: WorkflowNameSchema }).strict(),
+    output: z.object({ descriptor: WorkflowDefinitionDescriptorSchema, source: z.string().min(1) }),
+  },
+  listRuns: {
+    input: z.object({ workspaceId: z.string().min(1) }).strict(),
+    output: z.array(WorkflowRunRecordSchema),
+  },
+  getRun: {
+    input: z.object({ workspaceId: z.string().min(1), runId: WorkflowRunIdSchema }).strict(),
+    output: WorkflowRunRecordSchema.nullable(),
+  },
+  interrupt: {
+    input: z.object({ workspaceId: z.string().min(1), runId: WorkflowRunIdSchema }).strict(),
+    output: WorkflowRunRecordSchema,
+  },
+  resume: {
+    input: z.object({ workspaceId: z.string().min(1), runId: WorkflowRunIdSchema }).strict(),
+    output: z.object({
+      runId: WorkflowRunIdSchema,
+      status: WorkflowRunStatusSchema,
+      result: z.unknown(),
+    }),
+  },
+  promoteScratchDefinition: {
+    input: z
+      .object({
+        workspaceId: z.string().min(1),
+        name: WorkflowNameSchema,
+        description: z.string().min(1).max(1024),
+        location: z.enum(["project", "global"]),
+        overwrite: z.boolean().optional(),
+      })
+      .strict(),
+    output: WorkflowDefinitionDescriptorSchema,
+  },
+  promoteScratch: {
+    input: z
+      .object({
+        workspaceId: z.string().min(1),
+        runId: WorkflowRunIdSchema,
+        name: WorkflowNameSchema,
+        description: z.string().min(1).max(1024),
+        location: z.enum(["project", "global"]),
+        overwrite: z.boolean().optional(),
+      })
+      .strict(),
+    output: WorkflowDefinitionDescriptorSchema,
+  },
+  start: {
+    input: z
+      .object({
+        workspaceId: z.string().min(1),
+        name: WorkflowNameSchema,
+        runInBackground: z.boolean().optional(),
+        args: z.unknown().optional(),
+        rawCommand: z.string().min(1).optional(),
+      })
+      .strict(),
+    output: z.object({
+      runId: WorkflowRunIdSchema,
+      status: WorkflowRunStatusSchema,
+      result: z.unknown(),
+      invocationMessagePersisted: z.boolean().optional(),
+    }),
   },
 };
 

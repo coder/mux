@@ -1,0 +1,104 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { GlobalWindow } from "happy-dom";
+import { cleanup, render } from "@testing-library/react";
+
+import type React from "react";
+
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
+import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { WorkflowListToolCall, WorkflowReadToolCall } from "./WorkflowDefinitionToolCall";
+
+const source = `export default function workflow({ args, agent }) {
+  const topic = args.topic ?? "workflow UI";
+  return agent({ id: "review", prompt: "Review " + topic });
+}`;
+
+function renderWithTooltip(ui: React.ReactElement) {
+  return render(
+    <ThemeProvider forcedTheme="dark">
+      <TooltipProvider>{ui}</TooltipProvider>
+    </ThemeProvider>
+  );
+}
+
+function expectWorkflowHeaderBadge(view: ReturnType<typeof render>, label: string) {
+  const workflowBadge = view.getByText("Workflow");
+  const headerText = workflowBadge.closest('[data-scroll-intent="ignore"]')?.textContent ?? "";
+  expect(headerText.indexOf("Workflow")).toBeLessThan(headerText.indexOf(label));
+}
+
+describe("WorkflowDefinitionToolCall", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+  let originalLocalStorage: typeof globalThis.localStorage;
+
+  beforeEach(() => {
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+    originalLocalStorage = globalThis.localStorage;
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+    globalThis.localStorage = globalThis.window.localStorage;
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.localStorage = originalLocalStorage;
+  });
+
+  test("renders workflow_read metadata and highlighted source", () => {
+    const view = renderWithTooltip(
+      <WorkflowReadToolCall
+        args={{ name: "deep-research" }}
+        status="completed"
+        result={{
+          descriptor: {
+            name: "deep-research",
+            description: "Deep research",
+            scope: "built-in",
+            executable: true,
+          },
+          source,
+        }}
+      />
+    );
+
+    expectWorkflowHeaderBadge(view, "deep-research");
+    expect(view.getByText("Deep research")).toBeTruthy();
+    expect(view.container.textContent).toContain("return agent");
+  });
+
+  test("renders workflow_list as definition cards", () => {
+    const view = renderWithTooltip(
+      <WorkflowListToolCall
+        args={{}}
+        status="completed"
+        result={{
+          workflows: [
+            {
+              name: "deep-research",
+              description: "Deep research",
+              scope: "built-in",
+              executable: true,
+            },
+            {
+              name: "project-flow",
+              description: "Needs trust",
+              scope: "project",
+              executable: false,
+              blockedReason: "Project is not trusted",
+            },
+          ],
+        }}
+      />
+    );
+
+    expectWorkflowHeaderBadge(view, "list");
+    expect(view.getByText("2 definitions")).toBeTruthy();
+    expect(view.queryByText("executable")).toBeNull();
+    expect(view.getByText("blocked")).toBeTruthy();
+    expect(view.getByText("Project is not trusted")).toBeTruthy();
+  });
+});

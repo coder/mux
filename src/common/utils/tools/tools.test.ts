@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/require-await */
 import { describe, expect, mock, test } from "bun:test";
 import { z } from "zod";
 
@@ -87,6 +88,66 @@ describe("getToolsForModel", () => {
       initStateManager
     );
     expect(toolsWithReport.agent_report).toBeDefined();
+  });
+
+  test("only includes workflow tools when dynamic workflows service and experiment are enabled", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    const withoutExperiment = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        workflowService: {
+          listDefinitions: mock(async () => []),
+          readDefinition: mock(async () => ({
+            descriptor: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+            source: "export default function workflow() { return null; }",
+          })),
+          startNamedWorkflow: mock(async () => ({
+            runId: "wfr_1",
+            status: "completed" as const,
+            result: null,
+          })),
+        },
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(withoutExperiment.workflow_list).toBeUndefined();
+    expect(withoutExperiment.workflow_read).toBeUndefined();
+    expect(withoutExperiment.workflow_run).toBeUndefined();
+
+    const withExperiment = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        experiments: { dynamicWorkflows: true },
+        workflowService: {
+          listDefinitions: mock(async () => []),
+          readDefinition: mock(async () => ({
+            descriptor: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+            source: "export default function workflow() { return null; }",
+          })),
+          startNamedWorkflow: mock(async () => ({
+            runId: "wfr_1",
+            status: "completed" as const,
+            result: null,
+          })),
+        },
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(withExperiment.workflow_list).toBeDefined();
+    expect(withExperiment.workflow_read).toBeDefined();
+    expect(withExperiment.workflow_run).toBeDefined();
   });
 
   test("includes desktop tools when workspace capability is available", async () => {

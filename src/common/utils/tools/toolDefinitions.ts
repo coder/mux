@@ -27,7 +27,15 @@
  */
 
 import { z } from "zod";
-import { AgentIdSchema, AgentSkillPackageSchema, SkillNameSchema } from "@/common/orpc/schemas";
+import {
+  AgentIdSchema,
+  AgentSkillPackageSchema,
+  SkillNameSchema,
+  WorkflowDefinitionDescriptorSchema,
+  WorkflowNameSchema,
+  WorkflowRunRecordSchema,
+  WorkflowRunStatusSchema,
+} from "@/common/orpc/schemas";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import {
   BASH_HARD_MAX_LINES,
@@ -323,6 +331,7 @@ const TaskToolCompletedReportSchema = z
     taskId: z.string(),
     reportMarkdown: z.string(),
     title: z.string().optional(),
+    structuredOutput: z.unknown().optional(),
     agentId: z.string().optional(),
     agentType: z.string().optional(),
     groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
@@ -364,6 +373,7 @@ export const TaskToolCompletedResultSchema = z
     taskIds: z.array(z.string()).min(1).optional(),
     reportMarkdown: z.string().optional(),
     title: z.string().optional(),
+    structuredOutput: z.unknown().optional(),
     agentId: z.string().optional(),
     agentType: z.string().optional(),
     reports: z.array(TaskToolCompletedReportSchema).min(1).optional(),
@@ -419,8 +429,8 @@ export const TaskAwaitToolArgsSchema = z
       .array(z.string().min(1))
       .nullish()
       .describe(
-        "List of task IDs to await — use only real IDs returned by prior task, bash, or task_list tool results; never fabricate an ID. " +
-          "When omitted, waits for all active descendant tasks of the current workspace."
+        "List of task IDs or workflow run IDs to await — use only real IDs returned by prior task, bash, workflow_run, or task_list tool results; never fabricate an ID. " +
+          "When omitted, waits for all active descendant tasks and workflow runs of the current workspace."
       ),
     filter: z
       .string()
@@ -527,22 +537,25 @@ export const TaskAwaitToolCompletedResultSchema = z
     status: z.literal("completed"),
     taskId: z.string(),
     reportMarkdown: z.string(),
+    structuredOutput: z.unknown().optional(),
     title: z.string().optional(),
     output: z.string().optional(),
     elapsed_ms: z.number().optional(),
     exitCode: z.number().optional(),
     note: z.string().optional(),
+    run: WorkflowRunRecordSchema.optional(),
     artifacts: TaskAwaitToolArtifactsSchema.optional(),
   })
   .strict();
 
 export const TaskAwaitToolActiveResultSchema = z
   .object({
-    status: z.enum(["queued", "running", "awaiting_report"]),
+    status: z.enum(["queued", "running", "backgrounded", "awaiting_report", "interrupted"]),
     taskId: z.string(),
     output: z.string().optional(),
     elapsed_ms: z.number().optional(),
     note: z.string().optional(),
+    run: WorkflowRunRecordSchema.optional(),
   })
   .strict();
 
@@ -567,6 +580,7 @@ export const TaskAwaitToolErrorResultSchema = z
     status: z.literal("error"),
     taskId: z.string(),
     error: z.string(),
+    run: WorkflowRunRecordSchema.optional(),
   })
   .strict();
 
@@ -771,17 +785,106 @@ export const TaskListToolResultSchema = z
   .strict();
 
 // -----------------------------------------------------------------------------
+// workflow_run (durable workflow orchestration)
+// -----------------------------------------------------------------------------
+
+export const WorkflowListToolArgsSchema = z.object({}).strict();
+
+export const WorkflowListToolResultSchema = z
+  .object({
+    workflows: z.array(WorkflowDefinitionDescriptorSchema),
+  })
+  .strict();
+
+export const WorkflowReadToolArgsSchema = z
+  .object({
+    name: WorkflowNameSchema,
+  })
+  .strict();
+
+export const WorkflowReadToolResultSchema = z
+  .object({
+    descriptor: WorkflowDefinitionDescriptorSchema,
+    source: z.string().min(1),
+  })
+  .strict();
+
+export const WorkflowRunToolArgsSchema = z
+  .object({
+    name: WorkflowNameSchema,
+    args: z.unknown().nullish(),
+    run_in_background: z.boolean().nullish().default(false),
+  })
+  .strict();
+
+export const WorkflowRunToolResultSchema = z
+  .object({
+    status: WorkflowRunStatusSchema,
+    runId: z.string().min(1),
+    result: z.unknown(),
+    run: WorkflowRunRecordSchema.optional(),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
 // agent_report (explicit subagent -> parent report)
 // -----------------------------------------------------------------------------
 
-export const AgentReportToolArgsSchema = z
+export const AgentReportInlineToolArgsSchema = z
   .object({
     reportMarkdown: z.string().min(1),
+    structuredOutput: z.unknown().nullish(),
     title: z.string().nullish(),
   })
   .strict();
 
-export const AgentReportToolResultSchema = z.object({ success: z.literal(true) }).strict();
+export const AgentReportFileToolArgsSchema = z
+  .object({
+    reportMarkdownPath: z
+      .string()
+      .min(1)
+      .nullish()
+      .describe("Path to the markdown report file, usually report.md in the workspace root"),
+    structuredOutputPath: z
+      .string()
+      .min(1)
+      .nullish()
+      .describe(
+        "Path to a JSON file containing the structured output, usually structured-output.json"
+      ),
+    title: z.string().nullish(),
+  })
+  .strict();
+
+export const AgentReportToolArgsSchema = z.union([
+  AgentReportInlineToolArgsSchema,
+  AgentReportFileToolArgsSchema,
+]);
+
+export const AgentReportSubmittedReportSchema = z
+  .object({
+    reportMarkdown: z.string().min(1),
+    structuredOutput: z.unknown().optional(),
+    title: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const AgentReportToolResultSchema = z.discriminatedUnion("success", [
+  z
+    .object({
+      success: z.literal(true),
+      message: z.string().min(1).optional(),
+      report: AgentReportSubmittedReportSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      success: z.literal(false),
+      message: z.string().min(1),
+      errors: z.array(z.object({ path: z.string().min(1), message: z.string().min(1) })).min(1),
+    })
+    .strict(),
+]);
 const FILE_TOOL_PATH = z
   .string()
   .describe("Path to the file to edit (absolute or relative to the current workspace)");
@@ -1407,14 +1510,14 @@ export const TOOL_DEFINITIONS = {
   },
   task_await: {
     description:
-      "Wait for one or more tasks to produce output. " +
+      "Wait for one or more tasks or workflow runs to produce output. " +
       "\n\nWHEN TO USE: only call task_await when the current user request depends on a task's output, or when synthesis/integration of a previously-spawned task is the next logical step. " +
       "Do not call task_await solely because active tasks exist; for unrelated user messages, respond directly and let tasks continue in the background. " +
       "\n\nIMPORTANT: Do not call task_await in the same parallel tool-call batch as task or bash — " +
       "the taskId is not available until the spawning tool returns. " +
       "Always wait for the task/bash tool result first, then call task_await in a subsequent step. " +
-      "When omitting task_ids to await all active tasks, ensure at least one background task was already spawned in a prior step. " +
-      "\n\nAgent tasks return reports when completed. " +
+      "When omitting task_ids to await all active tasks/workflows, ensure at least one background task or workflow was already spawned in a prior step. " +
+      "\n\nAgent tasks and workflow runs return reports when completed. " +
       "Bash tasks return incremental output while running and a final reportMarkdown when they exit. " +
       "For bash tasks, you may optionally pass filter/filter_exclude to include/exclude output lines by regex. " +
       "WARNING: when using filter, non-matching lines are permanently discarded. " +
@@ -1424,7 +1527,7 @@ export const TOOL_DEFINITIONS = {
       "Set min_completed higher (up to the number of awaited tasks) when you genuinely need more before proceeding — e.g. best-of-N synthesis that must compare every candidate should pass min_completed equal to the batch size. " +
       "The result always includes every task complete at the moment it returns, plus current status for the rest; not-yet-completed tasks keep running and stay re-awaitable on a later call. " +
       "You always get per-task results (like Promise.allSettled), just possibly before every task has finished. " +
-      "Possible statuses: completed, queued, running, awaiting_report, not_found, invalid_scope, error. " +
+      "Possible statuses: completed, queued, running, backgrounded, awaiting_report, interrupted, not_found, invalid_scope, error. " +
       "Bash task outputs may be automatically filtered; when this happens, check each result's note for details and (if available) where the full output was saved.",
     schema: TaskAwaitToolArgsSchema,
   },
@@ -1443,6 +1546,21 @@ export const TOOL_DEFINITIONS = {
       "Use this after compaction or interruptions to rediscover which tasks are still active. " +
       "This is a discovery tool, NOT a waiting mechanism. If the current request actually depends on a task's output, call task_await with the specific task IDs you need; do not await all active tasks just because they appear here.",
     schema: TaskListToolArgsSchema,
+  },
+  workflow_list: {
+    description:
+      "List durable workflow definitions available in this workspace. Use this before workflow_run when you do not already know the workflow name. Before writing or editing workflow JS, read the built-in workflow-authoring skill. Scratch workflows are workspace files at .mux/workflows/.scratch/<name>.js and should be authored with file_read/file_edit_* tools.",
+    schema: WorkflowListToolArgsSchema,
+  },
+  workflow_read: {
+    description:
+      "Read a durable workflow definition's descriptor and source by name. Use this to inspect expected args or understand a workflow before running it. Before authoring new workflow JS, read the built-in workflow-authoring skill for available globals, schema limits, and replay rules.",
+    schema: WorkflowReadToolArgsSchema,
+  },
+  workflow_run: {
+    description:
+      "Start a durable workflow run by workflow name. Workflows coordinate delegated agent tasks and preserve run state for replay/resume. To create a scratch workflow, first read the built-in workflow-authoring skill, then write .mux/workflows/.scratch/<name>.js with a // description: header and default exported function, then run it by name.",
+    schema: WorkflowRunToolArgsSchema,
   },
   agent_report: {
     description:
@@ -2174,6 +2292,7 @@ export function getAvailableTools(
     enableAgentReport?: boolean;
     enableAnalyticsQuery?: boolean;
     enableAdvisor?: boolean;
+    enableDynamicWorkflows?: boolean;
     /** @deprecated Mux global tools are always included. */
     enableMuxGlobalAgentsTools?: boolean;
   }
@@ -2182,6 +2301,7 @@ export function getAvailableTools(
   const enableAgentReport = options?.enableAgentReport ?? true;
   const enableAnalyticsQuery = options?.enableAnalyticsQuery ?? true;
   const enableAdvisor = options?.enableAdvisor ?? false;
+  const enableDynamicWorkflows = options?.enableDynamicWorkflows ?? false;
 
   // Base tools available for all models
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
@@ -2219,6 +2339,7 @@ export function getAvailableTools(
     "task_apply_git_patch",
     "task_terminate",
     "task_list",
+    ...(enableDynamicWorkflows ? ["workflow_list", "workflow_read", "workflow_run"] : []),
     ...(enableAgentReport ? ["agent_report"] : []),
     "get_goal",
     "complete_goal",

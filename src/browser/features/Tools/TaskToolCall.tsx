@@ -98,6 +98,7 @@ const TaskStatusBadge: React.FC<{
       case "reported":
         return "bg-success/20 text-success";
       case "running":
+      case "backgrounded":
         return "bg-pending/20 text-pending";
       case "awaiting_report":
         return "bg-warning/20 text-warning";
@@ -208,7 +209,12 @@ interface TaskRowProps {
 }
 
 function isTaskRowElapsedActive(status: string): boolean {
-  return status === "queued" || status === "running" || status === "awaiting_report";
+  return (
+    status === "queued" ||
+    status === "running" ||
+    status === "backgrounded" ||
+    status === "awaiting_report"
+  );
 }
 
 const TaskRowElapsed: React.FC<{ startedAtMs: number | undefined; status: string }> = (props) => {

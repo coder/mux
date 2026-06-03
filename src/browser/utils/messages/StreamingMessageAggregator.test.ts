@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { createMuxMessage, type DisplayedMessage } from "@/common/types/message";
+import { buildWorkflowRunCardMessage } from "@/common/utils/workflowRunMessages";
 import { shouldNotifyOnResponseComplete } from "./responseCompletionMetadata";
 import { MAX_HISTORY_HIDDEN_SEGMENTS } from "./transcriptTruncationPlan";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
@@ -446,6 +447,72 @@ describe("StreamingMessageAggregator", () => {
       expect(userMessages[0]?.isSynthetic).toBe(true);
       expect(userMessages[1]?.content).toBe("hello");
       expect(userMessages[1]?.isSynthetic).toBeUndefined();
+    });
+
+    test("renders persisted workflow slash invocation before workflow card", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const command = createMuxMessage("workflow-command", "user", "/deep-research mux", {
+        timestamp: 1,
+        historySequence: 1,
+        muxMetadata: {
+          type: "workflow-trigger-display",
+          rawCommand: "/deep-research mux",
+          commandPrefix: "/deep-research",
+          runId: "wfr_123",
+        },
+      });
+      const card = buildWorkflowRunCardMessage(
+        { name: "deep-research", args: { input: "mux" } },
+        { runId: "wfr_123", status: "running", result: null },
+        2
+      );
+      card.metadata = {
+        timestamp: 2,
+        historySequence: 2,
+        synthetic: true,
+        uiVisible: true,
+        muxMetadata: { type: "workflow-run-card-display", runId: "wfr_123" },
+      };
+      const hiddenWorkflowResult = createMuxMessage(
+        "workflow-result",
+        "user",
+        '/deep-research mux\n\n<mux_workflow_result>{"reportMarkdown":"hidden"}</mux_workflow_result>',
+        {
+          timestamp: 3,
+          historySequence: 3,
+          muxMetadata: {
+            type: "workflow-result",
+            rawCommand: "/deep-research mux",
+            commandPrefix: "/deep-research",
+            runId: "wfr_123",
+          },
+        }
+      );
+      const assistant = createMuxMessage("assistant-1", "assistant", "Done", {
+        timestamp: 4,
+        historySequence: 4,
+      });
+
+      aggregator.loadHistoricalMessages([command, card, hiddenWorkflowResult, assistant], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed.map((message) => message.type)).toEqual(["user", "tool", "assistant"]);
+      expect(displayed[0]).toMatchObject({
+        type: "user",
+        content: "/deep-research mux",
+        commandPrefix: "/deep-research",
+      });
+      if (displayed[0]?.type !== "user") {
+        throw new Error("Expected workflow command to render as a user message");
+      }
+      expect(displayed[0].content).not.toContain("mux_workflow_result");
+      expect(displayed.some((message) => message.id === "workflow-result")).toBe(false);
+      expect(displayed[1]).toMatchObject({
+        type: "tool",
+        toolName: "workflow_run",
+        args: { name: "deep-research", args: { input: "mux" }, run_in_background: true },
+        result: { status: "running", runId: "wfr_123", result: null },
+      });
     });
 
     test("should strip legacy goal-cleared label from displayed summaries", () => {

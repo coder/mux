@@ -374,6 +374,26 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         rawCommand?: string;
       }
     | {
+        // Durable UI-only row that shows the slash command that launched a workflow run.
+        // Provider requests filter this out; the completed workflow result is sent later.
+        type: "workflow-trigger-display";
+        rawCommand: string;
+        runId: string;
+      }
+    | {
+        // Durable UI-only assistant row containing the workflow_run card.
+        // Provider requests filter this out; the completed workflow result is sent later.
+        type: "workflow-run-card-display";
+        runId: string;
+      }
+    | {
+        // Provider-visible workflow result message. The transcript hides this row because the
+        // user already sees the original slash command plus the workflow card.
+        type: "workflow-result";
+        rawCommand: string;
+        runId: string;
+      }
+    | {
         // /btw — user-side marker for a side question.
         //
         // The forked, single-turn, read-only side branch is created by the

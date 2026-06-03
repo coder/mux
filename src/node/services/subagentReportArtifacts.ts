@@ -26,6 +26,7 @@ export interface SubagentReportArtifactIndexEntry {
   title?: string;
   /** Full ancestor chain (parent first). Used for descendant scope checks after cleanup. */
   ancestorWorkspaceIds: string[];
+  structuredOutput?: unknown;
   /** Estimated token count of delivered report markdown (~4 chars/token). */
   reportTokenEstimate?: number;
 }
@@ -135,6 +136,7 @@ export async function readSubagentReportArtifact(
       thinkingLevel?: unknown;
       title?: unknown;
       ancestorWorkspaceIds?: unknown;
+      structuredOutput?: unknown;
       reportMarkdown?: unknown;
     };
 
@@ -159,6 +161,7 @@ export async function readSubagentReportArtifact(
             : undefined,
         thinkingLevel: coerceThinkingLevel(meta.thinkingLevel),
         title: title ?? meta.title,
+        structuredOutput: obj.structuredOutput,
         reportMarkdown,
       };
     }
@@ -185,6 +188,7 @@ export async function readSubagentReportArtifact(
       thinkingLevel,
       title,
       ancestorWorkspaceIds,
+      structuredOutput: obj.structuredOutput,
       reportMarkdown,
     };
   } catch (error) {
@@ -230,6 +234,7 @@ export async function upsertSubagentReportArtifact(params: {
   model?: string;
   /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
   thinkingLevel?: ThinkingLevel;
+  structuredOutput?: unknown;
   title?: string;
   nowMs?: number;
 }): Promise<SubagentReportArtifactIndexEntry> {
@@ -267,6 +272,7 @@ export async function upsertSubagentReportArtifact(params: {
             thinkingLevel,
             title: params.title,
             ancestorWorkspaceIds: params.ancestorWorkspaceIds,
+            structuredOutput: params.structuredOutput,
             reportMarkdown: params.reportMarkdown,
           },
           null,
@@ -290,6 +296,7 @@ export async function upsertSubagentReportArtifact(params: {
       model,
       thinkingLevel,
       title: params.title,
+      structuredOutput: params.structuredOutput,
       ancestorWorkspaceIds: params.ancestorWorkspaceIds,
     };
     updated.reportTokenEstimate = Math.ceil(

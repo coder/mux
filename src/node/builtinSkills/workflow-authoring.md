@@ -1,0 +1,221 @@
+---
+name: workflow-authoring
+description: Author durable JavaScript workflows for repeatable multi-agent orchestration
+---
+
+# Workflow Authoring
+
+Use this skill **before writing or editing a workflow definition**. Workflows are durable JavaScript conductors that coordinate sub-agent tasks, validate structured reports, and preserve run state for replay/resume.
+
+## When to use a workflow
+
+Prefer a workflow when the task is a repeatable orchestration pattern, especially when it needs several of these:
+
+- Multiple phases with clear progress reporting (`phase`, `log`).
+- Parallel sub-agent fan-out with stable roles or lanes.
+- Structured output validation from sub-agents.
+- Adversarial verification / cross-checking of candidate findings.
+- Durable state so completed work is reused after resume/restart.
+- A reusable slash-invokable process, like deep research or deep review.
+
+Do **not** create a workflow for a small one-off edit, a single simple investigation, or work that needs the conductor itself to run shell/filesystem/network operations. The conductor is intentionally limited; delegate those operations to sub-agents.
+
+## Before authoring
+
+1. Run `workflow_list` to see existing workflows.
+2. If an existing workflow is close, run `workflow_read({ name })` and adapt the pattern.
+3. For one-off drafts, write a scratch workflow:
+
+   ```text
+   .mux/workflows/.scratch/<name>.js
+   ```
+
+4. Use normal file tools (`file_read`, `file_edit_insert`, `file_edit_replace_string`) to author the JavaScript.
+5. Run it by name with `workflow_run`.
+
+Scratch workflows must include a description header and a default exported function:
+
+```js
+// description: Short workflow description
+export default function workflow({ args, phase, log, agent, parallelAgents }) {
+  phase("scope", { input: args.input });
+  return { reportMarkdown: "Done" };
+}
+```
+
+Reusable project workflows live in `.mux/workflows/<name>.js`; global workflows live in `~/.mux/workflows/<name>.js`. Project and scratch workflows require Project Trust.
+
+## Available workflow globals
+
+A workflow default export receives one object:
+
+```js
+export default function workflow({ args, phase, log, agent, parallelAgents }) {}
+```
+
+### `args`
+
+The invocation payload from `workflow_run`. Plain-text slash args are passed as `{ input: "..." }`, so normalize `args.input` for commands like:
+
+```text
+/workflow my-workflow review PR #123
+```
+
+### `phase(name, details?)`
+
+Records a durable phase event shown in the run card.
+
+```js
+phase("adversarial-verification", { candidateCount: issues.length });
+```
+
+### `log(message, data?)`
+
+Records lightweight progress/details.
+
+```js
+log("Selected lanes", { lanes });
+```
+
+### `agent(spec)`
+
+Runs one workflow-owned sub-agent and waits for its final report.
+
+Required fields:
+
+- `id`: stable step ID used for replay; never derive from unstable ordering unless the input ordering is stable.
+- `prompt`: child task prompt.
+
+Optional fields:
+
+- `title`: UI title.
+- `agentId`: sub-agent type/id; defaults to the workflow adapter default (usually `explore`).
+- `outputSchema`: JSON Schema subset used to validate `structuredOutput`.
+
+Returns:
+
+```ts
+{
+  reportMarkdown: string,
+  title?: string,
+  structuredOutput?: unknown
+}
+```
+
+### `parallelAgents(specs)`
+
+Runs multiple `agent` specs concurrently and returns results in input order. Use this for review lanes, source summarization, claim verification, or other independent slices.
+
+```js
+const laneResults = parallelAgents(
+  lanes.map((lane) => ({
+    id: `review-${lane}`,
+    title: `Review ${lane}`,
+    prompt: lanePrompt(lane),
+    outputSchema: issueListSchema(),
+  }))
+);
+```
+
+## Structured output schemas
+
+`outputSchema` supports this JSON Schema subset:
+
+- `type`
+- `properties`
+- `required`
+- `items`
+- `additionalProperties`
+- `enum`
+
+Keep schemas small and strict. Use `additionalProperties: false` for deterministic outputs.
+
+```js
+function issueListSchema() {
+  return {
+    type: "object",
+    required: ["issues"],
+    additionalProperties: false,
+    properties: {
+      issues: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["title", "severity", "filePaths", "evidence"],
+          additionalProperties: false,
+          properties: {
+            title: { type: "string" },
+            severity: { type: "string", enum: ["P0", "P1", "P2", "P3", "P4"] },
+            filePaths: { type: "array", items: { type: "string" } },
+            evidence: { type: "string" },
+          },
+        },
+      },
+    },
+  };
+}
+```
+
+## Replay rules and gotchas
+
+- Every `agent` / `parallelAgents` item must have a stable `id`.
+- The replay key includes the step ID and normalized spec, so changing prompts or schemas creates new work.
+- The workflow conductor cannot call general tools, import modules, access Node, run shell, read files, use timers, or rely on `Date`/`Math.random`.
+- Put shell/filesystem/web investigation inside delegated sub-agent prompts.
+- Cap model-produced fan-out before calling `parallelAgents`.
+- Return `{ reportMarkdown, structuredOutput }` so the parent agent and UI both get useful output.
+
+## Minimal pattern
+
+```js
+// description: Review a change with parallel lanes and verification
+export default function workflow({ args, phase, log, agent, parallelAgents }) {
+  const target = normalizeTarget(args);
+
+  phase("scope", { target });
+  const scope = agent({
+    id: "scope",
+    title: "Scope work",
+    prompt: "Identify review lanes for: " + target,
+    outputSchema: {
+      type: "object",
+      required: ["lanes"],
+      additionalProperties: false,
+      properties: { lanes: { type: "array", items: { type: "string" } } },
+    },
+  });
+
+  const lanes = scope.structuredOutput.lanes.slice(0, 6);
+  log("Running lanes", { lanes });
+
+  phase("lane-review", { lanes });
+  const reviews = parallelAgents(
+    lanes.map(function (lane) {
+      return {
+        id: "review-" + lane,
+        title: "Review " + lane,
+        prompt: "Review " + target + " for " + lane + " issues.",
+        outputSchema: issueListSchema(),
+      };
+    })
+  );
+
+  phase("final-synthesis", { reviewCount: reviews.length });
+  const final = agent({
+    id: "synthesize",
+    title: "Synthesize result",
+    prompt: "Synthesize these structured review outputs: " + JSON.stringify(reviews),
+  });
+
+  return { reportMarkdown: final.reportMarkdown };
+}
+
+function normalizeTarget(args) {
+  if (typeof args === "string" && args.trim()) return args.trim();
+  if (args && typeof args === "object") {
+    if (typeof args.target === "string" && args.target.trim()) return args.target.trim();
+    if (typeof args.input === "string" && args.input.trim()) return args.input.trim();
+  }
+  return "current workspace";
+}
+```

@@ -37,6 +37,7 @@ import type { CodexOauthService } from "@/node/services/codexOauthService";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 
+import { buildWorkflowRunCardMessage } from "@/common/utils/workflowRunMessages";
 import type { LanguageModel, Tool } from "ai";
 import { createMuxMessage } from "@/common/types/message";
 import type { ModelMessage, MuxMessage } from "@/common/types/message";
@@ -431,6 +432,61 @@ describe("prepareProviderRequestMessages", () => {
     ]);
     expect(result.providerRequestMessages.map((message) => message.id)).toEqual([
       "main-user",
+      "next-user",
+    ]);
+  });
+
+  it("filters workflow display rows while keeping provider-visible workflow results", () => {
+    const trigger = createMuxMessage("workflow-command", "user", "/shallow-review mux", {
+      historySequence: 1,
+      muxMetadata: {
+        type: "workflow-trigger-display",
+        rawCommand: "/shallow-review mux",
+        commandPrefix: "/shallow-review",
+        runId: "wfr_1",
+      },
+    });
+    const card = buildWorkflowRunCardMessage(
+      { name: "shallow-review", args: { input: "mux" } },
+      { runId: "wfr_1", status: "running", result: null },
+      2
+    );
+    card.metadata = {
+      historySequence: 2,
+      synthetic: true,
+      uiVisible: true,
+      muxMetadata: { type: "workflow-run-card-display", runId: "wfr_1" },
+    };
+    const result = createMuxMessage(
+      "workflow-result",
+      "user",
+      "/shallow-review mux\n\n<mux_workflow_result>{}</mux_workflow_result>",
+      {
+        historySequence: 3,
+        muxMetadata: {
+          type: "workflow-result",
+          rawCommand: "/shallow-review mux",
+          commandPrefix: "/shallow-review",
+          runId: "wfr_1",
+        },
+      }
+    );
+    const nextUser = createMuxMessage("next-user", "user", "continue normal work", {
+      historySequence: 4,
+    });
+
+    const prepared = prepareProviderRequestMessages(
+      [trigger, card, result, nextUser],
+      "openai",
+      "off"
+    );
+
+    expect(prepared.activeContextMessages.map((message) => message.id)).toEqual([
+      "workflow-result",
+      "next-user",
+    ]);
+    expect(prepared.providerRequestMessages.map((message) => message.id)).toEqual([
+      "workflow-result",
       "next-user",
     ]);
   });

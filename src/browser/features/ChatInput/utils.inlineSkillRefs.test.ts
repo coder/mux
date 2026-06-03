@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/await-thenable */
 import { describe, expect, test } from "bun:test";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import {
@@ -34,6 +35,63 @@ describe("parseCommandWithSkillInvocation", () => {
     expect(result.parsed).toEqual({
       type: "goal-set",
       objective: "--bogus\nBody",
+    });
+  });
+});
+
+describe("parseCommandWithSkillInvocation workflows", () => {
+  test("resolves an unambiguous unknown slash command as a workflow run", async () => {
+    await expect(
+      parseCommandWithSkillInvocation({
+        messageText: "/deep-research topic: mux",
+        agentSkillDescriptors: [],
+        workflowDefinitions: [
+          {
+            name: "deep-research",
+            description: "Research deeply",
+            scope: "built-in",
+            executable: true,
+          },
+        ],
+        api: null,
+        discovery: null,
+      })
+    ).resolves.toEqual({
+      parsed: { type: "workflow-run", name: "deep-research", argsText: "topic: mux" },
+      skillInvocation: null,
+    });
+  });
+
+  test("requires explicit workflow invocation when a skill and workflow share a name", async () => {
+    await expect(
+      parseCommandWithSkillInvocation({
+        messageText: "/deep-review topic: mux",
+        agentSkillDescriptors: [
+          {
+            name: "deep-review",
+            description: "Review deeply",
+            scope: "project",
+          },
+        ],
+        workflowDefinitions: [
+          {
+            name: "deep-review",
+            description: "Ambiguous workflow",
+            scope: "project",
+            executable: true,
+          },
+        ],
+        api: null,
+        discovery: null,
+      })
+    ).resolves.toEqual({
+      parsed: {
+        type: "command-invalid-args",
+        command: "deep-review",
+        input: "deep-review",
+        usage: "Skill and workflow names collide. Use /workflow deep-review to run the workflow.",
+      },
+      skillInvocation: null,
     });
   });
 });

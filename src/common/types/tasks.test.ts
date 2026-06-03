@@ -44,6 +44,11 @@ describe("normalizeTaskSettings", () => {
     expect(normalizeTaskSettings({})).toEqual(DEFAULT_TASK_SETTINGS);
   });
 
+  test("uses sixteen parallel agent tasks by default while preserving explicit values", () => {
+    expect(normalizeTaskSettings(undefined).maxParallelAgentTasks).toBe(16);
+    expect(normalizeTaskSettings({ maxParallelAgentTasks: 4 }).maxParallelAgentTasks).toBe(4);
+  });
+
   test("defaults include preserveSubagentsUntilArchive: false", () => {
     const normalized = normalizeTaskSettings(undefined);
     expect(normalized.preserveSubagentsUntilArchive).toBe(false);

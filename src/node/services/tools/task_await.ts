@@ -2,7 +2,9 @@ import { tool } from "ai";
 
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { readSubagentGitPatchArtifact } from "@/node/services/subagentGitPatchArtifacts";
+import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
 import { TaskAwaitToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import type { WorkflowRunRecord, WorkflowRunStatus } from "@/common/types/workflow";
 
 import { fromBashTaskId, toBashTaskId } from "./taskId";
 import { formatBashOutputReport } from "./bashTaskReport";
@@ -19,6 +21,9 @@ import {
   type AgentTaskStatusLookup,
   type AgentTaskTimestamps,
 } from "@/node/services/taskService";
+
+const DEFAULT_TASK_AWAIT_TIMEOUT_MS = 600_000;
+const WORKFLOW_AWAIT_POLL_INTERVAL_MS = 250;
 
 // Status values for which task_await still treats an agent task as live and
 // should surface the live status (plus an `elapsed_ms` field) instead of
@@ -74,6 +79,118 @@ function buildTaskAwaitSequencingError(taskId: string, suggestedTaskIds: string[
   };
 }
 
+function isWorkflowRunId(taskId: string): boolean {
+  return taskId.startsWith("wfr_");
+}
+
+function isWorkflowRunAwaitableStatus(status: WorkflowRunStatus): boolean {
+  return status === "pending" || status === "running" || status === "backgrounded";
+}
+
+function isWorkflowRunTerminalStatus(status: WorkflowRunStatus): boolean {
+  return status === "completed" || status === "failed" || status === "interrupted";
+}
+
+function parseWorkflowRun(value: unknown): WorkflowRunRecord {
+  return WorkflowRunRecordSchema.parse(value);
+}
+
+function getWorkflowRunElapsedMs(run: WorkflowRunRecord): number | undefined {
+  const createdAtMs = parseTimestampMs(run.createdAt);
+  if (createdAtMs == null) {
+    return undefined;
+  }
+  const updatedAtMs = parseTimestampMs(run.updatedAt);
+  const endAtMs = isWorkflowRunTerminalStatus(run.status) ? updatedAtMs : Date.now();
+  return Math.max(0, (endAtMs ?? Date.now()) - createdAtMs);
+}
+
+function getWorkflowRunReport(run: WorkflowRunRecord): {
+  reportMarkdown: string;
+  structuredOutput?: unknown;
+} {
+  const result = run.events.findLast((event) => event.type === "result")?.result;
+  if (result != null) {
+    return result;
+  }
+  return { reportMarkdown: `Workflow ${run.definition.name} completed without a final report.` };
+}
+
+function getWorkflowRunError(run: WorkflowRunRecord): string {
+  return (
+    run.events.findLast((event) => event.type === "error")?.message ??
+    `Workflow ${run.definition.name} failed.`
+  );
+}
+
+function buildWorkflowAwaitResult(run: WorkflowRunRecord) {
+  const base = {
+    taskId: run.id,
+    run,
+    ...withElapsedMs(getWorkflowRunElapsedMs(run)),
+  };
+
+  switch (run.status) {
+    case "completed": {
+      const result = getWorkflowRunReport(run);
+      return {
+        status: "completed" as const,
+        ...base,
+        reportMarkdown: result.reportMarkdown,
+        ...(result.structuredOutput !== undefined
+          ? { structuredOutput: result.structuredOutput }
+          : {}),
+        title: run.definition.name,
+      };
+    }
+    case "failed":
+      return {
+        status: "error" as const,
+        ...base,
+        error: getWorkflowRunError(run),
+      };
+    case "interrupted":
+      return {
+        status: "interrupted" as const,
+        ...base,
+        note: `Workflow ${run.definition.name} was interrupted.`,
+      };
+    case "pending":
+      return {
+        status: "queued" as const,
+        ...base,
+      };
+    case "backgrounded":
+      return {
+        status: "backgrounded" as const,
+        ...base,
+        note: "Workflow run is backgrounded. Use task_await to monitor progress.",
+      };
+    case "running":
+      return {
+        status: "running" as const,
+        ...base,
+      };
+  }
+}
+
+async function waitForDelayOrAbort(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, delayMs);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true }
+    );
+  });
+}
+
 export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.task_await.description,
@@ -90,8 +207,10 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
       const requestedIds: string[] | null =
         args.task_ids && args.task_ids.length > 0 ? args.task_ids : null;
 
-      const activeDescendantAgentTaskIds =
-        taskService.listActiveDescendantAgentTaskIds(workspaceId);
+      const activeDescendantAgentTaskIds = taskService.listActiveDescendantAgentTaskIds(
+        workspaceId,
+        { excludeWorkflowTasks: true }
+      );
       const listInScopeBackgroundBashTaskIds = async (): Promise<string[]> => {
         if (!config.backgroundProcessManager) {
           return [];
@@ -110,9 +229,26 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
 
         return dedupeStrings(bashTaskIds);
       };
+      const listInScopeWorkflowRunIds = async (): Promise<string[]> => {
+        if (config.workflowService?.listRuns == null) {
+          return [];
+        }
+
+        const workflowRunIds: string[] = [];
+        const runs = await config.workflowService.listRuns({ workspaceId });
+        for (const rawRun of runs) {
+          const parsed = WorkflowRunRecordSchema.safeParse(rawRun);
+          if (!parsed.success || !isWorkflowRunAwaitableStatus(parsed.data.status)) {
+            continue;
+          }
+          workflowRunIds.push(parsed.data.id);
+        }
+        return dedupeStrings(workflowRunIds);
+      };
       const listInScopeAwaitableTaskIds = async (): Promise<string[]> => {
         const awaitableTaskIds = [...activeDescendantAgentTaskIds];
         awaitableTaskIds.push(...(await listInScopeBackgroundBashTaskIds()));
+        awaitableTaskIds.push(...(await listInScopeWorkflowRunIds()));
         return dedupeStrings(awaitableTaskIds);
       };
       let suggestionBashTaskIdsPromise: Promise<string[]> | undefined;
@@ -120,11 +256,18 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         suggestionBashTaskIdsPromise ??= listInScopeBackgroundBashTaskIds().catch(() => []);
         return await suggestionBashTaskIdsPromise;
       };
+      let suggestionWorkflowRunIdsPromise: Promise<string[]> | undefined;
+      const getSuggestionWorkflowRunIds = async (): Promise<string[]> => {
+        suggestionWorkflowRunIdsPromise ??= listInScopeWorkflowRunIds().catch(() => []);
+        return await suggestionWorkflowRunIdsPromise;
+      };
       const uniqueTaskIds = requestedIds
         ? dedupeStrings(requestedIds)
         : await listInScopeAwaitableTaskIds();
 
-      const agentTaskIds = uniqueTaskIds.filter((taskId) => !taskId.startsWith("bash:"));
+      const agentTaskIds = uniqueTaskIds.filter(
+        (taskId) => !taskId.startsWith("bash:") && !isWorkflowRunId(taskId)
+      );
       const bulkFilter = (
         taskService as unknown as {
           filterDescendantAgentTaskIds?: (
@@ -166,6 +309,54 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         rejectedAgentTaskIds.length > 0
           ? taskService.getAgentTaskStatuses(rejectedAgentTaskIds)
           : new Map<string, AgentTaskStatusLookup>();
+
+      const getWorkflowRun = async (runId: string): Promise<WorkflowRunRecord | null> => {
+        if (config.workflowService?.getRun == null) {
+          throw new Error("workflowService not available for workflow run awaits");
+        }
+        const run = await config.workflowService.getRun({ workspaceId, runId });
+        if (run == null) {
+          return null;
+        }
+        return parseWorkflowRun(run);
+      };
+
+      const awaitWorkflowRun = async (runId: string, taskSignal: AbortSignal) => {
+        let run = await getWorkflowRun(runId);
+        if (run == null) {
+          return { status: "not_found" as const, taskId: runId };
+        }
+        if (timeoutMs === 0 || isWorkflowRunTerminalStatus(run.status)) {
+          return buildWorkflowAwaitResult(run);
+        }
+
+        const deadline = Date.now() + (timeoutMs ?? DEFAULT_TASK_AWAIT_TIMEOUT_MS);
+        while (!isWorkflowRunTerminalStatus(run.status)) {
+          if (abortSignal?.aborted) {
+            return { status: "error" as const, taskId: runId, error: "Interrupted", run };
+          }
+          if (taskSignal.aborted || Date.now() >= deadline) {
+            return buildWorkflowAwaitResult(run);
+          }
+
+          const remainingMs = Math.max(1, deadline - Date.now());
+          await waitForDelayOrAbort(
+            Math.min(WORKFLOW_AWAIT_POLL_INTERVAL_MS, remainingMs),
+            taskSignal
+          );
+          if (taskSignal.aborted) {
+            return buildWorkflowAwaitResult(run);
+          }
+
+          const nextRun = await getWorkflowRun(runId);
+          if (nextRun == null) {
+            return { status: "not_found" as const, taskId: runId };
+          }
+          run = nextRun;
+        }
+
+        return buildWorkflowAwaitResult(run);
+      };
 
       // task_await resolves once `min_completed` tasks have completed (default 1 = return on the
       // first completion) rather than always blocking on every awaited task. Each task gets its
@@ -240,6 +431,10 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           };
         }
 
+        if (isWorkflowRunId(taskId)) {
+          return await awaitWorkflowRun(taskId, taskSignal);
+        }
+
         if (!descendantAgentTaskIdSet.has(taskId)) {
           const lookup = rejectedAgentTaskStatuses.get(taskId);
           const activeTaskIds =
@@ -248,6 +443,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             const suggestedTaskIds = dedupeStrings([
               ...activeDescendantAgentTaskIds,
               ...(await getSuggestionBashTaskIds()),
+              ...(await getSuggestionWorkflowRunIds()),
             ]);
             if (suggestedTaskIds.length > 0) {
               return buildTaskAwaitSequencingError(taskId, suggestedTaskIds);
@@ -283,6 +479,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               status: "completed" as const,
               taskId,
               reportMarkdown: report.reportMarkdown,
+              structuredOutput: report.structuredOutput,
               title: report.title,
               ...getAgentTaskElapsedField(taskId),
               ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
@@ -309,6 +506,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             status: "completed" as const,
             taskId,
             reportMarkdown: report.reportMarkdown,
+            structuredOutput: report.structuredOutput,
             title: report.title,
             ...getAgentTaskElapsedField(taskId),
             ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),

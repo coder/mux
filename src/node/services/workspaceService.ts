@@ -120,6 +120,12 @@ import {
   type MuxMessageMetadata,
   type MuxMessage,
 } from "@/common/types/message";
+import type { WorkflowRunRecord } from "@/common/types/workflow";
+import {
+  WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
+  WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
+  buildWorkflowRunCardMessage,
+} from "@/common/utils/workflowRunMessages";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   hasSrcBaseDir,
@@ -5770,6 +5776,86 @@ export class WorkspaceService extends EventEmitter {
       const message = getErrorMessage(error);
       return Err(`Failed to fork workspace: ${message}`);
     }
+  }
+
+  async appendWorkflowRunInvocation(input: {
+    workspaceId: string;
+    rawCommand: string;
+    name: string;
+    args: unknown;
+    runId: string;
+    status: string;
+    result: unknown;
+    run?: WorkflowRunRecord;
+  }): Promise<boolean> {
+    assert(input.workspaceId.length > 0, "appendWorkflowRunInvocation requires workspaceId");
+    assert(input.rawCommand.trim().length > 0, "appendWorkflowRunInvocation requires rawCommand");
+    assert(input.name.length > 0, "appendWorkflowRunInvocation requires workflow name");
+    assert(input.runId.length > 0, "appendWorkflowRunInvocation requires runId");
+
+    const now = Date.now();
+    void this.updateRecencyTimestamp(input.workspaceId, now);
+    const commandPrefix = input.rawCommand.trim().split(/\s+/u)[0] ?? `/${input.name}`;
+    const userMessage = createMuxMessage(
+      `workflow-run-command-${input.runId}`,
+      "user",
+      input.rawCommand,
+      {
+        timestamp: now,
+        muxMetadata: {
+          type: WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
+          rawCommand: input.rawCommand,
+          commandPrefix,
+          runId: input.runId,
+        },
+      }
+    );
+    const workflowMessage = buildWorkflowRunCardMessage(
+      { name: input.name, args: input.args },
+      {
+        runId: input.runId,
+        status: input.status,
+        result: input.result,
+        ...(input.run != null ? { run: input.run } : {}),
+      },
+      now
+    );
+    workflowMessage.metadata = {
+      timestamp: now,
+      synthetic: true,
+      uiVisible: true,
+      muxMetadata: {
+        type: WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
+        runId: input.runId,
+      },
+    };
+
+    const session = this.getOrCreateSession(input.workspaceId);
+    const userAppend = await this.historyService.appendToHistory(input.workspaceId, userMessage);
+    if (!userAppend.success) {
+      log.error("Failed to append workflow slash command to history", {
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        error: userAppend.error,
+      });
+      return false;
+    }
+    session.emitChatEvent({ ...userMessage, type: "message" });
+
+    const toolAppend = await this.historyService.appendToHistory(
+      input.workspaceId,
+      workflowMessage
+    );
+    if (!toolAppend.success) {
+      log.error("Failed to append workflow run card to history", {
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+        error: toolAppend.error,
+      });
+      return false;
+    }
+    session.emitChatEvent({ ...workflowMessage, type: "message" });
+    return true;
   }
 
   async sendMessage(

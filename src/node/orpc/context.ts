@@ -1,3 +1,4 @@
+import type { IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import type { IncomingHttpHeaders } from "http";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
@@ -89,5 +90,6 @@ export interface ORPCContext {
   desktopSessionManager: DesktopSessionManager;
   desktopTokenManager: DesktopTokenManager;
   desktopBridgeServer: DesktopBridgeServer;
+  workflowRuntimeFactory: IJSRuntimeFactory;
   headers?: IncomingHttpHeaders;
 }

@@ -78,6 +78,7 @@ interface PendingTaskInfo {
 interface CompletedTaskInfo {
   taskId: string;
   reportMarkdown: string;
+  structuredOutput?: unknown;
   title?: string;
   agentId: string;
   agentType: string;
@@ -126,6 +127,7 @@ function serializeCompletedReport(report: CompletedTaskInfo) {
   return {
     taskId: report.taskId,
     reportMarkdown: report.reportMarkdown,
+    structuredOutput: report.structuredOutput,
     title: report.title,
     agentId: report.agentId,
     agentType: report.agentType,
@@ -210,6 +212,7 @@ function buildCompletedTaskResult(params: {
       status: "completed",
       taskId: report.taskId,
       reportMarkdown: report.reportMarkdown,
+      structuredOutput: report.structuredOutput,
       title: report.title,
       agentId: report.agentId,
       agentType: report.agentType,
@@ -397,6 +400,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
               report: {
                 taskId: createdTask.taskId,
                 reportMarkdown: report.reportMarkdown,
+                structuredOutput: report.structuredOutput,
                 title: report.title,
                 agentId: requestedAgentId,
                 agentType: requestedAgentId,

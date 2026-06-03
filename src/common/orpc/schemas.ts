@@ -45,6 +45,7 @@ export {
   FrontendWorkspaceMetadataSchema,
   GitStatusSchema,
   ProjectRefSchema,
+  WorkflowTaskMetadataSchema,
   WorkspaceActivitySnapshotSchema,
   WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
@@ -102,6 +103,23 @@ export {
   AgentSkillScopeSchema,
   SkillNameSchema,
 } from "./schemas/agentSkill";
+
+// Workflow schemas
+export {
+  StructuredTaskOutputSchema,
+  WorkflowDefinitionDescriptorSchema,
+  WorkflowDefinitionScopeSchema,
+  WorkflowEventSequenceSchema,
+  WorkflowNameSchema,
+  WorkflowResultSchema,
+  WorkflowRunEventSchema,
+  WorkflowRunIdSchema,
+  WorkflowRunRecordSchema,
+  WorkflowRunStatusSchema,
+  WorkflowRunStatusTransitionSchema,
+  WorkflowStepRecordSchema,
+  WorkflowStepStatusSchema,
+} from "./schemas/workflow";
 
 // Instruction context schemas (AGENTS.md, CLAUDE.md, …)
 export {
@@ -260,6 +278,7 @@ export {
   menu,
   agentSkills,
   agents,
+  workflows,
   nameGeneration,
   projects,
   mcpOauth,

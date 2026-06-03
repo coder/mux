@@ -227,12 +227,15 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
-<summary>agent_report (2)</summary>
+<summary>agent_report (5)</summary>
 
-| Env var                          | JSON path        | Type   | Description |
-| -------------------------------- | ---------------- | ------ | ----------- |
-| `MUX_TOOL_INPUT_REPORT_MARKDOWN` | `reportMarkdown` | string | —           |
-| `MUX_TOOL_INPUT_TITLE`           | `title`          | string | —           |
+| Env var                                 | JSON path              | Type    | Description                                                                          |
+| --------------------------------------- | ---------------------- | ------- | ------------------------------------------------------------------------------------ |
+| `MUX_TOOL_INPUT_REPORT_MARKDOWN`        | `reportMarkdown`       | string  | —                                                                                    |
+| `MUX_TOOL_INPUT_REPORT_MARKDOWN_PATH`   | `reportMarkdownPath`   | string  | Path to the markdown report file, usually report.md in the workspace root            |
+| `MUX_TOOL_INPUT_STRUCTURED_OUTPUT`      | `structuredOutput`     | unknown | —                                                                                    |
+| `MUX_TOOL_INPUT_STRUCTURED_OUTPUT_PATH` | `structuredOutputPath` | string  | Path to a JSON file containing the structured output, usually structured-output.json |
+| `MUX_TOOL_INPUT_TITLE`                  | `title`                | string  | —                                                                                    |
 
 </details>
 
@@ -633,8 +636,8 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 | `MUX_TOOL_INPUT_FILTER`           | `filter`            | string  | Optional regex to filter bash task output lines. By default, only matching lines are returned. When filter_exclude is true, matching lines are excluded instead. Non-matching lines are discarded and cannot be retrieved later.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `MUX_TOOL_INPUT_FILTER_EXCLUDE`   | `filter_exclude`    | boolean | When true, lines matching 'filter' are excluded instead of kept. Requires 'filter' to be set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `MUX_TOOL_INPUT_MIN_COMPLETED`    | `min_completed`     | number  | Number of awaited tasks that must complete before this call returns. Defaults to 1, so by default task_await returns as soon as the FIRST awaited task completes, letting you act on it while the rest keep running. The result still includes every task complete at that moment plus current status (running/queued) for the rest. Tasks that have not yet completed keep running and remain re-awaitable on a later task_await call. Raise this (e.g. set it to the total number of awaited tasks) when you genuinely need more before proceeding — for example best-of-N synthesis that must compare every candidate. Clamped to the number of awaited tasks; values above that behave like 'wait for all'. |
-| `MUX_TOOL_INPUT_TASK_IDS_<INDEX>` | `task_ids[<INDEX>]` | string  | List of task IDs to await — use only real IDs returned by prior task, bash, or task_list tool results; never fabricate an ID. When omitted, waits for all active descendant tasks of the current workspace.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `MUX_TOOL_INPUT_TASK_IDS_COUNT`   | `task_ids.length`   | number  | Number of elements in task_ids (List of task IDs to await — use only real IDs returned by prior task, bash, or task_list tool results; never fabricate an ID. When omitted, waits for all active descendant tasks of the current workspace.)                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `MUX_TOOL_INPUT_TASK_IDS_<INDEX>` | `task_ids[<INDEX>]` | string  | List of task IDs or workflow run IDs to await — use only real IDs returned by prior task, bash, workflow_run, or task_list tool results; never fabricate an ID. When omitted, waits for all active descendant tasks and workflow runs of the current workspace.                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `MUX_TOOL_INPUT_TASK_IDS_COUNT`   | `task_ids.length`   | number  | Number of elements in task_ids (List of task IDs or workflow run IDs to await — use only real IDs returned by prior task, bash, workflow_run, or task_list tool results; never fabricate an ID. When omitted, waits for all active descendant tasks and workflow runs of the current workspace.)                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `MUX_TOOL_INPUT_TIMEOUT_SECS`     | `timeout_secs`      | number  | Maximum time to wait in seconds for each task. For bash tasks, this waits for NEW output (or process exit). If exceeded, the result returns status=queued\|running\|awaiting_report (task is still active). Defaults to 600 seconds (10 minutes) if not specified. Set to 0 for a non-blocking status check.                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 </details>
@@ -676,6 +679,26 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 | Env var              | JSON path | Type   | Description                      |
 | -------------------- | --------- | ------ | -------------------------------- |
 | `MUX_TOOL_INPUT_URL` | `url`     | string | The URL to fetch (http or https) |
+
+</details>
+
+<details>
+<summary>workflow_read (1)</summary>
+
+| Env var               | JSON path | Type   | Description |
+| --------------------- | --------- | ------ | ----------- |
+| `MUX_TOOL_INPUT_NAME` | `name`    | string | —           |
+
+</details>
+
+<details>
+<summary>workflow_run (3)</summary>
+
+| Env var                            | JSON path           | Type    | Description |
+| ---------------------------------- | ------------------- | ------- | ----------- |
+| `MUX_TOOL_INPUT_ARGS`              | `args`              | unknown | —           |
+| `MUX_TOOL_INPUT_NAME`              | `name`              | string  | —           |
+| `MUX_TOOL_INPUT_RUN_IN_BACKGROUND` | `run_in_background` | boolean | —           |
 
 </details>
 

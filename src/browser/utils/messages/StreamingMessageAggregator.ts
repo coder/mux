@@ -80,6 +80,7 @@ import {
   isSideQuestionAnswerMessage as isSideQuestionAnswerMuxMessage,
   isSideQuestionUserMessage as isSideQuestionUserMuxMessage,
 } from "@/common/utils/messages/sideQuestion";
+import { isWorkflowResultMessage } from "@/common/utils/workflowRunMessages";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
@@ -3417,9 +3418,9 @@ export class StreamingMessageAggregator {
         typeof window !== "undefined" && window.api?.debugLlmRequest === true;
 
       const shouldHideMessageFromTranscript = (message: MuxMessage): boolean =>
-        message.metadata?.synthetic === true &&
         !showSyntheticMessages &&
-        message.metadata?.uiVisible !== true;
+        ((message.metadata?.synthetic === true && message.metadata?.uiVisible !== true) ||
+          isWorkflowResultMessage(message));
 
       // Synthetic agent-skill snapshot messages are hidden from the transcript unless
       // debugLlmRequest is enabled. We still want to surface their content in the UI by

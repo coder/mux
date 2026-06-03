@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import * as fs from "fs/promises";
 import { EventEmitter } from "events";
 
@@ -119,6 +120,20 @@ import {
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
 import { getErrorMessage } from "@/common/utils/errors";
 import { filterSideQuestionMessages } from "@/common/utils/messages/sideQuestion";
+import {
+  WORKFLOW_RESULT_METADATA_TYPE,
+  buildWorkflowResultContextMessage,
+  filterWorkflowDisplayOnlyMessages,
+} from "@/common/utils/workflowRunMessages";
+import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
+import {
+  shouldUseRuntimeWorkflowProjectIO,
+  WorkflowDefinitionStore,
+} from "@/node/services/workflows/WorkflowDefinitionStore";
+import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
+import { WorkflowService } from "@/node/services/workflows/WorkflowService";
+import { WorkflowTaskServiceAdapter } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
+import { resolveWorkflowScratchRoots } from "@/node/services/workflows/workflowScratchRoots";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
 
 const STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS = 1_000;
@@ -133,16 +148,18 @@ export function prepareProviderRequestMessages(
   sideQuestionFilteredCount: number;
   contextBoundarySlicedCount: number;
 } {
-  // /btw side questions are durable UI history, not main-agent context.
-  // Filter them before boundary slicing so future normal turns don't see
-  // side-question Q/A pairs and accidentally continue from an aside.
+  // /btw side questions and workflow display rows are durable UI history, not main-agent context.
+  // Filter them before boundary slicing so future normal turns don't see UI-only artifacts.
   const messagesWithoutSideQuestions = filterSideQuestionMessages(messages);
-  const sideQuestionFilteredCount = messages.length - messagesWithoutSideQuestions.length;
-  const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
+  const messagesWithoutWorkflowDisplay = filterWorkflowDisplayOnlyMessages(
     messagesWithoutSideQuestions
   );
+  const sideQuestionFilteredCount = messages.length - messagesWithoutSideQuestions.length;
+  const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
+    messagesWithoutWorkflowDisplay
+  );
   const contextBoundarySlicedCount =
-    messagesWithoutSideQuestions.length - activeContextMessages.length;
+    messagesWithoutWorkflowDisplay.length - activeContextMessages.length;
   const preserveReasoningOnly =
     canonicalProviderName === "anthropic" && effectiveThinkingLevel !== "off";
   return {
@@ -301,6 +318,20 @@ function derivePromptCacheScope(metadata: WorkspaceMetadata): string {
   return `${metadata.projectName}-${uniqueSuffix([metadata.projectPath])}`;
 }
 
+interface WorkflowResultContinuationSender {
+  sendMessage(
+    workspaceId: string,
+    message: string,
+    options: SendMessageOptions,
+    internal?: {
+      skipAutoResumeReset?: boolean;
+      synthetic?: boolean;
+      agentInitiated?: boolean;
+      startStreamInBackground?: boolean;
+    }
+  ): Promise<Result<void, SendMessageError>>;
+}
+
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
   private readonly historyService: HistoryService;
@@ -345,6 +376,7 @@ export class AIService extends EventEmitter {
   private lastLlmRequestByWorkspace = new Map<string, DebugLlmRequestSnapshot>();
   private taskService?: TaskService;
   private extraTools?: Record<string, Tool>;
+  private workflowResultContinuationSender?: WorkflowResultContinuationSender;
   private analyticsService?: { executeRawQuery(sql: string): Promise<unknown> };
   private desktopSessionManager?: DesktopSessionManager;
 
@@ -410,6 +442,10 @@ export class AIService extends EventEmitter {
 
   setTaskService(taskService: TaskService): void {
     this.taskService = taskService;
+  }
+
+  setWorkflowResultContinuationSender(sender: WorkflowResultContinuationSender): void {
+    this.workflowResultContinuationSender = sender;
   }
 
   setAnalyticsService(service: { executeRawQuery(sql: string): Promise<unknown> }): void {
@@ -1129,6 +1165,12 @@ export class AIService extends EventEmitter {
       const advisorExperimentEnabled =
         experiments?.advisorTool ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL) === true;
+      const dynamicWorkflowsExperimentEnabled =
+        experiments?.dynamicWorkflows ??
+        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS) === true;
+      const subagentFileReportsExperimentEnabled =
+        experiments?.subagentFileReports ??
+        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS) === true;
       emitStartupBreadcrumb("loading_workspace_context");
       const resolveAgentForStreamStartedAt = Date.now();
       const agentResult = await resolveAgentForStream({
@@ -1473,17 +1515,111 @@ export class AIService extends EventEmitter {
         advisorModelString,
         cfg.advisorThinkingLevel ?? THINKING_LEVEL_OFF
       );
-      const muxEnv = getMuxEnv(
-        metadata.projectPath,
-        getRuntimeType(metadata.runtimeConfig),
-        metadata.name,
-        {
-          workspaceId,
-          modelString,
-          thinkingLevel: thinkingLevel ?? "off",
-          costsUsd: sessionCostsUsd,
-        }
-      );
+      const runtimeType = getRuntimeType(metadata.runtimeConfig);
+      const useRuntimeProjectWorkflowIO = shouldUseRuntimeWorkflowProjectIO(runtimeType);
+      const workflowScratchRoots = resolveWorkflowScratchRoots(this.config, workspaceId, {
+        workspaceRootPath: workspacePath,
+        normalizePath: runtime.normalizePath.bind(runtime),
+      });
+      const muxEnv = getMuxEnv(metadata.projectPath, runtimeType, metadata.name, {
+        workspaceId,
+        modelString,
+        thinkingLevel: thinkingLevel ?? "off",
+        costsUsd: sessionCostsUsd,
+      });
+
+      const workflowService =
+        dynamicWorkflowsExperimentEnabled && this.taskService != null
+          ? new WorkflowService({
+              definitionStore: new WorkflowDefinitionStore({
+                projectRoot: runtime.normalizePath(".mux/workflows", workspacePath),
+                globalRoot: path.join(this.config.rootDir, "workflows"),
+                scratchRoot: workflowScratchRoots.scratchRoot,
+                projectRuntime: useRuntimeProjectWorkflowIO ? runtime : undefined,
+                projectCwd: useRuntimeProjectWorkflowIO ? workspacePath : undefined,
+              }),
+              runStore: new WorkflowRunStore({
+                sessionDir: this.config.getSessionDir(workspaceId),
+              }),
+              runtimeFactory: new QuickJSRuntimeFactory(),
+              taskAdapterFactory: (runId) =>
+                new WorkflowTaskServiceAdapter({
+                  taskService: this.taskService!,
+                  parentWorkspaceId: workspaceId,
+                  workflowRunId: runId,
+                  defaultAgentId: "explore",
+                  experiments: {
+                    ...experiments,
+                    dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
+                    subagentFileReports: subagentFileReportsExperimentEnabled,
+                  },
+                }),
+              // Background workflow tools outlive the model turn that started them. Feed the
+              // terminal result back as a hidden user turn so the parent agent continues
+              // instead of leaving the user staring at the workflow report payload.
+              onBackgroundRunTerminal: async ({ runId, status, result, run }) => {
+                const continuationSender = this.workflowResultContinuationSender;
+                if (continuationSender == null) {
+                  log.warn("Workflow completed but no continuation sender is configured", {
+                    workspaceId,
+                    runId,
+                  });
+                  return;
+                }
+
+                const rawCommand = `workflow_run ${run.definition.name}`;
+                const workflowResultMessage = buildWorkflowResultContextMessage({
+                  rawCommand,
+                  name: run.definition.name,
+                  runId,
+                  status,
+                  result,
+                  run,
+                });
+                const sendResult = await continuationSender.sendMessage(
+                  workspaceId,
+                  workflowResultMessage,
+                  {
+                    model: modelString,
+                    thinkingLevel: effectiveThinkingLevel,
+                    agentId: effectiveAgentId,
+                    toolPolicy: effectiveToolPolicy,
+                    additionalSystemInstructions: scratchpadAdditionalSystemInstructions,
+                    maxOutputTokens,
+                    providerOptions: effectiveMuxProviderOptions,
+                    experiments: {
+                      ...experiments,
+                      dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
+                      subagentFileReports: subagentFileReportsExperimentEnabled,
+                    },
+                    skipAiSettingsPersistence: true,
+                    muxMetadata: {
+                      type: WORKFLOW_RESULT_METADATA_TYPE,
+                      rawCommand,
+                      commandPrefix: "workflow_run",
+                      runId,
+                      requestedModel: modelString,
+                    },
+                  },
+                  {
+                    skipAutoResumeReset: true,
+                    synthetic: true,
+                    agentInitiated: true,
+                    startStreamInBackground: true,
+                  }
+                );
+                if (!sendResult.success) {
+                  log.warn("Failed to continue agent after workflow completion", {
+                    workspaceId,
+                    runId,
+                    error: sendResult.error,
+                  });
+                }
+              },
+              getCurrentProjectTrusted: () => isProjectTrusted(this.config, metadata.projectPath),
+              runnerId: `workflow-runner:${workspaceId}`,
+            })
+          : undefined;
 
       // Create assistant message ID early so tool-side usage reporting and nested tool events
       // stay scoped to this specific assistant turn. The placeholder is appended to history below
@@ -1576,10 +1712,14 @@ export class AIService extends EventEmitter {
           ancestorPlanFilePaths,
           workspaceId,
           muxScope,
+          workflowService,
           goalService: workspaceGoalService,
           enableGoalTools: goalToolAvailability,
           // Only child workspaces (tasks) can report to a parent.
           enableAgentReport: Boolean(metadata.parentWorkspaceId),
+          workflowAgentOutputSchema: metadata.workflowTask?.outputSchema,
+          subagentReportFiles:
+            subagentFileReportsExperimentEnabled && metadata.parentWorkspaceId != null,
           // External edit detection callback
           recordFileState,
           reportModelUsage: (event) => {
@@ -1654,8 +1794,12 @@ export class AIService extends EventEmitter {
           taskService: this.taskService,
           analyticsService: this.analyticsService,
           desktopSessionManager: this.desktopSessionManager,
-          // Experiments for inheritance to subagents.
-          experiments,
+          // Experiments for inheritance to subagents and workflow tool gating.
+          experiments: {
+            ...experiments,
+            dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
+            subagentFileReports: subagentFileReportsExperimentEnabled,
+          },
           // Dynamic context for tool descriptions (moved from system prompt for better model attention)
           availableSubagents: agentDefinitions,
           availableSkills,

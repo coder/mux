@@ -127,6 +127,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.sessionTimingService,
     opts.opResolver
   );
+  aiService.setWorkflowResultContinuationSender(workspaceService);
   workspaceService.setMCPServerManager(mcpServerManager);
   workspaceService.setWorkspaceGoalService(workspaceGoalService);
   workspaceGoalService.setOnActivityChange((workspaceId, snapshot) => {

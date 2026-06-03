@@ -3,6 +3,8 @@ import * as fs from "fs";
 import { describe, it, expect, mock, spyOn } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
+import type { ToolConfiguration } from "@/common/utils/tools/tools";
+import type { WorkflowRunRecord, WorkflowRunStatus } from "@/common/types/workflow";
 import { createTaskAwaitTool } from "./task_await";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
@@ -13,6 +15,27 @@ const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };
+
+type TestWorkflowService = NonNullable<ToolConfiguration["workflowService"]>;
+
+function createWorkflowRun(
+  status: WorkflowRunStatus,
+  events: WorkflowRunRecord["events"] = []
+): WorkflowRunRecord {
+  return {
+    id: "wfr_demo",
+    workspaceId: "parent-workspace",
+    definition: { name: "demo", description: "Demo workflow", scope: "built-in", executable: true },
+    definitionSource: "export default function workflow() { return null; }\n",
+    definitionHash: "sha256:demo",
+    args: {},
+    status,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:05.000Z",
+    events,
+    steps: [],
+  };
+}
 
 describe("task_await tool", () => {
   it("includes gitFormatPatch artifacts written during waitForAgentReport", async () => {
@@ -554,6 +577,192 @@ describe("task_await tool", () => {
     expect(waitForAgentReport).toHaveBeenCalledTimes(0);
   });
 
+  it("awaits workflow run ids and returns the consolidated workflow result", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-workflow-completed");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const completedRun = createWorkflowRun("completed", [
+      {
+        sequence: 1,
+        type: "status",
+        at: "2026-01-01T00:00:01.000Z",
+        status: "running",
+      },
+      {
+        sequence: 2,
+        type: "result",
+        at: "2026-01-01T00:00:04.000Z",
+        result: { reportMarkdown: "workflow done", structuredOutput: { ok: true } },
+      },
+      {
+        sequence: 3,
+        type: "status",
+        at: "2026-01-01T00:00:05.000Z",
+        status: "completed",
+      },
+    ]);
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      waitForAgentReport: mock(() => {
+        throw new Error("workflow run IDs should not be treated as agent tasks");
+      }),
+    } as unknown as TaskService;
+    const workflowService = {
+      getRun: mock(() => Promise.resolve(completedRun)),
+    };
+    const tool = createTaskAwaitTool({
+      ...baseConfig,
+      taskService,
+      workflowService: workflowService as unknown as TestWorkflowService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_demo"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        {
+          status: "completed",
+          taskId: "wfr_demo",
+          reportMarkdown: "workflow done",
+          structuredOutput: { ok: true },
+          title: "demo",
+          elapsed_ms: 5000,
+          run: completedRun,
+        },
+      ],
+    });
+    expect(workflowService.getRun).toHaveBeenCalledWith({
+      workspaceId: "parent-workspace",
+      runId: "wfr_demo",
+    });
+  });
+
+  it("discovers active workflow runs when task_ids is omitted", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-workflow-discovery");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const backgroundedRun = {
+      ...createWorkflowRun("backgrounded", [
+        {
+          sequence: 1,
+          type: "status" as const,
+          at: "2026-01-01T00:00:01.000Z",
+          status: "running" as const,
+        },
+        {
+          sequence: 2,
+          type: "status" as const,
+          at: "2026-01-01T00:00:02.000Z",
+          status: "backgrounded" as const,
+        },
+      ]),
+      id: "wfr_backgrounded",
+      status: "backgrounded" as const,
+    };
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      waitForAgentReport: mock(() => {
+        throw new Error("workflow discovery should not wait for agent reports");
+      }),
+    } as unknown as TaskService;
+    const workflowService = {
+      listRuns: mock(() => Promise.resolve([backgroundedRun])),
+      getRun: mock(() => Promise.resolve(backgroundedRun)),
+    };
+    const tool = createTaskAwaitTool({
+      ...baseConfig,
+      taskService,
+      workflowService: workflowService as unknown as TestWorkflowService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ timeout_secs: 0 }, mockToolCallOptions)
+    );
+
+    const workflowResult = result as {
+      results: Array<{ elapsed_ms?: unknown }>;
+    };
+    expect(typeof workflowResult.results[0]?.elapsed_ms).toBe("number");
+    expect(result).toEqual({
+      results: [
+        {
+          status: "backgrounded",
+          taskId: "wfr_backgrounded",
+          elapsed_ms: workflowResult.results[0]?.elapsed_ms,
+          note: "Workflow run is backgrounded. Use task_await to monitor progress.",
+          run: backgroundedRun,
+        },
+      ],
+    });
+  });
+
+  it("polls a backgrounded workflow run until the final result is available", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-workflow-poll");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const backgroundedRun = {
+      ...createWorkflowRun("backgrounded"),
+      id: "wfr_poll",
+      status: "backgrounded" as const,
+    };
+    const completedRun = {
+      ...createWorkflowRun("completed", [
+        {
+          sequence: 1,
+          type: "result" as const,
+          at: "2026-01-01T00:00:05.000Z",
+          result: { reportMarkdown: "poll complete" },
+        },
+        {
+          sequence: 2,
+          type: "status" as const,
+          at: "2026-01-01T00:00:05.000Z",
+          status: "completed" as const,
+        },
+      ]),
+      id: "wfr_poll",
+      status: "completed" as const,
+    };
+    let getRunCalls = 0;
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      waitForAgentReport: mock(() => {
+        throw new Error("workflow polling should not wait for agent reports");
+      }),
+    } as unknown as TaskService;
+    const workflowService = {
+      getRun: mock(() => Promise.resolve(getRunCalls++ === 0 ? backgroundedRun : completedRun)),
+    };
+    const tool = createTaskAwaitTool({
+      ...baseConfig,
+      taskService,
+      workflowService: workflowService as unknown as TestWorkflowService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_poll"], timeout_secs: 1 }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        {
+          status: "completed",
+          taskId: "wfr_poll",
+          reportMarkdown: "poll complete",
+          title: "demo",
+          elapsed_ms: 5000,
+          run: completedRun,
+        },
+      ],
+    });
+    expect(workflowService.getRun).toHaveBeenCalledTimes(2);
+  });
+
   it("defaults to waiting on all active descendant tasks when task_ids is omitted", async () => {
     using tempDir = new TestTempDir("test-task-await-tool-descendants");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
@@ -572,7 +781,9 @@ describe("task_await tool", () => {
 
     const result: unknown = await Promise.resolve(tool.execute!({}, mockToolCallOptions));
 
-    expect(listActiveDescendantAgentTaskIds).toHaveBeenCalledWith("parent-workspace");
+    expect(listActiveDescendantAgentTaskIds).toHaveBeenCalledWith("parent-workspace", {
+      excludeWorkflowTasks: true,
+    });
     expect(result).toEqual({
       results: [{ status: "completed", taskId: "t1", reportMarkdown: "ok", title: undefined }],
     });

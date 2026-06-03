@@ -32,7 +32,12 @@ import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import type { BashToolResult } from "@/common/types/tools";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { createMuxMessage } from "@/common/types/message";
+import {
+  WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
+  WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
+} from "@/common/utils/workflowRunMessages";
 import { getPlanFilePath } from "@/common/utils/planStorage";
 import * as todoStorageModule from "@/node/services/todos/todoStorage";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
@@ -207,6 +212,75 @@ function createFrontendWorkspaceMetadata(
     namedWorkspacePath: overrides.namedWorkspacePath ?? `/tmp/${overrides.id}`,
   };
 }
+
+describe("WorkspaceService workflow invocation events", () => {
+  test("emits workflow slash invocation rows through the active session chat stream", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "workflow-live-events";
+    const projectPath = path.join(config.rootDir, "project");
+    try {
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: "workflow-live-events",
+        projectName: "project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        aiService: createMockAIService({
+          stopStream: mock(() => Promise.resolve(Ok(undefined))),
+        }),
+        extensionMetadata: new ExtensionMetadataService(
+          path.join(config.rootDir, "extensionMetadata.json")
+        ),
+        initStateManager: {
+          ...mockInitStateManager,
+          off: mock(() => undefined as unknown as InitStateManager),
+        } as unknown as InitStateManager,
+      });
+      const session = workspaceService.getOrCreateSession(workspaceId);
+      const events: WorkspaceChatMessage[] = [];
+      const unsubscribe = session.onChatEvent(({ message }) => {
+        events.push(message);
+      });
+
+      try {
+        const persisted = await workspaceService.appendWorkflowRunInvocation({
+          workspaceId,
+          rawCommand: "/demo investigate live events",
+          name: "demo",
+          args: { input: "investigate live events" },
+          runId: "wfr_live_events",
+          status: "running",
+          result: null,
+        });
+
+        expect(persisted).toBe(true);
+        expect(events).toHaveLength(2);
+        const triggerMessage = events[0];
+        const cardMessage = events[1];
+        if (triggerMessage?.type !== "message" || cardMessage?.type !== "message") {
+          throw new Error("Expected workflow invocation to emit message events");
+        }
+        expect(triggerMessage).toMatchObject({ role: "user", type: "message" });
+        expect(triggerMessage.metadata?.muxMetadata).toEqual(
+          expect.objectContaining({ type: WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE })
+        );
+        expect(cardMessage).toMatchObject({ role: "assistant", type: "message" });
+        expect(cardMessage.metadata?.muxMetadata).toEqual(
+          expect.objectContaining({ type: WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE })
+        );
+      } finally {
+        unsubscribe();
+        workspaceService.disposeSession(workspaceId);
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+});
 
 describe("WorkspaceService truncateHistory goal acknowledgment", () => {
   async function createServices(aiServiceOverride?: AIService) {

@@ -26,6 +26,19 @@ interface AgentReportToolCallProps {
   status?: ToolStatus;
 }
 
+function getSubmittedReportMarkdown(
+  args: AgentReportToolArgs,
+  result: AgentReportToolResult | undefined
+): string {
+  if (result && "success" in result && result.success === true && result.report?.reportMarkdown) {
+    return result.report.reportMarkdown;
+  }
+  if ("reportMarkdown" in args) {
+    return args.reportMarkdown;
+  }
+  return `Report file: ${args.reportMarkdownPath ?? "report.md"}`;
+}
+
 export const AgentReportToolCall: React.FC<AgentReportToolCallProps> = ({
   args,
   result,
@@ -37,9 +50,10 @@ export const AgentReportToolCall: React.FC<AgentReportToolCallProps> = ({
   const errorResult = isToolErrorResult(result) ? result : null;
 
   const title = args.title ?? "Agent report";
+  const reportMarkdown = getSubmittedReportMarkdown(args, result);
 
   // Show a small preview when collapsed so the card still has some useful context.
-  const firstLine = args.reportMarkdown.trim().split("\n")[0] ?? "";
+  const firstLine = reportMarkdown.trim().split("\n")[0] ?? "";
   const preview = firstLine.length > 80 ? firstLine.slice(0, 80).trim() + "…" : firstLine;
 
   return (
@@ -54,7 +68,7 @@ export const AgentReportToolCall: React.FC<AgentReportToolCallProps> = ({
       {expanded && (
         <ToolDetails>
           <div className="text-[11px]">
-            <MarkdownRenderer content={args.reportMarkdown} />
+            <MarkdownRenderer content={reportMarkdown} />
           </div>
           {errorResult && <ErrorBox className="mt-2">{errorResult.error}</ErrorBox>}
         </ToolDetails>
