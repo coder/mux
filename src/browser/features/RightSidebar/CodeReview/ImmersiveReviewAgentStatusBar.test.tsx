@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { act, cleanup, fireEvent, render, type RenderResult } from "@testing-library/react";
+import { act, cleanup, render, type RenderResult } from "@testing-library/react";
 import { Profiler } from "react";
 
 import { installDom } from "../../../../../tests/ui/dom";
@@ -145,14 +145,16 @@ describe("ImmersiveReviewAgentStatusBar", () => {
     { content: "Add tests", status: "pending" },
   ];
 
-  test("renders the TODO plan (expanded) when todos exist", () => {
+  test("renders the TODO plan inline on a single line when todos exist", () => {
     seed("ws-todos", { todos });
     const result = renderBar("ws-todos");
-    // The horizontal TodoList strip is visible by default.
+    // The bar always shows the full plan: a static "TODO" label plus the inline
+    // horizontal TodoList strip listing each todo (no collapse toggle).
+    expect(result.getByText("TODO")).toBeTruthy();
     expect(result.getByText("Wire up status bar")).toBeTruthy();
     expect(result.getByText("Add tests")).toBeTruthy();
-    // Summary reflects the counts.
-    expect(result.getByText(/1 in progress/)).toBeTruthy();
+    // The plan is never collapsible, so there's no expand/collapse button.
+    expect(result.queryByRole("button")).toBeNull();
   });
 
   test("renders nothing when there is no plan and no active stream", () => {
@@ -181,29 +183,6 @@ describe("ImmersiveReviewAgentStatusBar", () => {
     expect(result.getByText("Mux has a question")).toBeTruthy();
     // The question chip wins over the streaming label.
     expect(result.queryByText("Streaming…")).toBeNull();
-  });
-
-  test("collapsing hides the plan and the collapsed choice persists across remounts", () => {
-    const workspaceId = "ws-collapse";
-    seed(workspaceId, { todos });
-    const first = renderBar(workspaceId);
-
-    // Plan is expanded by default; collapsing hides the horizontal strip.
-    expect(first.getByText("Wire up status bar")).toBeTruthy();
-    fireEvent.click(first.getByRole("button", { name: /todo/i }));
-    expect(first.queryByText("Wire up status bar")).toBeNull();
-
-    // Remounting the bar for the same workspace must restore the collapsed
-    // choice (asserted via the user-visible re-render rather than reading the
-    // raw localStorage value, which keeps this resilient to the test-runner's
-    // shared-global quirks).
-    first.unmount();
-    const second = renderBar(workspaceId);
-    expect(second.queryByText("Wire up status bar")).toBeNull();
-
-    // Re-expanding brings the plan back, proving the toggle round-trips.
-    fireEvent.click(second.getByRole("button", { name: /todo/i }));
-    expect(second.getByText("Wire up status bar")).toBeTruthy();
   });
 
   test("does not re-render on unrelated workspace-state bumps, only on watched fields", () => {

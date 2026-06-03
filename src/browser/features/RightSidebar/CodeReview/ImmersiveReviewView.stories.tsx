@@ -716,7 +716,7 @@ export const ImmersiveWithAgentStatusBar: Story = {
     await waitFor(
       () => {
         canvas.getByTestId("immersive-review-view");
-        // The collapsible TODO bar + its horizontal plan strip render.
+        // The single-line TODO bar + its inline horizontal plan strip render.
         canvas.getByTestId("immersive-agent-status-bar");
         canvas.getByText("Add the top status bar (TODO + streaming)");
         // Live streaming chip is visible alongside the plan.
@@ -750,7 +750,7 @@ export const ImmersiveWithStreamingNoTodo: Story = {
     await waitFor(
       () => {
         canvas.getByTestId("immersive-review-view");
-        // The bar renders the streaming chip with no TODO toggle/summary.
+        // The bar renders the streaming chip with no TODO label/plan.
         canvas.getByTestId("immersive-agent-status-bar");
         canvas.getByText("Streaming…");
         if (canvas.queryByText("TODO")) {
