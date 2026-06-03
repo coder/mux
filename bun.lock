@@ -49,7 +49,7 @@
         "@vercel/ai-sdk-openai-websocket-fetch": "^1.0.0",
         "@xterm/addon-serialize": "^0.14.0",
         "@xterm/headless": "^6.0.0",
-        "ai": "^6.0.175",
+        "ai": "6.0.175",
         "ai-tokenizer": "^1.0.6",
         "chalk": "^5.6.2",
         "comlink": "^4.4.2",

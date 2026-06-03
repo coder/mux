@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import { useEffect, useState, type ComponentProps } from "react";
 
@@ -32,7 +32,7 @@ void mock.module("@/browser/contexts/API", () => ({
   }),
 }));
 
-import { ImmersiveReviewView } from "./ImmersiveReviewView";
+import { ImmersiveReviewView, shouldPreserveImmersiveContextCursor } from "./ImmersiveReviewView";
 
 function createHunk(overrides: Partial<DiffHunk> = {}): DiffHunk {
   return {
@@ -114,6 +114,36 @@ function renderImmersiveReview(
   );
 }
 
+function installManualAnimationFrame() {
+  let nextFrameId = 1;
+  const callbacks = new Map<number, FrameRequestCallback>();
+
+  const requestAnimationFrameMock = mock((callback: FrameRequestCallback) => {
+    const frameId = nextFrameId;
+    nextFrameId += 1;
+    callbacks.set(frameId, callback);
+    return frameId;
+  }) as unknown as typeof globalThis.requestAnimationFrame;
+  const cancelAnimationFrameMock = mock((frameId: number) => {
+    callbacks.delete(frameId);
+  }) as unknown as typeof globalThis.cancelAnimationFrame;
+
+  globalThis.requestAnimationFrame = requestAnimationFrameMock;
+  globalThis.cancelAnimationFrame = cancelAnimationFrameMock;
+  globalThis.window.requestAnimationFrame = requestAnimationFrameMock;
+  globalThis.window.cancelAnimationFrame = cancelAnimationFrameMock;
+
+  return {
+    flush() {
+      const pendingCallbacks = Array.from(callbacks.values());
+      callbacks.clear();
+      for (const callback of pendingCallbacks) {
+        callback(performance.now());
+      }
+    },
+  };
+}
+
 describe("ImmersiveReviewView", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
@@ -191,6 +221,116 @@ describe("ImmersiveReviewView", () => {
         exitCode: 0,
       },
     });
+  });
+
+  test("keeps hydrated full-file context behind the reveal gate until positioned", async () => {
+    type ExecuteBashValue = Awaited<ReturnType<MockApiClient["workspace"]["executeBash"]>>;
+    let resolveRead: ((value: ExecuteBashValue) => void) | undefined;
+    const pendingRead = new Promise<ExecuteBashValue>((resolve) => {
+      resolveRead = resolve;
+    });
+    mockApi.workspace.executeBash = mock(() => pendingRead);
+    const animationFrame = installManualAnimationFrame();
+
+    const hunk = createHunk({
+      newStart: 3,
+      oldStart: 3,
+      header: "@@ -3 +3 @@",
+      content: "-old selected line\n+new selected line",
+    });
+
+    const view = renderImmersiveReview({
+      fileTree: createFileTree(hunk.filePath),
+      hunks: [hunk],
+      allHunks: [hunk],
+      selectedHunkId: hunk.id,
+      isTouchImmersive: false,
+    });
+
+    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalledTimes(1));
+    expect(view.getByTestId("immersive-diff-reveal-overlay").textContent ?? "").toContain(
+      "Loading file"
+    );
+    expect(view.getByTestId("immersive-diff-reveal-stage").className).toContain("invisible");
+
+    act(() => animationFrame.flush());
+    await waitFor(() => expect(view.queryByTestId("immersive-diff-reveal-overlay")).toBeNull());
+    expect(view.getByTestId("immersive-diff-reveal-stage").className).not.toContain("invisible");
+
+    const resolveLoadedContent = resolveRead;
+    if (!resolveLoadedContent) {
+      throw new Error("Read promise resolver was not captured");
+    }
+
+    act(() => {
+      resolveLoadedContent({
+        success: true,
+        data: {
+          success: true,
+          output: encodeFileReadOutput(
+            ["context before selected 1", "context before selected 2", "new selected line"].join(
+              "\n"
+            )
+          ),
+          exitCode: 0,
+        },
+      });
+    });
+
+    await waitFor(() =>
+      expect(view.getByTestId("immersive-diff-reveal-overlay").textContent ?? "").toContain(
+        "Preparing diff"
+      )
+    );
+    expect(view.container.textContent ?? "").toContain("context before selected 1");
+    expect(view.getByTestId("immersive-diff-reveal-stage").className).toContain("invisible");
+    expect(view.getByTestId("immersive-minimap-reveal-stage").className).toContain("h-full");
+    expect(view.getByTestId("immersive-minimap-reveal-stage").className).toContain("invisible");
+
+    act(() => animationFrame.flush());
+    await waitFor(() => expect(view.queryByTestId("immersive-diff-reveal-overlay")).toBeNull());
+    expect(view.getByTestId("immersive-diff-reveal-stage").className).not.toContain("invisible");
+    expect(view.getByTestId("immersive-minimap-reveal-stage").className).not.toContain("invisible");
+  });
+
+  test("only preserves context cursors while overlay content is unchanged", () => {
+    const previousRange = { startIndex: 0, endIndex: 1 };
+
+    expect(
+      shouldPreserveImmersiveContextCursor({
+        cursorLineIndex: 2,
+        previousRange,
+        previousHunkId: "hunk-selected",
+        currentHunkId: "hunk-selected",
+        previousOverlayContent: "compact overlay",
+        currentOverlayContent: "compact overlay",
+      })
+    ).toBe(true);
+
+    // Compact hunk overlays and hydrated full-file overlays use different
+    // numeric row indices. Do not carry an out-of-hunk compact cursor across
+    // hydration, or the reveal can replay a stale context/separator row.
+    expect(
+      shouldPreserveImmersiveContextCursor({
+        cursorLineIndex: 2,
+        previousRange,
+        previousHunkId: "hunk-selected",
+        currentHunkId: "hunk-selected",
+        previousOverlayContent: "compact overlay",
+        currentOverlayContent: "hydrated full-file overlay",
+      })
+    ).toBe(false);
+
+    expect(
+      shouldPreserveImmersiveContextCursor({
+        cursorLineIndex: 1,
+        previousRange,
+        previousHunkId: "hunk-selected",
+        currentHunkId: "hunk-selected",
+        previousOverlayContent: "compact overlay",
+        currentOverlayContent: "compact overlay",
+      })
+    ).toBe(false);
   });
 
   test("skips full-file reads when the selected hunk starts beyond the render budget", () => {

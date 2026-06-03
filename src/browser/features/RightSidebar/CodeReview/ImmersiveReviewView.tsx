@@ -146,6 +146,11 @@ interface ImmersiveOverlayData {
   hunkLineRanges: Map<string, HunkLineRange>;
 }
 
+interface OverlayRevealIdentity {
+  filePath: string;
+  content: string;
+}
+
 const MAX_FULL_FILE_CONTEXT_LINES = 1500;
 const MAX_FULL_FILE_CONTEXT_BYTES = 256 * 1024;
 
@@ -364,6 +369,13 @@ function buildOverlayFromHunks(sortedHunks: DiffHunk[]): ImmersiveOverlayData {
   };
 }
 
+function isSameOverlayRevealIdentity(
+  lhs: OverlayRevealIdentity | null,
+  rhs: OverlayRevealIdentity | null
+): boolean {
+  return lhs?.filePath === rhs?.filePath && lhs?.content === rhs?.content;
+}
+
 function isSelectionInsideRange(selection: SelectedLineRange, range: HunkLineRange): boolean {
   const start = Math.min(selection.startIndex, selection.endIndex);
   const end = Math.max(selection.startIndex, selection.endIndex);
@@ -374,6 +386,29 @@ function isLineInsideSelection(lineIndex: number, selection: SelectedLineRange):
   const start = Math.min(selection.startIndex, selection.endIndex);
   const end = Math.max(selection.startIndex, selection.endIndex);
   return lineIndex >= start && lineIndex <= end;
+}
+
+export function shouldPreserveImmersiveContextCursor(input: {
+  cursorLineIndex: number | null;
+  previousRange: { startIndex: number; endIndex: number } | null;
+  previousHunkId: string | null;
+  currentHunkId: string | null;
+  previousOverlayContent: string | null;
+  currentOverlayContent: string;
+}): boolean {
+  if (
+    input.cursorLineIndex === null ||
+    !input.previousRange ||
+    input.previousHunkId !== input.currentHunkId ||
+    input.previousOverlayContent !== input.currentOverlayContent
+  ) {
+    return false;
+  }
+
+  return (
+    input.cursorLineIndex < input.previousRange.startIndex ||
+    input.cursorLineIndex > input.previousRange.endIndex
+  );
 }
 
 /** Resolve the hunk that contains a given overlay line index using the lineHunkIds lookup. */
@@ -533,8 +568,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     return null;
   }, [selectedHunkId, hunks, allHunks, fileList, isReviewComplete]);
 
-  const activeFilePathRef = useRef<string | null>(null);
-  activeFilePathRef.current = activeFilePath;
+  const activeOverlayRevealIdentityRef = useRef<OverlayRevealIdentity | null>(null);
 
   const selectedHunkFromAll = useMemo(
     () => (selectedHunkId ? (allHunks.find((item) => item.id === selectedHunkId) ?? null) : null),
@@ -606,10 +640,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     [activeFilePath, currentFileHunks, props.workspaceId]
   );
 
-  // Hold diff reveal during file switches until the initial scroll is complete.
-  // Track the last revealed file instead of setting "pending" from an effect so
-  // a newly selected file is hidden on its first render rather than for one frame after paint.
-  const [revealedFilePath, setRevealedFilePath] = useState<string | null>(null);
+  // Hold diff reveal until geometry-changing overlay swaps have been positioned.
+  // This covers file switches and same-file hydration from compact hunk overlays
+  // into full-file context, so the browser never paints an unanchored diff tree.
+  const [revealedOverlayIdentity, setRevealedOverlayIdentity] =
+    useState<OverlayRevealIdentity | null>(null);
   const revealAnimationFrameRef = useRef<number | null>(null);
 
   // Load full file context only when it is cheap. The hunk overlay remains visible
@@ -737,6 +772,32 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     return buildOverlayFromHunks(currentFileHunks);
   }, [resolvedActiveFileContent, currentFileHunks]);
 
+  const activeOverlayRevealIdentity = useMemo<OverlayRevealIdentity | null>(
+    () => (activeFilePath ? { filePath: activeFilePath, content: overlayData.content } : null),
+    [activeFilePath, overlayData.content]
+  );
+  const isActiveOverlayRevealPending =
+    activeOverlayRevealIdentity !== null &&
+    !isSameOverlayRevealIdentity(revealedOverlayIdentity, activeOverlayRevealIdentity);
+  const isActiveFileRevealPending =
+    activeFilePath !== null && revealedOverlayIdentity?.filePath !== activeFilePath;
+  const revealLoadingLabel = isActiveFileRevealPending ? "Loading file..." : "Preparing diff...";
+
+  const scheduleOverlayReveal = useCallback((overlayIdentity: OverlayRevealIdentity) => {
+    if (revealAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(revealAnimationFrameRef.current);
+    }
+
+    revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
+      setRevealedOverlayIdentity((currentRevealedIdentity) =>
+        isSameOverlayRevealIdentity(activeOverlayRevealIdentityRef.current, overlayIdentity)
+          ? overlayIdentity
+          : currentRevealedIdentity
+      );
+      revealAnimationFrameRef.current = null;
+    });
+  }, []);
+
   const selectedHunkRange = useMemo(
     () => (selectedHunk ? (overlayData.hunkLineRanges.get(selectedHunk.id) ?? null) : null),
     [selectedHunk, overlayData]
@@ -818,6 +879,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const [activeLineIndex, setActiveLineIndex] = useState<number | null>(null);
   const [selectedLineRange, setSelectedLineRange] = useState<SelectedLineRange | null>(null);
   const [scrollNonce, setScrollNonce] = useState(0);
+  const [minimapRedrawNonce, setMinimapRedrawNonce] = useState(0);
   const [boundaryToast, setBoundaryToast] = useState<string | null>(null);
 
   // Which panel has keyboard focus while in immersive mode.
@@ -834,18 +896,20 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       revealAnimationFrameRef.current = null;
     }
 
-    if (!activeFilePath) {
-      setRevealedFilePath(null);
+    activeOverlayRevealIdentityRef.current = activeOverlayRevealIdentity;
+
+    if (!activeOverlayRevealIdentity) {
+      setRevealedOverlayIdentity(null);
       return;
     }
 
-    if (revealedFilePath !== activeFilePath) {
-      // Keep the splash visible for each file switch until we have scrolled to the target hunk.
-      // The pending state is derived during render so cross-file hunk iteration never flashes
-      // the new file at the old scroll position before this effect runs.
+    if (isActiveOverlayRevealPending) {
+      // The pending state is derived during render, not set from an effect, so
+      // file switches and same-file hydration swaps are hidden on their first
+      // paint until the scroll effect reveals the positioned overlay.
       hunkJumpRef.current = true;
     }
-  }, [activeFilePath, revealedFilePath]);
+  }, [activeOverlayRevealIdentity, isActiveOverlayRevealPending]);
 
   useEffect(() => {
     return () => {
@@ -857,21 +921,20 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   const selectedHunkRevealTargetLineIndex =
     selectedHunkRange?.firstModifiedIndex ?? selectedHunkRange?.startIndex ?? null;
-  const isActiveFileRevealPending = activeFilePath !== null && revealedFilePath !== activeFilePath;
-  const revealTargetLineIndex = isActiveFileRevealPending
+  const revealTargetLineIndex = isActiveOverlayRevealPending
     ? selectedHunkRevealTargetLineIndex
     : (activeLineIndex ?? selectedHunkRevealTargetLineIndex);
   const hasResolvedSelectedHunkForReveal =
     selectedHunkId !== null && currentFileHunks.some((hunk) => hunk.id === selectedHunkId);
 
   useLayoutEffect(() => {
-    if (!isActiveFileRevealPending) {
+    if (!isActiveOverlayRevealPending || !activeOverlayRevealIdentity) {
       return;
     }
 
     // Fail open so the UI cannot get stuck if a file has no hunks.
     if (currentFileHunks.length === 0) {
-      setRevealedFilePath(activeFilePath);
+      setRevealedOverlayIdentity(activeOverlayRevealIdentity);
       return;
     }
 
@@ -882,13 +945,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
     // Fail open once selection is stable if we still cannot resolve a reveal target.
     if (selectedHunkRevealTargetLineIndex === null) {
-      setRevealedFilePath(activeFilePath);
+      setRevealedOverlayIdentity(activeOverlayRevealIdentity);
     }
   }, [
-    activeFilePath,
+    activeOverlayRevealIdentity,
     currentFileHunks.length,
     hasResolvedSelectedHunkForReveal,
-    isActiveFileRevealPending,
+    isActiveOverlayRevealPending,
     selectedHunkRevealTargetLineIndex,
   ]);
 
@@ -955,6 +1018,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const onSelectHunkRef = useRef(onSelectHunk);
   const allHunksRef = useRef(allHunks);
   const hunkLineRangesRef = useRef(overlayData.hunkLineRanges);
+  const previousOverlayContentRef = useRef<string | null>(null);
   const previousSelectedHunkIdRef = useRef<string | null>(null);
   const previousSelectedHunkRangeRef = useRef<HunkLineRange | null>(null);
   const skipScrollUntilCursorSettlesRef = useRef(false);
@@ -996,9 +1060,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // iteration does not flash the previous cursor/selection for a frame.
   useLayoutEffect(() => {
     const resolvedSelectedHunkId = selectedHunk?.id ?? null;
+    const previousOverlayContent = previousOverlayContentRef.current;
     const previousSelectedHunkId = previousSelectedHunkIdRef.current;
     const previousSelectedHunkRange = previousSelectedHunkRangeRef.current;
 
+    previousOverlayContentRef.current = overlayData.content;
     previousSelectedHunkIdRef.current = resolvedSelectedHunkId;
     previousSelectedHunkRangeRef.current = selectedHunkRange;
 
@@ -1026,23 +1092,20 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     }
 
     const cursorLineIndex = activeLineIndexRef.current;
-    const cursorWasInPreviousSelectedHunk = Boolean(
-      cursorLineIndex !== null &&
-      previousSelectedHunkRange &&
-      cursorLineIndex >= previousSelectedHunkRange.startIndex &&
-      cursorLineIndex <= previousSelectedHunkRange.endIndex
-    );
-    const shouldPreserveContextCursor = Boolean(
-      cursorLineIndex !== null &&
-      previousSelectedHunkRange &&
-      previousSelectedHunkId === resolvedSelectedHunkId &&
-      !cursorWasInPreviousSelectedHunk
-    );
+    const shouldPreserveContextCursor = shouldPreserveImmersiveContextCursor({
+      cursorLineIndex,
+      previousRange: previousSelectedHunkRange,
+      previousHunkId: previousSelectedHunkId,
+      currentHunkId: resolvedSelectedHunkId,
+      previousOverlayContent,
+      currentOverlayContent: overlayData.content,
+    });
 
     if (shouldPreserveContextCursor) {
-      // Full-file context can arrive after the user has intentionally moved the
-      // cursor onto an unchanged/context row. Preserve that cursor instead of
-      // snapping back to the selected hunk just because overlay indices changed.
+      // Preserve intentional context-row cursor movement only while the rendered
+      // overlay is unchanged. Compact hunk overlays and hydrated full-file
+      // overlays use different numeric indices, so carrying a context-row index
+      // across that geometry swap would reveal at the wrong row.
       skipScrollUntilCursorSettlesRef.current = false;
       return;
     }
@@ -1083,6 +1146,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       return null;
     });
   }, [
+    overlayData.content,
     selectedHunk?.id,
     selectedHunkRange?.startIndex,
     selectedHunkRange?.endIndex,
@@ -1724,25 +1788,27 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         activeLineIndex <= selectedHunkRange.endIndex
       );
       hunkJumpRef.current = Boolean(
-        isActiveFileRevealPending ||
+        isActiveOverlayRevealPending ||
         skipScrollUntilCursorSettlesRef.current ||
         activeLineIndex === null ||
         !selectedHunkRange ||
         cursorIsInsideSelectedHunk
       );
-      if (!isActiveFileRevealPending) {
+      if (!isActiveOverlayRevealPending) {
         return;
       }
     }
 
-    const lineIndexForScroll = isActiveFileRevealPending ? revealTargetLineIndex : activeLineIndex;
+    const lineIndexForScroll = isActiveOverlayRevealPending
+      ? revealTargetLineIndex
+      : activeLineIndex;
     if (lineIndexForScroll === null) {
       return;
     }
 
     if (skipScrollUntilCursorSettlesRef.current) {
       const cursorHasSettled =
-        isActiveFileRevealPending ||
+        isActiveOverlayRevealPending ||
         activeLineIndex === null ||
         !selectedHunkRange ||
         (activeLineIndex >= selectedHunkRange.startIndex &&
@@ -1764,21 +1830,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       `[data-line-index="${lineIndexForScroll}"]`
     );
     if (!lineElement) {
-      if (!isActiveFileRevealPending || !activeFilePath || contentChanged) {
+      if (!isActiveOverlayRevealPending || !activeOverlayRevealIdentity || contentChanged) {
         return;
       }
 
-      if (revealAnimationFrameRef.current !== null) {
-        cancelAnimationFrame(revealAnimationFrameRef.current);
-      }
-
-      const revealFilePath = activeFilePath;
-      revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
-        setRevealedFilePath((currentRevealedFilePath) =>
-          activeFilePathRef.current === revealFilePath ? revealFilePath : currentRevealedFilePath
-        );
-        revealAnimationFrameRef.current = null;
-      });
+      scheduleOverlayReveal(activeOverlayRevealIdentity);
       return;
     }
 
@@ -1795,27 +1851,24 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     hunkJumpRef.current = false;
     lineElement.scrollIntoView({ behavior: "auto", block });
 
-    if (!isActiveFileRevealPending || !activeFilePath) {
+    if (!isActiveOverlayRevealPending || !activeOverlayRevealIdentity) {
       return;
     }
 
-    if (revealAnimationFrameRef.current !== null) {
-      cancelAnimationFrame(revealAnimationFrameRef.current);
+    if (!isTouchExperience) {
+      // The minimap redraws from scrollTop; after a hidden hydration/file-swap
+      // scroll, force one hidden redraw before the shared reveal gate opens.
+      setMinimapRedrawNonce((previousNonce) => previousNonce + 1);
     }
-
-    const revealFilePath = activeFilePath;
-    revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
-      setRevealedFilePath((currentRevealedFilePath) =>
-        activeFilePathRef.current === revealFilePath ? revealFilePath : currentRevealedFilePath
-      );
-      revealAnimationFrameRef.current = null;
-    });
+    scheduleOverlayReveal(activeOverlayRevealIdentity);
   }, [
-    activeFilePath,
     activeLineIndex,
-    isActiveFileRevealPending,
+    activeOverlayRevealIdentity,
+    isActiveOverlayRevealPending,
+    isTouchExperience,
     overlayData.content,
     revealTargetLineIndex,
+    scheduleOverlayReveal,
     scrollNonce,
     selectedHunkRange,
   ]);
@@ -2155,12 +2208,18 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
               </div>
             ) : (
               <div className="bg-dark relative overflow-hidden">
-                {isActiveFileRevealPending && (
-                  <div className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm">
-                    <span className="animate-pulse">Loading file...</span>
+                {isActiveOverlayRevealPending && (
+                  <div
+                    className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm"
+                    data-testid="immersive-diff-reveal-overlay"
+                  >
+                    <span className="animate-pulse">{revealLoadingLabel}</span>
                   </div>
                 )}
-                <div className={cn(isActiveFileRevealPending && "invisible")}>
+                <div
+                  className={cn(isActiveOverlayRevealPending && "invisible")}
+                  data-testid="immersive-diff-reveal-stage"
+                >
                   <SelectableDiffRenderer
                     content={overlayData.content}
                     filePath={activeFilePath ?? currentFileHunks[0].filePath}
@@ -2186,13 +2245,19 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         </div>
 
         {!isReviewComplete && !isTouchExperience && (
-          <ImmersiveMinimap
-            content={overlayData.content}
-            scrollContainerRef={scrollContainerRef}
-            activeLineIndex={activeLineIndex}
-            onSelectLineIndex={handleMinimapSelectLine}
-            commentLineIndices={commentLineIndices}
-          />
+          <div
+            className={cn("h-full self-stretch", isActiveOverlayRevealPending && "invisible")}
+            data-testid="immersive-minimap-reveal-stage"
+          >
+            <ImmersiveMinimap
+              content={overlayData.content}
+              scrollContainerRef={scrollContainerRef}
+              activeLineIndex={activeLineIndex}
+              redrawNonce={minimapRedrawNonce}
+              onSelectLineIndex={handleMinimapSelectLine}
+              commentLineIndices={commentLineIndices}
+            />
+          </div>
         )}
 
         {!isReviewComplete && !isTouchExperience && (
