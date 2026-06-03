@@ -30,6 +30,18 @@ const readThemeColor = (cssVariableName: string, fallback: string): string => {
   return resolvedColor.length > 0 ? resolvedColor : fallback;
 };
 
+// The minimap reads thumb geometry from a scroll container in three places
+// (initial draw, thumb press, and drag-follow), each needing the same
+// scrollTop/scrollHeight/clientHeight triple. Funnel them through one wrapper
+// so the call sites stay in sync; pure forwarding, no behavior change.
+const getScrollContainerThumbMetrics = (scrollContainer: HTMLElement, trackHeight: number) =>
+  getThumbMetrics(
+    scrollContainer.scrollTop,
+    scrollContainer.scrollHeight,
+    scrollContainer.clientHeight,
+    trackHeight
+  );
+
 export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
   // Computed synchronously during render — React Compiler memoizes based on
   // props.content. Avoids the useState+useEffect flash where the component
@@ -105,10 +117,8 @@ export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
 
     const scrollContainer = props.scrollContainerRef.current;
     if (scrollContainer) {
-      const { thumbTop, thumbHeight } = getThumbMetrics(
-        scrollContainer.scrollTop,
-        scrollContainer.scrollHeight,
-        scrollContainer.clientHeight,
+      const { thumbTop, thumbHeight } = getScrollContainerThumbMetrics(
+        scrollContainer,
         trackHeight
       );
 
@@ -196,12 +206,7 @@ export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
       const pointerY = event.clientY - bounds.top;
 
       if (scrollContainer) {
-        const thumbMetrics = getThumbMetrics(
-          scrollContainer.scrollTop,
-          scrollContainer.scrollHeight,
-          scrollContainer.clientHeight,
-          bounds.height
-        );
+        const thumbMetrics = getScrollContainerThumbMetrics(scrollContainer, bounds.height);
 
         const isPressingThumb =
           thumbMetrics.maxThumbTop > 0 &&
@@ -223,10 +228,8 @@ export const ImmersiveMinimap: React.FC<ImmersiveMinimapProps> = (props) => {
 
             const latestBounds = latestCanvas.getBoundingClientRect();
             const nextPointerY = moveEvent.clientY - latestBounds.top;
-            const nextMetrics = getThumbMetrics(
-              latestScrollContainer.scrollTop,
-              latestScrollContainer.scrollHeight,
-              latestScrollContainer.clientHeight,
+            const nextMetrics = getScrollContainerThumbMetrics(
+              latestScrollContainer,
               latestBounds.height
             );
             const nextThumbTop = clamp(nextPointerY - pointerOffset, 0, nextMetrics.maxThumbTop);
