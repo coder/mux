@@ -143,7 +143,10 @@ describe("WorkflowService", () => {
     await fs.mkdir(globalActionRoot, { recursive: true });
     await fs.writeFile(
       path.join(globalActionRoot, "broken.js"),
-      `module.exports.metadata = { version: 1, description: "Missing effect" };`,
+      `
+        module.exports.metadata = { version: 1, description: "Missing effect" };
+        module.exports.execute = async () => null;
+      `,
       "utf-8"
     );
 
@@ -173,6 +176,48 @@ describe("WorkflowService", () => {
       executable: false,
     });
     expect(action?.executable === false ? action.blockedReason : "").toContain("effect");
+  });
+
+  test("marks metadata-only workflow actions as blocked during discovery", async () => {
+    using tmp = new DisposableTempDir("workflow-service-actions-missing-execute");
+    const workspaceRoot = path.join(tmp.path, "project");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const projectActionRoot = path.join(workspaceRoot, ".mux", "actions");
+    const globalActionRoot = path.join(tmp.path, "mux-home", "actions");
+    await fs.mkdir(projectActionRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(projectActionRoot, "metadataOnly.js"),
+      `module.exports.metadata = { version: 1, description: "Metadata only", effect: "read" };`,
+      "utf-8"
+    );
+
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: projectActionRoot,
+        globalRoot: globalActionRoot,
+      }),
+      runStore: new WorkflowRunStore({ sessionDir: tmp.path }),
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          return { taskId: "task_1", reportMarkdown: "unused" };
+        },
+      },
+      runnerId: "runner-a",
+    });
+
+    const actions = await service.listActions({ projectTrusted: true });
+    const action = actions.find((candidate) => candidate.name === "metadataOnly");
+
+    expect(action).toMatchObject({
+      name: "metadataOnly",
+      scope: "project",
+      sourcePath: path.join(projectActionRoot, "metadataOnly.js"),
+      executable: false,
+    });
+    expect(action?.executable === false ? action.blockedReason : "").toContain("execute");
   });
 
   test("starts a named workflow and persists the captured definition source", async () => {

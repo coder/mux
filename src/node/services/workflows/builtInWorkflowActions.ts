@@ -14,6 +14,9 @@ function boundedLimit(value, fallback) {
 
 async function runGit(ctx, args) {
   const result = await ctx.exec("git", args);
+  if (result.stdoutTruncated || result.stderrTruncated) {
+    throw new Error("git command output exceeded workflow action capture limit");
+  }
   if (result.exitCode !== 0) {
     throw new Error((result.stderr || result.stdout || "git command failed").trim());
   }
@@ -22,6 +25,9 @@ async function runGit(ctx, args) {
 
 async function tryGit(ctx, args) {
   const result = await ctx.exec("git", args);
+  if (result.stdoutTruncated || result.stderrTruncated) {
+    throw new Error("git command output exceeded workflow action capture limit");
+  }
   return result.exitCode === 0 ? result.stdout.trimEnd() : null;
 }
 

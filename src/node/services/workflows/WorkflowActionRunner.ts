@@ -173,9 +173,13 @@ export class WorkflowActionRunner {
     try {
       assert(action.name.length > 0, "WorkflowActionRunner.describe: action name is required");
       assertSupportedWorkflowActionSyntax(action.source);
+      assert(
+        hasStaticWorkflowActionCallableExport(action.source, "execute"),
+        "Workflow action must export an execute function"
+      );
       return Promise.resolve({
         metadata: validateWorkflowActionMetadata(parseStaticWorkflowActionMetadata(action.source)),
-        hasReconcile: hasStaticWorkflowActionReconcileExport(action.source),
+        hasReconcile: hasStaticWorkflowActionCallableExport(action.source, "reconcile"),
       });
     } catch (error) {
       return Promise.reject(new Error(getErrorMessage(error)));
@@ -518,11 +522,107 @@ async function statOptional(filePath: string): Promise<Awaited<ReturnType<typeof
 }
 
 function assertSupportedWorkflowActionSyntax(source: string): void {
-  if (/^\s*import\s/m.test(source) || /(^|\n)\s*export\s*\{/m.test(source)) {
+  const maskedSource = maskStaticJavaScriptSource(source);
+  if (/^\s*import\s/m.test(maskedSource) || /(^|\n)\s*export\s*\{/m.test(maskedSource)) {
     throw new Error(
       "Workflow action files currently support CommonJS require() plus export const/function/default declarations; static import/export lists are not supported"
     );
   }
+}
+
+function maskStaticJavaScriptSource(source: string): string {
+  let output = "";
+  let index = 0;
+  while (index < source.length) {
+    const current = source[index];
+    const next = source[index + 1];
+    assert(current != null, "maskStaticJavaScriptSource: current character is required");
+    if (current === "/" && next === "/") {
+      output += "  ";
+      index += 2;
+      while (index < source.length && source[index] !== "\n") {
+        output += " ";
+        index += 1;
+      }
+      continue;
+    }
+    if (current === "/" && next === "*") {
+      output += "  ";
+      index += 2;
+      while (index < source.length) {
+        const blockCurrent = source[index];
+        const blockNext = source[index + 1];
+        assert(blockCurrent != null, "maskStaticJavaScriptSource: block character is required");
+        if (blockCurrent === "*" && blockNext === "/") {
+          output += "  ";
+          index += 2;
+          break;
+        }
+        output += blockCurrent === "\n" ? "\n" : " ";
+        index += 1;
+      }
+      continue;
+    }
+    if (current === '"' || current === "'" || current === "`") {
+      const quote = current;
+      output += " ";
+      index += 1;
+      while (index < source.length) {
+        const stringCurrent = source[index];
+        assert(stringCurrent != null, "maskStaticJavaScriptSource: string character is required");
+        output += stringCurrent === "\n" ? "\n" : " ";
+        index += 1;
+        if (stringCurrent === "\\") {
+          if (index < source.length) {
+            const escaped = source[index];
+            assert(escaped != null, "maskStaticJavaScriptSource: escaped character is required");
+            output += escaped === "\n" ? "\n" : " ";
+            index += 1;
+          }
+          continue;
+        }
+        if (stringCurrent === quote) {
+          break;
+        }
+      }
+      continue;
+    }
+    output += current;
+    index += 1;
+  }
+  assert(output.length === source.length, "maskStaticJavaScriptSource must preserve indexes");
+  return output;
+}
+
+function isTopLevelStaticMatch(maskedSource: string, matchIndex: number): boolean {
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  for (let index = 0; index < matchIndex; index += 1) {
+    const character = maskedSource[index];
+    assert(character != null, "isTopLevelStaticMatch: character is required");
+    switch (character) {
+      case "{":
+        braceDepth += 1;
+        break;
+      case "}":
+        braceDepth = Math.max(0, braceDepth - 1);
+        break;
+      case "[":
+        bracketDepth += 1;
+        break;
+      case "]":
+        bracketDepth = Math.max(0, bracketDepth - 1);
+        break;
+      case "(":
+        parenDepth += 1;
+        break;
+      case ")":
+        parenDepth = Math.max(0, parenDepth - 1);
+        break;
+    }
+  }
+  return braceDepth === 0 && bracketDepth === 0 && parenDepth === 0;
 }
 
 const STATIC_METADATA_ERROR =
@@ -534,13 +634,14 @@ function parseStaticWorkflowActionMetadata(source: string): unknown {
 }
 
 function extractStaticMetadataLiteral(source: string): string {
+  const maskedSource = maskStaticJavaScriptSource(source);
   const assignments = [
     /(^|[;\n])\s*export\s+(?:const|let|var)\s+metadata\s*=/mu,
     /(^|[;\n])\s*(?:module\.)?exports\.metadata\s*=/mu,
   ];
   for (const pattern of assignments) {
-    const match = pattern.exec(source);
-    if (match == null) {
+    const match = pattern.exec(maskedSource);
+    if (match == null || !isTopLevelStaticMatch(maskedSource, match.index)) {
       continue;
     }
     const start = skipStaticWhitespace(source, match.index + match[0].length);
@@ -549,12 +650,25 @@ function extractStaticMetadataLiteral(source: string): string {
   throw new Error(STATIC_METADATA_ERROR);
 }
 
-function hasStaticWorkflowActionReconcileExport(source: string): boolean {
+function hasStaticWorkflowActionCallableExport(
+  source: string,
+  name: "execute" | "reconcile"
+): boolean {
+  const maskedSource = maskStaticJavaScriptSource(source);
   return [
-    /(^|[;\n])\s*export\s+(?:async\s+)?function\s+reconcile\s*\(/mu,
-    /(^|[;\n])\s*export\s+(?:const|let|var)\s+reconcile\s*=/mu,
-    /(^|[;\n])\s*(?:module\.)?exports\.reconcile\s*=/mu,
-  ].some((pattern) => pattern.test(source));
+    new RegExp(`(^|[;\\n])\\s*export\\s+(?:async\\s+)?function\\s+${name}\\s*\\(`, "mu"),
+    new RegExp(
+      `(^|[;\\n])\\s*export\\s+(?:const|let|var)\\s+${name}\\s*=\\s*(?:async\\s*)?(?:function\\s*(?:[A-Za-z_$][A-Za-z0-9_$]*)?\\s*\\(|(?:\\([^)]*\\)|[A-Za-z_$][A-Za-z0-9_$]*)\\s*=>)`,
+      "mu"
+    ),
+    new RegExp(
+      `(^|[;\\n])\\s*(?:module\\.)?exports\\.${name}\\s*=\\s*(?:async\\s*)?(?:function\\s*(?:[A-Za-z_$][A-Za-z0-9_$]*)?\\s*\\(|(?:\\([^)]*\\)|[A-Za-z_$][A-Za-z0-9_$]*)\\s*=>)`,
+      "mu"
+    ),
+  ].some((pattern) => {
+    const match = pattern.exec(maskedSource);
+    return match != null && isTopLevelStaticMatch(maskedSource, match.index);
+  });
 }
 
 function normalizeStaticWorkflowActionMetadata(rawMetadata: unknown): unknown {
@@ -872,6 +986,10 @@ function finishCapture(capture) {
   return capture.truncated ? capture.text + "\n[truncated after " + STDIO_LIMIT_BYTES + " bytes]" : capture.text;
 }
 
+function captureResult(capture) {
+  return { text: finishCapture(capture), truncated: capture.truncated };
+}
+
 function listChildPids(pid) {
   try {
     return execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf-8" })
@@ -991,8 +1109,65 @@ function normalizeMetadata(rawMetadata) {
   };
 }
 
+function maskActionSourceForSyntax(source) {
+  let output = "";
+  let index = 0;
+  while (index < source.length) {
+    const current = source[index];
+    const next = source[index + 1];
+    if (current === "/" && next === "/") {
+      output += "  ";
+      index += 2;
+      while (index < source.length && source[index] !== "\n") {
+        output += " ";
+        index += 1;
+      }
+      continue;
+    }
+    if (current === "/" && next === "*") {
+      output += "  ";
+      index += 2;
+      while (index < source.length) {
+        const blockCurrent = source[index];
+        const blockNext = source[index + 1];
+        if (blockCurrent === "*" && blockNext === "/") {
+          output += "  ";
+          index += 2;
+          break;
+        }
+        output += blockCurrent === "\n" ? "\n" : " ";
+        index += 1;
+      }
+      continue;
+    }
+    if (current === '"' || current === "'" || current === "\`") {
+      const quote = current;
+      output += " ";
+      index += 1;
+      while (index < source.length) {
+        const stringCurrent = source[index];
+        output += stringCurrent === "\n" ? "\n" : " ";
+        index += 1;
+        if (stringCurrent === "\\") {
+          if (index < source.length) {
+            output += source[index] === "\n" ? "\n" : " ";
+            index += 1;
+          }
+          continue;
+        }
+        if (stringCurrent === quote) break;
+      }
+      continue;
+    }
+    output += current;
+    index += 1;
+  }
+  return output;
+}
+
 function assertSupportedActionSyntax(source) {
-  if (/^\s*import\s/m.test(source) || /(^|\n)\s*export\s*\{/m.test(source)) {
+  const maskedSource = maskActionSourceForSyntax(source);
+  if (/^\s*import\s/m.test(maskedSource) || /(^|\n)\s*export\s*\{/m.test(maskedSource)) {
     throw new Error(
       "Workflow action files currently support CommonJS require() plus export const/function/default declarations; static import/export lists are not supported"
     );
@@ -1118,7 +1293,17 @@ async function execCommand(command, args = [], options = {}) {
       untrackExecPid(options.execPidPath, child.pid);
     }
   }
-  return { exitCode, signal, stdout: finishCapture(stdout), stderr: finishCapture(stderr), timedOut };
+  const stdoutResult = captureResult(stdout);
+  const stderrResult = captureResult(stderr);
+  return {
+    exitCode,
+    signal,
+    stdout: stdoutResult.text,
+    stderr: stderrResult.text,
+    stdoutTruncated: stdoutResult.truncated,
+    stderrTruncated: stderrResult.truncated,
+    timedOut,
+  };
 }
 
 async function main() {

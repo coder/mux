@@ -28,6 +28,12 @@ export function shouldUseRuntimeWorkflowProjectIO(runtimeType: RuntimeMode): boo
   return runtimeType === RUNTIME_MODE.SSH || runtimeType === RUNTIME_MODE.DOCKER;
 }
 
+export function shouldDisableHostWorkflowActions(runtimeType: RuntimeMode): boolean {
+  return (
+    shouldUseRuntimeWorkflowProjectIO(runtimeType) || runtimeType === RUNTIME_MODE.DEVCONTAINER
+  );
+}
+
 export type WorkflowPromotionLocation = "project" | "global";
 
 export interface PromoteWorkflowDefinitionInput {

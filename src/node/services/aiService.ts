@@ -128,6 +128,7 @@ import {
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { WorkflowActionRegistry } from "@/node/services/workflows/WorkflowActionRegistry";
 import {
+  shouldDisableHostWorkflowActions,
   shouldUseRuntimeWorkflowProjectIO,
   WorkflowDefinitionStore,
 } from "@/node/services/workflows/WorkflowDefinitionStore";
@@ -1521,6 +1522,7 @@ export class AIService extends EventEmitter {
       );
       const runtimeType = getRuntimeType(metadata.runtimeConfig);
       const useRuntimeProjectWorkflowIO = shouldUseRuntimeWorkflowProjectIO(runtimeType);
+      const disableHostWorkflowActions = shouldDisableHostWorkflowActions(runtimeType);
       const workflowScratchRoots = resolveWorkflowScratchRoots(this.config, workspaceId, {
         workspaceRootPath: workspacePath,
         normalizePath: runtime.normalizePath.bind(runtime),
@@ -1545,8 +1547,11 @@ export class AIService extends EventEmitter {
               actionRegistry: new WorkflowActionRegistry({
                 projectRoot: runtime.normalizePath(".mux/actions", workspacePath),
                 globalRoot: path.join(this.config.rootDir, "actions"),
-                projectRuntime: useRuntimeProjectWorkflowIO ? runtime : undefined,
-                projectCwd: useRuntimeProjectWorkflowIO ? workspacePath : undefined,
+                // Host-spawned action execution is unsafe for remote/devcontainer workspaces.
+                // Passing the runtime makes the registry hide/block actions until runtime-backed
+                // action execution exists.
+                projectRuntime: disableHostWorkflowActions ? runtime : undefined,
+                projectCwd: disableHostWorkflowActions ? workspacePath : undefined,
               }),
               defaultActionCwd: workspacePath,
               runStore: new WorkflowRunStore({

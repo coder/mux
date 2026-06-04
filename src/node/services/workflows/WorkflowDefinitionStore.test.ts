@@ -6,6 +6,7 @@ import { RUNTIME_MODE } from "@/common/types/runtime";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { TrueRemotePathMappedRuntime } from "@/node/services/tools/testHelpers";
 import {
+  shouldDisableHostWorkflowActions,
   shouldUseRuntimeWorkflowProjectIO,
   WorkflowDefinitionStore,
 } from "./WorkflowDefinitionStore";
@@ -31,6 +32,14 @@ describe("WorkflowDefinitionStore", () => {
     expect(shouldUseRuntimeWorkflowProjectIO(RUNTIME_MODE.DEVCONTAINER)).toBe(false);
     expect(shouldUseRuntimeWorkflowProjectIO(RUNTIME_MODE.SSH)).toBe(true);
     expect(shouldUseRuntimeWorkflowProjectIO(RUNTIME_MODE.DOCKER)).toBe(true);
+  });
+
+  test("disables host workflow actions for remote and devcontainer runtimes", () => {
+    expect(shouldDisableHostWorkflowActions(RUNTIME_MODE.LOCAL)).toBe(false);
+    expect(shouldDisableHostWorkflowActions(RUNTIME_MODE.WORKTREE)).toBe(false);
+    expect(shouldDisableHostWorkflowActions(RUNTIME_MODE.DEVCONTAINER)).toBe(true);
+    expect(shouldDisableHostWorkflowActions(RUNTIME_MODE.SSH)).toBe(true);
+    expect(shouldDisableHostWorkflowActions(RUNTIME_MODE.DOCKER)).toBe(true);
   });
 
   test("discovers workflows by project, global, then built-in precedence when trusted", async () => {

@@ -1,10 +1,18 @@
+import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect, test } from "bun:test";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { WorkflowActionRunner } from "./WorkflowActionRunner";
-import { hashWorkflowActionSource, type ResolvedWorkflowAction } from "./WorkflowActionRegistry";
+import {
+  hashWorkflowActionSource,
+  WorkflowActionRegistry,
+  type ResolvedWorkflowAction,
+} from "./WorkflowActionRegistry";
+
+const execFileAsync = promisify(execFile);
 
 function createAction(sourcePath: string, source: string): ResolvedWorkflowAction {
   return {
@@ -168,6 +176,62 @@ describe("WorkflowActionRunner", () => {
     expect(result.stdout).toContain("truncated after");
   });
 
+  test("exposes ctx.exec truncation as structured output", async () => {
+    using tmp = new DisposableTempDir("workflow-action-exec-output-limit");
+    const sourcePath = path.join(tmp.path, "exec-noisy.js");
+    const source = `
+      module.exports.metadata = { version: 1, description: "Exec noisy", effect: "read" };
+      module.exports.execute = async (_input, ctx) => {
+        return await ctx.exec(process.execPath, ["-e", "process.stdout.write('x'.repeat(70 * 1024))"]);
+      };
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    const result = await runner.execute(createAction(sourcePath, source), {
+      input: null,
+      cwd: tmp.path,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts"),
+    });
+
+    expect(result.output).toMatchObject({
+      exitCode: 0,
+      stdoutTruncated: true,
+      stderrTruncated: false,
+    });
+  });
+
+  test("built-in git actions reject truncated command output", async () => {
+    using tmp = new DisposableTempDir("workflow-action-git-truncated");
+    const repoRoot = path.join(tmp.path, "repo");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await execFileAsync("git", ["init"], { cwd: repoRoot });
+    for (let index = 0; index < 1800; index += 1) {
+      await fs.writeFile(
+        path.join(repoRoot, `untracked-${String(index).padStart(4, "0")}-${"x".repeat(40)}.txt`),
+        "x",
+        "utf-8"
+      );
+    }
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const action = await registry.resolveAction("git.changedFiles", { projectTrusted: false });
+    const runner = new WorkflowActionRunner();
+
+    await expectRejects(
+      runner.execute(action, {
+        input: null,
+        cwd: repoRoot,
+        timeoutMs: 10_000,
+        artifactDir: path.join(tmp.path, "artifacts"),
+      }),
+      /capture limit/
+    );
+  });
+
   test("reports unsupported module syntax clearly", async () => {
     using tmp = new DisposableTempDir("workflow-action-import");
     const sourcePath = path.join(tmp.path, "import.js");
@@ -200,6 +264,38 @@ describe("WorkflowActionRunner", () => {
 
     expect(description.metadata.description).toBe("Static");
     await expectRejects(fs.access(markerPath), /no such file|ENOENT/i);
+  });
+
+  test("ignores metadata and reconcile text inside comments and strings", async () => {
+    using tmp = new DisposableTempDir("workflow-action-static-comment-mask");
+    const sourcePath = path.join(tmp.path, "commented.js");
+    const source = `
+      /* module.exports.metadata = { version: 1, description: "Fake", effect: "external" }; */
+      const ignored = "module.exports.reconcile = async () => null";
+      module.exports.metadata = { version: 1, description: "Real", effect: "read" };
+      module.exports.execute = async () => ({ ok: true });
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    const description = await runner.describe(createAction(sourcePath, source));
+
+    expect(description.metadata.description).toBe("Real");
+    expect(description.metadata.effect).toBe("read");
+    expect(description.hasReconcile).toBe(false);
+  });
+
+  test("requires executable action exports during describe", async () => {
+    using tmp = new DisposableTempDir("workflow-action-missing-execute");
+    const sourcePath = path.join(tmp.path, "missing-execute.js");
+    const source = `
+      module.exports.metadata = { version: 1, description: "Metadata only", effect: "read" };
+      module.exports.reconcile = 42;
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    await expectRejects(runner.describe(createAction(sourcePath, source)), /execute function/);
   });
 
   test("rejects artifacts that collide with the action result control file", async () => {

@@ -628,24 +628,6 @@ export class WorkflowRunner {
       buildWorkflowActionReplayInput(action, spec, cwd)
     );
     options.leaseGuard.throwIfLost();
-    const existingStep = await this.runStore.getStep(runId, spec.id, inputHash);
-    if (existingStep?.status === "completed" && existingStep.result?.structuredOutput != null) {
-      const cached = normalizeWorkflowActionResult(existingStep.result.structuredOutput);
-      await this.appendEvent(runId, {
-        sequence: sequence.next(),
-        type: "action",
-        at: this.clock.nowIso(),
-        stepId: spec.id,
-        name: action.name,
-        status: "cached",
-        effect: await this.getCachedWorkflowActionEffect(runId, spec.id, action),
-        sourcePath: action.sourcePath,
-        sourceHash: action.sourceHash,
-        details: cached,
-      });
-      return cached;
-    }
-
     const description = await this.actionRunner.describe(action);
     const metadata = validateWorkflowActionMetadata(description.metadata);
     assertWorkflowActionInput(metadata, spec.input, action.name);
@@ -683,6 +665,24 @@ export class WorkflowRunner {
         abortSignal: options.abortSignal,
         leaseGuard: options.leaseGuard,
       });
+    }
+
+    const existingStep = await this.runStore.getStep(runId, spec.id, inputHash);
+    if (existingStep?.status === "completed" && existingStep.result?.structuredOutput != null) {
+      const cached = normalizeWorkflowActionResult(existingStep.result.structuredOutput);
+      await this.appendEvent(runId, {
+        sequence: sequence.next(),
+        type: "action",
+        at: this.clock.nowIso(),
+        stepId: spec.id,
+        name: action.name,
+        status: "cached",
+        effect: await this.getCachedWorkflowActionEffect(runId, spec.id, action),
+        sourcePath: action.sourcePath,
+        sourceHash: action.sourceHash,
+        details: cached,
+      });
+      return cached;
     }
 
     return await this.executeActionStep(runId, sequence, {
@@ -732,14 +732,23 @@ export class WorkflowRunner {
       if (step.status === "completed" && step.inputHash === currentInputHash) {
         continue;
       }
-      const priorEvent = run.events.findLast(
+      const sameStepActionEvents = run.events.filter(
         (event): event is Extract<WorkflowRunEvent, { type: "action" }> =>
-          event.type === "action" &&
-          event.stepId === stepId &&
-          isWorkflowActionEventStatusForStep(event.status, step.status)
+          event.type === "action" && event.stepId === stepId
       );
-      const effect = priorEvent?.effect ?? currentEffect;
-      if (isMutatingWorkflowActionEffect(effect)) {
+      const priorEvent = sameStepActionEvents.findLast((event) =>
+        isWorkflowActionEventStatusForStep(event.status, step.status)
+      );
+      const hasAnyMutatingActionEvent = sameStepActionEvents.some((event) =>
+        isMutatingWorkflowActionEffect(event.effect)
+      );
+      // Prior action effect is a side-effect safety boundary. If event/step attribution is
+      // ambiguous, prefer blocking over allowing a mutating attempt to be hidden by newer
+      // read-only metadata or by a later same-id read action event.
+      if (
+        isMutatingWorkflowActionEffect(priorEvent?.effect ?? currentEffect) ||
+        hasAnyMutatingActionEvent
+      ) {
         return step;
       }
     }
@@ -1829,7 +1838,7 @@ function normalizeWorkflowApplyPatchResult(rawResult: unknown): WorkflowApplyPat
   }
   const parsed = TaskApplyGitPatchToolResultSchema.parse(rawResult);
   const conflictPaths = getConflictPathsFromPatchResult(parsed);
-  const failedPatchSubject = parsed.success ? undefined : parsed.failedPatchSubject;
+  const failedPatchSubject = getFailedPatchSubjectFromPatchResult(parsed);
   const status: WorkflowApplyPatchStatus = parsed.success
     ? "applied"
     : conflictPaths.length > 0 || failedPatchSubject != null
@@ -1849,6 +1858,20 @@ function normalizeWorkflowApplyPatchResult(rawResult: unknown): WorkflowApplyPat
     ...(parsed.success ? {} : { error: parsed.error }),
     ...(parsed.note !== undefined ? { note: parsed.note } : {}),
   };
+}
+
+function getFailedPatchSubjectFromPatchResult(
+  result: ReturnType<typeof TaskApplyGitPatchToolResultSchema.parse>
+): string | undefined {
+  if (result.success) {
+    return undefined;
+  }
+  if (result.failedPatchSubject != null) {
+    return result.failedPatchSubject;
+  }
+  return result.projectResults
+    ?.map((projectResult) => projectResult.failedPatchSubject)
+    .find((subject) => subject != null);
 }
 
 function getConflictPathsFromPatchResult(
