@@ -828,9 +828,12 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
           ? "backgrounded"
           : status;
 
-  // Auto-expand on error is just the fallback; the sticky tools preference wins.
-  const shouldAutoExpand = !!errorResult;
-  const { expanded, toggleExpanded } = useStickyExpand("tools", shouldAutoExpand);
+  // Base state follows the sticky tools preference. Errors can arrive after mount, so
+  // pass them as a live forceExpanded signal (latched) to open the row when one lands
+  // instead of seeding once and hiding the failure behind the header.
+  const { expanded, toggleExpanded } = useStickyExpand("tools", false, {
+    forceExpanded: !!errorResult,
+  });
 
   const [transcriptTaskId, setTranscriptTaskId] = useState<string | null>(null);
   const preview = prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
@@ -1051,11 +1054,13 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
     }
   }
 
-  // Keep task_await collapsed by default, but auto-expand when failures are present.
-  // This avoids hiding failures behind a "completed" badge in the header.
-  // Auto-expand when a sub-task failed is just the fallback; the sticky tools preference wins.
-  const shouldAutoExpand = failedCount > 0;
-  const { expanded, toggleExpanded } = useStickyExpand("tools", shouldAutoExpand);
+  // Keep task_await collapsed by default (following the sticky tools preference), but
+  // auto-expand when failures are present so they aren't hidden behind a "completed"
+  // badge. failedCount is usually 0 at mount and only rises once awaited results land,
+  // so pass it as a live forceExpanded signal (latched) rather than a one-time seed.
+  const { expanded, toggleExpanded } = useStickyExpand("tools", false, {
+    forceExpanded: failedCount > 0,
+  });
 
   const effectiveStatus: ToolStatus = status === "completed" && failedCount > 0 ? "failed" : status;
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { getAutoExpandPrefsKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -17,9 +17,13 @@ export type AutoExpandPrefs = Partial<Record<ExpandableBlockKind, boolean>>;
 
 export interface UseStickyExpandOptions {
   /**
-   * Force the block expanded regardless of the stored preference (e.g. a live,
-   * blocking AskUserQuestion prompt that must not be hidden). Only overrides the
-   * initial seed — the user can still collapse it.
+   * Live "must open" signal layered above the stored preference/fallback (e.g. a
+   * blocking AskUserQuestion prompt while executing, or a tool whose error/failure
+   * only becomes known after mount — task errors, failed `task_await` sub-tasks).
+   *
+   * It is latched monotonically: the row opens on the rising edge but the signal
+   * going false again never collapses a present block (no height tear). A user
+   * toggle still wins over it, so the row remains collapsible.
    */
   forceExpanded?: boolean;
 }
@@ -33,14 +37,17 @@ interface StickyExpandState {
 /**
  * Sticky expand/collapse state for transcript blocks (thinking + tools).
  *
- * UX contract — legible stickiness with no layout flashes:
- *  - Initial state is seeded ONCE at mount from the workspace's stored preference
- *    for `kind` (falling back to `fallbackExpanded`). We read with
- *    readPersistedState (NOT usePersistedState) so the block does not subscribe;
- *    a later preference change therefore cannot retroactively expand/collapse an
- *    already-mounted block — only blocks that mount afterwards inherit it.
- *  - A user toggle writes the preference so FUTURE blocks of this kind inherit the
- *    choice. This is the only write path.
+ * UX contract — legible stickiness with no layout flashes. Effective state is
+ * `userChoice ?? (forceLatched || (storedPref ?? fallbackExpanded))`:
+ *  - The stored preference and `fallbackExpanded` are snapshotted ONCE at mount
+ *    (via readPersistedState, NOT usePersistedState — no subscription), so a later
+ *    preference change from another block can never retroactively expand/collapse
+ *    this already-mounted block. Only blocks that mount afterwards inherit it.
+ *  - `forceExpanded` is a live "must open" signal, latched monotonically: it opens
+ *    the row on its rising edge (e.g. a task error arriving after mount) but never
+ *    forces a collapse, so a present block is never torn closed.
+ *  - A user toggle wins over everything and is the only thing that writes the
+ *    preference, so FUTURE blocks of this kind inherit the choice.
  *
  * workspaceId comes from MessageListContext (which wraps the whole transcript), so
  * no prop-drilling is needed; outside that context (e.g. isolated tests) the hook
@@ -54,22 +61,38 @@ export function useStickyExpand(
   const forceExpanded = options?.forceExpanded ?? false;
   const workspaceId = useOptionalMessageListContext()?.workspaceId;
 
-  const [expanded, setExpandedState] = useState<boolean>(() => {
-    if (forceExpanded) {
-      return true;
-    }
-    if (workspaceId == null) {
-      return fallbackExpanded;
-    }
-    const prefs = readPersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey(workspaceId), {});
-    return prefs[kind] ?? fallbackExpanded;
-  });
+  // Snapshot the stored preference + fallback ONCE at mount. Freezing them is what
+  // guarantees the present-block invariant: neither another block's preference write
+  // nor a convenience fallback that later flips (e.g. FileEdit's `!isFailed`) can
+  // mutate this row's baseline.
+  const [seed] = useState<{ pref: boolean | undefined; fallback: boolean }>(() => ({
+    pref:
+      workspaceId == null
+        ? undefined
+        : readPersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey(workspaceId), {})[kind],
+    fallback: fallbackExpanded,
+  }));
+
+  // The user's explicit toggle wins over everything and is the only thing we persist.
+  const [userChoice, setUserChoice] = useState<boolean | null>(null);
+
+  // Latch forceExpanded monotonically so a signal that turns on after mount (a task
+  // error / failed sub-task) still opens the row, while a signal turning back off
+  // never collapses a present block.
+  const [forceLatched, setForceLatched] = useState<boolean>(forceExpanded);
+  if (forceExpanded && !forceLatched) {
+    setForceLatched(true);
+  }
+
+  const expanded = userChoice ?? (forceLatched || (seed.pref ?? seed.fallback));
+
+  // Keep the latest expanded value available to setExpanded without making the
+  // callback identity depend on it.
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
 
   const setExpanded = (next: boolean): void => {
-    setExpandedState(next);
-    // Record the user's intent so future blocks of this kind inherit it. Present
-    // blocks read the preference once (above) and never subscribe, so this write
-    // cannot mutate any already-mounted block.
+    setUserChoice(next);
     if (workspaceId != null) {
       updatePersistedState<AutoExpandPrefs>(
         getAutoExpandPrefsKey(workspaceId),
@@ -82,6 +105,6 @@ export function useStickyExpand(
   return {
     expanded,
     setExpanded,
-    toggleExpanded: () => setExpanded(!expanded),
+    toggleExpanded: () => setExpanded(!expandedRef.current),
   };
 }

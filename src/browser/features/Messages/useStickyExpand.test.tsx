@@ -112,6 +112,37 @@ describe("useStickyExpand", () => {
     expect(readPrefs("ws-2")).toEqual({});
   });
 
+  test("opens on a late forceExpanded trigger and never auto-collapses it (latched)", () => {
+    // Mirrors a task / task_await row whose error or failed-sub-task signal only
+    // becomes known after mount (Codex P2). Seeding once would miss it.
+    const { result, rerender } = renderHook(
+      ({ force }: { force: boolean }) => useStickyExpand("tools", false, { forceExpanded: force }),
+      { wrapper: makeWrapper("ws-1"), initialProps: { force: false } }
+    );
+    expect(result.current.expanded).toBe(false);
+
+    // Error arrives → row opens.
+    rerender({ force: true });
+    expect(result.current.expanded).toBe(true);
+
+    // Trigger clears → row stays open (no collapse tear) and nothing is persisted.
+    rerender({ force: false });
+    expect(result.current.expanded).toBe(true);
+    expect(readPrefs("ws-1")).toEqual({});
+  });
+
+  test("a user collapse still wins over an active forceExpanded signal", () => {
+    const { result } = renderHook(() => useStickyExpand("tools", false, { forceExpanded: true }), {
+      wrapper: makeWrapper("ws-1"),
+    });
+    expect(result.current.expanded).toBe(true);
+
+    act(() => result.current.setExpanded(false));
+
+    expect(result.current.expanded).toBe(false);
+    expect(readPrefs("ws-1")).toEqual({ tools: false });
+  });
+
   test("forceExpanded overrides a collapsed stored preference and does not persist", () => {
     updatePersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey("ws-1"), { tools: false });
 
