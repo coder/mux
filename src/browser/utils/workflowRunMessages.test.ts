@@ -118,6 +118,25 @@ describe("buildWorkflowRunCardMessage", () => {
     );
   });
 
+  test("does not project workflow runs that are no longer anchored in the transcript", () => {
+    const run = {
+      id: "wfr_discarded",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      args: { topic: "discarded" },
+      status: "completed" as const,
+    };
+
+    expect(getWorkflowRunCardProjection([], run)).toEqual({
+      shouldProject: false,
+      existingMessage: null,
+    });
+  });
+
   test("projects updated terminal workflow cards while preserving the existing card slot", () => {
     const run = {
       id: "wfr_refresh",

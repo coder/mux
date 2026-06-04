@@ -105,7 +105,10 @@ export function getWorkflowRunCardProjection(
     return { shouldProject: false, existingMessage: null };
   }
 
-  return { shouldProject: true, existingMessage: null };
+  // A durable workflow run can outlive the chat row that launched it (for example after editing a
+  // prior message truncates history). Without a current transcript anchor, projecting it would
+  // resurrect discarded workflow cards at the bottom of the chat.
+  return { shouldProject: false, existingMessage: null };
 }
 
 export function addWorkflowRunCardMessage(
