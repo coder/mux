@@ -32,6 +32,7 @@ import {
   normalizeTaskSettings,
   shouldMirrorAgentDefaultToLegacySubagent,
 } from "@/common/types/tasks";
+import { normalizeUserPreferences } from "@/common/config/schemas/userPreferences";
 import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import {
@@ -884,6 +885,8 @@ export class Config {
         const runtimeEnablement = normalizeRuntimeEnablementOverrides(parsed.runtimeEnablement);
         const defaultRuntime = normalizeRuntimeEnablementId(parsed.defaultRuntime);
 
+        const userPreferences = normalizeUserPreferences(parsed.userPreferences);
+
         const layoutPresetsRaw = normalizeLayoutPresetsConfig(parsed.layoutPresets);
         const layoutPresets = isLayoutPresetsConfigEmpty(layoutPresetsRaw)
           ? undefined
@@ -900,6 +903,7 @@ export class Config {
           serverAuthGithubOwner: parseOptionalNonEmptyString(parsed.serverAuthGithubOwner),
           defaultProjectDir: parseOptionalNonEmptyString(parsed.defaultProjectDir),
           viewedSplashScreens: parsed.viewedSplashScreens,
+          userPreferences,
           layoutPresets,
           taskSettings,
           chatTranscriptFullWidth: parseOptionalBoolean(parsed.chatTranscriptFullWidth),
@@ -1103,6 +1107,11 @@ export class Config {
       if (config.featureFlagOverrides) {
         data.featureFlagOverrides = config.featureFlagOverrides;
       }
+      const userPreferences = normalizeUserPreferences(config.userPreferences);
+      if (userPreferences) {
+        data.userPreferences = userPreferences;
+      }
+
       if (config.layoutPresets) {
         const normalized = normalizeLayoutPresetsConfig(config.layoutPresets);
         if (!isLayoutPresetsConfigEmpty(normalized)) {

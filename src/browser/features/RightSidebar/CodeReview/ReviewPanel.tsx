@@ -66,7 +66,9 @@ import {
 import { parseDiff, extractAllHunks, buildGitDiffCommand } from "@/common/utils/git/diffParser";
 import {
   getReviewImmersiveKey,
+  getReviewDefaultBaseKey,
   getReviewSearchStateKey,
+  REVIEW_INCLUDE_UNCOMMITTED_KEY,
   REVIEW_SORT_ORDER_KEY,
 } from "@/common/constants/storage";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
@@ -656,7 +658,7 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     [assistedHunks, reviewPathContext]
   );
 
-  const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
+  const projectDefaultBaseKey = getReviewDefaultBaseKey(projectPath);
   const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
   const [defaultBase] = usePersistedState<string>(
     projectDefaultBaseKey,
@@ -664,7 +666,7 @@ export const ReviewAssistedStatsReporter: React.FC<ReviewAssistedStatsReporterPr
     { listener: true }
   );
   const [diffBase] = usePersistedState(workspaceDiffBaseKey, defaultBase, { listener: true });
-  const [includeUncommitted] = usePersistedState("review-include-uncommitted", false, {
+  const [includeUncommitted] = usePersistedState(REVIEW_INCLUDE_UNCOMMITTED_KEY, false, {
     listener: true,
   });
 
@@ -844,7 +846,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     selectedRepoRootProjectPath
   );
 
-  const projectDefaultBaseKey = STORAGE_KEYS.reviewDefaultBase(projectPath);
+  const projectDefaultBaseKey = getReviewDefaultBaseKey(projectPath);
   const workspaceDiffBaseKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
 
   // Per-project default base (shared across workspaces in the same project).
@@ -863,8 +865,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
 
   // Persist includeUncommitted flag globally
   const [includeUncommitted, setIncludeUncommitted] = usePersistedState(
-    "review-include-uncommitted",
-    false
+    REVIEW_INCLUDE_UNCOMMITTED_KEY,
+    false,
+    { listener: true }
   );
 
   // Persist showReadHunks flag globally

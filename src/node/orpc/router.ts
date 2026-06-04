@@ -52,6 +52,7 @@ import {
   isLayoutPresetsConfigEmpty,
   normalizeLayoutPresetsConfig,
 } from "@/common/types/uiLayouts";
+import { normalizeUserPreferences } from "@/common/config/schemas/userPreferences";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isValidModelFormat, normalizeSelectedModel } from "@/common/utils/ai/models";
 import {
@@ -816,6 +817,7 @@ export const router = (authToken?: string) => {
           const muxGovernorUrl = config.muxGovernorUrl ?? null;
           const muxGovernorEnrolled = Boolean(config.muxGovernorUrl && config.muxGovernorToken);
           return {
+            userPreferences: config.userPreferences,
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
             muxGatewayEnabled: config.muxGatewayEnabled,
             muxGatewayModels: config.muxGatewayModels,
@@ -1155,6 +1157,10 @@ export const router = (authToken?: string) => {
               input.taskSettings
             );
             const result = { ...config, taskSettings: normalizedTaskSettings };
+
+            if (input.userPreferences !== undefined) {
+              result.userPreferences = normalizeUserPreferences(input.userPreferences);
+            }
 
             if (input.advisorModelString !== undefined) {
               result.advisorModelString = normalizeOptionalConfigString(input.advisorModelString);

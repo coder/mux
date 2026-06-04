@@ -22,6 +22,21 @@ describe("AppConfigOnDiskSchema", () => {
     );
   });
 
+  it("validates userPreferences", () => {
+    const valid = {
+      userPreferences: {
+        appearance: { theme: "dark" },
+        sharing: { expiration: "24h", signing: false },
+      },
+    };
+
+    expect(AppConfigOnDiskSchema.safeParse(valid).success).toBe(true);
+    expect(
+      AppConfigOnDiskSchema.safeParse({ userPreferences: { appearance: { theme: "neon" } } })
+        .success
+    ).toBe(false);
+  });
+
   it("validates taskSettings with limits", () => {
     const valid = {
       taskSettings: {

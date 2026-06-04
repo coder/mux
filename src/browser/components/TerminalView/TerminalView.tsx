@@ -5,6 +5,7 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   DEFAULT_TERMINAL_FONT_CONFIG,
   TERMINAL_FONT_CONFIG_KEY,
+  normalizeTerminalFontConfig,
   type TerminalFontConfig,
 } from "@/common/constants/storage";
 import { useTerminalRouter } from "@/browser/terminal/TerminalRouterContext";
@@ -18,27 +19,6 @@ import {
   TERMINAL_ICON_FALLBACK_FAMILY,
 } from "@/browser/terminal/terminalFontFamily";
 import { TERMINAL_CONTAINER_ATTR } from "@/browser/utils/ui/keybinds";
-
-function normalizeTerminalFontConfig(value: unknown): TerminalFontConfig {
-  if (!value || typeof value !== "object") {
-    return DEFAULT_TERMINAL_FONT_CONFIG;
-  }
-
-  const record = value as { fontFamily?: unknown; fontSize?: unknown };
-
-  const fontFamily =
-    typeof record.fontFamily === "string" && record.fontFamily.trim()
-      ? record.fontFamily
-      : DEFAULT_TERMINAL_FONT_CONFIG.fontFamily;
-
-  const fontSizeNumber = Number(record.fontSize);
-  const fontSize =
-    Number.isFinite(fontSizeNumber) && fontSizeNumber > 0
-      ? fontSizeNumber
-      : DEFAULT_TERMINAL_FONT_CONFIG.fontSize;
-
-  return { fontFamily, fontSize };
-}
 
 function canLoadFontFamily(primary: string, fontSize: number): boolean {
   const family = stripOuterQuotes(primary).trim();

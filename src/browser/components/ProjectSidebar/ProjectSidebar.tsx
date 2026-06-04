@@ -31,6 +31,7 @@ import {
   reorderProjects,
   normalizeOrder,
 } from "@/common/utils/projectOrdering";
+import { PROJECT_ORDER_KEY } from "@/common/constants/storage";
 import {
   matchesKeybind,
   formatKeybind,
@@ -1579,7 +1580,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   ]);
 
   // UI preference: project order persists in localStorage
-  const [projectOrder, setProjectOrder] = usePersistedState<string[]>("mux:projectOrder", []);
+  const [projectOrder, setProjectOrder] = usePersistedState<string[]>(PROJECT_ORDER_KEY, []);
 
   // Build a stable signature of the project keys so effects don't fire on Map identity churn
   const projectPathsSignature = React.useMemo(() => {

@@ -18,6 +18,7 @@ import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
 import { WorkspaceProvider, useWorkspaceContext } from "../../contexts/WorkspaceContext";
 import { RouterProvider } from "../../contexts/RouterContext";
 import { TelemetryEnabledProvider } from "../../contexts/TelemetryEnabledContext";
+import { UserPreferencesProvider } from "@/browser/contexts/UserPreferencesContext";
 import { TerminalRouterProvider } from "../../terminal/TerminalRouterContext";
 
 interface AppLoaderProps {
@@ -45,7 +46,9 @@ export function AppLoader(props: AppLoaderProps) {
           <RouterProvider>
             <ProjectProvider>
               <WorkspaceProvider>
-                <AppLoaderInner />
+                <UserPreferencesProvider>
+                  <AppLoaderInner />
+                </UserPreferencesProvider>
               </WorkspaceProvider>
             </ProjectProvider>
           </RouterProvider>

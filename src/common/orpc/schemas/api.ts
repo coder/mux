@@ -111,6 +111,7 @@ import {
   ServiceTierSchema,
 } from "../../config/schemas/providersConfig";
 import { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntry";
+import { UserPreferencesSchema } from "../../config/schemas/userPreferences";
 import { TaskSettingsSchema } from "../../config/schemas/taskSettings";
 import { ThinkingLevelSchema } from "../../types/thinking";
 
@@ -2060,6 +2061,7 @@ export const config = {
   getConfig: {
     input: z.void(),
     output: z.object({
+      userPreferences: UserPreferencesSchema.optional(),
       taskSettings: ResolvedTaskSettingsSchema,
       muxGatewayEnabled: z.boolean().optional(),
       muxGatewayModels: z.array(z.string()).optional(),
@@ -2092,6 +2094,7 @@ export const config = {
   },
   saveConfig: {
     input: z.object({
+      userPreferences: UserPreferencesSchema.nullish(),
       taskSettings: ResolvedTaskSettingsSchema,
       advisorModelString: AdvisorModelStringSchema.nullish(),
       advisorThinkingLevel: AdvisorThinkingLevelSchema.nullish(),

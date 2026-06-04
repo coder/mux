@@ -6,12 +6,15 @@ import { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablemen
 import { ThinkingLevelSchema } from "../../types/thinking";
 import { CODER_ARCHIVE_BEHAVIORS } from "../coderArchiveBehavior";
 import { WORKTREE_ARCHIVE_BEHAVIORS } from "../worktreeArchiveBehavior";
+import { UserPreferencesSchema } from "./userPreferences";
 import { TaskSettingsSchema } from "./taskSettings";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
 
 export { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablement";
 export type { RuntimeEnablementOverrides } from "../../schemas/runtimeEnablement";
+export { UserPreferencesSchema } from "./userPreferences";
+export type { UserPreferences } from "./userPreferences";
 export { TaskSettingsSchema } from "./taskSettings";
 export type { TaskSettings } from "./taskSettings";
 
@@ -70,6 +73,7 @@ export const AppConfigOnDiskSchema = z
     viewedSplashScreens: z.array(z.string()).optional(),
     featureFlagOverrides: z.record(z.string(), FeatureFlagOverrideSchema).optional(),
     layoutPresets: z.unknown().optional(),
+    userPreferences: UserPreferencesSchema.optional(),
     taskSettings: TaskSettingsSchema.optional(),
     chatTranscriptFullWidth: z.boolean().optional(),
     muxGatewayEnabled: z.boolean().optional(),

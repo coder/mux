@@ -9,6 +9,7 @@ import {
 import {
   DEFAULT_EDITOR_CONFIG,
   EDITOR_CONFIG_KEY,
+  normalizeEditorConfig,
   type EditorConfig,
 } from "@/common/constants/storage";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -96,7 +97,9 @@ export async function openInEditor(args: {
    */
   isFile?: boolean;
 }): Promise<OpenInEditorResult> {
-  const editorConfig = readPersistedState<EditorConfig>(EDITOR_CONFIG_KEY, DEFAULT_EDITOR_CONFIG);
+  const editorConfig = normalizeEditorConfig(
+    readPersistedState<EditorConfig>(EDITOR_CONFIG_KEY, DEFAULT_EDITOR_CONFIG)
+  );
 
   const isSSH = isSSHRuntime(args.runtimeConfig);
   const isDocker = isDockerRuntime(args.runtimeConfig);

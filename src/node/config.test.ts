@@ -54,6 +54,74 @@ describe("Config", () => {
     });
   });
 
+  describe("userPreferences", () => {
+    it("loads and saves user preferences", async () => {
+      await config.editConfig((cfg) => ({
+        ...cfg,
+        userPreferences: {
+          appearance: { theme: "dark" },
+          navigation: { projectOrder: ["/repo"] },
+        },
+      }));
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.loadConfigOrDefault().userPreferences).toEqual({
+        appearance: { theme: "dark" },
+        navigation: { projectOrder: ["/repo"] },
+      });
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        userPreferences?: unknown;
+      };
+      expect(raw.userPreferences).toEqual({
+        appearance: { theme: "dark" },
+        navigation: { projectOrder: ["/repo"] },
+      });
+    });
+
+    it("preserves user preferences during unrelated saves", async () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          userPreferences: {
+            appearance: { theme: "flexoki-dark" },
+          },
+        })
+      );
+
+      await config.editConfig((cfg) => ({
+        ...cfg,
+        llmDebugLogs: true,
+      }));
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        userPreferences?: unknown;
+        llmDebugLogs?: unknown;
+      };
+      expect(raw.userPreferences).toEqual({ appearance: { theme: "flexoki-dark" } });
+      expect(raw.llmDebugLogs).toBe(true);
+    });
+
+    it("normalizes invalid user preference values on load", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          userPreferences: {
+            appearance: { theme: "legacy-light", transcriptDensity: "wide" },
+            notifications: { notifyOnResponseByWorkspace: { "ws-1": true, "ws-2": "yes" } },
+          },
+        })
+      );
+
+      expect(config.loadConfigOrDefault().userPreferences).toEqual({
+        appearance: { theme: "light" },
+        notifications: { notifyOnResponseByWorkspace: { "ws-1": true } },
+      });
+    });
+  });
+
   describe("chat transcript settings", () => {
     it("persists the full-width transcript flag", async () => {
       await config.editConfig((cfg) => {

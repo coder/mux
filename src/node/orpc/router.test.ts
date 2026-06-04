@@ -466,6 +466,44 @@ describe("router config.saveConfig", () => {
     expect(config.loadConfigOrDefault().chatTranscriptFullWidth).toBeUndefined();
   });
 
+  test("getConfig and saveConfig round trip user preferences", async () => {
+    const client = createRouterClient(router(), { context: createContext() });
+
+    await client.config.saveConfig({
+      taskSettings: DEFAULT_TASK_SETTINGS,
+      userPreferences: {
+        appearance: { theme: "dark" },
+        notifications: { notifyOnResponseByWorkspace: { "ws-1": true } },
+      },
+    });
+
+    expect((await client.config.getConfig()).userPreferences).toEqual({
+      appearance: { theme: "dark" },
+      notifications: { notifyOnResponseByWorkspace: { "ws-1": true } },
+    });
+    expect(config.loadConfigOrDefault().userPreferences).toEqual({
+      appearance: { theme: "dark" },
+      notifications: { notifyOnResponseByWorkspace: { "ws-1": true } },
+    });
+  });
+
+  test("saveConfig preserves existing user preferences when omitted", async () => {
+    await config.editConfig((current) => ({
+      ...current,
+      userPreferences: { appearance: { theme: "flexoki-light" } },
+    }));
+    const client = createRouterClient(router(), { context: createContext() });
+
+    await client.config.saveConfig({
+      taskSettings: DEFAULT_TASK_SETTINGS,
+      advisorModelString: null,
+    });
+
+    expect(config.loadConfigOrDefault().userPreferences).toEqual({
+      appearance: { theme: "flexoki-light" },
+    });
+  });
+
   test("preserves optional task settings when a save omits them", async () => {
     await config.editConfig((current) => ({
       ...current,

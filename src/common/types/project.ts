@@ -10,6 +10,7 @@ import type {
   FeatureFlagOverride,
   UpdateChannel,
 } from "@/common/config/schemas/appConfigOnDisk";
+import type { UserPreferences } from "@/common/config/schemas/userPreferences";
 import type { z } from "zod";
 import type { ProjectConfigSchema, WorkspaceConfigSchema } from "../orpc/schemas";
 import type { AgentAiDefaults } from "./agentAiDefaults";
@@ -77,6 +78,8 @@ export interface ProjectsConfig {
   viewedSplashScreens?: string[];
   /** Cross-client feature flag overrides (shared via ~/.mux/config.json). */
   featureFlagOverrides?: Record<string, FeatureFlagOverride>;
+  /** User preferences shared across local browser origins through ~/.mux/config.json. */
+  userPreferences?: UserPreferences;
   /** Global task settings (agent sub-workspaces, queue limits, nesting depth) */
   taskSettings?: TaskSettings;
   /** UI layout presets + hotkeys (shared via ~/.mux/config.json). */

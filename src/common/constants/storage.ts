@@ -88,6 +88,12 @@ export type LaunchBehavior = "dashboard" | "new-chat" | "last-workspace";
 export const CHAT_TRANSCRIPT_FULL_WIDTH_KEY = "chatTranscriptFullWidth";
 
 /**
+ * Ordered project paths in the left sidebar.
+ * Format: "mux:projectOrder"
+ */
+export const PROJECT_ORDER_KEY = "mux:projectOrder";
+
+/**
  * Get the localStorage key for expanded projects in sidebar (global)
  * Format: "expandedProjects"
  */
@@ -337,6 +343,12 @@ export const HIDDEN_MODELS_KEY = "hidden-models";
 export const AGENT_AI_DEFAULTS_KEY = "agentAiDefaults";
 
 /**
+ * LocalStorage keys for provider-specific AI options that are not backend-backed elsewhere.
+ */
+export const PROVIDER_OPTIONS_ANTHROPIC_KEY = "provider_options_anthropic";
+export const PROVIDER_OPTIONS_GOOGLE_KEY = "provider_options_google";
+
+/**
  * Get the localStorage key for vim mode preference (global)
  * Format: "vimEnabled"
  */
@@ -379,6 +391,27 @@ export interface EditorConfig {
 export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
   editor: "vscode",
 };
+
+export const EDITOR_TYPES = ["vscode", "cursor", "zed", "custom"] as const;
+
+export function isEditorType(value: unknown): value is EditorType {
+  return typeof value === "string" && EDITOR_TYPES.includes(value as EditorType);
+}
+
+export function normalizeEditorConfig(value: unknown): EditorConfig {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return DEFAULT_EDITOR_CONFIG;
+  }
+
+  const record = value as { editor?: unknown; customCommand?: unknown };
+  const editor = isEditorType(record.editor) ? record.editor : DEFAULT_EDITOR_CONFIG.editor;
+  const customCommand =
+    typeof record.customCommand === "string" && record.customCommand.trim()
+      ? record.customCommand
+      : undefined;
+
+  return { editor, customCommand };
+}
 
 /**
  * Transcript density display preference (global)
@@ -439,6 +472,25 @@ export const DEFAULT_TERMINAL_FONT_CONFIG: TerminalFontConfig = {
   fontSize: 13,
 };
 
+export function normalizeTerminalFontConfig(value: unknown): TerminalFontConfig {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return DEFAULT_TERMINAL_FONT_CONFIG;
+  }
+
+  const record = value as { fontFamily?: unknown; fontSize?: unknown };
+  const fontFamily =
+    typeof record.fontFamily === "string" && record.fontFamily.trim()
+      ? record.fontFamily
+      : DEFAULT_TERMINAL_FONT_CONFIG.fontFamily;
+  const fontSizeNumber = Number(record.fontSize);
+  const fontSize =
+    Number.isFinite(fontSizeNumber) && fontSizeNumber > 0
+      ? fontSizeNumber
+      : DEFAULT_TERMINAL_FONT_CONFIG.fontSize;
+
+  return { fontFamily, fontSize };
+}
+
 /**
  * Tutorial state storage key (global)
  * Stores: { disabled: boolean, completed: { creation?: true, workspace?: true, review?: true } }
@@ -474,6 +526,20 @@ export function getReviewStateKey(workspaceId: string): string {
 export function getHunkFirstSeenKey(workspaceId: string): string {
   return `hunkFirstSeen:${workspaceId}`;
 }
+
+/**
+ * Project-scoped default diff base for code review.
+ * Format: "review-default-base:{projectPath}"
+ */
+export function getReviewDefaultBaseKey(projectPath: string): string {
+  return `review-default-base:${projectPath}`;
+}
+
+/**
+ * Global code review behavior for including uncommitted changes.
+ * Format: "review-include-uncommitted"
+ */
+export const REVIEW_INCLUDE_UNCOMMITTED_KEY = "review-include-uncommitted";
 
 /**
  * Get the localStorage key for review sort order preference (global)
@@ -702,6 +768,7 @@ export function getPostCompactionStateKey(workspaceId: string): string {
  */
 const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
   getPendingWorkspaceSendErrorKey,
+  getNotifyOnResponseKey,
   getPlanContentKey, // Cache only, no need to preserve on fork
   getPostCompactionStateKey, // Cache only, no need to preserve on fork
 ];
