@@ -186,14 +186,16 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
       workflowTask.outputSchema = spec.outputSchema;
     }
 
+    const agentId = spec.agentId ?? this.defaultAgentId;
+    const experiments = this.getExperimentsForAgent(agentId);
     const createResult = await this.taskService.create({
       parentWorkspaceId: this.parentWorkspaceId,
       kind: "agent",
-      agentId: spec.agentId ?? this.defaultAgentId,
+      agentId,
       prompt: spec.prompt,
       title: spec.title ?? spec.id,
       workflowTask,
-      ...(this.experiments !== undefined ? { experiments: this.experiments } : {}),
+      ...(experiments !== undefined ? { experiments } : {}),
     });
     if (!createResult.success) {
       throw new Error(createResult.error);
@@ -202,6 +204,21 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     await lifecycle?.onTaskCreated?.(createResult.data.taskId);
 
     return await this.waitForAgentTask(createResult.data.taskId, spec, waitOptions);
+  }
+
+  private getExperimentsForAgent(agentId: string): WorkflowTaskExperiments | undefined {
+    const experiments = this.experiments;
+    if (experiments == null) {
+      return undefined;
+    }
+
+    if (agentId.trim().toLowerCase() !== "explore" || experiments.subagentFileReports !== true) {
+      return experiments;
+    }
+
+    // Explore is intentionally read-only and cannot create report.md/structured-output.json.
+    // Keep workflow Explore steps compatible when file-backed reporting is enabled globally.
+    return { ...experiments, subagentFileReports: false };
   }
 
   async waitForAgentTask(

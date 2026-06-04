@@ -67,13 +67,38 @@ describe("WorkflowTaskServiceAdapter", () => {
 
     await adapter.runAgent({
       id: "claims",
+      agentId: "exec",
       prompt: "Extract claims",
       outputSchema: { type: "object" },
     });
 
     expect(createArgs).toMatchObject({
+      agentId: "exec",
       prompt: "Extract claims",
       experiments: { dynamicWorkflows: true, subagentFileReports: true },
+    });
+  });
+
+  test("disables file-backed reports for read-only Explore workflow tasks", async () => {
+    let createArgs: unknown;
+    const create = mock(async (args: unknown) => {
+      createArgs = args;
+      return Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const });
+    });
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+      experiments: { dynamicWorkflows: true, subagentFileReports: true },
+    });
+
+    await adapter.runAgent({ id: "source", prompt: "Read source" });
+
+    expect(createArgs).toMatchObject({
+      agentId: "explore",
+      experiments: { dynamicWorkflows: true, subagentFileReports: false },
     });
   });
 
