@@ -1,4 +1,8 @@
-export type LocalhostLoopbackHost = "localhost" | "127.0.0.1" | "0.0.0.0" | "::1";
+// Single source of truth for loopback host literals so the runtime guard set
+// (LOOPBACK_HOST_SET) and the LocalhostLoopbackHost union can't drift apart.
+const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0", "::1"] as const;
+
+export type LocalhostLoopbackHost = (typeof LOOPBACK_HOSTS)[number];
 
 export interface NormalizeLocalhostProxyUrlOptions {
   url: string;
@@ -8,7 +12,7 @@ export interface NormalizeLocalhostProxyUrlOptions {
 
 const PORT_TEMPLATE_VARIABLE = "{{port}}";
 const HOST_TEMPLATE_VARIABLE = "{{host}}";
-const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
+const LOOPBACK_HOST_SET: ReadonlySet<string> = new Set(LOOPBACK_HOSTS);
 
 function stripIpv6Brackets(hostname: string): string {
   if (hostname.startsWith("[") && hostname.endsWith("]")) {
@@ -19,7 +23,7 @@ function stripIpv6Brackets(hostname: string): string {
 
 function isLoopbackHost(hostname: string): hostname is LocalhostLoopbackHost {
   const normalizedHost = stripIpv6Brackets(hostname.trim().toLowerCase());
-  return LOOPBACK_HOSTS.has(normalizedHost);
+  return LOOPBACK_HOST_SET.has(normalizedHost);
 }
 
 // Exported so browser-mode proxy template resolution can share a single
