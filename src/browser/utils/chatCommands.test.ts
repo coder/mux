@@ -252,6 +252,10 @@ describe("processSlashCommand - workflow", () => {
     expect(sendInput.options.muxMetadata?.type).toBe("workflow-result");
     expect(sendInput.options.muxMetadata?.rawCommand).toBe("/deep-research mux");
     expect(sendInput.options.muxMetadata?.commandPrefix).toBe("/deep-research");
+    expect(context.setSendingState).toHaveBeenNthCalledWith(1, true);
+    expect(context.setSendingState).toHaveBeenNthCalledWith(2, false);
+    expect(context.setSendingState).toHaveBeenNthCalledWith(3, true);
+    expect(context.setSendingState).toHaveBeenNthCalledWith(4, false);
     expect(onMessageSent).toHaveBeenCalledWith("tool-end");
   });
 

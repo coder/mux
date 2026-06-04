@@ -434,7 +434,16 @@ export async function processSlashCommand(
         : undefined;
 
     setInput("");
-    context.setSendingState(true);
+    let sendingStateActive = false;
+    const setWorkflowSendingState = (active: boolean) => {
+      if (sendingStateActive === active) {
+        return;
+      }
+      sendingStateActive = active;
+      context.setSendingState(active);
+    };
+
+    setWorkflowSendingState(true);
     try {
       const result = await activeClient.workflows.start({
         workspaceId,
@@ -443,6 +452,9 @@ export async function processSlashCommand(
         args,
         rawCommand,
       });
+      // The workflow is durable and backgrounded; do not pin the composer while polling for
+      // completion, otherwise the user cannot supersede a long-running slash workflow.
+      setWorkflowSendingState(false);
       const run = await waitForWorkflowTerminalRun({
         client: activeClient,
         workspaceId,
@@ -470,6 +482,7 @@ export async function processSlashCommand(
       });
       // Keep workflow outputs model-visible but UI-hidden: rawCommand drives transcript display,
       // while the XML block below gives the main agent the completed workflow result.
+      setWorkflowSendingState(true);
       const sendResult = await activeClient.workspace.sendMessage({
         workspaceId,
         message: workflowResultMessage,
@@ -508,7 +521,7 @@ export async function processSlashCommand(
       const shouldRestoreCommand = currentInput === undefined || currentInput.trim().length === 0;
       return { clearInput: !shouldRestoreCommand, toastShown: true };
     } finally {
-      context.setSendingState(false);
+      setWorkflowSendingState(false);
     }
   }
 
