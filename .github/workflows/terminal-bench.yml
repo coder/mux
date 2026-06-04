@@ -176,7 +176,8 @@ jobs:
           if [ -z "$DAYTONA_API_KEY" ]; then
             exit 0
           fi
-          pip install --quiet daytona
+          pip install --quiet 'daytona>=0.180.0,<2'
+          python3 -c 'import importlib.metadata as m; print("daytona", m.version("daytona"))'
           python3 scripts/daytona_sandbox_cleanup.py snapshot > /tmp/daytona-pre-existing.txt
           echo "Snapshot $(wc -l < /tmp/daytona-pre-existing.txt) pre-existing sandbox(es)"
 
@@ -224,7 +225,8 @@ jobs:
             echo "No pre-run snapshot found, skipping cleanup to avoid deleting unrelated sandboxes"
             exit 0
           fi
-          pip install --quiet daytona
+          pip install --quiet 'daytona>=0.180.0,<2'
+          python3 -c 'import importlib.metadata as m; print("daytona", m.version("daytona"))'
           python3 scripts/daytona_sandbox_cleanup.py cleanup --pre-existing-file /tmp/daytona-pre-existing.txt
 
       - name: Print results summary

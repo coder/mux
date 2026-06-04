@@ -576,26 +576,30 @@ chromatic: node_modules/.installed ## Run Chromatic for visual regression testin
 	@bun x chromatic --exit-zero-on-changes
 
 ## Benchmarks
-benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_HARBOR_PACKAGE/TB_DATASET/TB_CONCURRENCY/TB_TIMEOUT/TB_ENV/TB_MODEL/TB_ARGS to customize)
+benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_HARBOR_PACKAGE/TB_HARBOR_DAYTONA_PACKAGE/TB_DATASET/TB_CONCURRENCY/TB_TIMEOUT/TB_ENV/TB_MODEL/TB_ARGS to customize)
 	@# Pin Harbor with the Daytona extra so scheduled ingestion does not break on future CLI or adapter API drift.
+	@# Force the Daytona SDK to the cursor-pagination API while keeping Harbor stable.
 	@# Harbor removed --task-name, so keep smoke-test task filtering on the current dataset filter flag.
 	@HARBOR_PACKAGE=$${TB_HARBOR_PACKAGE:-harbor[daytona]==0.6.4}; \
+	HARBOR_DAYTONA_PACKAGE=$${TB_HARBOR_DAYTONA_PACKAGE:-daytona>=0.180.0,<2}; \
 	TB_DATASET=$${TB_DATASET:-terminal-bench@2.0}; \
 	TB_TIMEOUT=$${TB_TIMEOUT:-1800}; \
 	TB_CONCURRENCY=$${TB_CONCURRENCY:-4}; \
 	ENV_FLAG=$${TB_ENV:+--env $$TB_ENV}; \
 	MODEL_FLAG=$${TB_MODEL:+-m $$TB_MODEL}; \
 	TASK_NAME_FLAGS=""; \
-	if [ -n "$$TB_TASK_NAMES" ]; then \
+	if [ -n "$${TB_TASK_NAMES:-}" ]; then \
 		for task_name in $$TB_TASK_NAMES; do \
 			TASK_NAME_FLAGS="$$TASK_NAME_FLAGS --include-task-name $$task_name"; \
 		done; \
 	fi; \
 	echo "Using Harbor package: $$HARBOR_PACKAGE"; \
+	echo "Using Daytona package constraint: $$HARBOR_DAYTONA_PACKAGE"; \
 	echo "Using timeout: $$TB_TIMEOUT seconds"; \
 	echo "Running Terminal-Bench with dataset $$TB_DATASET (concurrency: $$TB_CONCURRENCY)"; \
 	export MUX_TIMEOUT_MS=$$((TB_TIMEOUT * 1000)); \
-	uvx --from "$$HARBOR_PACKAGE" harbor run \
+	uvx --from "$$HARBOR_PACKAGE" --with "$$HARBOR_DAYTONA_PACKAGE" python -c 'import importlib.metadata as m; print("Resolved Harbor package:", m.version("harbor")); print("Resolved Daytona package:", m.version("daytona"))'; \
+	uvx --from "$$HARBOR_PACKAGE" --with "$$HARBOR_DAYTONA_PACKAGE" harbor run \
 		--dataset "$$TB_DATASET" \
 		--agent-import-path benchmarks.terminal_bench.mux_agent:MuxAgent \
 		--agent-kwarg timeout=$$TB_TIMEOUT \
@@ -603,7 +607,7 @@ benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_HARBOR_PACKAGE
 		$$ENV_FLAG \
 		$$MODEL_FLAG \
 		$$TASK_NAME_FLAGS \
-		$${TB_ARGS}
+		$${TB_ARGS:-}
 
 ## Clean
 clean: ## Clean build artifacts
