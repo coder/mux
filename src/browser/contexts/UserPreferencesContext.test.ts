@@ -119,6 +119,20 @@ describe("UserPreferencesProvider bridge helpers", () => {
     expect(storage.getItem(VIM_ENABLED_KEY)).toBeNull();
   });
 
+  test("does not overwrite dirty local cache entries with backend values", () => {
+    const storage = new MemoryStorage();
+    storage.setJSON(UI_THEME_KEY, "flexoki-dark");
+
+    mirrorBackendPreferences({
+      backendPreferences: { appearance: { theme: "light" } },
+      dirtyKeys: new Set([UI_THEME_KEY]),
+      initial: false,
+      storage,
+    });
+
+    expect(JSON.parse(storage.getItem(UI_THEME_KEY) ?? "null")).toBe("flexoki-dark");
+  });
+
   test("keeps dirty local cache entries on non-initial backend refresh", () => {
     const storage = new MemoryStorage();
     storage.setJSON(UI_THEME_KEY, "dark");
