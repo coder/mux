@@ -1948,6 +1948,12 @@ export const router = (authToken?: string) => {
         .handler(({ context, input }) =>
           context.providerService.setModels(input.provider, input.models)
         ),
+      setModelParameters: t
+        .input(schemas.providers.setModelParameters.input)
+        .output(schemas.providers.setModelParameters.output)
+        .handler(({ context, input }) =>
+          context.providerService.setModelParameters(input.provider, input.modelId, input.overrides)
+        ),
       onConfigChanged: t
         .input(schemas.providers.onConfigChanged.input)
         .output(schemas.providers.onConfigChanged.output)

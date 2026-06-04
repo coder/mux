@@ -628,6 +628,117 @@ describe("ProviderService model normalization", () => {
   });
 });
 
+describe("ProviderService model parameter overrides", () => {
+  it("surfaces modelParameters in getConfig", () => {
+    withTempConfig((config, service) => {
+      saveOpenAIConfig(config, {
+        modelParameters: {
+          "gpt-5": {
+            max_output_tokens: 2048,
+            temperature: 0.4,
+            top_p: 0.9,
+          },
+        },
+      });
+
+      const providers = service.getConfig();
+
+      expect(providers.openai.modelParameters).toEqual({
+        "gpt-5": {
+          max_output_tokens: 2048,
+          temperature: 0.4,
+          top_p: 0.9,
+        },
+      });
+    });
+  });
+
+  it("sets model parameters while preserving unrelated model parameter keys", () => {
+    withTempConfig((config, service) => {
+      saveOpenAIConfig(config, {
+        modelParameters: {
+          "gpt-5": {
+            max_output_tokens: 1024,
+            top_k: 32,
+          },
+        },
+      });
+
+      const result = service.setModelParameters("openai", "gpt-5", {
+        max_output_tokens: null,
+        temperature: 0.7,
+        top_p: 0.95,
+      });
+
+      expect(result.success).toBe(true);
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.openai?.modelParameters).toEqual({
+        "gpt-5": {
+          temperature: 0.7,
+          top_p: 0.95,
+          top_k: 32,
+        },
+      });
+    });
+  });
+
+  it("clears stale model parameter overrides after a model rename", () => {
+    withTempConfig((config, service) => {
+      saveOpenAIConfig(config, {
+        modelParameters: {
+          legacy: {
+            temperature: 0.2,
+          },
+        },
+      });
+
+      const setNewModelParameters = service.setModelParameters("openai", "renamed", {
+        max_output_tokens: 4096,
+        temperature: 0.5,
+        top_p: null,
+      });
+      expect(setNewModelParameters.success).toBe(true);
+
+      const clearLegacyModelParameters = service.setModelParameters("openai", "legacy", {
+        max_output_tokens: null,
+        temperature: null,
+        top_p: null,
+      });
+      expect(clearLegacyModelParameters.success).toBe(true);
+
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.openai?.modelParameters).toEqual({
+        renamed: {
+          max_output_tokens: 4096,
+          temperature: 0.5,
+        },
+      });
+    });
+  });
+
+  it("removes modelParameters when the last override entry is cleared", () => {
+    withTempConfig((config, service) => {
+      saveOpenAIConfig(config, {
+        modelParameters: {
+          "gpt-5": {
+            max_output_tokens: 1024,
+          },
+        },
+      });
+
+      const result = service.setModelParameters("openai", "gpt-5", {
+        max_output_tokens: null,
+        temperature: null,
+        top_p: null,
+      });
+
+      expect(result.success).toBe(true);
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.openai?.modelParameters).toBeUndefined();
+    });
+  });
+});
+
 describe("ProviderService custom provider mutations", () => {
   it("rejects adding a built-in provider id", () => {
     withTempConfig((config, service) => {

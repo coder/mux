@@ -6,6 +6,7 @@ import {
   type ProviderName,
 } from "@/common/constants/providers";
 import type { BaseProviderConfig } from "@/common/config/schemas/providersConfig";
+import { ModelParametersByModelSchema } from "@/common/config/schemas/modelParameters";
 import type { Result } from "@/common/types/result";
 import type {
   AddCustomOpenAICompatibleProviderInput,
@@ -60,14 +61,69 @@ function filterProviderModelsByPolicy(
   return models.filter((entry) => allowedModels.includes(getProviderModelEntryId(entry)));
 }
 
+type EditableModelParameterOverrides = {
+  max_output_tokens?: number | null;
+  temperature?: number | null;
+  top_p?: number | null;
+};
+
+const MODEL_PARAMETER_OVERRIDE_KEYS = ["max_output_tokens", "temperature", "top_p"] as const;
+
+type ModelParameterOverrideKey = (typeof MODEL_PARAMETER_OVERRIDE_KEYS)[number];
+
+function normalizeModelParameters(
+  modelParameters: unknown
+): BaseProviderConfig["modelParameters"] | undefined {
+  const parsed = ModelParametersByModelSchema.safeParse(modelParameters);
+  if (!parsed.success) {
+    return undefined;
+  }
+  return parsed.data;
+}
+
+function filterModelParametersByPolicy(
+  modelParameters: BaseProviderConfig["modelParameters"] | undefined,
+  allowedModels: string[] | null
+): BaseProviderConfig["modelParameters"] | undefined {
+  if (!modelParameters) {
+    return undefined;
+  }
+
+  if (!Array.isArray(allowedModels)) {
+    return modelParameters;
+  }
+
+  const filteredEntries = Object.entries(modelParameters).filter(
+    ([modelId]) => modelId === "*" || allowedModels.includes(modelId)
+  );
+
+  if (filteredEntries.length === 0) {
+    return undefined;
+  }
+
+  return Object.fromEntries(filteredEntries);
+}
+
+function hasAnyEditableModelParameterOverride(overrides: EditableModelParameterOverrides): boolean {
+  return MODEL_PARAMETER_OVERRIDE_KEYS.some((key) => {
+    const value = overrides[key as ModelParameterOverrideKey];
+    return typeof value === "number";
+  });
+}
+
 function buildCustomProviderConfigInfo(
   config: BaseProviderConfig,
   policy?: { forcedBaseUrl?: string; allowedModels?: string[] | null }
 ): ProviderConfigInfo {
   const baseUrl = policy?.forcedBaseUrl ?? resolveConfigBaseUrl(config);
+  const allowedModels = policy?.allowedModels ?? null;
   const models = filterProviderModelsByPolicy(
     normalizeProviderModelEntries(config.models),
-    policy?.allowedModels ?? null
+    allowedModels
+  );
+  const modelParameters = filterModelParametersByPolicy(
+    normalizeModelParameters(config.modelParameters),
+    allowedModels
   );
   const apiKeyIsOpRef = isOpReference(config.apiKey);
   const apiKeySet = typeof config.apiKey === "string" && config.apiKey.trim().length > 0;
@@ -83,6 +139,7 @@ function buildCustomProviderConfigInfo(
     apiKeySource: apiKeySet ? "config" : apiKeyFile ? "file" : "keyless",
     baseUrl,
     models,
+    modelParameters,
     displayName: config.displayName,
     providerType: "openai-compatible",
     isCustom: true,
@@ -304,6 +361,7 @@ export class ProviderService {
         baseUrl?: string;
         baseURL?: string;
         models?: unknown[];
+        modelParameters?: unknown;
         serviceTier?: string;
         wireFormat?: string;
         store?: unknown;
@@ -336,6 +394,10 @@ export class ProviderService {
       const normalizedModels =
         config.models === undefined ? undefined : normalizeProviderModelEntries(config.models);
       const filteredModels = filterProviderModelsByPolicy(normalizedModels, allowedModels);
+      const filteredModelParameters = filterModelParametersByPolicy(
+        normalizeModelParameters(config.modelParameters),
+        allowedModels
+      );
 
       const codexOauthSet =
         provider === "openai" && parseCodexOauthAuth(config.codexOauth) !== null;
@@ -358,6 +420,7 @@ export class ProviderService {
         baseUrl: forcedBaseUrl ?? explicitBaseUrl,
         apiKeyFile: typeof config.apiKeyFile === "string" ? config.apiKeyFile : undefined,
         models: filteredModels,
+        modelParameters: filteredModelParameters,
       };
 
       // OpenAI-specific fields
@@ -849,6 +912,87 @@ export class ProviderService {
     } catch (error) {
       const message = getErrorMessage(error);
       return { success: false, error: `Failed to set models: ${message}` };
+    }
+  }
+
+  public setModelParameters(
+    provider: string,
+    modelId: string,
+    overrides: EditableModelParameterOverrides
+  ): Result<void, string> {
+    const normalizedModelId = modelId.trim();
+    if (normalizedModelId.length === 0) {
+      return { success: false, error: "Model ID cannot be empty" };
+    }
+
+    try {
+      if (this.policyService?.isEnforced()) {
+        if (!this.policyService.isProviderAllowed(provider)) {
+          return { success: false, error: `Provider ${provider} is not allowed by policy` };
+        }
+
+        const allowedModels =
+          this.policyService.getEffectivePolicy()?.providerAccess?.find((p) => p.id === provider)
+            ?.allowedModels ?? null;
+
+        if (
+          normalizedModelId !== "*" &&
+          Array.isArray(allowedModels) &&
+          !allowedModels.includes(normalizedModelId)
+        ) {
+          return {
+            success: false,
+            error: `Model ${normalizedModelId} is not allowed by policy`,
+          };
+        }
+      }
+
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+
+      if (!providersConfig[provider]) {
+        providersConfig[provider] = {};
+      }
+
+      const providerConfig = providersConfig[provider] as BaseProviderConfig;
+      const currentModelParameters = normalizeModelParameters(providerConfig.modelParameters) ?? {};
+      const nextModelParameters = { ...currentModelParameters };
+
+      if (hasAnyEditableModelParameterOverride(overrides)) {
+        const existingModelOverrides = currentModelParameters[normalizedModelId];
+        const nextModelOverrides: Record<string, unknown> =
+          typeof existingModelOverrides === "object" &&
+          existingModelOverrides !== null &&
+          !Array.isArray(existingModelOverrides)
+            ? { ...existingModelOverrides }
+            : {};
+
+        for (const key of MODEL_PARAMETER_OVERRIDE_KEYS) {
+          const value = overrides[key as ModelParameterOverrideKey];
+          if (typeof value === "number") {
+            nextModelOverrides[key] = value;
+          } else {
+            delete nextModelOverrides[key];
+          }
+        }
+
+        nextModelParameters[normalizedModelId] = nextModelOverrides;
+      } else {
+        delete nextModelParameters[normalizedModelId];
+      }
+
+      if (Object.keys(nextModelParameters).length === 0) {
+        delete providerConfig.modelParameters;
+      } else {
+        providerConfig.modelParameters = nextModelParameters;
+      }
+
+      this.config.saveProvidersConfig(providersConfig);
+      this.notifyFromMutation();
+
+      return { success: true, data: undefined };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return { success: false, error: `Failed to set model parameters: ${message}` };
     }
   }
 
