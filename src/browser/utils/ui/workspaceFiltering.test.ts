@@ -677,6 +677,28 @@ describe("delegated workspace activity roll-up", () => {
     expect(activityByWorkspaceId.has("cycle-b")).toBe(false);
   });
 
+  it("does not resurrect terminal descendants from stale live sidebar activity", () => {
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("reported-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "reported",
+      }),
+      createWorkspace("interrupted-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "interrupted",
+        reportedAt: new Date(0).toISOString(),
+      }),
+    ];
+
+    const activityByWorkspaceId = computeDelegatedActivityByWorkspaceId(workspaces, {
+      isWorkspaceLiveActive: (workspaceId) =>
+        workspaceId === "reported-child" || workspaceId === "interrupted-child",
+    });
+
+    expect(activityByWorkspaceId.has("parent")).toBe(false);
+  });
+
   it("uses live sidebar activity when task metadata lags", () => {
     const workspaces = [
       createWorkspace("parent"),

@@ -659,9 +659,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     : null;
   const hasDelegatedStatusText = delegatedStatusText != null;
   const hasOwnLiveStatusText =
-    awaitingUserQuestion ||
-    (displayStreamingStatusPhase !== null && !hasActiveDelegatedWork) ||
-    isRemoving;
+    awaitingUserQuestion || displayStreamingStatusPhase !== null || isRemoving;
   const shouldShowDelegatedStatus = hasDelegatedStatusText && !hasOwnLiveStatusText && !hasError;
   const visualState = getVisualState({
     awaitingUserQuestion,
@@ -689,6 +687,9 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   // Note: we intentionally render the secondary row even while the workspace is still
   // initializing so users can see early streaming/status information immediately.
   const hasSecondaryRow = !shouldShowInlineArchivingStatus && hasStatusText;
+  const secondaryStatusDescriptionId = hasSecondaryRow
+    ? `workspace-status-description-${workspaceId}`
+    : undefined;
   const hasCompletedChildren =
     (rowRenderMeta?.hasHiddenCompletedChildren ?? false) ||
     (rowRenderMeta?.visibleCompletedChildrenCount ?? 0) > 0;
@@ -846,6 +847,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                 ? `Archiving workspace ${displayTitle}`
                 : `Select workspace ${displayTitle}`
         }
+        aria-describedby={secondaryStatusDescriptionId}
         aria-disabled={isDisabled}
         data-workspace-path={namedWorkspacePath}
         data-workspace-id={workspaceId}
@@ -1135,7 +1137,11 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
             )}
           </div>
           {hasSecondaryRow && (
-            <div className="min-w-0" data-testid={`workspace-secondary-row-${workspaceId}`}>
+            <div
+              id={secondaryStatusDescriptionId}
+              className="min-w-0"
+              data-testid={`workspace-secondary-row-${workspaceId}`}
+            >
               {isRemoving ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
                   <Loader2 className="h-3 w-3 shrink-0 animate-spin" />

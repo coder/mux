@@ -27,6 +27,7 @@ interface TaskGroupListItemProps {
 
 export function TaskGroupListItem(props: TaskGroupListItemProps) {
   const hasRunningWork = props.runningCount > 0;
+  const statusDescriptionId = `task-group-status-${props.groupId}`;
   const paddingLeft = getSidebarItemPaddingLeft(props.depth);
   const statusParts: string[] = [];
   if (props.runningCount > 0) {
@@ -51,6 +52,7 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
       tabIndex={0}
       aria-expanded={props.isExpanded}
       aria-label={`${props.isExpanded ? "Collapse" : "Expand"} task group ${props.title}`}
+      aria-describedby={statusDescriptionId}
       data-testid={`task-group-${props.groupId}`}
       data-running={hasRunningWork}
       className={cn(
@@ -102,7 +104,10 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
             {props.completedCount}/{props.totalCount}
           </span>
         </div>
-        <div className="text-muted flex min-w-0 flex-wrap items-center gap-1.5 text-xs leading-4">
+        <div
+          id={statusDescriptionId}
+          className="text-muted flex min-w-0 flex-wrap items-center gap-1.5 text-xs leading-4"
+        >
           {statusParts.length > 0 ? (
             statusParts.map((part) => <span key={part}>{part}</span>)
           ) : (

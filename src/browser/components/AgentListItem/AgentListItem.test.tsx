@@ -316,10 +316,15 @@ describe("AgentListItem", () => {
 
     expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
     expect(rowView.getByText("Workflow running · 2 sub-agents active · 1 queued")).toBeTruthy();
+    const descriptionId = row.getAttribute("aria-describedby");
+    expect(descriptionId).toBe(`workspace-status-description-${TEST_WORKSPACE_ID}`);
+    expect(document.getElementById(descriptionId ?? "")?.textContent).toContain(
+      "Workflow running · 2 sub-agents active · 1 queued"
+    );
     expect(rowView.queryByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeNull();
   });
 
-  test("shows delegated workflow status ahead of coordinator streaming copy", () => {
+  test("keeps coordinator streaming copy ahead of delegated workflow work", () => {
     mockWorkspaceSidebarState = createWorkspaceSidebarState({ canInterrupt: true });
 
     const { row } = renderWorkspaceItem({
@@ -333,11 +338,11 @@ describe("AgentListItem", () => {
     const rowView = within(row);
 
     expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
-    expect(rowView.getByText("Workflow running · 1 sub-agent active")).toBeTruthy();
-    expect(rowView.queryByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeNull();
+    expect(rowView.getByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeTruthy();
+    expect(rowView.queryByText("Workflow running · 1 sub-agent active")).toBeNull();
   });
 
-  test("shows active delegated work ahead of coordinator streaming copy", () => {
+  test("keeps coordinator streaming copy ahead of active delegated work", () => {
     mockWorkspaceSidebarState = createWorkspaceSidebarState({ canInterrupt: true });
 
     const { row } = renderWorkspaceItem({
@@ -351,8 +356,8 @@ describe("AgentListItem", () => {
     const rowView = within(row);
 
     expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
-    expect(rowView.getByText("1 sub-agent active")).toBeTruthy();
-    expect(rowView.queryByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeNull();
+    expect(rowView.getByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeTruthy();
+    expect(rowView.queryByText("1 sub-agent active")).toBeNull();
   });
 
   test("keeps own question status ahead of delegated workflow work", () => {

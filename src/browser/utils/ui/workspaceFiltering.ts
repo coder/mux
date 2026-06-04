@@ -152,6 +152,34 @@ function isActiveDelegatedStatus(status: FrontendWorkspaceMetadata["taskStatus"]
   return status === "running" || status === "awaiting_report";
 }
 
+function isTerminalDelegatedWorkspace(workspace: FrontendWorkspaceMetadata): boolean {
+  return (
+    workspace.taskStatus === "reported" ||
+    workspace.taskStatus === "interrupted" ||
+    workspace.reportedAt != null
+  );
+}
+
+export function isWorkspaceDelegatedActivityActive(
+  workspace: FrontendWorkspaceMetadata,
+  options: DelegatedActivityOptions = {}
+): boolean {
+  if (isTerminalDelegatedWorkspace(workspace)) {
+    return false;
+  }
+  if (isActiveDelegatedStatus(workspace.taskStatus)) {
+    return true;
+  }
+
+  try {
+    return options.isWorkspaceLiveActive?.(workspace.id) === true;
+  } catch {
+    // Sidebar store teardown can race workspace metadata updates. Ignore the
+    // live hint rather than making a malformed descendant brick rendering.
+    return false;
+  }
+}
+
 /**
  * Roll active descendant task state up to parent rows for sidebar attention.
  * The child itself is counted for its ancestors, while each child row only
@@ -215,12 +243,12 @@ export function computeDelegatedActivityByWorkspaceId(
 
     for (const child of childrenByParentId.get(workspace.id) ?? []) {
       const childWorkflowOwned = ownWorkflowOwned || child.workflowTask != null;
-      if (isActiveDelegatedStatus(child.taskStatus) || getIsLiveActive(child.id)) {
+      if (isWorkspaceDelegatedActivityActive(child, { isWorkspaceLiveActive: getIsLiveActive })) {
         descendantActivity.activeCount += 1;
         if (childWorkflowOwned) {
           descendantActivity.workflowActiveCount += 1;
         }
-      } else if (child.taskStatus === "queued") {
+      } else if (!isTerminalDelegatedWorkspace(child) && child.taskStatus === "queued") {
         descendantActivity.queuedCount += 1;
         if (childWorkflowOwned) {
           descendantActivity.workflowQueuedCount += 1;

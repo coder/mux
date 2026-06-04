@@ -51,6 +51,7 @@ import {
   AGE_THRESHOLDS_DAYS,
   computeWorkspaceDepthMap,
   computeDelegatedActivityByWorkspaceId,
+  isWorkspaceDelegatedActivityActive,
   filterVisibleAgentRows,
   computeAgentRowRenderMeta,
   findNextNonEmptyTier,
@@ -1620,14 +1621,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     [projectPathsSignature, projectOrder]
   );
 
+  const isWorkspaceLiveActive = (workspaceId: string): boolean => {
+    const signal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
+    return signal?.isWorking === true;
+  };
   const delegatedActivityByWorkspaceId = computeDelegatedActivityByWorkspaceId(
     Array.from(sortedWorkspacesByProject.values()).flat(),
-    {
-      isWorkspaceLiveActive: (workspaceId) => {
-        const signal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
-        return signal?.isWorking === true;
-      },
-    }
+    { isWorkspaceLiveActive }
   );
 
   const singleProjectWorkspacesByProject = new Map<string, FrontendWorkspaceMetadata[]>();
@@ -2361,13 +2361,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       continue;
                                     }
                                     if (
-                                      member.taskStatus === "running" ||
-                                      member.taskStatus === "awaiting_report"
+                                      isWorkspaceDelegatedActivityActive(member, {
+                                        isWorkspaceLiveActive,
+                                      })
                                     ) {
                                       runningCount += 1;
                                       continue;
                                     }
-                                    if (member.taskStatus === "queued") {
+                                    if (
+                                      member.taskStatus === "queued" &&
+                                      member.reportedAt == null
+                                    ) {
                                       queuedCount += 1;
                                       continue;
                                     }

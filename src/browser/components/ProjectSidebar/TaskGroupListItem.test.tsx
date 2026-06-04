@@ -45,6 +45,9 @@ describe("TaskGroupListItem", () => {
     const groupRow = view.getByTestId("task-group-best-of-demo");
 
     expect(groupRow.dataset.running).toBe("true");
+    const descriptionId = groupRow.getAttribute("aria-describedby");
+    expect(descriptionId).toBe("task-group-status-best-of-demo");
+    expect(document.getElementById(descriptionId ?? "")?.textContent).toContain("2 running");
     expect(view.getByTestId("task-group-status-icon").className).toContain("text-content-success");
     expect(groupRow.textContent).toContain("2 running");
   });
