@@ -470,7 +470,6 @@ export class StreamingMessageAggregator {
   private cache: {
     allMessages?: MuxMessage[];
     displayedMessages?: DisplayedMessage[];
-    latestStreamingBashToolCallId?: string | null; // null = computed, none found
   } = {};
   private recencyTimestamp: number | null = null;
   private lastResponseCompletedAt: number | null = null;
@@ -3589,30 +3588,6 @@ export class StreamingMessageAggregator {
       this.cache.displayedMessages = resultMessages;
     }
     return this.cache.displayedMessages;
-  }
-
-  /**
-   * Get the toolCallId of the latest foreground bash that is currently executing.
-   * Used by BashToolCall for auto-expand/collapse behavior.
-   * Result is cached until the next mutation.
-   */
-  getLatestStreamingBashToolCallId(): string | null {
-    if (this.cache.latestStreamingBashToolCallId === undefined) {
-      const messages = this.getDisplayedMessages();
-      let result: string | null = null;
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const msg = messages[i];
-        if (msg.type === "tool" && msg.toolName === "bash" && msg.status === "executing") {
-          const args = msg.args as { run_in_background?: boolean } | undefined;
-          if (!args?.run_in_background) {
-            result = msg.toolCallId;
-            break;
-          }
-        }
-      }
-      this.cache.latestStreamingBashToolCallId = result;
-    }
-    return this.cache.latestStreamingBashToolCallId;
   }
 
   /**

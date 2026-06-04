@@ -16,11 +16,10 @@ import {
   ExitCodeBadge,
 } from "./Shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
-import { useBashAutoExpand } from "./Shared/useBashAutoExpand";
 import { formatDuration } from "@/common/utils/formatDuration";
 import { cn } from "@/common/lib/utils";
 import { ElapsedTimeDisplay } from "./Shared/ElapsedTimeDisplay";
-import { useBashToolLiveOutput, useLatestStreamingBashId } from "@/browser/stores/WorkspaceStore";
+import { useBashToolLiveOutput } from "@/browser/stores/WorkspaceStore";
 import { useForegroundBashToolCallIds } from "@/browser/stores/BackgroundBashStore";
 import { useBackgroundBashActions } from "@/browser/contexts/BackgroundBashContext";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
@@ -54,7 +53,10 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   status = "pending",
   startedAt,
 }) => {
-  const { expanded, setExpanded, toggleExpanded } = useToolExpansion();
+  // Bash shares the per-workspace "tools" auto-expand preference like every other tool
+  // (via useToolExpansion). It no longer special-cases the latest streaming command;
+  // live output still renders below when the row is expanded.
+  const { expanded, toggleExpanded } = useToolExpansion();
   const [outputDialogOpen, setOutputDialogOpen] = useState(false);
   const bashCollapsedSummaryMode = useBashCollapsedSummaryMode();
 
@@ -63,9 +65,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     workspaceId &&
     toolCallId &&
     (status === "executing" || (status === "completed" && !resultHasOutput))
-  );
-  const shouldTrackLatestStreamingBash = Boolean(
-    workspaceId && toolCallId && (status === "executing" || expanded)
   );
 
   const foregroundBashToolCallIds = useForegroundBashToolCallIds(
@@ -77,11 +76,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
     shouldTrackLiveBashState ? workspaceId : undefined,
     shouldTrackLiveBashState ? toolCallId : undefined
   );
-  const latestStreamingBashId = useLatestStreamingBashId(
-    shouldTrackLatestStreamingBash ? workspaceId : undefined
-  );
-  const isLatestStreamingBash = latestStreamingBashId === toolCallId;
-  const hasReplacementStreamingBash = latestStreamingBashId !== null && !isLatestStreamingBash;
 
   const outputRef = useRef<HTMLPreElement>(null);
   const outputPinnedRef = useRef(true);
@@ -93,17 +87,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
   const liveOutputView = liveOutput ?? EMPTY_LIVE_OUTPUT;
   const combinedLiveOutput = liveOutputView.combined;
-
-  // Track whether user manually toggled expansion to avoid fighting with auto-expand.
-  const userToggledRef = useRef(false);
-  useBashAutoExpand({
-    isLatestStreamingBash,
-    hasReplacementStreamingBash,
-    status,
-    startedAt,
-    setExpanded,
-    userToggledRef,
-  });
 
   const isPending = status === "executing" || status === "pending";
   const backgroundProcessId =
@@ -151,13 +134,9 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const completedHasOutput = typeof completedOutput === "string" && completedOutput.length > 0;
   const showCompletedOutputSection = !isBackgroundResult && (completedHasOutput || Boolean(note));
 
-  const handleToggle = () => {
-    userToggledRef.current = true;
-    toggleExpanded();
-  };
   return (
     <ToolContainer expanded={expanded}>
-      <ToolHeader onClick={handleToggle}>
+      <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon toolName="bash" />
         {bashCollapsedSummary.kind === "intent-command" ? (

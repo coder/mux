@@ -22,7 +22,11 @@ describe("FileEditToolCall expansion", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
-  test("collapses a failed edit when the result arrives after the pending render", () => {
+  test("does not mutate a present edit's expand state when the result arrives later", () => {
+    // Expand state is seeded once at mount (no workspace preference here) and must not
+    // be mutated when the result later arrives — that would be a layout flash. A row
+    // that mounted expanded (pending) stays expanded, so the failure is shown
+    // immediately instead of being auto-collapsed behind a second click.
     const view = renderWithProviders(
       <FileEditToolCall
         toolName="file_edit_replace_string"
@@ -45,10 +49,11 @@ describe("FileEditToolCall expansion", () => {
       </TooltipProvider>
     );
 
-    expect(view.queryByText("edit failed")).toBeNull();
-
-    fireEvent.click(view.getByText("src/example.ts"));
-
+    // Still expanded — the failure is visible without re-expanding.
     expect(view.queryByText("edit failed")).not.toBeNull();
+
+    // The user can still collapse it manually.
+    fireEvent.click(view.getByText("src/example.ts"));
+    expect(view.queryByText("edit failed")).toBeNull();
   });
 });

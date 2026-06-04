@@ -18,6 +18,7 @@ import {
 } from "./Shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { useOptionalMessageListContext } from "../Messages/MessageListContext";
+import { useStickyExpand } from "../Messages/useStickyExpand";
 import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
@@ -827,10 +828,9 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
           ? "backgrounded"
           : status;
 
+  // Auto-expand on error is just the fallback; the sticky tools preference wins.
   const shouldAutoExpand = !!errorResult;
-  const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
-  const expanded = userExpandedChoice ?? shouldAutoExpand;
-  const toggleExpanded = () => setUserExpandedChoice(!expanded);
+  const { expanded, toggleExpanded } = useStickyExpand("tools", shouldAutoExpand);
 
   const [transcriptTaskId, setTranscriptTaskId] = useState<string | null>(null);
   const preview = prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
@@ -1053,10 +1053,9 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
 
   // Keep task_await collapsed by default, but auto-expand when failures are present.
   // This avoids hiding failures behind a "completed" badge in the header.
+  // Auto-expand when a sub-task failed is just the fallback; the sticky tools preference wins.
   const shouldAutoExpand = failedCount > 0;
-  const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
-  const expanded = userExpandedChoice ?? shouldAutoExpand;
-  const toggleExpanded = () => setUserExpandedChoice(!expanded);
+  const { expanded, toggleExpanded } = useStickyExpand("tools", shouldAutoExpand);
 
   const effectiveStatus: ToolStatus = status === "completed" && failedCount > 0 ? "failed" : status;
 

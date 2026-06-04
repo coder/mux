@@ -4560,29 +4560,6 @@ export function useTaskToolLiveTaskIds(
 }
 
 /**
- * Hook to get the toolCallId of the latest streaming (executing) bash.
- * Returns null if no bash is currently streaming.
- * Used by BashToolCall to auto-expand/collapse.
- */
-export function useLatestStreamingBashId(workspaceId: string | undefined): string | null {
-  const store = getStoreInstance();
-
-  return useSyncExternalStore(
-    (listener) => {
-      if (!workspaceId) return () => undefined;
-      return store.subscribeKey(workspaceId, listener);
-    },
-    () => {
-      if (!workspaceId) return null;
-      const aggregator = store.getAggregator(workspaceId);
-      if (!aggregator) return null;
-      // Aggregator caches the result, so this is O(1) on subsequent calls
-      return aggregator.getLatestStreamingBashToolCallId();
-    }
-  );
-}
-
-/**
  * Hook to get an aggregator for a workspace.
  */
 export function useWorkspaceAggregator(

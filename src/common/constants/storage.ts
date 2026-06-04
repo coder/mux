@@ -213,6 +213,20 @@ export function getPinnedTodoExpandedKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for per-workspace transcript auto-expand preferences.
+ *
+ * Stores the user's last expand/collapse intent per block type, shaped like
+ * { thinking?: boolean; tools?: boolean } (see AutoExpandPrefs in
+ * useStickyExpand.ts). New thinking/tool blocks inherit this as their initial
+ * expand state; already-mounted blocks are never retroactively changed.
+ *
+ * Format: "auto-expand:{workspaceId}"
+ */
+export function getAutoExpandPrefsKey(workspaceId: string): string {
+  return `auto-expand:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for persisted workspace name-generation state.
  *
  * This is used by the workspace creation flow so drafts can preserve their
@@ -660,6 +674,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getWorkspaceAISettingsByAgentKey,
   getModelKey,
   getInputKey,
+  getAutoExpandPrefsKey,
   getWorkspaceNameStateKey,
   getInputAttachmentsKey,
   getAgentIdKey,

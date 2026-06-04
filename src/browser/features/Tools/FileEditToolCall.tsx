@@ -24,6 +24,7 @@ import {
   ErrorBox,
 } from "./Shared/ToolPrimitives";
 import { getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
+import { useStickyExpand } from "../Messages/useStickyExpand";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { DiffContainer, DiffRenderer, SelectableDiffRenderer } from "../Shared/DiffRenderer";
 import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu/KebabMenu";
@@ -155,13 +156,12 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
   status = "pending",
   onReviewNote,
 }) => {
-  // Collapse failed edits by default since they're common and expected. While a tool is
-  // streaming, result is undefined; derive the default from the latest result so a later
-  // failure still collapses unless the user already chose an expansion state.
+  // Collapse failed edits by default since they're common and expected. This is just
+  // the fallback: the per-workspace sticky tools preference (set once the user
+  // expands/collapses any tool here) wins. Seeded once at mount, so a later result or
+  // preference change never mutates this present block.
   const isFailed = result?.success === false;
-  const [userExpanded, setUserExpanded] = React.useState<boolean | undefined>(undefined);
-  const expanded = userExpanded ?? !isFailed;
-  const toggleExpanded = () => setUserExpanded((current) => !(current ?? !isFailed));
+  const { expanded, toggleExpanded } = useStickyExpand("tools", !isFailed);
   const [showRaw, setShowRaw] = React.useState(false);
   const [showInvocation, setShowInvocation] = React.useState(false);
   const [showFullDiff, setShowFullDiff] = React.useState(false);

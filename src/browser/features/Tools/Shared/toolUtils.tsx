@@ -1,6 +1,10 @@
-import React, { useState } from "react";
+import React from "react";
 import { AlertTriangle, Check, CircleDot, EyeOff, X } from "lucide-react";
 import type { ToolErrorResult } from "@/common/types/tools";
+import {
+  useStickyExpand,
+  type UseStickyExpandOptions,
+} from "@/browser/features/Messages/useStickyExpand";
 import { LoadingDots } from "./ToolPrimitives";
 
 /**
@@ -17,12 +21,14 @@ export type ToolStatus =
   | "redacted";
 
 /**
- * Hook for managing tool expansion state
+ * Hook for managing tool expansion state.
+ *
+ * Backed by the per-workspace sticky preference (see useStickyExpand): every tool
+ * shares the workspace's "tools" auto-expand intent, and `initialExpanded` is only
+ * the fallback used until the user has expanded/collapsed a tool in this workspace.
  */
-export function useToolExpansion(initialExpanded = false) {
-  const [expanded, setExpanded] = useState(initialExpanded);
-  const toggleExpanded = () => setExpanded(!expanded);
-  return { expanded, setExpanded, toggleExpanded };
+export function useToolExpansion(initialExpanded = false, options?: UseStickyExpandOptions) {
+  return useStickyExpand("tools", initialExpanded, options);
 }
 
 /**
