@@ -225,7 +225,9 @@ export function migrateModelParameterEntry(
   const destinationOverrides = currentModelParameters[nextModelId];
   const nextModelParameters = { ...currentModelParameters };
   nextModelParameters[nextModelId] = {
-    ...(destinationOverrides && typeof destinationOverrides === "object" ? destinationOverrides : {}),
+    ...(destinationOverrides && typeof destinationOverrides === "object"
+      ? destinationOverrides
+      : {}),
     ...originalOverrides,
   };
   delete nextModelParameters[originalModelId];
@@ -543,30 +545,11 @@ export function ModelsSection() {
       const setOverridesResult = await api.providers.setModelParameters({
         provider: providerId,
         modelId: trimmedModelId,
+        renameFromModelId: trimmedModelId !== originalModelId ? originalModelId : undefined,
         overrides,
       });
       if (!setOverridesResult.success) {
         setError(setOverridesResult.error);
-        void refresh();
-        return;
-      }
-
-      if (trimmedModelId === originalModelId) {
-        return;
-      }
-
-      const clearLegacyOverridesResult = await api.providers.setModelParameters({
-        provider: providerId,
-        modelId: originalModelId,
-        overrides: {
-          max_output_tokens: null,
-          temperature: null,
-          top_p: null,
-        },
-      });
-
-      if (!clearLegacyOverridesResult.success) {
-        setError(clearLegacyOverridesResult.error);
         void refresh();
       }
     })();

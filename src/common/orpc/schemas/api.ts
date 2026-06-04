@@ -361,6 +361,7 @@ export const providers = {
     input: z.object({
       provider: z.string(),
       modelId: z.string().min(1),
+      renameFromModelId: z.string().min(1).optional(),
       overrides: EditableCustomModelParameterOverridesSchema,
     }),
     output: ResultSchema(z.void(), z.string()),

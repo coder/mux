@@ -948,11 +948,20 @@ export class ProviderService {
   public setModelParameters(
     provider: string,
     modelId: string,
-    overrides: EditableModelParameterOverrides
+    overrides: EditableModelParameterOverrides,
+    renameFromModelId?: string
   ): Result<void, string> {
     const normalizedModelId = modelId.trim();
     if (normalizedModelId.length === 0) {
       return { success: false, error: "Model ID cannot be empty" };
+    }
+
+    const normalizedRenameFromModelId = renameFromModelId?.trim();
+    if (
+      renameFromModelId !== undefined &&
+      (!normalizedRenameFromModelId || normalizedRenameFromModelId.length === 0)
+    ) {
+      return { success: false, error: "Rename source model ID cannot be empty" };
     }
 
     try {
@@ -986,7 +995,34 @@ export class ProviderService {
       const providerConfig = providersConfig[provider] as BaseProviderConfig;
       const currentModelParameters = normalizeModelParameters(providerConfig.modelParameters) ?? {};
       const nextModelParameters = { ...currentModelParameters };
-      const existingModelOverrides = currentModelParameters[normalizedModelId];
+
+      if (
+        normalizedRenameFromModelId &&
+        normalizedRenameFromModelId !== normalizedModelId &&
+        normalizedRenameFromModelId in nextModelParameters
+      ) {
+        const renameSourceOverrides = nextModelParameters[normalizedRenameFromModelId];
+        const destinationOverrides = nextModelParameters[normalizedModelId];
+
+        if (
+          renameSourceOverrides &&
+          typeof renameSourceOverrides === "object" &&
+          !Array.isArray(renameSourceOverrides)
+        ) {
+          nextModelParameters[normalizedModelId] = {
+            ...(destinationOverrides &&
+            typeof destinationOverrides === "object" &&
+            !Array.isArray(destinationOverrides)
+              ? destinationOverrides
+              : {}),
+            ...renameSourceOverrides,
+          };
+        }
+
+        delete nextModelParameters[normalizedRenameFromModelId];
+      }
+
+      const existingModelOverrides = nextModelParameters[normalizedModelId];
       const nextModelOverrides: Record<string, unknown> =
         typeof existingModelOverrides === "object" &&
         existingModelOverrides !== null &&

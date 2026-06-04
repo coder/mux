@@ -747,7 +747,7 @@ describe("ProviderService model parameter overrides", () => {
     });
   });
 
-  it("clears stale model parameter overrides after a model rename", () => {
+  it("renames model parameter entries while preserving non-editable overrides", () => {
     withTempConfig((config, service) => {
       saveOpenAIConfig(config, {
         models: ["renamed"],
@@ -755,29 +755,30 @@ describe("ProviderService model parameter overrides", () => {
           legacy: {
             temperature: 0.2,
             top_k: 32,
+            seed: 7,
           },
         },
       });
 
-      const setNewModelParameters = service.setModelParameters("openai", "renamed", {
-        max_output_tokens: 4096,
-        temperature: 0.5,
-        top_p: null,
-      });
-      expect(setNewModelParameters.success).toBe(true);
-
-      const clearLegacyModelParameters = service.setModelParameters("openai", "legacy", {
-        max_output_tokens: null,
-        temperature: null,
-        top_p: null,
-      });
-      expect(clearLegacyModelParameters.success).toBe(true);
+      const renameResult = service.setModelParameters(
+        "openai",
+        "renamed",
+        {
+          max_output_tokens: 4096,
+          temperature: 0.5,
+          top_p: null,
+        },
+        "legacy"
+      );
+      expect(renameResult.success).toBe(true);
 
       const providersConfig = config.loadProvidersConfig();
       expect(providersConfig?.openai?.modelParameters).toEqual({
         renamed: {
           max_output_tokens: 4096,
           temperature: 0.5,
+          top_k: 32,
+          seed: 7,
         },
       });
     });
