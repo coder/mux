@@ -18,6 +18,7 @@ interface MockConfig {
   coderWorkspaceArchiveBehavior: CoderWorkspaceArchiveBehavior;
   worktreeArchiveBehavior: WorktreeArchiveBehavior;
   chatTranscriptFullWidth: boolean;
+  autoHideSidebar: boolean;
   llmDebugLogs: boolean;
 }
 
@@ -29,6 +30,7 @@ interface MockAPIClient {
       worktreeArchiveBehavior: WorktreeArchiveBehavior;
     }) => Promise<void>;
     updateChatTranscriptFullWidth: (input: { enabled: boolean }) => Promise<void>;
+    updateAutoHideSidebar: (input: { enabled: boolean }) => Promise<void>;
     updateLlmDebugLogs: (input: { enabled: boolean }) => Promise<void>;
   };
   server: {
@@ -171,6 +173,7 @@ interface RenderGeneralSectionOptions {
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
   worktreeArchiveBehavior?: WorktreeArchiveBehavior;
   chatTranscriptFullWidth?: boolean;
+  autoHideSidebar?: boolean;
 }
 
 interface MockAPISetup {
@@ -187,6 +190,9 @@ interface MockAPISetup {
   updateChatTranscriptFullWidthMock: ReturnType<
     typeof mock<(input: { enabled: boolean }) => Promise<void>>
   >;
+  updateAutoHideSidebarMock: ReturnType<
+    typeof mock<(input: { enabled: boolean }) => Promise<void>>
+  >;
 }
 
 function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup {
@@ -194,6 +200,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
     worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
     chatTranscriptFullWidth: false,
+    autoHideSidebar: false,
     llmDebugLogs: false,
     ...configOverrides,
   };
@@ -217,12 +224,19 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     return Promise.resolve();
   });
 
+  const updateAutoHideSidebarMock = mock(({ enabled }: { enabled: boolean }) => {
+    config.autoHideSidebar = enabled;
+
+    return Promise.resolve();
+  });
+
   return {
     api: {
       config: {
         getConfig: getConfigMock,
         updateCoderPrefs: updateCoderPrefsMock,
         updateChatTranscriptFullWidth: updateChatTranscriptFullWidthMock,
+        updateAutoHideSidebar: updateAutoHideSidebarMock,
         updateLlmDebugLogs: mock(({ enabled }: { enabled: boolean }) => {
           config.llmDebugLogs = enabled;
 
@@ -241,6 +255,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     getConfigMock,
     updateCoderPrefsMock,
     updateChatTranscriptFullWidthMock,
+    updateAutoHideSidebarMock,
   };
 }
 
@@ -263,8 +278,14 @@ describe("GeneralSection", () => {
   });
 
   function renderGeneralSection(options: RenderGeneralSectionOptions = {}) {
-    const { api, updateCoderPrefsMock, updateChatTranscriptFullWidthMock } = createMockAPI({
+    const {
+      api,
+      updateCoderPrefsMock,
+      updateChatTranscriptFullWidthMock,
+      updateAutoHideSidebarMock,
+    } = createMockAPI({
       chatTranscriptFullWidth: options.chatTranscriptFullWidth,
+      autoHideSidebar: options.autoHideSidebar,
       coderWorkspaceArchiveBehavior: options.coderWorkspaceArchiveBehavior,
       worktreeArchiveBehavior: options.worktreeArchiveBehavior,
     });
@@ -276,7 +297,12 @@ describe("GeneralSection", () => {
       </ThemeProvider>
     );
 
-    return { updateCoderPrefsMock, updateChatTranscriptFullWidthMock, view };
+    return {
+      updateCoderPrefsMock,
+      updateChatTranscriptFullWidthMock,
+      updateAutoHideSidebarMock,
+      view,
+    };
   }
 
   function getSelectTrigger(view: ReturnType<typeof render>, label: string): HTMLElement {
@@ -350,6 +376,24 @@ describe("GeneralSection", () => {
     await waitFor(() => {
       expect(toggle.getAttribute("aria-checked")).toBe("false");
       expect(updateChatTranscriptFullWidthMock).toHaveBeenCalledWith({ enabled: false });
+    });
+  });
+
+  test("loads and persists the auto-hide sidebar toggle", async () => {
+    const { updateAutoHideSidebarMock, view } = renderGeneralSection({
+      autoHideSidebar: true,
+    });
+
+    const toggle = view.getByRole("switch", { name: "Toggle automatic sidebar hiding" });
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+    });
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      expect(updateAutoHideSidebarMock).toHaveBeenCalledWith({ enabled: false });
     });
   });
 

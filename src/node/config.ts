@@ -903,6 +903,7 @@ export class Config {
           layoutPresets,
           taskSettings,
           chatTranscriptFullWidth: parseOptionalBoolean(parsed.chatTranscriptFullWidth),
+          autoHideSidebar: parseOptionalBoolean(parsed.autoHideSidebar),
           muxGatewayEnabled,
           llmDebugLogs: parseOptionalBoolean(parsed.llmDebugLogs),
           heartbeatDefaultPrompt: parseOptionalNonEmptyString(parsed.heartbeatDefaultPrompt),
@@ -981,6 +982,11 @@ export class Config {
       const chatTranscriptFullWidth = parseOptionalBoolean(config.chatTranscriptFullWidth);
       if (chatTranscriptFullWidth === true) {
         data.chatTranscriptFullWidth = true;
+      }
+
+      const autoHideSidebar = parseOptionalBoolean(config.autoHideSidebar);
+      if (autoHideSidebar === true) {
+        data.autoHideSidebar = true;
       }
 
       const llmDebugLogs = parseOptionalBoolean(config.llmDebugLogs);

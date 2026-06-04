@@ -22,6 +22,7 @@ import {
   BASH_COLLAPSED_SUMMARY_MODE_KEY,
   BASH_COLLAPSED_SUMMARY_MODES,
   CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
+  AUTO_HIDE_SIDEBAR_KEY,
   DEFAULT_BASH_COLLAPSED_SUMMARY_MODE,
   TRANSCRIPT_DENSITIES,
   normalizeBashCollapsedSummaryMode,
@@ -239,6 +240,7 @@ export function GeneralSection() {
   );
   const [archiveSettingsLoaded, setArchiveSettingsLoaded] = useState(false);
   const [chatTranscriptFullWidth, setChatTranscriptFullWidth] = useState(false);
+  const [autoHideSidebar, setAutoHideSidebar] = useState(false);
   const [llmDebugLogs, setLlmDebugLogs] = useState(false);
   const archiveBehaviorLoadNonceRef = useRef(0);
   const archiveBehaviorRef = useRef<CoderWorkspaceArchiveBehavior>(DEFAULT_CODER_ARCHIVE_BEHAVIOR);
@@ -247,12 +249,14 @@ export function GeneralSection() {
   );
 
   const chatTranscriptFullWidthLoadNonceRef = useRef(0);
+  const autoHideSidebarLoadNonceRef = useRef(0);
   const llmDebugLogsLoadNonceRef = useRef(0);
 
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
   // selections can't race and persist a stale value via out-of-order writes.
   const archiveBehaviorUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const chatTranscriptFullWidthUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const autoHideSidebarUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const llmDebugLogsUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const archiveBehaviorPendingUpdateRef = useRef<CoderWorkspaceArchiveBehavior | undefined>(
     undefined
@@ -269,6 +273,7 @@ export function GeneralSection() {
     setArchiveSettingsLoaded(false);
     const archiveBehaviorNonce = ++archiveBehaviorLoadNonceRef.current;
     const chatTranscriptFullWidthNonce = ++chatTranscriptFullWidthLoadNonceRef.current;
+    const autoHideSidebarNonce = ++autoHideSidebarLoadNonceRef.current;
     const llmDebugLogsNonce = ++llmDebugLogsLoadNonceRef.current;
 
     void api.config
@@ -298,6 +303,15 @@ export function GeneralSection() {
           setChatTranscriptFullWidth(enabled);
           updatePersistedState<boolean | undefined>(
             CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
+            enabled ? true : undefined
+          );
+        }
+
+        if (autoHideSidebarNonce === autoHideSidebarLoadNonceRef.current) {
+          const enabled = cfg.autoHideSidebar === true;
+          setAutoHideSidebar(enabled);
+          updatePersistedState<boolean | undefined>(
+            AUTO_HIDE_SIDEBAR_KEY,
             enabled ? true : undefined
           );
         }
@@ -406,6 +420,26 @@ export function GeneralSection() {
         // Best-effort only.
       })
       .then(() => api.config.updateChatTranscriptFullWidth({ enabled: checked }))
+      .catch(() => {
+        // Best-effort persistence.
+      });
+  };
+
+  const handleAutoHideSidebarChange = (checked: boolean) => {
+    // Invalidate any in-flight config load so it does not overwrite the user's selection.
+    autoHideSidebarLoadNonceRef.current++;
+    setAutoHideSidebar(checked);
+    updatePersistedState<boolean | undefined>(AUTO_HIDE_SIDEBAR_KEY, checked ? true : undefined);
+
+    if (!api?.config?.updateAutoHideSidebar) {
+      return;
+    }
+
+    autoHideSidebarUpdateChainRef.current = autoHideSidebarUpdateChainRef.current
+      .catch(() => {
+        // Best-effort only.
+      })
+      .then(() => api.config.updateAutoHideSidebar({ enabled: checked }))
       .catch(() => {
         // Best-effort persistence.
       });
@@ -547,6 +581,18 @@ export function GeneralSection() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Automatically hide sidebar</div>
+              <div className="text-muted text-xs">Collapse the left sidebar when not hovered.</div>
+            </div>
+            <Switch
+              checked={autoHideSidebar}
+              onCheckedChange={handleAutoHideSidebarChange}
+              aria-label="Toggle automatic sidebar hiding"
+            />
           </div>
 
           <div className="flex items-center justify-between gap-4">

@@ -16,6 +16,7 @@ import {
   readPersistedState,
 } from "./hooks/usePersistedState";
 import { useResizableSidebar } from "./hooks/useResizableSidebar";
+import { useAutoHideSidebar } from "./hooks/useAutoHideSidebar";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
@@ -189,6 +190,10 @@ function AppInner() {
     }
   );
 
+  const autoHideSidebar = useAutoHideSidebar();
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const effectiveSidebarCollapsed = autoHideSidebar ? !sidebarHovered : sidebarCollapsed;
+
   const [isMultiProjectWorkspaceModalOpen, setMultiProjectWorkspaceModalOpen] = useState(false);
   const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
 
@@ -222,8 +227,8 @@ function AppInner() {
   // Sync sidebar collapse state to the root element for non-React consumers like
   // Storybook play helpers that need to know whether the sidebar is currently collapsed.
   useEffect(() => {
-    document.documentElement.dataset.leftSidebarCollapsed = String(sidebarCollapsed);
-  }, [sidebarCollapsed]);
+    document.documentElement.dataset.leftSidebarCollapsed = String(effectiveSidebarCollapsed);
+  }, [effectiveSidebarCollapsed]);
   const creationProjectPath =
     !selectedWorkspace && !currentWorkspaceId ? pendingNewWorkspaceProject : null;
 
@@ -1073,8 +1078,10 @@ function AppInner() {
     <>
       <div className="bg-surface-primary mobile-layout flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[min(env(safe-area-inset-bottom,0px),40px)] pl-[env(safe-area-inset-left)]">
         <LeftSidebar
-          collapsed={sidebarCollapsed}
+          collapsed={effectiveSidebarCollapsed}
           onToggleCollapsed={handleToggleSidebar}
+          autoHideEnabled={autoHideSidebar}
+          onHoverChange={setSidebarHovered}
           widthPx={leftSidebar.width}
           isResizing={leftSidebar.isResizing}
           onStartResize={leftSidebar.startResize}

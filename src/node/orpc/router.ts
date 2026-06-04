@@ -841,6 +841,7 @@ export const router = (authToken?: string) => {
             muxGovernorUrl,
             muxGovernorEnrolled,
             chatTranscriptFullWidth: config.chatTranscriptFullWidth === true,
+            autoHideSidebar: config.autoHideSidebar === true,
             llmDebugLogs: config.llmDebugLogs === true,
             heartbeatDefaultPrompt: config.heartbeatDefaultPrompt ?? undefined,
             heartbeatDefaultIntervalMs: config.heartbeatDefaultIntervalMs ?? undefined,
@@ -1263,6 +1264,19 @@ export const router = (authToken?: string) => {
               config.chatTranscriptFullWidth = true;
             } else {
               delete config.chatTranscriptFullWidth;
+            }
+            return config;
+          });
+        }),
+      updateAutoHideSidebar: t
+        .input(schemas.config.updateAutoHideSidebar.input)
+        .output(schemas.config.updateAutoHideSidebar.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            if (input.enabled) {
+              config.autoHideSidebar = true;
+            } else {
+              delete config.autoHideSidebar;
             }
             return config;
           });

@@ -9,6 +9,9 @@ import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 interface LeftSidebarProps {
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  /** When true, attach hover handlers so the parent can expand/collapse on mouse enter/leave. */
+  autoHideEnabled?: boolean;
+  onHoverChange?: (hovered: boolean) => void;
   widthPx?: number;
   isResizing?: boolean;
   onStartResize?: (e: React.MouseEvent) => void;
@@ -20,6 +23,8 @@ export function LeftSidebar(props: LeftSidebarProps) {
   const {
     collapsed,
     onToggleCollapsed,
+    autoHideEnabled,
+    onHoverChange,
     widthPx,
     isResizing,
     onStartResize,
@@ -57,6 +62,8 @@ export function LeftSidebar(props: LeftSidebarProps) {
       {/* Sidebar */}
       <div
         data-testid="left-sidebar"
+        onMouseEnter={autoHideEnabled ? () => onHoverChange?.(true) : undefined}
+        onMouseLeave={autoHideEnabled ? () => onHoverChange?.(false) : undefined}
         className={cn(
           "h-full bg-sidebar border-r border-border flex flex-col shrink-0 overflow-hidden relative z-20",
           !isResizing && "transition-[width] duration-200",

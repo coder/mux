@@ -72,6 +72,7 @@ export const AppConfigOnDiskSchema = z
     layoutPresets: z.unknown().optional(),
     taskSettings: TaskSettingsSchema.optional(),
     chatTranscriptFullWidth: z.boolean().optional(),
+    autoHideSidebar: z.boolean().optional(),
     muxGatewayEnabled: z.boolean().optional(),
     llmDebugLogs: z.boolean().optional(),
     heartbeatDefaultPrompt: z.string().optional(),

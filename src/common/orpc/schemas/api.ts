@@ -2083,6 +2083,7 @@ export const config = {
       muxGovernorUrl: z.string().nullable(),
       muxGovernorEnrolled: z.boolean(),
       chatTranscriptFullWidth: z.boolean(),
+      autoHideSidebar: z.boolean(),
       llmDebugLogs: z.boolean(),
       heartbeatDefaultPrompt: z.string().optional(),
       heartbeatDefaultIntervalMs: z.number().optional(),
@@ -2171,6 +2172,7 @@ export const config = {
     output: z.void(),
   },
   updateChatTranscriptFullWidth: booleanToggleRoute,
+  updateAutoHideSidebar: booleanToggleRoute,
   updateLlmDebugLogs: booleanToggleRoute,
   updateHeartbeatDefaultPrompt: {
     input: z

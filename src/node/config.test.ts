@@ -95,6 +95,47 @@ describe("Config", () => {
     });
   });
 
+  describe("auto-hide sidebar settings", () => {
+    it("persists the auto-hide sidebar flag", async () => {
+      await config.editConfig((cfg) => {
+        cfg.autoHideSidebar = true;
+        return cfg;
+      });
+
+      const restartedConfig = new Config(tempDir);
+      expect(restartedConfig.loadConfigOrDefault().autoHideSidebar).toBe(true);
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        autoHideSidebar?: unknown;
+      };
+      expect(raw.autoHideSidebar).toBe(true);
+    });
+
+    it("omits the auto-hide sidebar flag when disabled", async () => {
+      await config.editConfig((cfg) => {
+        cfg.autoHideSidebar = false;
+        return cfg;
+      });
+
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        autoHideSidebar?: unknown;
+      };
+      expect(raw.autoHideSidebar).toBeUndefined();
+    });
+
+    it("ignores invalid auto-hide sidebar values on load", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          autoHideSidebar: "yes",
+        })
+      );
+
+      expect(config.loadConfigOrDefault().autoHideSidebar).toBeUndefined();
+    });
+  });
+
   describe("api server settings", () => {
     it("should persist apiServerBindHost, apiServerPort, and apiServerServeWebUi", async () => {
       await config.editConfig((cfg) => {
