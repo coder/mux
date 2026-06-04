@@ -65,7 +65,9 @@ import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService"
 import { getTotalCost, sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { ErrorEvent, StreamEndEvent } from "@/common/types/stream";
+import type { WorkflowRunStatus } from "@/common/types/workflow";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
+import { isWorkflowDisplayOnlyMessage } from "@/common/utils/workflowRunMessages";
 import {
   AgentReportInlineToolArgsSchema,
   AgentReportSubmittedReportSchema,
@@ -87,6 +89,8 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { isNonRetryableStreamError } from "@/common/utils/messages/retryEligibility";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
+import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
 
 export type TaskKind = "agent";
 
@@ -281,6 +285,14 @@ export interface DescendantAgentTaskInfo {
 
 type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 
+const WORKFLOW_RUN_ID_PREFIX = "wfr_";
+
+const ACTIVE_BACKGROUND_WORKFLOW_RUN_STATUSES = new Set<WorkflowRunStatus>([
+  "pending",
+  "running",
+  "backgrounded",
+]);
+
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 
 /** Maximum consecutive auto-resumes before stopping. Prevents infinite loops when descendants are stuck. */
@@ -366,6 +378,140 @@ function isSuccessfulToolResult(value: unknown): boolean {
     value !== null &&
     "success" in value &&
     (value as { success?: unknown }).success === true
+  );
+}
+
+function formatBackgroundAwaitTargetList(label: string, ids: string[]): string | null {
+  if (ids.length === 0) {
+    return null;
+  }
+  return `${label} (${ids.join(", ")})`;
+}
+
+function buildBackgroundAwaitPrompt(params: {
+  taskIds: string[];
+  workflowRunIds: string[];
+}): string {
+  assert(
+    params.taskIds.length > 0 || params.workflowRunIds.length > 0,
+    "buildBackgroundAwaitPrompt requires at least one awaitable target"
+  );
+
+  const targetLabels = [
+    formatBackgroundAwaitTargetList("sub-agent task(s)", params.taskIds),
+    formatBackgroundAwaitTargetList("workflow run(s)", params.workflowRunIds),
+  ].filter((label): label is string => label != null);
+  const taskIds = [...params.taskIds, ...params.workflowRunIds];
+
+  return (
+    `You have active background ${targetLabels.join(" and ")}. ` +
+    "You MUST NOT end your turn while any listed sub-agent tasks are queued/running/awaiting_report or workflow runs are pending/running/backgrounded. " +
+    `Call task_await now with task_ids: ${JSON.stringify(taskIds)} to wait for them. ` +
+    "If any are still queued/running/awaiting_report/backgrounded after that, call task_await again. " +
+    "Only once all listed work is terminal should you write your final response, integrating any reports or workflow results."
+  );
+}
+
+function isWorkflowRunId(value: unknown): value is string {
+  return typeof value === "string" && value.startsWith(WORKFLOW_RUN_ID_PREFIX);
+}
+
+function collectWorkflowRunIdsFromToolOutput(output: unknown): string[] {
+  if (output == null || typeof output !== "object") {
+    return [];
+  }
+
+  const record = output as Record<string, unknown>;
+  if (isWorkflowRunId(record.runId)) {
+    return [record.runId];
+  }
+
+  const results = record.results;
+  if (!Array.isArray(results)) {
+    return [];
+  }
+
+  const runIds: string[] = [];
+  for (const result of results) {
+    if (result == null || typeof result !== "object") {
+      continue;
+    }
+    const taskId = (result as Record<string, unknown>).taskId;
+    if (isWorkflowRunId(taskId)) {
+      runIds.push(taskId);
+    }
+  }
+  return runIds;
+}
+
+function collectWorkflowRunIdsFromTaskAwaitInput(input: unknown): string[] {
+  if (input == null || typeof input !== "object") {
+    return [];
+  }
+  const taskIds = (input as Record<string, unknown>).task_ids;
+  if (!Array.isArray(taskIds)) {
+    return [];
+  }
+  return taskIds.filter(isWorkflowRunId);
+}
+
+function collectAgentReferencedWorkflowRunIdsFromParts(
+  parts: readonly unknown[],
+  knownAgentRunIds: ReadonlySet<string>
+): string[] {
+  const runIds = new Set<string>();
+
+  for (const part of parts) {
+    if (!isDynamicToolPart(part) || part.state !== "output-available") {
+      continue;
+    }
+    if (part.toolName !== "workflow_run") {
+      continue;
+    }
+    for (const runId of collectWorkflowRunIdsFromToolOutput(part.output)) {
+      runIds.add(runId);
+    }
+  }
+
+  const allowedTaskAwaitRunIds = new Set([...knownAgentRunIds, ...runIds]);
+  for (const part of parts) {
+    if (!isDynamicToolPart(part) || part.state !== "output-available") {
+      continue;
+    }
+    if (part.toolName !== "task_await") {
+      continue;
+    }
+
+    // Omitted task_ids makes task_await discover every active run in the workspace, including
+    // slash-command runs. Only treat task_await output as agent provenance when the model either
+    // explicitly awaited that workflow ID in this turn or we already know the run was agent-started.
+    for (const runId of collectWorkflowRunIdsFromTaskAwaitInput(part.input)) {
+      runIds.add(runId);
+      allowedTaskAwaitRunIds.add(runId);
+    }
+    for (const runId of collectWorkflowRunIdsFromToolOutput(part.output)) {
+      if (allowedTaskAwaitRunIds.has(runId)) {
+        runIds.add(runId);
+      }
+    }
+  }
+
+  return Array.from(runIds);
+}
+
+function isSyntheticManualSupersessionMessage(message: MuxMessage): boolean {
+  const muxMetadata = message.metadata?.muxMetadata;
+  return (
+    message.metadata?.synthetic === true &&
+    muxMetadata?.type === "compaction-request" &&
+    muxMetadata.source === "auto-compaction"
+  );
+}
+
+function isManualUserSupersessionMessage(message: MuxMessage): boolean {
+  return (
+    message.role === "user" &&
+    (message.metadata?.synthetic !== true || isSyntheticManualSupersessionMessage(message))
   );
 }
 
@@ -469,6 +615,128 @@ export class TaskService {
   private interruptedParentWorkspaceIds = new Set<string>();
   /** Tracks consecutive auto-resumes per workspace. Reset when a user message is sent. */
   private consecutiveAutoResumes = new Map<string, number>();
+
+  private async findLatestManualUserSupersession(workspaceId: string): Promise<{
+    found: boolean;
+    timestamp?: number;
+  }> {
+    assert(workspaceId.length > 0, "findLatestManualUserSupersession requires workspaceId");
+    let latest: { found: boolean; timestamp?: number } = { found: false };
+    const historyResult = await this.historyService.iterateFullHistory(
+      workspaceId,
+      "backward",
+      (messages) => {
+        for (const message of messages) {
+          if (!isManualUserSupersessionMessage(message)) {
+            continue;
+          }
+          const timestamp = message.metadata?.timestamp;
+          latest = {
+            found: true,
+            ...(typeof timestamp === "number" ? { timestamp } : {}),
+          };
+          return false;
+        }
+        return undefined;
+      }
+    );
+
+    if (!historyResult.success) {
+      log.warn("Failed to read full history for workflow supersession", {
+        workspaceId,
+        error: historyResult.error,
+      });
+    }
+    return latest;
+  }
+
+  private async listAgentReferencedWorkflowRunIds(
+    workspaceId: string,
+    currentParts: readonly unknown[]
+  ): Promise<string[]> {
+    assert(workspaceId.length > 0, "listAgentReferencedWorkflowRunIds requires workspaceId");
+
+    const latestManualUser = await this.findLatestManualUserSupersession(workspaceId);
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    let historyMessages: MuxMessage[] = [];
+    let historyScanStartIndex = 0;
+    if (historyResult.success) {
+      historyMessages = historyResult.data;
+      const latestManualUserIndex = historyMessages.findLastIndex(isManualUserSupersessionMessage);
+      if (latestManualUserIndex !== -1) {
+        historyScanStartIndex = latestManualUserIndex + 1;
+      }
+    } else {
+      log.warn("Failed to read history for workflow run references", {
+        workspaceId,
+        error: historyResult.error,
+      });
+    }
+
+    const runIds = new Set<string>();
+    const references = await readAgentWorkflowRunReferences(this.config.getSessionDir(workspaceId));
+    for (const reference of references) {
+      // If the latest manual user message has no durable timestamp, fail safe: only trust
+      // workflow provenance re-established by current/post-manual assistant tool output below.
+      if (latestManualUser.found && latestManualUser.timestamp === undefined) {
+        continue;
+      }
+      if (
+        latestManualUser.timestamp !== undefined &&
+        reference.createdAtMs < latestManualUser.timestamp
+      ) {
+        continue;
+      }
+      runIds.add(reference.runId);
+    }
+
+    for (const runId of collectAgentReferencedWorkflowRunIdsFromParts(currentParts, runIds)) {
+      runIds.add(runId);
+    }
+
+    for (const message of historyMessages.slice(historyScanStartIndex)) {
+      if (message.role !== "assistant" || isWorkflowDisplayOnlyMessage(message)) {
+        continue;
+      }
+      for (const runId of collectAgentReferencedWorkflowRunIdsFromParts(message.parts, runIds)) {
+        runIds.add(runId);
+      }
+    }
+
+    return Array.from(runIds);
+  }
+
+  private async listActiveBackgroundWorkflowRunIds(
+    workspaceId: string,
+    referencedWorkflowRunIds: readonly string[]
+  ): Promise<string[]> {
+    assert(workspaceId.length > 0, "listActiveBackgroundWorkflowRunIds requires workspaceId");
+    if (referencedWorkflowRunIds.length === 0) {
+      return [];
+    }
+
+    try {
+      const referencedRunIdSet = new Set(referencedWorkflowRunIds);
+      const runStore = new WorkflowRunStore({ sessionDir: this.config.getSessionDir(workspaceId) });
+      const runs = await runStore.listRuns();
+      return runs
+        .filter(
+          (run) =>
+            referencedRunIdSet.has(run.id) &&
+            run.workspaceId === workspaceId &&
+            ACTIVE_BACKGROUND_WORKFLOW_RUN_STATUSES.has(run.status)
+        )
+        .map((run) => run.id);
+    } catch (error: unknown) {
+      // Workflow state should never make stream-end cleanup fail; task_await can still discover
+      // runs on a later turn once storage is readable again.
+      log.warn("Failed to list active background workflow runs", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+      return [];
+    }
+  }
 
   private markTaskQueueBackgrounded(taskId: string): void {
     this.userBackgroundedTaskIds.add(taskId);
@@ -3353,17 +3621,27 @@ export class TaskService {
     const entry = findWorkspaceEntry(cfg, workspaceId);
     if (!entry) return;
 
-    // Parent workspaces must not end while they have active background tasks.
-    // Enforce by auto-resuming the stream with a directive to await outstanding tasks.
+    // Parent workspaces must not end while they have active background tasks/workflows.
+    // Enforce by auto-resuming the stream with a directive to await outstanding work.
     if (!entry.workspace.parentWorkspaceId) {
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, workspaceId);
+      const referencedWorkflowRunIds = await this.listAgentReferencedWorkflowRunIds(
+        workspaceId,
+        event.parts
+      );
+      let activeWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
+        workspaceId,
+        referencedWorkflowRunIds
+      );
       if (!hasActiveDescendants) {
         // Foreground best-of children can finish while the parent task tool call is still pending,
         // which temporarily blocks their leaf cleanup and may defer synthetic fallback delivery.
         // Recheck both once the parent stream reaches a descendant-free stream-end.
         await this.deliverDeferredBestOfReportsForParent(workspaceId);
         await this.requestReportedChildCleanupRechecks(workspaceId);
-        return;
+        if (activeWorkflowRunIds.length === 0) {
+          return;
+        }
       }
 
       if (this.aiService.isStreaming(workspaceId)) {
@@ -3376,12 +3654,13 @@ export class TaskService {
       }
 
       // Workflow-owned descendants report through the workflow runner; parent nudges must not
-      // bypass that journal/final-result path by asking the model to task_await them directly.
+      // bypass that journal/final-result path by asking the model to task_await those child tasks
+      // directly. Instead, await the owning workflow run when one is still active.
       // Foreground waits can also be backgrounded at runtime when users queue another message.
-      const activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId, {
+      let activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId, {
         excludeWorkflowTasks: true,
       });
-      const blockingTaskIds = activeTaskIds.filter((id) => !this.isTaskQueueBackgrounded(id));
+      let blockingTaskIds = activeTaskIds.filter((id) => !this.isTaskQueueBackgrounded(id));
 
       // One-shot semantics: consume exemptions after this stream-end's decision.
       // The immediate stream-end after queue-backgrounding is suppressed, but any
@@ -3390,7 +3669,7 @@ export class TaskService {
         this.markTaskForegroundRelevant(taskId);
       }
 
-      if (blockingTaskIds.length === 0) {
+      if (blockingTaskIds.length === 0 && activeWorkflowRunIds.length === 0) {
         log.debug("Skipping parent auto-resume: all active descendants were queue-backgrounded", {
           workspaceId,
         });
@@ -3406,19 +3685,6 @@ export class TaskService {
         return;
       }
 
-      // Check for auto-resume flood protection
-      const resumeCount = this.consecutiveAutoResumes.get(workspaceId) ?? 0;
-      if (resumeCount >= MAX_CONSECUTIVE_PARENT_AUTO_RESUMES) {
-        log.warn("Auto-resume limit reached for parent workspace with active descendants", {
-          workspaceId,
-          resumeCount,
-          activeTaskIds: blockingTaskIds,
-          limit: MAX_CONSECUTIVE_PARENT_AUTO_RESUMES,
-        });
-        return;
-      }
-      this.consecutiveAutoResumes.set(workspaceId, resumeCount + 1);
-
       const resumeOptions = await this.resolveParentAutoResumeOptions(
         workspaceId,
         entry,
@@ -3426,23 +3692,56 @@ export class TaskService {
         event.metadata
       );
 
+      activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId, {
+        excludeWorkflowTasks: true,
+      });
+      blockingTaskIds = activeTaskIds.filter((id) => !this.isTaskQueueBackgrounded(id));
+      activeWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
+        workspaceId,
+        activeWorkflowRunIds
+      );
+      if (blockingTaskIds.length === 0 && activeWorkflowRunIds.length === 0) {
+        return;
+      }
+      if (
+        this.aiService.isStreaming(workspaceId) ||
+        this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId)
+      ) {
+        log.debug("Skipping parent auto-resume: workspace is no longer idle", { workspaceId });
+        return;
+      }
+
+      // Check for auto-resume flood protection after the final active-work recheck so stale
+      // workflow completions do not consume the retry budget.
+      const resumeCount = this.consecutiveAutoResumes.get(workspaceId) ?? 0;
+      if (resumeCount >= MAX_CONSECUTIVE_PARENT_AUTO_RESUMES) {
+        log.warn("Auto-resume limit reached for parent workspace with active background work", {
+          workspaceId,
+          resumeCount,
+          activeTaskIds: blockingTaskIds,
+          activeWorkflowRunIds,
+          limit: MAX_CONSECUTIVE_PARENT_AUTO_RESUMES,
+        });
+        return;
+      }
+      this.consecutiveAutoResumes.set(workspaceId, resumeCount + 1);
+
       const sendResult = await this.workspaceService.sendMessage(
         workspaceId,
-        `You have active background sub-agent task(s) (${blockingTaskIds.join(", ")}). ` +
-          "You MUST NOT end your turn while any sub-agent tasks are queued/running/awaiting_report. " +
-          "Call task_await now to wait for them to finish (omit timeout_secs to wait up to 10 minutes). " +
-          "If any tasks are still queued/running/awaiting_report after that, call task_await again. " +
-          "Only once all tasks are completed should you write your final response, integrating their reports.",
+        buildBackgroundAwaitPrompt({
+          taskIds: blockingTaskIds,
+          workflowRunIds: activeWorkflowRunIds,
+        }),
         {
           model: resumeOptions.model,
           agentId: resumeOptions.agentId,
           thinkingLevel: resumeOptions.thinkingLevel,
         },
         // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
-        { skipAutoResumeReset: true, synthetic: true, agentInitiated: true }
+        { skipAutoResumeReset: true, synthetic: true, agentInitiated: true, requireIdle: true }
       );
       if (!sendResult.success) {
-        log.error("Failed to resume parent with active background tasks", {
+        log.error("Failed to resume parent with active background work", {
           workspaceId,
           error: sendResult.error,
         });

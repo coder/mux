@@ -122,6 +122,7 @@ import {
 } from "@/common/types/message";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 import {
+  WORKFLOW_RESULT_METADATA_TYPE,
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
   WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
   buildWorkflowRunCardMessage,
@@ -283,6 +284,64 @@ function isWorkflowInvocationMessage(message: MuxMessage, runId: string): boolea
       typeof output === "object" &&
       (output as Record<string, unknown>).runId === runId
     );
+  });
+}
+
+function isSyntheticManualSupersessionMessage(message: MuxMessage): boolean {
+  const muxMetadata = message.metadata?.muxMetadata;
+  return (
+    message.metadata?.synthetic === true &&
+    muxMetadata?.type === "compaction-request" &&
+    muxMetadata.source === "auto-compaction"
+  );
+}
+
+function isManualUserSupersessionMessage(message: MuxMessage): boolean {
+  return (
+    message.role === "user" &&
+    (message.metadata?.synthetic !== true || isSyntheticManualSupersessionMessage(message))
+  );
+}
+
+function isWorkflowResultContinuationMessage(message: MuxMessage, runId: string): boolean {
+  return (
+    message.metadata?.muxMetadata?.type === WORKFLOW_RESULT_METADATA_TYPE &&
+    message.metadata.muxMetadata.runId === runId
+  );
+}
+
+function isTerminalWorkflowTaskAwaitResultMessage(message: MuxMessage, runId: string): boolean {
+  if (message.role !== "assistant") {
+    return false;
+  }
+
+  return message.parts.some((part) => {
+    if (part.type !== "dynamic-tool" || part.toolName !== "task_await") {
+      return false;
+    }
+    if (part.state !== "output-available") {
+      return false;
+    }
+    const output = part.output;
+    if (output == null || typeof output !== "object") {
+      return false;
+    }
+    const results = (output as Record<string, unknown>).results;
+    if (!Array.isArray(results)) {
+      return false;
+    }
+    return results.some((result) => {
+      if (result == null || typeof result !== "object") {
+        return false;
+      }
+      const record = result as Record<string, unknown>;
+      return (
+        record.taskId === runId &&
+        (record.status === "completed" ||
+          record.status === "error" ||
+          record.status === "interrupted")
+      );
+    });
   });
 }
 
@@ -5886,7 +5945,35 @@ export class WorkspaceService extends EventEmitter {
     assert(workspaceId.length > 0, "isWorkflowInvocationCurrent requires workspaceId");
     assert(runId.length > 0, "isWorkflowInvocationCurrent requires runId");
 
-    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    let current = false;
+    let foundDecision = false;
+    const historyResult = await this.historyService.iterateFullHistory(
+      workspaceId,
+      "backward",
+      (messages) => {
+        for (const message of messages) {
+          if (isManualUserSupersessionMessage(message)) {
+            current = false;
+            foundDecision = true;
+            return false;
+          }
+          if (
+            isWorkflowResultContinuationMessage(message, runId) ||
+            isTerminalWorkflowTaskAwaitResultMessage(message, runId)
+          ) {
+            current = false;
+            foundDecision = true;
+            return false;
+          }
+          if (isWorkflowInvocationMessage(message, runId)) {
+            current = true;
+            foundDecision = true;
+            return false;
+          }
+        }
+        return undefined;
+      }
+    );
     if (!historyResult.success) {
       log.warn("Could not read history before workflow continuation", {
         workspaceId,
@@ -5896,14 +5983,7 @@ export class WorkspaceService extends EventEmitter {
       return false;
     }
 
-    const runCardIndex = historyResult.data.findIndex((message) =>
-      isWorkflowInvocationMessage(message, runId)
-    );
-    if (runCardIndex === -1) {
-      return false;
-    }
-
-    return !historyResult.data.slice(runCardIndex + 1).some((message) => message.role === "user");
+    return foundDecision && current;
   }
 
   async sendMessage(

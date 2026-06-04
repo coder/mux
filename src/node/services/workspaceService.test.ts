@@ -280,6 +280,250 @@ describe("WorkspaceService workflow invocation events", () => {
       await cleanup();
     }
   });
+
+  test("keeps workflow invocations current across synthetic user continuations", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "workflow-currentness";
+    const runId = "wfr_currentness";
+    const projectPath = path.join(config.rootDir, "project");
+    try {
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: "workflow-currentness",
+        projectName: "project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        aiService: createMockAIService({
+          stopStream: mock(() => Promise.resolve(Ok(undefined))),
+        }),
+        extensionMetadata: new ExtensionMetadataService(
+          path.join(config.rootDir, "extensionMetadata.json")
+        ),
+        initStateManager: {
+          ...mockInitStateManager,
+          off: mock(() => undefined as unknown as InitStateManager),
+        } as unknown as InitStateManager,
+      });
+
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+          {
+            type: "dynamic-tool",
+            toolCallId: "workflow-call-1",
+            toolName: "workflow_run",
+            state: "output-available",
+            input: { name: "demo", args: {}, run_in_background: true },
+            output: { status: "running", runId, result: null },
+          },
+        ])
+      );
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("synthetic-await", "user", "Call task_await", {
+          timestamp: 1_100,
+          synthetic: true,
+        })
+      );
+
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(true);
+
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("manual-user", "user", "Never mind, answer something else", {
+          timestamp: 1_200,
+        })
+      );
+
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(false);
+      workspaceService.disposeSession(workspaceId);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("treats on-send compaction requests as manual workflow supersession", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "workflow-currentness-auto-compact";
+    const runId = "wfr_currentness_auto_compact";
+    const projectPath = path.join(config.rootDir, "project");
+    try {
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: "workflow-currentness-auto-compact",
+        projectName: "project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        aiService: createMockAIService({
+          stopStream: mock(() => Promise.resolve(Ok(undefined))),
+        }),
+        extensionMetadata: new ExtensionMetadataService(
+          path.join(config.rootDir, "extensionMetadata.json")
+        ),
+        initStateManager: {
+          ...mockInitStateManager,
+          off: mock(() => undefined as unknown as InitStateManager),
+        } as unknown as InitStateManager,
+      });
+
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+          {
+            type: "dynamic-tool",
+            toolCallId: "workflow-call-1",
+            toolName: "workflow_run",
+            state: "output-available",
+            input: { name: "demo", args: {}, run_in_background: true },
+            output: { status: "running", runId, result: null },
+          },
+        ])
+      );
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("auto-compaction", "user", "Compacting before a new user prompt", {
+          timestamp: 1_100,
+          synthetic: true,
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: {},
+            source: "auto-compaction",
+          },
+        })
+      );
+
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(false);
+      workspaceService.disposeSession(workspaceId);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("keeps workflow invocations current across compaction boundaries", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "workflow-currentness-boundary";
+    const runId = "wfr_currentness_boundary";
+    const projectPath = path.join(config.rootDir, "project");
+    try {
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: "workflow-currentness-boundary",
+        projectName: "project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        aiService: createMockAIService({
+          stopStream: mock(() => Promise.resolve(Ok(undefined))),
+        }),
+        extensionMetadata: new ExtensionMetadataService(
+          path.join(config.rootDir, "extensionMetadata.json")
+        ),
+        initStateManager: {
+          ...mockInitStateManager,
+          off: mock(() => undefined as unknown as InitStateManager),
+        } as unknown as InitStateManager,
+      });
+
+      const persisted = await workspaceService.appendWorkflowRunInvocation({
+        workspaceId,
+        rawCommand: "/demo currentness boundary",
+        name: "demo",
+        args: { input: "currentness boundary" },
+        runId,
+        status: "running",
+        result: null,
+      });
+      expect(persisted).toBe(true);
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("boundary", "assistant", "Compacted summary", {
+          timestamp: 2_000,
+          compactionBoundary: true,
+        })
+      );
+
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(true);
+      workspaceService.disposeSession(workspaceId);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("marks workflow invocations consumed after terminal task_await results", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "workflow-currentness-consumed";
+    const runId = "wfr_currentness_consumed";
+    const projectPath = path.join(config.rootDir, "project");
+    try {
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: "workflow-currentness-consumed",
+        projectName: "project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        aiService: createMockAIService({
+          stopStream: mock(() => Promise.resolve(Ok(undefined))),
+        }),
+        extensionMetadata: new ExtensionMetadataService(
+          path.join(config.rootDir, "extensionMetadata.json")
+        ),
+        initStateManager: {
+          ...mockInitStateManager,
+          off: mock(() => undefined as unknown as InitStateManager),
+        } as unknown as InitStateManager,
+      });
+
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+          {
+            type: "dynamic-tool",
+            toolCallId: "workflow-call-1",
+            toolName: "workflow_run",
+            state: "output-available",
+            input: { name: "demo", args: {}, run_in_background: true },
+            output: { status: "running", runId, result: null },
+          },
+        ])
+      );
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(true);
+
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("assistant-task-await", "assistant", "", { timestamp: 1_100 }, [
+          {
+            type: "dynamic-tool",
+            toolCallId: "task-await-1",
+            toolName: "task_await",
+            state: "output-available",
+            input: { task_ids: [runId] },
+            output: { results: [{ taskId: runId, status: "completed" }] },
+          },
+        ])
+      );
+
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(false);
+      workspaceService.disposeSession(workspaceId);
+    } finally {
+      await cleanup();
+    }
+  });
 });
 
 describe("WorkspaceService truncateHistory goal acknowledgment", () => {

@@ -251,6 +251,18 @@ function markProviderMetadataCostsIncluded(
   };
 }
 
+const WORKFLOW_CONTINUATION_RETRY_DELAY_MS = 1_000;
+const WORKFLOW_CONTINUATION_MAX_ATTEMPTS = 60;
+const WORKSPACE_BUSY_IDLE_ONLY_SEND_MESSAGE = "Workspace is busy; idle-only send was skipped.";
+
+function isWorkspaceBusyIdleOnlySend(error: SendMessageError): boolean {
+  return error.type === "unknown" && error.raw.includes(WORKSPACE_BUSY_IDLE_ONLY_SEND_MESSAGE);
+}
+
+function waitForWorkflowContinuationRetry(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, WORKFLOW_CONTINUATION_RETRY_DELAY_MS));
+}
+
 interface ToolExecutionContext {
   toolCallId?: string;
   abortSignal?: AbortSignal;
@@ -1579,22 +1591,6 @@ export class AIService extends EventEmitter {
                   return;
                 }
 
-                let invocationCurrent = await continuationSender.isWorkflowInvocationCurrent(
-                  workspaceId,
-                  runId
-                );
-                while (!invocationCurrent && this.isStreaming(workspaceId)) {
-                  await new Promise((resolve) => setTimeout(resolve, 1_000));
-                  invocationCurrent = await continuationSender.isWorkflowInvocationCurrent(
-                    workspaceId,
-                    runId
-                  );
-                }
-                if (!invocationCurrent) {
-                  log.debug("Skipping superseded workflow continuation", { workspaceId, runId });
-                  return;
-                }
-
                 const rawCommand = `workflow_run ${run.definition.name}`;
                 const workflowResultMessage = buildWorkflowResultContextMessage({
                   rawCommand,
@@ -1604,46 +1600,74 @@ export class AIService extends EventEmitter {
                   result,
                   run,
                 });
-                const sendResult = await continuationSender.sendMessage(
-                  workspaceId,
-                  workflowResultMessage,
-                  {
-                    model: modelString,
-                    thinkingLevel: effectiveThinkingLevel,
-                    agentId: effectiveAgentId,
-                    toolPolicy: effectiveToolPolicy,
-                    additionalSystemInstructions: scratchpadAdditionalSystemInstructions,
-                    maxOutputTokens,
-                    providerOptions: effectiveMuxProviderOptions,
-                    experiments: {
-                      ...experiments,
-                      dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
-                      subagentFileReports: subagentFileReportsExperimentEnabled,
-                    },
-                    skipAiSettingsPersistence: true,
-                    muxMetadata: {
-                      type: WORKFLOW_RESULT_METADATA_TYPE,
-                      rawCommand,
-                      commandPrefix: "workflow_run",
-                      runId,
-                      requestedModel: modelString,
-                    },
-                  },
-                  {
-                    skipAutoResumeReset: true,
-                    synthetic: true,
-                    agentInitiated: true,
-                    requireIdle: true,
-                    startStreamInBackground: true,
+                for (let attempt = 1; attempt <= WORKFLOW_CONTINUATION_MAX_ATTEMPTS; attempt++) {
+                  const invocationCurrent = await continuationSender.isWorkflowInvocationCurrent(
+                    workspaceId,
+                    runId
+                  );
+                  if (!invocationCurrent) {
+                    if (this.isStreaming(workspaceId)) {
+                      await waitForWorkflowContinuationRetry();
+                      continue;
+                    }
+                    log.debug("Skipping superseded workflow continuation", { workspaceId, runId });
+                    return;
                   }
-                );
-                if (!sendResult.success) {
-                  log.warn("Failed to continue agent after workflow completion", {
+
+                  const sendResult = await continuationSender.sendMessage(
+                    workspaceId,
+                    workflowResultMessage,
+                    {
+                      model: modelString,
+                      thinkingLevel: effectiveThinkingLevel,
+                      agentId: effectiveAgentId,
+                      toolPolicy: effectiveToolPolicy,
+                      additionalSystemInstructions: scratchpadAdditionalSystemInstructions,
+                      maxOutputTokens,
+                      providerOptions: effectiveMuxProviderOptions,
+                      experiments: {
+                        ...experiments,
+                        dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
+                        subagentFileReports: subagentFileReportsExperimentEnabled,
+                      },
+                      skipAiSettingsPersistence: true,
+                      muxMetadata: {
+                        type: WORKFLOW_RESULT_METADATA_TYPE,
+                        rawCommand,
+                        commandPrefix: "workflow_run",
+                        runId,
+                        requestedModel: modelString,
+                      },
+                    },
+                    {
+                      skipAutoResumeReset: true,
+                      synthetic: true,
+                      agentInitiated: true,
+                      requireIdle: true,
+                      startStreamInBackground: true,
+                    }
+                  );
+                  if (sendResult.success) {
+                    return;
+                  }
+                  if (!isWorkspaceBusyIdleOnlySend(sendResult.error)) {
+                    log.warn("Failed to continue agent after workflow completion", {
+                      workspaceId,
+                      runId,
+                      error: sendResult.error,
+                    });
+                    return;
+                  }
+                  await waitForWorkflowContinuationRetry();
+                }
+
+                log.warn(
+                  "Failed to continue agent after workflow completion: workspace stayed busy",
+                  {
                     workspaceId,
                     runId,
-                    error: sendResult.error,
-                  });
-                }
+                  }
+                );
               },
               getCurrentProjectTrusted: () => isProjectTrusted(this.config, metadata.projectPath),
               runnerId: `workflow-runner:${workspaceId}`,

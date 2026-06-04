@@ -3,6 +3,7 @@ import { describe, expect, mock, test } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 import { createWorkflowRunTool } from "./workflow_run";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
+import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
 
 const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
@@ -135,6 +136,9 @@ describe("workflow_run tool", () => {
       { name: "deep-research", args: { topic: "workflow tools" }, run_in_background: true },
       mockToolCallOptions
     );
+
+    const references = await readAgentWorkflowRunReferences(tempDir.path);
+    expect(references.map((reference) => reference.runId)).toContain("wfr_background");
 
     expect(startNamedWorkflowInBackground).toHaveBeenCalledWith({
       name: "deep-research",

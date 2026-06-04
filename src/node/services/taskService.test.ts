@@ -25,6 +25,8 @@ import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import { IdleDispatcher } from "@/node/services/idleDispatcher";
 import { TaskService, ForegroundWaitBackgroundedError } from "@/node/services/taskService";
+import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
+import { recordAgentWorkflowRunReference } from "@/node/services/agentWorkflowRunReferences";
 import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
@@ -39,6 +41,10 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import type { ErrorEvent, StreamEndEvent } from "@/common/types/stream";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
+import {
+  buildWorkflowRunCardMessage,
+  WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
+} from "@/common/utils/workflowRunMessages";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { AIService } from "@/node/services/aiService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
@@ -2330,6 +2336,349 @@ describe("TaskService", () => {
       // Auto-resume skips counter reset
       expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
     );
+  });
+
+  test("auto-resumes a parent workspace until background workflow runs finish", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const workflowRunId = "wfr_background";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootWorkspaceId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: rootWorkspaceId,
+      definition: {
+        name: "background-research",
+        description: "Background research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    await recordAgentWorkflowRunReference({
+      workspaceSessionDir: config.getSessionDir(rootWorkspaceId),
+      runId: workflowRunId,
+      createdAtMs: Date.now(),
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      rootWorkspaceId,
+      expect.stringContaining(workflowRunId),
+      expect.objectContaining({
+        model: "openai:gpt-5.2",
+        thinkingLevel: "medium",
+      }),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
+    const prompt = (sendMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[1];
+    assert(typeof prompt === "string", "expected workflow auto-resume prompt");
+    expect(prompt).toContain(`task_ids: ["${workflowRunId}"]`);
+    expect(prompt).toContain("task_await");
+  });
+
+  test("does not auto-resume for an agent workflow superseded by a manual user turn", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const workflowRunId = "wfr_superseded";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [projectWorkspace(projectPath, "root", rootWorkspaceId)],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootWorkspaceId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: rootWorkspaceId,
+      definition: {
+        name: "background-research",
+        description: "Background research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+    await recordAgentWorkflowRunReference({
+      workspaceSessionDir: config.getSessionDir(rootWorkspaceId),
+      runId: workflowRunId,
+      createdAtMs: 1_000,
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+    const appendManualUser = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage("manual-user", "user", "Ignore the old workflow", { timestamp: 2_000 })
+    );
+    expect(appendManualUser.success).toBe(true);
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("does not trust persisted workflow refs after timestamp-less manual user turns", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const workflowRunId = "wfr_timestampless_superseded";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [projectWorkspace(projectPath, "root", rootWorkspaceId)],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootWorkspaceId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: rootWorkspaceId,
+      definition: {
+        name: "background-research",
+        description: "Background research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+    await recordAgentWorkflowRunReference({
+      workspaceSessionDir: config.getSessionDir(rootWorkspaceId),
+      runId: workflowRunId,
+      createdAtMs: 1_000,
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+    const appendManualUser = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage("manual-user", "user", "Ignore the old workflow")
+    );
+    expect(appendManualUser.success).toBe(true);
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("does not auto-resume after on-send compaction supersedes an agent workflow", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const workflowRunId = "wfr_auto_compact_superseded";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [projectWorkspace(projectPath, "root", rootWorkspaceId)],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootWorkspaceId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: rootWorkspaceId,
+      definition: {
+        name: "background-research",
+        description: "Background research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+    await recordAgentWorkflowRunReference({
+      workspaceSessionDir: config.getSessionDir(rootWorkspaceId),
+      runId: workflowRunId,
+      createdAtMs: 1_000,
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+    const appendCompaction = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage("auto-compaction", "user", "Compacting before a new user prompt", {
+        timestamp: 2_000,
+        synthetic: true,
+        muxMetadata: {
+          type: "compaction-request",
+          rawCommand: "/compact",
+          parsed: {},
+          source: "auto-compaction",
+        },
+      })
+    );
+    expect(appendCompaction.success).toBe(true);
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("does not auto-resume a parent for slash-command workflow run cards", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const workflowRunId = "wfr_slash_background";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootWorkspaceId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: rootWorkspaceId,
+      definition: {
+        name: "background-research",
+        description: "Background research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+    const slashCard = buildWorkflowRunCardMessage(
+      { name: "background-research", args: {} },
+      { runId: workflowRunId, status: "running", result: null },
+      Date.now()
+    );
+    slashCard.metadata = {
+      ...slashCard.metadata,
+      muxMetadata: { type: WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE, runId: workflowRunId },
+    };
+    const appendCard = await historyService.appendToHistory(rootWorkspaceId, slashCard);
+    expect(appendCard.success).toBe(true);
+
+    const appendTaskAwaitDiscovery = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage(
+        "assistant-task-await-discovery",
+        "assistant",
+        "",
+        { timestamp: Date.now() },
+        [
+          {
+            type: "dynamic-tool",
+            toolCallId: "task-await-1",
+            toolName: "task_await",
+            state: "output-available",
+            input: {},
+            output: { results: [{ taskId: workflowRunId, status: "running" }] },
+          },
+        ]
+      )
+    );
+    expect(appendTaskAwaitDiscovery.success).toBe(true);
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test("does not auto-resume a parent for workflow-owned descendants", async () => {
