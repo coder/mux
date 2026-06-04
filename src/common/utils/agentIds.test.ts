@@ -29,6 +29,22 @@ describe("resolvePersistedAgentId", () => {
     ).toEqual(["explore"]);
   });
 
+  test("prefers legacy agentType for child task workspaces when fields disagree", () => {
+    expect(
+      resolvePersistedAgentIdCandidates({
+        parentWorkspaceId: "parent-1",
+        agentId: "exec",
+        agentType: "explore",
+      })
+    ).toEqual(["explore", "exec"]);
+    expect(
+      resolvePersistedAgentId(
+        { parentWorkspaceId: "parent-1", agentId: "exec", agentType: "explore" },
+        "exec"
+      )
+    ).toBe("explore");
+  });
+
   test("prefers non-empty agentId and falls back when neither field is set", () => {
     expect(resolvePersistedAgentId({ agentId: " Plan ", agentType: "explore" }, "exec")).toBe(
       "plan"

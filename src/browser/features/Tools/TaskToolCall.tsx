@@ -56,10 +56,7 @@ import {
   normalizeTaskGroupLabel,
   type TaskGroupKind,
 } from "@/common/utils/tools/taskGroups";
-import {
-  resolvePersistedAgentId,
-  resolvePersistedAgentIdCandidates,
-} from "@/common/utils/agentIds";
+import { resolvePersistedAgentId } from "@/common/utils/agentIds";
 import { formatDuration } from "@/common/utils/formatDuration";
 import { ElapsedTimeDisplay } from "./Shared/ElapsedTimeDisplay";
 
@@ -476,9 +473,8 @@ function recoverTaskGroupTaskIdsFromWorkspaceMetadata(params: {
       continue;
     }
     if (requestedAgentType) {
-      const metadataAgentTypes =
-        resolvePersistedAgentIdCandidates(metadata).map(normalizeTaskAgent);
-      if (metadataAgentTypes.length > 0 && !metadataAgentTypes.includes(requestedAgentType)) {
+      const metadataAgentType = normalizeTaskAgent(resolvePersistedAgentId(metadata, ""));
+      if (metadataAgentType && metadataAgentType !== requestedAgentType) {
         continue;
       }
     }

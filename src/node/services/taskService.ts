@@ -697,10 +697,9 @@ export class TaskService {
       }
     }
 
+    let fallbackChain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
+    let fallbackAgentId: string | undefined;
     for (const agentId of agentIdCandidates) {
-      let fallbackChain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
-      let fallbackAgentId: string | undefined;
-
       for (const discovery of agentDiscoveryCandidates) {
         try {
           const agentDefinition = await readAgentDefinition(
@@ -716,12 +715,8 @@ export class TaskService {
             workspaceId: entry.workspace.id ?? workspaceName,
           });
 
-          if (agentDefinition.id === "compact") {
-            return false;
-          }
-
           if (agentDefinition.scope === "project") {
-            return isPlanLikeInResolvedChain(chain);
+            return agentDefinition.id === "compact" ? false : isPlanLikeInResolvedChain(chain);
           }
           fallbackChain ??= chain;
           fallbackAgentId ??= agentDefinition.id;
@@ -734,13 +729,13 @@ export class TaskService {
           });
         }
       }
+    }
 
-      if (fallbackChain != null) {
-        if (fallbackAgentId === "compact") {
-          return false;
-        }
-        return isPlanLikeInResolvedChain(fallbackChain);
+    if (fallbackChain != null) {
+      if (fallbackAgentId === "compact") {
+        return false;
       }
+      return isPlanLikeInResolvedChain(fallbackChain);
     }
 
     return agentIdCandidates.includes("plan");
@@ -3083,9 +3078,9 @@ export class TaskService {
             });
           }
 
+          let fallbackSkipInitHook: boolean | undefined;
+          let resolvedSkipInitHook: boolean | undefined;
           for (const agentId of agentIdCandidates) {
-            let resolvedSkipInitHook: boolean | undefined;
-            let fallbackSkipInitHook: boolean | undefined;
             for (const discovery of discoveryContexts) {
               try {
                 const definition = await readAgentDefinition(
@@ -3117,12 +3112,12 @@ export class TaskService {
               }
             }
 
-            const candidateSkipInitHook = resolvedSkipInitHook ?? fallbackSkipInitHook;
-            if (candidateSkipInitHook != null) {
-              skipInitHook = candidateSkipInitHook;
+            if (resolvedSkipInitHook != null) {
               break;
             }
           }
+
+          skipInitHook = resolvedSkipInitHook ?? fallbackSkipInitHook ?? false;
         }
 
         runBackgroundInit(
@@ -3976,12 +3971,8 @@ export class TaskService {
           continue;
         }
 
-        const workspaceAgentIds = resolvePersistedAgentIdCandidates(workspace);
-        if (
-          requestedAgentId &&
-          workspaceAgentIds.length > 0 &&
-          !workspaceAgentIds.includes(requestedAgentId)
-        ) {
+        const workspaceAgentId = resolvePersistedAgentId(workspace, "");
+        if (requestedAgentId && workspaceAgentId && workspaceAgentId !== requestedAgentId) {
           continue;
         }
 

@@ -24,19 +24,20 @@ export function normalizeAgentId(
 }
 
 export function resolvePersistedAgentIdCandidates(
-  value: { agentId?: unknown; agentType?: unknown } | undefined
+  value: { agentId?: unknown; agentType?: unknown; parentWorkspaceId?: unknown } | undefined
 ): string[] {
   if (value == null) {
     return [];
   }
 
-  // Legacy task/workspace records may only have agentType. Coerce and validate
-  // each field independently so blank or corrupt modern agentId values cannot
-  // mask a valid legacy value.
-  const candidates = [
-    normalizePersistedAgentCandidate(value.agentId),
-    normalizePersistedAgentCandidate(value.agentType),
-  ];
+  // Legacy task/workspace records may only have agentType. For child task workspaces,
+  // agentType is the creation-time identity while agentId may be restamped by recovery sends.
+  // Coerce and validate each field independently so blank or corrupt values cannot mask a valid value.
+  const candidateFields =
+    value.parentWorkspaceId == null
+      ? [value.agentId, value.agentType]
+      : [value.agentType, value.agentId];
+  const candidates = candidateFields.map(normalizePersistedAgentCandidate);
   return candidates.filter(
     (candidate, index): candidate is string =>
       candidate != null && candidates.indexOf(candidate) === index
@@ -44,7 +45,7 @@ export function resolvePersistedAgentIdCandidates(
 }
 
 export function resolvePersistedAgentId(
-  value: { agentId?: unknown; agentType?: unknown } | undefined,
+  value: { agentId?: unknown; agentType?: unknown; parentWorkspaceId?: unknown } | undefined,
   fallback: string = WORKSPACE_DEFAULTS.agentId
 ): string {
   return resolvePersistedAgentIdCandidates(value)[0] ?? fallback;

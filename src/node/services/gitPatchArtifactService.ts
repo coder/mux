@@ -124,7 +124,7 @@ async function resolveAgentEditingCapability(args: {
   discoveryContexts: readonly WorkspaceRuntimeContext[];
   agentId: string;
   workspaceId: string;
-}): Promise<boolean | undefined> {
+}): Promise<{ editingCapable: boolean; projectScoped: boolean } | undefined> {
   const parsedAgentId = AgentIdSchema.safeParse(args.agentId);
   if (!parsedAgentId.success) {
     return undefined;
@@ -148,7 +148,10 @@ async function resolveAgentEditingCapability(args: {
       });
 
       if (agentDefinition.scope === "project") {
-        return isExecLikeEditingCapableInResolvedChain(chain);
+        return {
+          editingCapable: isExecLikeEditingCapableInResolvedChain(chain),
+          projectScoped: true,
+        };
       }
       fallbackChain ??= chain;
     } catch {
@@ -156,7 +159,12 @@ async function resolveAgentEditingCapability(args: {
     }
   }
 
-  return fallbackChain == null ? undefined : isExecLikeEditingCapableInResolvedChain(fallbackChain);
+  return fallbackChain == null
+    ? undefined
+    : {
+        editingCapable: isExecLikeEditingCapableInResolvedChain(fallbackChain),
+        projectScoped: false,
+      };
 }
 
 function buildTaskBaseCommitShaByProjectPath(params: {
@@ -341,6 +349,7 @@ export class GitPatchArtifactService {
     ].filter((context): context is WorkspaceRuntimeContext => context != null);
 
     let shouldGeneratePatch = false;
+    let fallbackShouldGeneratePatch: boolean | undefined;
     for (const childAgentId of childAgentIds) {
       const editingCapability = await resolveAgentEditingCapability({
         discoveryContexts,
@@ -350,9 +359,14 @@ export class GitPatchArtifactService {
       if (editingCapability == null) {
         continue;
       }
-      shouldGeneratePatch = editingCapability;
-      break;
+      if (editingCapability.projectScoped) {
+        shouldGeneratePatch = editingCapability.editingCapable;
+        fallbackShouldGeneratePatch = undefined;
+        break;
+      }
+      fallbackShouldGeneratePatch ??= editingCapability.editingCapable;
     }
+    shouldGeneratePatch = shouldGeneratePatch || fallbackShouldGeneratePatch === true;
 
     if (!shouldGeneratePatch || !childEntry) {
       return;

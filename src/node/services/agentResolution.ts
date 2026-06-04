@@ -221,14 +221,13 @@ export async function resolveAgentForStream(
 
   // --- Load agent definition (with fallback to exec) ---
   let agentDefinition: Awaited<ReturnType<typeof readAgentDefinition>> | undefined;
+  let fallbackDefinition:
+    | {
+        definition: Awaited<ReturnType<typeof readAgentDefinition>>;
+        discovery: AgentDiscoveryCandidate;
+      }
+    | undefined;
   for (const candidateAgentId of requestedAgentIds) {
-    let fallbackDefinition:
-      | {
-          definition: Awaited<ReturnType<typeof readAgentDefinition>>;
-          discovery: AgentDiscoveryCandidate;
-        }
-      | undefined;
-
     for (const discovery of agentDiscoveryCandidates) {
       try {
         const definition = await readAgentDefinition(
@@ -245,19 +244,19 @@ export async function resolveAgentForStream(
         fallbackDefinition ??= { definition, discovery };
       } catch {
         // Parent-only project agents may be untracked and absent from child worktrees.
-        // Try the next discovery path before trying the next persisted agent id.
+        // Try every persisted agent id before accepting a global/built-in fallback.
       }
     }
 
     if (agentDefinition != null) {
       break;
     }
-    if (fallbackDefinition != null) {
-      agentDefinition = fallbackDefinition.definition;
-      agentDiscoveryRuntime = fallbackDefinition.discovery.runtime;
-      agentDiscoveryPath = fallbackDefinition.discovery.workspacePath;
-      break;
-    }
+  }
+
+  if (agentDefinition == null && fallbackDefinition != null) {
+    agentDefinition = fallbackDefinition.definition;
+    agentDiscoveryRuntime = fallbackDefinition.discovery.runtime;
+    agentDiscoveryPath = fallbackDefinition.discovery.workspacePath;
   }
 
   if (agentDefinition == null) {

@@ -215,6 +215,75 @@ describe("resolveAgentForStream agent identity", () => {
     expect(result.data.effectiveMode).toBe("plan");
   });
 
+  test("tries legacy project agentType before stale built-in agentId fallback", async () => {
+    using tempDir = new DisposableTempDir("agent-resolution-stale-built-in-agent-id");
+    const projectPath = path.join(tempDir.path, "project");
+    const parentPath = path.join(projectPath, "parent");
+    const childPath = path.join(projectPath, "child");
+    const customAgentId = "parent-only-reviewer";
+    await fs.mkdir(path.join(parentPath, ".mux", "agents"), { recursive: true });
+    await fs.mkdir(childPath, { recursive: true });
+    await fs.writeFile(
+      path.join(parentPath, ".mux", "agents", `${customAgentId}.md`),
+      [
+        "---",
+        "name: Parent Only Reviewer",
+        "base: plan",
+        "subagent:",
+        "  runnable: true",
+        "---",
+        "Parent-only reviewer agent.",
+        "",
+      ].join("\n")
+    );
+
+    const metadata = createSubagentMetadata({
+      projectPath,
+      agentId: "exec",
+      agentType: customAgentId,
+    });
+    const cfg: ProjectsConfig = {
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { id: PARENT_WORKSPACE_ID, name: PARENT_WORKSPACE_ID, path: parentPath },
+              {
+                id: CHILD_WORKSPACE_ID,
+                name: CHILD_WORKSPACE_ID,
+                path: childPath,
+                parentWorkspaceId: PARENT_WORKSPACE_ID,
+                agentId: "exec",
+                agentType: customAgentId,
+              },
+            ],
+          },
+        ],
+      ]),
+    };
+
+    const result = await resolveAgentForStream({
+      workspaceId: CHILD_WORKSPACE_ID,
+      metadata,
+      runtime: new LocalRuntime(childPath),
+      workspacePath: childPath,
+      requestedAgentId: "exec",
+      disableWorkspaceAgents: false,
+      callerToolPolicy: undefined,
+      cfg,
+      emitError: () => undefined,
+      isAdvisorExperimentEnabled: true,
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.effectiveAgentId).toBe(customAgentId);
+    expect(result.data.agentDiscoveryPath).toBe(parentPath);
+    expect(result.data.effectiveMode).toBe("plan");
+  });
+
   test("tries legacy agentType when modern agentId is valid but unavailable", async () => {
     using tempDir = new DisposableTempDir("agent-resolution-stale-agent-id");
     const projectPath = path.join(tempDir.path, "project");

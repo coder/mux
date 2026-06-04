@@ -5912,7 +5912,7 @@ describe("TaskService", () => {
     ).toHaveLength(1);
   });
 
-  test("agent_report generates git format-patch artifact for exec tasks before cleanup", async () => {
+  test("agent_report uses legacy exec agentType for git format-patch eligibility", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -5950,7 +5950,7 @@ describe("TaskService", () => {
           name: "agent_exec_child",
           parentWorkspaceId: parentId,
           agentType: "exec",
-          agentId: "exec",
+          agentId: "explore",
           taskStatus: "running",
           runtimeConfig: { type: "local" },
           taskBaseCommitSha: baseCommitSha,
