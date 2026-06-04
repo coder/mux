@@ -193,6 +193,19 @@ interface UserPreferenceConfigClient {
   saveConfig: (input: { userPreferences?: UserPreferences | null }) => Promise<void>;
 }
 
+export function applyLocalPreferenceWrite(params: {
+  preferences: UserPreferences | undefined;
+  key: string;
+  newValue: unknown;
+  storage: Storage;
+}): UserPreferences | undefined {
+  const basePreferences =
+    params.preferences ?? mergeMissingLocalPreferences(undefined, params.storage);
+  return params.newValue === undefined || params.newValue === null
+    ? removeStoredUserPreference(basePreferences, params.key)
+    : applyStoredUserPreference(basePreferences, params.key, params.newValue);
+}
+
 export function shouldBackfillLocalPreferences(params: {
   backendPreferences: UserPreferences | undefined;
   userPreferencesInitialized: boolean | undefined;
@@ -387,7 +400,7 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
       setHydrated(true);
 
       if (
-        shouldBackfill &&
+        (shouldBackfill || dirtyKeysRef.current.size > 0) &&
         stableStringify(nextPreferences) !== stableStringify(backendPreferences)
       ) {
         enqueueSave(nextPreferences);
@@ -400,10 +413,16 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
       }
 
       dirtyKeysRef.current.add(event.key);
-      currentPreferencesRef.current =
-        event.newValue === undefined || event.newValue === null
-          ? removeStoredUserPreference(currentPreferencesRef.current, event.key)
-          : applyStoredUserPreference(currentPreferencesRef.current, event.key, event.newValue);
+      currentPreferencesRef.current = applyLocalPreferenceWrite({
+        preferences: currentPreferencesRef.current,
+        key: event.key,
+        newValue: event.newValue,
+        storage,
+      });
+
+      if (!hydratedRef.current) {
+        return;
+      }
 
       enqueueSave(currentPreferencesRef.current);
     });

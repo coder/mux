@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  applyLocalPreferenceWrite,
   createUserPreferenceSaveQueue,
   hydrateUserPreferencesLocalCache,
   mergeMissingLocalPreferences,
@@ -66,6 +67,24 @@ async function waitUntil(assertion: () => void): Promise<void> {
 }
 
 describe("UserPreferencesProvider bridge helpers", () => {
+  test("seeds local writes from the full local cache before hydration", () => {
+    const storage = new MemoryStorage();
+    storage.setJSON(UI_THEME_KEY, "dark");
+    storage.setJSON(VIM_ENABLED_KEY, true);
+
+    expect(
+      applyLocalPreferenceWrite({
+        preferences: undefined,
+        key: PROJECT_ORDER_KEY,
+        newValue: ["/repo"],
+        storage,
+      })
+    ).toEqual({
+      appearance: { theme: "dark", vimEnabled: true },
+      navigation: { projectOrder: ["/repo"] },
+    });
+  });
+
   test("keeps local backfill active until backend preferences are initialized", () => {
     expect(
       shouldBackfillLocalPreferences({
