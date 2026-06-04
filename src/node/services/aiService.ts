@@ -108,7 +108,7 @@ import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { DEVTOOLS_RUN_METADATA_ID_HEADER } from "./devToolsHeaderCapture";
 import { ProviderModelFactory, modelCostsIncluded } from "./providerModelFactory";
 import { prepareMessagesForProvider } from "./messagePipeline";
-import { resolveAgentForStream } from "./agentResolution";
+import { getLegacyModeForAgentMetadata, resolveAgentForStream } from "./agentResolution";
 import { buildPlanInstructions, buildStreamSystemContext } from "./streamContextBuilder";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
@@ -1205,6 +1205,7 @@ export class AIService extends EventEmitter {
         shouldDisableTaskToolsForDepth,
         effectiveToolPolicy,
       } = agentResult.data;
+      const legacyModeForMetadata = getLegacyModeForAgentMetadata(effectiveAgentId, effectiveMode);
       const projectTrusted = isProjectTrusted(this.config, metadata.projectPath);
       const sharedExecutionTrusted = isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
       const agentAdvisorEnabled = resolveAdvisorEnabledForAgent(
@@ -1978,6 +1979,7 @@ export class AIService extends EventEmitter {
           systemMessageTokens,
           effectiveAgentId,
           effectiveMode,
+          metadataMode: legacyModeForMetadata,
           effectiveThinkingLevel,
           emit: (event, data) => this.emit(event, data),
         };
@@ -2081,7 +2083,7 @@ export class AIService extends EventEmitter {
               providerOptions: mergedProviderOptions,
               thinkingLevel: effectiveThinkingLevel,
               maxOutputTokens,
-              mode: effectiveMode,
+              mode: legacyModeForMetadata,
               agentId: effectiveAgentId,
               toolPolicy: effectiveToolPolicy,
             },
@@ -2114,7 +2116,7 @@ export class AIService extends EventEmitter {
         model: modelString,
         providerName: canonicalProviderName,
         thinkingLevel: effectiveThinkingLevel,
-        mode: effectiveMode,
+        mode: legacyModeForMetadata,
         agentId: effectiveAgentId,
         maxOutputTokens,
         systemMessage,
@@ -2169,7 +2171,7 @@ export class AIService extends EventEmitter {
           systemMessageTokens,
           timestamp: Date.now(),
           agentId: effectiveAgentId,
-          mode: effectiveMode,
+          ...(legacyModeForMetadata != null ? { mode: legacyModeForMetadata } : {}),
           routedThroughGateway,
           // Preserve the resolved route source so stream events and persisted messages
           // keep non-gateway attribution even when the model ID itself is gateway-agnostic.
@@ -2213,7 +2215,7 @@ export class AIService extends EventEmitter {
           providerName: canonicalProviderName,
           routeProvider,
           agentId: effectiveAgentId,
-          mode: effectiveMode,
+          mode: legacyModeForMetadata,
           runtimeType: metadata.runtimeConfig.type,
           errorType: streamResult.error.type,
           toolCount: Object.keys(toolsForStream).length,
@@ -2242,7 +2244,7 @@ export class AIService extends EventEmitter {
         providerName: canonicalProviderName,
         routeProvider,
         agentId: effectiveAgentId,
-        mode: effectiveMode,
+        mode: legacyModeForMetadata,
         runtimeType: metadata.runtimeConfig.type,
         toolCount: Object.keys(toolsForStream).length,
         mcpToolCount: Object.keys(mcpTools ?? {}).length,

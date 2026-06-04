@@ -288,6 +288,15 @@ const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 // workspace/default agent preferences evolve (e.g., auto router defaults).
 const TASK_RECOVERY_FALLBACK_AGENT_ID = "exec";
 
+function resolveTaskAgentIdForResume(workspace: { agentId?: string; agentType?: string }): string {
+  // Legacy task entries may only have agentType. Preserve that before falling back to Exec.
+  return (
+    coerceNonEmptyString(workspace.agentId) ??
+    coerceNonEmptyString(workspace.agentType) ??
+    TASK_RECOVERY_FALLBACK_AGENT_ID
+  );
+}
+
 const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
 
 interface AgentTaskIndex {
@@ -814,7 +823,7 @@ export class TaskService {
       });
 
       const model = task.taskModelString ?? defaultModel;
-      const agentId = task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
+      const agentId = resolveTaskAgentIdForResume(task);
       log.info("[startup] Resuming running task", {
         taskId: task.id,
         taskName: task.name,
@@ -3065,7 +3074,7 @@ export class TaskService {
           queuedPrompt,
           {
             model,
-            agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
+            agentId: resolveTaskAgentIdForResume(task),
             thinkingLevel: task.taskThinkingLevel,
             experiments: task.taskExperiments,
           },
@@ -3088,7 +3097,7 @@ export class TaskService {
           taskId,
           {
             model,
-            agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
+            agentId: resolveTaskAgentIdForResume(task),
             thinkingLevel: task.taskThinkingLevel,
             experiments: task.taskExperiments,
           },
@@ -3298,7 +3307,7 @@ export class TaskService {
     const isPlanLike = await this.isPlanLikeTaskWorkspace(entry);
     const completionToolName = isPlanLike ? "propose_plan" : "agent_report";
     const model = entry.workspace.taskModelString ?? defaultModel;
-    const agentId = entry.workspace.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
+    const agentId = resolveTaskAgentIdForResume(entry.workspace);
     const startedAt = Date.now();
     const sendResult = await this.workspaceService.sendMessage(
       workspaceId,

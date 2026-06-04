@@ -564,12 +564,17 @@ describe("TaskService", () => {
     if (!queued.success) return;
     expect(queued.data.status).toBe("queued");
 
-    // Free the slot by marking the first task as reported.
+    // Free the slot by marking the first task as reported. Also simulate a legacy queued
+    // task that only has agentType so dequeue preserves Explore instead of falling back to Exec.
     await config.editConfig((cfg) => {
       for (const [_project, project] of cfg.projects) {
         const ws = project.workspaces.find((w) => w.id === running.data.taskId);
         if (ws) {
           ws.taskStatus = "reported";
+        }
+        const queuedWs = project.workspaces.find((w) => w.id === queued.data.taskId);
+        if (queuedWs) {
+          queuedWs.agentId = "";
         }
       }
       return cfg;
@@ -580,7 +585,7 @@ describe("TaskService", () => {
     expect(sendMessage).toHaveBeenCalledWith(
       queued.data.taskId,
       "task 2",
-      expect.anything(),
+      expect.objectContaining({ agentId: "explore" }),
       expect.objectContaining({ allowQueuedAgentTask: true })
     );
 

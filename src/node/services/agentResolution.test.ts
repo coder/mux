@@ -8,7 +8,7 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
-import { resolveAgentForStream } from "./agentResolution";
+import { getLegacyModeForAgentMetadata, resolveAgentForStream } from "./agentResolution";
 
 const PARENT_WORKSPACE_ID = "parent-workspace";
 const CHILD_WORKSPACE_ID = "child-workspace";
@@ -82,6 +82,16 @@ async function resolvePolicyForAgent(params: {
   }
   return result.data.effectiveToolPolicy ?? [];
 }
+
+describe("getLegacyModeForAgentMetadata", () => {
+  test("omits legacy mode metadata for custom or derived agents", () => {
+    expect(getLegacyModeForAgentMetadata("explore", "exec")).toBeUndefined();
+    expect(getLegacyModeForAgentMetadata("custom-plan", "plan")).toBeUndefined();
+    expect(getLegacyModeForAgentMetadata("exec", "exec")).toBe("exec");
+    expect(getLegacyModeForAgentMetadata("plan", "plan")).toBe("plan");
+    expect(getLegacyModeForAgentMetadata("compact", "compact")).toBe("compact");
+  });
+});
 
 describe("resolveAgentForStream advisor defaults", () => {
   test("enables advisor by default for Exec and Plan sub-agents when the experiment is enabled", async () => {

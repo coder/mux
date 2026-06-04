@@ -32,6 +32,7 @@ export interface SimulationContext {
   systemMessageTokens: number;
   effectiveAgentId: string;
   effectiveMode: "plan" | "exec" | "compact";
+  metadataMode?: "plan" | "exec" | "compact";
   effectiveThinkingLevel: ThinkingLevel;
   /** Emit a typed stream event (stream-start, stream-delta, stream-end, error). */
   emit: (event: string, data: unknown) => void;
@@ -49,7 +50,7 @@ function createSimulatedStreamStart(ctx: SimulationContext): StreamStartEvent {
     historySequence: ctx.historySequence,
     startTime: Date.now(),
     agentId: ctx.effectiveAgentId,
-    mode: ctx.effectiveMode,
+    ...(ctx.metadataMode != null ? { mode: ctx.metadataMode } : {}),
     thinkingLevel: ctx.effectiveThinkingLevel,
   };
 }

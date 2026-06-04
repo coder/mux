@@ -87,6 +87,15 @@ export interface AgentResolutionResult {
  * Returns `Err` only when a disabled agent is requested in a subagent workspace
  * (top-level workspaces silently fall back to exec).
  */
+// Derived agents (for example Explore, which uses Exec as its tool-policy base) should not
+// be labeled as their base mode in persisted/public metadata; `agentId` is the source of truth.
+export function getLegacyModeForAgentMetadata(
+  effectiveAgentId: string,
+  effectiveMode: "plan" | "exec" | "compact"
+): "plan" | "exec" | "compact" | undefined {
+  return effectiveAgentId === effectiveMode ? effectiveMode : undefined;
+}
+
 export async function resolveAgentForStream(
   opts: ResolveAgentOptions
 ): Promise<Result<AgentResolutionResult, SendMessageError>> {
