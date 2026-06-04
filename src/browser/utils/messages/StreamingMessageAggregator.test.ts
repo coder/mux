@@ -1331,6 +1331,65 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  describe("stream metadata", () => {
+    test("keeps derived agentId on the live assistant message when legacy mode is omitted", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: TEST_WORKSPACE_ID,
+        messageId: "explore-msg",
+        historySequence: 1,
+        model: TEST_MODEL,
+        startTime: Date.now(),
+        agentId: "explore",
+      });
+
+      const streamingMessage = aggregator
+        .getAllMessages()
+        .find((message) => message.id === "explore-msg");
+      expect(streamingMessage?.metadata?.agentId).toBe("explore");
+      expect(streamingMessage?.metadata?.mode).toBeUndefined();
+    });
+
+    test("preserves derived agentId when replay stream-start omits it", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: TEST_WORKSPACE_ID,
+        messageId: "explore-replay-msg",
+        historySequence: 1,
+        model: TEST_MODEL,
+        startTime: Date.now(),
+        agentId: "explore",
+      });
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: TEST_WORKSPACE_ID,
+        messageId: "explore-replay-msg",
+        delta: "hello",
+        tokens: 1,
+        timestamp: Date.now(),
+      });
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: TEST_WORKSPACE_ID,
+        messageId: "explore-replay-msg",
+        historySequence: 1,
+        model: TEST_MODEL,
+        startTime: Date.now(),
+        replay: true,
+      });
+
+      const streamingMessage = aggregator
+        .getAllMessages()
+        .find((message) => message.id === "explore-replay-msg");
+      expect(streamingMessage?.metadata?.agentId).toBe("explore");
+    });
+  });
+
   describe("recency on stream completion", () => {
     test("bumps recency on final non-compaction stream end", () => {
       let callbackCompletedAt: number | null | undefined;

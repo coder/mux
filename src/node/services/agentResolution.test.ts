@@ -16,6 +16,7 @@ const CHILD_WORKSPACE_ID = "child-workspace";
 function createSubagentMetadata(params: {
   projectPath: string;
   agentId: string;
+  agentType?: string;
 }): WorkspaceMetadata {
   return {
     id: CHILD_WORKSPACE_ID,
@@ -25,7 +26,7 @@ function createSubagentMetadata(params: {
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     parentWorkspaceId: PARENT_WORKSPACE_ID,
     agentId: params.agentId,
-    agentType: params.agentId,
+    agentType: params.agentType ?? params.agentId,
   };
 }
 
@@ -90,6 +91,58 @@ describe("getLegacyModeForAgentMetadata", () => {
     expect(getLegacyModeForAgentMetadata("exec", "exec")).toBe("exec");
     expect(getLegacyModeForAgentMetadata("plan", "plan")).toBe("plan");
     expect(getLegacyModeForAgentMetadata("compact", "compact")).toBe("compact");
+  });
+});
+
+describe("resolveAgentForStream agent identity", () => {
+  test("preserves legacy child agentType when persisted agentId is blank", async () => {
+    using tempDir = new DisposableTempDir("agent-resolution-legacy-agent-type");
+    const projectPath = path.join(tempDir.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const metadata = createSubagentMetadata({
+      projectPath,
+      agentId: "",
+      agentType: "explore",
+    });
+    const cfg: ProjectsConfig = {
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { id: PARENT_WORKSPACE_ID, name: PARENT_WORKSPACE_ID, path: projectPath },
+              {
+                id: CHILD_WORKSPACE_ID,
+                name: CHILD_WORKSPACE_ID,
+                path: projectPath,
+                parentWorkspaceId: PARENT_WORKSPACE_ID,
+                agentId: "",
+                agentType: "explore",
+              },
+            ],
+          },
+        ],
+      ]),
+    };
+
+    const result = await resolveAgentForStream({
+      workspaceId: CHILD_WORKSPACE_ID,
+      metadata,
+      runtime: new LocalRuntime(projectPath),
+      workspacePath: projectPath,
+      requestedAgentId: "exec",
+      disableWorkspaceAgents: false,
+      callerToolPolicy: undefined,
+      cfg,
+      emitError: () => undefined,
+      isAdvisorExperimentEnabled: true,
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.effectiveAgentId).toBe("explore");
   });
 });
 

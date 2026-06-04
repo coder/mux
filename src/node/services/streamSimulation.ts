@@ -83,6 +83,7 @@ export async function simulateContextLimitError(
       ...(ctx.routeProvider != null ? { routeProvider: ctx.routeProvider } : {}),
       systemMessageTokens: ctx.systemMessageTokens,
       agentId: ctx.effectiveAgentId,
+      ...(ctx.metadataMode != null ? { mode: ctx.metadataMode } : {}),
       thinkingLevel: ctx.effectiveThinkingLevel,
       partial: true,
       error: errorMessage,
@@ -126,6 +127,7 @@ export async function simulateToolPolicyNoop(
     ...(ctx.routeProvider != null ? { routeProvider: ctx.routeProvider } : {}),
     systemMessageTokens: ctx.systemMessageTokens,
     agentId: ctx.effectiveAgentId,
+    ...(ctx.metadataMode != null ? { mode: ctx.metadataMode } : {}),
     thinkingLevel: ctx.effectiveThinkingLevel,
     toolPolicy: effectiveToolPolicy,
   });
@@ -167,6 +169,7 @@ export async function simulateToolPolicyNoop(
     metadata: {
       model: ctx.canonicalModelString,
       agentId: ctx.effectiveAgentId,
+      ...(ctx.metadataMode != null ? { mode: ctx.metadataMode } : {}),
       thinkingLevel: ctx.effectiveThinkingLevel,
       routedThroughGateway: ctx.routedThroughGateway,
       ...(ctx.routeProvider != null ? { routeProvider: ctx.routeProvider } : {}),

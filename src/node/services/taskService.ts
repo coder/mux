@@ -57,7 +57,7 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { AgentIdSchema } from "@/common/orpc/schemas";
-import { normalizeAgentId } from "@/common/utils/agentIds";
+import { normalizeAgentId, resolvePersistedAgentId } from "@/common/utils/agentIds";
 import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService";
 import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
@@ -289,12 +289,7 @@ const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 const TASK_RECOVERY_FALLBACK_AGENT_ID = "exec";
 
 function resolveTaskAgentIdForResume(workspace: { agentId?: string; agentType?: string }): string {
-  // Legacy task entries may only have agentType. Preserve that before falling back to Exec.
-  return (
-    coerceNonEmptyString(workspace.agentId) ??
-    coerceNonEmptyString(workspace.agentType) ??
-    TASK_RECOVERY_FALLBACK_AGENT_ID
-  );
+  return resolvePersistedAgentId(workspace, TASK_RECOVERY_FALLBACK_AGENT_ID);
 }
 
 const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
@@ -650,12 +645,11 @@ export class TaskService {
   }): Promise<boolean> {
     assert(entry.projectPath.length > 0, "isPlanLikeTaskWorkspace: projectPath must be non-empty");
 
-    const rawAgentId = coerceNonEmptyString(entry.workspace.agentId ?? entry.workspace.agentType);
-    if (!rawAgentId) {
+    const normalizedAgentId = resolvePersistedAgentId(entry.workspace, "");
+    if (!normalizedAgentId) {
       return false;
     }
 
-    const normalizedAgentId = rawAgentId.trim().toLowerCase();
     const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
     if (!parsedAgentId.success) {
       return normalizedAgentId === "plan";
@@ -985,12 +979,11 @@ export class TaskService {
         ? appendSubagentFileReportInstructions(basePrompt, args.workflowTask)
         : basePrompt;
 
-    const agentIdRaw = coerceNonEmptyString(args.agentId ?? args.agentType);
-    if (!agentIdRaw) {
+    const normalizedAgentId = resolvePersistedAgentId(args, "");
+    if (!normalizedAgentId) {
       return Err("Task.create: agentId is required");
     }
 
-    const normalizedAgentId = normalizeAgentId(agentIdRaw, "");
     const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
     if (!parsedAgentId.success) {
       return Err(`Task.create: invalid agentId (${normalizedAgentId})`);
@@ -3014,9 +3007,9 @@ export class TaskService {
           this.opResolver
         );
         let skipInitHook = false;
-        const agentIdRaw = coerceNonEmptyString(task.agentId ?? task.agentType);
+        const agentIdRaw = resolvePersistedAgentId(task, "");
         if (agentIdRaw) {
-          const parsedAgentId = AgentIdSchema.safeParse(normalizeAgentId(agentIdRaw, ""));
+          const parsedAgentId = AgentIdSchema.safeParse(agentIdRaw);
           if (parsedAgentId.success) {
             const isInPlace = taskEntry.projectPath === parentWorkspaceName;
             const parentWorkspacePath =
@@ -3893,9 +3886,7 @@ export class TaskService {
           continue;
         }
 
-        const workspaceAgentId = coerceNonEmptyString(
-          workspace.agentId ?? workspace.agentType
-        )?.toLowerCase();
+        const workspaceAgentId = resolvePersistedAgentId(workspace, "");
         if (requestedAgentId && workspaceAgentId && workspaceAgentId !== requestedAgentId) {
           continue;
         }

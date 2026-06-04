@@ -20,6 +20,7 @@ import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentToo
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import { AgentIdSchema } from "@/common/orpc/schemas";
+import { resolvePersistedAgentId } from "@/common/utils/agentIds";
 import {
   getSubagentGitPatchMboxPath,
   matchesProjectArtifactProjectPathForUpdate,
@@ -253,10 +254,7 @@ export class GitPatchArtifactService {
     // Only exec-like subagents are expected to make commits that should be handed back to the parent.
     // NOTE: Custom agents can inherit from exec (base: exec). Those should also generate patches,
     // but read-only subagents (e.g. explore) should not.
-    const childAgentIdRaw = coerceNonEmptyString(
-      childEntry?.workspace.agentId ?? childEntry?.workspace.agentType
-    );
-    const childAgentId = childAgentIdRaw?.toLowerCase();
+    const childAgentId = resolvePersistedAgentId(childEntry?.workspace, "");
     if (!childAgentId) {
       return;
     }

@@ -21,6 +21,7 @@ import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { ProjectsConfig } from "@/common/types/project";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
+import { resolvePersistedAgentId } from "@/common/utils/agentIds";
 import { getErrorMessage } from "@/common/utils/errors";
 import { type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -118,10 +119,16 @@ export async function resolveAgentForStream(
   // Precedence:
   // - Child workspaces (tasks) use their persisted agentId/agentType.
   // - Main workspaces use the requested agentId (frontend), falling back to exec.
-  const requestedAgentIdRaw =
-    (metadata.parentWorkspaceId ? (metadata.agentId ?? metadata.agentType) : undefined) ??
-    (typeof rawAgentId === "string" ? rawAgentId : undefined) ??
-    "exec";
+  const persistedAgentId = metadata.parentWorkspaceId
+    ? resolvePersistedAgentId(metadata, "")
+    : undefined;
+  const requestedAgentIdRaw = metadata.parentWorkspaceId
+    ? persistedAgentId && persistedAgentId.length > 0
+      ? persistedAgentId
+      : "exec"
+    : typeof rawAgentId === "string"
+      ? rawAgentId
+      : "exec";
   const requestedAgentIdNormalized = requestedAgentIdRaw.trim().toLowerCase();
   const parsedAgentId = AgentIdSchema.safeParse(requestedAgentIdNormalized);
   const requestedAgentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);

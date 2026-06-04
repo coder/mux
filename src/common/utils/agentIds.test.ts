@@ -1,6 +1,26 @@
 import { describe, expect, test } from "bun:test";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
-import { normalizeAgentId, resolveRemovedBuiltinAgentId } from "./agentIds";
+import {
+  normalizeAgentId,
+  resolvePersistedAgentId,
+  resolveRemovedBuiltinAgentId,
+} from "./agentIds";
+
+describe("resolvePersistedAgentId", () => {
+  test("uses legacy agentType when modern agentId is blank", () => {
+    expect(resolvePersistedAgentId({ agentId: "   ", agentType: " Explore " }, "exec")).toBe(
+      "explore"
+    );
+  });
+
+  test("prefers non-empty agentId and falls back when neither field is set", () => {
+    expect(resolvePersistedAgentId({ agentId: " Plan ", agentType: "explore" }, "exec")).toBe(
+      "plan"
+    );
+    expect(resolvePersistedAgentId({ agentId: "", agentType: "" }, "exec")).toBe("exec");
+    expect(resolvePersistedAgentId(undefined, "exec")).toBe("exec");
+  });
+});
 
 describe("resolveRemovedBuiltinAgentId", () => {
   test("maps removed builtin agent ids to the workspace default when unavailable", () => {

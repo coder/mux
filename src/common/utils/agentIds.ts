@@ -22,6 +22,29 @@ export function normalizeAgentId(
   return normalized;
 }
 
+export function resolvePersistedAgentId(
+  value: { agentId?: unknown; agentType?: unknown } | undefined,
+  fallback: string = WORKSPACE_DEFAULTS.agentId
+): string {
+  if (value == null) {
+    return fallback;
+  }
+
+  // Legacy task/workspace records may only have agentType. Coerce each field
+  // independently so a blank modern agentId cannot mask a valid legacy value.
+  const agentId = normalizeAgentId(value.agentId, "");
+  if (agentId.length > 0) {
+    return agentId;
+  }
+
+  const agentType = normalizeAgentId(value.agentType, "");
+  if (agentType.length > 0) {
+    return agentType;
+  }
+
+  return fallback;
+}
+
 export function resolveRemovedBuiltinAgentId(
   value: unknown,
   availableAgentIds: Iterable<string>,

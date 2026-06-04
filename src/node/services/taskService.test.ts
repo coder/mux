@@ -580,14 +580,26 @@ describe("TaskService", () => {
       return cfg;
     });
 
-    await taskService.initialize();
-
-    expect(sendMessage).toHaveBeenCalledWith(
-      queued.data.taskId,
-      "task 2",
-      expect.objectContaining({ agentId: "explore" }),
-      expect.objectContaining({ allowQueuedAgentTask: true })
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
     );
+    try {
+      await taskService.initialize();
+
+      expect(sendMessage).toHaveBeenCalledWith(
+        queued.data.taskId,
+        "task 2",
+        expect.objectContaining({ agentId: "explore" }),
+        expect.objectContaining({ allowQueuedAgentTask: true })
+      );
+      expect(runBackgroundInitSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ skipInitHook: true }),
+        queued.data.taskId
+      );
+    } finally {
+      runBackgroundInitSpy.mockRestore();
+    }
 
     const cfg = config.loadConfigOrDefault();
     const started = Array.from(cfg.projects.values())
@@ -4082,7 +4094,7 @@ describe("TaskService", () => {
     );
   });
 
-  test("initialize uses propose_plan reminders for plan-inheriting awaiting_report tasks", async () => {
+  test("initialize uses legacy agentType for plan-inheriting awaiting_report tasks", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -4123,7 +4135,7 @@ describe("TaskService", () => {
           id: childId,
           name: "agent_custom_plan_child",
           parentWorkspaceId: parentId,
-          agentId: customAgentId,
+          agentId: "",
           agentType: customAgentId,
           taskStatus: "awaiting_report",
           runtimeConfig,

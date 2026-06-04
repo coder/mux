@@ -35,7 +35,7 @@ import {
 } from "@/constants/goals";
 import type { SendMessageError } from "@/common/types/errors";
 import { AgentIdSchema, SkillNameSchema } from "@/common/orpc/schemas";
-import { normalizeAgentId } from "@/common/utils/agentIds";
+import { normalizeAgentId, resolvePersistedAgentId } from "@/common/utils/agentIds";
 import {
   buildStreamErrorEventData,
   createStreamErrorMessage,
@@ -1306,9 +1306,7 @@ export class AgentSession {
       coerceGoalSyntheticMessageKind(persistedRetrySendOptions?.goalKind) ??
       coerceGoalSyntheticMessageKind(lastUserMessage?.metadata?.kind);
 
-    const workspaceAgentId =
-      this.normalizeAgentIdForRetry(workspaceMetadata?.agentId ?? workspaceMetadata?.agentType) ??
-      WORKSPACE_DEFAULTS.agentId;
+    const workspaceAgentId = resolvePersistedAgentId(workspaceMetadata, WORKSPACE_DEFAULTS.agentId);
     const persistedAgentId = this.normalizeAgentIdForRetry(persistedRetrySendOptions?.agentId);
     const assistantAgentId = this.normalizeAgentIdForRetry(lastAssistantMessage?.metadata?.agentId);
     const baseAgentId = persistedAgentId ?? assistantAgentId ?? workspaceAgentId;
@@ -3907,9 +3905,7 @@ export class AgentSession {
       return false;
     }
 
-    const agentIdRaw = (metadata.agentId ?? metadata.agentType ?? WORKSPACE_DEFAULTS.agentId)
-      .trim()
-      .toLowerCase();
+    const agentIdRaw = resolvePersistedAgentId(metadata, WORKSPACE_DEFAULTS.agentId);
     const parsedAgentId = AgentIdSchema.safeParse(agentIdRaw);
     const agentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
 

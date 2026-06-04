@@ -472,7 +472,8 @@ function recoverTaskGroupTaskIdsFromWorkspaceMetadata(params: {
       continue;
     }
     if (requestedAgentType) {
-      const metadataAgentType = normalizeTaskAgent(metadata.agentId ?? metadata.agentType);
+      const metadataAgentType =
+        normalizeTaskAgent(metadata.agentId) ?? normalizeTaskAgent(metadata.agentType);
       if (metadataAgentType && metadataAgentType !== requestedAgentType) {
         continue;
       }
@@ -1037,7 +1038,10 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
         continue;
       }
 
-      const agentType = (metadata.agentId ?? metadata.agentType)?.trim();
+      const agentType =
+        trimToNonEmptyString(metadata.agentId) ??
+        trimToNonEmptyString(metadata.agentType) ??
+        undefined;
       const title = metadata.title?.trim().length ? metadata.title : metadata.name;
 
       awaitedRows.push({
