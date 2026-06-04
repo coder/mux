@@ -677,6 +677,21 @@ describe("delegated workspace activity roll-up", () => {
     expect(activityByWorkspaceId.has("cycle-b")).toBe(false);
   });
 
+  it("keeps resumed descendants active even when reportedAt is stale", () => {
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("resumed-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        reportedAt: new Date(0).toISOString(),
+      }),
+    ];
+
+    const activityByWorkspaceId = computeDelegatedActivityByWorkspaceId(workspaces);
+
+    expect(activityByWorkspaceId.get("parent")?.activeCount).toBe(1);
+  });
+
   it("does not resurrect terminal descendants from stale live sidebar activity", () => {
     const workspaces = [
       createWorkspace("parent"),

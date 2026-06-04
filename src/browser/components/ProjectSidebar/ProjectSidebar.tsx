@@ -2368,10 +2368,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       runningCount += 1;
                                       continue;
                                     }
-                                    if (
-                                      member.taskStatus === "queued" &&
-                                      member.reportedAt == null
-                                    ) {
+                                    if (member.taskStatus === "queued") {
                                       queuedCount += 1;
                                       continue;
                                     }

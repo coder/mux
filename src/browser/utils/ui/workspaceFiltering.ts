@@ -153,11 +153,7 @@ function isActiveDelegatedStatus(status: FrontendWorkspaceMetadata["taskStatus"]
 }
 
 function isTerminalDelegatedWorkspace(workspace: FrontendWorkspaceMetadata): boolean {
-  return (
-    workspace.taskStatus === "reported" ||
-    workspace.taskStatus === "interrupted" ||
-    workspace.reportedAt != null
-  );
+  return workspace.taskStatus === "reported" || workspace.taskStatus === "interrupted";
 }
 
 export function isWorkspaceDelegatedActivityActive(
