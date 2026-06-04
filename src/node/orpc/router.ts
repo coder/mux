@@ -100,10 +100,18 @@ import {
   WorkflowDefinitionStore,
 } from "@/node/services/workflows/WorkflowDefinitionStore";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
-import { WorkflowService } from "@/node/services/workflows/WorkflowService";
+import {
+  WorkflowService,
+  type WorkflowBackgroundRunTerminalEvent,
+} from "@/node/services/workflows/WorkflowService";
 import { WorkflowTaskServiceAdapter } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
 import { resolveWorkflowScratchRoots } from "@/node/services/workflows/workflowScratchRoots";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
+
+import {
+  WORKFLOW_RESULT_METADATA_TYPE,
+  buildWorkflowResultContextMessage,
+} from "@/common/utils/workflowRunMessages";
 
 const RAW_QUERY_USER_ERROR_PATTERNS = [
   /^parser error:/i,
@@ -177,7 +185,10 @@ function assertDynamicWorkflowsEnabled(context: ORPCContext): void {
 
 async function resolveWorkflowContext(
   context: ORPCContext,
-  workspaceId: string
+  workspaceId: string,
+  options: {
+    onBackgroundRunTerminal?: (event: WorkflowBackgroundRunTerminalEvent) => Promise<void> | void;
+  } = {}
 ): Promise<{ service: WorkflowService; projectTrusted: boolean }> {
   assert(workspaceId.length > 0, "resolveWorkflowContext: workspaceId is required");
   assertDynamicWorkflowsEnabled(context);
@@ -235,6 +246,9 @@ async function resolveWorkflowContext(
             subagentFileReports: subagentFileReportsExperimentEnabled,
           },
         }),
+      ...(options.onBackgroundRunTerminal != null
+        ? { onBackgroundRunTerminal: options.onBackgroundRunTerminal }
+        : {}),
       getCurrentProjectTrusted: () => isTrustedProjectPath(context, metadata.projectPath),
       runnerId: `workflow-runner:${workspaceId}`,
     }),
@@ -1762,9 +1776,56 @@ export const router = (authToken?: string) => {
         .output(schemas.workflows.start.output)
         .handler(async ({ context, input, signal }) => {
           assertDynamicWorkflowsEnabled(context);
+          const rawCommandForContinuation = input.rawCommand;
+          const continuationOptions = input.continuationOptions;
+          const onBackgroundRunTerminal =
+            rawCommandForContinuation != null && continuationOptions != null
+              ? async ({ runId, status, result, run }: WorkflowBackgroundRunTerminalEvent) => {
+                  const commandPrefix = rawCommandForContinuation.split(/\s+/u)[0] ?? input.name;
+                  const workflowResultMessage = buildWorkflowResultContextMessage({
+                    rawCommand: rawCommandForContinuation,
+                    name: input.name,
+                    runId,
+                    status,
+                    result,
+                    run,
+                  });
+                  const sendResult = await context.workspaceService.sendMessage(
+                    input.workspaceId,
+                    workflowResultMessage,
+                    {
+                      ...continuationOptions,
+                      skipAiSettingsPersistence: true,
+                      muxMetadata: {
+                        type: WORKFLOW_RESULT_METADATA_TYPE,
+                        rawCommand: rawCommandForContinuation,
+                        commandPrefix,
+                        runId,
+                        requestedModel: continuationOptions.model,
+                      },
+                    },
+                    {
+                      skipAutoResumeReset: true,
+                      synthetic: true,
+                      agentInitiated: true,
+                      startStreamInBackground: true,
+                    }
+                  );
+                  if (!sendResult.success) {
+                    log.warn("Failed to continue slash workflow after completion", {
+                      workspaceId: input.workspaceId,
+                      runId,
+                      error: sendResult.error,
+                    });
+                  }
+                }
+              : undefined;
           const { service, projectTrusted } = await resolveWorkflowContext(
             context,
-            input.workspaceId
+            input.workspaceId,
+            {
+              ...(onBackgroundRunTerminal != null ? { onBackgroundRunTerminal } : {}),
+            }
           );
           const workflowStartArgs = {
             name: input.name,

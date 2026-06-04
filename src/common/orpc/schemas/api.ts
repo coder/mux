@@ -1793,6 +1793,7 @@ export const workflows = {
         runInBackground: z.boolean().optional(),
         args: z.unknown().optional(),
         rawCommand: z.string().min(1).optional(),
+        continuationOptions: SendMessageOptionsSchema.optional(),
       })
       .strict(),
     output: z.object({

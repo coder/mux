@@ -450,11 +450,21 @@ export async function processSlashCommand(
         name: parsed.name,
         runInBackground: true,
         args,
+        continuationOptions: context.sendMessageOptions,
         rawCommand,
       });
       // The workflow is durable and backgrounded; do not pin the composer while polling for
       // completion, otherwise the user cannot supersede a long-running slash workflow.
       setWorkflowSendingState(false);
+      if (result.invocationMessagePersisted === true) {
+        trackCommandUsed("workflow");
+        setToast({
+          id: Date.now().toString(),
+          type: "success",
+          message: `Workflow ${parsed.name} started`,
+        });
+        return { clearInput: true, toastShown: true };
+      }
       const run = await waitForWorkflowTerminalRun({
         client: activeClient,
         workspaceId,

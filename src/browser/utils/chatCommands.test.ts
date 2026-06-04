@@ -240,6 +240,7 @@ describe("processSlashCommand - workflow", () => {
       runInBackground: true,
       args: { input: "mux" },
       rawCommand: "/deep-research mux",
+      continuationOptions: context.sendMessageOptions,
     });
     expect(getRun).toHaveBeenCalledWith({ workspaceId: "test-ws", runId: "wfr_123" });
     expect(sendMessage).toHaveBeenCalledTimes(1);
@@ -257,6 +258,49 @@ describe("processSlashCommand - workflow", () => {
     expect(context.setSendingState).toHaveBeenNthCalledWith(3, true);
     expect(context.setSendingState).toHaveBeenNthCalledWith(4, false);
     expect(onMessageSent).toHaveBeenCalledWith("tool-end");
+  });
+
+  test("leaves slash workflow continuation to backend when invocation is persisted", async () => {
+    const start = mock(() =>
+      Promise.resolve({
+        runId: "wfr_123",
+        status: "running",
+        result: null,
+        invocationMessagePersisted: true,
+      })
+    );
+    const getRun = mock(() => Promise.resolve(null));
+    const sendMessage = mock(() => Promise.resolve({ success: true }));
+    const context = createSlashCommandContext({
+      api: {
+        workflows: { start, getRun },
+        workspace: { sendMessage },
+      } as unknown as SlashCommandContext["api"],
+      rawInput: "/deep-research mux",
+      dynamicWorkflowsEnabled: true,
+    });
+
+    const result = await processSlashCommand(
+      { type: "workflow-run", name: "deep-research", argsText: "mux" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: true, toastShown: true });
+    expect(start).toHaveBeenCalledWith({
+      workspaceId: "test-ws",
+      name: "deep-research",
+      runInBackground: true,
+      args: { input: "mux" },
+      rawCommand: "/deep-research mux",
+      continuationOptions: context.sendMessageOptions,
+    });
+    expect(getRun).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", message: "Workflow deep-research started" })
+    );
+    expect(context.setSendingState).toHaveBeenNthCalledWith(1, true);
+    expect(context.setSendingState).toHaveBeenNthCalledWith(2, false);
   });
 
   test("does not send terminal workflow results for superseded slash commands", async () => {
