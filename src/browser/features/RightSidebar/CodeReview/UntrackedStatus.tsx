@@ -12,6 +12,8 @@ interface UntrackedStatusProps {
   workspacePath: string;
   refreshTrigger?: number;
   onRefresh?: () => void;
+  repoRootProjectPath?: string | null;
+  pathFilter?: string;
 }
 
 export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
@@ -19,6 +21,8 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
   workspacePath,
   refreshTrigger,
   onRefresh,
+  repoRootProjectPath,
+  pathFilter = "",
 }) => {
   const { api } = useAPI();
   const [untrackedFiles, setUntrackedFiles] = useState<string[]>([]);
@@ -45,8 +49,8 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
       try {
         const result = await api?.workspace.executeBash({
           workspaceId,
-          script: "git ls-files --others --exclude-standard",
-          options: repoRootBashOptions(5),
+          script: `git ls-files --others --exclude-standard${pathFilter}`,
+          options: repoRootBashOptions(5, repoRootProjectPath),
         });
 
         if (cancelled || !result) return;
@@ -81,7 +85,7 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [api, workspaceId, workspacePath, refreshTrigger]);
+  }, [api, workspaceId, workspacePath, refreshTrigger, repoRootProjectPath, pathFilter]);
 
   const handleTrackAll = async () => {
     if (untrackedFiles.length === 0 || isTracking) return;
@@ -94,7 +98,7 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
       const result = await api?.workspace.executeBash({
         workspaceId,
         script: `git add -- ${escapedFiles}`,
-        options: repoRootBashOptions(10),
+        options: repoRootBashOptions(10, repoRootProjectPath),
       });
 
       if (result?.success) {

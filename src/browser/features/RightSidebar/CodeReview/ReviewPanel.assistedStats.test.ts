@@ -7,6 +7,7 @@ import {
   countUnreadAssistedHunks,
   getEffectiveReviewFrontendFilters,
   getEffectiveReviewIncludeUncommitted,
+  getReviewSubProjectPathspec,
   normalizeReviewPanelAssistedHunks,
 } from "./ReviewPanel";
 
@@ -117,6 +118,39 @@ describe("buildReviewDiffPathFilter", () => {
   });
 });
 
+describe("getReviewSubProjectPathspec", () => {
+  test("derives a git-root pathspec for sub-project workspaces", () => {
+    expect(
+      getReviewSubProjectPathspec({
+        workspaceMetadata: {
+          projectPath: "/repo/app",
+          subProjectPath: "/repo/app/packages/api",
+        },
+        projectPath: "/repo/app",
+      })
+    ).toBe("packages/api");
+  });
+
+  test("ignores missing or unrelated sub-project paths", () => {
+    expect(
+      getReviewSubProjectPathspec({
+        workspaceMetadata: {
+          projectPath: "/repo/app",
+          subProjectPath: "/repo/other/packages/api",
+        },
+        projectPath: "/repo/app",
+      })
+    ).toBeNull();
+
+    expect(
+      getReviewSubProjectPathspec({
+        workspaceMetadata: { projectPath: "/repo/app" },
+        projectPath: "/repo/app",
+      })
+    ).toBeNull();
+  });
+});
+
 describe("buildReviewDiffPathFilterSpecs", () => {
   const workspaceMetadata = {
     projects: [
@@ -124,6 +158,48 @@ describe("buildReviewDiffPathFilterSpecs", () => {
       { projectName: "project-b", projectPath: "/repo/project-b" },
     ],
   };
+
+  test("non-assisted broad diffs default to the sub-project pathspec", () => {
+    const specs = buildReviewDiffPathFilterSpecs({
+      isImmersive: false,
+      assistedOnly: false,
+      assistedHunks: [],
+      selectedFilePath: null,
+      selectedDiffPath: "",
+      workspaceMetadata: null,
+      projectPath: "/repo/app",
+      subProjectPathspec: "packages/api",
+    });
+
+    expect(specs).toEqual([
+      {
+        repoRootProjectPath: "/repo/app",
+        pathFilter: " -- 'packages/api'",
+        selectedFilePath: null,
+      },
+    ]);
+  });
+
+  test("broad non-assisted diffs stay unfiltered without a sub-project pathspec", () => {
+    const specs = buildReviewDiffPathFilterSpecs({
+      isImmersive: false,
+      assistedOnly: false,
+      assistedHunks: [],
+      selectedFilePath: null,
+      selectedDiffPath: "",
+      workspaceMetadata: null,
+      projectPath: "/repo/app",
+      subProjectPathspec: null,
+    });
+
+    expect(specs).toEqual([
+      {
+        repoRootProjectPath: "/repo/app",
+        pathFilter: "",
+        selectedFilePath: null,
+      },
+    ]);
+  });
 
   test("assisted mode roots each multi-project pathspec in the pinned file's repository", () => {
     const specs = buildReviewDiffPathFilterSpecs({
@@ -160,6 +236,7 @@ describe("buildReviewDiffPathFilterSpecs", () => {
       selectedDiffPath: "",
       workspaceMetadata: null,
       projectPath: "/repo/app",
+      subProjectPathspec: "packages/api",
       pathContext: {
         projectPath: "/repo/app",
         executionRootPath: "/repo/app/packages/api",
@@ -175,23 +252,45 @@ describe("buildReviewDiffPathFilterSpecs", () => {
     ]);
   });
 
-  test("non-assisted mode keeps selected file rooting for truncation recovery", () => {
+  test("non-assisted mode keeps in-scope selected file rooting for truncation recovery", () => {
     const specs = buildReviewDiffPathFilterSpecs({
       isImmersive: false,
       assistedOnly: false,
-      assistedHunks: [{ path: "project-a/src/main.ts" }],
-      selectedFilePath: "project-b/src/user-selected.ts",
-      selectedDiffPath: "src/user-selected.ts",
-      selectedRepoRootProjectPath: "/repo/project-b",
+      assistedHunks: [{ path: "project-a/packages/api/src/main.ts" }],
+      selectedFilePath: "project-a/packages/api/src/user-selected.ts",
+      selectedDiffPath: "packages/api/src/user-selected.ts",
+      selectedRepoRootProjectPath: "/repo/project-a",
       workspaceMetadata,
       projectPath: "/repo/project-a",
+      subProjectPathspec: "packages/api",
     });
 
     expect(specs).toEqual([
       {
-        repoRootProjectPath: "/repo/project-b",
-        pathFilter: " -- 'src/user-selected.ts'",
-        selectedFilePath: "project-b/src/user-selected.ts",
+        repoRootProjectPath: "/repo/project-a",
+        pathFilter: " -- 'packages/api/src/user-selected.ts'",
+        selectedFilePath: "project-a/packages/api/src/user-selected.ts",
+      },
+    ]);
+  });
+
+  test("non-assisted mode ignores stale selected files outside the sub-project", () => {
+    const specs = buildReviewDiffPathFilterSpecs({
+      isImmersive: false,
+      assistedOnly: false,
+      assistedHunks: [],
+      selectedFilePath: "packages/web/src/user-selected.ts",
+      selectedDiffPath: "packages/web/src/user-selected.ts",
+      workspaceMetadata: null,
+      projectPath: "/repo/app",
+      subProjectPathspec: "packages/api",
+    });
+
+    expect(specs).toEqual([
+      {
+        repoRootProjectPath: "/repo/app",
+        pathFilter: " -- 'packages/api'",
+        selectedFilePath: null,
       },
     ]);
   });
