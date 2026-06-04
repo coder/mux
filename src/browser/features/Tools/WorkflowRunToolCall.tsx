@@ -143,6 +143,8 @@ function getWorkflowEventLabel(event: WorkflowRunEvent): string {
       return event.message;
     case "task":
       return `${event.stepId} / ${event.taskId} / ${event.status}`;
+    case "patch":
+      return `${event.stepId} / ${event.sourceTaskId} / ${event.status}`;
     case "validation": {
       const verdict = event.success ? "passed" : "failed";
       return event.message
@@ -166,6 +168,8 @@ function getWorkflowEventDetail(event: WorkflowRunEvent): unknown {
       return event.data;
     case "result":
       return event.result;
+    case "patch":
+      return event.details;
     case "task":
     case "validation":
     case "error":
@@ -180,6 +184,13 @@ function getEventTone(event: WorkflowRunEvent): "normal" | "success" | "warning"
   }
   if (event.type === "validation") {
     return event.success ? "success" : "warning";
+  }
+  if (event.type === "patch") {
+    return event.status === "applied"
+      ? "success"
+      : event.status === "started"
+        ? "normal"
+        : "warning";
   }
   if (event.type === "result") {
     return "success";

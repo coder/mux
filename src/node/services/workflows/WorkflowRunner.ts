@@ -1,4 +1,5 @@
 import { StructuredTaskOutputSchema, WorkflowResultSchema } from "@/common/orpc/schemas";
+import { TaskApplyGitPatchToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import type {
   StructuredTaskOutput,
   WorkflowResult,
@@ -41,6 +42,31 @@ export interface WorkflowAgentWaitOptions {
 
 export type WorkflowAgentResult = StructuredTaskOutput & { taskId: string };
 
+export type WorkflowApplyPatchStatus = "applied" | "conflict" | "failed";
+
+export interface WorkflowApplyPatchSpec {
+  id: string;
+  sourceTaskId: string;
+  target: "parent";
+  projectPath?: string;
+  threeWay: boolean;
+  force: boolean;
+}
+
+export interface WorkflowApplyPatchResult {
+  success: boolean;
+  status: WorkflowApplyPatchStatus;
+  taskId: string;
+  dryRun?: boolean;
+  projectResults?: unknown;
+  appliedCommits?: unknown;
+  headCommitSha?: string;
+  conflictPaths?: string[];
+  failedPatchSubject?: string;
+  error?: string;
+  note?: string;
+}
+
 export interface WorkflowTaskAdapter {
   runAgent(
     spec: WorkflowAgentSpec,
@@ -52,6 +78,10 @@ export interface WorkflowTaskAdapter {
     spec: WorkflowAgentSpec,
     waitOptions?: WorkflowAgentWaitOptions
   ): Promise<WorkflowAgentResult>;
+  applyPatch?(
+    spec: WorkflowApplyPatchSpec,
+    options?: { abortSignal?: AbortSignal }
+  ): Promise<unknown>;
   interruptRun?(): Promise<void>;
 }
 
@@ -311,6 +341,19 @@ export class WorkflowRunner {
             throw error;
           }
         });
+        setupRuntime.registerFunction("__workflowApplyPatch", async (rawSpec) => {
+          try {
+            return await this.runApplyPatchStep(runId, sequence, rawSpec, {
+              abortSignal: setupRuntime.getAbortSignal(),
+              leaseGuard,
+            });
+          } catch (error) {
+            if (isForegroundWaitBackgroundedError(error)) {
+              await markBackgrounded();
+            }
+            throw error;
+          }
+        });
         setupRuntime.registerFunction("__workflowParallelAgents", async (rawSpecs) => {
           try {
             return await this.runAgentStepsInParallel(runId, sequence, rawSpecs, {
@@ -487,6 +530,115 @@ export class WorkflowRunner {
     if (run.status === "interrupted") {
       throw new Error(`Workflow run interrupted: ${runId}`);
     }
+  }
+
+  private async runApplyPatchStep(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    rawSpec: unknown,
+    options: {
+      abortSignal?: AbortSignal;
+      leaseGuard: WorkflowRunnerLeaseGuard;
+    }
+  ): Promise<WorkflowApplyPatchResult> {
+    const spec = parseWorkflowApplyPatchSpec(rawSpec);
+    assertWorkflowStepId(spec.id, "applyPatch");
+    const inputHash = hashWorkflowStepInput(spec.id, spec);
+    options.leaseGuard.throwIfLost();
+    const existingStep = await this.runStore.getStep(runId, spec.id, inputHash);
+    if (existingStep?.status === "completed" && existingStep.result?.structuredOutput != null) {
+      return normalizeWorkflowApplyPatchResult(existingStep.result.structuredOutput);
+    }
+
+    options.leaseGuard.throwIfLost();
+    await this.assertTaskBelongsToCompletedWorkflowStep(runId, spec.sourceTaskId);
+    const startedAt = existingStep?.startedAt ?? this.clock.nowIso();
+    await this.recordStepStarted(runId, {
+      stepId: spec.id,
+      inputHash,
+      taskId: spec.sourceTaskId,
+      startedAt,
+    });
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "patch",
+      at: this.clock.nowIso(),
+      stepId: spec.id,
+      sourceTaskId: spec.sourceTaskId,
+      status: "started",
+      details:
+        spec.projectPath != null
+          ? { target: spec.target, projectPath: spec.projectPath }
+          : { target: spec.target },
+    });
+
+    try {
+      if (this.taskAdapter.applyPatch == null) {
+        throw new Error("Workflow task adapter does not support applyPatch");
+      }
+      const rawResult = await this.taskAdapter.applyPatch(spec, {
+        abortSignal: options.abortSignal,
+      });
+      options.leaseGuard.throwIfLost();
+      const result = normalizeWorkflowApplyPatchResult(rawResult);
+      const reportMarkdown = formatWorkflowApplyPatchReport(result);
+      await this.recordStepCompleted(runId, {
+        stepId: spec.id,
+        inputHash,
+        taskId: spec.sourceTaskId,
+        result: {
+          reportMarkdown,
+          structuredOutput: result,
+        },
+        startedAt,
+        completedAt: this.clock.nowIso(),
+      });
+      await this.appendEvent(runId, {
+        sequence: sequence.next(),
+        type: "patch",
+        at: this.clock.nowIso(),
+        stepId: spec.id,
+        sourceTaskId: spec.sourceTaskId,
+        status: result.status,
+        details: result,
+      });
+      return result;
+    } catch (error) {
+      const message = getErrorMessage(error);
+      await this.recordStepFailed(runId, {
+        stepId: spec.id,
+        inputHash,
+        taskId: spec.sourceTaskId,
+        error: message,
+        startedAt,
+        completedAt: this.clock.nowIso(),
+      });
+      await this.appendEvent(runId, {
+        sequence: sequence.next(),
+        type: "patch",
+        at: this.clock.nowIso(),
+        stepId: spec.id,
+        sourceTaskId: spec.sourceTaskId,
+        status: "failed",
+        details: { error: message },
+      });
+      throw error;
+    }
+  }
+
+  private async assertTaskBelongsToCompletedWorkflowStep(
+    runId: string,
+    taskId: string
+  ): Promise<void> {
+    const run = await this.runStore.getRun(runId);
+    const owningStep = run.steps.find(
+      (step) =>
+        step.status === "completed" && step.taskId === taskId && step.result?.taskId === taskId
+    );
+    assert(
+      owningStep != null,
+      `applyPatch source taskId ${taskId} was not produced by a completed workflow agent step`
+    );
   }
 
   private async runAgentStep(
@@ -904,6 +1056,128 @@ class WorkflowEventSequence {
   }
 }
 
+function parseWorkflowApplyPatchSpec(rawSpec: unknown): WorkflowApplyPatchSpec {
+  assert(rawSpec != null && typeof rawSpec === "object", "applyPatch requires a spec object");
+  const spec = rawSpec as Record<string, unknown>;
+  assert(typeof spec.id === "string", "applyPatch replay boundary requires a stable id");
+
+  const sourceTaskId = getApplyPatchSourceTaskId(
+    spec.source ?? spec.from ?? spec.task ?? spec.taskId
+  );
+  assert(
+    typeof sourceTaskId === "string" && sourceTaskId.length > 0,
+    "applyPatch requires a source taskId or an agent result with taskId"
+  );
+
+  const target = spec.target ?? "parent";
+  assert(target === "parent", "applyPatch target currently supports only 'parent'");
+  if (spec.onConflict !== undefined) {
+    assert(spec.onConflict === "return", "applyPatch onConflict currently supports only 'return'");
+  }
+  if (spec.strategy !== undefined) {
+    assert(
+      spec.strategy === "three-way" || spec.strategy === "dry-run-then-apply",
+      "applyPatch strategy currently supports 'three-way' or 'dry-run-then-apply'"
+    );
+  }
+
+  const parsed: WorkflowApplyPatchSpec = {
+    id: spec.id,
+    sourceTaskId,
+    target,
+    threeWay: spec.threeWay !== false && spec.three_way !== false,
+    force: spec.force === true,
+  };
+  if (typeof spec.projectPath === "string" && spec.projectPath.length > 0) {
+    parsed.projectPath = spec.projectPath;
+  } else if (typeof spec.project_path === "string" && spec.project_path.length > 0) {
+    parsed.projectPath = spec.project_path;
+  }
+  return parsed;
+}
+
+function getApplyPatchSourceTaskId(source: unknown): string | undefined {
+  if (typeof source === "string" && source.length > 0) {
+    return source;
+  }
+  if (source != null && typeof source === "object") {
+    const taskId = (source as Record<string, unknown>).taskId;
+    if (typeof taskId === "string" && taskId.length > 0) {
+      return taskId;
+    }
+  }
+  return undefined;
+}
+
+function isWorkflowApplyPatchResult(value: unknown): value is WorkflowApplyPatchResult {
+  if (value == null || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.success === "boolean" &&
+    typeof record.taskId === "string" &&
+    (record.status === "applied" || record.status === "conflict" || record.status === "failed")
+  );
+}
+
+function normalizeWorkflowApplyPatchResult(rawResult: unknown): WorkflowApplyPatchResult {
+  if (isWorkflowApplyPatchResult(rawResult)) {
+    return rawResult;
+  }
+  const parsed = TaskApplyGitPatchToolResultSchema.parse(rawResult);
+  const conflictPaths = getConflictPathsFromPatchResult(parsed);
+  const failedPatchSubject = parsed.success ? undefined : parsed.failedPatchSubject;
+  const status: WorkflowApplyPatchStatus = parsed.success
+    ? "applied"
+    : conflictPaths.length > 0 || failedPatchSubject != null
+      ? "conflict"
+      : "failed";
+
+  return {
+    success: parsed.success,
+    status,
+    taskId: parsed.taskId,
+    ...(parsed.dryRun !== undefined ? { dryRun: parsed.dryRun } : {}),
+    ...(parsed.projectResults !== undefined ? { projectResults: parsed.projectResults } : {}),
+    ...(parsed.appliedCommits !== undefined ? { appliedCommits: parsed.appliedCommits } : {}),
+    ...(parsed.headCommitSha !== undefined ? { headCommitSha: parsed.headCommitSha } : {}),
+    ...(conflictPaths.length > 0 ? { conflictPaths } : {}),
+    ...(failedPatchSubject !== undefined ? { failedPatchSubject } : {}),
+    ...(parsed.success ? {} : { error: parsed.error }),
+    ...(parsed.note !== undefined ? { note: parsed.note } : {}),
+  };
+}
+
+function getConflictPathsFromPatchResult(
+  result: ReturnType<typeof TaskApplyGitPatchToolResultSchema.parse>
+): string[] {
+  const paths = new Set<string>();
+  const topLevelConflictPaths = result.success ? [] : (result.conflictPaths ?? []);
+  for (const path of topLevelConflictPaths) {
+    paths.add(path);
+  }
+  for (const projectResult of result.projectResults ?? []) {
+    for (const path of projectResult.conflictPaths ?? []) {
+      paths.add(path);
+    }
+  }
+  return Array.from(paths);
+}
+
+function formatWorkflowApplyPatchReport(result: WorkflowApplyPatchResult): string {
+  if (result.status === "applied") {
+    return `Patch applied from task ${result.taskId}.`;
+  }
+  if (result.status === "conflict") {
+    const paths = result.conflictPaths?.length
+      ? ` Conflicts: ${result.conflictPaths.join(", ")}.`
+      : "";
+    return `Patch from task ${result.taskId} did not apply cleanly.${paths}`;
+  }
+  return `Patch from task ${result.taskId} failed: ${result.error ?? "unknown error"}`;
+}
+
 function parseWorkflowAgentSpec(rawSpec: unknown): WorkflowAgentSpec {
   assert(rawSpec != null && typeof rawSpec === "object", "agent requires a spec object");
   const spec = rawSpec as Record<string, unknown>;
@@ -968,6 +1242,7 @@ return (async () => await __muxWorkflow({
   phase: __workflowPhase,
   log: __workflowLog,
   agent: __workflowAgent,
+  applyPatch: __workflowApplyPatch,
   parallelAgents: __workflowParallelAgents,
 }))();
 `;

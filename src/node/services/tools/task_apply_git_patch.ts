@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 import * as path from "node:path";
 
+import type { z } from "zod";
+
 import { tool } from "ai";
 
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import {
+  TaskApplyGitPatchToolArgsSchema,
   TaskApplyGitPatchToolResultSchema,
   TOOL_DEFINITIONS,
 } from "@/common/utils/tools/toolDefinitions";
@@ -25,6 +28,14 @@ import { coerceNonEmptyString, findWorkspaceEntry } from "@/node/services/taskUt
 import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
 
 import { parseToolResult, requireWorkspaceId } from "./toolUtils";
+
+export type TaskApplyGitPatchArgs = z.infer<typeof TaskApplyGitPatchToolArgsSchema>;
+export type TaskApplyGitPatchResult = z.infer<typeof TaskApplyGitPatchToolResultSchema>;
+
+export type TaskApplyGitPatchConfiguration = Pick<
+  ToolConfiguration,
+  "workspaceId" | "cwd" | "runtime" | "runtimeTempDir" | "workspaceSessionDir" | "trusted"
+>;
 
 interface AppliedCommit {
   subject: string;
@@ -888,249 +899,272 @@ async function applyProjectPatch(params: {
   };
 }
 
+export async function applyTaskGitPatchArtifact(
+  config: TaskApplyGitPatchConfiguration,
+  args: TaskApplyGitPatchArgs,
+  options: { abortSignal?: AbortSignal; allowAlreadyApplied?: boolean } = {}
+): Promise<TaskApplyGitPatchResult> {
+  const workspaceId = requireWorkspaceId(config, "task_apply_git_patch");
+  assert(config.cwd, "task_apply_git_patch requires cwd");
+  assert(config.runtimeTempDir, "task_apply_git_patch requires runtimeTempDir");
+  const workspaceSessionDir = config.workspaceSessionDir;
+  assert(workspaceSessionDir, "task_apply_git_patch requires workspaceSessionDir");
+
+  const parsedArgs = TaskApplyGitPatchToolArgsSchema.parse(args);
+  const taskId = parsedArgs.task_id;
+  const dryRun = parsedArgs.dry_run === true;
+  const threeWay = parsedArgs.three_way !== false;
+  const force = parsedArgs.force === true;
+
+  await config.runtime.ensureDir(config.runtimeTempDir, options.abortSignal);
+
+  const artifactLookup = await findGitPatchArtifactInWorkspaceOrAncestors({
+    workspaceId,
+    workspaceSessionDir,
+    childTaskId: taskId,
+  });
+
+  if (!artifactLookup) {
+    return parseToolResult(
+      TaskApplyGitPatchToolResultSchema,
+      {
+        success: false as const,
+        taskId,
+        dryRun,
+        error: "No git patch artifact found for this taskId.",
+      },
+      "task_apply_git_patch"
+    );
+  }
+
+  const artifact = artifactLookup.artifact;
+  const artifactWorkspaceId = artifactLookup.artifactWorkspaceId;
+  const artifactSessionDir = artifactLookup.artifactSessionDir;
+  const isReplay = artifactWorkspaceId !== workspaceId;
+  const artifactLookupNote = artifactLookup.note;
+
+  if (artifact.parentWorkspaceId !== artifactWorkspaceId) {
+    return parseToolResult(
+      TaskApplyGitPatchToolResultSchema,
+      {
+        success: false as const,
+        taskId,
+        dryRun,
+        error: "This patch artifact belongs to a different parent workspace.",
+        note: mergeNotes(
+          artifactLookupNote,
+          `Expected parent workspace ${artifactWorkspaceId} but artifact metadata says ${artifact.parentWorkspaceId}.`
+        ),
+      },
+      "task_apply_git_patch"
+    );
+  }
+
+  const requestedProjectPath = parsedArgs.project_path;
+  const projectArtifacts =
+    requestedProjectPath != null
+      ? artifact.projectArtifacts.filter((projectArtifact) =>
+          matchesProjectArtifactProjectPath(projectArtifact, requestedProjectPath)
+        )
+      : artifact.projectArtifacts;
+
+  if (parsedArgs.project_path != null && projectArtifacts.length === 0) {
+    return parseToolResult(
+      TaskApplyGitPatchToolResultSchema,
+      {
+        success: false as const,
+        taskId,
+        dryRun,
+        error: `No project patch artifact found for ${parsedArgs.project_path}.`,
+      },
+      "task_apply_git_patch"
+    );
+  }
+
+  if (projectArtifacts.length === 0) {
+    return parseToolResult(
+      TaskApplyGitPatchToolResultSchema,
+      {
+        success: false as const,
+        taskId,
+        dryRun,
+        error: "This task has no project patch artifacts.",
+      },
+      "task_apply_git_patch"
+    );
+  }
+
+  const repoTargetsByProjectPath = resolveCurrentWorkspaceRepoTargets({
+    workspaceId,
+    workspaceSessionDir,
+  });
+  const projectResults: TaskApplyGitPatchProjectResult[] = [];
+
+  const readyProjectArtifacts = projectArtifacts.filter(
+    (projectArtifact) => projectArtifact.status === "ready"
+  );
+  if (readyProjectArtifacts.length === 0) {
+    for (const projectArtifact of projectArtifacts) {
+      projectResults.push(summarizeNonReadyProjectArtifact({ projectArtifact }));
+    }
+
+    const legacyFields = toLegacyFields(projectResults);
+    return parseToolResult(
+      TaskApplyGitPatchToolResultSchema,
+      {
+        success: false as const,
+        taskId,
+        dryRun,
+        projectResults,
+        error: "This task has no ready project patch artifacts.",
+        note: artifactLookupNote,
+        ...legacyFields,
+      },
+      "task_apply_git_patch"
+    );
+  }
+
+  let shouldStopAfterFailure = false;
+  for (const projectArtifact of projectArtifacts) {
+    if (shouldStopAfterFailure) {
+      projectResults.push({
+        projectPath: projectArtifact.projectPath,
+        projectName: projectArtifact.projectName,
+        status: "skipped",
+        error: "Not attempted because an earlier project apply failed.",
+      });
+      continue;
+    }
+
+    if (projectArtifact.status !== "ready") {
+      projectResults.push(summarizeNonReadyProjectArtifact({ projectArtifact }));
+      if (parsedArgs.project_path != null) {
+        shouldStopAfterFailure = true;
+      }
+      continue;
+    }
+
+    if (!isReplay && projectArtifact.appliedAtMs && !force) {
+      const appliedAt = new Date(projectArtifact.appliedAtMs).toISOString();
+      if (options.allowAlreadyApplied === true) {
+        projectResults.push({
+          projectPath: projectArtifact.projectPath,
+          projectName: projectArtifact.projectName,
+          status: "applied",
+          note: `Patch already applied at ${appliedAt}; treating as applied for replay-safe workflow integration.`,
+        });
+        continue;
+      }
+      if (!dryRun) {
+        projectResults.push({
+          projectPath: projectArtifact.projectPath,
+          projectName: projectArtifact.projectName,
+          status: "failed",
+          error: `Patch already applied at ${appliedAt}.`,
+          note: "Re-run with force=true to apply again.",
+        });
+        shouldStopAfterFailure = true;
+        continue;
+      }
+    }
+
+    const repoTarget = repoTargetsByProjectPath.get(projectArtifact.projectPath);
+    const repoCwd =
+      repoTarget?.repoCwd ?? (artifact.projectArtifacts.length === 1 ? config.cwd : undefined);
+    if (!repoCwd) {
+      projectResults.push({
+        projectPath: projectArtifact.projectPath,
+        projectName: projectArtifact.projectName,
+        status: "failed",
+        error: "Could not resolve the current workspace repo root for this project.",
+      });
+      shouldStopAfterFailure = true;
+      continue;
+    }
+
+    const applyResult = await applyProjectPatch({
+      taskId,
+      workspaceId,
+      runtime: config.runtime,
+      runtimeTempDir: config.runtimeTempDir,
+      trusted: config.trusted === true,
+      repoCwd,
+      projectArtifact,
+      artifactWorkspaceId,
+      artifactSessionDir,
+      artifactLookupNote,
+      dryRun,
+      threeWay,
+      force,
+      isReplay,
+      abortSignal: options.abortSignal,
+    });
+    projectResults.push(applyResult.projectResult);
+    if (!applyResult.success) {
+      shouldStopAfterFailure = true;
+    }
+  }
+
+  const legacyFields = toLegacyFields(projectResults);
+  const attemptedReadyCount = projectArtifacts.filter(
+    (projectArtifact) => projectArtifact.status === "ready"
+  ).length;
+  const appliedReadyCount = projectResults.filter(
+    (projectResult) => projectResult.status === "applied"
+  ).length;
+  const hasApplyFailure = projectResults.some(
+    (projectResult, index) =>
+      projectResult.status === "failed" && projectArtifacts[index]?.status === "ready"
+  );
+  const overallNote = mergeNotes(
+    artifactLookupNote,
+    projectResults
+      .map((projectResult) => projectResult.note)
+      .filter((note): note is string => typeof note === "string")
+      .join("\n") || undefined
+  );
+
+  if (hasApplyFailure) {
+    const firstFailedProject = projectResults.find(
+      (projectResult) => projectResult.status === "failed"
+    );
+    return parseToolResult(
+      TaskApplyGitPatchToolResultSchema,
+      {
+        success: false as const,
+        taskId,
+        dryRun,
+        projectResults,
+        error:
+          firstFailedProject?.error ??
+          `Failed while applying project patches (${appliedReadyCount}/${attemptedReadyCount} ready projects applied).`,
+        note: overallNote,
+        ...legacyFields,
+      },
+      "task_apply_git_patch"
+    );
+  }
+
+  return parseToolResult(
+    TaskApplyGitPatchToolResultSchema,
+    {
+      success: true as const,
+      taskId,
+      projectResults,
+      dryRun,
+      note: overallNote,
+      ...(projectResults.length === 1 ? legacyFields : {}),
+    },
+    "task_apply_git_patch"
+  );
+}
+
 export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.task_apply_git_patch.description,
     inputSchema: TOOL_DEFINITIONS.task_apply_git_patch.schema,
     execute: async (args, { abortSignal }): Promise<unknown> => {
-      const workspaceId = requireWorkspaceId(config, "task_apply_git_patch");
-      assert(config.cwd, "task_apply_git_patch requires cwd");
-      assert(config.runtimeTempDir, "task_apply_git_patch requires runtimeTempDir");
-      const workspaceSessionDir = config.workspaceSessionDir;
-      assert(workspaceSessionDir, "task_apply_git_patch requires workspaceSessionDir");
-
-      const taskId = args.task_id;
-      const dryRun = args.dry_run === true;
-      const threeWay = args.three_way !== false;
-      const force = args.force === true;
-
-      const artifactLookup = await findGitPatchArtifactInWorkspaceOrAncestors({
-        workspaceId,
-        workspaceSessionDir,
-        childTaskId: taskId,
-      });
-
-      if (!artifactLookup) {
-        return parseToolResult(
-          TaskApplyGitPatchToolResultSchema,
-          {
-            success: false as const,
-            taskId,
-            dryRun,
-            error: "No git patch artifact found for this taskId.",
-          },
-          "task_apply_git_patch"
-        );
-      }
-
-      const artifact = artifactLookup.artifact;
-      const artifactWorkspaceId = artifactLookup.artifactWorkspaceId;
-      const artifactSessionDir = artifactLookup.artifactSessionDir;
-      const isReplay = artifactWorkspaceId !== workspaceId;
-      const artifactLookupNote = artifactLookup.note;
-
-      if (artifact.parentWorkspaceId !== artifactWorkspaceId) {
-        return parseToolResult(
-          TaskApplyGitPatchToolResultSchema,
-          {
-            success: false as const,
-            taskId,
-            dryRun,
-            error: "This patch artifact belongs to a different parent workspace.",
-            note: mergeNotes(
-              artifactLookupNote,
-              `Expected parent workspace ${artifactWorkspaceId} but artifact metadata says ${artifact.parentWorkspaceId}.`
-            ),
-          },
-          "task_apply_git_patch"
-        );
-      }
-
-      const requestedProjectPath = args.project_path;
-      const projectArtifacts =
-        requestedProjectPath != null
-          ? artifact.projectArtifacts.filter((projectArtifact) =>
-              matchesProjectArtifactProjectPath(projectArtifact, requestedProjectPath)
-            )
-          : artifact.projectArtifacts;
-
-      if (args.project_path != null && projectArtifacts.length === 0) {
-        return parseToolResult(
-          TaskApplyGitPatchToolResultSchema,
-          {
-            success: false as const,
-            taskId,
-            dryRun,
-            error: `No project patch artifact found for ${args.project_path}.`,
-          },
-          "task_apply_git_patch"
-        );
-      }
-
-      if (projectArtifacts.length === 0) {
-        return parseToolResult(
-          TaskApplyGitPatchToolResultSchema,
-          {
-            success: false as const,
-            taskId,
-            dryRun,
-            error: "This task has no project patch artifacts.",
-          },
-          "task_apply_git_patch"
-        );
-      }
-
-      const repoTargetsByProjectPath = resolveCurrentWorkspaceRepoTargets({
-        workspaceId,
-        workspaceSessionDir,
-      });
-      const projectResults: TaskApplyGitPatchProjectResult[] = [];
-
-      const readyProjectArtifacts = projectArtifacts.filter(
-        (projectArtifact) => projectArtifact.status === "ready"
-      );
-      if (readyProjectArtifacts.length === 0) {
-        for (const projectArtifact of projectArtifacts) {
-          projectResults.push(summarizeNonReadyProjectArtifact({ projectArtifact }));
-        }
-
-        const legacyFields = toLegacyFields(projectResults);
-        return parseToolResult(
-          TaskApplyGitPatchToolResultSchema,
-          {
-            success: false as const,
-            taskId,
-            dryRun,
-            projectResults,
-            error: "This task has no ready project patch artifacts.",
-            note: artifactLookupNote,
-            ...legacyFields,
-          },
-          "task_apply_git_patch"
-        );
-      }
-
-      let shouldStopAfterFailure = false;
-      for (const projectArtifact of projectArtifacts) {
-        if (shouldStopAfterFailure) {
-          projectResults.push({
-            projectPath: projectArtifact.projectPath,
-            projectName: projectArtifact.projectName,
-            status: "skipped",
-            error: "Not attempted because an earlier project apply failed.",
-          });
-          continue;
-        }
-
-        if (projectArtifact.status !== "ready") {
-          projectResults.push(summarizeNonReadyProjectArtifact({ projectArtifact }));
-          if (args.project_path != null) {
-            shouldStopAfterFailure = true;
-          }
-          continue;
-        }
-
-        if (!isReplay && projectArtifact.appliedAtMs && !force && !dryRun) {
-          projectResults.push({
-            projectPath: projectArtifact.projectPath,
-            projectName: projectArtifact.projectName,
-            status: "failed",
-            error: `Patch already applied at ${new Date(projectArtifact.appliedAtMs).toISOString()}.`,
-            note: "Re-run with force=true to apply again.",
-          });
-          shouldStopAfterFailure = true;
-          continue;
-        }
-
-        const repoTarget = repoTargetsByProjectPath.get(projectArtifact.projectPath);
-        const repoCwd =
-          repoTarget?.repoCwd ?? (artifact.projectArtifacts.length === 1 ? config.cwd : undefined);
-        if (!repoCwd) {
-          projectResults.push({
-            projectPath: projectArtifact.projectPath,
-            projectName: projectArtifact.projectName,
-            status: "failed",
-            error: "Could not resolve the current workspace repo root for this project.",
-          });
-          shouldStopAfterFailure = true;
-          continue;
-        }
-
-        const applyResult = await applyProjectPatch({
-          taskId,
-          workspaceId,
-          runtime: config.runtime,
-          runtimeTempDir: config.runtimeTempDir,
-          trusted: config.trusted === true,
-          repoCwd,
-          projectArtifact,
-          artifactWorkspaceId,
-          artifactSessionDir,
-          artifactLookupNote,
-          dryRun,
-          threeWay,
-          force,
-          isReplay,
-          abortSignal,
-        });
-        projectResults.push(applyResult.projectResult);
-        if (!applyResult.success) {
-          shouldStopAfterFailure = true;
-        }
-      }
-
-      const legacyFields = toLegacyFields(projectResults);
-      const attemptedReadyCount = projectArtifacts.filter(
-        (projectArtifact) => projectArtifact.status === "ready"
-      ).length;
-      const appliedReadyCount = projectResults.filter(
-        (projectResult) => projectResult.status === "applied"
-      ).length;
-      const hasApplyFailure = projectResults.some(
-        (projectResult, index) =>
-          projectResult.status === "failed" && projectArtifacts[index]?.status === "ready"
-      );
-      const overallNote = mergeNotes(
-        artifactLookupNote,
-        projectResults
-          .map((projectResult) => projectResult.note)
-          .filter((note): note is string => typeof note === "string")
-          .join("\n") || undefined
-      );
-
-      if (hasApplyFailure) {
-        const firstFailedProject = projectResults.find(
-          (projectResult) => projectResult.status === "failed"
-        );
-        return parseToolResult(
-          TaskApplyGitPatchToolResultSchema,
-          {
-            success: false as const,
-            taskId,
-            dryRun,
-            projectResults,
-            error:
-              firstFailedProject?.error ??
-              `Failed while applying project patches (${appliedReadyCount}/${attemptedReadyCount} ready projects applied).`,
-            note: overallNote,
-            ...legacyFields,
-          },
-          "task_apply_git_patch"
-        );
-      }
-
-      return parseToolResult(
-        TaskApplyGitPatchToolResultSchema,
-        {
-          success: true as const,
-          taskId,
-          projectResults,
-          dryRun,
-          note: overallNote,
-          ...(projectResults.length === 1 ? legacyFields : {}),
-        },
-        "task_apply_git_patch"
-      );
+      return await applyTaskGitPatchArtifact(config, args, { abortSignal });
     },
   });
 };

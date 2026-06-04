@@ -104,6 +104,124 @@ describe("WorkflowTaskServiceAdapter", () => {
     });
   });
 
+  test("dry-runs before applying workflow patch artifacts", async () => {
+    const create = mock(async () =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
+    const calls: unknown[] = [];
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+      getProjectTrusted: () => true,
+      applyPatchArtifact: async (args) => {
+        calls.push(args);
+        return {
+          success: true,
+          taskId: args.task_id,
+          dryRun: args.dry_run === true,
+          projectResults: [{ projectPath: "/repo", projectName: "repo", status: "applied" }],
+        };
+      },
+    });
+
+    const result = await adapter.applyPatch({
+      id: "apply-impl",
+      sourceTaskId: "task_impl",
+      target: "parent",
+      projectPath: "/repo",
+      threeWay: true,
+      force: false,
+    });
+
+    expect(calls).toEqual([
+      {
+        task_id: "task_impl",
+        project_path: "/repo",
+        three_way: true,
+        force: false,
+        dry_run: true,
+      },
+      {
+        task_id: "task_impl",
+        project_path: "/repo",
+        three_way: true,
+        force: false,
+        dry_run: false,
+      },
+    ]);
+    expect(result).toMatchObject({ success: true, dryRun: false });
+  });
+
+  test("returns dry-run conflicts without applying workflow patches", async () => {
+    const create = mock(async () =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
+    const calls: unknown[] = [];
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+      getProjectTrusted: () => true,
+      applyPatchArtifact: async (args) => {
+        calls.push(args);
+        return {
+          success: false,
+          taskId: args.task_id,
+          dryRun: true,
+          error: "Patch failed",
+          conflictPaths: ["src/auth.ts"],
+        };
+      },
+    });
+
+    const result = await adapter.applyPatch({
+      id: "apply-impl",
+      sourceTaskId: "task_impl",
+      target: "parent",
+      threeWay: true,
+      force: false,
+    });
+
+    expect(calls).toEqual([{ task_id: "task_impl", three_way: true, force: false, dry_run: true }]);
+    expect(result).toMatchObject({ success: false, conflictPaths: ["src/auth.ts"] });
+  });
+
+  test("requires live Project Trust before applying workflow patches", async () => {
+    const create = mock(async () =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
+    const applyPatchArtifact = mock(async () => ({
+      success: true as const,
+      taskId: "task_impl",
+      projectResults: [],
+    }));
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+      getProjectTrusted: () => false,
+      applyPatchArtifact,
+    });
+
+    await expect(
+      adapter.applyPatch({
+        id: "apply-impl",
+        sourceTaskId: "task_impl",
+        target: "parent",
+        threeWay: true,
+        force: false,
+      })
+    ).rejects.toThrow(/Project Trust/);
+    expect(applyPatchArtifact).not.toHaveBeenCalled();
+  });
+
   test("interrupts preserved descendant task workspaces for the parent workspace", async () => {
     const create = mock(async () =>
       Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })

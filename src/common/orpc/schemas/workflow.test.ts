@@ -40,12 +40,21 @@ describe("workflow domain schemas", () => {
           at: "2026-05-29T00:00:01.000Z",
           name: "scope",
         },
+        {
+          sequence: 3,
+          type: "patch",
+          at: "2026-05-29T00:00:02.000Z",
+          stepId: "apply-implementation",
+          sourceTaskId: "task_impl",
+          status: "applied",
+          details: { taskId: "task_impl" },
+        },
       ],
       steps: [],
     });
 
     expect(run.definition.name).toBe("deep-research");
-    expect(run.events.map((event) => event.sequence)).toEqual([1, 2]);
+    expect(run.events.map((event) => event.sequence)).toEqual([1, 2, 3]);
   });
 
   test("rejects workflow run ids that could escape the run directory", () => {

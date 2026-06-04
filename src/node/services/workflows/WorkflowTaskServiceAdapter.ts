@@ -1,11 +1,19 @@
 import assert from "@/common/utils/assert";
+import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import type { TaskCreateResult } from "@/node/services/taskService";
 import type {
   WorkflowAgentResult,
   WorkflowAgentSpec,
   WorkflowAgentWaitOptions,
+  WorkflowApplyPatchSpec,
   WorkflowTaskAdapter,
 } from "./WorkflowRunner";
+import {
+  applyTaskGitPatchArtifact,
+  type TaskApplyGitPatchArgs,
+  type TaskApplyGitPatchConfiguration,
+  type TaskApplyGitPatchResult,
+} from "@/node/services/tools/task_apply_git_patch";
 
 interface WorkflowTaskExperiments {
   programmaticToolCalling?: boolean;
@@ -43,12 +51,20 @@ interface WorkflowTaskServiceLike {
   ): Promise<string[]>;
 }
 
+type WorkflowPatchArtifactApplier = (
+  args: TaskApplyGitPatchArgs,
+  options?: { abortSignal?: AbortSignal }
+) => Promise<TaskApplyGitPatchResult>;
+
 export interface WorkflowTaskServiceAdapterOptions {
   taskService: WorkflowTaskServiceLike;
   parentWorkspaceId: string;
   workflowRunId: string;
   defaultAgentId: string;
   experiments?: WorkflowTaskExperiments;
+  patchToolConfig?: TaskApplyGitPatchConfiguration;
+  applyPatchArtifact?: WorkflowPatchArtifactApplier;
+  getProjectTrusted?: () => boolean | Promise<boolean>;
 }
 
 export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
@@ -56,6 +72,10 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
   private readonly parentWorkspaceId: string;
   private readonly workflowRunId: string;
   private readonly defaultAgentId: string;
+  private readonly patchToolConfig?: TaskApplyGitPatchConfiguration;
+  private readonly applyPatchArtifact?: WorkflowPatchArtifactApplier;
+  private readonly getProjectTrusted?: () => boolean | Promise<boolean>;
+  private readonly patchApplyMutex = new AsyncMutex();
   private readonly experiments?: WorkflowTaskExperiments;
 
   constructor(options: WorkflowTaskServiceAdapterOptions) {
@@ -75,7 +95,73 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     this.parentWorkspaceId = options.parentWorkspaceId;
     this.workflowRunId = options.workflowRunId;
     this.defaultAgentId = options.defaultAgentId;
+    this.patchToolConfig = options.patchToolConfig;
+    this.applyPatchArtifact = options.applyPatchArtifact;
+    this.getProjectTrusted = options.getProjectTrusted;
     this.experiments = options.experiments;
+  }
+
+  async applyPatch(
+    spec: WorkflowApplyPatchSpec,
+    options?: { abortSignal?: AbortSignal }
+  ): Promise<TaskApplyGitPatchResult> {
+    assert(spec.id.length > 0, "WorkflowTaskServiceAdapter.applyPatch: spec.id is required");
+    assert(
+      spec.sourceTaskId.length > 0,
+      "WorkflowTaskServiceAdapter.applyPatch: sourceTaskId is required"
+    );
+    if ((await this.getProjectTrusted?.()) !== true) {
+      throw new Error("applyPatch requires Project Trust");
+    }
+
+    // Applying one patch mutates HEAD, so complete each dry-run + real apply pair before
+    // checking the next patch. This preserves the old Orchestrator conflict model.
+    await using _lock = await this.patchApplyMutex.acquire();
+    const applyPatchArtifact = this.resolvePatchArtifactApplier();
+    const baseArgs: TaskApplyGitPatchArgs = {
+      task_id: spec.sourceTaskId,
+      ...(spec.projectPath != null ? { project_path: spec.projectPath } : {}),
+      three_way: spec.threeWay,
+      force: spec.force,
+    };
+
+    const dryRun = await applyPatchArtifact(
+      {
+        ...baseArgs,
+        dry_run: true,
+      },
+      options
+    );
+    if (!dryRun.success) {
+      return dryRun;
+    }
+
+    return await applyPatchArtifact(
+      {
+        ...baseArgs,
+        dry_run: false,
+      },
+      options
+    );
+  }
+
+  private resolvePatchArtifactApplier(): WorkflowPatchArtifactApplier {
+    if (this.applyPatchArtifact != null) {
+      return this.applyPatchArtifact;
+    }
+    const patchToolConfig = this.patchToolConfig;
+    if (patchToolConfig == null) {
+      throw new Error("WorkflowTaskServiceAdapter.applyPatch requires patch tool configuration");
+    }
+    return async (args, options) =>
+      await applyTaskGitPatchArtifact(
+        {
+          ...patchToolConfig,
+          trusted: true,
+        },
+        args,
+        { abortSignal: options?.abortSignal, allowAlreadyApplied: true }
+      );
   }
 
   async interruptRun(): Promise<void> {

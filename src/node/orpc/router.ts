@@ -201,6 +201,8 @@ async function resolveWorkflowContext(
     EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS
   );
 
+  const workflowRuntimeTempDir = runtime.normalizePath(".mux/tmp", workspacePath);
+
   return {
     projectTrusted,
     service: new WorkflowService({
@@ -219,6 +221,15 @@ async function resolveWorkflowContext(
           parentWorkspaceId: workspaceId,
           workflowRunId: runId,
           defaultAgentId: "explore",
+          patchToolConfig: {
+            workspaceId,
+            cwd: workspacePath,
+            runtime,
+            runtimeTempDir: workflowRuntimeTempDir,
+            workspaceSessionDir: context.config.getSessionDir(workspaceId),
+            trusted: projectTrusted,
+          },
+          getProjectTrusted: () => isTrustedProjectPath(context, metadata.projectPath),
           experiments: {
             dynamicWorkflows: true,
             subagentFileReports: subagentFileReportsExperimentEnabled,

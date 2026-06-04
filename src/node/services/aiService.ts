@@ -1548,6 +1548,15 @@ export class AIService extends EventEmitter {
                   parentWorkspaceId: workspaceId,
                   workflowRunId: runId,
                   defaultAgentId: "explore",
+                  patchToolConfig: {
+                    workspaceId,
+                    cwd: workspacePath,
+                    runtime,
+                    runtimeTempDir,
+                    workspaceSessionDir: this.config.getSessionDir(workspaceId),
+                    trusted: isProjectTrusted(this.config, metadata.projectPath),
+                  },
+                  getProjectTrusted: () => isProjectTrusted(this.config, metadata.projectPath),
                   experiments: {
                     ...experiments,
                     dynamicWorkflows: dynamicWorkflowsExperimentEnabled,

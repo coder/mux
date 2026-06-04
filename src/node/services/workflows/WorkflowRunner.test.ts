@@ -97,6 +97,172 @@ describe("WorkflowRunner", () => {
     });
   });
 
+  test("returns child task IDs to workflow code", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-task-id");
+    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await store.createRun({
+      id: "wfr_task_id",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+        const result = agent({ id: "implement", prompt: "Implement" });
+        return { reportMarkdown: result.taskId };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        return { taskId: "task_impl", reportMarkdown: "implemented" };
+      },
+    });
+
+    await expect(runner.run("wfr_task_id")).resolves.toEqual({ reportMarkdown: "task_impl" });
+    const run = await store.getRun("wfr_task_id");
+
+    expect(run.steps[0]?.result).toMatchObject({ taskId: "task_impl" });
+  });
+
+  test("applies workflow-owned child patches through a durable applyPatch step", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-apply-patch");
+    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await store.createRun({
+      id: "wfr_apply_patch",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent, applyPatch }) {
+        const implementation = agent({ id: "implement", prompt: "Implement" });
+        const applied = applyPatch({ id: "apply-implement", source: implementation, target: "parent" });
+        return { reportMarkdown: applied.status + ":" + applied.taskId };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const applyCalls: unknown[] = [];
+    const runner = createRunner(store, {
+      async runAgent() {
+        return { taskId: "task_impl", reportMarkdown: "implemented" };
+      },
+      async applyPatch(spec) {
+        applyCalls.push(spec);
+        return {
+          success: true,
+          taskId: spec.sourceTaskId,
+          projectResults: [{ projectPath: "/repo", projectName: "repo", status: "applied" }],
+        };
+      },
+    });
+
+    await expect(runner.run("wfr_apply_patch")).resolves.toEqual({
+      reportMarkdown: "applied:task_impl",
+    });
+    const run = await store.getRun("wfr_apply_patch");
+
+    expect(applyCalls).toEqual([
+      {
+        id: "apply-implement",
+        sourceTaskId: "task_impl",
+        target: "parent",
+        threeWay: true,
+        force: false,
+      },
+    ]);
+    expect(run.steps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ stepId: "apply-implement", status: "completed" }),
+      ])
+    );
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "patch", stepId: "apply-implement", status: "started" }),
+        expect.objectContaining({ type: "patch", stepId: "apply-implement", status: "applied" }),
+      ])
+    );
+  });
+
+  test("replays completed applyPatch steps without reapplying", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-apply-patch-replay");
+    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const agentSpec = { id: "implement", prompt: "Implement" };
+    const applySpec = {
+      id: "apply-implement",
+      sourceTaskId: "task_impl",
+      target: "parent",
+      threeWay: true,
+      force: false,
+    } as const;
+    await store.createRun({
+      id: "wfr_apply_patch_replay",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent, applyPatch }) {
+        const implementation = agent({ id: "implement", prompt: "Implement" });
+        const applied = applyPatch({ id: "apply-implement", source: implementation, target: "parent" });
+        return { reportMarkdown: applied.status + ":" + applied.taskId };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await store.recordStepCompleted("wfr_apply_patch_replay", {
+      stepId: agentSpec.id,
+      inputHash: hashWorkflowStepInput(agentSpec.id, agentSpec),
+      taskId: "task_impl",
+      result: { taskId: "task_impl", reportMarkdown: "implemented" },
+      startedAt: "2026-05-29T00:00:01.000Z",
+      completedAt: "2026-05-29T00:00:02.000Z",
+    });
+    await store.recordStepCompleted("wfr_apply_patch_replay", {
+      stepId: applySpec.id,
+      inputHash: hashWorkflowStepInput(applySpec.id, applySpec),
+      taskId: "task_impl",
+      result: {
+        reportMarkdown: "Patch applied from task task_impl.",
+        structuredOutput: { success: true, status: "applied", taskId: "task_impl" },
+      },
+      startedAt: "2026-05-29T00:00:03.000Z",
+      completedAt: "2026-05-29T00:00:04.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("agent should replay");
+      },
+      async applyPatch() {
+        throw new Error("patch should replay");
+      },
+    });
+
+    await expect(runner.run("wfr_apply_patch_replay")).resolves.toEqual({
+      reportMarkdown: "applied:task_impl",
+    });
+  });
+
+  test("rejects applyPatch sources that are not workflow-owned child tasks", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-apply-patch-unowned");
+    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await store.createRun({
+      id: "wfr_apply_patch_unowned",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ applyPatch }) {
+        return applyPatch({ id: "apply-external", source: "task_external" });
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("agent should not run");
+      },
+      async applyPatch() {
+        throw new Error("external task patch should not be applied");
+      },
+    });
+
+    await expect(runner.run("wfr_apply_patch_unowned")).rejects.toThrow(
+      /was not produced by a completed workflow agent step/
+    );
+  });
+
   test("marks run failed when runtime setup throws after starting", async () => {
     using tmp = new DisposableTempDir("workflow-runner-runtime-setup");
     const store = await createRunStore(tmp.path);

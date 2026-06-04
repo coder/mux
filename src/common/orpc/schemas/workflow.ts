@@ -58,6 +58,7 @@ export const StructuredTaskOutputSchema = z.object({
   reportMarkdown: z.string(),
   title: z.string().min(1).nullable().optional(),
   structuredOutput: JsonValueSchema.optional(),
+  taskId: z.string().min(1).optional(),
 });
 
 export const WorkflowRunEventSchema = z.discriminatedUnion("type", [
@@ -88,6 +89,15 @@ export const WorkflowRunEventSchema = z.discriminatedUnion("type", [
     stepId: z.string().min(1),
     taskId: z.string().min(1),
     status: z.string().min(1),
+  }),
+  z.object({
+    sequence: z.number().int().positive(),
+    type: z.literal("patch"),
+    at: IsoDateTimeSchema,
+    stepId: z.string().min(1),
+    sourceTaskId: z.string().min(1),
+    status: z.enum(["started", "applied", "conflict", "failed"]),
+    details: JsonValueSchema.optional(),
   }),
   z.object({
     sequence: z.number().int().positive(),
