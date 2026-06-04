@@ -11,7 +11,10 @@ import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
+import type {
+  AgentRowRenderMeta,
+  WorkspaceDelegatedActivity,
+} from "@/browser/utils/ui/workspaceFiltering";
 import { cn } from "@/common/lib/utils";
 import {
   TASK_GROUP_KIND,
@@ -104,6 +107,7 @@ export interface AgentListItemProps extends AgentListItemBaseProps {
   /** Section ID this workspace belongs to (for drag-drop targeting) */
   sectionId?: string;
   rowRenderMeta?: AgentRowRenderMeta;
+  delegatedActivity?: WorkspaceDelegatedActivity;
   completedChildrenExpanded?: boolean;
   onToggleCompletedChildren?: (workspaceId: string) => void;
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
@@ -150,6 +154,7 @@ function getVisualState(opts: {
   isArchiving: boolean;
   isWorking: boolean;
   isStarting: boolean;
+  hasActiveDelegatedWork: boolean;
   isUnread: boolean;
   isSelected: boolean;
   hasError: boolean;
@@ -163,7 +168,7 @@ function getVisualState(opts: {
   if (opts.awaitingUserQuestion) {
     return "question";
   }
-  if (opts.isWorking || opts.isStarting || opts.isInitializing) {
+  if (opts.isWorking || opts.isStarting || opts.isInitializing || opts.hasActiveDelegatedWork) {
     return "active";
   }
   // Avoid unread flicker for the currently selected workspace while last-read
@@ -244,6 +249,50 @@ function StatusDot(props: {
           {props.overlay}
         </span>
       )}
+    </div>
+  );
+}
+
+function formatSubAgentCount(count: number, label: "active" | "queued"): string {
+  return `${count} sub-agent${count === 1 ? "" : "s"} ${label}`;
+}
+
+function formatDelegatedActivityText(activity: WorkspaceDelegatedActivity): string | null {
+  const parts: string[] = [];
+  if (activity.activeCount > 0) {
+    if (activity.workflowActiveCount > 0) {
+      parts.push("Workflow running");
+    }
+    parts.push(formatSubAgentCount(activity.activeCount, "active"));
+  } else if (activity.queuedCount > 0) {
+    if (activity.workflowQueuedCount > 0) {
+      parts.push("Workflow queued");
+    }
+    parts.push(formatSubAgentCount(activity.queuedCount, "queued"));
+  }
+
+  if (activity.activeCount > 0 && activity.queuedCount > 0) {
+    parts.push(`${activity.queuedCount} queued`);
+  }
+
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function DelegatedActivityIndicator(props: {
+  workspaceId: string;
+  activity: WorkspaceDelegatedActivity;
+}) {
+  const statusText = formatDelegatedActivityText(props.activity);
+  if (!statusText) {
+    return null;
+  }
+
+  return (
+    <div
+      className="text-muted flex min-w-0 items-center gap-1.5 text-xs leading-4"
+      data-testid={`workspace-delegated-activity-${props.workspaceId}`}
+    >
+      <span className="min-w-0 truncate">{statusText}</span>
     </div>
   );
 }
@@ -432,6 +481,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     depth,
     sectionId,
     rowRenderMeta,
+    delegatedActivity,
     completedChildrenExpanded,
     onToggleCompletedChildren,
     onSelectWorkspace,
@@ -603,6 +653,16 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     useWorkspaceStreamingStatusPhase(streamingStatusPhase);
   const isWorking = displayStreamingStatusPhase !== null && !awaitingUserQuestion;
   const hasError = lastAbortReason?.reason === "system";
+  const hasActiveDelegatedWork = (delegatedActivity?.activeCount ?? 0) > 0;
+  const delegatedStatusText = delegatedActivity
+    ? formatDelegatedActivityText(delegatedActivity)
+    : null;
+  const hasDelegatedStatusText = delegatedStatusText != null;
+  const hasOwnLiveStatusText =
+    awaitingUserQuestion ||
+    (displayStreamingStatusPhase !== null && !hasActiveDelegatedWork) ||
+    isRemoving;
+  const shouldShowDelegatedStatus = hasDelegatedStatusText && !hasOwnLiveStatusText && !hasError;
   const visualState = getVisualState({
     awaitingUserQuestion,
     isInitializing,
@@ -610,6 +670,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     isArchiving: isArchiving === true,
     isWorking,
     isStarting: displayStreamingStatusPhase === "starting",
+    hasActiveDelegatedWork,
     isUnread,
     isSelected,
     hasError,
@@ -617,6 +678,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const isSubAgentRow = rowRenderMeta?.rowKind === "subagent";
   const showsVisibleStatusDot = isStatusDotVisible(visualState, false, isSubAgentRow);
   const hasStatusText =
+    shouldShowDelegatedStatus ||
     Boolean(agentStatus) ||
     awaitingUserQuestion ||
     displayStreamingStatusPhase !== null ||
@@ -1084,6 +1146,11 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   <MessageCircleQuestionMark className="h-3 w-3 shrink-0" strokeWidth={1.8} />
                   <span className="min-w-0 truncate">Mux has a few questions</span>
                 </div>
+              ) : shouldShowDelegatedStatus && delegatedActivity ? (
+                <DelegatedActivityIndicator
+                  workspaceId={workspaceId}
+                  activity={delegatedActivity}
+                />
               ) : (
                 <WorkspaceStatusIndicator
                   workspaceId={workspaceId}

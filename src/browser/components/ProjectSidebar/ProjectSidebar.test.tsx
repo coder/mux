@@ -118,6 +118,7 @@ interface MockAgentListItemProps {
   };
   depth?: number;
   rowRenderMeta?: AgentRowRenderMeta;
+  delegatedActivity?: { activeCount: number; queuedCount: number };
   subAgentConnectorLayout?: "default" | "task-group-member";
   completedChildrenExpanded?: boolean;
   onToggleCompletedChildren?: (workspaceId: string) => void;
@@ -316,6 +317,8 @@ function installProjectSidebarTestDoubles() {
           data-row-kind={props.rowRenderMeta?.rowKind ?? "unknown"}
           data-connector-layout={props.subAgentConnectorLayout ?? "default"}
           data-completed-expanded={String(props.completedChildrenExpanded ?? false)}
+          data-delegated-active={String(props.delegatedActivity?.activeCount ?? 0)}
+          data-delegated-queued={String(props.delegatedActivity?.queuedCount ?? 0)}
         >
           <span>{displayTitle}</span>
           {hasCompletedChildren && props.onToggleCompletedChildren ? (
@@ -616,6 +619,7 @@ function createWorkspace(
     taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
     title?: string;
     bestOf?: FrontendWorkspaceMetadata["bestOf"];
+    workflowTask?: FrontendWorkspaceMetadata["workflowTask"];
   }
 ): FrontendWorkspaceMetadata {
   return {
@@ -633,6 +637,7 @@ function createWorkspace(
     parentWorkspaceId: opts?.parentWorkspaceId,
     taskStatus: opts?.taskStatus,
     bestOf: opts?.bestOf,
+    workflowTask: opts?.workflowTask,
   };
 }
 
@@ -909,6 +914,58 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       expect(view.getByTestId(agentItemTestId("child-2"))).toBeTruthy();
       expect(view.getByTestId(agentItemTestId("child-3"))).toBeTruthy();
     });
+  });
+
+  test("passes delegated activity from workflow descendants to parent rows", () => {
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const parentWorkspace = {
+      ...createWorkspace("parent", { title: "Parent workspace" }),
+      projects: singleProjectRefs,
+    };
+    const workflowChild = {
+      ...createWorkspace("workflow-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        title: "Workflow step",
+        workflowTask: { runId: "run-1", stepId: "step-1" },
+      }),
+      projects: singleProjectRefs,
+    };
+    const queuedGrandchild = {
+      ...createWorkspace("queued-grandchild", {
+        parentWorkspaceId: "workflow-child",
+        taskStatus: "queued",
+        title: "Queued follow-up",
+      }),
+      projects: singleProjectRefs,
+    };
+
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    });
+
+    const sortedWorkspacesByProject = new Map([
+      ["/projects/demo-project", [parentWorkspace, workflowChild, queuedGrandchild]],
+    ]);
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={sortedWorkspacesByProject}
+        workspaceRecency={{ parent: Date.now(), "workflow-child": Date.now() }}
+      />
+    );
+
+    const parentRow = view.getByTestId(agentItemTestId("parent"));
+    expect(parentRow.dataset.delegatedActive).toBe("1");
+    expect(parentRow.dataset.delegatedQueued).toBe("1");
   });
 
   test("renders variants groups with a shared row and labeled members when expanded", async () => {

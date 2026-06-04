@@ -114,6 +114,137 @@ export function computeWorkspaceDepthMap(
   return Object.fromEntries(depths);
 }
 
+export interface WorkspaceDelegatedActivity {
+  activeCount: number;
+  queuedCount: number;
+  workflowActiveCount: number;
+  workflowQueuedCount: number;
+}
+
+interface DelegatedActivityOptions {
+  isWorkspaceLiveActive?: (workspaceId: string) => boolean;
+}
+
+function createEmptyDelegatedActivity(): WorkspaceDelegatedActivity {
+  return {
+    activeCount: 0,
+    queuedCount: 0,
+    workflowActiveCount: 0,
+    workflowQueuedCount: 0,
+  };
+}
+
+function addDelegatedActivity(
+  target: WorkspaceDelegatedActivity,
+  source: WorkspaceDelegatedActivity
+): void {
+  target.activeCount += source.activeCount;
+  target.queuedCount += source.queuedCount;
+  target.workflowActiveCount += source.workflowActiveCount;
+  target.workflowQueuedCount += source.workflowQueuedCount;
+}
+
+function hasDelegatedActivity(activity: WorkspaceDelegatedActivity): boolean {
+  return activity.activeCount > 0 || activity.queuedCount > 0;
+}
+
+function isActiveDelegatedStatus(status: FrontendWorkspaceMetadata["taskStatus"]): boolean {
+  return status === "running" || status === "awaiting_report";
+}
+
+/**
+ * Roll active descendant task state up to parent rows for sidebar attention.
+ * The child itself is counted for its ancestors, while each child row only
+ * receives counts for its own descendants so rows don't double-count themselves.
+ */
+export function computeDelegatedActivityByWorkspaceId(
+  workspaces: readonly FrontendWorkspaceMetadata[],
+  options: DelegatedActivityOptions = {}
+): Map<string, WorkspaceDelegatedActivity> {
+  const workspaceById = new Map<string, FrontendWorkspaceMetadata>();
+  for (const workspace of workspaces) {
+    assert(
+      workspace.id.length > 0,
+      "computeDelegatedActivityByWorkspaceId: workspace id is required"
+    );
+    workspaceById.set(workspace.id, workspace);
+  }
+
+  const childrenByParentId = new Map<string, FrontendWorkspaceMetadata[]>();
+  const roots: FrontendWorkspaceMetadata[] = [];
+  for (const workspace of workspaceById.values()) {
+    const parentId = workspace.parentWorkspaceId;
+    if (!parentId || !workspaceById.has(parentId)) {
+      roots.push(workspace);
+      continue;
+    }
+
+    const children = childrenByParentId.get(parentId) ?? [];
+    children.push(workspace);
+    childrenByParentId.set(parentId, children);
+  }
+
+  const activityByWorkspaceId = new Map<string, WorkspaceDelegatedActivity>();
+  const visited = new Set<string>();
+
+  const getIsLiveActive = (workspaceId: string): boolean => {
+    try {
+      return options.isWorkspaceLiveActive?.(workspaceId) === true;
+    } catch {
+      // Sidebar store teardown can race workspace metadata updates. Ignore the
+      // live hint rather than making a malformed descendant brick rendering.
+      return false;
+    }
+  };
+
+  const traverse = (
+    workspace: FrontendWorkspaceMetadata,
+    ancestorWorkflowOwned: boolean,
+    path: Set<string>
+  ): WorkspaceDelegatedActivity => {
+    if (path.has(workspace.id)) {
+      return createEmptyDelegatedActivity();
+    }
+    if (visited.has(workspace.id)) {
+      return activityByWorkspaceId.get(workspace.id) ?? createEmptyDelegatedActivity();
+    }
+
+    path.add(workspace.id);
+    const ownWorkflowOwned = ancestorWorkflowOwned || workspace.workflowTask != null;
+    const descendantActivity = createEmptyDelegatedActivity();
+
+    for (const child of childrenByParentId.get(workspace.id) ?? []) {
+      const childWorkflowOwned = ownWorkflowOwned || child.workflowTask != null;
+      if (isActiveDelegatedStatus(child.taskStatus) || getIsLiveActive(child.id)) {
+        descendantActivity.activeCount += 1;
+        if (childWorkflowOwned) {
+          descendantActivity.workflowActiveCount += 1;
+        }
+      } else if (child.taskStatus === "queued") {
+        descendantActivity.queuedCount += 1;
+        if (childWorkflowOwned) {
+          descendantActivity.workflowQueuedCount += 1;
+        }
+      }
+
+      addDelegatedActivity(descendantActivity, traverse(child, childWorkflowOwned, path));
+    }
+
+    path.delete(workspace.id);
+    visited.add(workspace.id);
+    if (hasDelegatedActivity(descendantActivity)) {
+      activityByWorkspaceId.set(workspace.id, descendantActivity);
+    }
+    return descendantActivity;
+  };
+
+  for (const root of roots) {
+    traverse(root, root.workflowTask != null, new Set());
+  }
+
+  return activityByWorkspaceId;
+}
+
 export interface AgentRowRenderMeta {
   depth: number;
   rowKind: "primary" | "subagent";
