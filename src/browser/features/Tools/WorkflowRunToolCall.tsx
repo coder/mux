@@ -1,4 +1,5 @@
 import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { APIContext, type APIClient } from "@/browser/contexts/API";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
@@ -396,13 +397,8 @@ function WorkflowTaskRow(props: {
   const label = getWorkflowEventLabel(event);
   const taskReportMarkdown = getTaskReportMarkdown(event, props.steps);
   const canShowReport = taskReportMarkdown != null;
-  const activateTaskRow = () => {
-    if (canShowReport) {
-      setReportExpanded((isExpanded) => !isExpanded);
-      return;
-    }
-    props.onNavigate(event.taskId);
-  };
+  const reportId = `workflow-task-report-${props.row.firstEvent.sequence}-${event.taskId}`;
+  const activateTaskRow = () => props.onNavigate(event.taskId);
   const onKeyDown: React.KeyboardEventHandler<HTMLDivElement> = (keyboardEvent) => {
     if (keyboardEvent.key !== "Enter" && keyboardEvent.key !== " ") {
       return;
@@ -411,41 +407,67 @@ function WorkflowTaskRow(props: {
     activateTaskRow();
   };
 
+  const taskRow = (
+    <div
+      className="grid cursor-pointer grid-cols-[3rem_4.75rem_minmax(0,1fr)] items-center gap-2 border-l-2 border-transparent px-2 py-1 text-[10px]"
+      role="button"
+      tabIndex={0}
+      aria-label={`Open workflow task ${event.taskId}`}
+      onClick={activateTaskRow}
+      onKeyDown={onKeyDown}
+    >
+      <TooltipIfPresent
+        tooltip={
+          <WorkflowEventTooltip
+            event={props.row.firstEvent}
+            displayIndex={props.displayIndex}
+            label={label}
+          />
+        }
+        side="top"
+        align="start"
+      >
+        <span
+          className="text-muted counter-nums-mono w-fit cursor-help"
+          aria-label={`Raw event #${props.row.firstEvent.sequence}`}
+        >
+          #{props.displayIndex}
+        </span>
+      </TooltipIfPresent>
+      <span className={`w-fit font-mono uppercase ${getEventTypeClass(event)}`}>{event.type}</span>
+      <span className="text-foreground truncate">{label}</span>
+    </div>
+  );
+
   return (
     <li className="hover:bg-background/50">
-      <div
-        className={`grid cursor-pointer grid-cols-[3rem_4.75rem_minmax(0,1fr)] items-center gap-2 border-l-2 border-transparent px-2 py-1 text-[10px]`}
-        role="button"
-        tabIndex={0}
-        aria-expanded={canShowReport ? reportExpanded : undefined}
-        onClick={activateTaskRow}
-        onKeyDown={onKeyDown}
-      >
-        <TooltipIfPresent
-          tooltip={
-            <WorkflowEventTooltip
-              event={props.row.firstEvent}
-              displayIndex={props.displayIndex}
-              label={label}
-            />
-          }
-          side="top"
-          align="start"
-        >
-          <span
-            className="text-muted counter-nums-mono w-fit cursor-help"
-            aria-label={`Raw event #${props.row.firstEvent.sequence}`}
+      {canShowReport ? (
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center">
+          {taskRow}
+          <button
+            type="button"
+            className={`${WORKFLOW_ACTION_BUTTON_CLASS} mr-2 gap-1 px-1.5 py-0.5 text-[10px]`}
+            aria-controls={reportId}
+            aria-expanded={reportExpanded}
+            aria-label={`${reportExpanded ? "Hide" : "Show"} report for ${event.taskId}`}
+            onClick={() => setReportExpanded((isExpanded) => !isExpanded)}
           >
-            #{props.displayIndex}
-          </span>
-        </TooltipIfPresent>
-        <span className={`w-fit font-mono uppercase ${getEventTypeClass(event)}`}>
-          {event.type}
-        </span>
-        <span className="text-foreground truncate">{label}</span>
-      </div>
+            {reportExpanded ? (
+              <ChevronDown className="h-3 w-3" aria-hidden="true" />
+            ) : (
+              <ChevronRight className="h-3 w-3" aria-hidden="true" />
+            )}
+            Report
+          </button>
+        </div>
+      ) : (
+        taskRow
+      )}
       {reportExpanded && taskReportMarkdown != null && (
-        <div className="border-border bg-background/40 mx-2 mb-2 rounded border p-2 text-[11px]">
+        <div
+          id={reportId}
+          className="border-border bg-background/40 mx-2 mb-2 rounded border p-2 text-[11px]"
+        >
           <MarkdownRenderer content={taskReportMarkdown} />
         </div>
       )}

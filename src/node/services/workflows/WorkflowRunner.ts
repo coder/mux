@@ -9,6 +9,7 @@ import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubset } from "@/common/utils/jsonSchemaSubset";
 import type { IJSRuntime, IJSRuntimeFactory } from "@/node/services/ptc/runtime";
+import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import type { AppendWorkflowRunEventOptions, WorkflowRunStore } from "./WorkflowRunStore";
 import { assertWorkflowStepId, hashWorkflowStepInput } from "./workflowReplayKey";
 
@@ -128,6 +129,16 @@ function shouldRestartUnrecoverableStartedTask(error: unknown): boolean {
   return message === "Task not found" || message === "Task interrupted";
 }
 
+function getTaskTerminalStatusForError(
+  error: unknown,
+  abortSignal?: AbortSignal
+): "failed" | "interrupted" {
+  if (abortSignal?.aborted === true || getErrorMessage(error) === "Task interrupted") {
+    return "interrupted";
+  }
+  return "failed";
+}
+
 function isRetryableAgentOutputError(error: unknown): boolean {
   return error instanceof WorkflowAgentOutputValidationError;
 }
@@ -192,7 +203,7 @@ export class WorkflowRunner {
   private readonly taskAdapter: WorkflowTaskAdapter;
   private readonly runnerId: string;
   private readonly clock: WorkflowRunnerClock;
-  private readonly taskStartedEventMutex = new AsyncMutex();
+  private readonly taskEventMutex = new AsyncMutex();
 
   constructor(options: WorkflowRunnerOptions) {
     assert(options.runnerId.length > 0, "WorkflowRunner: runnerId is required");
@@ -658,6 +669,13 @@ export class WorkflowRunner {
     options.leaseGuard.throwIfLost();
     const existingStep = await this.runStore.getStep(runId, spec.id, inputHash);
     if (existingStep?.status === "completed" && existingStep.result != null) {
+      if (existingStep.taskId != null) {
+        options.leaseGuard.throwIfLost();
+        await this.recordTaskCompletedEventIfMissing(runId, sequence, {
+          stepId: spec.id,
+          taskId: existingStep.taskId,
+        });
+      }
       return existingStep.result;
     }
 
@@ -711,6 +729,13 @@ export class WorkflowRunner {
     for (const [index, step] of parsedSteps.entries()) {
       const existingStep = existingSteps[index];
       if (existingStep?.status === "completed" && existingStep.result != null) {
+        if (existingStep.taskId != null) {
+          options.leaseGuard.throwIfLost();
+          await this.recordTaskCompletedEventIfMissing(runId, sequence, {
+            stepId: step.spec.id,
+            taskId: existingStep.taskId,
+          });
+        }
         results[index] = existingStep.result;
         continue;
       }
@@ -911,6 +936,14 @@ export class WorkflowRunner {
       try {
         return await this.taskAdapter.waitForAgentTask(step.taskId, step.spec, step.waitOptions);
       } catch (error) {
+        if (!isForegroundWaitBackgroundedError(error)) {
+          step.leaseGuard.throwIfLost();
+          await this.recordTaskTerminalEventIfMissing(runId, sequence, {
+            stepId: step.spec.id,
+            taskId: step.taskId,
+            status: getTaskTerminalStatusForError(error, step.waitOptions?.abortSignal),
+          });
+        }
         if (!shouldRestartUnrecoverableStartedTask(error)) {
           throw error;
         }
@@ -919,26 +952,39 @@ export class WorkflowRunner {
 
     step.leaseGuard.throwIfLost();
     let recordedTaskId: string | undefined;
-    const rawResult = await this.taskAdapter.runAgent(
-      step.spec,
-      {
-        onTaskCreated: async (taskId) => {
-          step.leaseGuard.throwIfLost();
-          recordedTaskId = taskId;
-          await this.recordStepStarted(runId, {
-            stepId: step.spec.id,
-            inputHash: step.inputHash,
-            taskId,
-            startedAt: step.startedAt,
-          });
-          await this.recordTaskStartedEventIfMissing(runId, sequence, {
-            stepId: step.spec.id,
-            taskId,
-          });
+    let rawResult: WorkflowAgentResult;
+    try {
+      rawResult = await this.taskAdapter.runAgent(
+        step.spec,
+        {
+          onTaskCreated: async (taskId) => {
+            step.leaseGuard.throwIfLost();
+            recordedTaskId = taskId;
+            await this.recordStepStarted(runId, {
+              stepId: step.spec.id,
+              inputHash: step.inputHash,
+              taskId,
+              startedAt: step.startedAt,
+            });
+            await this.recordTaskStartedEventIfMissing(runId, sequence, {
+              stepId: step.spec.id,
+              taskId,
+            });
+          },
         },
-      },
-      step.waitOptions
-    );
+        step.waitOptions
+      );
+    } catch (error) {
+      if (recordedTaskId != null && !isForegroundWaitBackgroundedError(error)) {
+        step.leaseGuard.throwIfLost();
+        await this.recordTaskTerminalEventIfMissing(runId, sequence, {
+          stepId: step.spec.id,
+          taskId: recordedTaskId,
+          status: getTaskTerminalStatusForError(error, step.waitOptions?.abortSignal),
+        });
+      }
+      throw error;
+    }
     step.leaseGuard.throwIfLost();
     if (recordedTaskId == null) {
       await this.recordStepStarted(runId, {
@@ -960,30 +1006,54 @@ export class WorkflowRunner {
     sequence: WorkflowEventSequence,
     task: { stepId: string; taskId: string }
   ): Promise<void> {
-    assert(runId.length > 0, "WorkflowRunner.recordTaskStartedEventIfMissing: runId is required");
-    assert(task.stepId.length > 0, "WorkflowRunner: started task stepId is required");
-    assert(task.taskId.length > 0, "WorkflowRunner: started task taskId is required");
+    await this.recordTaskEventIfMissing(runId, sequence, { ...task, status: "started" });
+  }
 
-    await this.taskStartedEventMutex.runExclusive(async () => {
-      const run = await this.runStore.getRun(runId);
-      const alreadyRecorded = run.events.some(
-        (event) =>
-          event.type === "task" &&
-          event.status === "started" &&
-          event.stepId === task.stepId &&
-          event.taskId === task.taskId
-      );
-      if (alreadyRecorded) {
-        return;
-      }
-      await this.appendEvent(runId, {
-        sequence: sequence.next(),
-        type: "task",
-        at: this.clock.nowIso(),
-        stepId: task.stepId,
-        taskId: task.taskId,
-        status: "started",
-      });
+  private async recordTaskCompletedEventIfMissing(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    task: { stepId: string; taskId: string }
+  ): Promise<void> {
+    await this.recordTaskEventIfMissing(runId, sequence, { ...task, status: "completed" });
+  }
+
+  private async recordTaskTerminalEventIfMissing(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    task: { stepId: string; taskId: string; status: "failed" | "interrupted" }
+  ): Promise<void> {
+    await this.recordTaskEventIfMissing(runId, sequence, task);
+  }
+
+  private async recordTaskEventIfMissing(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    task: { stepId: string; taskId: string; status: string }
+  ): Promise<void> {
+    assert(runId.length > 0, "WorkflowRunner.recordTaskEventIfMissing: runId is required");
+    assert(task.stepId.length > 0, "WorkflowRunner: task event stepId is required");
+    assert(task.taskId.length > 0, "WorkflowRunner: task event taskId is required");
+    assert(task.status.length > 0, "WorkflowRunner: task event status is required");
+
+    await using _lock = await this.taskEventMutex.acquire();
+    const run = await this.runStore.getRun(runId);
+    const alreadyRecorded = run.events.some(
+      (event) =>
+        event.type === "task" &&
+        event.status === task.status &&
+        event.stepId === task.stepId &&
+        event.taskId === task.taskId
+    );
+    if (alreadyRecorded) {
+      return;
+    }
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "task",
+      at: this.clock.nowIso(),
+      stepId: task.stepId,
+      taskId: task.taskId,
+      status: task.status,
     });
   }
 
@@ -1090,24 +1160,6 @@ export class WorkflowRunner {
       `agent ${stepId} returned no taskId`
     );
     return maybeTaskId;
-  }
-}
-
-class AsyncMutex {
-  private tail: Promise<void> = Promise.resolve();
-
-  async runExclusive<T>(callback: () => Promise<T>): Promise<T> {
-    const previous = this.tail;
-    let release!: () => void;
-    this.tail = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous;
-    try {
-      return await callback();
-    } finally {
-      release();
-    }
   }
 }
 

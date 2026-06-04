@@ -443,6 +443,46 @@ describe("WorkflowRunner", () => {
     expect(taskCalls).toBe(1);
   });
 
+  test("backfills completed task events when replaying completed agent steps", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-completed-task-event-backfill");
+    const store = await createRunStore(tmp.path);
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    await store.recordStepCompleted("wfr_123", {
+      stepId: spec.id,
+      inputHash: hashWorkflowStepInput(spec.id, spec),
+      taskId: "task_completed_missing_event",
+      result: { taskId: "task_completed_missing_event", reportMarkdown: "summary" },
+      startedAt: "2026-05-29T00:00:00.500Z",
+      completedAt: "2026-05-29T00:00:00.750Z",
+    });
+    await store.appendEvent("wfr_123", {
+      sequence: 1,
+      type: "task",
+      at: "2026-05-29T00:00:00.500Z",
+      stepId: spec.id,
+      taskId: "task_completed_missing_event",
+      status: "started",
+    });
+    let taskCalls = 0;
+    const runner = createRunner(store, {
+      async runAgent() {
+        taskCalls += 1;
+        throw new Error("agent should replay");
+      },
+    });
+
+    await expect(runner.run("wfr_123")).resolves.toEqual({ reportMarkdown: "Final: summary" });
+    const taskEvents = (await store.getRun("wfr_123")).events.filter(
+      (event) => event.type === "task" && event.taskId === "task_completed_missing_event"
+    );
+
+    expect(taskCalls).toBe(0);
+    expect(taskEvents).toEqual([
+      expect.objectContaining({ status: "started" }),
+      expect.objectContaining({ status: "completed" }),
+    ]);
+  });
+
   test("reuses a recorded started task id instead of respawning on resume", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
     const store = await createRunStore(tmp.path);
@@ -552,6 +592,43 @@ describe("WorkflowRunner", () => {
       status: "completed",
       taskId: "task_recovered",
     });
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "task",
+          stepId: "summarize-topic",
+          taskId: "task_missing",
+          status: "failed",
+        }),
+        expect.objectContaining({
+          type: "task",
+          stepId: "summarize-topic",
+          taskId: "task_recovered",
+          status: "completed",
+        }),
+      ])
+    );
+  });
+
+  test("records failed task events when an agent task fails after creation", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-child-failure");
+    const store = await createRunStore(tmp.path);
+    const runner = createRunner(store, {
+      async runAgent(_spec, lifecycle) {
+        await lifecycle?.onTaskCreated?.("task_failed_after_create");
+        throw new Error("child execution failed");
+      },
+    });
+
+    await expect(runner.run("wfr_123")).rejects.toThrow("child execution failed");
+    const taskEvents = (await store.getRun("wfr_123")).events.filter(
+      (event) => event.type === "task" && event.taskId === "task_failed_after_create"
+    );
+
+    expect(taskEvents).toEqual([
+      expect.objectContaining({ status: "started" }),
+      expect.objectContaining({ status: "failed" }),
+    ]);
   });
 
   test("restarts started task records when resuming a user-interrupted run", async () => {

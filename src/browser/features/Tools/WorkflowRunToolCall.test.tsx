@@ -203,9 +203,10 @@ describe("WorkflowRunToolCall", () => {
     expect(taskEventRow.closest('[role="button"]')?.className).toContain("cursor-pointer");
     expect(taskEventRow.getAttribute("title")).toBeNull();
     expect(taskEventRow.closest("summary")).toBeNull();
-    expect(view.queryByText("Show report")).toBeNull();
+    const taskReportToggle = view.getByLabelText("Show report for task_scope");
+    expect(taskReportToggle.closest('[role="button"]')).toBeNull();
 
-    fireEvent.click(taskEventRow);
+    fireEvent.click(taskReportToggle);
 
     await waitFor(() => expect(view.container.textContent).toContain("Child task report body."), {
       timeout: 5_000,
@@ -218,7 +219,7 @@ describe("WorkflowRunToolCall", () => {
     expect(renderedText).toContain("confidence");
   });
 
-  test("coalesces task attempts, navigates running rows, and expands completed reports inline", async () => {
+  test("coalesces task attempts, navigates rows, and toggles completed reports separately", async () => {
     const navigatedTo: string[] = [];
     useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {
       navigatedTo.push(workspaceId);
@@ -321,7 +322,6 @@ describe("WorkflowRunToolCall", () => {
     fireEvent.click(view.getByText("implement / task_retry / started"));
     expect(navigatedTo).toEqual(["task_retry"]);
 
-    expect(view.queryByText("Show report")).toBeNull();
     const completedTaskControl = view
       .getByText("implement / task_live / completed")
       .closest('[role="button"]');
@@ -330,11 +330,17 @@ describe("WorkflowRunToolCall", () => {
     }
 
     fireEvent.keyDown(completedTaskControl, { key: "Enter" });
+    expect(navigatedTo).toEqual(["task_retry", "task_live"]);
+    expect(view.container.textContent).not.toContain("Completed task body.");
 
-    expect(navigatedTo).toEqual(["task_retry"]);
+    const reportToggle = view.getByLabelText("Show report for task_live");
+    expect(reportToggle.closest('[role="button"]')).toBeNull();
+    fireEvent.click(reportToggle);
+
+    expect(navigatedTo).toEqual(["task_retry", "task_live"]);
     await waitFor(() => expect(view.container.textContent).toContain("Completed task body."));
 
-    fireEvent.click(view.getByText("implement / task_live / completed"));
+    fireEvent.click(view.getByLabelText("Hide report for task_live"));
     expect(view.container.textContent).not.toContain("Completed task body.");
   });
 
