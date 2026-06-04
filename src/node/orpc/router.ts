@@ -1777,12 +1777,18 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input, signal }) => {
           assertDynamicWorkflowsEnabled(context);
           let invocationMessagePersisted: boolean | undefined;
+          let resolveInvocationPersistence: (persisted: boolean) => void = () => undefined;
+          const invocationPersistence = new Promise<boolean>((resolve) => {
+            resolveInvocationPersistence = resolve;
+          });
           const rawCommandForContinuation = input.rawCommand;
           const continuationOptions = input.continuationOptions;
           const onBackgroundRunTerminal =
             rawCommandForContinuation != null && continuationOptions != null
               ? async ({ runId, status, result, run }: WorkflowBackgroundRunTerminalEvent) => {
-                  if (invocationMessagePersisted !== true) {
+                  const persistedInvocation =
+                    invocationMessagePersisted === true ? true : await invocationPersistence;
+                  if (persistedInvocation !== true) {
                     log.warn("Skipping slash workflow continuation without persisted invocation", {
                       workspaceId: input.workspaceId,
                       runId,
@@ -1861,18 +1867,21 @@ export const router = (authToken?: string) => {
             run?: NonNullable<Awaited<ReturnType<typeof service.getRun>>>;
           }) => {
             assert(input.rawCommand != null, "Workflow invocation persistence requires rawCommand");
-            invocationMessagePersisted = await context.workspaceService.appendWorkflowRunInvocation(
-              {
-                workspaceId: input.workspaceId,
-                rawCommand: input.rawCommand,
-                name: input.name,
-                args: workflowStartArgs.args,
-                runId: details.runId,
-                status: details.status,
-                result: details.result,
-                ...(details.run != null ? { run: details.run } : {}),
-              }
-            );
+            try {
+              invocationMessagePersisted =
+                await context.workspaceService.appendWorkflowRunInvocation({
+                  workspaceId: input.workspaceId,
+                  rawCommand: input.rawCommand,
+                  name: input.name,
+                  args: workflowStartArgs.args,
+                  runId: details.runId,
+                  status: details.status,
+                  result: details.result,
+                  ...(details.run != null ? { run: details.run } : {}),
+                });
+            } finally {
+              resolveInvocationPersistence(invocationMessagePersisted === true);
+            }
           };
           const result =
             input.runInBackground === true

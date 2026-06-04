@@ -7,6 +7,7 @@ import * as path from "path";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import { Config } from "@/node/config";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
+import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import type { ORPCContext } from "./context";
 import { router } from "./router";
@@ -54,6 +55,20 @@ describe("router workspace goal validation", () => {
     expect(clearGoal).not.toHaveBeenCalled();
   });
 });
+
+async function waitForRouterCondition(
+  description: string,
+  predicate: () => boolean
+): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${description}`);
+}
 
 async function waitForRouterWorkflowStatus(
   client: {
@@ -293,6 +308,69 @@ describe("router workflow routes", () => {
         status: "running",
       })
     );
+  });
+
+  test("waits for foreground slash invocation persistence before terminal continuation", async () => {
+    fs.writeFileSync(
+      path.join(projectPath, ".mux", "workflows", "backgroundable.js"),
+      "// description: Backgroundable workflow\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+    );
+    const context = createContext({ enabled: true });
+    const workspaceService = context.workspaceService as unknown as {
+      appendWorkflowRunInvocation: ReturnType<typeof mock>;
+      isWorkflowInvocationCurrent: ReturnType<typeof mock>;
+      sendMessage: ReturnType<typeof mock>;
+    };
+    let releaseInvocationPersistence: (() => void) | undefined;
+    workspaceService.appendWorkflowRunInvocation = mock(async () => {
+      await new Promise<void>((resolve) => {
+        releaseInvocationPersistence = resolve;
+      });
+      return true;
+    });
+    workspaceService.isWorkflowInvocationCurrent = mock(async () => true);
+    workspaceService.sendMessage = mock(async () => ({ success: true, data: {} }));
+
+    let waitCalls = 0;
+    context.taskService = {
+      create: mock(async () => ({ success: true, data: { taskId: "task_slow" } })),
+      waitForAgentReport: mock(async () => {
+        waitCalls += 1;
+        if (waitCalls === 1) {
+          throw new ForegroundWaitBackgroundedError();
+        }
+        return { reportMarkdown: "done" };
+      }),
+    } as unknown as ORPCContext["taskService"];
+
+    const client = createRouterClient(router(), { context });
+    const startPromise = client.workflows.start({
+      workspaceId: "workspace-1",
+      name: "backgroundable",
+      args: { input: "slow" },
+      rawCommand: "/backgroundable slow",
+      continuationOptions: { model: "test:model", agentId: "exec" },
+    });
+
+    await waitForRouterCondition(
+      "foreground invocation persistence to start",
+      () => workspaceService.appendWorkflowRunInvocation.mock.calls.length === 1
+    );
+    await waitForRouterCondition(
+      "background resume to finish its agent wait",
+      () => waitCalls === 2
+    );
+    expect(workspaceService.sendMessage).not.toHaveBeenCalled();
+    releaseInvocationPersistence?.();
+
+    const result = await startPromise;
+    expect(result).toMatchObject({ status: "backgrounded", invocationMessagePersisted: true });
+    await waitForRouterCondition(
+      "workflow terminal continuation to send after invocation persistence",
+      () => workspaceService.sendMessage.mock.calls.length === 1
+    );
+    expect(workspaceService.sendMessage.mock.calls[0]?.[0]).toBe("workspace-1");
+    expect(workspaceService.sendMessage.mock.calls[0]?.[1]).toContain("<mux_workflow_result>");
   });
 
   test("starts a workflow in the background when requested through the API", async () => {
