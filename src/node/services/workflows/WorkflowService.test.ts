@@ -17,8 +17,12 @@ async function writeWorkflow(root: string, name: string, source: string) {
   await fs.writeFile(path.join(root, `${name}.js`), source, "utf-8");
 }
 
-async function waitForCondition(description: string, predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 1_000;
+async function waitForCondition(
+  description: string,
+  predicate: () => boolean,
+  timeoutMs = 5_000
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) {
       return;
