@@ -512,12 +512,21 @@ function collectAgentReferencedWorkflowRunIdsFromParts(
   return Array.from(runIds);
 }
 
+function isInternalResumeAutoCompactionMessage(message: MuxMessage): boolean {
+  const muxMetadata = message.metadata?.muxMetadata;
+  if (muxMetadata?.type !== "compaction-request" || muxMetadata.source !== "auto-compaction") {
+    return false;
+  }
+  return muxMetadata.parsed.followUpContent?.dispatchOptions?.source === "internal-resume";
+}
+
 function isSyntheticManualSupersessionMessage(message: MuxMessage): boolean {
   const muxMetadata = message.metadata?.muxMetadata;
   return (
     message.metadata?.synthetic === true &&
     muxMetadata?.type === "compaction-request" &&
-    muxMetadata.source === "auto-compaction"
+    muxMetadata.source === "auto-compaction" &&
+    !isInternalResumeAutoCompactionMessage(message)
   );
 }
 
@@ -673,7 +682,8 @@ export class TaskService {
 
   private async listAgentReferencedWorkflowRunIds(
     workspaceId: string,
-    currentParts: readonly unknown[]
+    currentParts: readonly unknown[],
+    currentMessageId?: string
   ): Promise<string[]> {
     assert(workspaceId.length > 0, "listAgentReferencedWorkflowRunIds requires workspaceId");
 
@@ -681,11 +691,19 @@ export class TaskService {
     const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
     let historyMessages: MuxMessage[] = [];
     let historyScanStartIndex = 0;
+    let trustCurrentParts = true;
     if (historyResult.success) {
       historyMessages = historyResult.data;
       const latestSupersessionIndex = historyMessages.findLastIndex(isWorkflowSupersessionMessage);
       if (latestSupersessionIndex !== -1) {
         historyScanStartIndex = latestSupersessionIndex + 1;
+        const currentMessageIndex =
+          currentMessageId == null
+            ? -1
+            : historyMessages.findIndex((message) => message.id === currentMessageId);
+        if (currentMessageIndex !== -1 && currentMessageIndex < latestSupersessionIndex) {
+          trustCurrentParts = false;
+        }
       }
     } else {
       log.warn("Failed to read history for workflow run references", {
@@ -704,15 +722,17 @@ export class TaskService {
       }
       if (
         latestSupersession.timestamp !== undefined &&
-        reference.createdAtMs < latestSupersession.timestamp
+        reference.createdAtMs <= latestSupersession.timestamp
       ) {
         continue;
       }
       runIds.add(reference.runId);
     }
 
-    for (const runId of collectAgentReferencedWorkflowRunIdsFromParts(currentParts, runIds)) {
-      runIds.add(runId);
+    if (trustCurrentParts) {
+      for (const runId of collectAgentReferencedWorkflowRunIdsFromParts(currentParts, runIds)) {
+        runIds.add(runId);
+      }
     }
 
     for (const message of historyMessages.slice(historyScanStartIndex)) {
@@ -3688,7 +3708,8 @@ export class TaskService {
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, workspaceId);
       const referencedWorkflowRunIds = await this.listAgentReferencedWorkflowRunIds(
         workspaceId,
-        event.parts
+        event.parts,
+        event.messageId
       );
       let activeWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
         workspaceId,
@@ -3815,13 +3836,50 @@ export class TaskService {
         { skipAutoResumeReset: true, synthetic: true, agentInitiated: true, requireIdle: true }
       );
       if (!sendResult.success && isWorkspaceBusyIdleOnlySend(sendResult.error)) {
+        activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId, {
+          excludeWorkflowTasks: true,
+        });
+        blockingTaskIds = getBlockingTaskIds(activeTaskIds);
+        activeWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
+          workspaceId,
+          activeWorkflowRunIds
+        );
+        if (blockingTaskIds.length === 0 && activeWorkflowRunIds.length === 0) {
+          this.consecutiveAutoResumes.delete(workspaceId);
+          consumeQueueBackgroundedExemptions();
+          return;
+        }
+        if (
+          this.aiService.isStreaming(workspaceId) ||
+          this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId)
+        ) {
+          if (resumeCount === 0) {
+            this.consecutiveAutoResumes.delete(workspaceId);
+          } else {
+            this.consecutiveAutoResumes.set(workspaceId, resumeCount);
+          }
+          consumeQueueBackgroundedExemptions();
+          log.debug("Skipping parent auto-resume fallback: workspace is no longer idle", {
+            workspaceId,
+          });
+          return;
+        }
+
         // AgentSession can still be in COMPLETING when StreamManager has emitted stream-end.
         // Queue this nudge rather than dropping the only await prompt for active background work.
-        sendResult = await this.workspaceService.sendMessage(workspaceId, prompt, sendOptions, {
-          skipAutoResumeReset: true,
-          synthetic: true,
-          agentInitiated: true,
-        });
+        sendResult = await this.workspaceService.sendMessage(
+          workspaceId,
+          buildBackgroundAwaitPrompt({
+            taskIds: blockingTaskIds,
+            workflowRunIds: activeWorkflowRunIds,
+          }),
+          sendOptions,
+          {
+            skipAutoResumeReset: true,
+            synthetic: true,
+            agentInitiated: true,
+          }
+        );
       }
       consumeQueueBackgroundedExemptions();
       if (!sendResult.success) {
@@ -3866,7 +3924,8 @@ export class TaskService {
 
     const taskReferencedWorkflowRunIds = await this.listAgentReferencedWorkflowRunIds(
       workspaceId,
-      event.parts
+      event.parts,
+      event.messageId
     );
     const taskActiveWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
       workspaceId,

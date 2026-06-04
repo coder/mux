@@ -287,12 +287,21 @@ function isWorkflowInvocationMessage(message: MuxMessage, runId: string): boolea
   });
 }
 
+function isInternalResumeAutoCompactionMessage(message: MuxMessage): boolean {
+  const muxMetadata = message.metadata?.muxMetadata;
+  if (muxMetadata?.type !== "compaction-request" || muxMetadata.source !== "auto-compaction") {
+    return false;
+  }
+  return muxMetadata.parsed.followUpContent?.dispatchOptions?.source === "internal-resume";
+}
+
 function isSyntheticManualSupersessionMessage(message: MuxMessage): boolean {
   const muxMetadata = message.metadata?.muxMetadata;
   return (
     message.metadata?.synthetic === true &&
     muxMetadata?.type === "compaction-request" &&
-    muxMetadata.source === "auto-compaction"
+    muxMetadata.source === "auto-compaction" &&
+    !isInternalResumeAutoCompactionMessage(message)
   );
 }
 
@@ -6191,6 +6200,10 @@ export class WorkspaceService extends EventEmitter {
           synthetic: internal?.synthetic,
           agentInitiated: internal?.agentInitiated,
         });
+
+        if (effectiveQueueDispatchMode != null && !internal?.skipAutoResumeReset) {
+          this.taskService?.resetAutoResumeCount(workspaceId);
+        }
 
         if (effectiveQueueDispatchMode === "tool-end") {
           this.taskService?.backgroundForegroundWaitsForWorkspace(workspaceId);

@@ -346,6 +346,75 @@ describe("WorkspaceService workflow invocation events", () => {
     }
   });
 
+  test("keeps workflow invocations current across mid-stream auto-compaction requests", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "workflow-currentness-midstream-compact";
+    const runId = "wfr_currentness_midstream_compact";
+    const projectPath = path.join(config.rootDir, "project");
+    try {
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: "workflow-currentness-midstream-compact",
+        projectName: "project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        aiService: createMockAIService({
+          stopStream: mock(() => Promise.resolve(Ok(undefined))),
+        }),
+        extensionMetadata: new ExtensionMetadataService(
+          path.join(config.rootDir, "extensionMetadata.json")
+        ),
+        initStateManager: {
+          ...mockInitStateManager,
+          off: mock(() => undefined as unknown as InitStateManager),
+        } as unknown as InitStateManager,
+      });
+
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+          {
+            type: "dynamic-tool",
+            toolCallId: "workflow-call-1",
+            toolName: "workflow_run",
+            state: "output-available",
+            input: { name: "demo", args: {}, run_in_background: true },
+            output: { status: "running", runId, result: null },
+          },
+        ])
+      );
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("midstream-auto-compaction", "user", "Compacting to continue", {
+          timestamp: 1_100,
+          synthetic: true,
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: {
+              followUpContent: {
+                text: "Continue",
+                model: "openai:gpt-5.2",
+                agentId: "exec",
+                dispatchOptions: { source: "internal-resume" },
+              },
+            },
+            source: "auto-compaction",
+          },
+        })
+      );
+
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(true);
+      workspaceService.disposeSession(workspaceId);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("treats on-send compaction requests as manual workflow supersession", async () => {
     const { config, historyService, cleanup } = await createTestHistoryService();
     const workspaceId = "workflow-currentness-auto-compact";
@@ -1866,6 +1935,49 @@ describe("WorkspaceService sendMessage status clearing", () => {
     expect(getAgentTaskStatus).toHaveBeenCalledWith("test-workspace");
     expect(markInterruptedTaskRunning).not.toHaveBeenCalled();
     expect(fakeSession.queueMessage).not.toHaveBeenCalled();
+  });
+
+  test("queued user messages reset auto-resume state", async () => {
+    fakeSession.isBusy.mockReturnValue(true);
+
+    const resetAutoResumeCount = mock(() => undefined);
+    workspaceService.setTaskService({
+      getAgentTaskStatus: mock(() => "running" as const),
+      resetAutoResumeCount,
+    } as unknown as TaskService);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(fakeSession.queueMessage).toHaveBeenCalled();
+    expect(resetAutoResumeCount).toHaveBeenCalledWith("test-workspace");
+  });
+
+  test("synthetic queued auto-resume messages preserve auto-resume state", async () => {
+    fakeSession.isBusy.mockReturnValue(true);
+
+    const resetAutoResumeCount = mock(() => undefined);
+    workspaceService.setTaskService({
+      getAgentTaskStatus: mock(() => "running" as const),
+      resetAutoResumeCount,
+    } as unknown as TaskService);
+
+    const result = await workspaceService.sendMessage(
+      "test-workspace",
+      "await background work",
+      {
+        model: "openai:gpt-4o-mini",
+        agentId: "exec",
+      },
+      { skipAutoResumeReset: true, synthetic: true, agentInitiated: true }
+    );
+
+    expect(result.success).toBe(true);
+    expect(fakeSession.queueMessage).toHaveBeenCalled();
+    expect(resetAutoResumeCount).not.toHaveBeenCalled();
   });
 
   test("backgrounds foreground task waits when queuing a tool-end message", async () => {
@@ -7702,8 +7814,8 @@ describe("WorkspaceService fork", () => {
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
       {} as ReturnType<typeof runtimeFactory.createRuntime>
     );
-    const orchestrateForkSpy = spyOn(forkOrchestratorModule, "orchestrateFork").mockRejectedValue(
-      new Error("runtime explosion")
+    const orchestrateForkSpy = spyOn(forkOrchestratorModule, "orchestrateFork").mockImplementation(
+      () => Promise.reject(new Error("runtime explosion"))
     );
 
     try {

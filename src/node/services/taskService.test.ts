@@ -2479,6 +2479,76 @@ describe("TaskService", () => {
     );
   });
 
+  test("does not queue parent auto-resume if follow-up turn appears during idle fallback", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-222";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const sendMessage = mock(
+      (
+        _workspaceId: string,
+        _message: string,
+        _options: unknown,
+        internal?: { requireIdle?: boolean }
+      ): Promise<Result<void, { type: string; raw: string }>> => {
+        if (internal?.requireIdle === true) {
+          return Promise.resolve(
+            Err({ type: "unknown", raw: "Workspace is busy; idle-only send was skipped." })
+          );
+        }
+        return Promise.resolve(Ok(undefined));
+      }
+    );
+    let queueChecks = 0;
+    const hasPendingQueuedOrPreparingTurn = mock(() => {
+      queueChecks += 1;
+      return queueChecks >= 3;
+    });
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService } = createWorkspaceServiceMocks({
+      sendMessage,
+      hasPendingQueuedOrPreparingTurn,
+    });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      1,
+      rootWorkspaceId,
+      expect.stringContaining(childTaskId),
+      expect.anything(),
+      expect.objectContaining({ requireIdle: true })
+    );
+  });
+
   test("does not auto-resume for an agent workflow superseded by a manual user turn", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -2600,6 +2670,143 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  test("does not trust persisted workflow refs at the same timestamp as manual supersession", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const workflowRunId = "wfr_same_ms_superseded";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [projectWorkspace(projectPath, "root", rootWorkspaceId)],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootWorkspaceId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: rootWorkspaceId,
+      definition: {
+        name: "background-research",
+        description: "Background research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+    await recordAgentWorkflowRunReference({
+      workspaceSessionDir: config.getSessionDir(rootWorkspaceId),
+      runId: workflowRunId,
+      createdAtMs: 2_000,
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+    const appendManualUser = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage("manual-user", "user", "Ignore the old workflow", { timestamp: 2_000 })
+    );
+    expect(appendManualUser.success).toBe(true);
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("ignores current workflow_run parts from a stream superseded in history", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const workflowRunId = "wfr_current_parts_stale";
+    const assistantMessageId = "assistant-before-slash";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [projectWorkspace(projectPath, "root", rootWorkspaceId)],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootWorkspaceId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: rootWorkspaceId,
+      definition: {
+        name: "background-research",
+        description: "Background research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    expect(
+      (
+        await historyService.appendToHistory(
+          rootWorkspaceId,
+          createMuxMessage(assistantMessageId, "assistant", "", { timestamp: 1_000 })
+        )
+      ).success
+    ).toBe(true);
+    expect(
+      (
+        await historyService.appendToHistory(
+          rootWorkspaceId,
+          createMuxMessage("workflow-slash-trigger", "user", "/research new topic", {
+            timestamp: 2_000,
+          })
+        )
+      ).success
+    ).toBe(true);
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: assistantMessageId,
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "workflow-call-stale",
+          toolName: "workflow_run",
+          state: "output-available",
+          input: { name: "background-research", args: {}, run_in_background: true },
+          output: { status: "running", runId: workflowRunId, result: null },
+        },
+      ],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   test("does not trust persisted workflow refs after timestamp-less manual user turns", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -2657,6 +2864,86 @@ describe("TaskService", () => {
     });
 
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("keeps workflow refs current across mid-stream auto-compaction", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const workflowRunId = "wfr_midstream_compaction_current";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [projectWorkspace(projectPath, "root", rootWorkspaceId)],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootWorkspaceId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: rootWorkspaceId,
+      definition: {
+        name: "background-research",
+        description: "Background research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+    await recordAgentWorkflowRunReference({
+      workspaceSessionDir: config.getSessionDir(rootWorkspaceId),
+      runId: workflowRunId,
+      createdAtMs: 1_000,
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+    const appendCompaction = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage("midstream-auto-compaction", "user", "Compacting to continue", {
+        timestamp: 2_000,
+        synthetic: true,
+        muxMetadata: {
+          type: "compaction-request",
+          rawCommand: "/compact",
+          parsed: {
+            followUpContent: {
+              text: "Continue",
+              model: "openai:gpt-5.2",
+              agentId: "exec",
+              dispatchOptions: { source: "internal-resume" },
+            },
+          },
+          source: "auto-compaction",
+        },
+      })
+    );
+    expect(appendCompaction.success).toBe(true);
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      rootWorkspaceId,
+      expect.stringContaining(workflowRunId),
+      expect.anything(),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
   });
 
   test("does not auto-resume after on-send compaction supersedes an agent workflow", async () => {
