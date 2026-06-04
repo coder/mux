@@ -192,6 +192,7 @@ export class WorkflowRunner {
   private readonly taskAdapter: WorkflowTaskAdapter;
   private readonly runnerId: string;
   private readonly clock: WorkflowRunnerClock;
+  private readonly taskStartedEventMutex = new AsyncMutex();
 
   constructor(options: WorkflowRunnerOptions) {
     assert(options.runnerId.length > 0, "WorkflowRunner: runnerId is required");
@@ -752,7 +753,7 @@ export class WorkflowRunner {
         abortSignal: batchAbortController.signal,
       };
       const pendingRuns = currentPending.map(async (step) => {
-        return await this.runOrResumeAgentStep(runId, {
+        return await this.runOrResumeAgentStep(runId, sequence, {
           spec:
             step.attempt === 1
               ? step.spec
@@ -838,7 +839,7 @@ export class WorkflowRunner {
     let taskId = step.taskId;
     let spec = step.spec;
     while (attempt <= WORKFLOW_AGENT_MAX_ATTEMPTS) {
-      const rawResult = await this.runOrResumeAgentStep(runId, {
+      const rawResult = await this.runOrResumeAgentStep(runId, sequence, {
         spec,
         inputHash: step.inputHash,
         startedAt,
@@ -891,6 +892,7 @@ export class WorkflowRunner {
 
   private async runOrResumeAgentStep(
     runId: string,
+    sequence: WorkflowEventSequence,
     step: {
       spec: WorkflowAgentSpec;
       inputHash: string;
@@ -902,6 +904,10 @@ export class WorkflowRunner {
   ): Promise<WorkflowAgentResult> {
     step.leaseGuard.throwIfLost();
     if (step.taskId != null && this.taskAdapter.waitForAgentTask != null) {
+      await this.recordTaskStartedEventIfMissing(runId, sequence, {
+        stepId: step.spec.id,
+        taskId: step.taskId,
+      });
       try {
         return await this.taskAdapter.waitForAgentTask(step.taskId, step.spec, step.waitOptions);
       } catch (error) {
@@ -925,6 +931,10 @@ export class WorkflowRunner {
             taskId,
             startedAt: step.startedAt,
           });
+          await this.recordTaskStartedEventIfMissing(runId, sequence, {
+            stepId: step.spec.id,
+            taskId,
+          });
         },
       },
       step.waitOptions
@@ -937,8 +947,44 @@ export class WorkflowRunner {
         taskId: rawResult.taskId,
         startedAt: step.startedAt,
       });
+      await this.recordTaskStartedEventIfMissing(runId, sequence, {
+        stepId: step.spec.id,
+        taskId: rawResult.taskId,
+      });
     }
     return rawResult;
+  }
+
+  private async recordTaskStartedEventIfMissing(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    task: { stepId: string; taskId: string }
+  ): Promise<void> {
+    assert(runId.length > 0, "WorkflowRunner.recordTaskStartedEventIfMissing: runId is required");
+    assert(task.stepId.length > 0, "WorkflowRunner: started task stepId is required");
+    assert(task.taskId.length > 0, "WorkflowRunner: started task taskId is required");
+
+    await this.taskStartedEventMutex.runExclusive(async () => {
+      const run = await this.runStore.getRun(runId);
+      const alreadyRecorded = run.events.some(
+        (event) =>
+          event.type === "task" &&
+          event.status === "started" &&
+          event.stepId === task.stepId &&
+          event.taskId === task.taskId
+      );
+      if (alreadyRecorded) {
+        return;
+      }
+      await this.appendEvent(runId, {
+        sequence: sequence.next(),
+        type: "task",
+        at: this.clock.nowIso(),
+        stepId: task.stepId,
+        taskId: task.taskId,
+        status: "started",
+      });
+    });
   }
 
   private async recordAgentResult(
@@ -1044,6 +1090,24 @@ export class WorkflowRunner {
       `agent ${stepId} returned no taskId`
     );
     return maybeTaskId;
+  }
+}
+
+class AsyncMutex {
+  private tail: Promise<void> = Promise.resolve();
+
+  async runExclusive<T>(callback: () => Promise<T>): Promise<T> {
+    const previous = this.tail;
+    let release!: () => void;
+    this.tail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await callback();
+    } finally {
+      release();
+    }
   }
 }
 
