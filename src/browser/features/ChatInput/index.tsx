@@ -295,6 +295,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
   const editingMessageForUi =
     editingMessage?.id === optimisticallyDismissedEditId ? undefined : editingMessage;
+  const isTranscriptCaughtUp =
+    variant === "workspace" ? (props.isTranscriptCaughtUp ?? false) : false;
   const isStreamStarting = variant === "workspace" ? (props.isStreamStarting ?? false) : false;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
   const [isMobileTouch, setIsMobileTouch] = useState(
@@ -1559,7 +1561,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         const workflows = await api.workflows.listDefinitions(discoveryInput);
         const discoveryWorkspaceId = variant === "workspace" && workspaceId ? workspaceId : null;
         const runs =
-          discoveryWorkspaceId != null
+          discoveryWorkspaceId != null && isTranscriptCaughtUp
             ? await api.workflows.listRuns({ workspaceId: discoveryWorkspaceId })
             : [];
         if (!isMounted || workflowsRequestIdRef.current !== requestId) {
@@ -1598,7 +1600,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return () => {
       isMounted = false;
     };
-  }, [api, variant, workspaceId, atMentionProjectPath, dynamicWorkflowsExperimentEnabled, store]);
+  }, [
+    api,
+    variant,
+    workspaceId,
+    atMentionProjectPath,
+    dynamicWorkflowsExperimentEnabled,
+    isTranscriptCaughtUp,
+    store,
+  ]);
 
   // Load agent skills for suggestions
   useEffect(() => {

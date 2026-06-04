@@ -137,6 +137,71 @@ describe("buildWorkflowRunCardMessage", () => {
     });
   });
 
+  test("uses workflow card metadata as a repairable transcript anchor", () => {
+    const run = {
+      id: "wfr_metadata_anchor",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      args: { topic: "metadata" },
+      status: "completed" as const,
+    };
+    const malformedCard = buildWorkflowRunCardMessage(
+      { name: run.definition.name, args: run.args },
+      { runId: run.id, status: "running", result: null },
+      123
+    );
+    malformedCard.metadata = {
+      historySequence: 7,
+      muxMetadata: { type: "workflow-run-card-display", runId: run.id },
+    };
+    const part = malformedCard.parts[0];
+    if (part?.type !== "dynamic-tool" || part.state !== "output-available") {
+      throw new Error("Expected workflow card dynamic tool part");
+    }
+    part.output = { status: "running" };
+
+    expect(getWorkflowRunCardProjection([malformedCard], run)).toEqual({
+      shouldProject: true,
+      existingMessage: malformedCard,
+    });
+  });
+
+  test("uses workflow trigger rows as anchors to repair missing cards", () => {
+    const run = {
+      id: "wfr_trigger_anchor",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      args: { topic: "trigger" },
+      status: "completed" as const,
+    };
+    const trigger: MuxMessage = {
+      id: "workflow-run-command-wfr_trigger_anchor",
+      role: "user",
+      parts: [{ type: "text", text: "/deep-research trigger" }],
+      metadata: {
+        historySequence: 6,
+        muxMetadata: {
+          type: "workflow-trigger-display",
+          rawCommand: "/deep-research trigger",
+          runId: run.id,
+        },
+      },
+    };
+
+    expect(getWorkflowRunCardProjection([trigger], run)).toEqual({
+      shouldProject: true,
+      existingMessage: trigger,
+    });
+  });
+
   test("projects updated terminal workflow cards while preserving the existing card slot", () => {
     const run = {
       id: "wfr_refresh",

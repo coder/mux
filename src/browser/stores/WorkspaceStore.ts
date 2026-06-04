@@ -108,6 +108,7 @@ export interface WorkspaceState {
   isStreamStarting: boolean;
   awaitingUserQuestion: boolean;
   loading: boolean;
+  isTranscriptCaughtUp: boolean;
   isHydratingTranscript: boolean;
   hasOlderHistory: boolean;
   loadingOlderHistory: boolean;
@@ -1913,6 +1914,7 @@ export class WorkspaceStore {
         isStreamStarting,
         awaitingUserQuestion: aggregator.hasAwaitingUserQuestion(),
         loading: !hasMessages && !hasRunningInitMessage && !transient.caughtUp,
+        isTranscriptCaughtUp: transient.caughtUp,
         isHydratingTranscript,
         hasOlderHistory: historyPagination.hasOlder,
         loadingOlderHistory: historyPagination.loading,

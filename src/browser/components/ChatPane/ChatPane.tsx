@@ -410,6 +410,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     isStreamStarting,
     loading,
     isHydratingTranscript,
+    isTranscriptCaughtUp,
     hasOlderHistory,
     loadingOlderHistory,
   } = workspaceState;
@@ -1524,6 +1525,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
               projectName={projectName}
               workspaceName={workspaceName}
               isStreamStarting={isStreamStarting}
+              isTranscriptCaughtUp={isTranscriptCaughtUp}
               isHydratingTranscript={isHydratingTranscript}
               runtimeConfig={runtimeConfig}
               isQueuedAgentTask={isQueuedAgentTask}
@@ -1581,6 +1583,7 @@ interface ChatInputPaneProps {
   isQueuedAgentTask: boolean;
   isCompacting: boolean;
   isStreamStarting: boolean;
+  isTranscriptCaughtUp: boolean;
   isHydratingTranscript: boolean;
   shouldShowPinnedTodoList: boolean;
   shouldShowReviewsBanner: boolean;
@@ -1729,6 +1732,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
             ? "Queued - waiting for an available parallel task slot. This will start automatically."
             : undefined
         }
+        isTranscriptCaughtUp={props.isTranscriptCaughtUp}
         isStreamStarting={props.isStreamStarting}
         isCompacting={props.isCompacting}
         editingMessage={props.editingMessage}

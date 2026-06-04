@@ -3,6 +3,8 @@ import type { MuxMessage } from "@/common/types/message";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 import assert from "@/common/utils/assert";
 import {
+  WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
+  WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
   buildWorkflowRunCardMessage,
   filterWorkflowDisplayOnlyMessages,
   type WorkflowRunCardInput,
@@ -49,11 +51,51 @@ function getProjectedWorkflowRunCardMessageId(runId: string): string {
   return `workflow-run-${runId}`;
 }
 
+function hasWorkflowRunCardMetadata(message: MuxMessage, runId: string): boolean {
+  return (
+    message.id === getProjectedWorkflowRunCardMessageId(runId) &&
+    message.role === "assistant" &&
+    message.metadata?.muxMetadata?.type === WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE &&
+    message.metadata.muxMetadata.runId === runId
+  );
+}
+
+function findWorkflowTriggerDisplayMessage(
+  messages: readonly MuxMessage[],
+  runId: string
+): MuxMessage | null {
+  return (
+    messages.find(
+      (message) =>
+        message.metadata?.muxMetadata?.type === WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE &&
+        message.metadata.muxMetadata.runId === runId
+    ) ?? null
+  );
+}
+
+function getWorkflowRunCardMetadata(
+  metadata: MuxMessage["metadata"] | undefined,
+  runId: string
+): MuxMessage["metadata"] {
+  return {
+    ...metadata,
+    muxMetadata: {
+      type: WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
+      runId,
+    },
+  };
+}
+
 export function findProjectedWorkflowRunCardMessage(
   messages: readonly MuxMessage[],
   runId: string
 ): MuxMessage | null {
   assert(runId.length > 0, "findProjectedWorkflowRunCardMessage: run id is required");
+  const metadataMatch = messages.find((message) => hasWorkflowRunCardMetadata(message, runId));
+  if (metadataMatch != null) {
+    return metadataMatch;
+  }
+
   const messageId = getProjectedWorkflowRunCardMessageId(runId);
   return (
     messages.find(
@@ -105,6 +147,11 @@ export function getWorkflowRunCardProjection(
     return { shouldProject: false, existingMessage: null };
   }
 
+  const triggerMessage = findWorkflowTriggerDisplayMessage(messages, run.id);
+  if (triggerMessage != null) {
+    return { shouldProject: true, existingMessage: triggerMessage };
+  }
+
   // A durable workflow run can outlive the chat row that launched it (for example after editing a
   // prior message truncates history). Without a current transcript anchor, projecting it would
   // resurrect discarded workflow cards at the bottom of the chat.
@@ -120,7 +167,7 @@ export function addWorkflowRunCardMessage(
   assert(workspaceId.length > 0, "addWorkflowRunCardMessage: workspaceId is required");
   const message = buildWorkflowRunCardMessage(input, result);
   if (options?.existingMessage?.metadata != null) {
-    message.metadata = options.existingMessage.metadata;
+    message.metadata = getWorkflowRunCardMetadata(options.existingMessage.metadata, result.runId);
   }
   addEphemeralMessage(workspaceId, message);
 }

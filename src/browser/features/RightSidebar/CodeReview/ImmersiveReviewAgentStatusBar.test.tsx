@@ -46,6 +46,7 @@ function buildState(workspaceId: string, input: SeedInput): WorkspaceState {
     isStreamStarting: input.isStarting ?? false,
     awaitingUserQuestion: input.awaitingUserQuestion ?? false,
     loading: false,
+    isTranscriptCaughtUp: true,
     isHydratingTranscript: false,
     hasOlderHistory: false,
     loadingOlderHistory: false,
