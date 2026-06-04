@@ -153,6 +153,16 @@ describe("built-in deep-research workflow", () => {
       "verify-claim-1",
       "synthesize-report",
     ]);
+    expect(taskCalls.map((call) => call.agentId)).toEqual([
+      "explore",
+      "explore",
+      "explore",
+      "explore",
+      "exec",
+      "exec",
+      "exec",
+      "exec",
+    ]);
     expect(taskCalls.every((call) => call.outputSchema != null)).toBe(true);
     expect(run.events.filter((event) => event.type === "phase").map((event) => event.name)).toEqual(
       [
@@ -269,6 +279,7 @@ describe("built-in deep-research workflow", () => {
       "extract-claims",
       "synthesize-report",
     ]);
+    expect(taskCalls.map((call) => call.agentId)).toEqual(["explore", "explore", "exec", "exec"]);
     expect(result).toMatchObject({
       structuredOutput: {
         sources: [],

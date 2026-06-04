@@ -12,12 +12,18 @@ export const BUILT_IN_WORKFLOW_DEFINITIONS: readonly BuiltInWorkflowDefinition[]
     description: "Coordinate delegated agents to research, verify, and synthesize a topic.",
     source: `export default function deepResearch({ args, phase, log, agent, parallelAgents }) {
   const maxFanOut = 16;
+  const exploreAgentId = "explore";
+  const reasoningAgentId = "exec";
+  // Some users configure Explore with fast/cheap models; reserve Exec for reasoning-heavy synthesis.
+  const readOnlyReasoningPrompt =
+    "This is a read-only deep-research reasoning task. Do not edit files, create commits, apply patches, push branches, or open PRs. Inspect evidence only as needed and report findings.\\n\\n";
   const topic = normalizeDeepResearchTopic(args);
 
   phase("scope", { topic });
   const scope = agent({
     id: "scope-topic",
     title: "Scope research topic",
+    agentId: exploreAgentId,
     prompt:
       "Refine this deep research topic into a focused investigation. Return concise research questions and the refined topic.\\n\\nTopic: " +
       topic,
@@ -38,6 +44,7 @@ export const BUILT_IN_WORKFLOW_DEFINITIONS: readonly BuiltInWorkflowDefinition[]
   const sources = agent({
     id: "discover-sources",
     title: "Discover high-signal sources",
+    agentId: exploreAgentId,
     prompt:
       "Find high-signal primary or directly relevant sources for this research topic. Prefer repo files, specs, primary docs, and concrete evidence over summaries. Return sources with title, url/path, and relevance.\\n\\nTopic: " +
       refinedTopic +
@@ -74,6 +81,7 @@ export const BUILT_IN_WORKFLOW_DEFINITIONS: readonly BuiltInWorkflowDefinition[]
           return {
             id: "summarize-source-" + index,
             title: "Read and summarize source " + (index + 1),
+            agentId: exploreAgentId,
             prompt:
               "Read or inspect this discovered source and summarize the evidence relevant to the research questions.\\n\\nTopic: " +
               refinedTopic +
@@ -98,7 +106,9 @@ export const BUILT_IN_WORKFLOW_DEFINITIONS: readonly BuiltInWorkflowDefinition[]
   const claims = agent({
     id: "extract-claims",
     title: "Extract claims and support",
+    agentId: reasoningAgentId,
     prompt:
+      readOnlyReasoningPrompt +
       "Extract the most important factual claims and supporting evidence from these source summaries. Return claims with support notes.\\n\\nTopic: " +
       refinedTopic +
       "\\nSummaries: " +
@@ -132,7 +142,9 @@ export const BUILT_IN_WORKFLOW_DEFINITIONS: readonly BuiltInWorkflowDefinition[]
           return {
             id: "verify-claim-" + index,
             title: "Adversarially verify claim " + (index + 1),
+            agentId: reasoningAgentId,
             prompt:
+              readOnlyReasoningPrompt +
               "Challenge this claim. Look for contradictions, missing evidence, overreach, and lower-confidence areas. Return verdict and risk.\\n\\nTopic: " +
               refinedTopic +
               "\\nClaim: " +
@@ -158,7 +170,9 @@ export const BUILT_IN_WORKFLOW_DEFINITIONS: readonly BuiltInWorkflowDefinition[]
   const final = agent({
     id: "synthesize-report",
     title: "Synthesize final deep research report",
+    agentId: reasoningAgentId,
     prompt:
+      readOnlyReasoningPrompt +
       "Write the final deep research report. Include key findings, citations/source references by title or path, uncertainty, and recommendations for follow-up. Return confidence and remaining gaps as structured output.\\n\\nTopic: " +
       refinedTopic +
       "\\nSources: " +
