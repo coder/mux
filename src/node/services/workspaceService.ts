@@ -7801,6 +7801,10 @@ export class WorkspaceService extends EventEmitter {
     };
   }
 
+  getWorkflowContinuationSendOptions(workspaceId: string): SendMessageOptions | null {
+    return this.getGoalContinuationKickoffSendOptions(workspaceId);
+  }
+
   getGoalContinuationKickoffSendOptions(workspaceId: string): SendMessageOptions | null {
     assert(
       workspaceId.trim().length > 0,

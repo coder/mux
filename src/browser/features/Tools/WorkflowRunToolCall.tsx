@@ -19,6 +19,7 @@ import type {
   WorkflowRunToolSuccessResult,
 } from "@/common/types/tools";
 import assert from "@/common/utils/assert";
+import { canRetryWorkflowFromCheckpoint } from "@/common/utils/workflowRetryEligibility";
 
 import {
   ToolContainer,
@@ -57,7 +58,21 @@ interface WorkflowRunToolCallProps {
   startedAt?: number;
 }
 
-type WorkflowRunAction = "interrupt" | "resume";
+type WorkflowRunAction = "interrupt" | "resume" | "retryFromCheckpoint";
+
+function shouldKeepWorkflowActionPolling(input: {
+  action: WorkflowRunAction;
+  run: WorkflowRunRecord;
+  baselineSequence: number;
+}): boolean {
+  if (input.run.status === "interrupted") {
+    return true;
+  }
+  if (input.action !== "retryFromCheckpoint" || input.run.status !== "failed") {
+    return false;
+  }
+  return getLatestWorkflowEventSequence(input.run) <= input.baselineSequence;
+}
 
 async function updateWorkflowRunFromAction(input: {
   api: APIClient;
@@ -67,6 +82,7 @@ async function updateWorkflowRunFromAction(input: {
   setActionError: React.Dispatch<React.SetStateAction<string | null>>;
   setRefreshedRun: React.Dispatch<React.SetStateAction<WorkflowRunRecord | null>>;
   setResumingRunId: React.Dispatch<React.SetStateAction<string | null>>;
+  baselineSequence: number;
 }) {
   input.setActionError(null);
   let resumeRequestAccepted = false;
@@ -77,16 +93,30 @@ async function updateWorkflowRunFromAction(input: {
             workspaceId: input.workspaceId,
             runId: input.runId,
           })
-        : await input.api.workflows.resume({
-            workspaceId: input.workspaceId,
-            runId: input.runId,
-          });
-    if (input.action === "resume") {
+        : input.action === "resume"
+          ? await input.api.workflows.resume({
+              workspaceId: input.workspaceId,
+              runId: input.runId,
+            })
+          : await input.api.workflows.retryFromCheckpoint({
+              workspaceId: input.workspaceId,
+              runId: input.runId,
+            });
+    if (input.action === "resume" || input.action === "retryFromCheckpoint") {
       resumeRequestAccepted = true;
       input.setResumingRunId(input.runId);
     }
     if ("id" in nextRun) {
       input.setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, nextRun));
+      if (
+        !shouldKeepWorkflowActionPolling({
+          action: input.action,
+          run: nextRun,
+          baselineSequence: input.baselineSequence,
+        })
+      ) {
+        input.setResumingRunId(null);
+      }
       return;
     }
     const refreshed = await input.api.workflows.getRun({
@@ -95,9 +125,21 @@ async function updateWorkflowRunFromAction(input: {
     });
     if (refreshed != null) {
       input.setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, refreshed));
+      if (
+        !shouldKeepWorkflowActionPolling({
+          action: input.action,
+          run: refreshed,
+          baselineSequence: input.baselineSequence,
+        })
+      ) {
+        input.setResumingRunId(null);
+      }
     }
   } catch (error) {
-    if (input.action === "resume" && !resumeRequestAccepted) {
+    if (
+      (input.action === "resume" || input.action === "retryFromCheckpoint") &&
+      !resumeRequestAccepted
+    ) {
       input.setResumingRunId(null);
     }
     input.setActionError(
@@ -525,8 +567,8 @@ function isFreshEnoughForToolCall(run: WorkflowRunRecord, startedAt: number | un
   return createdAt >= startedAt - FOREGROUND_WORKFLOW_DISCOVERY_SKEW_MS;
 }
 
-function getLatestWorkflowEventSequence(run: WorkflowRunRecord): number {
-  return run.events.reduce((maxSequence, event) => Math.max(maxSequence, event.sequence), 0);
+function getLatestWorkflowEventSequence(run: WorkflowRunRecord | null | undefined): number {
+  return run?.events.reduce((maxSequence, event) => Math.max(maxSequence, event.sequence), 0) ?? 0;
 }
 
 function compareWorkflowRunSnapshots(left: WorkflowRunRecord, right: WorkflowRunRecord): number {
@@ -639,6 +681,14 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   const successResult = isWorkflowRunSuccessResult(result) ? result : null;
   const [refreshedRun, setRefreshedRun] = useState<WorkflowRunRecord | null>(null);
   const [resumingRunId, setResumingRunId] = useState<string | null>(null);
+  const [workflowActionInFlightRunId, setWorkflowActionInFlightRunId] = useState<string | null>(
+    null
+  );
+  const workflowActionInFlightRunIdRef = useRef<string | null>(null);
+  const setWorkflowActionInFlight = (nextRunId: string | null) => {
+    workflowActionInFlightRunIdRef.current = nextRunId;
+    setWorkflowActionInFlightRunId(nextRunId);
+  };
   const baseRun = successResult?.run;
   const selectedRun = selectWorkflowRunSnapshot({
     runId: successResult?.runId,
@@ -648,6 +698,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   const runId = selectedRun.runId;
   const run = selectedRun.run;
   const displayStatus = run?.status ?? successResult?.status ?? status;
+  const displayEventSequence = getLatestWorkflowEventSequence(run);
   const resultValue = successResult?.result ?? getLatestResultEvent(run);
   const reportMarkdown = getReportMarkdown(resultValue);
   const structuredOutput = getStructuredOutput(resultValue);
@@ -680,6 +731,8 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   const [savingPromotionTarget, setSavingPromotionTarget] =
     useState<WorkflowPromotionTarget | null>(null);
   const savingPromotionTargetRef = useRef<WorkflowPromotionTarget | null>(null);
+  const resumeOrRetryPendingForRun =
+    runId != null && (resumingRunId === runId || workflowActionInFlightRunId === runId);
   const displayDefinition = promotedDefinition ?? run?.definition;
   // A uniquely discovered foreground run is actionable before the blocking tool call returns.
   const discoveredForegroundRunConfirmed =
@@ -700,7 +753,14 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     runIdentityConfirmed &&
     apiState?.api != null &&
     run?.workspaceId != null &&
-    displayStatus === "interrupted";
+    displayStatus === "interrupted" &&
+    !resumeOrRetryPendingForRun;
+  const canRetryFromCheckpoint =
+    runIdentityConfirmed &&
+    apiState?.api != null &&
+    run?.workspaceId != null &&
+    canRetryWorkflowFromCheckpoint(run) &&
+    !resumeOrRetryPendingForRun;
   const canPromote =
     runIdentityConfirmed &&
     run?.workspaceId != null &&
@@ -717,16 +777,33 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     if (apiState?.api == null || run?.workspaceId == null || runId == null) {
       return;
     }
-    await updateWorkflowRunFromAction({
-      api: apiState.api,
-      workspaceId: run.workspaceId,
-      runId,
-      action,
-      setActionError,
-      setRefreshedRun,
-      setResumingRunId,
-    });
+    const isResumeOrRetry = action === "resume" || action === "retryFromCheckpoint";
+    if (isResumeOrRetry) {
+      if (workflowActionInFlightRunIdRef.current === runId || resumingRunId === runId) {
+        return;
+      }
+      setWorkflowActionInFlight(runId);
+    }
+    try {
+      await updateWorkflowRunFromAction({
+        api: apiState.api,
+        workspaceId: run.workspaceId,
+        runId,
+        action,
+        setActionError,
+        setRefreshedRun,
+        setResumingRunId,
+        baselineSequence: getLatestWorkflowEventSequence(run),
+      });
+    } finally {
+      if (isResumeOrRetry) {
+        setWorkflowActionInFlight(null);
+      }
+    }
   };
+
+  const updateRunFromActionRef = useRef(updateRunFromAction);
+  updateRunFromActionRef.current = updateRunFromAction;
 
   const saveScratchWorkflow = (location: WorkflowPromotionTarget) => {
     const api = apiState?.api;
@@ -772,10 +849,16 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   };
 
   useEffect(() => {
-    if (resumingRunId === runId && run?.status !== "interrupted") {
+    // Checkpoint retries briefly keep showing the old failed snapshot until polling observes a
+    // post-retry event sequence, so don't clear that pending marker just because status is failed.
+    if (
+      resumingRunId === runId &&
+      run?.status !== "interrupted" &&
+      !(run?.status === "failed" && canRetryWorkflowFromCheckpoint(run))
+    ) {
       setResumingRunId(null);
     }
-  }, [resumingRunId, run?.status, runId]);
+  }, [resumingRunId, run, runId]);
 
   const saveScratchWorkflowRef = useRef(saveScratchWorkflow);
   saveScratchWorkflowRef.current = saveScratchWorkflow;
@@ -784,23 +867,6 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     if (registerCommandSource == null || runId == null || run?.workspaceId == null) {
       return;
     }
-
-    const workflowApi = apiState?.api;
-    const workspaceId = run.workspaceId;
-    const runWorkflowAction = async (action: WorkflowRunAction) => {
-      if (workflowApi == null) {
-        return;
-      }
-      await updateWorkflowRunFromAction({
-        api: workflowApi,
-        workspaceId,
-        runId,
-        action,
-        setActionError,
-        setRefreshedRun,
-        setResumingRunId,
-      });
-    };
 
     const unregister = registerCommandSource(() => {
       const subtitle = `${args.name} • ${runId}`;
@@ -812,7 +878,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
           subtitle,
           section: "Workflows",
           keywords: ["workflow", "interrupt", "stop", args.name, runId],
-          run: () => runWorkflowAction("interrupt"),
+          run: () => updateRunFromActionRef.current("interrupt"),
         });
       }
       if (canResume) {
@@ -822,7 +888,17 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
           subtitle,
           section: "Workflows",
           keywords: ["workflow", "resume", "continue", args.name, runId],
-          run: () => runWorkflowAction("resume"),
+          run: () => updateRunFromActionRef.current("resume"),
+        });
+      }
+      if (canRetryFromCheckpoint) {
+        actions.push({
+          id: `workflow:${runId}:retry-from-checkpoint`,
+          title: `Retry workflow from checkpoint: ${args.name}`,
+          subtitle,
+          section: "Workflows",
+          keywords: ["workflow", "retry", "resume", "checkpoint", args.name, runId],
+          run: () => updateRunFromActionRef.current("retryFromCheckpoint"),
         });
       }
       if (canPromote) {
@@ -861,8 +937,10 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     apiState?.api,
     args.name,
     canInterrupt,
+    canRetryFromCheckpoint,
     canPromote,
     canResume,
+    resumeOrRetryPendingForRun,
     registerCommandSource,
     run?.workspaceId,
     runId,
@@ -922,7 +1000,13 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
         });
         if (!ignore && nextRun != null) {
           setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, nextRun));
-          if (nextRun.status !== "interrupted") {
+          if (
+            !shouldKeepWorkflowActionPolling({
+              action: "retryFromCheckpoint",
+              run: nextRun,
+              baselineSequence: displayEventSequence,
+            })
+          ) {
             setResumingRunId(null);
           }
         }
@@ -939,7 +1023,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
       ignore = true;
       window.clearInterval(interval);
     };
-  }, [apiState?.api, displayStatus, resumingRunId, run?.workspaceId, runId]);
+  }, [apiState?.api, displayEventSequence, displayStatus, resumingRunId, run?.workspaceId, runId]);
 
   return (
     <ToolContainer expanded={expanded}>
@@ -982,7 +1066,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
             </WorkflowDisclosureSection>
           )}
 
-          {(canInterrupt || canResume || canPromote) && (
+          {(canInterrupt || canResume || canRetryFromCheckpoint || canPromote) && (
             <div className="mb-2 flex flex-wrap gap-2 text-[10px]">
               {canInterrupt && (
                 <button
@@ -1006,6 +1090,18 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
                   }}
                 >
                   Resume workflow
+                </button>
+              )}
+              {canRetryFromCheckpoint && (
+                <button
+                  type="button"
+                  className={WORKFLOW_ACTION_BUTTON_CLASS}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void updateRunFromAction("retryFromCheckpoint");
+                  }}
+                >
+                  Retry from checkpoint
                 </button>
               )}
               {canPromote && (

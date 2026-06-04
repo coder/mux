@@ -135,6 +135,9 @@ describe("router workflow routes", () => {
       },
       workspaceService: {
         appendWorkflowRunInvocation: mock(async () => true),
+        isWorkflowInvocationCurrent: mock(async () => false),
+        getWorkflowContinuationSendOptions: mock(() => null),
+        sendMessage: mock(async () => ({ success: true, data: undefined })),
       },
       taskService: {},
       experimentsService: {
@@ -251,6 +254,106 @@ describe("router workflow routes", () => {
       result: null,
     });
     await waitForRouterWorkflowStatus(client, "workspace-1", "wfr_api_resume", "completed");
+  });
+
+  test("retries a recoverable failed workflow through the API", async () => {
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir("workspace-1") });
+    await runStore.createRun({
+      id: "wfr_api_retry",
+      workspaceId: "workspace-1",
+      definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'retried via api' }; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendEvent("wfr_api_retry", {
+      sequence: 1,
+      type: "error",
+      at: "2026-05-29T00:00:00.750Z",
+      message: "Execution interrupted",
+    });
+    await runStore.appendStatus("wfr_api_retry", "failed", "2026-05-29T00:00:00.751Z");
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    await expect(
+      client.workflows.retryFromCheckpoint({ workspaceId: "workspace-1", runId: "wfr_api_retry" })
+    ).resolves.toEqual({
+      runId: "wfr_api_retry",
+      status: "running",
+      result: null,
+    });
+    await waitForRouterWorkflowStatus(client, "workspace-1", "wfr_api_retry", "completed");
+  });
+
+  test("continues current workflow invocations after checkpoint retry completes", async () => {
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir("workspace-1") });
+    await runStore.createRun({
+      id: "wfr_api_retry_continue",
+      workspaceId: "workspace-1",
+      definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'continued after retry' }; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendEvent("wfr_api_retry_continue", {
+      sequence: 1,
+      type: "error",
+      at: "2026-05-29T00:00:00.750Z",
+      message: "Execution interrupted",
+    });
+    await runStore.appendStatus("wfr_api_retry_continue", "failed", "2026-05-29T00:00:00.751Z");
+    const context = createContext({ enabled: true });
+    const workspaceService = context.workspaceService as unknown as {
+      isWorkflowInvocationCurrent: ReturnType<typeof mock>;
+      getWorkflowContinuationSendOptions: ReturnType<typeof mock>;
+      sendMessage: ReturnType<typeof mock>;
+    };
+    workspaceService.isWorkflowInvocationCurrent = mock(async () => true);
+    workspaceService.getWorkflowContinuationSendOptions = mock(() => ({
+      model: "test:model",
+      agentId: "exec",
+    }));
+    workspaceService.sendMessage = mock(async () => ({ success: true, data: undefined }));
+    const client = createRouterClient(router(), { context });
+
+    await expect(
+      client.workflows.retryFromCheckpoint({
+        workspaceId: "workspace-1",
+        runId: "wfr_api_retry_continue",
+      })
+    ).resolves.toEqual({
+      runId: "wfr_api_retry_continue",
+      status: "running",
+      result: null,
+    });
+    await waitForRouterCondition(
+      "checkpoint retry continuation",
+      () => workspaceService.sendMessage.mock.calls.length === 1
+    );
+
+    expect(workspaceService.sendMessage.mock.calls[0]?.[0]).toBe("workspace-1");
+    expect(workspaceService.sendMessage.mock.calls[0]?.[1]).toContain("<mux_workflow_result>");
+    expect(workspaceService.sendMessage.mock.calls[0]?.[2]).toMatchObject({
+      model: "test:model",
+      agentId: "exec",
+      skipAiSettingsPersistence: true,
+      muxMetadata: {
+        type: "workflow-result",
+        rawCommand: "workflow_run demo",
+        commandPrefix: "workflow_run",
+        runId: "wfr_api_retry_continue",
+        requestedModel: "test:model",
+      },
+    });
+    expect(workspaceService.sendMessage.mock.calls[0]?.[3]).toMatchObject({
+      skipAutoResumeReset: true,
+      synthetic: true,
+      agentInitiated: true,
+      requireIdle: true,
+      startStreamInBackground: true,
+    });
   });
 
   test("starts a trusted project-local workflow through the API", async () => {

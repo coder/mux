@@ -45,6 +45,8 @@ export interface AppendWorkflowRunEventOptions {
    * interrupt.
    */
   allowInterruptedResume?: boolean;
+  /** Only explicit failed-run checkpoint retry may reopen a failed run. */
+  allowFailedCheckpointRetry?: boolean;
   /** Fence a journal/step mutation so only the current lease owner can write it. */
   expectedLeaseOwnerId?: string;
 }
@@ -452,13 +454,18 @@ export class WorkflowRunStore {
       parsedEvent.type === "status" &&
       options.allowInterruptedResume === true &&
       parsedEvent.status === "running";
+    const isFailedCheckpointRetryEvent =
+      parsedEvent.type === "status" &&
+      options.allowFailedCheckpointRetry === true &&
+      run.status === "failed" &&
+      parsedEvent.status === "running";
     const isRepeatedInterruptedStatus =
       parsedEvent.type === "status" && parsedEvent.status === "interrupted";
     if (run.status === "interrupted" && !isInterruptedResumeEvent && !isRepeatedInterruptedStatus) {
       throw new Error(`Workflow run interrupted: ${runId}`);
     }
     if (parsedEvent.type === "status") {
-      if (isTerminalRunStatus(run.status)) {
+      if (isTerminalRunStatus(run.status) && !isFailedCheckpointRetryEvent) {
         throw new Error(
           `Cannot transition workflow run from ${run.status} to ${parsedEvent.status}`
         );

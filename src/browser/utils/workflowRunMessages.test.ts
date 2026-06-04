@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { buildWorkflowResultContextMessage } from "@/common/utils/workflowRunMessages";
 import {
   buildWorkflowRunCardMessage,
   filterWorkflowDisplayOnlyMessages,
@@ -43,6 +44,71 @@ describe("buildWorkflowRunCardMessage", () => {
       input: { name: "deep-research", args: { topic: "reload" }, run_in_background: true },
       output: { status: "completed", runId: "wfr_reload", result: { reportMarkdown: "done" }, run },
     });
+  });
+
+  test("omits stale historical errors from completed retry result context", () => {
+    const run: WorkflowRunRecord = {
+      id: "wfr_retried",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:test",
+      args: { topic: "retry" },
+      status: "completed",
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:04.000Z",
+      events: [
+        {
+          sequence: 1,
+          type: "error",
+          at: "2026-05-29T00:00:00.000Z",
+          message: "Execution interrupted",
+        },
+        {
+          sequence: 2,
+          type: "status",
+          at: "2026-05-29T00:00:01.000Z",
+          status: "failed",
+        },
+        {
+          sequence: 3,
+          type: "status",
+          at: "2026-05-29T00:00:02.000Z",
+          status: "running",
+        },
+        {
+          sequence: 4,
+          type: "result",
+          at: "2026-05-29T00:00:03.000Z",
+          result: { reportMarkdown: "retried successfully" },
+        },
+        {
+          sequence: 5,
+          type: "status",
+          at: "2026-05-29T00:00:04.000Z",
+          status: "completed",
+        },
+      ],
+      steps: [],
+    };
+
+    const message = buildWorkflowResultContextMessage({
+      rawCommand: "/deep-research retry",
+      name: "deep-research",
+      runId: run.id,
+      status: run.status,
+      result: null,
+      run,
+    });
+
+    expect(message).toContain("retried successfully");
+    expect(message).toContain('"status": "completed"');
+    expect(message).not.toContain("Execution interrupted");
   });
 
   test("filters durable workflow UI-only rows while preserving workflow results", () => {

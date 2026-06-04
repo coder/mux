@@ -1761,6 +1761,14 @@ export const workflows = {
       result: z.unknown(),
     }),
   },
+  retryFromCheckpoint: {
+    input: z.object({ workspaceId: z.string().min(1), runId: WorkflowRunIdSchema }).strict(),
+    output: z.object({
+      runId: WorkflowRunIdSchema,
+      status: WorkflowRunStatusSchema,
+      result: z.unknown(),
+    }),
+  },
   promoteScratchDefinition: {
     input: z
       .object({

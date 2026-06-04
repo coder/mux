@@ -121,6 +121,7 @@ export interface WorkflowRunnerRunOptions {
   abortSignal?: AbortSignal;
   backgroundOnMessageQueued?: boolean;
   allowResumeFromInterrupted?: boolean;
+  allowRetryFromFailedCheckpoint?: boolean;
 }
 
 interface WorkflowRunnerLeaseGuard {
@@ -316,8 +317,12 @@ export class WorkflowRunner {
         }
       }
       const resumingInterruptedRun = run.status === "interrupted";
+      const retryingFailedRun = run.status === "failed";
       if (resumingInterruptedRun && options?.allowResumeFromInterrupted !== true) {
         throw new Error(`Workflow run interrupted: ${runId}`);
+      }
+      if (retryingFailedRun && options?.allowRetryFromFailedCheckpoint !== true) {
+        throw new Error(`Workflow run failed: ${runId}`);
       }
       const ignoreStartedTaskIds = resumingInterruptedRun;
       let backgrounded: Promise<void> | null = null;
@@ -341,7 +346,10 @@ export class WorkflowRunner {
           at: this.clock.nowIso(),
           status: "running",
         },
-        { allowInterruptedResume: resumingInterruptedRun }
+        {
+          allowInterruptedResume: resumingInterruptedRun,
+          allowFailedCheckpointRetry: retryingFailedRun,
+        }
       );
 
       let runtime: IJSRuntime | undefined;

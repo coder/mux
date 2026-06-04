@@ -24,6 +24,7 @@ import type {
   WorkspaceChatMessage,
   WorkspaceStatsSnapshot,
   FrontendWorkspaceMetadataSchemaType,
+  SendMessageOptions,
 } from "@/common/orpc/types";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SshPromptEvent, SshPromptRequest } from "@/common/orpc/schemas/ssh";
@@ -140,6 +141,81 @@ function isWorkspaceBusyIdleOnlySend(error: { type: string; raw?: string }): boo
   return (
     error.type === "unknown" && error.raw?.includes(WORKSPACE_BUSY_IDLE_ONLY_SEND_MESSAGE) === true
   );
+}
+
+async function sendWorkflowRunTerminalContinuation(input: {
+  context: ORPCContext;
+  workspaceId: string;
+  rawCommand: string;
+  name: string;
+  event: WorkflowBackgroundRunTerminalEvent;
+  continuationOptions?: SendMessageOptions;
+}): Promise<void> {
+  const { context, workspaceId, rawCommand, name, event } = input;
+  const { runId, status, result, run } = event;
+  const commandPrefix = rawCommand.split(/\s+/u)[0] ?? name;
+  const workflowResultMessage = buildWorkflowResultContextMessage({
+    rawCommand,
+    name,
+    runId,
+    status,
+    result,
+    run,
+  });
+  let continuationOptions = input.continuationOptions ?? null;
+
+  for (;;) {
+    const invocationCurrent = await context.workspaceService.isWorkflowInvocationCurrent(
+      workspaceId,
+      runId
+    );
+    if (!invocationCurrent) {
+      log.debug("Skipping superseded workflow continuation", { workspaceId, runId });
+      return;
+    }
+
+    continuationOptions ??=
+      context.workspaceService.getWorkflowContinuationSendOptions(workspaceId);
+    if (continuationOptions == null) {
+      log.warn("Skipping workflow continuation without send options", { workspaceId, runId });
+      return;
+    }
+
+    const sendResult = await context.workspaceService.sendMessage(
+      workspaceId,
+      workflowResultMessage,
+      {
+        ...continuationOptions,
+        skipAiSettingsPersistence: true,
+        muxMetadata: {
+          type: WORKFLOW_RESULT_METADATA_TYPE,
+          rawCommand,
+          commandPrefix,
+          runId,
+          requestedModel: continuationOptions.model,
+        },
+      },
+      {
+        skipAutoResumeReset: true,
+        synthetic: true,
+        agentInitiated: true,
+        requireIdle: true,
+        startStreamInBackground: true,
+      }
+    );
+    if (sendResult.success) {
+      return;
+    }
+    if (!isWorkspaceBusyIdleOnlySend(sendResult.error)) {
+      log.warn("Failed to continue workflow after completion", {
+        workspaceId,
+        runId,
+        error: sendResult.error,
+      });
+      return;
+    }
+    await waitForWorkflowContinuationRetry();
+  }
 }
 
 function waitForWorkflowContinuationRetry(): Promise<void> {
@@ -1776,6 +1852,32 @@ export const router = (authToken?: string) => {
             projectTrusted,
           });
         }),
+      // Retry actions arrive from a fresh oRPC request, so rebuild the terminal continuation
+      // callback here instead of relying on the original WorkflowService instance still existing.
+      retryFromCheckpoint: t
+        .input(schemas.workflows.retryFromCheckpoint.input)
+        .output(schemas.workflows.retryFromCheckpoint.output)
+        .handler(async ({ context, input }) => {
+          const { service, projectTrusted } = await resolveWorkflowContext(
+            context,
+            input.workspaceId,
+            {
+              onBackgroundRunTerminal: (event) =>
+                sendWorkflowRunTerminalContinuation({
+                  context,
+                  workspaceId: input.workspaceId,
+                  rawCommand: `workflow_run ${event.run.definition.name}`,
+                  name: event.run.definition.name,
+                  event,
+                }),
+            }
+          );
+          return service.retryRunFromCheckpointInBackground({
+            workspaceId: input.workspaceId,
+            runId: input.runId,
+            projectTrusted,
+          });
+        }),
       promoteScratchDefinition: t
         .input(schemas.workflows.promoteScratchDefinition.input)
         .output(schemas.workflows.promoteScratchDefinition.output)
@@ -1825,74 +1927,24 @@ export const router = (authToken?: string) => {
           const continuationOptions = input.continuationOptions;
           const onBackgroundRunTerminal =
             rawCommandForContinuation != null && continuationOptions != null
-              ? async ({ runId, status, result, run }: WorkflowBackgroundRunTerminalEvent) => {
+              ? async (event: WorkflowBackgroundRunTerminalEvent) => {
                   const persistedInvocation =
                     invocationMessagePersisted === true ? true : await invocationPersistence;
                   if (persistedInvocation !== true) {
                     log.warn("Skipping slash workflow continuation without persisted invocation", {
                       workspaceId: input.workspaceId,
-                      runId,
+                      runId: event.runId,
                     });
                     return;
                   }
-                  const commandPrefix = rawCommandForContinuation.split(/\s+/u)[0] ?? input.name;
-                  const workflowResultMessage = buildWorkflowResultContextMessage({
+                  await sendWorkflowRunTerminalContinuation({
+                    context,
+                    workspaceId: input.workspaceId,
                     rawCommand: rawCommandForContinuation,
                     name: input.name,
-                    runId,
-                    status,
-                    result,
-                    run,
+                    event,
+                    continuationOptions,
                   });
-                  for (;;) {
-                    const invocationCurrent =
-                      await context.workspaceService.isWorkflowInvocationCurrent(
-                        input.workspaceId,
-                        runId
-                      );
-                    if (!invocationCurrent) {
-                      log.debug("Skipping superseded slash workflow continuation", {
-                        workspaceId: input.workspaceId,
-                        runId,
-                      });
-                      return;
-                    }
-
-                    const sendResult = await context.workspaceService.sendMessage(
-                      input.workspaceId,
-                      workflowResultMessage,
-                      {
-                        ...continuationOptions,
-                        skipAiSettingsPersistence: true,
-                        muxMetadata: {
-                          type: WORKFLOW_RESULT_METADATA_TYPE,
-                          rawCommand: rawCommandForContinuation,
-                          commandPrefix,
-                          runId,
-                          requestedModel: continuationOptions.model,
-                        },
-                      },
-                      {
-                        skipAutoResumeReset: true,
-                        synthetic: true,
-                        agentInitiated: true,
-                        requireIdle: true,
-                        startStreamInBackground: true,
-                      }
-                    );
-                    if (sendResult.success) {
-                      return;
-                    }
-                    if (!isWorkspaceBusyIdleOnlySend(sendResult.error)) {
-                      log.warn("Failed to continue slash workflow after completion", {
-                        workspaceId: input.workspaceId,
-                        runId,
-                        error: sendResult.error,
-                      });
-                      return;
-                    }
-                    await waitForWorkflowContinuationRetry();
-                  }
                 }
               : undefined;
           const { service, projectTrusted } = await resolveWorkflowContext(

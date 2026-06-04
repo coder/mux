@@ -433,6 +433,48 @@ describe("WorkflowRunner", () => {
     expect(taskCalls).toBe(1);
   });
 
+  test("requires explicit checkpoint retry permission to restart failed runs", async () => {
+    using tmp = new DisposableTempDir("workflow-runner");
+    const store = await createRunStore(tmp.path);
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    await store.recordStepStarted("wfr_123", {
+      stepId: spec.id,
+      inputHash: hashWorkflowStepInput(spec.id, spec),
+      taskId: "task_existing",
+      startedAt: "2026-05-29T00:00:00.500Z",
+    });
+    await store.appendEvent("wfr_123", {
+      sequence: 1,
+      type: "error",
+      at: "2026-05-29T00:00:00.750Z",
+      message: "Execution interrupted",
+    });
+    await store.appendStatus("wfr_123", "failed", "2026-05-29T00:00:00.751Z");
+
+    let runAgentCalls = 0;
+    const waitedFor: string[] = [];
+    const runner = createRunner(store, {
+      async runAgent() {
+        runAgentCalls += 1;
+        return { taskId: "task_duplicate", reportMarkdown: "duplicate" };
+      },
+      async waitForAgentTask(taskId) {
+        waitedFor.push(taskId);
+        return { taskId, reportMarkdown: "summary" };
+      },
+    });
+
+    await expect(runner.run("wfr_123")).rejects.toThrow(/failed/);
+    await expect(runner.run("wfr_123", { allowRetryFromFailedCheckpoint: true })).resolves.toEqual({
+      reportMarkdown: "Final: summary",
+    });
+    const run = await store.getRun("wfr_123");
+
+    expect(run.status).toBe("completed");
+    expect(waitedFor).toEqual(["task_existing"]);
+    expect(runAgentCalls).toBe(0);
+  });
+
   test("aborts without terminal writes after losing its lease", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
     const store = await createRunStore(tmp.path);

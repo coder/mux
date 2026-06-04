@@ -15,8 +15,15 @@ function getWorkflowResultValue(result: unknown, run: WorkflowRunRecord | null):
   return run?.events.findLast((event) => event.type === "result")?.result ?? result;
 }
 
-function getWorkflowError(run: WorkflowRunRecord | null): string | undefined {
-  return run?.events.findLast((event) => event.type === "error")?.message;
+function getWorkflowError(input: {
+  run: WorkflowRunRecord | null;
+  status: string;
+  resultValue: unknown;
+}): string | undefined {
+  if (input.status !== "failed" && input.resultValue != null) {
+    return undefined;
+  }
+  return input.run?.events.findLast((event) => event.type === "error")?.message;
 }
 
 function getWorkflowResultField(value: unknown, field: string): unknown {
@@ -52,6 +59,11 @@ export function buildWorkflowResultContextMessage(input: {
   const resultValue = getWorkflowResultValue(input.result, input.run);
   const reportMarkdown = getWorkflowResultField(resultValue, "reportMarkdown");
   const structuredOutput = getWorkflowResultField(resultValue, "structuredOutput");
+  const workflowError = getWorkflowError({
+    run: input.run,
+    status: input.status,
+    resultValue,
+  });
   const payload = {
     workflow: {
       name: input.name,
@@ -61,7 +73,7 @@ export function buildWorkflowResultContextMessage(input: {
     ...(typeof reportMarkdown === "string" ? { reportMarkdown } : {}),
     ...(structuredOutput !== undefined ? { structuredOutput } : {}),
     ...(resultValue != null ? { result: resultValue } : {}),
-    ...(getWorkflowError(input.run) ? { error: getWorkflowError(input.run) } : {}),
+    ...(workflowError ? { error: workflowError } : {}),
   };
 
   return [

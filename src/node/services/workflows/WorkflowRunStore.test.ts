@@ -226,6 +226,23 @@ describe("WorkflowRunStore", () => {
     await expect(store.getRun("wfr_123")).resolves.toMatchObject({ status: "completed" });
   });
 
+  test("requires explicit checkpoint retry permission to reopen failed runs", async () => {
+    using tmp = new DisposableTempDir("workflow-runs");
+    const store = await createStore(tmp.path);
+
+    await store.appendStatus("wfr_123", "running", "2026-05-29T00:00:01.000Z");
+    await store.appendStatus("wfr_123", "failed", "2026-05-29T00:00:02.000Z");
+
+    await expect(
+      store.appendStatus("wfr_123", "running", "2026-05-29T00:00:03.000Z")
+    ).rejects.toThrow(/Cannot transition/);
+    await expect(
+      store.appendStatus("wfr_123", "running", "2026-05-29T00:00:04.000Z", {
+        allowFailedCheckpointRetry: true,
+      })
+    ).resolves.toMatchObject({ status: "running" });
+  });
+
   test("reuses completed steps by stable step id and input hash", async () => {
     using tmp = new DisposableTempDir("workflow-runs");
     const store = await createStore(tmp.path);

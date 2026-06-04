@@ -1213,6 +1213,547 @@ describe("WorkflowRunToolCall", () => {
     expect(view.getByText("resumed")).toBeTruthy();
   });
 
+  test("shows retry from checkpoint for recoverable failed workflows", async () => {
+    let retried = false;
+    let getRunCalls = 0;
+    const failedRun = {
+      id: "wfr_retry",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:test",
+      args: { topic: "workflow cards" },
+      status: "failed" as const,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:01.000Z",
+      events: [
+        {
+          sequence: 1,
+          type: "error" as const,
+          at: "2026-05-29T00:00:00.000Z",
+          message: "Execution interrupted",
+        },
+        {
+          sequence: 2,
+          type: "status" as const,
+          at: "2026-05-29T00:00:01.000Z",
+          status: "failed" as const,
+        },
+      ],
+      steps: [],
+    };
+    const completedRun = {
+      ...failedRun,
+      status: "completed" as const,
+      updatedAt: "2026-05-29T00:00:02.000Z",
+      events: [
+        ...failedRun.events,
+        {
+          sequence: 3,
+          type: "status" as const,
+          at: "2026-05-29T00:00:01.500Z",
+          status: "running" as const,
+        },
+        {
+          sequence: 4,
+          type: "result" as const,
+          at: "2026-05-29T00:00:02.000Z",
+          result: { reportMarkdown: "retried" },
+        },
+        {
+          sequence: 5,
+          type: "status" as const,
+          at: "2026-05-29T00:00:02.000Z",
+          status: "completed" as const,
+        },
+      ],
+    };
+    const api = {
+      workflows: {
+        retryFromCheckpoint: async () => {
+          retried = true;
+          return {
+            runId: "wfr_retry",
+            status: "running" as const,
+            result: null,
+          };
+        },
+        getRun: async () => {
+          getRunCalls += 1;
+          return getRunCalls === 1 ? failedRun : completedRun;
+        },
+      },
+    };
+
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowRunToolCall
+              args={{
+                name: "deep-research",
+                args: { topic: "workflow cards" },
+                run_in_background: true,
+              }}
+              status="completed"
+              result={{ status: "failed", runId: "wfr_retry", result: null, run: failedRun }}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Retry from checkpoint" }));
+
+    await waitFor(() => expect(retried).toBe(true));
+    await waitFor(() => expect(view.getAllByText("completed").length).toBeGreaterThan(0));
+    fireEvent.click(getWorkflowHeader(view));
+    expect(view.getByText("retried")).toBeTruthy();
+  });
+
+  test("stops retry polling after an accepted retry reaches terminal failure", async () => {
+    const originalSetInterval = globalThis.window.setInterval;
+    const originalClearInterval = globalThis.window.clearInterval;
+    let clearIntervalCalls = 0;
+    const intervalRef: { handler: (() => void) | null } = { handler: null };
+    const intervalId = 123;
+    globalThis.window.setInterval = ((handler: () => void) => {
+      intervalRef.handler = handler;
+      return intervalId;
+    }) as unknown as typeof window.setInterval;
+    globalThis.window.clearInterval = ((id?: number) => {
+      if (id === intervalId) {
+        clearIntervalCalls += 1;
+      }
+    }) as unknown as typeof window.clearInterval;
+    try {
+      let getRunCalls = 0;
+      const failedRun = {
+        id: "wfr_retry_terminal_failed",
+        workspaceId: "workspace-1",
+        definition: {
+          name: "deep-research",
+          description: "Deep research",
+          scope: "built-in" as const,
+          executable: true,
+        },
+        definitionSource: "export default function workflow() { return null; }",
+        definitionHash: "sha256:test",
+        args: {},
+        status: "failed" as const,
+        createdAt: "2026-05-29T00:00:00.000Z",
+        updatedAt: "2026-05-29T00:00:01.000Z",
+        events: [
+          {
+            sequence: 1,
+            type: "error" as const,
+            at: "2026-05-29T00:00:00.000Z",
+            message: "Execution interrupted",
+          },
+          {
+            sequence: 2,
+            type: "status" as const,
+            at: "2026-05-29T00:00:01.000Z",
+            status: "failed" as const,
+          },
+        ],
+        steps: [],
+      };
+      const terminalFailedRun = {
+        ...failedRun,
+        updatedAt: "2026-05-29T00:00:04.000Z",
+        events: [
+          ...failedRun.events,
+          {
+            sequence: 3,
+            type: "status" as const,
+            at: "2026-05-29T00:00:02.000Z",
+            status: "running" as const,
+          },
+          {
+            sequence: 4,
+            type: "error" as const,
+            at: "2026-05-29T00:00:03.000Z",
+            message: "retry failed",
+          },
+          {
+            sequence: 5,
+            type: "status" as const,
+            at: "2026-05-29T00:00:04.000Z",
+            status: "failed" as const,
+          },
+        ],
+      };
+      const api = {
+        workflows: {
+          retryFromCheckpoint: async () => ({
+            runId: failedRun.id,
+            status: "running" as const,
+            result: null,
+          }),
+          getRun: async () => {
+            getRunCalls += 1;
+            return terminalFailedRun;
+          },
+        },
+      };
+
+      const view = render(
+        <APIHarness client={api}>
+          <ThemeProvider forcedTheme="dark">
+            <TooltipProvider>
+              <WorkflowRunToolCall
+                args={{ name: "deep-research", args: {}, run_in_background: true }}
+                status="completed"
+                result={{ status: "failed", runId: failedRun.id, result: null, run: failedRun }}
+              />
+            </TooltipProvider>
+          </ThemeProvider>
+        </APIHarness>
+      );
+
+      fireEvent.click(view.getByRole("button", { name: "Retry from checkpoint" }));
+
+      await waitFor(() => expect(getRunCalls).toBe(1));
+      const pendingIntervalHandler = intervalRef.handler;
+      if (clearIntervalCalls === 0 && pendingIntervalHandler != null) {
+        pendingIntervalHandler();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(getRunCalls).toBe(1);
+    } finally {
+      globalThis.window.setInterval = originalSetInterval;
+      globalThis.window.clearInterval = originalClearInterval;
+    }
+  });
+
+  test("stops resume polling after an accepted resume reaches terminal failure", async () => {
+    const originalSetInterval = globalThis.window.setInterval;
+    const originalClearInterval = globalThis.window.clearInterval;
+    let clearIntervalCalls = 0;
+    const intervalRef: { handler: (() => void) | null } = { handler: null };
+    const intervalId = 456;
+    globalThis.window.setInterval = ((handler: () => void) => {
+      intervalRef.handler = handler;
+      return intervalId;
+    }) as unknown as typeof window.setInterval;
+    globalThis.window.clearInterval = ((id?: number) => {
+      if (id === intervalId) {
+        clearIntervalCalls += 1;
+      }
+    }) as unknown as typeof window.clearInterval;
+    try {
+      let getRunCalls = 0;
+      const interruptedRun = {
+        id: "wfr_resume_terminal_failed",
+        workspaceId: "workspace-1",
+        definition: {
+          name: "deep-research",
+          description: "Deep research",
+          scope: "built-in" as const,
+          executable: true,
+        },
+        definitionSource: "export default function workflow() { return null; }",
+        definitionHash: "sha256:test",
+        args: {},
+        status: "interrupted" as const,
+        createdAt: "2026-05-29T00:00:00.000Z",
+        updatedAt: "2026-05-29T00:00:01.000Z",
+        events: [
+          {
+            sequence: 1,
+            type: "status" as const,
+            at: "2026-05-29T00:00:01.000Z",
+            status: "interrupted" as const,
+          },
+        ],
+        steps: [],
+      };
+      const terminalFailedRun = {
+        ...interruptedRun,
+        status: "failed" as const,
+        updatedAt: "2026-05-29T00:00:04.000Z",
+        events: [
+          ...interruptedRun.events,
+          {
+            sequence: 2,
+            type: "status" as const,
+            at: "2026-05-29T00:00:02.000Z",
+            status: "running" as const,
+          },
+          {
+            sequence: 3,
+            type: "error" as const,
+            at: "2026-05-29T00:00:03.000Z",
+            message: "resume failed",
+          },
+          {
+            sequence: 4,
+            type: "status" as const,
+            at: "2026-05-29T00:00:04.000Z",
+            status: "failed" as const,
+          },
+        ],
+      };
+      const api = {
+        workflows: {
+          resume: async () => ({
+            runId: interruptedRun.id,
+            status: "running" as const,
+            result: null,
+          }),
+          getRun: async () => {
+            getRunCalls += 1;
+            return terminalFailedRun;
+          },
+        },
+      };
+
+      const view = render(
+        <APIHarness client={api}>
+          <ThemeProvider forcedTheme="dark">
+            <TooltipProvider>
+              <WorkflowRunToolCall
+                args={{ name: "deep-research", args: {}, run_in_background: true }}
+                status="completed"
+                result={{
+                  status: "interrupted",
+                  runId: interruptedRun.id,
+                  result: null,
+                  run: interruptedRun,
+                }}
+              />
+            </TooltipProvider>
+          </ThemeProvider>
+        </APIHarness>
+      );
+
+      fireEvent.click(view.getByRole("button", { name: "Resume workflow" }));
+
+      await waitFor(() => expect(getRunCalls).toBe(1));
+      const pendingIntervalHandler = intervalRef.handler;
+      if (clearIntervalCalls === 0 && pendingIntervalHandler != null) {
+        pendingIntervalHandler();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(getRunCalls).toBe(1);
+    } finally {
+      globalThis.window.setInterval = originalSetInterval;
+      globalThis.window.clearInterval = originalClearInterval;
+    }
+  });
+
+  test("ignores duplicate checkpoint retry clicks while a retry request is in flight", async () => {
+    let releaseRetry!: () => void;
+    const retryStarted = new Promise<void>((resolve) => {
+      releaseRetry = resolve;
+    });
+    let retryCalls = 0;
+    const failedRun = {
+      id: "wfr_retry_duplicate",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:test",
+      args: {},
+      status: "failed" as const,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:01.000Z",
+      events: [
+        {
+          sequence: 1,
+          type: "error" as const,
+          at: "2026-05-29T00:00:00.000Z",
+          message: "Execution interrupted",
+        },
+        {
+          sequence: 2,
+          type: "status" as const,
+          at: "2026-05-29T00:00:01.000Z",
+          status: "failed" as const,
+        },
+      ],
+      steps: [],
+    };
+    const completedRun = {
+      ...failedRun,
+      status: "completed" as const,
+      updatedAt: "2026-05-29T00:00:02.000Z",
+      events: [
+        ...failedRun.events,
+        {
+          sequence: 3,
+          type: "result" as const,
+          at: "2026-05-29T00:00:02.000Z",
+          result: { reportMarkdown: "retried" },
+        },
+        {
+          sequence: 4,
+          type: "status" as const,
+          at: "2026-05-29T00:00:02.000Z",
+          status: "completed" as const,
+        },
+      ],
+    };
+    const api = {
+      workflows: {
+        retryFromCheckpoint: async () => {
+          retryCalls += 1;
+          await retryStarted;
+          return { runId: failedRun.id, status: "running" as const, result: null };
+        },
+        getRun: async () => completedRun,
+      },
+    };
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowRunToolCall
+              args={{ name: "deep-research", args: {}, run_in_background: true }}
+              status="completed"
+              result={{ status: "failed", runId: failedRun.id, result: null, run: failedRun }}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    const retryButton = view.getByRole("button", { name: "Retry from checkpoint" });
+    fireEvent.click(retryButton);
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(retryCalls).toBe(1));
+    releaseRetry();
+    await waitFor(() => expect(view.getAllByText("completed").length).toBeGreaterThan(0));
+  });
+
+  test("does not show retry from checkpoint for non-recoverable failed workflows", () => {
+    const api = { workflows: { retryFromCheckpoint: async () => null } };
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowRunToolCall
+              args={{ name: "deep-research", args: {}, run_in_background: true }}
+              status="completed"
+              result={{
+                status: "failed",
+                runId: "wfr_no_retry",
+                result: null,
+                run: {
+                  id: "wfr_no_retry",
+                  workspaceId: "workspace-1",
+                  definition: {
+                    name: "deep-research",
+                    description: "Deep research",
+                    scope: "built-in",
+                    executable: true,
+                  },
+                  definitionSource: "export default function workflow() { return null; }",
+                  definitionHash: "sha256:test",
+                  args: {},
+                  status: "failed",
+                  createdAt: "2026-05-29T00:00:00.000Z",
+                  updatedAt: "2026-05-29T00:00:01.000Z",
+                  events: [
+                    {
+                      sequence: 1,
+                      type: "error",
+                      at: "2026-05-29T00:00:00.000Z",
+                      message: "SyntaxError: Unexpected token",
+                    },
+                    {
+                      sequence: 2,
+                      type: "status",
+                      at: "2026-05-29T00:00:01.000Z",
+                      status: "failed",
+                    },
+                  ],
+                  steps: [],
+                },
+              }}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    expect(view.queryByRole("button", { name: "Retry from checkpoint" })).toBeNull();
+  });
+
+  test("does not show retry from checkpoint for unfinished patch checkpoints", () => {
+    const api = { workflows: { retryFromCheckpoint: async () => null } };
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowRunToolCall
+              args={{ name: "deep-research", args: {}, run_in_background: true }}
+              status="completed"
+              result={{
+                status: "failed",
+                runId: "wfr_patch_no_retry",
+                result: null,
+                run: {
+                  id: "wfr_patch_no_retry",
+                  workspaceId: "workspace-1",
+                  definition: {
+                    name: "deep-research",
+                    description: "Deep research",
+                    scope: "built-in",
+                    executable: true,
+                  },
+                  definitionSource: "export default function workflow() { return null; }",
+                  definitionHash: "sha256:test",
+                  args: {},
+                  status: "failed",
+                  createdAt: "2026-05-29T00:00:00.000Z",
+                  updatedAt: "2026-05-29T00:00:01.000Z",
+                  events: [
+                    {
+                      sequence: 1,
+                      type: "patch",
+                      at: "2026-05-29T00:00:00.000Z",
+                      stepId: "apply-implement",
+                      sourceTaskId: "task_impl",
+                      status: "started",
+                    },
+                    {
+                      sequence: 2,
+                      type: "error",
+                      at: "2026-05-29T00:00:00.500Z",
+                      message: "Execution interrupted",
+                    },
+                    {
+                      sequence: 3,
+                      type: "status",
+                      at: "2026-05-29T00:00:01.000Z",
+                      status: "failed",
+                    },
+                  ],
+                  steps: [],
+                },
+              }}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    expect(view.queryByRole("button", { name: "Retry from checkpoint" })).toBeNull();
+  });
+
   test("clears resume polling when resume fails", async () => {
     let getRunCalls = 0;
     const api = {

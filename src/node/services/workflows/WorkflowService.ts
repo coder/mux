@@ -8,6 +8,7 @@ import type {
 } from "@/common/types/workflow";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
+import { getWorkflowCheckpointRetryEligibility } from "@/common/utils/workflowRetryEligibility";
 import type { IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import type { WorkflowActionRegistry } from "./WorkflowActionRegistry";
 import { WorkflowActionRunner } from "./WorkflowActionRunner";
@@ -246,6 +247,21 @@ export class WorkflowService {
     );
     await (this.taskAdapterFactory?.(input.runId) ?? this.requireTaskAdapter()).interruptRun?.();
     return interrupted;
+  }
+
+  async retryRunFromCheckpointInBackground(input: {
+    workspaceId: string;
+    runId: string;
+    projectTrusted: boolean;
+  }): Promise<StartNamedWorkflowResult> {
+    const run = await this.requireRunForWorkspace(input);
+    assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
+    assertWorkflowRunCanRetryFromCheckpoint(run);
+    await this.runInBackground(input.runId, "Background workflow checkpoint retry failed:", {
+      allowRetryFromFailedCheckpoint: true,
+      projectTrusted: input.projectTrusted,
+    });
+    return { runId: input.runId, status: "running", result: null };
   }
 
   async resumeRunInBackground(input: {
@@ -551,7 +567,10 @@ export class WorkflowService {
   private runInBackground(
     runId: string,
     failureMessage: string,
-    runnerOptions: Pick<WorkflowRunnerRunOptions, "allowResumeFromInterrupted"> & {
+    runnerOptions: Pick<
+      WorkflowRunnerRunOptions,
+      "allowResumeFromInterrupted" | "allowRetryFromFailedCheckpoint"
+    > & {
       projectTrusted: boolean;
     }
   ): Promise<void> {
@@ -694,6 +713,13 @@ function canResumeRunWithCurrentTrust(run: WorkflowRunRecord, projectTrusted: bo
 function assertRunCanResumeWithCurrentTrust(run: WorkflowRunRecord, projectTrusted: boolean): void {
   if (!canResumeRunWithCurrentTrust(run, projectTrusted)) {
     throw new Error("Project trust is required to resume project-local or scratch workflow runs");
+  }
+}
+
+function assertWorkflowRunCanRetryFromCheckpoint(run: WorkflowRunRecord): void {
+  const eligibility = getWorkflowCheckpointRetryEligibility(run);
+  if (!eligibility.canRetry) {
+    throw new Error(eligibility.reason ?? "Workflow run cannot be retried from checkpoint");
   }
 }
 

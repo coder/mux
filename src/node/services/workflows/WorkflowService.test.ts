@@ -779,6 +779,239 @@ export default function workflow({ args, agent }) {
     expect(backgroundFlags).toEqual([true, false]);
   });
 
+  test("retries recoverable failed workflows from their checkpoint in the background", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_retry_checkpoint",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow({ agent }) { const child = agent({ id: 'summarize-topic', prompt: 'Summarize durable workflows' }); return { reportMarkdown: 'Final: ' + child.reportMarkdown }; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    await runStore.recordStepStarted("wfr_retry_checkpoint", {
+      stepId: spec.id,
+      inputHash: hashWorkflowStepInput(spec.id, spec),
+      taskId: "task_existing",
+      startedAt: "2026-05-29T00:00:00.500Z",
+    });
+    await runStore.appendEvent("wfr_retry_checkpoint", {
+      sequence: 1,
+      type: "error",
+      at: "2026-05-29T00:00:00.750Z",
+      message: "Execution interrupted",
+    });
+    await runStore.appendStatus("wfr_retry_checkpoint", "failed", "2026-05-29T00:00:00.751Z");
+
+    let releaseExistingTask!: () => void;
+    const existingTaskReleased = new Promise<void>((resolve) => {
+      releaseExistingTask = resolve;
+    });
+    const waitedFor: string[] = [];
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("retry should harvest existing task before spawning replacement");
+        },
+        async waitForAgentTask(taskId) {
+          waitedFor.push(taskId);
+          await existingTaskReleased;
+          return { taskId, reportMarkdown: "summary" };
+        },
+      },
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await expect(
+      service.retryRunFromCheckpointInBackground({
+        workspaceId: "workspace-1",
+        runId: "wfr_retry_checkpoint",
+        projectTrusted: true,
+      })
+    ).resolves.toEqual({ runId: "wfr_retry_checkpoint", status: "running", result: null });
+    await waitForWorkflowStatus(runStore, "wfr_retry_checkpoint", "running");
+
+    releaseExistingTask();
+    await waitForWorkflowStatus(runStore, "wfr_retry_checkpoint", "completed");
+    expect(waitedFor).toEqual(["task_existing"]);
+  });
+
+  test("retries failed workflows with completed patch checkpoints without reapplying", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_retry_completed_patch",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "patch-demo",
+        description: "Patch demo",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow({ agent, applyPatch }) { const child = agent({ id: 'implement', prompt: 'Implement change' }); const patch = applyPatch({ id: 'apply-implement', source: child, target: 'parent' }); return { reportMarkdown: 'Patch ' + patch.status }; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const agentSpec = { id: "implement", prompt: "Implement change" };
+    await runStore.recordStepCompleted("wfr_retry_completed_patch", {
+      stepId: agentSpec.id,
+      inputHash: hashWorkflowStepInput(agentSpec.id, agentSpec),
+      taskId: "task_impl",
+      result: { taskId: "task_impl", reportMarkdown: "implemented" },
+      startedAt: "2026-05-29T00:00:00.100Z",
+      completedAt: "2026-05-29T00:00:00.200Z",
+    });
+    const patchSpec = {
+      id: "apply-implement",
+      sourceTaskId: "task_impl",
+      target: "parent" as const,
+      threeWay: true,
+      force: false,
+    };
+    const patchResult = { success: true, status: "applied" as const, taskId: "task_impl" };
+    await runStore.recordStepCompleted("wfr_retry_completed_patch", {
+      stepId: patchSpec.id,
+      inputHash: hashWorkflowStepInput(patchSpec.id, patchSpec),
+      taskId: "task_impl",
+      result: {
+        reportMarkdown: "Patch applied from task task_impl.",
+        structuredOutput: patchResult,
+      },
+      startedAt: "2026-05-29T00:00:00.300Z",
+      completedAt: "2026-05-29T00:00:00.400Z",
+    });
+    await runStore.appendEvent("wfr_retry_completed_patch", {
+      sequence: 1,
+      type: "patch",
+      at: "2026-05-29T00:00:00.300Z",
+      stepId: patchSpec.id,
+      sourceTaskId: "task_impl",
+      status: "started",
+    });
+    await runStore.appendEvent("wfr_retry_completed_patch", {
+      sequence: 2,
+      type: "patch",
+      at: "2026-05-29T00:00:00.400Z",
+      stepId: patchSpec.id,
+      sourceTaskId: "task_impl",
+      status: "applied",
+      details: patchResult,
+    });
+    await runStore.appendEvent("wfr_retry_completed_patch", {
+      sequence: 3,
+      type: "error",
+      at: "2026-05-29T00:00:00.750Z",
+      message: "Execution interrupted",
+    });
+    await runStore.appendStatus("wfr_retry_completed_patch", "failed", "2026-05-29T00:00:00.751Z");
+    let applyPatchCalls = 0;
+    let runAgentCalls = 0;
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          runAgentCalls += 1;
+          throw new Error("completed agent checkpoint should replay");
+        },
+        async applyPatch() {
+          applyPatchCalls += 1;
+          throw new Error("completed patch checkpoint should replay");
+        },
+      },
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await expect(
+      service.retryRunFromCheckpointInBackground({
+        workspaceId: "workspace-1",
+        runId: "wfr_retry_completed_patch",
+        projectTrusted: true,
+      })
+    ).resolves.toEqual({ runId: "wfr_retry_completed_patch", status: "running", result: null });
+    await waitForWorkflowStatus(runStore, "wfr_retry_completed_patch", "completed");
+    await expect(runStore.getRun("wfr_retry_completed_patch")).resolves.toMatchObject({
+      status: "completed",
+    });
+    expect(runAgentCalls).toBe(0);
+    expect(applyPatchCalls).toBe(0);
+  });
+
+  test("rejects checkpoint retry for non-recoverable failed workflows", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_retry_rejected",
+      workspaceId: "workspace-1",
+      definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+      definitionSource: "export default function workflow() { return null; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendEvent("wfr_retry_rejected", {
+      sequence: 1,
+      type: "error",
+      at: "2026-05-29T00:00:00.750Z",
+      message: "SyntaxError: Unexpected token",
+    });
+    await runStore.appendStatus("wfr_retry_rejected", "failed", "2026-05-29T00:00:00.751Z");
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("non-recoverable retry must not run");
+        },
+      },
+      runnerId: "runner-a",
+    });
+
+    await expect(
+      service.retryRunFromCheckpointInBackground({
+        workspaceId: "workspace-1",
+        runId: "wfr_retry_rejected",
+        projectTrusted: true,
+      })
+    ).rejects.toThrow(/cannot be retried from checkpoint/);
+    await expect(runStore.getRun("wfr_retry_rejected")).resolves.toMatchObject({
+      status: "failed",
+    });
+  });
+
   test("does not mark resume running before the runner acquires the lease", async () => {
     using tmp = new DisposableTempDir("workflow-service");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
