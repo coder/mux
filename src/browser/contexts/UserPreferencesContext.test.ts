@@ -82,6 +82,27 @@ describe("UserPreferencesProvider bridge helpers", () => {
     expect(JSON.parse(storage.getItem(LAUNCH_BEHAVIOR_KEY) ?? "null")).toBe("last-workspace");
   });
 
+  test("does not backfill stale local cache after backend preferences are initialized", async () => {
+    const storage = new MemoryStorage();
+    storage.setJSON(UI_THEME_KEY, "dark");
+    storage.setJSON(VIM_ENABLED_KEY, true);
+
+    await hydrateUserPreferencesLocalCache({
+      storage,
+      configClient: {
+        getConfig: () =>
+          Promise.resolve({
+            userPreferencesInitialized: true,
+            userPreferences: undefined,
+          }),
+        saveConfig: () => Promise.resolve(),
+      },
+    });
+
+    expect(storage.getItem(UI_THEME_KEY)).toBeNull();
+    expect(storage.getItem(VIM_ENABLED_KEY)).toBeNull();
+  });
+
   test("removes stale local cache entries on non-initial backend refresh", () => {
     const storage = new MemoryStorage();
     storage.setJSON(UI_THEME_KEY, "dark");

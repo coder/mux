@@ -491,6 +491,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     ] satisfies AgentDefinitionDescriptor[]);
 
   let userPreferences = normalizeUserPreferences(initialUserPreferences);
+  let userPreferencesInitialized = initialUserPreferences !== undefined;
   let taskSettings = normalizeTaskSettings(initialTaskSettings ?? DEFAULT_TASK_SETTINGS);
 
   let agentAiDefaults = normalizeAgentAiDefaults(
@@ -693,6 +694,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     config: {
       getConfig: () =>
         Promise.resolve({
+          userPreferencesInitialized,
           userPreferences,
           taskSettings,
           muxGatewayEnabled,
@@ -726,6 +728,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
         if (input.userPreferences !== undefined) {
           userPreferences = normalizeUserPreferences(input.userPreferences);
+          userPreferencesInitialized = true;
         }
 
         if (input.agentAiDefaults !== undefined) {

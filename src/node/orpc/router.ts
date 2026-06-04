@@ -817,6 +817,7 @@ export const router = (authToken?: string) => {
           const muxGovernorUrl = config.muxGovernorUrl ?? null;
           const muxGovernorEnrolled = Boolean(config.muxGovernorUrl && config.muxGovernorToken);
           return {
+            userPreferencesInitialized: config.migrations?.userPreferencesInitialized === true,
             userPreferences: config.userPreferences,
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
             muxGatewayEnabled: config.muxGatewayEnabled,
@@ -1163,6 +1164,10 @@ export const router = (authToken?: string) => {
 
             if (input.userPreferences !== undefined) {
               result.userPreferences = normalizeUserPreferences(input.userPreferences);
+              result.migrations = {
+                ...(result.migrations ?? {}),
+                userPreferencesInitialized: true,
+              };
             }
 
             if (input.advisorModelString !== undefined) {

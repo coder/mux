@@ -339,6 +339,7 @@ function normalizeConfigMigrations(value: unknown): AppConfigMigrations {
   const record = value as Record<string, unknown>;
   return {
     ...(record.execSubagentDefaultsSplit === true ? { execSubagentDefaultsSplit: true } : {}),
+    ...(record.userPreferencesInitialized === true ? { userPreferencesInitialized: true } : {}),
   };
 }
 
@@ -886,6 +887,10 @@ export class Config {
         const defaultRuntime = normalizeRuntimeEnablementId(parsed.defaultRuntime);
 
         const userPreferences = normalizeUserPreferences(parsed.userPreferences);
+        const migrations = normalizeConfigMigrations(parsed.migrations);
+        if (parsed.userPreferences !== undefined) {
+          migrations.userPreferencesInitialized = true;
+        }
 
         const layoutPresetsRaw = normalizeLayoutPresetsConfig(parsed.layoutPresets);
         const layoutPresets = isLayoutPresetsConfigEmpty(layoutPresetsRaw)
@@ -928,7 +933,7 @@ export class Config {
           // Subagent defaults: exec is canonical active storage, non-exec entries
           // support legacy mirror compatibility.
           subagentAiDefaults: legacySubagentAiDefaults,
-          migrations: normalizeConfigMigrations(parsed.migrations),
+          migrations,
           featureFlagOverrides: parsed.featureFlagOverrides,
           useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
           muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
@@ -1144,10 +1149,18 @@ export class Config {
       const migrations = normalizeConfigMigrations(config.migrations);
       if (
         migrations.execSubagentDefaultsSplit === true ||
+        migrations.userPreferencesInitialized === true ||
+        config.userPreferences !== undefined ||
         config.agentAiDefaults?.exec != null ||
         config.subagentAiDefaults?.exec != null
       ) {
-        data.migrations = { ...migrations, execSubagentDefaultsSplit: true };
+        data.migrations = {
+          ...migrations,
+          ...(config.userPreferences !== undefined ? { userPreferencesInitialized: true } : {}),
+          ...(config.agentAiDefaults?.exec != null || config.subagentAiDefaults?.exec != null
+            ? { execSubagentDefaultsSplit: true }
+            : {}),
+        };
       }
 
       if (config.useSSH2Transport !== undefined) {

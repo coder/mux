@@ -477,6 +477,7 @@ describe("router config.saveConfig", () => {
       },
     });
 
+    expect((await client.config.getConfig()).userPreferencesInitialized).toBe(true);
     expect((await client.config.getConfig()).userPreferences).toEqual({
       appearance: { theme: "dark" },
       notifications: { notifyOnResponseByWorkspace: { "ws-1": true } },
@@ -520,6 +521,7 @@ describe("router config.saveConfig", () => {
       userPreferences: null,
     });
 
+    expect((await client.config.getConfig()).userPreferencesInitialized).toBe(true);
     expect(config.loadConfigOrDefault().userPreferences).toBeUndefined();
   });
 

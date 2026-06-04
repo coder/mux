@@ -53,6 +53,7 @@ export const GoalDefaultsSchema = z.object({
 
 export const AppConfigMigrationsSchema = z.object({
   execSubagentDefaultsSplit: z.boolean().optional(),
+  userPreferencesInitialized: z.boolean().optional(),
 });
 
 export const FeatureFlagOverrideSchema = z.enum(["default", "on", "off"]);

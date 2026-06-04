@@ -189,7 +189,7 @@ function waitForRetryDelay(delayMs: number, signal: AbortSignal): Promise<void> 
 }
 
 interface UserPreferenceConfigClient {
-  getConfig: () => Promise<{ userPreferences?: unknown }>;
+  getConfig: () => Promise<{ userPreferences?: unknown; userPreferencesInitialized?: boolean }>;
   saveConfig: (input: { userPreferences?: UserPreferences | null }) => Promise<void>;
 }
 
@@ -209,14 +209,18 @@ export async function hydrateUserPreferencesLocalCache(params: {
   }
 
   const backendPreferences = normalizeUserPreferences(config.userPreferences);
+  const shouldBackfillLocalPreferences =
+    config.userPreferencesInitialized !== true && backendPreferences === undefined;
   mirrorBackendPreferences({
     backendPreferences,
     dirtyKeys: new Set(),
-    initial: true,
+    initial: shouldBackfillLocalPreferences,
     storage,
   });
 
-  return mergeMissingLocalPreferences(backendPreferences, storage);
+  return shouldBackfillLocalPreferences
+    ? mergeMissingLocalPreferences(backendPreferences, storage)
+    : backendPreferences;
 }
 
 export function createUserPreferenceSaveQueue(params: {
@@ -349,14 +353,16 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
       }
 
       const backendPreferences = normalizeUserPreferences(config.userPreferences);
+      const shouldBackfillLocalPreferences =
+        initial && config.userPreferencesInitialized !== true && backendPreferences === undefined;
       mirrorBackendPreferences({
         backendPreferences,
         dirtyKeys: dirtyKeysRef.current,
-        initial,
+        initial: shouldBackfillLocalPreferences,
         storage,
       });
 
-      const withLocalBackfill = initial
+      const withLocalBackfill = shouldBackfillLocalPreferences
         ? mergeMissingLocalPreferences(backendPreferences, storage)
         : backendPreferences;
       const nextPreferences = overlayDirtyLocalValues(
@@ -369,7 +375,10 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
       hydratedRef.current = true;
       setHydrated(true);
 
-      if (initial && stableStringify(nextPreferences) !== stableStringify(backendPreferences)) {
+      if (
+        shouldBackfillLocalPreferences &&
+        stableStringify(nextPreferences) !== stableStringify(backendPreferences)
+      ) {
         enqueueSave(nextPreferences);
       }
     };

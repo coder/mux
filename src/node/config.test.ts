@@ -71,8 +71,10 @@ describe("Config", () => {
       });
 
       const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        migrations?: { userPreferencesInitialized?: unknown };
         userPreferences?: unknown;
       };
+      expect(raw.migrations?.userPreferencesInitialized).toBe(true);
       expect(raw.userPreferences).toEqual({
         appearance: { theme: "dark" },
         navigation: { projectOrder: ["/repo"] },
@@ -101,6 +103,20 @@ describe("Config", () => {
       };
       expect(raw.userPreferences).toEqual({ appearance: { theme: "flexoki-dark" } });
       expect(raw.llmDebugLogs).toBe(true);
+    });
+
+    it("treats existing user preferences as initialized for cross-origin sync", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          userPreferences: {
+            appearance: { theme: "flexoki-dark" },
+          },
+        })
+      );
+
+      expect(config.loadConfigOrDefault().migrations?.userPreferencesInitialized).toBe(true);
     });
 
     it("normalizes invalid user preference values on load", () => {
