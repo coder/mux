@@ -1433,6 +1433,7 @@ describe("WorkflowRunner", () => {
         const diffStat = action.git.diffStat({ id: "diff-stat", input: { base: "main" } });
         return {
           reportMarkdown: JSON.stringify({
+            hashes: commits.output.commits.map((commit) => commit.hash),
             subjects: commits.output.commits.map((commit) => commit.subject),
             unstaged: status.output.unstaged.map((file) => file.path),
             untracked: status.output.untracked,
@@ -1466,6 +1467,7 @@ describe("WorkflowRunner", () => {
 
     const result = await runner.run("wfr_built_in_git_actions");
     const parsed = JSON.parse(result.reportMarkdown) as {
+      hashes: string[];
       subjects: string[];
       unstaged: string[];
       untracked: string[];
@@ -1474,6 +1476,7 @@ describe("WorkflowRunner", () => {
       branchStat: string;
     };
 
+    expect(parsed.hashes.every((hash) => /^[0-9a-f]{40}$/u.test(hash))).toBe(true);
     expect(parsed.subjects).toContain("feature commit");
     expect(parsed.subjects).toContain("ignore file");
     expect(parsed.unstaged).toContain("tracked.txt");

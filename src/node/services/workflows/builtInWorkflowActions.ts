@@ -175,7 +175,7 @@ module.exports.execute = async function (rawInput, ctx) {
     "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1e",
     mergeBase + ".." + head,
   ]);
-  const commits = stdout.split("\x1e").filter((record) => record.length > 0).map((record) => {
+  const commits = stdout.split("\x1e").map((record) => record.trim()).filter((record) => record.length > 0).map((record) => {
     const [hash, shortHash, authorName, authorEmail, authoredAt, subject] = record.split("\x1f");
     return { hash, shortHash, authorName, authorEmail, authoredAt, subject };
   });
