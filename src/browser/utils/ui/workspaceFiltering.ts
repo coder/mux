@@ -152,28 +152,30 @@ function isActiveDelegatedStatus(status: FrontendWorkspaceMetadata["taskStatus"]
   return status === "running" || status === "awaiting_report";
 }
 
-function isTerminalDelegatedWorkspace(workspace: FrontendWorkspaceMetadata): boolean {
-  return workspace.taskStatus === "reported" || workspace.taskStatus === "interrupted";
+function getIsWorkspaceLiveActive(workspaceId: string, options: DelegatedActivityOptions): boolean {
+  try {
+    return options.isWorkspaceLiveActive?.(workspaceId) === true;
+  } catch {
+    // Sidebar store teardown can race workspace metadata updates. Ignore the
+    // live hint rather than making a malformed descendant brick rendering.
+    return false;
+  }
 }
 
 export function isWorkspaceDelegatedActivityActive(
   workspace: FrontendWorkspaceMetadata,
   options: DelegatedActivityOptions = {}
 ): boolean {
-  if (isTerminalDelegatedWorkspace(workspace)) {
-    return false;
-  }
   if (isActiveDelegatedStatus(workspace.taskStatus)) {
     return true;
   }
-
-  try {
-    return options.isWorkspaceLiveActive?.(workspace.id) === true;
-  } catch {
-    // Sidebar store teardown can race workspace metadata updates. Ignore the
-    // live hint rather than making a malformed descendant brick rendering.
+  if (hasCompletedAgentReport(workspace)) {
     return false;
   }
+
+  // Interrupted tasks without a finalized report can still be streaming while
+  // task finalization catches up, so let the live fallback decide.
+  return getIsWorkspaceLiveActive(workspace.id, options);
 }
 
 /**
@@ -244,7 +246,7 @@ export function computeDelegatedActivityByWorkspaceId(
         if (childWorkflowOwned) {
           descendantActivity.workflowActiveCount += 1;
         }
-      } else if (!isTerminalDelegatedWorkspace(child) && child.taskStatus === "queued") {
+      } else if (!hasCompletedAgentReport(child) && child.taskStatus === "queued") {
         descendantActivity.queuedCount += 1;
         if (childWorkflowOwned) {
           descendantActivity.workflowQueuedCount += 1;

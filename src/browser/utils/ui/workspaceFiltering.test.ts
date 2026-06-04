@@ -692,6 +692,22 @@ describe("delegated workspace activity roll-up", () => {
     expect(activityByWorkspaceId.get("parent")?.activeCount).toBe(1);
   });
 
+  it("keeps live interrupted descendants active until report finalization", () => {
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("interrupted-live-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "interrupted",
+      }),
+    ];
+
+    const activityByWorkspaceId = computeDelegatedActivityByWorkspaceId(workspaces, {
+      isWorkspaceLiveActive: (workspaceId) => workspaceId === "interrupted-live-child",
+    });
+
+    expect(activityByWorkspaceId.get("parent")?.activeCount).toBe(1);
+  });
+
   it("does not resurrect terminal descendants from stale live sidebar activity", () => {
     const workspaces = [
       createWorkspace("parent"),
