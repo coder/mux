@@ -2118,7 +2118,54 @@ export class StreamManager extends EventEmitter {
                 break;
 
               case "finish": {
-                const finishPart = part as { finishReason?: unknown };
+                const finishPart = part as {
+                  finishReason?: unknown;
+                  rawFinishReason?: unknown;
+                };
+                // Skip the `ai` package's synthesized-default finish part.
+                //
+                // `streamText`'s internal `runStep` initializes
+                // `stepFinishReason = "other"` and `stepRawFinishReason = undefined`,
+                // and unconditionally emits those values from its flush() at
+                // end-of-stream — even when the underlying SSE stream closed
+                // before any terminal event arrived. The OpenAI Responses,
+                // Chat Completions, and Anthropic Messages adapters all
+                // exhibit this in practice: a clean upstream EOF (no
+                // `response.completed`, no `message_stop`, no
+                // `finish_reason` delta) ends up as a synthesized
+                // `(other, undefined)` finish here.
+                //
+                // The discriminator is narrow on purpose. Every real OpenAI
+                // and Anthropic finish path that maps to `"other"` pairs it
+                // with a defined raw reason (e.g. Anthropic's `"compaction"`).
+                // The `(other, undefined)` shape is unreachable from the
+                // adapters' own finish-reason mappers and is therefore a
+                // reliable signal that the finish was synthesized.
+                //
+                // Treating it as a non-event lets the existing
+                // `!receivedTerminalEvent` branch below fire
+                // `handleTruncatedStreamCompletion`, which surfaces a
+                // retryable `stream_truncated` error instead of silently
+                // committing partial output as a normal assistant message.
+                if (
+                  finishPart.finishReason === "other" &&
+                  finishPart.rawFinishReason === undefined
+                ) {
+                  // Observability for the unaudited-adapter risk: if a future
+                  // provider adapter we haven't read source for legitimately
+                  // emits `(other, undefined)` as a real terminal finish, the
+                  // discriminator misfires and the user sees a spurious
+                  // truncated-stream retry. Surface a log so that misfires
+                  // are diagnosable instead of silent.
+                  workspaceLog.warn(
+                    "Treating synthesized-default (other, undefined) finish as truncated stream",
+                    {
+                      messageId: streamInfo.messageId,
+                      model: streamInfo.model,
+                    }
+                  );
+                  break;
+                }
                 streamInfo.receivedTerminalEvent = true;
                 if (typeof finishPart.finishReason === "string") {
                   streamInfo.terminalFinishReason = finishPart.finishReason;
