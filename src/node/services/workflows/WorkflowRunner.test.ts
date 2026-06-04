@@ -1363,6 +1363,10 @@ describe("WorkflowRunner", () => {
     await runGit(repoRoot, ["add", "feature.txt"]);
     await runGit(repoRoot, ["commit", "-m", "feature commit"]);
     await fs.appendFile(path.join(repoRoot, "tracked.txt"), "dirty\n", "utf-8");
+    await fs.writeFile(path.join(repoRoot, ".gitignore"), "ignored.txt\n", "utf-8");
+    await runGit(repoRoot, ["add", ".gitignore"]);
+    await runGit(repoRoot, ["commit", "-m", "ignore file"]);
+    await fs.writeFile(path.join(repoRoot, "ignored.txt"), "ignored\n", "utf-8");
     await fs.writeFile(path.join(repoRoot, "new.txt"), "new\n", "utf-8");
     const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
     await store.createRun({
@@ -1379,6 +1383,7 @@ describe("WorkflowRunner", () => {
             subjects: commits.output.commits.map((commit) => commit.subject),
             unstaged: status.output.unstaged.map((file) => file.path),
             untracked: status.output.untracked,
+            ignored: status.output.ignored,
             branchFiles: changed.output.branch.map((file) => file.path),
             branchStat: diffStat.output.branch,
           }),
@@ -1411,13 +1416,16 @@ describe("WorkflowRunner", () => {
       subjects: string[];
       unstaged: string[];
       untracked: string[];
+      ignored: string[];
       branchFiles: string[];
       branchStat: string;
     };
 
-    expect(parsed.subjects).toEqual(["feature commit"]);
+    expect(parsed.subjects).toContain("feature commit");
+    expect(parsed.subjects).toContain("ignore file");
     expect(parsed.unstaged).toContain("tracked.txt");
     expect(parsed.untracked).toContain("new.txt");
+    expect(parsed.ignored).toContain("ignored.txt");
     expect(parsed.branchFiles).toContain("feature.txt");
     expect(parsed.branchStat).toContain("feature.txt");
     const run = await store.getRun("wfr_built_in_git_actions");

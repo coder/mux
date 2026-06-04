@@ -107,7 +107,14 @@ function parseStatusLine(line) {
 }
 
 module.exports.execute = async function (_input, ctx) {
-  const stdout = await runGit(ctx, ["status", "--porcelain=v1", "-b", "-uall", "--ahead-behind"]);
+  const stdout = await runGit(ctx, [
+    "status",
+    "--porcelain=v1",
+    "-b",
+    "-uall",
+    "--ignored=traditional",
+    "--ahead-behind",
+  ]);
   const lines = stdout.split(/\r?\n/).filter(Boolean);
   const header = lines[0]?.startsWith("## ") ? parseBranchHeader(lines[0]) : { branch: null, upstream: null, ahead: 0, behind: 0 };
   const staged = [];
