@@ -919,13 +919,15 @@ describe("useCreationWorkspace", () => {
     expect(handleSendResult).toEqual({ success: true });
     expect(workspaceApi.create.mock.calls.length).toBe(1);
     expect(workspaceApi.sendMessage.mock.calls.length).toBe(1);
-    expect(workflowsApi.start).toHaveBeenCalledWith({
+    const workflowStartInput = workflowsApi.start.mock.calls[0]?.[0];
+    expect(workflowStartInput).toMatchObject({
       workspaceId: TEST_WORKSPACE_ID,
       name: "deep-research",
       runInBackground: true,
       rawCommand: "/deep-research mux workflows",
       args: { input: "mux workflows" },
     });
+    expect(workflowStartInput?.continuationOptions?.agentId).toBe("exec");
     expect(workflowsApi.getRun).toHaveBeenCalledWith({
       workspaceId: TEST_WORKSPACE_ID,
       runId: "wfr_creation",
