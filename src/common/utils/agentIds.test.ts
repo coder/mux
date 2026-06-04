@@ -3,6 +3,7 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import {
   normalizeAgentId,
   resolvePersistedAgentId,
+  resolvePersistedAgentIdCandidates,
   resolveRemovedBuiltinAgentId,
 } from "./agentIds";
 
@@ -17,6 +18,15 @@ describe("resolvePersistedAgentId", () => {
     expect(resolvePersistedAgentId({ agentId: "???", agentType: " Explore " }, "exec")).toBe(
       "explore"
     );
+  });
+
+  test("returns distinct valid candidates in persisted precedence order", () => {
+    expect(
+      resolvePersistedAgentIdCandidates({ agentId: " Missing-Agent ", agentType: " Explore " })
+    ).toEqual(["missing-agent", "explore"]);
+    expect(
+      resolvePersistedAgentIdCandidates({ agentId: "explore", agentType: " Explore " })
+    ).toEqual(["explore"]);
   });
 
   test("prefers non-empty agentId and falls back when neither field is set", () => {

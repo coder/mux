@@ -23,28 +23,31 @@ export function normalizeAgentId(
   return normalized;
 }
 
-export function resolvePersistedAgentId(
-  value: { agentId?: unknown; agentType?: unknown } | undefined,
-  fallback: string = WORKSPACE_DEFAULTS.agentId
-): string {
+export function resolvePersistedAgentIdCandidates(
+  value: { agentId?: unknown; agentType?: unknown } | undefined
+): string[] {
   if (value == null) {
-    return fallback;
+    return [];
   }
 
   // Legacy task/workspace records may only have agentType. Coerce and validate
   // each field independently so blank or corrupt modern agentId values cannot
   // mask a valid legacy value.
-  const agentId = normalizePersistedAgentCandidate(value.agentId);
-  if (agentId != null) {
-    return agentId;
-  }
+  const candidates = [
+    normalizePersistedAgentCandidate(value.agentId),
+    normalizePersistedAgentCandidate(value.agentType),
+  ];
+  return candidates.filter(
+    (candidate, index): candidate is string =>
+      candidate != null && candidates.indexOf(candidate) === index
+  );
+}
 
-  const agentType = normalizePersistedAgentCandidate(value.agentType);
-  if (agentType != null) {
-    return agentType;
-  }
-
-  return fallback;
+export function resolvePersistedAgentId(
+  value: { agentId?: unknown; agentType?: unknown } | undefined,
+  fallback: string = WORKSPACE_DEFAULTS.agentId
+): string {
+  return resolvePersistedAgentIdCandidates(value)[0] ?? fallback;
 }
 
 function normalizePersistedAgentCandidate(value: unknown): string | undefined {

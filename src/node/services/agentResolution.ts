@@ -18,12 +18,13 @@ import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import type { ErrorEvent } from "@/common/types/stream";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
-import type { ProjectsConfig } from "@/common/types/project";
+import type { ProjectsConfig, Workspace as WorkspaceConfigEntry } from "@/common/types/project";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
-import { resolvePersistedAgentId } from "@/common/utils/agentIds";
+import { resolvePersistedAgentIdCandidates } from "@/common/utils/agentIds";
 import { getErrorMessage } from "@/common/utils/errors";
 import { type ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import { createRuntimeContextForWorkspace } from "@/node/runtime/runtimeHelpers";
 import type { Runtime } from "@/node/runtime/Runtime";
 import {
   getSkipScopesAboveForKnownScope,
@@ -105,37 +106,67 @@ function coerceNonEmptyString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function findWorkspacePathById(cfg: ProjectsConfig, workspaceId: string): string | undefined {
-  for (const project of cfg.projects.values()) {
+function normalizeRequestedAgentId(value: unknown, fallback: "exec" = "exec"): string {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : fallback;
+  const parsed = AgentIdSchema.safeParse(raw);
+  return parsed.success ? parsed.data : fallback;
+}
+
+interface AgentDiscoveryCandidate {
+  runtime: Runtime;
+  workspacePath: string;
+}
+
+function findWorkspaceById(
+  cfg: ProjectsConfig,
+  workspaceId: string
+): { projectPath: string; workspace: WorkspaceConfigEntry } | undefined {
+  for (const [projectPath, project] of cfg.projects) {
     const workspace = project.workspaces.find((candidate) => candidate.id === workspaceId);
-    const workspacePath = coerceNonEmptyString(workspace?.path);
-    if (workspacePath != null) {
-      return workspacePath;
+    if (workspace != null) {
+      return { projectPath, workspace };
     }
   }
   return undefined;
 }
 
-function getAgentDiscoveryPathCandidates(params: {
+function getAgentDiscoveryCandidates(params: {
   metadata: WorkspaceMetadata;
+  runtime: Runtime;
   workspacePath: string;
   disableWorkspaceAgents: boolean;
   cfg: ProjectsConfig;
-}): string[] {
+}): AgentDiscoveryCandidate[] {
   if (params.disableWorkspaceAgents) {
-    return [params.metadata.projectPath];
+    return [{ runtime: params.runtime, workspacePath: params.metadata.projectPath }];
   }
 
-  const candidates: string[] = [];
-  const parentWorkspacePath = params.metadata.parentWorkspaceId
-    ? findWorkspacePathById(params.cfg, params.metadata.parentWorkspaceId)
+  // Child project definitions must keep normal project > global > built-in precedence.
+  // Parent discovery is a fallback for untracked project agents that never reached the child worktree.
+  const candidates: AgentDiscoveryCandidate[] = [
+    { runtime: params.runtime, workspacePath: params.workspacePath },
+  ];
+
+  const parentWorkspace = params.metadata.parentWorkspaceId
+    ? findWorkspaceById(params.cfg, params.metadata.parentWorkspaceId)
     : undefined;
-  if (parentWorkspacePath != null) {
-    candidates.push(parentWorkspacePath);
-  }
-
-  if (!candidates.includes(params.workspacePath)) {
-    candidates.push(params.workspacePath);
+  const parentWorkspaceName = coerceNonEmptyString(parentWorkspace?.workspace.name);
+  if (parentWorkspace != null && parentWorkspaceName != null) {
+    try {
+      candidates.push(
+        createRuntimeContextForWorkspace({
+          runtimeConfig: parentWorkspace.workspace.runtimeConfig ?? params.metadata.runtimeConfig,
+          projectPath: parentWorkspace.projectPath,
+          name: parentWorkspaceName,
+          namedWorkspacePath: coerceNonEmptyString(parentWorkspace.workspace.path),
+        })
+      );
+    } catch (error) {
+      log.debug("Failed to build parent agent-discovery runtime", {
+        parentWorkspaceId: params.metadata.parentWorkspaceId,
+        error: getErrorMessage(error),
+      });
+    }
   }
 
   return candidates;
@@ -163,54 +194,77 @@ export async function resolveAgentForStream(
   // Precedence:
   // - Child workspaces (tasks) use their persisted agentId/agentType.
   // - Main workspaces use the requested agentId (frontend), falling back to exec.
-  const persistedAgentId = metadata.parentWorkspaceId
-    ? resolvePersistedAgentId(metadata, "")
-    : undefined;
-  const requestedAgentIdRaw = metadata.parentWorkspaceId
-    ? persistedAgentId && persistedAgentId.length > 0
-      ? persistedAgentId
-      : "exec"
-    : typeof rawAgentId === "string"
-      ? rawAgentId
-      : "exec";
-  const requestedAgentIdNormalized = requestedAgentIdRaw.trim().toLowerCase();
-  const parsedAgentId = AgentIdSchema.safeParse(requestedAgentIdNormalized);
-  const requestedAgentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
+  const requestedAgentIds = metadata.parentWorkspaceId
+    ? [...resolvePersistedAgentIdCandidates(metadata), "exec"].filter(
+        (agentId, index, candidates) => candidates.indexOf(agentId) === index
+      )
+    : [normalizeRequestedAgentId(rawAgentId)];
+  const requestedAgentId = requestedAgentIds[0] ?? ("exec" as const);
   let effectiveAgentId = requestedAgentId;
 
   // When disableWorkspaceAgents is true, skip workspace-specific agents entirely.
   // Use project path so only built-in/global agents are available. This allows "unbricking"
   // when iterating on agent files — a broken agent in the worktree won't affect message sending.
-  const agentDiscoveryPathCandidates = getAgentDiscoveryPathCandidates({
+  const agentDiscoveryCandidates = getAgentDiscoveryCandidates({
     metadata,
+    runtime,
     workspacePath,
     disableWorkspaceAgents,
     cfg,
   });
-  let agentDiscoveryPath = agentDiscoveryPathCandidates[0] ?? workspacePath;
+  let agentDiscoveryRuntime = agentDiscoveryCandidates[0]?.runtime ?? runtime;
+  let agentDiscoveryPath = agentDiscoveryCandidates[0]?.workspacePath ?? workspacePath;
 
   const isSubagentWorkspace = Boolean(metadata.parentWorkspaceId);
 
   // --- Load agent definition (with fallback to exec) ---
-  let agentDefinition;
-  for (const candidatePath of agentDiscoveryPathCandidates) {
-    try {
-      agentDefinition = await readAgentDefinition(runtime, candidatePath, effectiveAgentId);
-      agentDiscoveryPath = candidatePath;
+  let agentDefinition: Awaited<ReturnType<typeof readAgentDefinition>> | undefined;
+  for (const candidateAgentId of requestedAgentIds) {
+    let fallbackDefinition:
+      | {
+          definition: Awaited<ReturnType<typeof readAgentDefinition>>;
+          discovery: AgentDiscoveryCandidate;
+        }
+      | undefined;
+
+    for (const discovery of agentDiscoveryCandidates) {
+      try {
+        const definition = await readAgentDefinition(
+          discovery.runtime,
+          discovery.workspacePath,
+          candidateAgentId
+        );
+        if (definition.scope === "project") {
+          agentDefinition = definition;
+          agentDiscoveryRuntime = discovery.runtime;
+          agentDiscoveryPath = discovery.workspacePath;
+          break;
+        }
+        fallbackDefinition ??= { definition, discovery };
+      } catch {
+        // Parent-only project agents may be untracked and absent from child worktrees.
+        // Try the next discovery path before trying the next persisted agent id.
+      }
+    }
+
+    if (agentDefinition != null) {
       break;
-    } catch {
-      // Parent-only project agents may be untracked and absent from child worktrees.
-      // Try the next discovery path before falling back to Exec.
+    }
+    if (fallbackDefinition != null) {
+      agentDefinition = fallbackDefinition.definition;
+      agentDiscoveryRuntime = fallbackDefinition.discovery.runtime;
+      agentDiscoveryPath = fallbackDefinition.discovery.workspacePath;
+      break;
     }
   }
 
   if (agentDefinition == null) {
     workspaceLog.warn("Failed to load agent definition; falling back", {
-      effectiveAgentId,
-      agentDiscoveryPathCandidates,
+      requestedAgentIds,
+      agentDiscoveryPaths: agentDiscoveryCandidates.map((candidate) => candidate.workspacePath),
       disableWorkspaceAgents,
     });
-    agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
+    agentDefinition = await readAgentDefinition(agentDiscoveryRuntime, agentDiscoveryPath, "exec");
   }
 
   // Keep agent ID aligned with the actual definition used (may fall back to exec).
@@ -223,7 +277,7 @@ export async function resolveAgentForStream(
   if (agentDefinition.id !== "exec") {
     try {
       const resolvedFrontmatter = await resolveAgentFrontmatter(
-        runtime,
+        agentDiscoveryRuntime,
         agentDiscoveryPath,
         agentDefinition.id,
         {
@@ -256,7 +310,11 @@ export async function resolveAgentForStream(
           agentId: agentDefinition.id,
           requestedAgentId,
         });
-        agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
+        agentDefinition = await readAgentDefinition(
+          agentDiscoveryRuntime,
+          agentDiscoveryPath,
+          "exec"
+        );
         effectiveAgentId = agentDefinition.id;
       }
     } catch (error: unknown) {
@@ -270,7 +328,7 @@ export async function resolveAgentForStream(
 
   // --- Inheritance chain & plan-like detection ---
   const agentsForInheritance = await resolveAgentInheritanceChain({
-    runtime,
+    runtime: agentDiscoveryRuntime,
     workspacePath: agentDiscoveryPath,
     agentId: agentDefinition.id,
     agentDefinition,

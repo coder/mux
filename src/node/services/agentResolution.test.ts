@@ -213,6 +213,125 @@ describe("resolveAgentForStream agent identity", () => {
     expect(result.data.agentIsPlanLike).toBe(true);
     expect(result.data.effectiveMode).toBe("plan");
   });
+
+  test("tries legacy agentType when modern agentId is valid but unavailable", async () => {
+    using tempDir = new DisposableTempDir("agent-resolution-stale-agent-id");
+    const projectPath = path.join(tempDir.path, "project");
+    const parentPath = path.join(projectPath, "parent");
+    const childPath = path.join(projectPath, "child");
+    await fs.mkdir(childPath, { recursive: true });
+
+    const metadata = createSubagentMetadata({
+      projectPath,
+      agentId: "missing-agent",
+      agentType: "explore",
+    });
+    const cfg: ProjectsConfig = {
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { id: PARENT_WORKSPACE_ID, name: PARENT_WORKSPACE_ID, path: parentPath },
+              {
+                id: CHILD_WORKSPACE_ID,
+                name: CHILD_WORKSPACE_ID,
+                path: childPath,
+                parentWorkspaceId: PARENT_WORKSPACE_ID,
+                agentId: "missing-agent",
+                agentType: "explore",
+              },
+            ],
+          },
+        ],
+      ]),
+    };
+
+    const result = await resolveAgentForStream({
+      workspaceId: CHILD_WORKSPACE_ID,
+      metadata,
+      runtime: new LocalRuntime(childPath),
+      workspacePath: childPath,
+      requestedAgentId: "exec",
+      disableWorkspaceAgents: false,
+      callerToolPolicy: undefined,
+      cfg,
+      emitError: () => undefined,
+      isAdvisorExperimentEnabled: true,
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.effectiveAgentId).toBe("explore");
+  });
+
+  test("prefers child project overrides before parent built-in fallback", async () => {
+    using tempDir = new DisposableTempDir("agent-resolution-child-project-override");
+    const projectPath = path.join(tempDir.path, "project");
+    const parentPath = path.join(projectPath, "parent");
+    const childPath = path.join(projectPath, "child");
+    await fs.mkdir(path.join(childPath, ".mux", "agents"), { recursive: true });
+    await fs.mkdir(parentPath, { recursive: true });
+    await fs.writeFile(
+      path.join(childPath, ".mux", "agents", "exec.md"),
+      [
+        "---",
+        "name: Child Exec Override",
+        "base: plan",
+        "subagent:",
+        "  runnable: true",
+        "---",
+        "Child project override for Exec.",
+        "",
+      ].join("\n")
+    );
+
+    const metadata = createSubagentMetadata({
+      projectPath,
+      agentId: "exec",
+    });
+    const cfg: ProjectsConfig = {
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { id: PARENT_WORKSPACE_ID, name: PARENT_WORKSPACE_ID, path: parentPath },
+              {
+                id: CHILD_WORKSPACE_ID,
+                name: CHILD_WORKSPACE_ID,
+                path: childPath,
+                parentWorkspaceId: PARENT_WORKSPACE_ID,
+                agentId: "exec",
+                agentType: "exec",
+              },
+            ],
+          },
+        ],
+      ]),
+    };
+
+    const result = await resolveAgentForStream({
+      workspaceId: CHILD_WORKSPACE_ID,
+      metadata,
+      runtime: new LocalRuntime(childPath),
+      workspacePath: childPath,
+      requestedAgentId: "exec",
+      disableWorkspaceAgents: false,
+      callerToolPolicy: undefined,
+      cfg,
+      emitError: () => undefined,
+      isAdvisorExperimentEnabled: true,
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.agentDefinition.scope).toBe("project");
+    expect(result.data.agentDefinition.frontmatter.name).toBe("Child Exec Override");
+    expect(result.data.effectiveMode).toBe("plan");
+  });
 });
 
 describe("resolveAgentForStream advisor defaults", () => {

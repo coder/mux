@@ -56,6 +56,7 @@ import {
   normalizeTaskGroupLabel,
   type TaskGroupKind,
 } from "@/common/utils/tools/taskGroups";
+import { resolvePersistedAgentId } from "@/common/utils/agentIds";
 import { formatDuration } from "@/common/utils/formatDuration";
 import { ElapsedTimeDisplay } from "./Shared/ElapsedTimeDisplay";
 
@@ -472,8 +473,7 @@ function recoverTaskGroupTaskIdsFromWorkspaceMetadata(params: {
       continue;
     }
     if (requestedAgentType) {
-      const metadataAgentType =
-        normalizeTaskAgent(metadata.agentId) ?? normalizeTaskAgent(metadata.agentType);
+      const metadataAgentType = normalizeTaskAgent(resolvePersistedAgentId(metadata, ""));
       if (metadataAgentType && metadataAgentType !== requestedAgentType) {
         continue;
       }
@@ -1038,10 +1038,8 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
         continue;
       }
 
-      const agentType =
-        trimToNonEmptyString(metadata.agentId) ??
-        trimToNonEmptyString(metadata.agentType) ??
-        undefined;
+      const resolvedAgentType = resolvePersistedAgentId(metadata, "");
+      const agentType = resolvedAgentType.length > 0 ? resolvedAgentType : undefined;
       const title = metadata.title?.trim().length ? metadata.title : metadata.name;
 
       awaitedRows.push({

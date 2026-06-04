@@ -4094,7 +4094,7 @@ describe("TaskService", () => {
     );
   });
 
-  test("initialize uses legacy agentType for plan-inheriting awaiting_report tasks", async () => {
+  test("initialize uses legacy agentType when modern agentId is unavailable for awaiting_report tasks", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -4136,8 +4136,73 @@ describe("TaskService", () => {
           id: childId,
           name: "agent_custom_plan_child",
           parentWorkspaceId: parentId,
-          agentId: "",
+          agentId: "missing-agent",
           agentType: customAgentId,
+          taskStatus: "awaiting_report",
+          runtimeConfig,
+        },
+      ],
+      testTaskSettings(1, 3)
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.initialize();
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("awaiting its final propose_plan"),
+      expect.objectContaining({
+        toolPolicy: [{ regex_match: "^propose_plan$", action: "require" }],
+      }),
+      expect.objectContaining({ synthetic: true })
+    );
+  });
+
+  test("initialize honors child project agent overrides before parent built-in fallback", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo-child-override");
+    const parentId = "parent-child-override-111";
+    const childId = "child-exec-override-222";
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const parentWorkspacePath = path.join(projectPath, "parent");
+    const childWorkspacePath = path.join(projectPath, "child-exec-override");
+
+    const childAgentDir = path.join(childWorkspacePath, ".mux", "agents");
+    await fsPromises.mkdir(childAgentDir, { recursive: true });
+    await fsPromises.writeFile(
+      path.join(childAgentDir, "exec.md"),
+      [
+        "---",
+        "name: Child Exec Override",
+        "base: plan",
+        "subagent:",
+        "  runnable: true",
+        "---",
+        "Child plan-like Exec override for restart handling tests.",
+        "",
+      ].join("\n")
+    );
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: parentWorkspacePath,
+          id: parentId,
+          name: "parent",
+          runtimeConfig,
+        },
+        {
+          path: childWorkspacePath,
+          id: childId,
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentId: "exec",
+          agentType: "exec",
           taskStatus: "awaiting_report",
           runtimeConfig,
         },
