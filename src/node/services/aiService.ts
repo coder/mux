@@ -1577,10 +1577,17 @@ export class AIService extends EventEmitter {
                   return;
                 }
 
-                const invocationCurrent = await continuationSender.isWorkflowInvocationCurrent(
+                let invocationCurrent = await continuationSender.isWorkflowInvocationCurrent(
                   workspaceId,
                   runId
                 );
+                while (!invocationCurrent && this.isStreaming(workspaceId)) {
+                  await new Promise((resolve) => setTimeout(resolve, 1_000));
+                  invocationCurrent = await continuationSender.isWorkflowInvocationCurrent(
+                    workspaceId,
+                    runId
+                  );
+                }
                 if (!invocationCurrent) {
                   log.debug("Skipping superseded workflow continuation", { workspaceId, runId });
                   return;
