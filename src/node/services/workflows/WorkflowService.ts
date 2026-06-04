@@ -239,6 +239,14 @@ export class WorkflowService {
         allowResumeFromInterrupted: run.status === "interrupted",
       });
       return { runId: input.runId, status: "completed", result };
+    } catch (error) {
+      if (error instanceof WorkflowRunBackgroundedError) {
+        void this.runInBackground(input.runId, "Backgrounded workflow resume failed:").catch(
+          () => undefined
+        );
+        return { runId: input.runId, status: "backgrounded", result: null };
+      }
+      throw error;
     } finally {
       unregisterRunnerAbort();
     }

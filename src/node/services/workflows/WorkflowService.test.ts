@@ -572,6 +572,63 @@ export default function workflow({ args, agent }) {
     expect(taskCalls).toEqual(["second"]);
   });
 
+  test("keeps resumed workflow running when foreground wait backgrounds", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_resume_backgrounded",
+      workspaceId: "workspace-1",
+      definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus(
+      "wfr_resume_backgrounded",
+      "interrupted",
+      "2026-05-29T00:00:01.000Z"
+    );
+
+    let calls = 0;
+    const backgroundFlags: Array<boolean | undefined> = [];
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(_spec, _lifecycle, waitOptions) {
+          calls += 1;
+          backgroundFlags.push(waitOptions?.backgroundOnMessageQueued);
+          if (calls === 1) {
+            throw new ForegroundWaitBackgroundedError();
+          }
+          return { taskId: "task_slow", reportMarkdown: "done" };
+        },
+      },
+      runnerId: "runner-a",
+    });
+
+    const result = await service.resumeRun({
+      workspaceId: "workspace-1",
+      runId: "wfr_resume_backgrounded",
+      projectTrusted: true,
+    });
+
+    expect(result).toEqual({
+      runId: "wfr_resume_backgrounded",
+      status: "backgrounded",
+      result: null,
+    });
+    await waitForWorkflowStatus(runStore, "wfr_resume_backgrounded", "completed");
+    expect(calls).toBe(2);
+    expect(backgroundFlags).toEqual([true, false]);
+  });
+
   test("does not mark resume running before the runner acquires the lease", async () => {
     using tmp = new DisposableTempDir("workflow-service");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
