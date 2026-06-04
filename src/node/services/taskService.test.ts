@@ -332,6 +332,7 @@ function createWorkspaceServiceMocks(
     updateAgentStatus: ReturnType<typeof mock>;
     isExperimentEnabled: ReturnType<typeof mock>;
     emitChatEvent: ReturnType<typeof mock>;
+    isWorkflowInvocationCurrent: ReturnType<typeof mock>;
   }>
 ): {
   workspaceService: WorkspaceService;
@@ -346,6 +347,7 @@ function createWorkspaceServiceMocks(
   updateAgentStatus: ReturnType<typeof mock>;
   isExperimentEnabled: ReturnType<typeof mock>;
   emitChatEvent: ReturnType<typeof mock>;
+  isWorkflowInvocationCurrent: ReturnType<typeof mock>;
 } {
   const sendMessage =
     overrides?.sendMessage ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
@@ -365,6 +367,8 @@ function createWorkspaceServiceMocks(
     overrides?.updateAgentStatus ?? mock((): Promise<void> => Promise.resolve());
   const isExperimentEnabled = overrides?.isExperimentEnabled ?? mock(() => false);
   const emitChatEvent = overrides?.emitChatEvent ?? mock(() => undefined);
+  const isWorkflowInvocationCurrent =
+    overrides?.isWorkflowInvocationCurrent ?? mock(() => Promise.resolve(true));
 
   return {
     workspaceService: {
@@ -379,6 +383,7 @@ function createWorkspaceServiceMocks(
       updateAgentStatus,
       isExperimentEnabled,
       emitChatEvent,
+      isWorkflowInvocationCurrent,
     } as unknown as WorkspaceService,
     sendMessage,
     resumeStream,
@@ -391,6 +396,7 @@ function createWorkspaceServiceMocks(
     updateAgentStatus,
     isExperimentEnabled,
     emitChatEvent,
+    isWorkflowInvocationCurrent,
   };
 }
 
@@ -7553,6 +7559,95 @@ describe("TaskService", () => {
       ],
     });
 
+    expect(remove).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining(workflowRunId),
+      expect.objectContaining({ model: "openai:gpt-4o-mini", agentId: "exec" }),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("running");
+  });
+
+  test("task stream-end waits for completed task-local workflows before final report", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-workflow-completed-wait";
+    const childId = "child-workflow-completed-wait";
+    const workflowRunId = "wfr_child_completed";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+          taskModelString: "openai:gpt-4o-mini",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(childId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: childId,
+      definition: {
+        name: "child-workflow",
+        description: "Child workflow",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+    await runStore.appendStatus(workflowRunId, "completed", "2026-06-04T00:00:02.000Z");
+    await recordAgentWorkflowRunReference({
+      workspaceSessionDir: config.getSessionDir(childId),
+      runId: workflowRunId,
+      createdAtMs: 1_000,
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService, sendMessage, isWorkflowInvocationCurrent } =
+      createWorkspaceServiceMocks({
+        remove,
+      });
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Premature report", title: "Premature" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    expect(isWorkflowInvocationCurrent).toHaveBeenCalledWith(childId, workflowRunId);
     expect(remove).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledWith(
       childId,

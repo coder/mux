@@ -545,6 +545,59 @@ function isWorkflowSupersessionMessage(message: MuxMessage): boolean {
   return isManualUserSupersessionMessage(message) || isResetBoundaryMessage(message);
 }
 
+function isTerminalWorkflowRunStatus(status: WorkflowRunStatus): boolean {
+  return status === "completed" || status === "failed" || status === "interrupted";
+}
+
+function isFailedWorkflowRunSnapshot(value: unknown, runId: string): boolean {
+  if (value == null || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return record.id === runId && record.status === "failed";
+}
+
+function isTerminalWorkflowTaskAwaitRecord(
+  record: Record<string, unknown>,
+  runId: string
+): boolean {
+  if (record.taskId !== runId) {
+    return false;
+  }
+  if (record.status === "completed" || record.status === "interrupted") {
+    return true;
+  }
+  if (record.status === "error") {
+    return isFailedWorkflowRunSnapshot(record.run, runId);
+  }
+  return false;
+}
+
+function hasTerminalWorkflowTaskAwaitInParts(parts: readonly unknown[], runId: string): boolean {
+  return parts.some((part) => {
+    if (!isDynamicToolPart(part) || part.toolName !== "task_await") {
+      return false;
+    }
+    if (part.state !== "output-available") {
+      return false;
+    }
+    const output = part.output;
+    if (output == null || typeof output !== "object") {
+      return false;
+    }
+    const results = (output as Record<string, unknown>).results;
+    if (!Array.isArray(results)) {
+      return false;
+    }
+    return results.some((result) => {
+      if (result == null || typeof result !== "object") {
+        return false;
+      }
+      return isTerminalWorkflowTaskAwaitRecord(result as Record<string, unknown>, runId);
+    });
+  });
+}
+
 function sanitizeAgentTypeForName(agentType: string): string {
   const normalized = agentType
     .trim()
@@ -772,6 +825,53 @@ export class TaskService {
       // Workflow state should never make stream-end cleanup fail; task_await can still discover
       // runs on a later turn once storage is readable again.
       log.warn("Failed to list active background workflow runs", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+      return [];
+    }
+  }
+
+  private async listBlockingBackgroundWorkflowRunIds(
+    workspaceId: string,
+    referencedWorkflowRunIds: readonly string[],
+    currentParts: readonly unknown[]
+  ): Promise<string[]> {
+    assert(workspaceId.length > 0, "listBlockingBackgroundWorkflowRunIds requires workspaceId");
+    if (referencedWorkflowRunIds.length === 0) {
+      return [];
+    }
+
+    try {
+      const referencedRunIdSet = new Set(referencedWorkflowRunIds);
+      const runStore = new WorkflowRunStore({ sessionDir: this.config.getSessionDir(workspaceId) });
+      const runs = await runStore.listRuns();
+      const blockingRunIds: string[] = [];
+      for (const run of runs) {
+        if (!referencedRunIdSet.has(run.id) || run.workspaceId !== workspaceId) {
+          continue;
+        }
+        if (ACTIVE_BACKGROUND_WORKFLOW_RUN_STATUSES.has(run.status)) {
+          blockingRunIds.push(run.id);
+          continue;
+        }
+        if (!isTerminalWorkflowRunStatus(run.status)) {
+          continue;
+        }
+        if (hasTerminalWorkflowTaskAwaitInParts(currentParts, run.id)) {
+          continue;
+        }
+        const isCurrent = await this.workspaceService.isWorkflowInvocationCurrent(
+          workspaceId,
+          run.id
+        );
+        if (isCurrent) {
+          blockingRunIds.push(run.id);
+        }
+      }
+      return blockingRunIds;
+    } catch (error: unknown) {
+      log.warn("Failed to list blocking background workflow runs", {
         workspaceId,
         error: getErrorMessage(error),
       });
@@ -3927,9 +4027,10 @@ export class TaskService {
       event.parts,
       event.messageId
     );
-    const taskActiveWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
+    const taskActiveWorkflowRunIds = await this.listBlockingBackgroundWorkflowRunIds(
       workspaceId,
-      taskReferencedWorkflowRunIds
+      taskReferencedWorkflowRunIds,
+      event.parts
     );
     if (taskActiveWorkflowRunIds.length > 0) {
       if (status === "awaiting_report") {
