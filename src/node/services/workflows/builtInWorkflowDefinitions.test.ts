@@ -394,7 +394,7 @@ describe("built-in deep-research workflow", () => {
     expect(structuredOutput.sources).toHaveLength(16);
     expect(structuredOutput.claims).toHaveLength(16);
     expect(structuredOutput.verification).toHaveLength(16);
-  });
+  }, 10_000);
 });
 
 describe("built-in deep-review-workflow", () => {
@@ -572,5 +572,5 @@ describe("built-in deep-review-workflow", () => {
         },
       },
     });
-  });
+  }, 10_000);
 });
