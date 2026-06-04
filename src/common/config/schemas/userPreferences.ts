@@ -409,7 +409,7 @@ export function normalizeUserPreferences(value: unknown): UserPreferences | unde
   if (isRecord(value.navigation)) {
     const navigation: NonNullable<UserPreferences["navigation"]> = {};
     const launchBehavior = parseEnum<LaunchBehavior>(
-      ["dashboard", "new-chat", "last-workspace"],
+      LaunchBehaviorSchema.options,
       value.navigation.launchBehavior
     );
     if (launchBehavior) {

@@ -4,6 +4,7 @@ import {
   createUserPreferenceSaveQueue,
   hydrateUserPreferencesLocalCache,
   mergeMissingLocalPreferences,
+  mirrorBackendPreferences,
   overlayDirtyLocalValues,
   prunePreferenceScopes,
 } from "./UserPreferencesContext";
@@ -79,6 +80,22 @@ describe("UserPreferencesProvider bridge helpers", () => {
     });
 
     expect(JSON.parse(storage.getItem(LAUNCH_BEHAVIOR_KEY) ?? "null")).toBe("last-workspace");
+  });
+
+  test("removes stale local cache entries on non-initial backend refresh", () => {
+    const storage = new MemoryStorage();
+    storage.setJSON(UI_THEME_KEY, "dark");
+    storage.setJSON(VIM_ENABLED_KEY, true);
+
+    mirrorBackendPreferences({
+      backendPreferences: { appearance: { theme: "light" } },
+      dirtyKeys: new Set(),
+      initial: false,
+      storage,
+    });
+
+    expect(JSON.parse(storage.getItem(UI_THEME_KEY) ?? "null")).toBe("light");
+    expect(storage.getItem(VIM_ENABLED_KEY)).toBeNull();
   });
 
   test("backfills only local preferences that are missing from backend config", () => {
@@ -191,6 +208,39 @@ describe("UserPreferencesProvider bridge helpers", () => {
     expect(saveAttempts).toBe(2);
     expect(dirtyClears).toBe(1);
     expect(errors[0]).toContain("retrying");
+  });
+
+  test("save queue stops retrying after abort", async () => {
+    const controller = new AbortController();
+    const currentPreferences: UserPreferences | undefined = { appearance: { theme: "dark" } };
+    let saveAttempts = 0;
+    const errors: string[] = [];
+
+    const queue = createUserPreferenceSaveQueue({
+      signal: controller.signal,
+      configClient: {
+        getConfig: () => Promise.resolve({}),
+        saveConfig: () => {
+          saveAttempts += 1;
+          return Promise.reject(new Error("temporary failure"));
+        },
+      },
+      getCurrentPreferences: () => currentPreferences,
+      clearDirtyKeys: () => {
+        throw new Error("dirty keys should not clear after an aborted save");
+      },
+      onError: (message) => {
+        errors.push(message);
+      },
+    });
+
+    queue(currentPreferences);
+
+    await waitUntil(() => expect(errors).toHaveLength(1));
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(saveAttempts).toBe(1);
   });
 
   test("save queue serializes in-flight saves and persists the latest pending preferences", async () => {

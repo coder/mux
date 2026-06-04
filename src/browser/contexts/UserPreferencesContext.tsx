@@ -16,7 +16,6 @@ import {
   entriesFromUserPreferences,
   getStoredUserPreferenceEntries,
   getStoredUserPreferenceKeys,
-  hasUserPreferenceEntry,
   isUserPreferenceStorageKey,
   readStoredUserPreferenceValue,
   removeStoredUserPreference,
@@ -85,7 +84,7 @@ export function mergeMissingLocalPreferences(
   return next;
 }
 
-function mirrorBackendPreferences(params: {
+export function mirrorBackendPreferences(params: {
   backendPreferences: UserPreferences | undefined;
   dirtyKeys: ReadonlySet<string>;
   initial: boolean;
@@ -227,15 +226,18 @@ export function createUserPreferenceSaveQueue(params: {
   clearDirtyKeys: () => void;
   onError: (message: string, error: unknown) => void;
 }): (preferences: UserPreferences | undefined) => void {
+  interface PendingPreferenceSave {
+    value: UserPreferences | undefined;
+  }
   let saveInFlight = false;
-  let pendingSave: UserPreferences | undefined | null = null;
+  let pendingSave: PendingPreferenceSave | null = null;
   let retryAttempt = 0;
 
   const flush = async () => {
     saveInFlight = true;
     try {
       while (pendingSave !== null && !params.signal.aborted) {
-        const preferencesToSave = pendingSave;
+        const preferencesToSave = pendingSave.value;
         pendingSave = null;
         const savedFingerprint = stableStringify(preferencesToSave);
 
@@ -244,7 +246,7 @@ export function createUserPreferenceSaveQueue(params: {
         } catch (error) {
           const hasNewerPendingSave = pendingSave !== null;
           if (!hasNewerPendingSave) {
-            pendingSave = preferencesToSave;
+            pendingSave = { value: preferencesToSave };
           }
 
           const retryDelayMs = getUserPreferenceSaveRetryDelayMs(retryAttempt);
@@ -278,7 +280,7 @@ export function createUserPreferenceSaveQueue(params: {
   };
 
   return (preferences) => {
-    pendingSave = preferences;
+    pendingSave = { value: preferences };
     if (saveInFlight) {
       return;
     }
@@ -457,10 +459,7 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
     const prunedKeys = new Set(entriesFromUserPreferences(pruned).map((entry) => entry.key));
     if (storage) {
       for (const key of getStoredUserPreferenceKeys(storage)) {
-        if (
-          !prunedKeys.has(key) &&
-          hasUserPreferenceEntry(currentPreferencesRef.current, key) === false
-        ) {
+        if (!prunedKeys.has(key)) {
           removeBackendEntryFromLocalStorage(key, storage);
         }
       }
