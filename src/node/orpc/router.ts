@@ -1776,11 +1776,31 @@ export const router = (authToken?: string) => {
         .output(schemas.workflows.start.output)
         .handler(async ({ context, input, signal }) => {
           assertDynamicWorkflowsEnabled(context);
+          let invocationMessagePersisted: boolean | undefined;
           const rawCommandForContinuation = input.rawCommand;
           const continuationOptions = input.continuationOptions;
           const onBackgroundRunTerminal =
             rawCommandForContinuation != null && continuationOptions != null
               ? async ({ runId, status, result, run }: WorkflowBackgroundRunTerminalEvent) => {
+                  if (invocationMessagePersisted !== true) {
+                    log.warn("Skipping slash workflow continuation without persisted invocation", {
+                      workspaceId: input.workspaceId,
+                      runId,
+                    });
+                    return;
+                  }
+                  const invocationCurrent =
+                    await context.workspaceService.isWorkflowInvocationCurrent(
+                      input.workspaceId,
+                      runId
+                    );
+                  if (!invocationCurrent) {
+                    log.debug("Skipping superseded slash workflow continuation", {
+                      workspaceId: input.workspaceId,
+                      runId,
+                    });
+                    return;
+                  }
                   const commandPrefix = rawCommandForContinuation.split(/\s+/u)[0] ?? input.name;
                   const workflowResultMessage = buildWorkflowResultContextMessage({
                     rawCommand: rawCommandForContinuation,
@@ -1833,7 +1853,6 @@ export const router = (authToken?: string) => {
             projectTrusted,
             args: input.args ?? {},
           };
-          let invocationMessagePersisted: boolean | undefined;
           const persistInvocation = async (details: {
             runId: string;
             status: string;

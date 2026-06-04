@@ -5858,6 +5858,32 @@ export class WorkspaceService extends EventEmitter {
     return true;
   }
 
+  async isWorkflowInvocationCurrent(workspaceId: string, runId: string): Promise<boolean> {
+    assert(workspaceId.length > 0, "isWorkflowInvocationCurrent requires workspaceId");
+    assert(runId.length > 0, "isWorkflowInvocationCurrent requires runId");
+
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      log.warn("Could not read history before workflow continuation", {
+        workspaceId,
+        runId,
+        error: historyResult.error,
+      });
+      return false;
+    }
+
+    const runCardIndex = historyResult.data.findIndex(
+      (message) =>
+        message.metadata?.muxMetadata?.type === WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE &&
+        message.metadata.muxMetadata.runId === runId
+    );
+    if (runCardIndex === -1) {
+      return false;
+    }
+
+    return !historyResult.data.slice(runCardIndex + 1).some((message) => message.role === "user");
+  }
+
   async sendMessage(
     workspaceId: string,
     message: string,
