@@ -63,6 +63,8 @@ export interface ResolveAgentOptions {
 export interface AgentResolutionResult {
   effectiveAgentId: string;
   agentDefinition: Awaited<ReturnType<typeof readAgentDefinition>>;
+  /** Runtime used for agent discovery (child workspace or parent fallback for untracked agents). */
+  agentDiscoveryRuntime: Runtime;
   /** Path used for agent discovery (workspace path or project path if agents disabled). */
   agentDiscoveryPath: string;
   isSubagentWorkspace: boolean;
@@ -376,6 +378,7 @@ export async function resolveAgentForStream(
   return Ok({
     effectiveAgentId,
     agentDefinition,
+    agentDiscoveryRuntime,
     agentDiscoveryPath,
     isSubagentWorkspace,
     agentInheritanceChain: agentsForInheritance,

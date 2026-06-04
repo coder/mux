@@ -255,6 +255,7 @@ function resolvedAgentResultFor(
         frontmatter: { name: "Exec" },
         body: "Exec agent body",
       },
+      agentDiscoveryRuntime: new LocalRuntime(metadata.projectPath),
       agentDiscoveryPath: metadata.projectPath,
       isSubagentWorkspace: false,
       agentInheritanceChain: [{ id: "exec", tools: { add: [".*"] } }],

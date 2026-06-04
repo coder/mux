@@ -1195,6 +1195,7 @@ export class AIService extends EventEmitter {
       const {
         effectiveAgentId,
         agentDefinition,
+        agentDiscoveryRuntime,
         agentDiscoveryPath,
         isSubagentWorkspace,
         agentInheritanceChain,
@@ -1295,6 +1296,7 @@ export class AIService extends EventEmitter {
           effectiveMode,
           effectiveAgentId,
           agentIsPlanLike,
+          agentDiscoveryRuntime,
           agentDiscoveryPath,
           additionalSystemInstructions: scratchpadAdditionalSystemInstructions,
           shouldDisableTaskToolsForDepth,
@@ -1325,6 +1327,7 @@ export class AIService extends EventEmitter {
           workspacePath,
           workspaceId,
           agentDefinition,
+          agentDiscoveryRuntime,
           agentDiscoveryPath,
           isSubagentWorkspace,
           effectiveAdditionalInstructions,

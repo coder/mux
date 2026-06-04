@@ -209,6 +209,7 @@ describe("resolveAgentForStream agent identity", () => {
 
     expect(result.success).toBe(true);
     if (!result.success) return;
+    expect(result.data.agentDiscoveryPath).toBe(parentPath);
     expect(result.data.effectiveAgentId).toBe(customAgentId);
     expect(result.data.agentIsPlanLike).toBe(true);
     expect(result.data.effectiveMode).toBe("plan");

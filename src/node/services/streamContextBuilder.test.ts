@@ -88,6 +88,7 @@ async function buildSystemContextForTest(args: {
     workspacePath: args.workspacePath,
     workspaceId: args.metadata.id,
     agentDefinition: { id: "exec", scope: "built-in" },
+    agentDiscoveryRuntime: args.runtime,
     agentDiscoveryPath: args.workspacePath,
     isSubagentWorkspace: args.isSubagentWorkspace,
     effectiveAdditionalInstructions: args.effectiveAdditionalInstructions,
@@ -130,6 +131,7 @@ describe("buildPlanInstructions", () => {
       effectiveMode: "plan",
       effectiveAgentId: "plan",
       agentIsPlanLike: true,
+      agentDiscoveryRuntime: runtime,
       agentDiscoveryPath: projectPath,
       additionalSystemInstructions: callerInstructions,
       shouldDisableTaskToolsForDepth: false,
@@ -204,6 +206,7 @@ describe("buildPlanInstructions", () => {
       effectiveMode: "exec",
       effectiveAgentId: "exec",
       agentIsPlanLike: false,
+      agentDiscoveryRuntime: runtime,
       agentDiscoveryPath: projectPath,
       additionalSystemInstructions: undefined,
       shouldDisableTaskToolsForDepth: false,
@@ -220,6 +223,7 @@ describe("buildPlanInstructions", () => {
       effectiveMode: "exec",
       effectiveAgentId: "exec",
       agentIsPlanLike: false,
+      agentDiscoveryRuntime: runtime,
       agentDiscoveryPath: projectPath,
       additionalSystemInstructions: undefined,
       shouldDisableTaskToolsForDepth: false,
@@ -235,7 +239,84 @@ describe("buildPlanInstructions", () => {
   });
 });
 
+class RestrictedTestRuntime extends TestRuntime {
+  constructor(
+    projectPath: string,
+    muxHomePath: string,
+    private readonly readableRoot: string
+  ) {
+    super(projectPath, muxHomePath);
+  }
+
+  override readFile(filePath: string, abortSignal?: AbortSignal): ReadableStream<Uint8Array> {
+    const root = path.resolve(this.readableRoot);
+    const target = path.resolve(filePath);
+    if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
+      throw new Error(`RestrictedTestRuntime cannot read outside ${root}: ${target}`);
+    }
+    return super.readFile(filePath, abortSignal);
+  }
+}
+
 describe("buildStreamSystemContext", () => {
+  test("uses the resolved agent discovery runtime for parent-only subagent prompts", async () => {
+    using tempRoot = new DisposableTempDir("stream-system-context-parent-runtime");
+
+    const projectPath = path.join(tempRoot.path, "project");
+    const parentPath = path.join(projectPath, "parent");
+    const childPath = path.join(projectPath, "child");
+    const muxHome = path.join(tempRoot.path, "mux-home");
+    const customAgentId = "parent-only-reviewer";
+    await fs.mkdir(path.join(parentPath, ".mux", "agents"), { recursive: true });
+    await fs.mkdir(childPath, { recursive: true });
+    await fs.mkdir(muxHome, { recursive: true });
+    await fs.writeFile(
+      path.join(parentPath, ".mux", "agents", `${customAgentId}.md`),
+      [
+        "---",
+        "name: Parent Only Reviewer",
+        "subagent:",
+        "  runnable: true",
+        "---",
+        "Parent-only reviewer prompt body.",
+        "",
+      ].join("\n")
+    );
+
+    const metadata = createWorkspaceMetadata({
+      id: "child-ws",
+      name: "child-workspace",
+      projectName: "project",
+      projectPath,
+      parentWorkspaceId: "parent-ws",
+    });
+    const cfg = createProjectsConfig({
+      projectPath,
+      workspaces: [
+        { id: "parent-ws", name: "parent-workspace" },
+        { id: metadata.id, name: metadata.name, parentWorkspaceId: metadata.parentWorkspaceId },
+      ],
+    });
+
+    const result = await buildStreamSystemContext({
+      runtime: new RestrictedTestRuntime(childPath, muxHome, childPath),
+      metadata,
+      workspacePath: childPath,
+      workspaceId: metadata.id,
+      agentDefinition: { id: customAgentId, scope: "project" },
+      agentDiscoveryRuntime: new RestrictedTestRuntime(parentPath, muxHome, parentPath),
+      agentDiscoveryPath: parentPath,
+      isSubagentWorkspace: true,
+      effectiveAdditionalInstructions: undefined,
+      modelString: "openai:gpt-5.2",
+      cfg,
+      providersConfig: null,
+      mcpServers: {},
+    });
+
+    expect(result.agentSystemPrompt).toContain("Parent-only reviewer prompt body.");
+  });
+
   test("includes the direct parent plan path ahead of caller instructions", async () => {
     using tempRoot = new DisposableTempDir("stream-system-context");
 

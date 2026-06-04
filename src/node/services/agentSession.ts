@@ -35,7 +35,7 @@ import {
 } from "@/constants/goals";
 import type { SendMessageError } from "@/common/types/errors";
 import { AgentIdSchema, SkillNameSchema } from "@/common/orpc/schemas";
-import { normalizeAgentId, resolvePersistedAgentId } from "@/common/utils/agentIds";
+import { normalizeAgentId, resolvePersistedAgentIdCandidates } from "@/common/utils/agentIds";
 import {
   buildStreamErrorEventData,
   createStreamErrorMessage,
@@ -74,6 +74,7 @@ import {
 import {
   createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
+  type WorkspaceRuntimeContext,
 } from "@/node/runtime/runtimeHelpers";
 import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
 import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
@@ -1306,15 +1307,21 @@ export class AgentSession {
       coerceGoalSyntheticMessageKind(persistedRetrySendOptions?.goalKind) ??
       coerceGoalSyntheticMessageKind(lastUserMessage?.metadata?.kind);
 
-    const workspaceAgentId = resolvePersistedAgentId(workspaceMetadata, WORKSPACE_DEFAULTS.agentId);
+    const workspaceAgentIdCandidates = resolvePersistedAgentIdCandidates(workspaceMetadata);
+    const workspaceAgentId = workspaceAgentIdCandidates[0] ?? WORKSPACE_DEFAULTS.agentId;
     const persistedAgentId = this.normalizeAgentIdForRetry(persistedRetrySendOptions?.agentId);
     const assistantAgentId = this.normalizeAgentIdForRetry(lastAssistantMessage?.metadata?.agentId);
     const baseAgentId = persistedAgentId ?? assistantAgentId ?? workspaceAgentId;
+    const agentSettingsCandidates = [
+      baseAgentId,
+      ...workspaceAgentIdCandidates,
+      workspaceAgentId,
+    ].filter((agentId, index, candidates) => candidates.indexOf(agentId) === index);
 
     const agentSettings =
-      workspaceMetadata?.aiSettingsByAgent?.[baseAgentId] ??
-      workspaceMetadata?.aiSettingsByAgent?.[workspaceAgentId] ??
-      workspaceMetadata?.aiSettings;
+      agentSettingsCandidates
+        .map((agentId) => workspaceMetadata?.aiSettingsByAgent?.[agentId])
+        .find((settings) => settings != null) ?? workspaceMetadata?.aiSettings;
     const compactSettings = workspaceMetadata?.aiSettingsByAgent?.compact;
 
     const persistedModel = this.normalizeStartupModel(persistedRetrySendOptions?.model);
@@ -3905,13 +3912,12 @@ export class AgentSession {
       return false;
     }
 
-    const agentIdRaw = resolvePersistedAgentId(metadata, WORKSPACE_DEFAULTS.agentId);
-    const parsedAgentId = AgentIdSchema.safeParse(agentIdRaw);
-    const agentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
+    const agentIdCandidates = [
+      ...resolvePersistedAgentIdCandidates(metadata),
+      WORKSPACE_DEFAULTS.agentId,
+    ].filter((agentId, index, candidates) => candidates.indexOf(agentId) === index);
+    let resolvedAgentIdForLog = agentIdCandidates[0] ?? WORKSPACE_DEFAULTS.agentId;
 
-    // Prefer resolving agent inheritance from the parent workspace: project agents may be untracked
-    // (and therefore absent from child worktrees), but they are always present in the parent that
-    // spawned the task.
     const metadataCandidates: Array<typeof metadata> = [metadata];
 
     try {
@@ -3919,33 +3925,67 @@ export class AgentSession {
         metadata.parentWorkspaceId
       );
       if (parentMetadataResult.success) {
-        metadataCandidates.unshift(parentMetadataResult.data);
+        metadataCandidates.push(parentMetadataResult.data);
       }
     } catch {
-      // ignore - fall back to child metadata
+      // Ignore: child discovery still handles built-in agents.
     }
 
-    let chain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
+    const discoveryContexts: WorkspaceRuntimeContext[] = [];
     for (const agentMetadata of metadataCandidates) {
       try {
         const { runtime, workspacePath } = createRuntimeContextForWorkspace(agentMetadata);
-
-        const agentDiscoveryPath =
-          context.options?.disableWorkspaceAgents === true
-            ? agentMetadata.projectPath
-            : workspacePath;
-
-        const agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, agentId);
-        chain = await resolveAgentInheritanceChain({
+        discoveryContexts.push({
           runtime,
-          workspacePath: agentDiscoveryPath,
-          agentId,
-          agentDefinition,
-          workspaceId: this.workspaceId,
+          workspacePath:
+            context.options?.disableWorkspaceAgents === true
+              ? agentMetadata.projectPath
+              : workspacePath,
         });
-        break;
       } catch {
-        // ignore - try next candidate
+        // Ignore: try the next metadata source.
+      }
+    }
+
+    let chain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
+    for (const candidateAgentId of agentIdCandidates) {
+      let fallbackChain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
+      let fallbackAgentId: string | undefined;
+
+      for (const discovery of discoveryContexts) {
+        try {
+          const agentDefinition = await readAgentDefinition(
+            discovery.runtime,
+            discovery.workspacePath,
+            candidateAgentId
+          );
+          const candidateChain = await resolveAgentInheritanceChain({
+            runtime: discovery.runtime,
+            workspacePath: discovery.workspacePath,
+            agentId: agentDefinition.id,
+            agentDefinition,
+            workspaceId: this.workspaceId,
+          });
+
+          if (agentDefinition.scope === "project") {
+            chain = candidateChain;
+            resolvedAgentIdForLog = agentDefinition.id;
+            break;
+          }
+          fallbackChain ??= candidateChain;
+          fallbackAgentId ??= agentDefinition.id;
+        } catch {
+          // Try the next discovery context before trying the next persisted candidate.
+        }
+      }
+
+      if (chain != null) {
+        break;
+      }
+      if (fallbackChain != null) {
+        chain = fallbackChain;
+        resolvedAgentIdForLog = fallbackAgentId ?? candidateAgentId;
+        break;
       }
     }
 
@@ -3969,7 +4009,7 @@ export class AgentSession {
       workspaceId: this.workspaceId,
       requestId,
       model: context.modelString,
-      agentId,
+      agentId: resolvedAgentIdForLog,
     });
 
     // Only need the current compaction epoch — if compaction already happened, the

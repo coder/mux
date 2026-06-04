@@ -3061,30 +3061,66 @@ export class TaskService {
           this.opResolver
         );
         let skipInitHook = false;
-        const agentIdRaw = resolvePersistedAgentId(task, "");
-        if (agentIdRaw) {
-          const parsedAgentId = AgentIdSchema.safeParse(agentIdRaw);
-          if (parsedAgentId.success) {
-            const isInPlace = taskEntry.projectPath === parentWorkspaceName;
-            const parentWorkspacePath =
-              coerceNonEmptyString(parentEntry.workspace.path) ??
-              (isInPlace
-                ? taskEntry.projectPath
-                : runtime.getWorkspacePath(taskEntry.projectPath, parentWorkspaceName));
+        const agentIdCandidates = resolvePersistedAgentIdCandidates(task);
+        if (agentIdCandidates.length > 0) {
+          const discoveryContexts: Array<{ runtime: Runtime; workspacePath: string }> = [
+            { runtime: runtimeForTaskWorkspace, workspacePath },
+          ];
+          try {
+            discoveryContexts.push(
+              createRuntimeContextForWorkspace({
+                runtimeConfig: parentEntry.workspace.runtimeConfig ?? parentRuntimeConfig,
+                projectPath: parentEntry.projectPath,
+                name: parentWorkspaceName,
+                namedWorkspacePath: coerceNonEmptyString(parentEntry.workspace.path),
+              })
+            );
+          } catch (error: unknown) {
+            log.debug("Queued task: failed to build parent agent-discovery runtime", {
+              taskId,
+              parentWorkspaceId: parentId,
+              error: getErrorMessage(error),
+            });
+          }
 
-            try {
-              const frontmatter = await resolveAgentFrontmatter(
-                runtime,
-                parentWorkspacePath,
-                parsedAgentId.data
-              );
-              skipInitHook = frontmatter.subagent?.skip_init_hook === true;
-            } catch (error: unknown) {
-              log.debug("Queued task: failed to read agent definition for skip_init_hook", {
-                taskId,
-                agentId: parsedAgentId.data,
-                error: getErrorMessage(error),
-              });
+          for (const agentId of agentIdCandidates) {
+            let resolvedSkipInitHook: boolean | undefined;
+            let fallbackSkipInitHook: boolean | undefined;
+            for (const discovery of discoveryContexts) {
+              try {
+                const definition = await readAgentDefinition(
+                  discovery.runtime,
+                  discovery.workspacePath,
+                  agentId
+                );
+                const frontmatter = await resolveAgentFrontmatter(
+                  discovery.runtime,
+                  discovery.workspacePath,
+                  definition.id,
+                  {
+                    skipScopesAbove: getSkipScopesAboveForKnownScope(definition.scope),
+                  }
+                );
+                const candidateSkipInitHook = frontmatter.subagent?.skip_init_hook === true;
+                if (definition.scope === "project") {
+                  resolvedSkipInitHook = candidateSkipInitHook;
+                  break;
+                }
+                fallbackSkipInitHook ??= candidateSkipInitHook;
+              } catch (error: unknown) {
+                log.debug("Queued task: failed to read agent definition for skip_init_hook", {
+                  taskId,
+                  agentId,
+                  agentDiscoveryPath: discovery.workspacePath,
+                  error: getErrorMessage(error),
+                });
+              }
+            }
+
+            const candidateSkipInitHook = resolvedSkipInitHook ?? fallbackSkipInitHook;
+            if (candidateSkipInitHook != null) {
+              skipInitHook = candidateSkipInitHook;
+              break;
             }
           }
         }
@@ -3940,8 +3976,12 @@ export class TaskService {
           continue;
         }
 
-        const workspaceAgentId = resolvePersistedAgentId(workspace, "");
-        if (requestedAgentId && workspaceAgentId && workspaceAgentId !== requestedAgentId) {
+        const workspaceAgentIds = resolvePersistedAgentIdCandidates(workspace);
+        if (
+          requestedAgentId &&
+          workspaceAgentIds.length > 0 &&
+          !workspaceAgentIds.includes(requestedAgentId)
+        ) {
           continue;
         }
 

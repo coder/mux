@@ -7,6 +7,7 @@ import type {
   SubagentGitPatchArtifact,
   SubagentGitProjectPatchArtifact,
 } from "@/common/utils/tools/toolDefinitions";
+import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { ProjectRef } from "@/common/types/workspace";
 import {
   coerceNonEmptyString,
@@ -17,10 +18,14 @@ import { log } from "@/node/services/log";
 import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
-import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import {
+  createRuntimeContextForWorkspace,
+  createRuntimeForWorkspace,
+  type WorkspaceRuntimeContext,
+} from "@/node/runtime/runtimeHelpers";
 import { execBuffered } from "@/node/utils/runtime/helpers";
 import { AgentIdSchema } from "@/common/orpc/schemas";
-import { resolvePersistedAgentId } from "@/common/utils/agentIds";
+import { resolvePersistedAgentIdCandidates } from "@/common/utils/agentIds";
 import {
   getSubagentGitPatchMboxPath,
   matchesProjectArtifactProjectPathForUpdate,
@@ -81,6 +86,77 @@ function getPrimaryProjectName(projectPath: string, projects?: ProjectRef[]): st
   return matchingProjectName && matchingProjectName.length > 0
     ? matchingProjectName
     : PlatformPaths.getProjectName(projectPath).trim();
+}
+
+function createAgentDiscoveryContext(
+  entry: ReturnType<typeof findWorkspaceEntry>
+): WorkspaceRuntimeContext | undefined {
+  const workspace = entry?.workspace;
+  const workspacePath = coerceNonEmptyString(workspace?.path);
+  const workspaceName =
+    coerceNonEmptyString(workspace?.name) ??
+    (workspacePath == null ? undefined : PlatformPaths.getProjectName(workspacePath));
+  if (entry == null || workspace == null || workspaceName == null) {
+    return undefined;
+  }
+
+  const metadata = {
+    runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
+    projectPath: entry.projectPath,
+    name: workspaceName,
+    namedWorkspacePath: workspacePath,
+  };
+
+  try {
+    return createRuntimeContextForWorkspace(metadata);
+  } catch {
+    // Older task records/tests can pair a project-dir local runtime with a child worktree path.
+    // Fall back to the pre-existing persisted-path behavior rather than blocking patch cleanup.
+    const runtime = createRuntimeForWorkspace(metadata);
+    return {
+      runtime,
+      workspacePath: workspacePath ?? runtime.getWorkspacePath(entry.projectPath, workspaceName),
+    };
+  }
+}
+
+async function resolveAgentEditingCapability(args: {
+  discoveryContexts: readonly WorkspaceRuntimeContext[];
+  agentId: string;
+  workspaceId: string;
+}): Promise<boolean | undefined> {
+  const parsedAgentId = AgentIdSchema.safeParse(args.agentId);
+  if (!parsedAgentId.success) {
+    return undefined;
+  }
+
+  let fallbackChain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
+
+  for (const discovery of args.discoveryContexts) {
+    try {
+      const agentDefinition = await readAgentDefinition(
+        discovery.runtime,
+        discovery.workspacePath,
+        parsedAgentId.data
+      );
+      const chain = await resolveAgentInheritanceChain({
+        runtime: discovery.runtime,
+        workspacePath: discovery.workspacePath,
+        agentId: agentDefinition.id,
+        agentDefinition,
+        workspaceId: args.workspaceId,
+      });
+
+      if (agentDefinition.scope === "project") {
+        return isExecLikeEditingCapableInResolvedChain(chain);
+      }
+      fallbackChain ??= chain;
+    } catch {
+      // Try the next discovery context before falling back to global/built-in definitions.
+    }
+  }
+
+  return fallbackChain == null ? undefined : isExecLikeEditingCapableInResolvedChain(fallbackChain);
 }
 
 function buildTaskBaseCommitShaByProjectPath(params: {
@@ -254,61 +330,28 @@ export class GitPatchArtifactService {
     // Only exec-like subagents are expected to make commits that should be handed back to the parent.
     // NOTE: Custom agents can inherit from exec (base: exec). Those should also generate patches,
     // but read-only subagents (e.g. explore) should not.
-    const childAgentId = resolvePersistedAgentId(childEntry?.workspace, "");
-    if (!childAgentId) {
+    const childAgentIds = resolvePersistedAgentIdCandidates(childEntry?.workspace);
+    if (childAgentIds.length === 0) {
       return;
     }
 
-    let shouldGeneratePatch = childAgentId === "exec";
+    const discoveryContexts = [
+      createAgentDiscoveryContext(childEntry),
+      createAgentDiscoveryContext(findWorkspaceEntry(cfg, parentWorkspaceId)),
+    ].filter((context): context is WorkspaceRuntimeContext => context != null);
 
-    if (!shouldGeneratePatch) {
-      const parsedChildAgentId = AgentIdSchema.safeParse(childAgentId);
-      if (parsedChildAgentId.success) {
-        const agentId = parsedChildAgentId.data;
-
-        // Prefer resolving agent inheritance from the parent workspace: project agents may be untracked
-        // (and therefore absent from child worktrees), but they are always present in the parent that
-        // spawned the task.
-        const agentDiscoveryEntry = findWorkspaceEntry(cfg, parentWorkspaceId) ?? childEntry;
-        const agentDiscoveryWs = agentDiscoveryEntry?.workspace;
-
-        const agentWorkspacePath = coerceNonEmptyString(agentDiscoveryWs?.path);
-        const runtimeConfig = agentDiscoveryWs?.runtimeConfig;
-
-        if (agentDiscoveryEntry && agentWorkspacePath && runtimeConfig) {
-          const fallbackName =
-            agentWorkspacePath.split("/").pop() ?? agentWorkspacePath.split("\\").pop() ?? "";
-          const workspaceName =
-            coerceNonEmptyString(agentDiscoveryWs?.name) ?? coerceNonEmptyString(fallbackName);
-
-          if (workspaceName) {
-            const runtime = createRuntimeForWorkspace({
-              runtimeConfig,
-              projectPath: agentDiscoveryEntry.projectPath,
-              name: workspaceName,
-            });
-
-            try {
-              const agentDefinition = await readAgentDefinition(
-                runtime,
-                agentWorkspacePath,
-                agentId
-              );
-              const chain = await resolveAgentInheritanceChain({
-                runtime,
-                workspacePath: agentWorkspacePath,
-                agentId,
-                agentDefinition,
-                workspaceId: childWorkspaceId,
-              });
-
-              shouldGeneratePatch = isExecLikeEditingCapableInResolvedChain(chain);
-            } catch {
-              // ignore - treat as non-exec-like
-            }
-          }
-        }
+    let shouldGeneratePatch = false;
+    for (const childAgentId of childAgentIds) {
+      const editingCapability = await resolveAgentEditingCapability({
+        discoveryContexts,
+        agentId: childAgentId,
+        workspaceId: childWorkspaceId,
+      });
+      if (editingCapability == null) {
+        continue;
       }
+      shouldGeneratePatch = editingCapability;
+      break;
     }
 
     if (!shouldGeneratePatch || !childEntry) {

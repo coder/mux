@@ -62,6 +62,8 @@ export interface BuildPlanInstructionsOptions {
   effectiveMode: "plan" | "exec" | "compact";
   effectiveAgentId: string;
   agentIsPlanLike: boolean;
+  /** Runtime that resolved the active agent definition. May be the parent workspace runtime for subagents. */
+  agentDiscoveryRuntime: Runtime;
   agentDiscoveryPath: string;
   /** Base additional instructions from the caller (may be undefined). */
   additionalSystemInstructions: string | undefined;
@@ -108,6 +110,7 @@ export async function buildPlanInstructions(
     effectiveMode,
     effectiveAgentId,
     agentIsPlanLike,
+    agentDiscoveryRuntime,
     agentDiscoveryPath,
     additionalSystemInstructions,
     shouldDisableTaskToolsForDepth,
@@ -188,12 +191,12 @@ export async function buildPlanInstructions(
         } else {
           try {
             const lastDefinition = await readAgentDefinition(
-              runtime,
+              agentDiscoveryRuntime,
               agentDiscoveryPath,
               lastAgentId
             );
             const lastChain = await resolveAgentInheritanceChain({
-              runtime,
+              runtime: agentDiscoveryRuntime,
               workspacePath: agentDiscoveryPath,
               agentId: lastAgentId,
               agentDefinition: lastDefinition,
@@ -230,6 +233,8 @@ export interface BuildStreamSystemContextOptions {
   workspaceId: string;
   /** Agent definition (may have fallen back to exec). Use `.id` for resolution. */
   agentDefinition: { id: string; scope: AgentDefinitionScope };
+  /** Runtime that resolved the active agent definition. May be the parent workspace runtime for subagents. */
+  agentDiscoveryRuntime: Runtime;
   agentDiscoveryPath: string;
   isSubagentWorkspace: boolean;
   effectiveAdditionalInstructions: string | undefined;
@@ -455,6 +460,7 @@ export async function buildStreamSystemContext(
     workspacePath,
     workspaceId,
     agentDefinition,
+    agentDiscoveryRuntime,
     agentDiscoveryPath,
     isSubagentWorkspace,
     effectiveAdditionalInstructions,
@@ -472,15 +478,20 @@ export async function buildStreamSystemContext(
 
   // Resolve the body with inheritance (prompt.append merges with base).
   // Use agentDefinition.id (may have fallen back to exec) instead of effectiveAgentId.
-  const resolvedBody = await resolveAgentBody(runtime, agentDiscoveryPath, agentDefinition.id, {
-    skipScopesAbove: getSkipScopesAboveForKnownScope(agentDefinition.scope),
-  });
+  const resolvedBody = await resolveAgentBody(
+    agentDiscoveryRuntime,
+    agentDiscoveryPath,
+    agentDefinition.id,
+    {
+      skipScopesAbove: getSkipScopesAboveForKnownScope(agentDefinition.scope),
+    }
+  );
 
   let subagentAppendPrompt: string | undefined;
   if (isSubagentWorkspace) {
     try {
       const resolvedFrontmatter = await resolveAgentFrontmatter(
-        runtime,
+        agentDiscoveryRuntime,
         agentDiscoveryPath,
         agentDefinition.id,
         {
@@ -513,7 +524,7 @@ export async function buildStreamSystemContext(
   let agentDefinitions: Awaited<ReturnType<typeof discoverAgentDefinitions>> | undefined;
   if (!isSubagentWorkspace) {
     agentDefinitions = await discoverAvailableSubagentsForToolContext({
-      runtime,
+      runtime: agentDiscoveryRuntime,
       workspacePath: agentDiscoveryPath,
       cfg,
       loadDesktopCapability,
