@@ -55,6 +55,9 @@ export class WorkflowActionRegistry {
   }
 
   async listActions(options: { projectTrusted: boolean }): Promise<ScannedWorkflowAction[]> {
+    if (this.projectRuntime != null) {
+      return [];
+    }
     const byName = await this.collectActions(options);
     return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -77,6 +80,9 @@ export class WorkflowActionRegistry {
 
     const globalAction = await this.readLocalAction(normalizedName, this.globalRoot, "global");
     if (globalAction != null) {
+      if (this.projectRuntime != null) {
+        throw new Error("Workflow actions are not supported for runtime-backed workspaces yet");
+      }
       return globalAction;
     }
 
@@ -131,7 +137,13 @@ export class WorkflowActionRegistry {
         return null;
       }
       const source = await fs.readFile(sourcePath, "utf-8");
-      return { name, scope, sourcePath, source, sourceHash: hashWorkflowActionSource(source) };
+      return {
+        name,
+        scope,
+        sourcePath,
+        source,
+        sourceHash: await hashWorkflowActionSourceWithDependencies(sourcePath, source),
+      };
     } catch (error) {
       if (await localPathExists(sourcePath)) {
         log.warn(`Skipping unreadable workflow action '${sourcePath}': ${getErrorMessage(error)}`);
@@ -179,6 +191,92 @@ export function normalizeWorkflowActionName(name: string): string {
 export function hashWorkflowActionSource(source: string): string {
   assert(typeof source === "string", "Workflow action source must be a string");
   return `sha256:${crypto.createHash("sha256").update(source).digest("hex")}`;
+}
+
+const WORKFLOW_ACTION_DEPENDENCY_LIMIT = 64;
+const STATIC_REQUIRE_PATTERN = /\brequire\s*\(\s*(["'])([^"']+)\1\s*\)/gu;
+
+async function hashWorkflowActionSourceWithDependencies(
+  sourcePath: string,
+  source: string
+): Promise<string> {
+  const dependencies: Array<{ sourcePath: string; source: string }> = [];
+  await collectStaticRelativeDependencies(sourcePath, source, dependencies, new Set([sourcePath]));
+  if (dependencies.length === 0) {
+    return hashWorkflowActionSource(source);
+  }
+  const hash = crypto.createHash("sha256").update(source);
+  for (const dependency of dependencies.sort((a, b) => a.sourcePath.localeCompare(b.sourcePath))) {
+    hash.update("\0dependency\0");
+    hash.update(dependency.sourcePath);
+    hash.update("\0");
+    hash.update(dependency.source);
+  }
+  return `sha256:${hash.digest("hex")}`;
+}
+
+async function collectStaticRelativeDependencies(
+  sourcePath: string,
+  source: string,
+  dependencies: Array<{ sourcePath: string; source: string }>,
+  seenPaths: Set<string>
+): Promise<void> {
+  for (const specifier of getStaticRequireSpecifiers(source)) {
+    if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
+      continue;
+    }
+    const dependencyPath = await resolveRelativeRequirePath(path.dirname(sourcePath), specifier);
+    if (dependencyPath == null || seenPaths.has(dependencyPath)) {
+      continue;
+    }
+    assert(
+      dependencies.length < WORKFLOW_ACTION_DEPENDENCY_LIMIT,
+      `Workflow action static dependency limit exceeded: ${WORKFLOW_ACTION_DEPENDENCY_LIMIT}`
+    );
+    seenPaths.add(dependencyPath);
+    const dependencySource = await fs.readFile(dependencyPath, "utf-8");
+    dependencies.push({ sourcePath: dependencyPath, source: dependencySource });
+    await collectStaticRelativeDependencies(
+      dependencyPath,
+      dependencySource,
+      dependencies,
+      seenPaths
+    );
+  }
+}
+
+function getStaticRequireSpecifiers(source: string): string[] {
+  const specifiers: string[] = [];
+  for (const match of source.matchAll(STATIC_REQUIRE_PATTERN)) {
+    const specifier = match[2];
+    if (specifier != null) {
+      specifiers.push(specifier);
+    }
+  }
+  return specifiers;
+}
+
+async function resolveRelativeRequirePath(
+  baseDir: string,
+  specifier: string
+): Promise<string | null> {
+  const basePath = path.resolve(baseDir, specifier);
+  for (const candidate of [
+    basePath,
+    `${basePath}.js`,
+    `${basePath}.json`,
+    path.join(basePath, "index.js"),
+  ]) {
+    try {
+      const stat = await fs.stat(candidate);
+      if (stat.isFile()) {
+        return candidate;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 function actionNameToRelativePath(name: string): string {

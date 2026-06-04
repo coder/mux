@@ -35,6 +35,7 @@ export interface CreateWorkflowRunInput {
   definition: WorkflowDefinitionDescriptor;
   definitionSource: string;
   args: unknown;
+  defaultActionCwd?: string;
   now: string;
 }
 
@@ -89,6 +90,7 @@ export class WorkflowRunStore {
       definitionSource: input.definitionSource,
       definitionHash: hashSource(input.definitionSource),
       args: input.args,
+      ...(input.defaultActionCwd != null ? { defaultActionCwd: input.defaultActionCwd } : {}),
       status: "pending",
       createdAt: input.now,
       updatedAt: input.now,

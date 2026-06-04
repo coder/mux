@@ -106,6 +106,30 @@ describe("WorkflowActionRegistry", () => {
     expect(actions).toEqual([]);
   });
 
+  test("rejects runtime-backed global actions instead of using a remote cwd locally", async () => {
+    using tmp = new DisposableTempDir("workflow-actions-runtime-global");
+    const projectRoot = "/runtime/project/.mux/actions";
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await writeAction(globalRoot, "shared.js");
+    const registry = new WorkflowActionRegistry({
+      projectRoot,
+      globalRoot,
+      projectRuntime: createRuntimeWithExistingActions(),
+      projectCwd: "/runtime/project",
+    });
+
+    try {
+      await registry.resolveAction("shared", { projectTrusted: true });
+      throw new Error("Expected runtime-backed global action to be rejected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect(error instanceof Error ? error.message : "").toMatch(/runtime-backed workspaces/);
+    }
+    const actions = await registry.listActions({ projectTrusted: true });
+
+    expect(actions).toEqual([]);
+  });
+
   test("blocks project-local actions without Project Trust while allowing global actions", async () => {
     using tmp = new DisposableTempDir("workflow-actions-trust");
     const projectRoot = path.join(tmp.path, "project-actions");

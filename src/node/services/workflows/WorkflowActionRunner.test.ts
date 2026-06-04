@@ -184,6 +184,75 @@ describe("WorkflowActionRunner", () => {
     );
   });
 
+  test("does not evaluate action top-level code while describing metadata", async () => {
+    using tmp = new DisposableTempDir("workflow-action-static-describe");
+    const markerPath = path.join(tmp.path, "loaded.txt");
+    const sourcePath = path.join(tmp.path, "static.js");
+    const source = `
+      require("node:fs").writeFileSync(${JSON.stringify(markerPath)}, "loaded");
+      export const metadata = { version: 1, description: "Static", effect: "read" };
+      export async function execute() { return { ok: true }; }
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    const description = await runner.describe(createAction(sourcePath, source));
+
+    expect(description.metadata.description).toBe("Static");
+    await expectRejects(fs.access(markerPath), /no such file|ENOENT/i);
+  });
+
+  test("rejects artifacts that collide with the action result control file", async () => {
+    using tmp = new DisposableTempDir("workflow-action-result-artifact-collision");
+    const sourcePath = path.join(tmp.path, "collision.js");
+    const source = `
+      module.exports.metadata = { version: 1, description: "Collision", effect: "read" };
+      module.exports.execute = async (_input, ctx) => {
+        await ctx.writeArtifact(".mux-action-result.json", "collision");
+        return { ok: true };
+      };
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    await expectRejects(
+      runner.execute(createAction(sourcePath, source), {
+        input: null,
+        cwd: tmp.path,
+        timeoutMs: 10_000,
+        artifactDir: path.join(tmp.path, "artifacts"),
+      }),
+      /reserved for workflow action results/
+    );
+  });
+
+  test("kills ctx.exec descendants when the action timeout fires", async () => {
+    using tmp = new DisposableTempDir("workflow-action-exec-timeout");
+    const markerPath = path.join(tmp.path, "survived.txt");
+    const sourcePath = path.join(tmp.path, "exec-timeout.js");
+    const source = `
+      module.exports.metadata = { version: 1, description: "Exec timeout", effect: "read" };
+      module.exports.execute = async (_input, ctx) => {
+        await ctx.exec("sh", ["-c", ${JSON.stringify(`sleep 0.25; echo survived > ${markerPath}`)}]);
+        return { ok: true };
+      };
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    await expectTimeout(
+      runner.execute(createAction(sourcePath, source), {
+        input: null,
+        cwd: tmp.path,
+        timeoutMs: 25,
+        artifactDir: path.join(tmp.path, "artifacts"),
+      })
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    await expectRejects(fs.access(markerPath), /no such file|ENOENT/i);
+  });
+
   test("kills actions that exceed their timeout", async () => {
     using tmp = new DisposableTempDir("workflow-action-timeout");
     const sourcePath = path.join(tmp.path, "slow.js");

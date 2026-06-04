@@ -208,6 +208,7 @@ export const WorkflowRunRecordSchema = z.object({
   definitionSource: z.string().min(1),
   definitionHash: z.string().min(1),
   args: JsonValueSchema,
+  defaultActionCwd: z.string().min(1).optional(),
   status: WorkflowRunStatusSchema,
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,

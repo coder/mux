@@ -1,5 +1,4 @@
 import * as crypto from "node:crypto";
-import * as os from "node:os";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -65,6 +64,7 @@ interface WorkflowActionRunnerPayload {
 
 const WORKFLOW_ACTION_STDIO_LIMIT_BYTES = 64 * 1024;
 const WORKFLOW_ACTION_RESULT_LIMIT_BYTES = 1024 * 1024;
+const WORKFLOW_ACTION_RESULT_FILENAME = ".mux-action-result.json";
 
 interface BoundedTextCapture {
   text: string;
@@ -165,26 +165,16 @@ export class WorkflowActionExecutionError extends Error {
 }
 
 export class WorkflowActionRunner {
-  async describe(action: ResolvedWorkflowAction): Promise<WorkflowActionDescription> {
-    assert(action.name.length > 0, "WorkflowActionRunner.describe: action name is required");
-    const artifactDir = await createTransientActionDir(action.name);
+  describe(action: ResolvedWorkflowAction): Promise<WorkflowActionDescription> {
     try {
-      using child = await this.runChild(action, {
-        mode: "describe",
-        artifactDir,
-        cwd: path.dirname(action.sourcePath),
-        input: null,
-        timeoutMs: 10_000,
+      assert(action.name.length > 0, "WorkflowActionRunner.describe: action name is required");
+      assertSupportedWorkflowActionSyntax(action.source);
+      return Promise.resolve({
+        metadata: validateWorkflowActionMetadata(parseStaticWorkflowActionMetadata(action.source)),
+        hasReconcile: hasStaticWorkflowActionReconcileExport(action.source),
       });
-      if (!child.result.success) {
-        throw new WorkflowActionExecutionError(child.result.error, child);
-      }
-      return {
-        metadata: validateWorkflowActionMetadata(child.result.metadata),
-        hasReconcile: child.result.hasReconcile === true,
-      };
-    } finally {
-      await fs.rm(artifactDir, { recursive: true, force: true });
+    } catch (error) {
+      return Promise.reject(new Error(getErrorMessage(error)));
     }
   }
 
@@ -245,7 +235,7 @@ export class WorkflowActionRunner {
     [Symbol.dispose](): void;
   }> {
     await fs.mkdir(options.artifactDir, { recursive: true });
-    const resultPath = path.join(options.artifactDir, ".mux-action-result.json");
+    const resultPath = path.join(options.artifactDir, WORKFLOW_ACTION_RESULT_FILENAME);
     await fs.rm(resultPath, { force: true });
     const attemptId = crypto.randomUUID();
     const payload: WorkflowActionRunnerPayload = {
@@ -332,7 +322,24 @@ export class WorkflowActionRunner {
     const durationMs = Date.now() - startedAt;
     const stdout = formatBoundedText(stdoutCapture);
     const stderr = formatBoundedText(stderrCapture);
-    const artifacts = await normalizeArtifacts(await readArtifactListing(resultPath));
+    let resultStat: Awaited<ReturnType<typeof statOptional>>;
+    try {
+      resultStat = await statOptional(resultPath);
+      if (resultStat != null && resultStat.size > WORKFLOW_ACTION_RESULT_LIMIT_BYTES) {
+        throw new Error(
+          `result exceeded ${WORKFLOW_ACTION_RESULT_LIMIT_BYTES} bytes: ${resultStat.size}`
+        );
+      }
+    } catch (error) {
+      const errorDetails = { stdout, stderr, exitCode, signal, durationMs, artifacts: [] };
+      throw new WorkflowActionExecutionError(
+        `Workflow action ${action.name} did not produce a valid result: ${getErrorMessage(error)}`,
+        errorDetails
+      );
+    }
+    const artifacts = await normalizeArtifacts(
+      resultStat == null ? [] : await readArtifactListing(resultPath)
+    );
     const errorDetails = { stdout, stderr, exitCode, signal, durationMs, artifacts };
     if (timedOut) {
       throw new WorkflowActionExecutionError(
@@ -349,11 +356,8 @@ export class WorkflowActionRunner {
 
     let rawResult: unknown;
     try {
-      const resultStat = await fs.stat(resultPath);
-      if (resultStat.size > WORKFLOW_ACTION_RESULT_LIMIT_BYTES) {
-        throw new Error(
-          `result exceeded ${WORKFLOW_ACTION_RESULT_LIMIT_BYTES} bytes: ${resultStat.size}`
-        );
+      if (resultStat == null) {
+        throw new Error("result file was not written");
       }
       rawResult = JSON.parse(await fs.readFile(resultPath, "utf-8"));
     } catch (error) {
@@ -441,6 +445,10 @@ async function normalizeArtifacts(
 
 async function readArtifactListing(resultPath: string): Promise<WorkflowActionArtifact[]> {
   try {
+    const resultStat = await statOptional(resultPath);
+    if (resultStat == null || resultStat.size > WORKFLOW_ACTION_RESULT_LIMIT_BYTES) {
+      return [];
+    }
     const parsed = ACTION_CHILD_RESULT_SCHEMA.safeParse(
       JSON.parse(await fs.readFile(resultPath, "utf-8"))
     );
@@ -453,9 +461,334 @@ async function readArtifactListing(resultPath: string): Promise<WorkflowActionAr
   return [];
 }
 
-async function createTransientActionDir(actionName: string): Promise<string> {
-  const safeName = actionName.replace(/[^A-Za-z0-9_-]+/gu, "-");
-  return await fs.mkdtemp(path.join(os.tmpdir(), `mux-action-${safeName}-`));
+async function statOptional(filePath: string): Promise<Awaited<ReturnType<typeof fs.stat>> | null> {
+  try {
+    return await fs.stat(filePath);
+  } catch {
+    return null;
+  }
+}
+
+function assertSupportedWorkflowActionSyntax(source: string): void {
+  if (/^\s*import\s/m.test(source) || /(^|\n)\s*export\s*\{/m.test(source)) {
+    throw new Error(
+      "Workflow action files currently support CommonJS require() plus export const/function/default declarations; static import/export lists are not supported"
+    );
+  }
+}
+
+const STATIC_METADATA_ERROR =
+  "Workflow action metadata must be a static object literal using JSON-compatible values";
+
+function parseStaticWorkflowActionMetadata(source: string): unknown {
+  const literal = extractStaticMetadataLiteral(source);
+  return normalizeStaticWorkflowActionMetadata(new StaticActionLiteralParser(literal).parseValue());
+}
+
+function extractStaticMetadataLiteral(source: string): string {
+  const assignments = [
+    /(^|[;\n])\s*export\s+(?:const|let|var)\s+metadata\s*=/mu,
+    /(^|[;\n])\s*(?:module\.)?exports\.metadata\s*=/mu,
+  ];
+  for (const pattern of assignments) {
+    const match = pattern.exec(source);
+    if (match == null) {
+      continue;
+    }
+    const start = skipStaticWhitespace(source, match.index + match[0].length);
+    return readObjectLiteralAt(source, start);
+  }
+  throw new Error(STATIC_METADATA_ERROR);
+}
+
+function hasStaticWorkflowActionReconcileExport(source: string): boolean {
+  return [
+    /(^|[;\n])\s*export\s+(?:async\s+)?function\s+reconcile\s*\(/mu,
+    /(^|[;\n])\s*export\s+(?:const|let|var)\s+reconcile\s*=/mu,
+    /(^|[;\n])\s*(?:module\.)?exports\.reconcile\s*=/mu,
+  ].some((pattern) => pattern.test(source));
+}
+
+function normalizeStaticWorkflowActionMetadata(rawMetadata: unknown): unknown {
+  if (rawMetadata == null || typeof rawMetadata !== "object" || Array.isArray(rawMetadata)) {
+    throw new Error(STATIC_METADATA_ERROR);
+  }
+  const metadata = rawMetadata as Record<string, unknown>;
+  return {
+    version: metadata.version ?? 1,
+    description: metadata.description,
+    effect: normalizeStaticWorkflowActionEffect(metadata.effect ?? metadata.effectLevel),
+    ...(metadata.inputSchema !== undefined ? { inputSchema: metadata.inputSchema } : {}),
+    ...(metadata.outputSchema !== undefined ? { outputSchema: metadata.outputSchema } : {}),
+    ...(metadata.permissions !== undefined ? { permissions: metadata.permissions } : {}),
+    ...(metadata.timeoutMs !== undefined ? { timeoutMs: metadata.timeoutMs } : {}),
+  };
+}
+
+function normalizeStaticWorkflowActionEffect(rawEffect: unknown): unknown {
+  if (rawEffect === "read" || rawEffect === "readonly" || rawEffect === "read-only") {
+    return "read";
+  }
+  if (rawEffect === "workspace" || rawEffect === "workspace-mutating") {
+    return "workspace";
+  }
+  if (rawEffect === "external" || rawEffect === "external-side-effect") {
+    return "external";
+  }
+  return rawEffect;
+}
+
+function readObjectLiteralAt(source: string, start: number): string {
+  if (source[start] !== "{") {
+    throw new Error(STATIC_METADATA_ERROR);
+  }
+  let depth = 0;
+  let index = start;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === '"' || char === "'" || char === "`") {
+      index = skipQuotedString(source, index, char);
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "/") {
+      index = skipLineComment(source, index + 2);
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "*") {
+      index = skipBlockComment(source, index + 2);
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, index + 1);
+      }
+    }
+    index += 1;
+  }
+  throw new Error(STATIC_METADATA_ERROR);
+}
+
+function skipStaticWhitespace(source: string, start: number): number {
+  let index = start;
+  while (index < source.length) {
+    const char = source[index];
+    if (/\s/u.test(char)) {
+      index += 1;
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "/") {
+      index = skipLineComment(source, index + 2);
+      continue;
+    }
+    if (char === "/" && source[index + 1] === "*") {
+      index = skipBlockComment(source, index + 2);
+      continue;
+    }
+    break;
+  }
+  return index;
+}
+
+function skipQuotedString(source: string, start: number, quote: string): number {
+  let index = start + 1;
+  while (index < source.length) {
+    const char = source[index];
+    if (char === "\\") {
+      index += 2;
+      continue;
+    }
+    if (char === quote) {
+      return index + 1;
+    }
+    index += 1;
+  }
+  throw new Error(STATIC_METADATA_ERROR);
+}
+
+function skipLineComment(source: string, start: number): number {
+  const end = source.indexOf("\n", start);
+  return end === -1 ? source.length : end + 1;
+}
+
+function skipBlockComment(source: string, start: number): number {
+  const end = source.indexOf("*/", start);
+  if (end === -1) {
+    throw new Error(STATIC_METADATA_ERROR);
+  }
+  return end + 2;
+}
+
+class StaticActionLiteralParser {
+  private index = 0;
+
+  constructor(private readonly source: string) {}
+
+  parseValue(): unknown {
+    this.skipWhitespaceAndComments();
+    const value = this.readValue();
+    this.skipWhitespaceAndComments();
+    if (this.index !== this.source.length) {
+      throw new Error(STATIC_METADATA_ERROR);
+    }
+    return value;
+  }
+
+  private readValue(): unknown {
+    this.skipWhitespaceAndComments();
+    const char = this.source[this.index];
+    if (char === "{") {
+      return this.readObject();
+    }
+    if (char === "[") {
+      return this.readArray();
+    }
+    if (char === '"' || char === "'") {
+      return this.readString(char);
+    }
+    if (this.source.startsWith("true", this.index)) {
+      this.index += "true".length;
+      return true;
+    }
+    if (this.source.startsWith("false", this.index)) {
+      this.index += "false".length;
+      return false;
+    }
+    if (this.source.startsWith("null", this.index)) {
+      this.index += "null".length;
+      return null;
+    }
+    return this.readNumber();
+  }
+
+  private readObject(): Record<string, unknown> {
+    this.expect("{");
+    const result: Record<string, unknown> = {};
+    this.skipWhitespaceAndComments();
+    while (!this.consume("}")) {
+      const key = this.readObjectKey();
+      this.skipWhitespaceAndComments();
+      this.expect(":");
+      result[key] = this.readValue();
+      this.skipWhitespaceAndComments();
+      if (this.consume("}")) {
+        break;
+      }
+      this.expect(",");
+      this.skipWhitespaceAndComments();
+    }
+    return result;
+  }
+
+  private readArray(): unknown[] {
+    this.expect("[");
+    const result: unknown[] = [];
+    this.skipWhitespaceAndComments();
+    while (!this.consume("]")) {
+      result.push(this.readValue());
+      this.skipWhitespaceAndComments();
+      if (this.consume("]")) {
+        break;
+      }
+      this.expect(",");
+      this.skipWhitespaceAndComments();
+    }
+    return result;
+  }
+
+  private readObjectKey(): string {
+    this.skipWhitespaceAndComments();
+    const char = this.source[this.index];
+    if (char === '"' || char === "'") {
+      return this.readString(char);
+    }
+    const match = /^[A-Za-z_$][A-Za-z0-9_$-]*/u.exec(this.source.slice(this.index));
+    if (match == null) {
+      throw new Error(STATIC_METADATA_ERROR);
+    }
+    this.index += match[0].length;
+    return match[0];
+  }
+
+  private readString(quote: string): string {
+    this.expect(quote);
+    let value = "";
+    while (this.index < this.source.length) {
+      const char = this.source[this.index];
+      this.index += 1;
+      if (char === quote) {
+        return value;
+      }
+      if (char === "\\") {
+        value += this.readEscapeSequence();
+      } else {
+        value += char;
+      }
+    }
+    throw new Error(STATIC_METADATA_ERROR);
+  }
+
+  private readEscapeSequence(): string {
+    const char = this.source[this.index];
+    this.index += 1;
+    switch (char) {
+      case '"':
+      case "'":
+      case "\\":
+        return char;
+      case "b":
+        return "\b";
+      case "f":
+        return "\f";
+      case "n":
+        return "\n";
+      case "r":
+        return "\r";
+      case "t":
+        return "\t";
+      case "u": {
+        const hex = this.source.slice(this.index, this.index + 4);
+        if (!/^[0-9A-Fa-f]{4}$/u.test(hex)) {
+          throw new Error(STATIC_METADATA_ERROR);
+        }
+        this.index += 4;
+        return String.fromCharCode(Number.parseInt(hex, 16));
+      }
+      default:
+        throw new Error(STATIC_METADATA_ERROR);
+    }
+  }
+
+  private readNumber(): number {
+    const match = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/u.exec(
+      this.source.slice(this.index)
+    );
+    if (match == null) {
+      throw new Error(STATIC_METADATA_ERROR);
+    }
+    this.index += match[0].length;
+    return Number(match[0]);
+  }
+
+  private skipWhitespaceAndComments(): void {
+    this.index = skipStaticWhitespace(this.source, this.index);
+  }
+
+  private consume(expected: string): boolean {
+    if (this.source[this.index] !== expected) {
+      return false;
+    }
+    this.index += 1;
+    return true;
+  }
+
+  private expect(expected: string): void {
+    if (!this.consume(expected)) {
+      throw new Error(STATIC_METADATA_ERROR);
+    }
+  }
 }
 
 const WORKFLOW_ACTION_CHILD_SOURCE = String.raw`
@@ -606,6 +939,9 @@ function assertSafeArtifactName(name) {
   if (path.isAbsolute(name) || name.split(/[\\/]+/).includes("..")) {
     throw new Error("Artifact name must stay inside the action artifact directory");
   }
+  if (path.normalize(name) === ".mux-action-result.json") {
+    throw new Error("Artifact name is reserved for workflow action results");
+  }
 }
 
 async function execCommand(command, args = [], options = {}) {
@@ -617,7 +953,7 @@ async function execCommand(command, args = [], options = {}) {
   }
   const child = spawn(command, args, {
     cwd: options.cwd,
-    detached: process.platform !== "win32",
+    detached: false,
     env: options.env ? { ...process.env, ...options.env } : process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });

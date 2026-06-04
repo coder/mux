@@ -507,6 +507,7 @@ export class WorkflowService {
       definition: definition.descriptor,
       definitionSource: definition.source,
       args: input.args,
+      ...(this.defaultActionCwd != null ? { defaultActionCwd: this.defaultActionCwd } : {}),
       now: this.clock?.nowIso() ?? new Date().toISOString(),
     });
     return runId;

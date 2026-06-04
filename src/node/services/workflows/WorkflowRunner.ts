@@ -93,7 +93,6 @@ export interface WorkflowActionResult {
   signal: string | null;
   durationMs: number;
   artifacts: Array<{ name: string; path: string; sizeBytes: number }>;
-  cached?: boolean;
   reconciled?: boolean;
 }
 
@@ -599,6 +598,11 @@ export class WorkflowRunner {
     }
   }
 
+  private async getDefaultActionCwd(runId: string): Promise<string | undefined> {
+    const run = await this.runStore.getRun(runId);
+    return run.defaultActionCwd ?? this.defaultActionCwd;
+  }
+
   private async runActionStep(
     runId: string,
     sequence: WorkflowEventSequence,
@@ -618,7 +622,11 @@ export class WorkflowRunner {
     const action = await registry.resolveAction(rawName, {
       projectTrusted: await this.getProjectTrusted(),
     });
-    const inputHash = hashWorkflowStepInput(spec.id, buildWorkflowActionReplayInput(action, spec));
+    const cwd = getWorkflowActionCwd(spec, action, await this.getDefaultActionCwd(runId));
+    const inputHash = hashWorkflowStepInput(
+      spec.id,
+      buildWorkflowActionReplayInput(action, spec, cwd)
+    );
     options.leaseGuard.throwIfLost();
     const existingStep = await this.runStore.getStep(runId, spec.id, inputHash);
     if (existingStep?.status === "completed" && existingStep.result?.structuredOutput != null) {
@@ -635,17 +643,27 @@ export class WorkflowRunner {
         sourceHash: action.sourceHash,
         details: cached,
       });
-      return { ...cached, cached: true };
+      return cached;
     }
 
     const description = await this.actionRunner.describe(action);
     const metadata = validateWorkflowActionMetadata(description.metadata);
     assertWorkflowActionInput(metadata, spec.input, action.name);
 
-    const unsafeMutatingAttempt = isMutatingWorkflowActionEffect(metadata.effect)
-      ? await this.findUnsafePriorActionAttempt(runId, spec.id)
-      : null;
+    const unsafeMutatingAttempt = await this.findUnsafePriorActionAttempt(
+      runId,
+      spec.id,
+      metadata.effect
+    );
     if (unsafeMutatingAttempt != null) {
+      if (unsafeMutatingAttempt.inputHash !== inputHash) {
+        const message = `Workflow action ${action.name} has an incomplete or failed mutating step with a different replay identity and cannot be replayed automatically`;
+        await this.appendWorkflowActionFailure(runId, sequence, spec, action, metadata, message, {
+          startedAt: unsafeMutatingAttempt.startedAt,
+          inputHash,
+        });
+        throw new Error(message);
+      }
       if (!description.hasReconcile) {
         const message = `Workflow action ${action.name} has an incomplete ${metadata.effect} step and cannot be replayed without reconciliation`;
         await this.appendWorkflowActionFailure(runId, sequence, spec, action, metadata, message, {
@@ -659,6 +677,7 @@ export class WorkflowRunner {
         action,
         metadata,
         inputHash,
+        cwd,
         startedAt: unsafeMutatingAttempt.startedAt,
         abortSignal: options.abortSignal,
         leaseGuard: options.leaseGuard,
@@ -670,6 +689,7 @@ export class WorkflowRunner {
       action,
       metadata,
       inputHash,
+      cwd,
       startedAt: existingStep?.startedAt ?? this.clock.nowIso(),
       abortSignal: options.abortSignal,
       leaseGuard: options.leaseGuard,
@@ -695,14 +715,25 @@ export class WorkflowRunner {
 
   private async findUnsafePriorActionAttempt(
     runId: string,
-    stepId: string
+    stepId: string,
+    currentEffect: WorkflowActionEffect
   ): Promise<WorkflowStepRecord | null> {
     const run = await this.runStore.getRun(runId);
-    return (
+    const priorAttempt =
       run.steps.findLast(
         (step) => step.stepId === stepId && (step.status === "started" || step.status === "failed")
-      ) ?? null
+      ) ?? null;
+    if (priorAttempt == null) {
+      return null;
+    }
+    const priorEvent = run.events.findLast(
+      (event): event is Extract<WorkflowRunEvent, { type: "action" }> =>
+        event.type === "action" &&
+        event.stepId === stepId &&
+        (event.status === "started" || event.status === "failed")
     );
+    const effect = priorEvent?.effect ?? currentEffect;
+    return isMutatingWorkflowActionEffect(effect) ? priorAttempt : null;
   }
 
   private async executeActionStep(
@@ -713,6 +744,7 @@ export class WorkflowRunner {
       action: ResolvedWorkflowAction;
       metadata: WorkflowActionMetadata;
       inputHash: string;
+      cwd: string;
       startedAt: string;
       abortSignal?: AbortSignal;
       leaseGuard: WorkflowRunnerLeaseGuard;
@@ -734,13 +766,13 @@ export class WorkflowRunner {
       effect: step.metadata.effect,
       sourcePath: step.action.sourcePath,
       sourceHash: step.action.sourceHash,
-      details: workflowActionEventDetails(step.metadata, step.spec),
+      details: workflowActionEventDetails(step.metadata, step.spec, step.cwd),
     });
 
     try {
       const rawResult = await this.actionRunner.execute(step.action, {
         input: step.spec.input,
-        cwd: getWorkflowActionCwd(step.spec, step.action, this.defaultActionCwd),
+        cwd: step.cwd,
         timeoutMs: getWorkflowActionTimeoutMs(step.spec, step.metadata),
         abortSignal: step.abortSignal,
         artifactDir: this.runStore.getStepArtifactsDir(runId, step.spec.id, step.inputHash),
@@ -760,6 +792,7 @@ export class WorkflowRunner {
       action: ResolvedWorkflowAction;
       metadata: WorkflowActionMetadata;
       inputHash: string;
+      cwd: string;
       startedAt: string;
       abortSignal?: AbortSignal;
       leaseGuard: WorkflowRunnerLeaseGuard;
@@ -776,13 +809,16 @@ export class WorkflowRunner {
       effect: step.metadata.effect,
       sourcePath: step.action.sourcePath,
       sourceHash: step.action.sourceHash,
-      details: { ...workflowActionEventDetails(step.metadata, step.spec), reconciliation: true },
+      details: {
+        ...workflowActionEventDetails(step.metadata, step.spec, step.cwd),
+        reconciliation: true,
+      },
     });
 
     try {
       const rawResult = await this.actionRunner.reconcile(step.action, {
         input: step.spec.input,
-        cwd: getWorkflowActionCwd(step.spec, step.action, this.defaultActionCwd),
+        cwd: step.cwd,
         timeoutMs: getWorkflowActionTimeoutMs(step.spec, step.metadata),
         abortSignal: step.abortSignal,
         artifactDir: this.runStore.getStepArtifactsDir(runId, step.spec.id, step.inputHash),
@@ -1559,7 +1595,8 @@ function parseWorkflowActionSpec(rawSpec: unknown): WorkflowActionSpec {
 
 function buildWorkflowActionReplayInput(
   action: ResolvedWorkflowAction,
-  spec: WorkflowActionSpec
+  spec: WorkflowActionSpec,
+  cwd: string
 ): unknown {
   return {
     primitive: "action",
@@ -1568,8 +1605,8 @@ function buildWorkflowActionReplayInput(
     sourcePath: action.sourcePath,
     sourceHash: action.sourceHash,
     input: spec.input,
+    cwd,
     ...(spec.timeoutMs !== undefined ? { timeoutMs: spec.timeoutMs } : {}),
-    ...(spec.cwd !== undefined ? { cwd: spec.cwd } : {}),
   };
 }
 
@@ -1630,14 +1667,15 @@ function getWorkflowActionCwd(
 
 function workflowActionEventDetails(
   metadata: WorkflowActionMetadata,
-  spec: WorkflowActionSpec
+  spec: WorkflowActionSpec,
+  cwd: string
 ): Record<string, unknown> {
   return {
     description: metadata.description,
     effect: metadata.effect,
     advisoryPermissions: metadata.permissions ?? [],
     timeoutMs: getWorkflowActionTimeoutMs(spec, metadata),
-    ...(spec.cwd !== undefined ? { cwd: spec.cwd } : {}),
+    cwd,
   };
 }
 
@@ -1669,7 +1707,6 @@ function normalizeWorkflowActionResult(rawResult: unknown): WorkflowActionResult
     signal: typeof record.signal === "string" ? record.signal : null,
     durationMs: record.durationMs,
     artifacts: record.artifacts.map((artifact) => normalizeWorkflowActionArtifact(artifact)),
-    ...(record.cached === true ? { cached: true } : {}),
     ...(record.reconciled === true ? { reconciled: true } : {}),
   };
 }
