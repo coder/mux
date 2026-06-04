@@ -429,7 +429,8 @@ export const TaskAwaitToolArgsSchema = z
       .array(z.string().min(1))
       .nullish()
       .describe(
-        "List of task IDs or workflow run IDs to await — use only real IDs returned by prior task, bash, workflow_run, or task_list tool results; never fabricate an ID. " +
+        "List of task IDs or workflow run IDs to await — use only real IDs returned by prior task, bash, or workflow_run results; never fabricate an ID. " +
+          "task_list can rediscover sub-agent/background bash IDs, but workflow run rediscovery is done by omitting task_ids. " +
           "When omitted, waits for active descendant tasks and workflow runs of the current workspace, excluding workflow-owned sub-agents and their background bash tasks because those results are consumed through workflow runs."
       ),
     filter: z

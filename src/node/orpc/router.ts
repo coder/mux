@@ -131,7 +131,6 @@ function shouldExposeRawQueryError(error: unknown): boolean {
 }
 
 const WORKFLOW_CONTINUATION_RETRY_DELAY_MS = 1_000;
-const WORKFLOW_CONTINUATION_MAX_ATTEMPTS = 60;
 const WORKSPACE_BUSY_IDLE_ONLY_SEND_MESSAGE = "Workspace is busy; idle-only send was skipped.";
 
 function isWorkspaceBusyIdleOnlySend(error: { type: string; raw?: string }): boolean {
@@ -1818,7 +1817,7 @@ export const router = (authToken?: string) => {
                     result,
                     run,
                   });
-                  for (let attempt = 1; attempt <= WORKFLOW_CONTINUATION_MAX_ATTEMPTS; attempt++) {
+                  for (;;) {
                     const invocationCurrent =
                       await context.workspaceService.isWorkflowInvocationCurrent(
                         input.workspaceId,
@@ -1867,14 +1866,6 @@ export const router = (authToken?: string) => {
                     }
                     await waitForWorkflowContinuationRetry();
                   }
-
-                  log.warn(
-                    "Failed to continue slash workflow after completion: workspace stayed busy",
-                    {
-                      workspaceId: input.workspaceId,
-                      runId,
-                    }
-                  );
                 }
               : undefined;
           const { service, projectTrusted } = await resolveWorkflowContext(

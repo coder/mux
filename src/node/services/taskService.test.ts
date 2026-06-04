@@ -2410,6 +2410,75 @@ describe("TaskService", () => {
     expect(prompt).toContain("task_await");
   });
 
+  test("queues parent auto-resume if stream-end cleanup is still busy", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-222";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const sendMessage = mock(
+      (
+        _workspaceId: string,
+        _message: string,
+        _options: unknown,
+        internal?: { requireIdle?: boolean }
+      ): Promise<Result<void, { type: string; raw: string }>> => {
+        if (internal?.requireIdle === true) {
+          return Promise.resolve(
+            Err({ type: "unknown", raw: "Workspace is busy; idle-only send was skipped." })
+          );
+        }
+        return Promise.resolve(Ok(undefined));
+      }
+    );
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      1,
+      rootWorkspaceId,
+      expect.stringContaining(childTaskId),
+      expect.anything(),
+      expect.objectContaining({ requireIdle: true })
+    );
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      2,
+      rootWorkspaceId,
+      expect.stringContaining(childTaskId),
+      expect.anything(),
+      expect.not.objectContaining({ requireIdle: true })
+    );
+  });
+
   test("does not auto-resume for an agent workflow superseded by a manual user turn", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -2457,6 +2526,68 @@ describe("TaskService", () => {
       createMuxMessage("manual-user", "user", "Ignore the old workflow", { timestamp: 2_000 })
     );
     expect(appendManualUser.success).toBe(true);
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("does not auto-resume for an agent workflow superseded by a context reset", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const workflowRunId = "wfr_reset_superseded";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [projectWorkspace(projectPath, "root", rootWorkspaceId)],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootWorkspaceId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: rootWorkspaceId,
+      definition: {
+        name: "background-research",
+        description: "Background research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+    await recordAgentWorkflowRunReference({
+      workspaceSessionDir: config.getSessionDir(rootWorkspaceId),
+      runId: workflowRunId,
+      createdAtMs: 1_000,
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+    const appendReset = await historyService.appendToHistory(
+      rootWorkspaceId,
+      createMuxMessage("reset-boundary", "assistant", "Context reset", {
+        timestamp: 2_000,
+        contextBoundaryKind: "reset",
+      })
+    );
+    expect(appendReset.success).toBe(true);
 
     await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
@@ -7061,6 +7192,90 @@ describe("TaskService", () => {
     );
   });
 
+  test("task stream-end waits for task-local background workflows before final report", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-workflow-wait";
+    const childId = "child-workflow-wait";
+    const workflowRunId = "wfr_child_active";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+          taskModelString: "openai:gpt-4o-mini",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(childId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: childId,
+      definition: {
+        name: "child-workflow",
+        description: "Child workflow",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+    await recordAgentWorkflowRunReference({
+      workspaceSessionDir: config.getSessionDir(childId),
+      runId: workflowRunId,
+      createdAtMs: 1_000,
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Premature report", title: "Premature" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining(workflowRunId),
+      expect.objectContaining({ model: "openai:gpt-4o-mini", agentId: "exec" }),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("running");
+  });
+
   test("handleStreamEnd finalizes report when task status is interrupted", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -9609,6 +9824,105 @@ describe("TaskService", () => {
       // Now auto-resume should work again
       await internal.handleStreamEnd(makeStreamEndEvent());
       expect(sendMessage).toHaveBeenCalledTimes(4);
+    });
+
+    test("workflow-only quiescence resets the auto-resume budget", async () => {
+      const config = await createTestConfig(rootDir);
+      const projectPath = path.join(rootDir, "repo");
+      await fsPromises.mkdir(projectPath, { recursive: true });
+
+      const rootWorkspaceId = "root-workflow-budget";
+      const firstRunId = "wfr_budget_first";
+      const secondRunId = "wfr_budget_second";
+      await config.saveConfig({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              trusted: true,
+              workspaces: [projectWorkspace(projectPath, "root", rootWorkspaceId)],
+            },
+          ],
+        ]),
+        taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+      });
+
+      const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootWorkspaceId) });
+      await runStore.createRun({
+        id: firstRunId,
+        workspaceId: rootWorkspaceId,
+        definition: {
+          name: "first-workflow",
+          description: "First workflow",
+          scope: "built-in",
+          executable: true,
+        },
+        definitionSource:
+          "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+        args: {},
+        now: "2026-06-04T00:00:00.000Z",
+      });
+      await runStore.appendStatus(firstRunId, "running", "2026-06-04T00:00:01.000Z");
+      await recordAgentWorkflowRunReference({
+        workspaceSessionDir: config.getSessionDir(rootWorkspaceId),
+        runId: firstRunId,
+        createdAtMs: 1_000,
+      });
+
+      const { aiService } = createAIServiceMocks(config);
+      const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+      const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+      const internal = taskService as unknown as {
+        handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+      };
+      const makeStreamEndEvent = (): StreamEndEvent => ({
+        type: "stream-end",
+        workspaceId: rootWorkspaceId,
+        messageId: `assistant-${Date.now()}`,
+        metadata: { model: "openai:gpt-5.2" },
+        parts: [],
+      });
+
+      for (let i = 0; i < 3; i++) {
+        await internal.handleStreamEnd(makeStreamEndEvent());
+      }
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+      await internal.handleStreamEnd(makeStreamEndEvent());
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+
+      await runStore.appendStatus(firstRunId, "completed", "2026-06-04T00:00:02.000Z");
+      await internal.handleStreamEnd(makeStreamEndEvent());
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+
+      await runStore.createRun({
+        id: secondRunId,
+        workspaceId: rootWorkspaceId,
+        definition: {
+          name: "second-workflow",
+          description: "Second workflow",
+          scope: "built-in",
+          executable: true,
+        },
+        definitionSource:
+          "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+        args: {},
+        now: "2026-06-04T00:00:03.000Z",
+      });
+      await runStore.appendStatus(secondRunId, "running", "2026-06-04T00:00:04.000Z");
+      await recordAgentWorkflowRunReference({
+        workspaceSessionDir: config.getSessionDir(rootWorkspaceId),
+        runId: secondRunId,
+        createdAtMs: 3_000,
+      });
+
+      await internal.handleStreamEnd(makeStreamEndEvent());
+      expect(sendMessage).toHaveBeenCalledTimes(4);
+      expect(sendMessage).toHaveBeenLastCalledWith(
+        rootWorkspaceId,
+        expect.stringContaining(secondRunId),
+        expect.anything(),
+        expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+      );
     });
 
     test("markParentWorkspaceInterrupted suppresses parent auto-resume until reset", async () => {

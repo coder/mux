@@ -252,7 +252,6 @@ function markProviderMetadataCostsIncluded(
 }
 
 const WORKFLOW_CONTINUATION_RETRY_DELAY_MS = 1_000;
-const WORKFLOW_CONTINUATION_MAX_ATTEMPTS = 60;
 const WORKSPACE_BUSY_IDLE_ONLY_SEND_MESSAGE = "Workspace is busy; idle-only send was skipped.";
 
 function isWorkspaceBusyIdleOnlySend(error: SendMessageError): boolean {
@@ -1600,7 +1599,7 @@ export class AIService extends EventEmitter {
                   result,
                   run,
                 });
-                for (let attempt = 1; attempt <= WORKFLOW_CONTINUATION_MAX_ATTEMPTS; attempt++) {
+                for (;;) {
                   const invocationCurrent = await continuationSender.isWorkflowInvocationCurrent(
                     workspaceId,
                     runId
@@ -1660,14 +1659,6 @@ export class AIService extends EventEmitter {
                   }
                   await waitForWorkflowContinuationRetry();
                 }
-
-                log.warn(
-                  "Failed to continue agent after workflow completion: workspace stayed busy",
-                  {
-                    workspaceId,
-                    runId,
-                  }
-                );
               },
               getCurrentProjectTrusted: () => isProjectTrusted(this.config, metadata.projectPath),
               runnerId: `workflow-runner:${workspaceId}`,

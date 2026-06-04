@@ -461,6 +461,172 @@ describe("WorkspaceService workflow invocation events", () => {
     }
   });
 
+  test("treats reset boundaries as workflow supersession", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "workflow-currentness-reset";
+    const runId = "wfr_currentness_reset";
+    const projectPath = path.join(config.rootDir, "project");
+    try {
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: "workflow-currentness-reset",
+        projectName: "project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        aiService: createMockAIService({
+          stopStream: mock(() => Promise.resolve(Ok(undefined))),
+        }),
+        extensionMetadata: new ExtensionMetadataService(
+          path.join(config.rootDir, "extensionMetadata.json")
+        ),
+        initStateManager: {
+          ...mockInitStateManager,
+          off: mock(() => undefined as unknown as InitStateManager),
+        } as unknown as InitStateManager,
+      });
+
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+          {
+            type: "dynamic-tool",
+            toolCallId: "workflow-call-1",
+            toolName: "workflow_run",
+            state: "output-available",
+            input: { name: "demo", args: {}, run_in_background: true },
+            output: { status: "running", runId, result: null },
+          },
+        ])
+      );
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(true);
+
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("reset-boundary", "assistant", "Context reset", {
+          timestamp: 1_100,
+          contextBoundaryKind: "reset",
+        })
+      );
+
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(false);
+      workspaceService.disposeSession(workspaceId);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("keeps workflow current after non-terminal task_await errors", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "workflow-currentness-error";
+    const runId = "wfr_currentness_error";
+    const projectPath = path.join(config.rootDir, "project");
+    try {
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: "workflow-currentness-error",
+        projectName: "project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        aiService: createMockAIService({
+          stopStream: mock(() => Promise.resolve(Ok(undefined))),
+        }),
+        extensionMetadata: new ExtensionMetadataService(
+          path.join(config.rootDir, "extensionMetadata.json")
+        ),
+        initStateManager: {
+          ...mockInitStateManager,
+          off: mock(() => undefined as unknown as InitStateManager),
+        } as unknown as InitStateManager,
+      });
+
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+          {
+            type: "dynamic-tool",
+            toolCallId: "workflow-call-1",
+            toolName: "workflow_run",
+            state: "output-available",
+            input: { name: "demo", args: {}, run_in_background: true },
+            output: { status: "running", runId, result: null },
+          },
+        ])
+      );
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage(
+          "assistant-task-await-active-error",
+          "assistant",
+          "",
+          { timestamp: 1_100 },
+          [
+            {
+              type: "dynamic-tool",
+              toolCallId: "task-await-1",
+              toolName: "task_await",
+              state: "output-available",
+              input: { task_ids: [runId] },
+              output: {
+                results: [
+                  {
+                    taskId: runId,
+                    status: "error",
+                    error: "Interrupted",
+                    run: { id: runId, status: "running" },
+                  },
+                ],
+              },
+            },
+          ]
+        )
+      );
+
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(true);
+
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage(
+          "assistant-task-await-failed-error",
+          "assistant",
+          "",
+          { timestamp: 1_200 },
+          [
+            {
+              type: "dynamic-tool",
+              toolCallId: "task-await-2",
+              toolName: "task_await",
+              state: "output-available",
+              input: { task_ids: [runId] },
+              output: {
+                results: [
+                  {
+                    taskId: runId,
+                    status: "error",
+                    error: "Workflow failed",
+                    run: { id: runId, status: "failed" },
+                  },
+                ],
+              },
+            },
+          ]
+        )
+      );
+
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(false);
+      workspaceService.disposeSession(workspaceId);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("marks workflow invocations consumed after terminal task_await results", async () => {
     const { config, historyService, cleanup } = await createTestHistoryService();
     const workspaceId = "workflow-currentness-consumed";

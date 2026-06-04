@@ -310,6 +310,34 @@ function isWorkflowResultContinuationMessage(message: MuxMessage, runId: string)
   );
 }
 
+function isResetBoundaryMessage(message: MuxMessage): boolean {
+  return message.metadata?.contextBoundaryKind === CONTEXT_BOUNDARY_KINDS.RESET;
+}
+
+function isFailedWorkflowRunSnapshot(value: unknown, runId: string): boolean {
+  if (value == null || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return record.id === runId && record.status === "failed";
+}
+
+function isTerminalWorkflowTaskAwaitRecord(
+  record: Record<string, unknown>,
+  runId: string
+): boolean {
+  if (record.taskId !== runId) {
+    return false;
+  }
+  if (record.status === "completed" || record.status === "interrupted") {
+    return true;
+  }
+  if (record.status === "error") {
+    return isFailedWorkflowRunSnapshot(record.run, runId);
+  }
+  return false;
+}
+
 function isTerminalWorkflowTaskAwaitResultMessage(message: MuxMessage, runId: string): boolean {
   if (message.role !== "assistant") {
     return false;
@@ -334,13 +362,7 @@ function isTerminalWorkflowTaskAwaitResultMessage(message: MuxMessage, runId: st
       if (result == null || typeof result !== "object") {
         return false;
       }
-      const record = result as Record<string, unknown>;
-      return (
-        record.taskId === runId &&
-        (record.status === "completed" ||
-          record.status === "error" ||
-          record.status === "interrupted")
-      );
+      return isTerminalWorkflowTaskAwaitRecord(result as Record<string, unknown>, runId);
     });
   });
 }
@@ -5953,6 +5975,11 @@ export class WorkspaceService extends EventEmitter {
       (messages) => {
         for (const message of messages) {
           if (isManualUserSupersessionMessage(message)) {
+            current = false;
+            foundDecision = true;
+            return false;
+          }
+          if (isResetBoundaryMessage(message)) {
             current = false;
             foundDecision = true;
             return false;
