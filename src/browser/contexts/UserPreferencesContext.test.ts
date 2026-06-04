@@ -155,6 +155,44 @@ describe("UserPreferencesProvider bridge helpers", () => {
     });
   });
 
+  test("save queue retries failed saves without dropping pending preferences", async () => {
+    const controller = new AbortController();
+    const saves: Array<UserPreferences | null | undefined> = [];
+    const currentPreferences: UserPreferences | undefined = { appearance: { theme: "dark" } };
+    let saveAttempts = 0;
+    let dirtyClears = 0;
+    const errors: string[] = [];
+
+    const queue = createUserPreferenceSaveQueue({
+      signal: controller.signal,
+      configClient: {
+        getConfig: () => Promise.resolve({}),
+        saveConfig: (input) => {
+          saveAttempts += 1;
+          if (saveAttempts === 1) {
+            return Promise.reject(new Error("temporary failure"));
+          }
+          saves.push(input.userPreferences);
+          return Promise.resolve();
+        },
+      },
+      getCurrentPreferences: () => currentPreferences,
+      clearDirtyKeys: () => {
+        dirtyClears += 1;
+      },
+      onError: (message) => {
+        errors.push(message);
+      },
+    });
+
+    queue(currentPreferences);
+
+    await waitUntil(() => expect(saves).toEqual([currentPreferences]));
+    expect(saveAttempts).toBe(2);
+    expect(dirtyClears).toBe(1);
+    expect(errors[0]).toContain("retrying");
+  });
+
   test("save queue serializes in-flight saves and persists the latest pending preferences", async () => {
     const controller = new AbortController();
     const saves: Array<UserPreferences | null | undefined> = [];

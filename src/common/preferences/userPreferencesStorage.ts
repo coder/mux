@@ -1,5 +1,13 @@
-import type { UserPreferences } from "@/common/config/schemas/userPreferences";
-import { pruneUserPreferences } from "@/common/config/schemas/userPreferences";
+import {
+  LaunchBehaviorSchema,
+  parseThemePreference,
+  pruneUserPreferences,
+  type UserPreferences,
+} from "@/common/config/schemas/userPreferences";
+import {
+  AUTO_COMPACTION_THRESHOLD_MIN,
+  AUTO_COMPACTION_THRESHOLD_STORAGE_MAX,
+} from "@/common/constants/ui";
 import {
   BASH_COLLAPSED_SUMMARY_MODE_KEY,
   BASH_COLLAPSED_SUMMARY_MODES,
@@ -106,9 +114,7 @@ function parseStoredValue(raw: string | null): unknown {
 }
 
 function parseLaunchBehavior(value: unknown): LaunchBehavior | undefined {
-  return value === "dashboard" || value === "new-chat" || value === "last-workspace"
-    ? value
-    : undefined;
+  return parseEnum<LaunchBehavior>(LaunchBehaviorSchema.options, value);
 }
 
 function parseExpiration(value: unknown): ExpirationValue | undefined {
@@ -118,7 +124,10 @@ function parseExpiration(value: unknown): ExpirationValue | undefined {
 }
 
 function parseThreshold(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= AUTO_COMPACTION_THRESHOLD_MIN &&
+    value <= AUTO_COMPACTION_THRESHOLD_STORAGE_MAX
     ? value
     : undefined;
 }
@@ -235,18 +244,12 @@ export function applyStoredUserPreference(
   const next = cloneUserPreferences(preferences);
 
   if (key === UI_THEME_KEY) {
-    const parsed = typeof value === "string" ? value : undefined;
-    if (
-      parsed === "auto" ||
-      parsed === "light" ||
-      parsed === "dark" ||
-      parsed === "flexoki-light" ||
-      parsed === "flexoki-dark"
-    ) {
-      ensureAppearance(next).theme = parsed;
-      return pruneUserPreferences(next);
+    const parsed = parseThemePreference(value);
+    if (!parsed) {
+      return removeStoredUserPreference(next, key);
     }
-    return removeStoredUserPreference(next, key);
+    ensureAppearance(next).theme = parsed;
+    return pruneUserPreferences(next);
   }
 
   if (key === TRANSCRIPT_DENSITY_KEY) {

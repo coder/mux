@@ -343,7 +343,7 @@ export const HIDDEN_MODELS_KEY = "hidden-models";
 export const AGENT_AI_DEFAULTS_KEY = "agentAiDefaults";
 
 /**
- * LocalStorage keys for provider-specific AI options that are not backend-backed elsewhere.
+ * Provider-specific AI options, synced through userPreferences.
  */
 export const PROVIDER_OPTIONS_ANTHROPIC_KEY = "provider_options_anthropic";
 export const PROVIDER_OPTIONS_GOOGLE_KEY = "provider_options_google";

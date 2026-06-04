@@ -158,6 +158,37 @@ export function prunePreferenceScopes(params: {
   return normalizeUserPreferences(next);
 }
 
+const USER_PREFERENCE_SAVE_RETRY_BASE_DELAY_MS = 250;
+const USER_PREFERENCE_SAVE_RETRY_MAX_DELAY_MS = 5000;
+
+function getUserPreferenceSaveRetryDelayMs(retryAttempt: number): number {
+  return Math.min(
+    USER_PREFERENCE_SAVE_RETRY_BASE_DELAY_MS * 2 ** retryAttempt,
+    USER_PREFERENCE_SAVE_RETRY_MAX_DELAY_MS
+  );
+}
+
+function waitForRetryDelay(delayMs: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const timeoutId = setTimeout(finish, delayMs);
+    function finish() {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    }
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
 interface UserPreferenceConfigClient {
   getConfig: () => Promise<{ userPreferences?: unknown }>;
   saveConfig: (input: { userPreferences?: UserPreferences | null }) => Promise<void>;
@@ -198,6 +229,7 @@ export function createUserPreferenceSaveQueue(params: {
 }): (preferences: UserPreferences | undefined) => void {
   let saveInFlight = false;
   let pendingSave: UserPreferences | undefined | null = null;
+  let retryAttempt = 0;
 
   const flush = async () => {
     saveInFlight = true;
@@ -206,8 +238,26 @@ export function createUserPreferenceSaveQueue(params: {
         const preferencesToSave = pendingSave;
         pendingSave = null;
         const savedFingerprint = stableStringify(preferencesToSave);
-        await params.configClient.saveConfig({ userPreferences: preferencesToSave ?? null });
 
+        try {
+          await params.configClient.saveConfig({ userPreferences: preferencesToSave ?? null });
+        } catch (error) {
+          const hasNewerPendingSave = pendingSave !== null;
+          if (!hasNewerPendingSave) {
+            pendingSave = preferencesToSave;
+          }
+
+          const retryDelayMs = getUserPreferenceSaveRetryDelayMs(retryAttempt);
+          retryAttempt += 1;
+          params.onError(
+            `Failed to persist user preferences, retrying in ${retryDelayMs}ms:`,
+            error
+          );
+          await waitForRetryDelay(retryDelayMs, params.signal);
+          continue;
+        }
+
+        retryAttempt = 0;
         if (params.signal.aborted) {
           return;
         }
@@ -216,8 +266,6 @@ export function createUserPreferenceSaveQueue(params: {
           params.clearDirtyKeys();
         }
       }
-    } catch (error) {
-      params.onError("Failed to persist user preferences:", error);
     } finally {
       saveInFlight = false;
       if (pendingSave !== null && !params.signal.aborted) {
@@ -261,6 +309,13 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
       setHydrated(false);
       return;
     }
+
+    // Treat every concrete API client identity as a fresh backend source. Electron normally
+    // reconnects through null, but direct client swaps should still rerun the initial backfill.
+    currentPreferencesRef.current = undefined;
+    dirtyKeysRef.current.clear();
+    hydratedRef.current = false;
+    setHydrated(false);
 
     const storage = getLocalStorage();
     if (!storage) {
@@ -350,7 +405,7 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
           if (signal.aborted) {
             break;
           }
-          const refresh = applyBackendConfig(false);
+          const refresh = applyBackendConfig(!hydratedRef.current);
           refresh.catch((error) => {
             console.warn("Failed to refresh user preferences:", error);
           });

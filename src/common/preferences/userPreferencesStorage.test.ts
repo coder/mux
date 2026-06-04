@@ -5,6 +5,7 @@ import {
   entriesFromUserPreferences,
   getStoredUserPreferenceEntries,
   hasUserPreferenceEntry,
+  isUserPreferenceStorageKey,
   removeStoredUserPreference,
 } from "./userPreferencesStorage";
 import {
@@ -23,6 +24,7 @@ import {
   getThinkingLevelKey,
   getTrunkBranchKey,
 } from "@/common/constants/storage";
+import type { UserPreferences } from "@/common/config/schemas/userPreferences";
 
 class MemoryStorage {
   private values = new Map<string, string>();
@@ -104,6 +106,66 @@ describe("user preference localStorage registry", () => {
         defaultBaseByProject: { "/repo": "origin/main" },
       },
     });
+  });
+
+  test("migrates legacy theme names during localStorage collection", () => {
+    const storage = new MemoryStorage();
+    storage.setJSON(UI_THEME_KEY, "solarized-dark");
+
+    expect(collectForTest(storage)).toEqual({ appearance: { theme: "dark" } });
+  });
+
+  test("all flattened preference entries are recognized, applied, and removable", () => {
+    const preferences: UserPreferences = {
+      appearance: {
+        theme: "flexoki-dark",
+        transcriptDensity: "hyper",
+        bashCollapsedSummaryMode: "intent",
+        terminalFontConfig: { fontFamily: "Geist Mono", fontSize: 13 },
+        editorConfig: { editor: "custom", customCommand: "code --goto" },
+        vimEnabled: true,
+      },
+      navigation: { launchBehavior: "new-chat", projectOrder: ["/repo"] },
+      sharing: { expiration: "24h", signing: false },
+      ai: {
+        globalDefaults: { agentId: "exec", thinkingLevel: "medium" },
+        projectDefaults: {
+          "/repo": {
+            agentId: "plan",
+            model: "openai:gpt-4.1",
+            thinkingLevel: "high",
+          },
+        },
+        providerOptions: {
+          anthropic: { disableBetaFeatures: true },
+          google: { safety: "off" },
+        },
+        autoCompactionThresholdByModel: { "openai:gpt-4.1": 100 },
+      },
+      workspaceCreation: {
+        byProject: {
+          "/repo": {
+            trunkBranch: "origin/main",
+            lastRuntimeConfig: { ssh: { host: "devbox" } },
+            notifyOnResponseAutoEnable: true,
+          },
+        },
+      },
+      notifications: { notifyOnResponseByWorkspace: { "ws-1": false } },
+      review: { includeUncommitted: true, defaultBaseByProject: { "/repo": "origin/main" } },
+    };
+
+    const entries = entriesFromUserPreferences(preferences);
+    expect(new Set(entries.map((entry) => entry.key)).size).toBe(entries.length);
+
+    for (const entry of entries) {
+      expect(isUserPreferenceStorageKey(entry.key)).toBe(true);
+      const applied = applyStoredUserPreference(undefined, entry.key, entry.value);
+      expect(hasUserPreferenceEntry(applied, entry.key)).toBe(true);
+      expect(
+        hasUserPreferenceEntry(removeStoredUserPreference(applied, entry.key), entry.key)
+      ).toBe(false);
+    }
   });
 
   test("round trips backend preferences to localStorage entries", () => {

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { AUTO_COMPACTION_THRESHOLD_MIN } from "@/common/constants/ui";
+import {
+  AUTO_COMPACTION_THRESHOLD_MIN,
+  AUTO_COMPACTION_THRESHOLD_STORAGE_MAX,
+} from "@/common/constants/ui";
 import {
   BASH_COLLAPSED_SUMMARY_MODES,
   EDITOR_TYPES,
@@ -101,7 +104,10 @@ export const UserPreferencesSchema = z.object({
         })
         .optional(),
       autoCompactionThresholdByModel: z
-        .record(z.string(), z.number().min(AUTO_COMPACTION_THRESHOLD_MIN).max(100))
+        .record(
+          z.string(),
+          z.number().min(AUTO_COMPACTION_THRESHOLD_MIN).max(AUTO_COMPACTION_THRESHOLD_STORAGE_MAX)
+        )
         .optional(),
     })
     .optional(),
@@ -134,7 +140,7 @@ export const UserPreferencesSchema = z.object({
 
 export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
 
-function parseThemePreference(value: unknown): ThemePreferenceConfig | undefined {
+export function parseThemePreference(value: unknown): ThemePreferenceConfig | undefined {
   const parsed = ThemePreferenceSchema.safeParse(value);
   if (parsed.success) {
     return parsed.data;
@@ -207,7 +213,7 @@ function parseAutoCompactionThresholds(value: unknown): Record<string, number> |
       typeof threshold !== "number" ||
       !Number.isFinite(threshold) ||
       threshold < AUTO_COMPACTION_THRESHOLD_MIN ||
-      threshold > 100
+      threshold > AUTO_COMPACTION_THRESHOLD_STORAGE_MAX
     ) {
       continue;
     }

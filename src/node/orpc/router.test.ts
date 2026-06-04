@@ -509,6 +509,20 @@ describe("router config.saveConfig", () => {
     });
   });
 
+  test("saveConfig clears user preferences when explicitly set to null", async () => {
+    await config.editConfig((current) => ({
+      ...current,
+      userPreferences: { appearance: { theme: "flexoki-light" } },
+    }));
+    const client = createRouterClient(router(), { context: createContext() });
+
+    await client.config.saveConfig({
+      userPreferences: null,
+    });
+
+    expect(config.loadConfigOrDefault().userPreferences).toBeUndefined();
+  });
+
   test("saveConfig preserves existing user preferences when omitted", async () => {
     await config.editConfig((current) => ({
       ...current,
