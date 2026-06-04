@@ -186,6 +186,10 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "ISO 8601 timestamp when workspace was last unarchived. Used for recency calculation to bump restored workspaces to top.",
   }),
+  snoozedUntil: z.string().optional().meta({
+    description:
+      "ISO 8601 timestamp until which this workspace is snoozed. Workspaces are considered snoozed (hidden under the sidebar Snooze section) while this timestamp lies in the future; once it passes the field is treated as cleared without requiring backend rewrite.",
+  }),
   projects: z
     .array(ProjectRefSchema)
     .optional()

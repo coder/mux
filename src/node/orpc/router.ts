@@ -3312,6 +3312,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.unarchive(input.workspaceId);
         }),
+      snooze: t
+        .input(schemas.workspace.snooze.input)
+        .output(schemas.workspace.snooze.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.setSnooze(input.workspaceId, input.snoozedUntil);
+        }),
       deleteWorktree: t
         .input(schemas.workspace.deleteWorktree.input)
         .output(schemas.workspace.deleteWorktree.output)

@@ -23,5 +23,11 @@ export function getWorkspaceSidebarKey(meta: FrontendWorkspaceMetadata): string 
     meta.taskStatus ?? "", // Task lifecycle label/state for sub-agent rows
     meta.agentType ?? "", // Agent preset badge/label (future)
     meta.subProjectPath ?? "", // Sub-project grouping and cwd context for sidebar organization
+    // Snooze deadline — drives whether the row renders under the dedicated
+    // 💤 Snoozed section or in its normal age tier. Without this, the stable
+    // reference comparator short-circuits on snooze/unsnooze and the sidebar
+    // only updates after a reload (the metadata Map is fresh but the cached
+    // sorted Map is returned unchanged).
+    meta.snoozedUntil ?? "",
   ].join("|");
 }

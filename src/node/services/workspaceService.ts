@@ -5,6 +5,7 @@ import assert from "@/common/utils/assert";
 import { DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR } from "@/common/config/worktreeArchiveBehavior";
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { MAX_SNOOZE_MS } from "@/common/utils/snooze";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
@@ -4411,6 +4412,116 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Snooze (or unsnooze) a workspace by setting its `snoozedUntil` ISO
+   * timestamp. Snoozed workspaces are hidden under a dedicated "Snoozed"
+   * section in the sidebar until the timestamp passes; passing `null` clears
+   * the field entirely.
+   *
+   * We persist the absolute deadline (not a duration) so the section drains
+   * naturally at the wall-clock expiry without needing a backend timer or
+   * scheduled job. The metadata-driven UI uses `isWorkspaceSnoozed` to derive
+   * the live state, mirroring how `isWorkspaceArchived` derives the archived
+   * state from `archivedAt`/`unarchivedAt`.
+   */
+  async setSnooze(workspaceId: string, snoozedUntil: string | null): Promise<Result<void, string>> {
+    try {
+      const normalizedWorkspaceId = workspaceId.trim();
+      assert(normalizedWorkspaceId.length > 0, "setSnooze requires a non-empty workspaceId");
+
+      let normalizedSnoozedUntil: string | undefined;
+      if (snoozedUntil != null) {
+        const parsed = Date.parse(snoozedUntil);
+        if (!Number.isFinite(parsed)) {
+          return Err("Snooze timestamp must be a valid ISO 8601 string");
+        }
+        const now = Date.now();
+        if (parsed <= now) {
+          // Setting a deadline in the past would render the workspace as
+          // not-snoozed anyway; treat that as an explicit unsnooze so the
+          // persisted state stays clean.
+          normalizedSnoozedUntil = undefined;
+        } else if (parsed - now > MAX_SNOOZE_MS) {
+          return Err("Snooze duration exceeds the maximum supported horizon (52 weeks)");
+        } else {
+          normalizedSnoozedUntil = new Date(parsed).toISOString();
+        }
+      }
+
+      const found = this.config.findWorkspace(normalizedWorkspaceId);
+      if (!found) {
+        return Err("Workspace not found");
+      }
+
+      const { projectPath, workspacePath } = found;
+
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(projectPath);
+        if (!projectConfig) return config;
+        const workspaceEntry =
+          projectConfig.workspaces.find((w) => w.id === normalizedWorkspaceId) ??
+          projectConfig.workspaces.find((w) => w.path === workspacePath);
+        if (!workspaceEntry) return config;
+
+        if (normalizedSnoozedUntil) {
+          workspaceEntry.snoozedUntil = normalizedSnoozedUntil;
+        } else {
+          // Clearing via `delete` rather than writing `null` keeps the
+          // persisted config minimal and matches how archive/unarchive uses
+          // the absence of an `archivedAt` field.
+          delete workspaceEntry.snoozedUntil;
+        }
+        return config;
+      });
+
+      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to set snooze: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Best-effort: clear any active snooze on a workspace when the user sends a
+   * real (non-synthetic) message. Called fire-and-forget from `sendMessage`.
+   *
+   * Fast-paths the common "not snoozed" case with a cheap config read so we
+   * don't pay a `setSnooze` write on every single message send. Failures are
+   * logged at debug and swallowed so a transient config write error can never
+   * block the actual message — the user can re-snooze manually if needed.
+   */
+  private async clearSnoozeOnUserMessage(workspaceId: string): Promise<void> {
+    try {
+      const found = this.config.findWorkspace(workspaceId);
+      if (!found) return;
+      const config = this.config.loadConfigOrDefault();
+      const projectConfig = config.projects.get(found.projectPath);
+      // Mirror `setSnooze`'s id-or-path fallback so legacy config entries
+      // (those only identified by `path`, with no `id` yet) still match.
+      // Without the path fallback, the fast-path would silently treat legacy
+      // entries as "not snoozed" and leave the workspace stuck.
+      const entry =
+        projectConfig?.workspaces.find((w) => w.id === workspaceId) ??
+        projectConfig?.workspaces.find((w) => w.path === found.workspacePath);
+      if (!entry?.snoozedUntil) {
+        // Fast path: most sends land here since most workspaces aren't snoozed.
+        return;
+      }
+      const result = await this.setSnooze(workspaceId, null);
+      if (!result.success) {
+        log.debug("Failed to auto-unsnooze workspace on user message", {
+          workspaceId,
+          error: result.error,
+        });
+      }
+    } catch (error) {
+      log.debug("Auto-unsnooze threw on user message", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /**
    * Archive a workspace. Archived workspaces are hidden from the main sidebar
    * but can be viewed on the project page.
    *
@@ -5955,6 +6066,16 @@ export class WorkspaceService extends EventEmitter {
           this.taskService?.backgroundForegroundWaitsForWorkspace(workspaceId);
         }
 
+        // Auto-unsnooze only after the queue accepted the user's message —
+        // Codex P2 catch: doing this earlier (alongside the recency update)
+        // would drain the snooze even for sends that fail validation
+        // (pricing gate, queued-task block, requireIdle, etc.). Synthetic
+        // sends are excluded so heartbeats/idle compaction/goal continuations
+        // can't drain the section the moment the user snoozes.
+        if (internal?.synthetic !== true) {
+          void this.clearSnoozeOnUserMessage(workspaceId);
+        }
+
         return Ok(undefined);
       }
 
@@ -6034,6 +6155,13 @@ export class WorkspaceService extends EventEmitter {
         }
 
         return result;
+      }
+
+      // Auto-unsnooze only after the message was actually accepted by the
+      // session (see queue-path comment above for rationale). Same synthetic
+      // gate so backend-initiated maintenance sends never drain the section.
+      if (internal?.synthetic !== true) {
+        void this.clearSnoozeOnUserMessage(workspaceId);
       }
 
       if (claimedAutoTitle) {

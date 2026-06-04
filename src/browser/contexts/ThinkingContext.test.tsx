@@ -165,6 +165,7 @@ function createWorkspaceContextValue(): WorkspaceContextValue {
     preflightArchiveWorkspace: () => Promise.resolve({ success: true }),
     archiveWorkspace: () => Promise.resolve({ success: true }),
     unarchiveWorkspace: () => Promise.resolve({ success: true }),
+    snoozeWorkspace: () => Promise.resolve({ success: true }),
     refreshWorkspaceMetadata: () => Promise.resolve(),
     setWorkspaceMetadata: () => undefined,
     selectedWorkspace: null,

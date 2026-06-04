@@ -1,6 +1,7 @@
 import { describe, it, expect } from "@jest/globals";
 import {
   partitionWorkspacesByAge,
+  partitionWorkspacesBySnooze,
   formatDaysThreshold,
   AGE_THRESHOLDS_DAYS,
   buildSortedWorkspacesByProject,
@@ -956,5 +957,61 @@ describe("sub-agent row render metadata", () => {
     expect(expandedMeta.get("reported-1")?.connectorPosition).toBe("middle");
     expect(expandedMeta.get("active-2")?.connectorPosition).toBe("middle");
     expect(expandedMeta.get("reported-2")?.connectorPosition).toBe("last");
+  });
+});
+
+describe("partitionWorkspacesBySnooze", () => {
+  const NOW = 1_700_000_000_000;
+  const future = (offsetMs: number): string => new Date(NOW + offsetMs).toISOString();
+  const past = (offsetMs: number): string => new Date(NOW - offsetMs).toISOString();
+
+  it("separates currently-snoozed workspaces while leaving expired snoozes active", () => {
+    const active = createWorkspace("active");
+    const snoozed: FrontendWorkspaceMetadata = {
+      ...createWorkspace("snoozed"),
+      snoozedUntil: future(60 * 60_000),
+    };
+    const expired: FrontendWorkspaceMetadata = {
+      ...createWorkspace("expired"),
+      // A past deadline should auto-drain back into the active list without
+      // requiring a backend rewrite.
+      snoozedUntil: past(60 * 60_000),
+    };
+
+    const result = partitionWorkspacesBySnooze([active, snoozed, expired], { nowMs: NOW });
+    expect(result.snoozed.map((w) => w.id)).toEqual(["snoozed"]);
+    expect(result.active.map((w) => w.id)).toEqual(["active", "expired"]);
+  });
+
+  it("inherits the parent's snooze state so sub-agents follow their parent", () => {
+    const parent: FrontendWorkspaceMetadata = {
+      ...createWorkspace("parent"),
+      snoozedUntil: future(60 * 60_000),
+    };
+    const child = createWorkspace("child", { parentWorkspaceId: "parent" });
+    const standalone = createWorkspace("standalone");
+
+    const result = partitionWorkspacesBySnooze([parent, child, standalone], { nowMs: NOW });
+    expect(result.snoozed.map((w) => w.id).sort()).toEqual(["child", "parent"]);
+    expect(result.active.map((w) => w.id)).toEqual(["standalone"]);
+  });
+
+  it("walks the parentLookup when the parent lives outside the partition slice", () => {
+    // Reproduces the cross-section case: the section being rendered only
+    // contains the child, but the snoozed parent lives in another section
+    // (or the unsectioned bucket).
+    const parent: FrontendWorkspaceMetadata = {
+      ...createWorkspace("parent"),
+      snoozedUntil: future(60 * 60_000),
+    };
+    const child = createWorkspace("child", { parentWorkspaceId: "parent" });
+    const parentLookup = new Map([
+      [parent.id, parent],
+      [child.id, child],
+    ]);
+
+    const result = partitionWorkspacesBySnooze([child], { nowMs: NOW, parentLookup });
+    expect(result.snoozed.map((w) => w.id)).toEqual(["child"]);
+    expect(result.active.map((w) => w.id)).toEqual([]);
   });
 });

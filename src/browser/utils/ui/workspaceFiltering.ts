@@ -2,6 +2,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/common/types/project";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { assert } from "@/common/utils/assert";
+import { isWorkspaceSnoozed } from "@/common/utils/snooze";
 
 interface WorkspaceGroupConfig {
   id: string;
@@ -423,6 +424,99 @@ export function formatDaysThreshold(days: number): string {
 interface AgePartitionResult {
   recent: FrontendWorkspaceMetadata[];
   buckets: FrontendWorkspaceMetadata[][];
+}
+
+/**
+ * Result of splitting workspaces into "active" (visible in age tiers) and
+ * "snoozed" (collected into the dedicated 💤 Snoozed sidebar section).
+ *
+ * Parent/child hierarchy is preserved: a sub-agent inherits the snooze state
+ * of its parent so descendants don't flicker into the active list while their
+ * parent is hidden. This keeps the existing parent-tier inheritance contract
+ * intact and avoids dangling orphans across the partition boundary.
+ */
+export interface SnoozePartitionResult {
+  active: FrontendWorkspaceMetadata[];
+  snoozed: FrontendWorkspaceMetadata[];
+}
+
+/**
+ * Split workspaces into active vs snoozed buckets, with descendants inheriting
+ * their parent's snooze state.
+ *
+ * Defined as a separate partitioner (instead of folding into
+ * `partitionWorkspacesByAge`) so the existing age contract stays stable and
+ * tests around recency/age inheritance don't churn. Call site walks:
+ *  1. `partitionWorkspacesBySnooze(list, { parentLookup })` → `{ active, snoozed }`
+ *  2. `partitionWorkspacesByAge(active, recency)` → existing age tiers
+ *  3. Render a sibling 💤 Snoozed section using `snoozed`.
+ *
+ * `parentLookup` is an optional project-wide id→metadata map used to walk
+ * the parent chain. When the caller renders a **subset** of the project's
+ * workspaces (e.g. a single sub-project section where a child's parent lives
+ * in a sibling section or in the unsectioned bucket), the section-local
+ * `byId` would miss that parent and the inheritance silently dropped — so a
+ * sub-agent could stay visible while its parent was snoozed. Passing the
+ * full project workspaces here keeps the "descendants follow parent snooze
+ * state" contract intact regardless of which slice is being rendered.
+ */
+export function partitionWorkspacesBySnooze(
+  workspaces: FrontendWorkspaceMetadata[],
+  options?: {
+    nowMs?: number;
+    parentLookup?: ReadonlyMap<string, FrontendWorkspaceMetadata>;
+  }
+): SnoozePartitionResult {
+  if (workspaces.length === 0) {
+    return { active: [], snoozed: [] };
+  }
+
+  const nowMs = options?.nowMs;
+  // Local lookup first (cheap + handles tests that only pass a single list),
+  // then fall back to the project-wide parentLookup so cross-section parents
+  // still resolve.
+  const localById = new Map(workspaces.map((workspace) => [workspace.id, workspace] as const));
+  const parentLookup = options?.parentLookup;
+  const resolveById = (id: string): FrontendWorkspaceMetadata | undefined =>
+    localById.get(id) ?? parentLookup?.get(id);
+  const snoozedById = new Map<string, boolean>();
+  const visiting = new Set<string>();
+
+  const resolveSnoozed = (workspace: FrontendWorkspaceMetadata): boolean => {
+    const cached = snoozedById.get(workspace.id);
+    if (cached !== undefined) return cached;
+
+    if (visiting.has(workspace.id)) {
+      // Defensive cycle handling: fall back to direct snooze check.
+      const fallback = isWorkspaceSnoozed(workspace.snoozedUntil, nowMs);
+      snoozedById.set(workspace.id, fallback);
+      return fallback;
+    }
+    visiting.add(workspace.id);
+
+    let result = isWorkspaceSnoozed(workspace.snoozedUntil, nowMs);
+    if (!result && workspace.parentWorkspaceId) {
+      const parent = resolveById(workspace.parentWorkspaceId);
+      if (parent) {
+        result = resolveSnoozed(parent);
+      }
+    }
+
+    visiting.delete(workspace.id);
+    snoozedById.set(workspace.id, result);
+    return result;
+  };
+
+  const active: FrontendWorkspaceMetadata[] = [];
+  const snoozed: FrontendWorkspaceMetadata[] = [];
+  for (const workspace of workspaces) {
+    if (resolveSnoozed(workspace)) {
+      snoozed.push(workspace);
+    } else {
+      active.push(workspace);
+    }
+  }
+  return { active, snoozed };
 }
 
 /**
