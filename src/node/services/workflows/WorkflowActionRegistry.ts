@@ -8,8 +8,9 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import { log } from "@/node/services/log";
 import { quoteRuntimeProbePath } from "@/node/services/tools/runtimePathShellQuote";
 import { execBuffered } from "@/node/utils/runtime/helpers";
+import { BUILT_IN_WORKFLOW_ACTION_SOURCES } from "./builtInWorkflowActions";
 
-export type WorkflowActionScope = "project" | "global";
+export type WorkflowActionScope = "project" | "global" | "built-in";
 
 export interface WorkflowActionRegistryOptions {
   projectRoot: string;
@@ -33,6 +34,7 @@ interface ScannedWorkflowAction {
 }
 
 const ACTION_NAME_SEGMENT_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
+const BUILT_IN_WORKFLOW_ACTION_ROOT = path.resolve(path.sep, "__mux_builtin_workflow_actions__");
 
 export class WorkflowActionRegistry {
   private readonly projectRoot: string;
@@ -86,6 +88,14 @@ export class WorkflowActionRegistry {
       return globalAction;
     }
 
+    const builtInAction = this.readBuiltInAction(normalizedName);
+    if (builtInAction != null) {
+      if (this.projectRuntime != null) {
+        throw new Error("Workflow actions are not supported for runtime-backed workspaces yet");
+      }
+      return builtInAction;
+    }
+
     throw new Error(`Workflow action not found: ${normalizedName}`);
   }
 
@@ -98,6 +108,7 @@ export class WorkflowActionRegistry {
       sources.push(await scanLocalActionDirectory(this.projectRoot, "project"));
     }
     sources.push(await scanLocalActionDirectory(this.globalRoot, "global"));
+    sources.push(scanBuiltInActions());
 
     for (const source of sources) {
       for (const action of source) {
@@ -150,6 +161,21 @@ export class WorkflowActionRegistry {
       }
       throw new Error(`Unable to read workflow action '${sourcePath}': ${getErrorMessage(error)}`);
     }
+  }
+
+  private readBuiltInAction(name: string): ResolvedWorkflowAction | null {
+    const source = getBuiltInActionSource(name);
+    if (source == null) {
+      return null;
+    }
+    const sourcePath = builtInActionSourcePath(name);
+    return {
+      name,
+      scope: "built-in",
+      sourcePath,
+      source,
+      sourceHash: hashWorkflowActionSource(source),
+    };
   }
 
   private async projectActionExists(name: string): Promise<boolean> {
@@ -281,6 +307,24 @@ async function resolveRelativeRequirePath(
 
 function actionNameToRelativePath(name: string): string {
   return path.join(...normalizeWorkflowActionName(name).split(".")) + ".js";
+}
+
+function getBuiltInActionSource(name: string): string | null {
+  return Object.prototype.hasOwnProperty.call(BUILT_IN_WORKFLOW_ACTION_SOURCES, name)
+    ? BUILT_IN_WORKFLOW_ACTION_SOURCES[name as keyof typeof BUILT_IN_WORKFLOW_ACTION_SOURCES]
+    : null;
+}
+
+function builtInActionSourcePath(name: string): string {
+  return path.join(BUILT_IN_WORKFLOW_ACTION_ROOT, actionNameToRelativePath(name));
+}
+
+function scanBuiltInActions(): ScannedWorkflowAction[] {
+  return Object.keys(BUILT_IN_WORKFLOW_ACTION_SOURCES).map((name) => ({
+    name,
+    scope: "built-in" as const,
+    sourcePath: builtInActionSourcePath(name),
+  }));
 }
 
 async function scanLocalActionDirectory(

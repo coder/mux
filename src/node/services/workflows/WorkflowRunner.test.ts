@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/no-unsafe-argument, @typescript-eslint/require-await */
+import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-
+import { promisify } from "node:util";
 import { describe, expect, test } from "bun:test";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -14,6 +15,12 @@ import {
   type WorkflowTaskAdapter,
 } from "./WorkflowRunner";
 import { hashWorkflowStepInput } from "./workflowReplayKey";
+
+const execFileAsync = promisify(execFile);
+
+async function runGit(cwd: string, args: string[]): Promise<void> {
+  await execFileAsync("git", args, { cwd });
+}
 
 const definition = {
   name: "deep-research",
@@ -1336,6 +1343,96 @@ describe("WorkflowRunner", () => {
       throw new Error("Expected action artifacts");
     }
     expect(artifacts[0]).toEqual(expect.objectContaining({ name: "echo.json" }));
+  });
+
+  test("runs built-in Git workflow actions", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-built-in-git-actions");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const repoRoot = path.join(tmp.path, "repo");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "tracked.txt"), "base\n", "utf-8");
+    await runGit(repoRoot, ["add", "tracked.txt"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+    await runGit(repoRoot, ["checkout", "-b", "feature"]);
+    await fs.writeFile(path.join(repoRoot, "feature.txt"), "feature\n", "utf-8");
+    await runGit(repoRoot, ["add", "feature.txt"]);
+    await runGit(repoRoot, ["commit", "-m", "feature commit"]);
+    await fs.appendFile(path.join(repoRoot, "tracked.txt"), "dirty\n", "utf-8");
+    await fs.writeFile(path.join(repoRoot, "new.txt"), "new\n", "utf-8");
+    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await store.createRun({
+      id: "wfr_built_in_git_actions",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ action }) {
+        const commits = action.git.commitsBetween({ id: "commits", input: { base: "main" } });
+        const status = action.git.status({ id: "status" });
+        const changed = action.git.changedFiles({ id: "changed", input: { base: "main" } });
+        const diffStat = action.git.diffStat({ id: "diff-stat", input: { base: "main" } });
+        return {
+          reportMarkdown: JSON.stringify({
+            subjects: commits.output.commits.map((commit) => commit.subject),
+            unstaged: status.output.unstaged.map((file) => file.path),
+            untracked: status.output.untracked,
+            branchFiles: changed.output.branch.map((file) => file.path),
+            branchStat: diffStat.output.branch,
+          }),
+        };
+      }`,
+      args: {},
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_built_in_git_actions");
+    const parsed = JSON.parse(result.reportMarkdown) as {
+      subjects: string[];
+      unstaged: string[];
+      untracked: string[];
+      branchFiles: string[];
+      branchStat: string;
+    };
+
+    expect(parsed.subjects).toEqual(["feature commit"]);
+    expect(parsed.unstaged).toContain("tracked.txt");
+    expect(parsed.untracked).toContain("new.txt");
+    expect(parsed.branchFiles).toContain("feature.txt");
+    expect(parsed.branchStat).toContain("feature.txt");
+    const run = await store.getRun("wfr_built_in_git_actions");
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "action",
+          name: "git.commitsBetween",
+          status: "completed",
+        }),
+        expect.objectContaining({ type: "action", name: "git.status", status: "completed" }),
+        expect.objectContaining({ type: "action", name: "git.diffStat", status: "completed" }),
+        expect.objectContaining({ type: "action", name: "git.changedFiles", status: "completed" }),
+      ])
+    );
   });
 
   test("replays completed workflow action results without re-executing", async () => {

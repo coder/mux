@@ -32,6 +32,23 @@ function createRuntimeWithExistingActions(): Runtime {
   } as unknown as Runtime;
 }
 
+function createRuntimeWithoutActions(): Runtime {
+  return {
+    normalizePath(relativePath: string, root?: string) {
+      return root == null ? relativePath : path.posix.join(root, relativePath);
+    },
+    exec() {
+      return Promise.resolve({
+        stdout: streamFromString(""),
+        stderr: streamFromString(""),
+        stdin: new WritableStream(),
+        exitCode: Promise.resolve(1),
+        duration: Promise.resolve(1),
+      });
+    },
+  } as unknown as Runtime;
+}
+
 async function writeAction(root: string, relativePath: string, source = "module.exports = {};") {
   const filePath = path.join(root, relativePath);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -71,7 +88,29 @@ describe("WorkflowActionRegistry", () => {
 
     const actions = await registry.listActions({ projectTrusted: true });
 
-    expect(actions).toEqual([{ name: "graphite.stackSnapshot", scope: "project", sourcePath }]);
+    expect(actions).toContainEqual({
+      name: "graphite.stackSnapshot",
+      scope: "project",
+      sourcePath,
+    });
+  });
+
+  test("ships built-in Git workflow actions", async () => {
+    using tmp = new DisposableTempDir("workflow-actions-built-in");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const registry = new WorkflowActionRegistry({ projectRoot, globalRoot });
+
+    const resolved = await registry.resolveAction("git.status", { projectTrusted: false });
+    const actions = await registry.listActions({ projectTrusted: false });
+
+    expect(resolved.scope).toBe("built-in");
+    expect(resolved.source).toContain("git status");
+    const byName = new Map(actions.map((action) => [action.name, action]));
+    expect(byName.get("git.status")?.scope).toBe("built-in");
+    expect(byName.get("git.commitsBetween")?.scope).toBe("built-in");
+    expect(byName.get("git.diffStat")?.scope).toBe("built-in");
+    expect(byName.get("git.changedFiles")?.scope).toBe("built-in");
   });
 
   test("uses project actions before global actions when trusted", async () => {
@@ -87,6 +126,23 @@ describe("WorkflowActionRegistry", () => {
     expect(resolved.scope).toBe("project");
     expect(resolved.source).toContain("project: true");
     expect(resolved.sourceHash).toMatch(/^sha256:/);
+  });
+
+  test("uses user actions before built-in actions", async () => {
+    using tmp = new DisposableTempDir("workflow-actions-built-in-precedence");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await writeAction(
+      globalRoot,
+      path.join("git", "status.js"),
+      "module.exports = { global: true };"
+    );
+    const registry = new WorkflowActionRegistry({ projectRoot, globalRoot });
+
+    const resolved = await registry.resolveAction("git.status", { projectTrusted: true });
+
+    expect(resolved.scope).toBe("global");
+    expect(resolved.source).toContain("global: true");
   });
 
   test("does not fall back to a global action when a trusted project action is invalid", async () => {
@@ -155,6 +211,26 @@ describe("WorkflowActionRegistry", () => {
     expect(actions).toEqual([]);
   });
 
+  test("rejects runtime-backed built-in actions instead of using a remote cwd locally", async () => {
+    using tmp = new DisposableTempDir("workflow-actions-runtime-built-in");
+    const projectRoot = "/runtime/project/.mux/actions";
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const registry = new WorkflowActionRegistry({
+      projectRoot,
+      globalRoot,
+      projectRuntime: createRuntimeWithoutActions(),
+      projectCwd: "/runtime/project",
+    });
+
+    try {
+      await registry.resolveAction("git.status", { projectTrusted: true });
+      throw new Error("Expected runtime-backed built-in action to be rejected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect(error instanceof Error ? error.message : "").toMatch(/runtime-backed workspaces/);
+    }
+  });
+
   test("blocks project-local actions without Project Trust while allowing global actions", async () => {
     using tmp = new DisposableTempDir("workflow-actions-trust");
     const projectRoot = path.join(tmp.path, "project-actions");
@@ -168,6 +244,10 @@ describe("WorkflowActionRegistry", () => {
     const actions = await registry.listActions({ projectTrusted: false });
 
     expect(shared.scope).toBe("global");
-    expect(actions).toEqual([{ name: "shared", scope: "global", sourcePath: shared.sourcePath }]);
+    expect(actions).toContainEqual({
+      name: "shared",
+      scope: "global",
+      sourcePath: shared.sourcePath,
+    });
   });
 });
