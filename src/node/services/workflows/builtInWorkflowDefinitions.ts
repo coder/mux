@@ -224,6 +224,11 @@ function normalizeDeepResearchTopic(args) {
     description:
       "Coordinate adversarial review agents to find, verify, and synthesize code review findings.",
     source: `export default function deepReviewWorkflow({ args, phase, log, agent, parallelAgents }) {
+  const exploreAgentId = "explore";
+  const reasoningAgentId = "exec";
+  // Scope discovery stays on Explore; review judgment uses Exec for users with fast Explore defaults.
+  const readOnlyReviewPrompt =
+    "This is a read-only deep code review task. Do not edit files, create commits, apply patches, push branches, or open PRs. Inspect repository evidence only as needed and report findings.\\n\\n";
   const input = normalizeDeepReviewArgs(args);
   const maxCandidates = input.maxCandidates;
 
@@ -235,6 +240,7 @@ function normalizeDeepResearchTopic(args) {
   const scope = agent({
     id: "scope-review-surface",
     title: "Scope review surface",
+    agentId: exploreAgentId,
     prompt:
       "Scope this code review. Identify changed files, likely intent, touched layers, highest-risk areas, and which review lanes should run. Use repository evidence; do not assume the diff is complete if refs are provided.\\n\\n" +
       renderReviewInput(input),
@@ -250,7 +256,9 @@ function normalizeDeepResearchTopic(args) {
       return {
         id: "review-" + lane,
         title: "Review lane: " + lane,
+        agentId: reasoningAgentId,
         prompt:
+          readOnlyReviewPrompt +
           lanePrompt(lane) +
           "\\n\\nReview target:\\n" +
           renderReviewInput(input) +
@@ -272,7 +280,9 @@ function normalizeDeepResearchTopic(args) {
   const triage = agent({
     id: "triage-candidate-issues",
     title: "Triage and dedupe review findings",
+    agentId: reasoningAgentId,
     prompt:
+      readOnlyReviewPrompt +
       "Deduplicate and triage these candidate code review findings. Merge duplicates, drop vague or non-actionable items, normalize severity, and preserve concrete evidence.\\n\\n" +
       "Review target:\\n" +
       renderReviewInput(input) +
@@ -293,7 +303,9 @@ function normalizeDeepResearchTopic(args) {
           return {
             id: "verify-issue-" + index,
             title: "Verify review finding " + (index + 1),
+            agentId: reasoningAgentId,
             prompt:
+              readOnlyReviewPrompt +
               "Adversarially verify this code review finding. Try to disprove it. Inspect relevant code paths and tests. Decide whether it is valid, duplicate, overstated, not reproducible, or needs more information.\\n\\n" +
               "Review target:\\n" +
               renderReviewInput(input) +
@@ -316,7 +328,9 @@ function normalizeDeepResearchTopic(args) {
   const final = agent({
     id: "synthesize-review",
     title: "Synthesize final deep review",
+    agentId: reasoningAgentId,
     prompt:
+      readOnlyReviewPrompt +
       "Write the final code review. Include only findings that remain actionable after adversarial verification. Use severity P0-P4, file paths, and concrete evidence. If there are no verified issues, say so clearly. Include questions and a validation plan.\\n\\n" +
       "Scoped review surface:\\n" +
       JSON.stringify(scope.structuredOutput, null, 2) +

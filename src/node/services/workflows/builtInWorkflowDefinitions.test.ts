@@ -523,6 +523,21 @@ describe("built-in deep-review-workflow", () => {
       "verify-issue-0",
       "synthesize-review",
     ]);
+    expect(taskCalls.map((call) => call.agentId)).toEqual([
+      "explore",
+      "exec",
+      "exec",
+      "exec",
+      "exec",
+      "exec",
+      "exec",
+      "exec",
+    ]);
+    expect(
+      taskCalls
+        .filter((call) => call.agentId === "exec")
+        .every((call) => call.prompt.includes("read-only deep code review task"))
+    ).toBe(true);
     expect(taskCalls.every((call) => call.outputSchema != null)).toBe(true);
     expect(run.events.filter((event) => event.type === "phase").map((event) => event.name)).toEqual(
       ["scope", "lane-review", "triage-dedupe", "adversarial-verification", "final-synthesis"]
