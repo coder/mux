@@ -137,14 +137,6 @@ function getEditableModelParameterOverrides(
   };
 }
 
-function hasAnyEditableModelParameterOverride(overrides: EditableModelParameterOverrides): boolean {
-  return (
-    overrides.max_output_tokens !== null ||
-    overrides.temperature !== null ||
-    overrides.top_p !== null
-  );
-}
-
 function buildProviderModelEntry(
   modelId: string,
   contextWindowTokens: number | null,
@@ -171,33 +163,48 @@ export function buildUpdatedModelParameters(
   overrides: EditableModelParameterOverrides
 ): Record<string, Record<string, unknown>> | undefined {
   const nextModelParameters = { ...(currentModelParameters ?? {}) };
+  const currentOverrides = nextModelParameters[modelId];
+  const nextOverrides: Record<string, unknown> = {
+    ...(typeof currentOverrides === "object" && currentOverrides !== null ? currentOverrides : {}),
+  };
 
-  if (!hasAnyEditableModelParameterOverride(overrides)) {
+  if (overrides.max_output_tokens === null) {
+    delete nextOverrides.max_output_tokens;
+  } else {
+    nextOverrides.max_output_tokens = overrides.max_output_tokens;
+  }
+
+  if (overrides.temperature === null) {
+    delete nextOverrides.temperature;
+  } else {
+    nextOverrides.temperature = overrides.temperature;
+  }
+
+  if (overrides.top_p === null) {
+    delete nextOverrides.top_p;
+  } else {
+    nextOverrides.top_p = overrides.top_p;
+  }
+
+  if (Object.keys(nextOverrides).length === 0) {
     delete nextModelParameters[modelId];
   } else {
-    const currentOverrides = nextModelParameters[modelId];
-    const nextOverrides: Record<string, unknown> = {
-      ...(typeof currentOverrides === "object" && currentOverrides !== null
-        ? currentOverrides
-        : {}),
-      max_output_tokens: overrides.max_output_tokens,
-      temperature: overrides.temperature,
-      top_p: overrides.top_p,
-    };
-
-    if (overrides.max_output_tokens === null) {
-      delete nextOverrides.max_output_tokens;
-    }
-    if (overrides.temperature === null) {
-      delete nextOverrides.temperature;
-    }
-    if (overrides.top_p === null) {
-      delete nextOverrides.top_p;
-    }
-
     nextModelParameters[modelId] = nextOverrides;
   }
 
+  return Object.keys(nextModelParameters).length > 0 ? nextModelParameters : undefined;
+}
+
+export function removeModelParameterEntry(
+  currentModelParameters: Record<string, Record<string, unknown>> | undefined,
+  modelId: string
+): Record<string, Record<string, unknown>> | undefined {
+  if (!currentModelParameters || !(modelId in currentModelParameters)) {
+    return currentModelParameters;
+  }
+
+  const nextModelParameters = { ...currentModelParameters };
+  delete nextModelParameters[modelId];
   return Object.keys(nextModelParameters).length > 0 ? nextModelParameters : undefined;
 }
 
@@ -320,10 +327,38 @@ export function ModelsSection() {
         models.filter((entry) => getProviderModelEntryId(entry) !== modelId)
       );
 
-      // Save in background
-      void api.providers.setModels({ provider, models: updatedModels });
+      const providerModelParameters = config[provider]?.modelParameters as
+        | Record<string, Record<string, unknown>>
+        | undefined;
+      updateOptimistically(provider, {
+        modelParameters: removeModelParameterEntry(providerModelParameters, modelId),
+      });
+
+      void (async () => {
+        const setModelsResult = await api.providers.setModels({ provider, models: updatedModels });
+        if (!setModelsResult.success) {
+          setError(setModelsResult.error);
+          void refresh();
+          return;
+        }
+
+        const clearOverridesResult = await api.providers.setModelParameters({
+          provider,
+          modelId,
+          overrides: {
+            max_output_tokens: null,
+            temperature: null,
+            top_p: null,
+          },
+        });
+
+        if (!clearOverridesResult.success) {
+          setError(clearOverridesResult.error);
+          void refresh();
+        }
+      })();
     },
-    [api, config, updateModelsOptimistically]
+    [api, config, refresh, updateModelsOptimistically, updateOptimistically]
   );
 
   const startModelEdit = useCallback((model: CustomModelInfo, focus: "model" | "context") => {
@@ -448,15 +483,7 @@ export function ModelsSection() {
     let nextModelParameters = providerModelParameters;
 
     if (trimmedModelId !== editing.originalModelId) {
-      nextModelParameters = buildUpdatedModelParameters(
-        nextModelParameters,
-        editing.originalModelId,
-        {
-          max_output_tokens: null,
-          temperature: null,
-          top_p: null,
-        }
-      );
+      nextModelParameters = removeModelParameterEntry(nextModelParameters, editing.originalModelId);
     }
 
     nextModelParameters = buildUpdatedModelParameters(

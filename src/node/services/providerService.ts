@@ -6,7 +6,10 @@ import {
   type ProviderName,
 } from "@/common/constants/providers";
 import type { BaseProviderConfig } from "@/common/config/schemas/providersConfig";
-import { ModelParametersByModelSchema } from "@/common/config/schemas/modelParameters";
+import {
+  ModelParameterOverridesSchema,
+  ModelParametersByModelSchema,
+} from "@/common/config/schemas/modelParameters";
 import type { Result } from "@/common/types/result";
 import type {
   AddCustomOpenAICompatibleProviderInput,
@@ -75,10 +78,37 @@ function normalizeModelParameters(
   modelParameters: unknown
 ): BaseProviderConfig["modelParameters"] | undefined {
   const parsed = ModelParametersByModelSchema.safeParse(modelParameters);
-  if (!parsed.success) {
+  if (parsed.success) {
+    return parsed.data;
+  }
+
+  if (
+    typeof modelParameters !== "object" ||
+    modelParameters === null ||
+    Array.isArray(modelParameters)
+  ) {
     return undefined;
   }
-  return parsed.data;
+
+  const recoveredEntries: Array<[string, Record<string, unknown>]> = [];
+  for (const [modelId, overrides] of Object.entries(modelParameters)) {
+    if (modelId.trim().length === 0) {
+      continue;
+    }
+
+    const parsedOverrides = ModelParameterOverridesSchema.safeParse(overrides);
+    if (!parsedOverrides.success) {
+      continue;
+    }
+
+    recoveredEntries.push([modelId, parsedOverrides.data]);
+  }
+
+  if (recoveredEntries.length === 0) {
+    return undefined;
+  }
+
+  return Object.fromEntries(recoveredEntries);
 }
 
 function filterModelParametersByPolicy(
@@ -956,28 +986,33 @@ export class ProviderService {
       const providerConfig = providersConfig[provider] as BaseProviderConfig;
       const currentModelParameters = normalizeModelParameters(providerConfig.modelParameters) ?? {};
       const nextModelParameters = { ...currentModelParameters };
+      const existingModelOverrides = currentModelParameters[normalizedModelId];
+      const nextModelOverrides: Record<string, unknown> =
+        typeof existingModelOverrides === "object" &&
+        existingModelOverrides !== null &&
+        !Array.isArray(existingModelOverrides)
+          ? { ...existingModelOverrides }
+          : {};
 
-      if (hasAnyEditableModelParameterOverride(overrides)) {
-        const existingModelOverrides = currentModelParameters[normalizedModelId];
-        const nextModelOverrides: Record<string, unknown> =
-          typeof existingModelOverrides === "object" &&
-          existingModelOverrides !== null &&
-          !Array.isArray(existingModelOverrides)
-            ? { ...existingModelOverrides }
-            : {};
-
-        for (const key of MODEL_PARAMETER_OVERRIDE_KEYS) {
-          const value = overrides[key as ModelParameterOverrideKey];
-          if (typeof value === "number") {
-            nextModelOverrides[key] = value;
-          } else {
-            delete nextModelOverrides[key];
-          }
+      for (const key of MODEL_PARAMETER_OVERRIDE_KEYS) {
+        const value = overrides[key as ModelParameterOverrideKey];
+        if (typeof value === "number") {
+          nextModelOverrides[key] = value;
+        } else {
+          delete nextModelOverrides[key];
         }
+      }
 
-        nextModelParameters[normalizedModelId] = nextModelOverrides;
-      } else {
+      const modelIsConfigured = normalizeProviderModelEntries(providerConfig.models).some(
+        (entry) => getProviderModelEntryId(entry) === normalizedModelId
+      );
+
+      if (!modelIsConfigured && !hasAnyEditableModelParameterOverride(overrides)) {
         delete nextModelParameters[normalizedModelId];
+      } else if (Object.keys(nextModelOverrides).length === 0) {
+        delete nextModelParameters[normalizedModelId];
+      } else {
+        nextModelParameters[normalizedModelId] = nextModelOverrides;
       }
 
       if (Object.keys(nextModelParameters).length === 0) {

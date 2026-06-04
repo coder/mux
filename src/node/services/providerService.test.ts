@@ -682,12 +682,79 @@ describe("ProviderService model parameter overrides", () => {
     });
   });
 
-  it("clears stale model parameter overrides after a model rename", () => {
+  it("clears editable keys without dropping non-editable model parameters", () => {
+    withTempConfig((config, service) => {
+      saveOpenAIConfig(config, {
+        models: ["gpt-5"],
+        modelParameters: {
+          "gpt-5": {
+            temperature: 0.3,
+            top_k: 16,
+          },
+        },
+      });
+
+      const result = service.setModelParameters("openai", "gpt-5", {
+        max_output_tokens: null,
+        temperature: null,
+        top_p: null,
+      });
+
+      expect(result.success).toBe(true);
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.openai?.modelParameters).toEqual({
+        "gpt-5": {
+          top_k: 16,
+        },
+      });
+    });
+  });
+
+  it("retains valid model parameter entries when another entry is malformed", () => {
     withTempConfig((config, service) => {
       saveOpenAIConfig(config, {
         modelParameters: {
+          "*": {
+            top_p: 0.8,
+            custom_passthrough: true,
+          },
+          "bad-model": {
+            temperature: 3,
+          },
+          "gpt-5": {
+            temperature: 0.4,
+          },
+        },
+      });
+
+      const result = service.setModelParameters("openai", "gpt-5", {
+        max_output_tokens: 2048,
+        temperature: null,
+        top_p: null,
+      });
+
+      expect(result.success).toBe(true);
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.openai?.modelParameters).toEqual({
+        "*": {
+          top_p: 0.8,
+          custom_passthrough: true,
+        },
+        "gpt-5": {
+          max_output_tokens: 2048,
+        },
+      });
+    });
+  });
+
+  it("clears stale model parameter overrides after a model rename", () => {
+    withTempConfig((config, service) => {
+      saveOpenAIConfig(config, {
+        models: ["renamed"],
+        modelParameters: {
           legacy: {
             temperature: 0.2,
+            top_k: 32,
           },
         },
       });

@@ -4,6 +4,7 @@ import {
   buildUpdatedModelParameters,
   parseBoundedNumberInput,
   parsePositiveIntegerInput,
+  removeModelParameterEntry,
   shouldAllowRouteOverrideInSettings,
   shouldShowModelInSettings,
 } from "./ModelsSection";
@@ -68,12 +69,16 @@ describe("model parameter edit helpers", () => {
     expect(parseBoundedNumberInput("-0.1", 0, 1)).toBeNull();
   });
 
-  test("buildUpdatedModelParameters updates overrides and clears renamed entries", () => {
-    const withRenamed = buildUpdatedModelParameters(
+  test("buildUpdatedModelParameters preserves non-editable parameters when clearing editable fields", () => {
+    const updated = buildUpdatedModelParameters(
       {
-        legacy: { temperature: 0.2 },
+        "gpt-5": {
+          max_output_tokens: 1024,
+          temperature: 0.7,
+          top_k: 42,
+        },
       },
-      "legacy",
+      "gpt-5",
       {
         max_output_tokens: null,
         temperature: null,
@@ -81,9 +86,15 @@ describe("model parameter edit helpers", () => {
       }
     );
 
-    expect(withRenamed).toBeUndefined();
+    expect(updated).toEqual({
+      "gpt-5": {
+        top_k: 42,
+      },
+    });
+  });
 
-    const withNewOverrides = buildUpdatedModelParameters(withRenamed, "renamed", {
+  test("buildUpdatedModelParameters updates editable fields", () => {
+    const withNewOverrides = buildUpdatedModelParameters(undefined, "renamed", {
       max_output_tokens: 2048,
       temperature: 0.5,
       top_p: null,
@@ -94,6 +105,20 @@ describe("model parameter edit helpers", () => {
         max_output_tokens: 2048,
         temperature: 0.5,
       },
+    });
+  });
+
+  test("removeModelParameterEntry clears old model parameter keys", () => {
+    const withoutLegacy = removeModelParameterEntry(
+      {
+        legacy: { temperature: 0.2 },
+        renamed: { top_p: 0.8 },
+      },
+      "legacy"
+    );
+
+    expect(withoutLegacy).toEqual({
+      renamed: { top_p: 0.8 },
     });
   });
 });
