@@ -7,7 +7,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { log } from "@/node/services/log";
 import { quoteRuntimeProbePath } from "@/node/services/tools/runtimePathShellQuote";
-import { execBuffered, readFileString } from "@/node/utils/runtime/helpers";
+import { execBuffered } from "@/node/utils/runtime/helpers";
 
 export type WorkflowActionScope = "project" | "global";
 
@@ -88,18 +88,8 @@ export class WorkflowActionRegistry {
   }): Promise<Map<string, ScannedWorkflowAction>> {
     const byName = new Map<string, ScannedWorkflowAction>();
     const sources: ScannedWorkflowAction[][] = [];
-    if (options.projectTrusted) {
-      if (this.projectRuntime != null) {
-        assert(
-          this.projectCwd != null,
-          "WorkflowActionRegistry.collectActions: projectCwd missing"
-        );
-        sources.push(
-          await scanRuntimeActionDirectory(this.projectRuntime, this.projectRoot, this.projectCwd)
-        );
-      } else {
-        sources.push(await scanLocalActionDirectory(this.projectRoot, "project"));
-      }
+    if (options.projectTrusted && this.projectRuntime == null) {
+      sources.push(await scanLocalActionDirectory(this.projectRoot, "project"));
     }
     sources.push(await scanLocalActionDirectory(this.globalRoot, "global"));
 
@@ -115,31 +105,16 @@ export class WorkflowActionRegistry {
 
   private async readProjectAction(name: string): Promise<ResolvedWorkflowAction | null> {
     if (this.projectRuntime != null) {
-      assert(
-        this.projectCwd != null,
-        "WorkflowActionRegistry.readProjectAction: projectCwd missing"
-      );
       const sourcePath = this.projectRuntime.normalizePath(
         actionNameToRelativePath(name),
         this.projectRoot
       );
-      try {
-        const source = await readFileString(this.projectRuntime, sourcePath);
-        return {
-          name,
-          scope: "project",
-          sourcePath,
-          source,
-          sourceHash: hashWorkflowActionSource(source),
-        };
-      } catch (error) {
-        if (await this.runtimeActionPathExists(sourcePath)) {
-          log.warn(
-            `Skipping unreadable runtime workflow action '${sourcePath}': ${getErrorMessage(error)}`
-          );
-        }
-        return null;
+      if (await this.runtimeActionPathExists(sourcePath)) {
+        throw new Error(
+          "Project-local workflow actions are not supported for runtime-backed workspaces yet"
+        );
       }
+      return null;
     }
     return await this.readLocalAction(name, this.projectRoot, "project");
   }
@@ -252,52 +227,6 @@ async function scanLocalActionDirectoryRecursive(
     }
     actions.push({ name: actionName, scope, sourcePath: entryPath });
   }
-}
-
-async function scanRuntimeActionDirectory(
-  runtime: Runtime,
-  root: string,
-  cwd: string
-): Promise<ScannedWorkflowAction[]> {
-  let stdout: string;
-  try {
-    const quotedRoot = quoteRuntimeProbePath(root);
-    const result = await execBuffered(
-      runtime,
-      `if [ ! -d ${quotedRoot} ]; then exit 0; fi
-cd ${quotedRoot} || exit 1
-find . -type f -name '*.js' -print`,
-      { cwd, timeout: 10 }
-    );
-    if (result.exitCode !== 0) {
-      const details =
-        result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`;
-      throw new Error(details);
-    }
-    stdout = result.stdout;
-  } catch (error) {
-    log.warn(`Skipping runtime workflow action root '${root}': ${getErrorMessage(error)}`);
-    return [];
-  }
-
-  const actions: ScannedWorkflowAction[] = [];
-  for (const line of stdout.split("\n")) {
-    const relativePath = line.trim().replace(/^\.\//u, "");
-    if (relativePath.length === 0) {
-      continue;
-    }
-    const actionName = actionNameFromRelativePath(relativePath);
-    if (actionName == null) {
-      log.warn(`Skipping runtime workflow action with invalid path '${relativePath}' in ${root}`);
-      continue;
-    }
-    actions.push({
-      name: actionName,
-      scope: "project",
-      sourcePath: runtime.normalizePath(relativePath, root),
-    });
-  }
-  return actions;
 }
 
 function actionNameFromRelativePath(relativePath: string): string | null {

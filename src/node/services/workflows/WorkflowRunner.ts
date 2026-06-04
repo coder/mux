@@ -6,6 +6,7 @@ import type {
   WorkflowActionMetadata,
   WorkflowResult,
   WorkflowRunEvent,
+  WorkflowStepRecord,
 } from "@/common/types/workflow";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -617,9 +618,6 @@ export class WorkflowRunner {
     const action = await registry.resolveAction(rawName, {
       projectTrusted: await this.getProjectTrusted(),
     });
-    const description = await this.actionRunner.describe(action);
-    const metadata = validateWorkflowActionMetadata(description.metadata);
-    assertWorkflowActionInput(metadata, spec.input, action.name);
     const inputHash = hashWorkflowStepInput(spec.id, buildWorkflowActionReplayInput(action, spec));
     options.leaseGuard.throwIfLost();
     const existingStep = await this.runStore.getStep(runId, spec.id, inputHash);
@@ -632,7 +630,7 @@ export class WorkflowRunner {
         stepId: spec.id,
         name: action.name,
         status: "cached",
-        effect: metadata.effect,
+        effect: await this.getCachedWorkflowActionEffect(runId, spec.id, action),
         sourcePath: action.sourcePath,
         sourceHash: action.sourceHash,
         details: cached,
@@ -640,11 +638,18 @@ export class WorkflowRunner {
       return { ...cached, cached: true };
     }
 
-    if (existingStep?.status === "started" && isMutatingWorkflowActionEffect(metadata.effect)) {
+    const description = await this.actionRunner.describe(action);
+    const metadata = validateWorkflowActionMetadata(description.metadata);
+    assertWorkflowActionInput(metadata, spec.input, action.name);
+
+    const unsafeMutatingAttempt = isMutatingWorkflowActionEffect(metadata.effect)
+      ? await this.findUnsafePriorActionAttempt(runId, spec.id)
+      : null;
+    if (unsafeMutatingAttempt != null) {
       if (!description.hasReconcile) {
         const message = `Workflow action ${action.name} has an incomplete ${metadata.effect} step and cannot be replayed without reconciliation`;
         await this.appendWorkflowActionFailure(runId, sequence, spec, action, metadata, message, {
-          startedAt: existingStep.startedAt,
+          startedAt: unsafeMutatingAttempt.startedAt,
           inputHash,
         });
         throw new Error(message);
@@ -654,7 +659,7 @@ export class WorkflowRunner {
         action,
         metadata,
         inputHash,
-        startedAt: existingStep.startedAt,
+        startedAt: unsafeMutatingAttempt.startedAt,
         abortSignal: options.abortSignal,
         leaseGuard: options.leaseGuard,
       });
@@ -669,6 +674,35 @@ export class WorkflowRunner {
       abortSignal: options.abortSignal,
       leaseGuard: options.leaseGuard,
     });
+  }
+
+  private async getCachedWorkflowActionEffect(
+    runId: string,
+    stepId: string,
+    action: ResolvedWorkflowAction
+  ): Promise<WorkflowActionEffect> {
+    const run = await this.runStore.getRun(runId);
+    const event = run.events.findLast(
+      (candidate): candidate is Extract<WorkflowRunEvent, { type: "action" }> =>
+        candidate.type === "action" &&
+        candidate.stepId === stepId &&
+        candidate.name === action.name &&
+        candidate.sourceHash === action.sourceHash &&
+        (candidate.status === "completed" || candidate.status === "reconciled")
+    );
+    return event?.effect ?? "read";
+  }
+
+  private async findUnsafePriorActionAttempt(
+    runId: string,
+    stepId: string
+  ): Promise<WorkflowStepRecord | null> {
+    const run = await this.runStore.getRun(runId);
+    return (
+      run.steps.findLast(
+        (step) => step.stepId === stepId && (step.status === "started" || step.status === "failed")
+      ) ?? null
+    );
   }
 
   private async executeActionStep(
@@ -1601,7 +1635,7 @@ function workflowActionEventDetails(
   return {
     description: metadata.description,
     effect: metadata.effect,
-    permissions: metadata.permissions ?? [],
+    advisoryPermissions: metadata.permissions ?? [],
     timeoutMs: getWorkflowActionTimeoutMs(spec, metadata),
     ...(spec.cwd !== undefined ? { cwd: spec.cwd } : {}),
   };

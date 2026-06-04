@@ -108,7 +108,7 @@ Returns:
 
 ### `action.<namespace>.<name>(spec)`
 
-Runs a user-defined workflow action from `.mux/actions/**/*.js` or `~/.mux/actions/**/*.js`. Nested folders become namespaces: `.mux/actions/graphite/stackSnapshot.js` is called as `action.graphite.stackSnapshot(...)`. Project-local actions require Project Trust; global actions are available across projects.
+Runs a user-defined workflow action from `.mux/actions/**/*.js` or `~/.mux/actions/**/*.js`. Nested folders become namespaces: `.mux/actions/graphite/stackSnapshot.js` is called as `action.graphite.stackSnapshot(...)`. Project-local actions require Project Trust and currently run only for local workspaces; SSH/Docker project actions are blocked until runtime-backed action execution exists. Global actions are available across projects.
 
 Action calls are durable replay steps. Completed results are reused when the action source hash and input identity match. Incomplete read-only actions may retry; incomplete mutating actions (`effect: "workspace"` or `"external"`) do not blindly re-run unless the action exports a safe `reconcile` hook.
 
@@ -120,7 +120,7 @@ Optional fields:
 
 - `input`: JSON input validated against the action's `inputSchema` when declared.
 - `timeoutMs`: per-call timeout override.
-- `cwd` / `worktreePath`: working directory for the action runner.
+- `cwd` / `worktreePath`: working directory for the action runner and default `ctx.exec` cwd.
 
 ```js
 const snapshot = action.graphite.stackSnapshot({
@@ -134,6 +134,8 @@ const viaName = action.invoke("graphite.stackSnapshot", {
 });
 ```
 
+Action files run in a CommonJS-like Node wrapper. They may use `require(...)` plus the simple `export const metadata` / `export async function execute` declarations shown below; static `import` and export-list syntax are not supported yet.
+
 A JavaScript action exports metadata and an execute function:
 
 ```js
@@ -143,6 +145,7 @@ export const metadata = {
   effect: "read", // "read" | "workspace" | "external"
   inputSchema: { type: "object" },
   outputSchema: { type: "object" },
+  // Advisory reviewer-facing metadata; not an enforced sandbox.
   permissions: [{ kind: "command", command: "gt" }],
   timeoutMs: 30000,
 };

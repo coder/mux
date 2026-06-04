@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as os from "node:os";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs/promises";
@@ -13,6 +14,7 @@ import {
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubsetSchema } from "@/common/utils/jsonSchemaSubset";
+import { forceCloseStdio, killProcessTree } from "@/node/utils/disposableExec";
 import type { ResolvedWorkflowAction } from "./WorkflowActionRegistry";
 
 export type WorkflowActionEffect = z.infer<typeof WorkflowActionEffectSchema>;
@@ -49,6 +51,7 @@ export interface WorkflowActionRunnerOptions {
 }
 
 interface WorkflowActionRunnerPayload {
+  attemptId: string;
   mode: "describe" | "execute" | "reconcile";
   actionName: string;
   sourcePath: string;
@@ -60,8 +63,43 @@ interface WorkflowActionRunnerPayload {
   resultPath: string;
 }
 
+const WORKFLOW_ACTION_STDIO_LIMIT_BYTES = 64 * 1024;
+const WORKFLOW_ACTION_RESULT_LIMIT_BYTES = 1024 * 1024;
+
+interface BoundedTextCapture {
+  text: string;
+  bytes: number;
+  truncated: boolean;
+}
+
+function createBoundedTextCapture(): BoundedTextCapture {
+  return { text: "", bytes: 0, truncated: false };
+}
+
+function appendBoundedText(capture: BoundedTextCapture, chunk: Buffer): void {
+  if (capture.bytes >= WORKFLOW_ACTION_STDIO_LIMIT_BYTES) {
+    capture.truncated = true;
+    return;
+  }
+  const remainingBytes = WORKFLOW_ACTION_STDIO_LIMIT_BYTES - capture.bytes;
+  const accepted = chunk.byteLength <= remainingBytes ? chunk : chunk.subarray(0, remainingBytes);
+  capture.text += accepted.toString();
+  capture.bytes += accepted.byteLength;
+  if (accepted.byteLength < chunk.byteLength) {
+    capture.truncated = true;
+  }
+}
+
+function formatBoundedText(capture: BoundedTextCapture): string {
+  return capture.truncated
+    ? `${capture.text}
+[truncated after ${WORKFLOW_ACTION_STDIO_LIMIT_BYTES} bytes]`
+    : capture.text;
+}
+
 const ACTION_CHILD_RESULT_SCHEMA = z.discriminatedUnion("success", [
   z.object({
+    attemptId: z.string().min(1),
     success: z.literal(true),
     metadata: WorkflowActionMetadataSchema,
     hasReconcile: z.boolean().optional(),
@@ -77,6 +115,7 @@ const ACTION_CHILD_RESULT_SCHEMA = z.discriminatedUnion("success", [
       .optional(),
   }),
   z.object({
+    attemptId: z.string().min(1),
     success: z.literal(false),
     error: z.string().min(1),
     metadata: WorkflowActionMetadataSchema.optional(),
@@ -207,7 +246,10 @@ export class WorkflowActionRunner {
   }> {
     await fs.mkdir(options.artifactDir, { recursive: true });
     const resultPath = path.join(options.artifactDir, ".mux-action-result.json");
+    await fs.rm(resultPath, { force: true });
+    const attemptId = crypto.randomUUID();
     const payload: WorkflowActionRunnerPayload = {
+      attemptId,
       mode: options.mode,
       actionName: action.name,
       sourcePath: action.sourcePath,
@@ -220,6 +262,8 @@ export class WorkflowActionRunner {
     };
     const startedAt = Date.now();
     const child = spawn(process.execPath, ["-e", WORKFLOW_ACTION_CHILD_SOURCE], {
+      cwd: options.cwd,
+      detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
@@ -227,16 +271,22 @@ export class WorkflowActionRunner {
       },
     });
 
-    let stdout = "";
-    let stderr = "";
+    const stdoutCapture = createBoundedTextCapture();
+    const stderrCapture = createBoundedTextCapture();
     let exitCode: number | null = null;
     let signal: string | null = null;
     let timedOut = false;
     let aborted = false;
     const killChild = () => {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill();
+      if (child.exitCode !== null || child.signalCode !== null) {
+        return;
       }
+      if (child.pid != null) {
+        killProcessTree(child.pid);
+      } else {
+        child.kill("SIGKILL");
+      }
+      forceCloseStdio(child);
     };
     const abortChild = () => {
       aborted = true;
@@ -255,10 +305,10 @@ export class WorkflowActionRunner {
     }
 
     child.stdout?.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
+      appendBoundedText(stdoutCapture, chunk);
     });
     child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      appendBoundedText(stderrCapture, chunk);
     });
     child.on("exit", (code, childSignal) => {
       exitCode = code;
@@ -280,6 +330,8 @@ export class WorkflowActionRunner {
     }
 
     const durationMs = Date.now() - startedAt;
+    const stdout = formatBoundedText(stdoutCapture);
+    const stderr = formatBoundedText(stderrCapture);
     const artifacts = await normalizeArtifacts(await readArtifactListing(resultPath));
     const errorDetails = { stdout, stderr, exitCode, signal, durationMs, artifacts };
     if (timedOut) {
@@ -297,6 +349,12 @@ export class WorkflowActionRunner {
 
     let rawResult: unknown;
     try {
+      const resultStat = await fs.stat(resultPath);
+      if (resultStat.size > WORKFLOW_ACTION_RESULT_LIMIT_BYTES) {
+        throw new Error(
+          `result exceeded ${WORKFLOW_ACTION_RESULT_LIMIT_BYTES} bytes: ${resultStat.size}`
+        );
+      }
       rawResult = JSON.parse(await fs.readFile(resultPath, "utf-8"));
     } catch (error) {
       throw new WorkflowActionExecutionError(
@@ -312,6 +370,19 @@ export class WorkflowActionRunner {
         errorDetails
       );
     }
+    if (parsed.data.attemptId !== attemptId) {
+      throw new WorkflowActionExecutionError(
+        `Workflow action ${action.name} produced a stale result for a different attempt`,
+        errorDetails
+      );
+    }
+    if (parsed.data.success && (exitCode !== 0 || signal !== null)) {
+      const exitReason = signal != null ? String(signal) : String(exitCode ?? "unknown");
+      throw new WorkflowActionExecutionError(
+        `Workflow action ${action.name} exited after writing a success result: ${exitReason}`,
+        errorDetails
+      );
+    }
 
     const resultArtifacts = await normalizeArtifacts(parsed.data.artifacts ?? artifacts);
     return {
@@ -323,7 +394,7 @@ export class WorkflowActionRunner {
       durationMs,
       artifacts: resultArtifacts,
       [Symbol.dispose]() {
-        child.kill();
+        killChild();
       },
     };
   }
@@ -391,7 +462,50 @@ const WORKFLOW_ACTION_CHILD_SOURCE = String.raw`
 const { createRequire } = require("node:module");
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
+
+const STDIO_LIMIT_BYTES = 64 * 1024;
+const RESULT_LIMIT_BYTES = 1024 * 1024;
+const MAX_ARTIFACT_COUNT = 32;
+const MAX_ARTIFACT_BYTES = 10 * 1024 * 1024;
+
+function createCapture() {
+  return { text: "", bytes: 0, truncated: false };
+}
+
+function appendCapture(capture, chunk) {
+  if (capture.bytes >= STDIO_LIMIT_BYTES) {
+    capture.truncated = true;
+    return;
+  }
+  const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+  const remaining = STDIO_LIMIT_BYTES - capture.bytes;
+  const accepted = buffer.byteLength <= remaining ? buffer : buffer.subarray(0, remaining);
+  capture.text += accepted.toString();
+  capture.bytes += accepted.byteLength;
+  if (accepted.byteLength < buffer.byteLength) capture.truncated = true;
+}
+
+function finishCapture(capture) {
+  return capture.truncated ? capture.text + "\n[truncated after " + STDIO_LIMIT_BYTES + " bytes]" : capture.text;
+}
+
+function killProcessTree(pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return;
+  if (process.platform === "win32") {
+    try {
+      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    } catch {}
+    return;
+  }
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+}
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -431,6 +545,14 @@ function normalizeMetadata(rawMetadata) {
   };
 }
 
+function assertSupportedActionSyntax(source) {
+  if (/^\s*import\s/m.test(source) || /(^|\n)\s*export\s*\{/m.test(source)) {
+    throw new Error(
+      "Workflow action files currently support CommonJS require() plus export const/function/default declarations; static import/export lists are not supported"
+    );
+  }
+}
+
 function stripExportSyntax(source) {
   return source
     .replace(/(^|\n)\s*export\s+default\s+/g, "$1const __default = ")
@@ -439,6 +561,7 @@ function stripExportSyntax(source) {
 }
 
 async function loadAction(payload) {
+  assertSupportedActionSyntax(payload.source);
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const transformedSource = stripExportSyntax(payload.source);
   const actionDir = path.dirname(payload.sourcePath);
@@ -494,29 +617,33 @@ async function execCommand(command, args = [], options = {}) {
   }
   const child = spawn(command, args, {
     cwd: options.cwd,
+    detached: process.platform !== "win32",
     env: options.env ? { ...process.env, ...options.env } : process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  let stdout = "";
-  let stderr = "";
+  const stdout = createCapture();
+  const stderr = createCapture();
   let exitCode = null;
   let signal = null;
   let timedOut = false;
   const timeoutMs = options.timeoutMs;
+  const killChild = () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    if (child.pid != null) killProcessTree(child.pid);
+    else child.kill("SIGKILL");
+  };
   const timer = typeof timeoutMs === "number" && timeoutMs > 0 ? setTimeout(() => {
     timedOut = true;
-    child.kill();
+    killChild();
   }, timeoutMs) : null;
   timer?.unref?.();
   child.stdout?.on("data", (chunk) => {
-    const text = chunk.toString();
-    stdout += text;
-    process.stdout.write(text);
+    appendCapture(stdout, chunk);
+    process.stdout.write(chunk);
   });
   child.stderr?.on("data", (chunk) => {
-    const text = chunk.toString();
-    stderr += text;
-    process.stderr.write(text);
+    appendCapture(stderr, chunk);
+    process.stderr.write(chunk);
   });
   child.on("exit", (code, childSignal) => {
     exitCode = code;
@@ -529,7 +656,7 @@ async function execCommand(command, args = [], options = {}) {
   if (timer != null) {
     clearTimeout(timer);
   }
-  return { exitCode, signal, stdout, stderr, timedOut };
+  return { exitCode, signal, stdout: finishCapture(stdout), stderr: finishCapture(stderr), timedOut };
 }
 
 async function main() {
@@ -537,7 +664,11 @@ async function main() {
   const artifacts = [];
   const writeResult = async (result) => {
     await fs.mkdir(path.dirname(payload.resultPath), { recursive: true });
-    await fs.writeFile(payload.resultPath, JSON.stringify({ ...result, artifacts }), "utf-8");
+    const content = JSON.stringify({ attemptId: payload.attemptId, ...result, artifacts });
+    if (Buffer.byteLength(content) > RESULT_LIMIT_BYTES) {
+      throw new Error("Workflow action result exceeded " + RESULT_LIMIT_BYTES + " bytes");
+    }
+    await fs.writeFile(payload.resultPath, content, "utf-8");
   };
 
   try {
@@ -568,12 +699,18 @@ async function main() {
       exec: async (command, args, options = {}) => await execCommand(command, args, { cwd: payload.cwd, ...options }),
       writeArtifact: async (name, value) => {
         assertSafeArtifactName(name);
+        if (artifacts.length >= MAX_ARTIFACT_COUNT) {
+          throw new Error("Workflow action artifact count exceeded " + MAX_ARTIFACT_COUNT);
+        }
         const artifactPath = path.join(payload.artifactDir, name);
         await fs.mkdir(path.dirname(artifactPath), { recursive: true });
         const content = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        const sizeBytes = Buffer.byteLength(content);
+        if (sizeBytes > MAX_ARTIFACT_BYTES) {
+          throw new Error("Workflow action artifact exceeded " + MAX_ARTIFACT_BYTES + " bytes");
+        }
         await fs.writeFile(artifactPath, content, "utf-8");
-        const stat = await fs.stat(artifactPath);
-        const artifact = { name, path: artifactPath, sizeBytes: stat.size };
+        const artifact = { name, path: artifactPath, sizeBytes };
         artifacts.push(artifact);
         return artifact;
       },

@@ -2,14 +2,52 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { describe, expect, test } from "bun:test";
+import type { Runtime } from "@/node/runtime/Runtime";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { WorkflowActionRegistry } from "./WorkflowActionRegistry";
+
+function streamFromString(content: string): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(content));
+      controller.close();
+    },
+  });
+}
+
+function createRuntimeWithExistingActions(): Runtime {
+  return {
+    normalizePath(relativePath: string, root?: string) {
+      return root == null ? relativePath : path.posix.join(root, relativePath);
+    },
+    exec() {
+      return Promise.resolve({
+        stdout: streamFromString(""),
+        stderr: streamFromString(""),
+        stdin: new WritableStream(),
+        exitCode: Promise.resolve(0),
+        duration: Promise.resolve(1),
+      });
+    },
+  } as unknown as Runtime;
+}
 
 async function writeAction(root: string, relativePath: string, source = "module.exports = {};") {
   const filePath = path.join(root, relativePath);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, source, "utf-8");
   return filePath;
+}
+
+async function expectRuntimeProjectActionRejection(registry: WorkflowActionRegistry) {
+  try {
+    await registry.resolveAction("remoteOnly", { projectTrusted: true });
+  } catch (error) {
+    expect(error).toBeInstanceOf(Error);
+    expect(error instanceof Error ? error.message : "").toMatch(/runtime-backed workspaces/);
+    return;
+  }
+  throw new Error("Expected runtime-backed project action to be rejected");
 }
 
 async function expectProjectTrustRejection(registry: WorkflowActionRegistry) {
@@ -49,6 +87,23 @@ describe("WorkflowActionRegistry", () => {
     expect(resolved.scope).toBe("project");
     expect(resolved.source).toContain("project: true");
     expect(resolved.sourceHash).toMatch(/^sha256:/);
+  });
+
+  test("rejects runtime-backed project actions instead of executing them locally", async () => {
+    using tmp = new DisposableTempDir("workflow-actions-runtime");
+    const projectRoot = "/runtime/project/.mux/actions";
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const registry = new WorkflowActionRegistry({
+      projectRoot,
+      globalRoot,
+      projectRuntime: createRuntimeWithExistingActions(),
+      projectCwd: "/runtime/project",
+    });
+
+    await expectRuntimeProjectActionRejection(registry);
+    const actions = await registry.listActions({ projectTrusted: true });
+
+    expect(actions).toEqual([]);
   });
 
   test("blocks project-local actions without Project Trust while allowing global actions", async () => {
