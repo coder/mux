@@ -3948,9 +3948,9 @@ export class AgentSession {
     }
 
     let chain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
-    let fallbackChain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
-    let fallbackAgentId: string | undefined;
     for (const candidateAgentId of agentIdCandidates) {
+      let fallbackChain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
+      let fallbackAgentId: string | undefined;
       for (const discovery of discoveryContexts) {
         try {
           const agentDefinition = await readAgentDefinition(
@@ -3974,18 +3974,18 @@ export class AgentSession {
           fallbackChain ??= candidateChain;
           fallbackAgentId ??= agentDefinition.id;
         } catch {
-          // Try every persisted agent id before accepting a global/built-in fallback.
+          // Try the next discovery context before moving to the next persisted agent id.
         }
       }
 
       if (chain != null) {
         break;
       }
-    }
-
-    if (chain == null && fallbackChain != null) {
-      chain = fallbackChain;
-      resolvedAgentIdForLog = fallbackAgentId ?? resolvedAgentIdForLog;
+      if (fallbackChain != null) {
+        chain = fallbackChain;
+        resolvedAgentIdForLog = fallbackAgentId ?? resolvedAgentIdForLog;
+        break;
+      }
     }
 
     if (!chain) {

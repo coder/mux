@@ -349,7 +349,6 @@ export class GitPatchArtifactService {
     ].filter((context): context is WorkspaceRuntimeContext => context != null);
 
     let shouldGeneratePatch = false;
-    let fallbackShouldGeneratePatch: boolean | undefined;
     for (const childAgentId of childAgentIds) {
       const editingCapability = await resolveAgentEditingCapability({
         discoveryContexts,
@@ -359,14 +358,9 @@ export class GitPatchArtifactService {
       if (editingCapability == null) {
         continue;
       }
-      if (editingCapability.projectScoped) {
-        shouldGeneratePatch = editingCapability.editingCapable;
-        fallbackShouldGeneratePatch = undefined;
-        break;
-      }
-      fallbackShouldGeneratePatch ??= editingCapability.editingCapable;
+      shouldGeneratePatch = editingCapability.editingCapable;
+      break;
     }
-    shouldGeneratePatch = shouldGeneratePatch || fallbackShouldGeneratePatch === true;
 
     if (!shouldGeneratePatch || !childEntry) {
       return;

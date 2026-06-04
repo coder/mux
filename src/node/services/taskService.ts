@@ -295,7 +295,11 @@ const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 // workspace/default agent preferences evolve (e.g., auto router defaults).
 const TASK_RECOVERY_FALLBACK_AGENT_ID = "exec";
 
-function resolveTaskAgentIdForResume(workspace: { agentId?: string; agentType?: string }): string {
+function resolveTaskAgentIdForResume(workspace: {
+  agentId?: string;
+  agentType?: string;
+  parentWorkspaceId?: string | null;
+}): string {
   return resolvePersistedAgentId(workspace, TASK_RECOVERY_FALLBACK_AGENT_ID);
 }
 
@@ -697,9 +701,9 @@ export class TaskService {
       }
     }
 
-    let fallbackChain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
-    let fallbackAgentId: string | undefined;
     for (const agentId of agentIdCandidates) {
+      let fallbackChain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
+      let fallbackAgentId: string | undefined;
       for (const discovery of agentDiscoveryCandidates) {
         try {
           const agentDefinition = await readAgentDefinition(
@@ -729,13 +733,13 @@ export class TaskService {
           });
         }
       }
-    }
 
-    if (fallbackChain != null) {
-      if (fallbackAgentId === "compact") {
-        return false;
+      if (fallbackChain != null) {
+        if (fallbackAgentId === "compact") {
+          return false;
+        }
+        return isPlanLikeInResolvedChain(fallbackChain);
       }
-      return isPlanLikeInResolvedChain(fallbackChain);
     }
 
     return agentIdCandidates.includes("plan");
@@ -1028,7 +1032,7 @@ export class TaskService {
         ? appendSubagentFileReportInstructions(basePrompt, args.workflowTask)
         : basePrompt;
 
-    const normalizedAgentId = resolvePersistedAgentId(args, "");
+    const normalizedAgentId = normalizeAgentId(args.agentId ?? args.agentType, "");
     if (!normalizedAgentId) {
       return Err("Task.create: agentId is required");
     }
@@ -3078,9 +3082,9 @@ export class TaskService {
             });
           }
 
-          let fallbackSkipInitHook: boolean | undefined;
           let resolvedSkipInitHook: boolean | undefined;
           for (const agentId of agentIdCandidates) {
+            let fallbackSkipInitHook: boolean | undefined;
             for (const discovery of discoveryContexts) {
               try {
                 const definition = await readAgentDefinition(
@@ -3112,12 +3116,13 @@ export class TaskService {
               }
             }
 
+            resolvedSkipInitHook ??= fallbackSkipInitHook;
             if (resolvedSkipInitHook != null) {
               break;
             }
           }
 
-          skipInitHook = resolvedSkipInitHook ?? fallbackSkipInitHook ?? false;
+          skipInitHook = resolvedSkipInitHook ?? false;
         }
 
         runBackgroundInit(
