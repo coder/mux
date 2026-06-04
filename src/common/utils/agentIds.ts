@@ -1,3 +1,4 @@
+import { AgentIdSchema } from "@/common/schemas/ids";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 const REMOVED_BUILTIN_AGENT_FALLBACKS: Readonly<Record<string, string>> = {
@@ -30,19 +31,28 @@ export function resolvePersistedAgentId(
     return fallback;
   }
 
-  // Legacy task/workspace records may only have agentType. Coerce each field
-  // independently so a blank modern agentId cannot mask a valid legacy value.
-  const agentId = normalizeAgentId(value.agentId, "");
-  if (agentId.length > 0) {
+  // Legacy task/workspace records may only have agentType. Coerce and validate
+  // each field independently so blank or corrupt modern agentId values cannot
+  // mask a valid legacy value.
+  const agentId = normalizePersistedAgentCandidate(value.agentId);
+  if (agentId != null) {
     return agentId;
   }
 
-  const agentType = normalizeAgentId(value.agentType, "");
-  if (agentType.length > 0) {
+  const agentType = normalizePersistedAgentCandidate(value.agentType);
+  if (agentType != null) {
     return agentType;
   }
 
   return fallback;
+}
+
+function normalizePersistedAgentCandidate(value: unknown): string | undefined {
+  const normalized = normalizeAgentId(value, "");
+  if (normalized.length === 0) {
+    return undefined;
+  }
+  return AgentIdSchema.safeParse(normalized).success ? normalized : undefined;
 }
 
 export function resolveRemovedBuiltinAgentId(

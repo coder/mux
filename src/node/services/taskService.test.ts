@@ -4102,9 +4102,10 @@ describe("TaskService", () => {
     const childId = "child-custom-plan-222";
     const customAgentId = "custom_plan_runner";
     const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const parentWorkspacePath = path.join(projectPath, "parent");
     const childWorkspacePath = path.join(projectPath, "child-custom-plan");
 
-    const customAgentDir = path.join(childWorkspacePath, ".mux", "agents");
+    const customAgentDir = path.join(parentWorkspacePath, ".mux", "agents");
     await fsPromises.mkdir(customAgentDir, { recursive: true });
     await fsPromises.writeFile(
       path.join(customAgentDir, `${customAgentId}.md`),
@@ -4125,7 +4126,7 @@ describe("TaskService", () => {
       projectPath,
       [
         {
-          path: path.join(projectPath, "parent"),
+          path: parentWorkspacePath,
           id: parentId,
           name: "parent",
           runtimeConfig,
@@ -8000,10 +8001,11 @@ describe("TaskService", () => {
     const childId = "child-plan-222";
     const childAgentId = options?.childAgentId ?? "plan";
     const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const parentWorkspacePath = path.join(projectPath, "parent");
     const childWorkspacePath = path.join(projectPath, "child-plan");
 
     if (childAgentId !== "plan") {
-      const customAgentDir = path.join(childWorkspacePath, ".mux", "agents");
+      const customAgentDir = path.join(parentWorkspacePath, ".mux", "agents");
       await fsPromises.mkdir(customAgentDir, { recursive: true });
       await fsPromises.writeFile(
         path.join(customAgentDir, `${childAgentId}.md`),
@@ -8027,7 +8029,7 @@ describe("TaskService", () => {
       projectPath,
       [
         {
-          path: path.join(projectPath, "parent"),
+          path: parentWorkspacePath,
           id: parentId,
           name: "parent",
           runtimeConfig,

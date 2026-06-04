@@ -640,7 +640,7 @@ export class TaskService {
     projectPath: string;
     workspace: Pick<
       WorkspaceConfigEntry,
-      "id" | "name" | "path" | "runtimeConfig" | "agentId" | "agentType"
+      "id" | "name" | "path" | "runtimeConfig" | "agentId" | "agentType" | "parentWorkspaceId"
     >;
   }): Promise<boolean> {
     assert(entry.projectPath.length > 0, "isPlanLikeTaskWorkspace: projectPath must be non-empty");
@@ -662,34 +662,54 @@ export class TaskService {
       return parsedAgentId.data === "plan";
     }
 
-    try {
-      const runtime = createRuntimeForWorkspace({
-        runtimeConfig,
-        projectPath: entry.projectPath,
-        name: workspaceName,
-      });
-      const agentDefinition = await readAgentDefinition(runtime, workspacePath, parsedAgentId.data);
-      const chain = await resolveAgentInheritanceChain({
-        runtime,
-        workspacePath,
-        agentId: agentDefinition.id,
-        agentDefinition,
-        workspaceId: entry.workspace.id ?? workspaceName,
-      });
+    const cfg = this.config.loadConfigOrDefault();
+    const parentWorkspacePath = entry.workspace.parentWorkspaceId
+      ? coerceNonEmptyString(
+          findWorkspaceEntry(cfg, entry.workspace.parentWorkspaceId)?.workspace.path
+        )
+      : undefined;
+    const agentDiscoveryPaths = [parentWorkspacePath, workspacePath].filter(
+      (candidatePath, index, candidates): candidatePath is string =>
+        candidatePath != null && candidates.indexOf(candidatePath) === index
+    );
 
-      if (agentDefinition.id === "compact") {
-        return false;
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig,
+      projectPath: entry.projectPath,
+      name: workspaceName,
+    });
+
+    for (const agentDiscoveryPath of agentDiscoveryPaths) {
+      try {
+        const agentDefinition = await readAgentDefinition(
+          runtime,
+          agentDiscoveryPath,
+          parsedAgentId.data
+        );
+        const chain = await resolveAgentInheritanceChain({
+          runtime,
+          workspacePath: agentDiscoveryPath,
+          agentId: agentDefinition.id,
+          agentDefinition,
+          workspaceId: entry.workspace.id ?? workspaceName,
+        });
+
+        if (agentDefinition.id === "compact") {
+          return false;
+        }
+
+        return isPlanLikeInResolvedChain(chain);
+      } catch (error: unknown) {
+        log.debug("Failed to resolve task agent mode from discovery path", {
+          workspaceId: entry.workspace.id,
+          agentId: parsedAgentId.data,
+          agentDiscoveryPath,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
-
-      return isPlanLikeInResolvedChain(chain);
-    } catch (error: unknown) {
-      log.debug("Failed to resolve task agent mode; falling back to agentId check", {
-        workspaceId: entry.workspace.id,
-        agentId: parsedAgentId.data,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return parsedAgentId.data === "plan";
     }
+
+    return parsedAgentId.data === "plan";
   }
 
   private async emitWorkspaceMetadata(workspaceId: string): Promise<void> {

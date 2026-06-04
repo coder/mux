@@ -97,6 +97,50 @@ export function getLegacyModeForAgentMetadata(
   return effectiveAgentId === effectiveMode ? effectiveMode : undefined;
 }
 
+function coerceNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function findWorkspacePathById(cfg: ProjectsConfig, workspaceId: string): string | undefined {
+  for (const project of cfg.projects.values()) {
+    const workspace = project.workspaces.find((candidate) => candidate.id === workspaceId);
+    const workspacePath = coerceNonEmptyString(workspace?.path);
+    if (workspacePath != null) {
+      return workspacePath;
+    }
+  }
+  return undefined;
+}
+
+function getAgentDiscoveryPathCandidates(params: {
+  metadata: WorkspaceMetadata;
+  workspacePath: string;
+  disableWorkspaceAgents: boolean;
+  cfg: ProjectsConfig;
+}): string[] {
+  if (params.disableWorkspaceAgents) {
+    return [params.metadata.projectPath];
+  }
+
+  const candidates: string[] = [];
+  const parentWorkspacePath = params.metadata.parentWorkspaceId
+    ? findWorkspacePathById(params.cfg, params.metadata.parentWorkspaceId)
+    : undefined;
+  if (parentWorkspacePath != null) {
+    candidates.push(parentWorkspacePath);
+  }
+
+  if (!candidates.includes(params.workspacePath)) {
+    candidates.push(params.workspacePath);
+  }
+
+  return candidates;
+}
+
 export async function resolveAgentForStream(
   opts: ResolveAgentOptions
 ): Promise<Result<AgentResolutionResult, SendMessageError>> {
@@ -137,20 +181,34 @@ export async function resolveAgentForStream(
   // When disableWorkspaceAgents is true, skip workspace-specific agents entirely.
   // Use project path so only built-in/global agents are available. This allows "unbricking"
   // when iterating on agent files — a broken agent in the worktree won't affect message sending.
-  const agentDiscoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
+  const agentDiscoveryPathCandidates = getAgentDiscoveryPathCandidates({
+    metadata,
+    workspacePath,
+    disableWorkspaceAgents,
+    cfg,
+  });
+  let agentDiscoveryPath = agentDiscoveryPathCandidates[0] ?? workspacePath;
 
   const isSubagentWorkspace = Boolean(metadata.parentWorkspaceId);
 
   // --- Load agent definition (with fallback to exec) ---
   let agentDefinition;
-  try {
-    agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, effectiveAgentId);
-  } catch (error) {
+  for (const candidatePath of agentDiscoveryPathCandidates) {
+    try {
+      agentDefinition = await readAgentDefinition(runtime, candidatePath, effectiveAgentId);
+      agentDiscoveryPath = candidatePath;
+      break;
+    } catch {
+      // Parent-only project agents may be untracked and absent from child worktrees.
+      // Try the next discovery path before falling back to Exec.
+    }
+  }
+
+  if (agentDefinition == null) {
     workspaceLog.warn("Failed to load agent definition; falling back", {
       effectiveAgentId,
-      agentDiscoveryPath,
+      agentDiscoveryPathCandidates,
       disableWorkspaceAgents,
-      error: getErrorMessage(error),
     });
     agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
   }

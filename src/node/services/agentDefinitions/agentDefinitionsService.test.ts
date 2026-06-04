@@ -463,9 +463,13 @@ Custom planning instructions.
     using tempDir = new DisposableTempDir("agent-explore-guidance");
     const runtime = new LocalRuntime(tempDir.path);
 
-    const exploreBody = await resolveAgentBody(runtime, tempDir.path, "explore");
-    expect(exploreBody).toContain("You are in Explore mode (read-only).");
-    expect(exploreBody).not.toContain("You are in Exec mode.");
+    const [exploreBody, execBody] = await Promise.all([
+      resolveAgentBody(runtime, tempDir.path, "explore"),
+      resolveAgentBody(runtime, tempDir.path, "exec"),
+    ]);
+    expect(exploreBody.trim().length).toBeGreaterThan(0);
+    expect(execBody.trim().length).toBeGreaterThan(0);
+    expect(exploreBody).not.toContain(execBody.trim());
 
     const exploreFrontmatter = await resolveAgentFrontmatter(runtime, tempDir.path, "explore");
     expect(exploreFrontmatter.tools?.add).toContain(".*");

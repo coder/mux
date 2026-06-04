@@ -13,6 +13,12 @@ describe("resolvePersistedAgentId", () => {
     );
   });
 
+  test("uses legacy agentType when modern agentId is invalid", () => {
+    expect(resolvePersistedAgentId({ agentId: "???", agentType: " Explore " }, "exec")).toBe(
+      "explore"
+    );
+  });
+
   test("prefers non-empty agentId and falls back when neither field is set", () => {
     expect(resolvePersistedAgentId({ agentId: " Plan ", agentType: "explore" }, "exec")).toBe(
       "plan"

@@ -144,6 +144,75 @@ describe("resolveAgentForStream agent identity", () => {
     if (!result.success) return;
     expect(result.data.effectiveAgentId).toBe("explore");
   });
+
+  test("resolves parent-only project agents for child workspaces", async () => {
+    using tempDir = new DisposableTempDir("agent-resolution-parent-only-agent");
+    const projectPath = path.join(tempDir.path, "project");
+    const parentPath = path.join(projectPath, "parent");
+    const childPath = path.join(projectPath, "child");
+    const customAgentId = "custom-plan-runner";
+    await fs.mkdir(path.join(parentPath, ".mux", "agents"), { recursive: true });
+    await fs.mkdir(childPath, { recursive: true });
+    await fs.writeFile(
+      path.join(parentPath, ".mux", "agents", `${customAgentId}.md`),
+      [
+        "---",
+        "name: Custom Plan Runner",
+        "base: plan",
+        "subagent:",
+        "  runnable: true",
+        "---",
+        "Parent-only plan-like agent.",
+        "",
+      ].join("\n")
+    );
+
+    const metadata = createSubagentMetadata({
+      projectPath,
+      agentId: "",
+      agentType: customAgentId,
+    });
+    const cfg: ProjectsConfig = {
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              { id: PARENT_WORKSPACE_ID, name: PARENT_WORKSPACE_ID, path: parentPath },
+              {
+                id: CHILD_WORKSPACE_ID,
+                name: CHILD_WORKSPACE_ID,
+                path: childPath,
+                parentWorkspaceId: PARENT_WORKSPACE_ID,
+                agentId: "",
+                agentType: customAgentId,
+              },
+            ],
+          },
+        ],
+      ]),
+    };
+
+    const result = await resolveAgentForStream({
+      workspaceId: CHILD_WORKSPACE_ID,
+      metadata,
+      runtime: new LocalRuntime(childPath),
+      workspacePath: childPath,
+      requestedAgentId: "exec",
+      disableWorkspaceAgents: false,
+      callerToolPolicy: undefined,
+      cfg,
+      emitError: () => undefined,
+      isAdvisorExperimentEnabled: true,
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.effectiveAgentId).toBe(customAgentId);
+    expect(result.data.agentIsPlanLike).toBe(true);
+    expect(result.data.effectiveMode).toBe("plan");
+  });
 });
 
 describe("resolveAgentForStream advisor defaults", () => {
