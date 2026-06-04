@@ -208,6 +208,31 @@ export function removeModelParameterEntry(
   return Object.keys(nextModelParameters).length > 0 ? nextModelParameters : undefined;
 }
 
+export function migrateModelParameterEntry(
+  currentModelParameters: Record<string, Record<string, unknown>> | undefined,
+  originalModelId: string,
+  nextModelId: string
+): Record<string, Record<string, unknown>> | undefined {
+  if (!currentModelParameters || originalModelId === nextModelId) {
+    return currentModelParameters;
+  }
+
+  const originalOverrides = currentModelParameters[originalModelId];
+  if (!originalOverrides || typeof originalOverrides !== "object") {
+    return currentModelParameters;
+  }
+
+  const destinationOverrides = currentModelParameters[nextModelId];
+  const nextModelParameters = { ...currentModelParameters };
+  nextModelParameters[nextModelId] = {
+    ...(destinationOverrides && typeof destinationOverrides === "object" ? destinationOverrides : {}),
+    ...originalOverrides,
+  };
+  delete nextModelParameters[originalModelId];
+
+  return Object.keys(nextModelParameters).length > 0 ? nextModelParameters : undefined;
+}
+
 export function shouldShowModelInSettings(modelId: string, codexOauthConfigured: boolean): boolean {
   // OpenAI OAuth gating only applies to OpenAI-routed models; other providers can
   // reuse the same providerModelId string without requiring OpenAI OAuth.
@@ -483,7 +508,11 @@ export function ModelsSection() {
     let nextModelParameters = providerModelParameters;
 
     if (trimmedModelId !== editing.originalModelId) {
-      nextModelParameters = removeModelParameterEntry(nextModelParameters, editing.originalModelId);
+      nextModelParameters = migrateModelParameterEntry(
+        nextModelParameters,
+        editing.originalModelId,
+        trimmedModelId
+      );
     }
 
     nextModelParameters = buildUpdatedModelParameters(

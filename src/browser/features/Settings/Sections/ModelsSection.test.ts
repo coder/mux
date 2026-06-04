@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import {
   buildUpdatedModelParameters,
+  migrateModelParameterEntry,
   parseBoundedNumberInput,
   parsePositiveIntegerInput,
   removeModelParameterEntry,
@@ -104,6 +105,58 @@ describe("model parameter edit helpers", () => {
       renamed: {
         max_output_tokens: 2048,
         temperature: 0.5,
+      },
+    });
+  });
+
+  test("rename migration preserves non-editable overrides and removes legacy key", () => {
+    const migrated = migrateModelParameterEntry(
+      {
+        legacy: {
+          temperature: 0.2,
+          top_k: 42,
+          seed: 7,
+        },
+      },
+      "legacy",
+      "renamed"
+    );
+
+    const updated = buildUpdatedModelParameters(migrated, "renamed", {
+      max_output_tokens: null,
+      temperature: 0.8,
+      top_p: null,
+    });
+
+    expect(updated).toEqual({
+      renamed: {
+        temperature: 0.8,
+        top_k: 42,
+        seed: 7,
+      },
+    });
+  });
+
+  test("rename migration merges existing destination overrides", () => {
+    const migrated = migrateModelParameterEntry(
+      {
+        legacy: {
+          temperature: 0.4,
+          top_k: 12,
+        },
+        renamed: {
+          seed: 99,
+        },
+      },
+      "legacy",
+      "renamed"
+    );
+
+    expect(migrated).toEqual({
+      renamed: {
+        seed: 99,
+        temperature: 0.4,
+        top_k: 12,
       },
     });
   });
