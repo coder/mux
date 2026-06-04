@@ -1,4 +1,5 @@
 import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { APIContext, type APIClient } from "@/browser/contexts/API";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
@@ -45,6 +46,7 @@ import {
   formatWorkflowSavedMessage,
   type WorkflowPromotionTarget,
 } from "./WorkflowDefinitionToolCall";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 
 interface WorkflowRunToolCallProps {
@@ -131,6 +133,53 @@ function getStructuredOutput(value: unknown): unknown {
   return undefined;
 }
 
+type WorkflowTaskEvent = Extract<WorkflowRunEvent, { type: "task" }>;
+
+type WorkflowDisplayRow =
+  | { kind: "event"; event: WorkflowRunEvent }
+  | { kind: "task"; firstEvent: WorkflowTaskEvent; latestEvent: WorkflowTaskEvent };
+
+function getTaskEventKey(event: WorkflowTaskEvent): string {
+  return `task:${event.stepId}:${event.taskId}`;
+}
+
+function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDisplayRow[] {
+  const rows: WorkflowDisplayRow[] = [];
+  const taskRows = new Map<string, Extract<WorkflowDisplayRow, { kind: "task" }>>();
+
+  for (const event of events) {
+    if (event.type === "status" || event.type === "result") {
+      continue;
+    }
+    if (event.type !== "task") {
+      rows.push({ kind: "event", event });
+      continue;
+    }
+
+    const key = getTaskEventKey(event);
+    const existingRow = taskRows.get(key);
+    if (existingRow != null) {
+      existingRow.latestEvent = event;
+      continue;
+    }
+
+    const row: Extract<WorkflowDisplayRow, { kind: "task" }> = {
+      kind: "task",
+      firstEvent: event,
+      latestEvent: event,
+    };
+    taskRows.set(key, row);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function getDisplayRowKey(row: WorkflowDisplayRow): string {
+  if (row.kind === "task") {
+    return getTaskEventKey(row.firstEvent);
+  }
+  return getEventKey(row.event);
+}
 function getEventKey(event: WorkflowRunEvent): string {
   return `${event.sequence}:${event.type}`;
 }
@@ -247,11 +296,7 @@ function findTaskStepForEvent(
     return null;
   }
 
-  const byTaskId = steps.find((step) => step.taskId === event.taskId);
-  if (byTaskId != null) {
-    return byTaskId;
-  }
-  return steps.find((step) => step.stepId === event.stepId) ?? null;
+  return steps.find((step) => step.taskId === event.taskId && step.stepId === event.stepId) ?? null;
 }
 
 function getTaskReportMarkdown(
@@ -341,6 +386,95 @@ function WorkflowEventRow(props: {
   );
 }
 
+function WorkflowTaskRow(props: {
+  row: Extract<WorkflowDisplayRow, { kind: "task" }>;
+  displayIndex: number;
+  steps: readonly WorkflowStepRecord[];
+  onNavigate: (taskId: string) => void;
+}) {
+  const [reportExpanded, setReportExpanded] = useState(false);
+  const event = props.row.latestEvent;
+  const label = getWorkflowEventLabel(event);
+  const taskReportMarkdown = getTaskReportMarkdown(event, props.steps);
+  const canShowReport = taskReportMarkdown != null;
+  const reportId = `workflow-task-report-${props.row.firstEvent.sequence}-${event.taskId}`;
+  const activateTaskRow = () => props.onNavigate(event.taskId);
+  const onKeyDown: React.KeyboardEventHandler<HTMLDivElement> = (keyboardEvent) => {
+    if (keyboardEvent.key !== "Enter" && keyboardEvent.key !== " ") {
+      return;
+    }
+    keyboardEvent.preventDefault();
+    activateTaskRow();
+  };
+
+  const taskRow = (
+    <div
+      className="grid cursor-pointer grid-cols-[3rem_4.75rem_minmax(0,1fr)] items-center gap-2 border-l-2 border-transparent px-2 py-1 text-[10px]"
+      role="button"
+      tabIndex={0}
+      aria-label={`Open workflow task ${event.taskId}`}
+      onClick={activateTaskRow}
+      onKeyDown={onKeyDown}
+    >
+      <TooltipIfPresent
+        tooltip={
+          <WorkflowEventTooltip
+            event={props.row.firstEvent}
+            displayIndex={props.displayIndex}
+            label={label}
+          />
+        }
+        side="top"
+        align="start"
+      >
+        <span
+          className="text-muted counter-nums-mono w-fit cursor-help"
+          aria-label={`Raw event #${props.row.firstEvent.sequence}`}
+        >
+          #{props.displayIndex}
+        </span>
+      </TooltipIfPresent>
+      <span className={`w-fit font-mono uppercase ${getEventTypeClass(event)}`}>{event.type}</span>
+      <span className="text-foreground truncate">{label}</span>
+    </div>
+  );
+
+  return (
+    <li className="hover:bg-background/50">
+      {canShowReport ? (
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center">
+          {taskRow}
+          <button
+            type="button"
+            className={`${WORKFLOW_ACTION_BUTTON_CLASS} mr-2 gap-1 px-1.5 py-0.5 text-[10px]`}
+            aria-controls={reportId}
+            aria-expanded={reportExpanded}
+            aria-label={`${reportExpanded ? "Hide" : "Show"} report for ${event.taskId}`}
+            onClick={() => setReportExpanded((isExpanded) => !isExpanded)}
+          >
+            {reportExpanded ? (
+              <ChevronDown className="h-3 w-3" aria-hidden="true" />
+            ) : (
+              <ChevronRight className="h-3 w-3" aria-hidden="true" />
+            )}
+            Report
+          </button>
+        </div>
+      ) : (
+        taskRow
+      )}
+      {reportExpanded && taskReportMarkdown != null && (
+        <div
+          id={reportId}
+          className="border-border bg-background/40 mx-2 mb-2 rounded border p-2 text-[11px]"
+        >
+          <MarkdownRenderer content={taskReportMarkdown} />
+        </div>
+      )}
+    </li>
+  );
+}
+
 const AUTO_COLLAPSE_WORKFLOW_STATUSES = new Set(["completed"]);
 
 const REFRESHING_WORKFLOW_STATUSES = new Set(["pending", "running", "backgrounded"]);
@@ -393,10 +527,9 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   const structuredOutput = getStructuredOutput(resultValue);
   const invocationArgs = run?.args ?? args.args ?? {};
   const events = run?.events ?? [];
-  const interestingEvents = events.filter(
-    (event) => event.type !== "status" && event.type !== "result"
-  );
+  const displayRows = getWorkflowDisplayRows(events);
   const headerStatus = toToolStatus(displayStatus);
+  const workspaceStore = useWorkspaceStoreRaw();
 
   const toggleWorkflowExpanded = () => {
     userToggledExpansionRef.current = true;
@@ -733,18 +866,28 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
 
           {actionError && <ErrorBox className="mb-2">{actionError}</ErrorBox>}
 
-          {interestingEvents.length > 0 && (
-            <WorkflowSection title={`Workflow events (${interestingEvents.length})`}>
+          {displayRows.length > 0 && (
+            <WorkflowSection title={`Workflow events (${displayRows.length})`}>
               <div className="border-border bg-background/20 max-h-[220px] overflow-y-auto rounded border">
                 <ol className="divide-border/60 divide-y">
-                  {interestingEvents.map((event, index) => (
-                    <WorkflowEventRow
-                      key={getEventKey(event)}
-                      event={event}
-                      displayIndex={index + 1}
-                      steps={run?.steps ?? []}
-                    />
-                  ))}
+                  {displayRows.map((row, index) =>
+                    row.kind === "task" ? (
+                      <WorkflowTaskRow
+                        key={getDisplayRowKey(row)}
+                        row={row}
+                        displayIndex={index + 1}
+                        steps={run?.steps ?? []}
+                        onNavigate={(taskId) => workspaceStore.navigateToWorkspace(taskId)}
+                      />
+                    ) : (
+                      <WorkflowEventRow
+                        key={getDisplayRowKey(row)}
+                        event={row.event}
+                        displayIndex={index + 1}
+                        steps={run?.steps ?? []}
+                      />
+                    )
+                  )}
                 </ol>
               </div>
             </WorkflowSection>

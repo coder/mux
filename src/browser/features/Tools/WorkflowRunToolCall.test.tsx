@@ -12,6 +12,7 @@ import {
 } from "@/browser/contexts/CommandRegistryContext";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { WorkflowRunToolCall } from "./WorkflowRunToolCall";
 
 function APIHarness(props: { client: unknown; children: ReactNode }) {
@@ -62,6 +63,7 @@ describe("WorkflowRunToolCall", () => {
   });
 
   afterEach(() => {
+    useWorkspaceStoreRaw().setNavigateToWorkspace(() => undefined);
     cleanup();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
@@ -198,30 +200,148 @@ describe("WorkflowRunToolCall", () => {
     const taskEventRow = view.getByText("scope-topic / task_scope / completed");
     const taskEventIndex = view.getByText("#3");
     expect(taskEventIndex.className).toContain("cursor-help");
-    expect(taskEventRow.className).toContain("cursor-pointer");
+    expect(taskEventRow.closest('[role="button"]')?.className).toContain("cursor-pointer");
     expect(taskEventRow.getAttribute("title")).toBeNull();
-    const taskEventSummary = taskEventRow.closest("summary");
-    const taskEventDetails = taskEventRow.closest("details");
-    if (taskEventSummary == null) {
-      throw new Error("Expected task event summary");
-    }
-    expect(taskEventDetails?.hasAttribute("open")).toBe(false);
+    expect(taskEventRow.closest("summary")).toBeNull();
+    const taskReportToggle = view.getByLabelText("Show report for task_scope");
+    expect(taskReportToggle.closest('[role="button"]')).toBeNull();
 
-    fireEvent.click(taskEventSummary);
+    fireEvent.click(taskReportToggle);
 
-    expect(taskEventDetails?.hasAttribute("open")).toBe(true);
-    await waitFor(
-      () => expect(taskEventDetails?.textContent).toContain("Child task report body."),
-      {
-        timeout: 5_000,
-      }
-    );
+    await waitFor(() => expect(view.container.textContent).toContain("Child task report body."), {
+      timeout: 5_000,
+    });
     await waitFor(() => expect(view.container.textContent).toContain("Workflow result body"));
     const renderedText = view.container.textContent ?? "";
     expect(renderedText.indexOf("confidence")).toBeLessThan(
       renderedText.indexOf("Workflow result body")
     );
     expect(renderedText).toContain("confidence");
+  });
+
+  test("coalesces task attempts, navigates rows, and toggles completed reports separately", async () => {
+    const navigatedTo: string[] = [];
+    useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {
+      navigatedTo.push(workspaceId);
+    });
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <TooltipProvider>
+          <WorkflowRunToolCall
+            args={{ name: "implementation", args: {}, run_in_background: true }}
+            status="executing"
+            result={{
+              status: "running",
+              runId: "wfr_task_rows",
+              result: null,
+              run: {
+                id: "wfr_task_rows",
+                workspaceId: "workspace-1",
+                definition: {
+                  name: "implementation",
+                  description: "Implementation",
+                  scope: "built-in",
+                  executable: true,
+                },
+                definitionSource: "export default function workflow() { return null; }",
+                definitionHash: "sha256:test",
+                args: {},
+                status: "running",
+                createdAt: "2026-05-29T00:00:00.000Z",
+                updatedAt: "2026-05-29T00:00:01.000Z",
+                events: [
+                  {
+                    sequence: 1,
+                    type: "status",
+                    at: "2026-05-29T00:00:00.000Z",
+                    status: "running",
+                  },
+                  {
+                    sequence: 2,
+                    type: "task",
+                    at: "2026-05-29T00:00:00.000Z",
+                    stepId: "implement",
+                    taskId: "task_live",
+                    status: "started",
+                  },
+                  {
+                    sequence: 3,
+                    type: "task",
+                    at: "2026-05-29T00:00:01.000Z",
+                    stepId: "implement",
+                    taskId: "task_live",
+                    status: "completed",
+                  },
+                  {
+                    sequence: 4,
+                    type: "task",
+                    at: "2026-05-29T00:00:01.000Z",
+                    stepId: "implement",
+                    taskId: "task_retry",
+                    status: "started",
+                  },
+                  {
+                    sequence: 5,
+                    type: "patch",
+                    at: "2026-05-29T00:00:01.000Z",
+                    stepId: "apply-implement",
+                    sourceTaskId: "task_live",
+                    status: "started",
+                  },
+                ],
+                steps: [
+                  {
+                    stepId: "implement",
+                    inputHash: "sha256:implement-live",
+                    status: "completed",
+                    taskId: "task_live",
+                    startedAt: "2026-05-29T00:00:00.000Z",
+                    completedAt: "2026-05-29T00:00:01.000Z",
+                    result: { reportMarkdown: "## Implement report\n\nCompleted task body." },
+                  },
+                  {
+                    stepId: "apply-implement",
+                    inputHash: "sha256:patch",
+                    status: "started",
+                    taskId: "task_live",
+                    startedAt: "2026-05-29T00:00:01.000Z",
+                  },
+                ],
+              },
+            }}
+          />
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+
+    expect(view.getAllByText("implement / task_live / completed")).toHaveLength(1);
+    expect(view.queryByText("implement / task_live / started")).toBeNull();
+    expect(view.getByText("implement / task_retry / started")).toBeTruthy();
+    expect(view.getByText("apply-implement / task_live / started")).toBeTruthy();
+
+    fireEvent.click(view.getByText("implement / task_retry / started"));
+    expect(navigatedTo).toEqual(["task_retry"]);
+
+    const completedTaskControl = view
+      .getByText("implement / task_live / completed")
+      .closest('[role="button"]');
+    if (completedTaskControl == null) {
+      throw new Error("Expected completed task row to be keyboard focusable");
+    }
+
+    fireEvent.keyDown(completedTaskControl, { key: "Enter" });
+    expect(navigatedTo).toEqual(["task_retry", "task_live"]);
+    expect(view.container.textContent).not.toContain("Completed task body.");
+
+    const reportToggle = view.getByLabelText("Show report for task_live");
+    expect(reportToggle.closest('[role="button"]')).toBeNull();
+    fireEvent.click(reportToggle);
+
+    expect(navigatedTo).toEqual(["task_retry", "task_live"]);
+    await waitFor(() => expect(view.container.textContent).toContain("Completed task body."));
+
+    fireEvent.click(view.getByLabelText("Hide report for task_live"));
+    expect(view.container.textContent).not.toContain("Completed task body.");
   });
 
   test("refreshes a running workflow from the API and shows the completed result", async () => {

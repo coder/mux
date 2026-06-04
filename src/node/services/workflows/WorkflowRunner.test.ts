@@ -85,8 +85,13 @@ describe("WorkflowRunner", () => {
       "phase",
       "log",
       "task",
+      "task",
       "result",
       "status",
+    ]);
+    expect(run.events.filter((event) => event.type === "task")).toEqual([
+      expect.objectContaining({ stepId: "summarize-topic", taskId: "task_1", status: "started" }),
+      expect.objectContaining({ stepId: "summarize-topic", taskId: "task_1", status: "completed" }),
     ]);
     expect(run.steps).toHaveLength(1);
     expect(run.steps[0]).toMatchObject({
@@ -95,6 +100,50 @@ describe("WorkflowRunner", () => {
       taskId: "task_1",
       result: { reportMarkdown: "summary", structuredOutput: { sources: 3 } },
     });
+  });
+
+  test("records a started task event as soon as an agent task is created", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-started-task-event");
+    const store = await createRunStore(tmp.path);
+    const runner = createRunner(store, {
+      async runAgent(_spec, lifecycle) {
+        await lifecycle?.onTaskCreated?.("task_live");
+        const runDuringTask = await store.getRun("wfr_123");
+        expect(runDuringTask.events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "task",
+              stepId: "summarize-topic",
+              taskId: "task_live",
+              status: "started",
+            }),
+          ])
+        );
+        return {
+          taskId: "task_live",
+          reportMarkdown: "summary",
+          structuredOutput: { sources: 3 },
+        };
+      },
+    });
+
+    await runner.run("wfr_123");
+    const taskEvents = (await store.getRun("wfr_123")).events.filter(
+      (event) => event.type === "task"
+    );
+
+    expect(taskEvents).toEqual([
+      expect.objectContaining({
+        stepId: "summarize-topic",
+        taskId: "task_live",
+        status: "started",
+      }),
+      expect.objectContaining({
+        stepId: "summarize-topic",
+        taskId: "task_live",
+        status: "completed",
+      }),
+    ]);
   });
 
   test("returns child task IDs to workflow code", async () => {
@@ -394,6 +443,46 @@ describe("WorkflowRunner", () => {
     expect(taskCalls).toBe(1);
   });
 
+  test("backfills completed task events when replaying completed agent steps", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-completed-task-event-backfill");
+    const store = await createRunStore(tmp.path);
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    await store.recordStepCompleted("wfr_123", {
+      stepId: spec.id,
+      inputHash: hashWorkflowStepInput(spec.id, spec),
+      taskId: "task_completed_missing_event",
+      result: { taskId: "task_completed_missing_event", reportMarkdown: "summary" },
+      startedAt: "2026-05-29T00:00:00.500Z",
+      completedAt: "2026-05-29T00:00:00.750Z",
+    });
+    await store.appendEvent("wfr_123", {
+      sequence: 1,
+      type: "task",
+      at: "2026-05-29T00:00:00.500Z",
+      stepId: spec.id,
+      taskId: "task_completed_missing_event",
+      status: "started",
+    });
+    let taskCalls = 0;
+    const runner = createRunner(store, {
+      async runAgent() {
+        taskCalls += 1;
+        throw new Error("agent should replay");
+      },
+    });
+
+    await expect(runner.run("wfr_123")).resolves.toEqual({ reportMarkdown: "Final: summary" });
+    const taskEvents = (await store.getRun("wfr_123")).events.filter(
+      (event) => event.type === "task" && event.taskId === "task_completed_missing_event"
+    );
+
+    expect(taskCalls).toBe(0);
+    expect(taskEvents).toEqual([
+      expect.objectContaining({ status: "started" }),
+      expect.objectContaining({ status: "completed" }),
+    ]);
+  });
+
   test("reuses a recorded started task id instead of respawning on resume", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
     const store = await createRunStore(tmp.path);
@@ -403,6 +492,14 @@ describe("WorkflowRunner", () => {
       inputHash: hashWorkflowStepInput(spec.id, spec),
       taskId: "task_existing",
       startedAt: "2026-05-29T00:00:00.500Z",
+    });
+    await store.appendEvent("wfr_123", {
+      sequence: 1,
+      type: "task",
+      at: "2026-05-29T00:00:00.500Z",
+      stepId: spec.id,
+      taskId: "task_existing",
+      status: "started",
     });
     let runAgentCalls = 0;
     const waitedFor: string[] = [];
@@ -425,8 +522,41 @@ describe("WorkflowRunner", () => {
 
     expect(runAgentCalls).toBe(0);
     expect(waitedFor).toEqual(["task_existing"]);
+    const startedEvents = (await store.getRun("wfr_123")).events.filter(
+      (event) =>
+        event.type === "task" && event.status === "started" && event.taskId === "task_existing"
+    );
+    expect(startedEvents).toHaveLength(1);
     expect(waitTimeoutMs).toBeGreaterThan(5 * 60 * 1000);
     expect(waitAbortSignal?.aborted).toBe(false);
+  });
+
+  test("adds one started task event when resuming legacy started steps", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-legacy-started-event");
+    const store = await createRunStore(tmp.path);
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    await store.recordStepStarted("wfr_123", {
+      stepId: spec.id,
+      inputHash: hashWorkflowStepInput(spec.id, spec),
+      taskId: "task_legacy",
+      startedAt: "2026-05-29T00:00:00.500Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("agent should not respawn");
+      },
+      async waitForAgentTask(taskId) {
+        return { taskId, reportMarkdown: "summary" };
+      },
+    });
+
+    await expect(runner.run("wfr_123")).resolves.toEqual({ reportMarkdown: "Final: summary" });
+    const startedEvents = (await store.getRun("wfr_123")).events.filter(
+      (event) =>
+        event.type === "task" && event.status === "started" && event.taskId === "task_legacy"
+    );
+
+    expect(startedEvents).toHaveLength(1);
   });
 
   test("reruns stale started task ids that no longer have recoverable reports", async () => {
@@ -462,6 +592,43 @@ describe("WorkflowRunner", () => {
       status: "completed",
       taskId: "task_recovered",
     });
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "task",
+          stepId: "summarize-topic",
+          taskId: "task_missing",
+          status: "failed",
+        }),
+        expect.objectContaining({
+          type: "task",
+          stepId: "summarize-topic",
+          taskId: "task_recovered",
+          status: "completed",
+        }),
+      ])
+    );
+  });
+
+  test("records failed task events when an agent task fails after creation", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-child-failure");
+    const store = await createRunStore(tmp.path);
+    const runner = createRunner(store, {
+      async runAgent(_spec, lifecycle) {
+        await lifecycle?.onTaskCreated?.("task_failed_after_create");
+        throw new Error("child execution failed");
+      },
+    });
+
+    await expect(runner.run("wfr_123")).rejects.toThrow("child execution failed");
+    const taskEvents = (await store.getRun("wfr_123")).events.filter(
+      (event) => event.type === "task" && event.taskId === "task_failed_after_create"
+    );
+
+    expect(taskEvents).toEqual([
+      expect.objectContaining({ status: "started" }),
+      expect.objectContaining({ status: "failed" }),
+    ]);
   });
 
   test("restarts started task records when resuming a user-interrupted run", async () => {
@@ -517,10 +684,11 @@ describe("WorkflowRunner", () => {
     let active = 0;
     let maxActive = 0;
     const runner = createRunner(store, {
-      async runAgent(spec) {
+      async runAgent(spec, lifecycle) {
         calls.push(spec.id);
         active += 1;
         maxActive = Math.max(maxActive, active);
+        await lifecycle?.onTaskCreated?.(`task_${spec.id}`);
         await new Promise((resolve) => setTimeout(resolve, 10));
         active -= 1;
         return { taskId: `task_${spec.id}`, reportMarkdown: spec.id };
@@ -534,6 +702,25 @@ describe("WorkflowRunner", () => {
     expect(calls).toEqual(["source-a", "source-b"]);
     expect(maxActive).toBe(2);
     const run = await store.getRun("wfr_parallel");
+    const eventSequences = run.events.map((event) => event.sequence);
+    expect(eventSequences).toEqual([...eventSequences].sort((a, b) => a - b));
+    expect(new Set(eventSequences).size).toBe(eventSequences.length);
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "task",
+          stepId: "source-a",
+          taskId: "task_source-a",
+          status: "started",
+        }),
+        expect.objectContaining({
+          type: "task",
+          stepId: "source-b",
+          taskId: "task_source-b",
+          status: "started",
+        }),
+      ])
+    );
     expect(run.steps.map((step) => step.stepId).sort()).toEqual(["source-a", "source-b"]);
   });
 
