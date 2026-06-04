@@ -1,3 +1,5 @@
+import * as path from "node:path";
+
 import { StructuredTaskOutputSchema, WorkflowResultSchema } from "@/common/orpc/schemas";
 import { TaskApplyGitPatchToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import type {
@@ -1695,7 +1697,11 @@ function getWorkflowActionCwd(
   action: ResolvedWorkflowAction,
   defaultCwd?: string
 ): string {
-  return spec.cwd ?? defaultCwd ?? action.sourcePath.split(/[\\/][^\\/]*$/u)[0] ?? ".";
+  const fallbackCwd = defaultCwd ?? action.sourcePath.split(/[\\/][^\\/]*$/u)[0] ?? ".";
+  if (spec.cwd == null) {
+    return fallbackCwd;
+  }
+  return path.isAbsolute(spec.cwd) ? spec.cwd : path.resolve(fallbackCwd, spec.cwd);
 }
 
 function workflowActionEventDetails(

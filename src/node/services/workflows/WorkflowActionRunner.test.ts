@@ -285,6 +285,34 @@ describe("WorkflowActionRunner", () => {
     expect(description.hasReconcile).toBe(false);
   });
 
+  test("does not rewrite export syntax inside action strings", async () => {
+    using tmp = new DisposableTempDir("workflow-action-export-template");
+    const sourcePath = path.join(tmp.path, "template.js");
+    const source = `
+      module.exports.metadata = { version: 1, description: "Template", effect: "read" };
+      const generated = \`
+export const value = 1;
+export default value;
+\`;
+      module.exports.execute = async () => generated;
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    const result = await runner.execute(createAction(sourcePath, source), {
+      input: null,
+      cwd: tmp.path,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts"),
+    });
+
+    if (typeof result.output !== "string") {
+      throw new Error("Expected string output");
+    }
+    expect(result.output).toContain("export const value = 1;");
+    expect(result.output).toContain("export default value;");
+  });
+
   test("requires executable action exports during describe", async () => {
     using tmp = new DisposableTempDir("workflow-action-missing-execute");
     const sourcePath = path.join(tmp.path, "missing-execute.js");

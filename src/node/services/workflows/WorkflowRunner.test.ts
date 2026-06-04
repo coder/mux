@@ -2246,6 +2246,60 @@ describe("WorkflowRunner", () => {
     );
   });
 
+  test("resolves relative action cwd against the persisted default action cwd", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-action-relative-cwd");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const workspaceRoot = path.join(tmp.path, "workspace");
+    const packageRoot = path.join(workspaceRoot, "packages", "app");
+    await fs.mkdir(projectRoot, { recursive: true });
+    await fs.mkdir(packageRoot, { recursive: true });
+    await fs.writeFile(path.join(packageRoot, "marker.txt"), "from package", "utf-8");
+    const actionPath = path.join(projectRoot, "cwd.js");
+    await fs.writeFile(
+      actionPath,
+      `export const metadata = { version: 1, description: "Cwd", effect: "read" };
+      export async function execute() {
+        const fs = require("node:fs");
+        return { cwd: process.cwd(), marker: fs.readFileSync("marker.txt", "utf-8") };
+      }`,
+      "utf-8"
+    );
+    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await store.createRun({
+      id: "wfr_action_relative_cwd",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ action }) {
+        const result = action.cwd({ id: "cwd", cwd: "packages/app" });
+        return { reportMarkdown: result.output.cwd + ":" + result.output.marker };
+      }`,
+      args: {},
+      defaultActionCwd: workspaceRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:03.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await expect(runner.run("wfr_action_relative_cwd")).resolves.toEqual({
+      reportMarkdown: `${packageRoot}:from package`,
+    });
+  });
+
   test("uses the run's persisted default action cwd for replay", async () => {
     using tmp = new DisposableTempDir("workflow-runner-action-persisted-cwd");
     const projectRoot = path.join(tmp.path, "project-actions");

@@ -1174,11 +1174,70 @@ function assertSupportedActionSyntax(source) {
   }
 }
 
+function isTopLevelActionSourceMatch(maskedSource, matchIndex) {
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  for (let index = 0; index < matchIndex; index += 1) {
+    switch (maskedSource[index]) {
+      case "{":
+        braceDepth += 1;
+        break;
+      case "}":
+        braceDepth = Math.max(0, braceDepth - 1);
+        break;
+      case "[":
+        bracketDepth += 1;
+        break;
+      case "]":
+        bracketDepth = Math.max(0, bracketDepth - 1);
+        break;
+      case "(":
+        parenDepth += 1;
+        break;
+      case ")":
+        parenDepth = Math.max(0, parenDepth - 1);
+        break;
+    }
+  }
+  return braceDepth === 0 && bracketDepth === 0 && parenDepth === 0;
+}
+
+function replaceMaskedExportSyntax(source, pattern, replacementForMatch) {
+  const maskedSource = maskActionSourceForSyntax(source);
+  let output = "";
+  let lastIndex = 0;
+  pattern.lastIndex = 0;
+  let match;
+  while ((match = pattern.exec(maskedSource)) !== null) {
+    if (!isTopLevelActionSourceMatch(maskedSource, match.index)) {
+      continue;
+    }
+    output += source.slice(lastIndex, match.index);
+    output += replacementForMatch(match);
+    lastIndex = match.index + match[0].length;
+  }
+  return output + source.slice(lastIndex);
+}
+
 function stripExportSyntax(source) {
-  return source
-    .replace(/(^|\n)\s*export\s+default\s+/g, "$1const __default = ")
-    .replace(/(^|\n)\s*export\s+(async\s+function|function)\s+([A-Za-z_$][A-Za-z0-9_$]*)/g, "$1$2 $3")
-    .replace(/(^|\n)\s*export\s+(const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)/g, "$1$2 $3");
+  let transformed = source;
+  transformed = replaceMaskedExportSyntax(
+    transformed,
+    /(^|\n)\s*export\s+default\s+/g,
+    (match) => match[1] + "const __default = "
+  );
+  transformed = replaceMaskedExportSyntax(
+    transformed,
+    /(^|\n)\s*export\s+(async\s+function|function)\s+([A-Za-z_$][A-Za-z0-9_$]*)/g,
+    (match) => match[1] + match[2] + " " + match[3]
+  );
+  transformed = replaceMaskedExportSyntax(
+    transformed,
+    /(^|\n)\s*export\s+(const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)/g,
+    (match) => match[1] + match[2] + " " + match[3]
+  );
+  return transformed;
 }
 
 async function loadAction(payload) {
