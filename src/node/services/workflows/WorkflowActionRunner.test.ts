@@ -253,6 +253,32 @@ describe("WorkflowActionRunner", () => {
     await expectRejects(fs.access(markerPath), /no such file|ENOENT/i);
   });
 
+  test("kills ctx.exec descendants when the command timeout fires", async () => {
+    using tmp = new DisposableTempDir("workflow-action-exec-command-timeout");
+    const markerPath = path.join(tmp.path, "survived.txt");
+    const sourcePath = path.join(tmp.path, "exec-command-timeout.js");
+    const source = `
+      module.exports.metadata = { version: 1, description: "Exec command timeout", effect: "read" };
+      module.exports.execute = async (_input, ctx) => {
+        const result = await ctx.exec("sh", ["-c", ${JSON.stringify(`(sleep 0.25; echo survived > ${markerPath}) & wait`)}], { timeoutMs: 25 });
+        return { timedOut: result.timedOut };
+      };
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    const result = await runner.execute(createAction(sourcePath, source), {
+      input: null,
+      cwd: tmp.path,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts"),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    expect(result.output).toEqual({ timedOut: true });
+    await expectRejects(fs.access(markerPath), /no such file|ENOENT/i);
+  });
+
   test("kills actions that exceed their timeout", async () => {
     using tmp = new DisposableTempDir("workflow-action-timeout");
     const sourcePath = path.join(tmp.path, "slow.js");

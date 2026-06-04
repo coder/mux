@@ -823,6 +823,35 @@ function finishCapture(capture) {
   return capture.truncated ? capture.text + "\n[truncated after " + STDIO_LIMIT_BYTES + " bytes]" : capture.text;
 }
 
+function listChildPids(pid) {
+  try {
+    return execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf-8" })
+      .trim()
+      .split(/\n+/)
+      .map((line) => line.trim().split(/\s+/).map((value) => Number(value)))
+      .filter(([childPid, parentPid]) => Number.isFinite(childPid) && parentPid === pid)
+      .map(([childPid]) => childPid);
+  } catch {
+    return [];
+  }
+}
+
+function collectDescendantPids(pid, seen = new Set()) {
+  const descendants = [];
+  for (const childPid of listChildPids(pid)) {
+    if (seen.has(childPid)) continue;
+    seen.add(childPid);
+    descendants.push(...collectDescendantPids(childPid, seen), childPid);
+  }
+  return descendants;
+}
+
+function killPid(pid) {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
+}
+
 function killProcessTree(pid) {
   if (!Number.isFinite(pid) || pid <= 0) return;
   if (process.platform === "win32") {
@@ -831,12 +860,13 @@ function killProcessTree(pid) {
     } catch {}
     return;
   }
+  for (const descendantPid of collectDescendantPids(pid)) {
+    killPid(descendantPid);
+  }
   try {
     process.kill(-pid, "SIGKILL");
   } catch {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
+    killPid(pid);
   }
 }
 
