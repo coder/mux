@@ -196,7 +196,6 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
 const WORKFLOW_COMMAND_SUPERSEDED_MESSAGE = "Workflow command was superseded.";
 const WORKFLOW_TERMINAL_STATUSES = new Set(["completed", "failed", "interrupted"]);
 const WORKFLOW_POLL_INTERVAL_MS = 2_000;
-const WORKFLOW_POLL_TIMEOUT_MS = 30 * 60_000;
 
 function isWorkflowTerminalStatus(status: string): boolean {
   return WORKFLOW_TERMINAL_STATUSES.has(status);
@@ -213,7 +212,6 @@ async function waitForWorkflowTerminalRun(input: {
   initialStatus: string;
   isCurrent?: () => boolean;
 }): Promise<WorkflowRunRecord | null> {
-  const startedAt = Date.now();
   let run = await input.client.workflows.getRun({
     workspaceId: input.workspaceId,
     runId: input.runId,
@@ -223,9 +221,6 @@ async function waitForWorkflowTerminalRun(input: {
   while (!isWorkflowTerminalStatus(status)) {
     if (input.isCurrent?.() === false) {
       throw new Error(WORKFLOW_COMMAND_SUPERSEDED_MESSAGE);
-    }
-    if (Date.now() - startedAt > WORKFLOW_POLL_TIMEOUT_MS) {
-      throw new Error(`Timed out waiting for workflow ${input.runId} to finish.`);
     }
     await delay(WORKFLOW_POLL_INTERVAL_MS);
     run = await input.client.workflows.getRun({
