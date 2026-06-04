@@ -262,6 +262,30 @@ type WorktreeArchiveSnapshotLifecycleService = Pick<
 >;
 // Trim and normalize a heartbeat message for storage. Accepts `unknown` so it safely handles
 // both user input (string | undefined) and persisted config values that may have been corrupted.
+function isWorkflowInvocationMessage(message: MuxMessage, runId: string): boolean {
+  if (
+    message.metadata?.muxMetadata?.type === WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE &&
+    message.metadata.muxMetadata.runId === runId
+  ) {
+    return true;
+  }
+
+  return message.parts.some((part) => {
+    if (part.type !== "dynamic-tool" || part.toolName !== "workflow_run") {
+      return false;
+    }
+    if (part.state !== "output-available") {
+      return false;
+    }
+    const output = part.output;
+    return (
+      output != null &&
+      typeof output === "object" &&
+      (output as Record<string, unknown>).runId === runId
+    );
+  });
+}
+
 function sanitizeHeartbeatMessage(message: unknown): string | undefined {
   if (typeof message !== "string") {
     return undefined;
@@ -5872,10 +5896,8 @@ export class WorkspaceService extends EventEmitter {
       return false;
     }
 
-    const runCardIndex = historyResult.data.findIndex(
-      (message) =>
-        message.metadata?.muxMetadata?.type === WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE &&
-        message.metadata.muxMetadata.runId === runId
+    const runCardIndex = historyResult.data.findIndex((message) =>
+      isWorkflowInvocationMessage(message, runId)
     );
     if (runCardIndex === -1) {
       return false;

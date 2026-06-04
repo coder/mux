@@ -319,6 +319,7 @@ function derivePromptCacheScope(metadata: WorkspaceMetadata): string {
 }
 
 interface WorkflowResultContinuationSender {
+  isWorkflowInvocationCurrent(workspaceId: string, runId: string): Promise<boolean>;
   sendMessage(
     workspaceId: string,
     message: string,
@@ -1573,6 +1574,15 @@ export class AIService extends EventEmitter {
                     workspaceId,
                     runId,
                   });
+                  return;
+                }
+
+                const invocationCurrent = await continuationSender.isWorkflowInvocationCurrent(
+                  workspaceId,
+                  runId
+                );
+                if (!invocationCurrent) {
+                  log.debug("Skipping superseded workflow continuation", { workspaceId, runId });
                   return;
                 }
 
