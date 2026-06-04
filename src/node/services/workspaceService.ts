@@ -6202,11 +6202,11 @@ export class WorkspaceService extends EventEmitter {
         });
 
         if (effectiveQueueDispatchMode != null && !internal?.skipAutoResumeReset) {
-          this.taskService?.resetAutoResumeCount(workspaceId);
+          this.taskService?.resetAutoResumeCount?.(workspaceId);
         }
 
         if (effectiveQueueDispatchMode === "tool-end") {
-          this.taskService?.backgroundForegroundWaitsForWorkspace(workspaceId);
+          this.taskService?.backgroundForegroundWaitsForWorkspace?.(workspaceId);
         }
 
         return Ok(undefined);
