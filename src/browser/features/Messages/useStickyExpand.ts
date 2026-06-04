@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { getAutoExpandPrefsKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -91,20 +91,35 @@ export function useStickyExpand(
   const expandedRef = useRef(expanded);
   expandedRef.current = expanded;
 
-  const setExpanded = (next: boolean): void => {
-    setUserChoice(next);
-    if (workspaceId != null) {
-      updatePersistedState<AutoExpandPrefs>(
-        getAutoExpandPrefsKey(workspaceId),
-        (prev) => ({ ...prev, [kind]: next }),
-        {}
-      );
-    }
-  };
+  // setExpanded/toggleExpanded MUST keep a stable identity across renders. Consumers
+  // pass setExpanded into effect dependency arrays — e.g. WorkflowRunToolCall lists it
+  // in a useLayoutEffect and a useEffect — and the previous useToolExpansion returned
+  // React's stable useState setter, so those effects only re-ran on real changes. The
+  // bun test runtime does NOT apply the React Compiler, so without an explicit stable
+  // identity these closures change every render and re-fire those consumer effects on
+  // every commit; the synchronous useLayoutEffect variant then spins act() forever
+  // (observed as a hung unit test). This is a correctness requirement, not perf memo.
+  const setExpanded = useCallback(
+    (next: boolean): void => {
+      setUserChoice(next);
+      if (workspaceId != null) {
+        updatePersistedState<AutoExpandPrefs>(
+          getAutoExpandPrefsKey(workspaceId),
+          (prev) => ({ ...prev, [kind]: next }),
+          {}
+        );
+      }
+    },
+    [workspaceId, kind]
+  );
+
+  // expandedRef keeps toggleExpanded reading the latest value without taking a
+  // dependency on `expanded`, so its identity stays stable too.
+  const toggleExpanded = useCallback(() => setExpanded(!expandedRef.current), [setExpanded]);
 
   return {
     expanded,
     setExpanded,
-    toggleExpanded: () => setExpanded(!expandedRef.current),
+    toggleExpanded,
   };
 }
