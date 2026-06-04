@@ -546,9 +546,7 @@ export class StreamManager extends EventEmitter {
     streamInfo.partialWritePromise = (async () => {
       try {
         const canonicalModel = normalizeToCanonical(streamInfo.model);
-        const routedThroughGateway =
-          streamInfo.initialMetadata?.routedThroughGateway ??
-          streamInfo.model.startsWith("mux-gateway:");
+        const routedThroughGateway = this.resolveRoutedThroughGateway(streamInfo);
 
         const partialMessage: MuxMessage = {
           id: streamInfo.messageId,
@@ -1665,6 +1663,21 @@ export class StreamManager extends EventEmitter {
     return rawMode === "plan" || rawMode === "exec" ? rawMode : undefined;
   }
 
+  /**
+   * Resolves whether this stream was routed through the mux gateway.
+   *
+   * Prefers the explicit flag recorded in the stream's initial metadata and
+   * falls back to the `mux-gateway:` model-id prefix. Every partial/stream
+   * event write needs this value, so it lives in one place to keep the
+   * metadata-first fallback consistent across callsites.
+   */
+  private resolveRoutedThroughGateway(streamInfo: WorkspaceStreamInfo): boolean {
+    return (
+      streamInfo.initialMetadata?.routedThroughGateway ??
+      streamInfo.model.startsWith("mux-gateway:")
+    );
+  }
+
   private emitStreamStart(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
@@ -1674,9 +1687,7 @@ export class StreamManager extends EventEmitter {
     const streamStartAgentId = streamInfo.initialMetadata?.agentId;
     const streamStartMode = this.getStreamMode(streamInfo.initialMetadata);
     const canonicalModel = normalizeToCanonical(streamInfo.model);
-    const routedThroughGateway =
-      streamInfo.initialMetadata?.routedThroughGateway ??
-      streamInfo.model.startsWith("mux-gateway:");
+    const routedThroughGateway = this.resolveRoutedThroughGateway(streamInfo);
     const routeProvider = streamInfo.initialMetadata?.routeProvider;
 
     this.emit("stream-start", {
@@ -2192,9 +2203,7 @@ export class StreamManager extends EventEmitter {
               streamInfo.initialMetadata?.costsIncluded
             );
             const canonicalModel = normalizeToCanonical(streamInfo.model);
-            const routedThroughGateway =
-              streamInfo.initialMetadata?.routedThroughGateway ??
-              streamInfo.model.startsWith("mux-gateway:");
+            const routedThroughGateway = this.resolveRoutedThroughGateway(streamInfo);
             const toolModelUsages =
               streamInfo.toolModelUsages.length > 0
                 ? streamInfo.toolModelUsages.map(clonePersistedToolModelUsage)
@@ -2467,9 +2476,7 @@ export class StreamManager extends EventEmitter {
     payload: StreamErrorPayload & { errorType: StreamErrorType }
   ): Promise<void> {
     const canonicalModel = normalizeToCanonical(streamInfo.model);
-    const routedThroughGateway =
-      streamInfo.initialMetadata?.routedThroughGateway ??
-      streamInfo.model.startsWith("mux-gateway:");
+    const routedThroughGateway = this.resolveRoutedThroughGateway(streamInfo);
 
     const errorPartialMessage: MuxMessage = {
       id: payload.messageId,
