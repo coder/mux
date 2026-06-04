@@ -282,6 +282,7 @@ verify-docker-runtime-artifacts: build-docker-runtime ## Verify required Docker 
 	@test -f dist/runtime/server-bundle.js
 	@test -f dist/runtime/tokenizer.worker.js
 	@test -f dist/static/splash.html
+	@test -f dist/typescript-lib/lib.es2023.d.ts.txt
 
 # Bundle server runtime for Docker image to reduce runtime dependencies/image size.
 # Depend on build-main explicitly because dist/cli/server.js is emitted as a side effect.

@@ -113,6 +113,9 @@ COPY --from=builder /app/dist/*.html ./dist/
 COPY --from=builder /app/dist/*.css ./dist/
 COPY --from=builder /app/dist/*.js ./dist/
 
+# Copy TypeScript lib files used by the bundled PTC validator at server startup.
+COPY --from=builder /app/dist/typescript-lib ./dist/typescript-lib
+
 # Copy runtime bundles last (most volatile layer during backend iteration).
 COPY --from=builder /app/dist/runtime ./dist/runtime
 
