@@ -119,6 +119,22 @@ describe("UserPreferencesProvider bridge helpers", () => {
     expect(storage.getItem(VIM_ENABLED_KEY)).toBeNull();
   });
 
+  test("keeps dirty local cache entries on non-initial backend refresh", () => {
+    const storage = new MemoryStorage();
+    storage.setJSON(UI_THEME_KEY, "dark");
+    storage.setJSON(VIM_ENABLED_KEY, true);
+
+    mirrorBackendPreferences({
+      backendPreferences: { appearance: { theme: "light" } },
+      dirtyKeys: new Set([VIM_ENABLED_KEY]),
+      initial: false,
+      storage,
+    });
+
+    expect(JSON.parse(storage.getItem(UI_THEME_KEY) ?? "null")).toBe("light");
+    expect(JSON.parse(storage.getItem(VIM_ENABLED_KEY) ?? "null")).toBe(true);
+  });
+
   test("backfills only local preferences that are missing from backend config", () => {
     const storage = new MemoryStorage();
     storage.setJSON(UI_THEME_KEY, "light");
