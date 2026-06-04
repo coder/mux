@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
@@ -342,6 +342,382 @@ describe("WorkflowRunToolCall", () => {
 
     fireEvent.click(view.getByLabelText("Hide report for task_live"));
     expect(view.container.textContent).not.toContain("Completed task body.");
+  });
+
+  test("renders executing foreground workflow status before the durable run is discovered", () => {
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <TooltipProvider>
+          <WorkflowRunToolCall
+            args={{
+              name: "deep-research",
+              args: { topic: "workflow cards" },
+              run_in_background: false,
+            }}
+            status="executing"
+          />
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+
+    const workflowHeader = getWorkflowHeader(view);
+    expect(workflowHeader.textContent).toContain("executing");
+    expect(workflowHeader.textContent).not.toContain("pending");
+  });
+
+  test("discovers foreground workflow runs and renders live run details", async () => {
+    const staleRun = {
+      id: "wfr_stale",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:stale",
+      args: { topic: "workflow cards" },
+      status: "running" as const,
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:01.000Z",
+      events: [
+        { sequence: 1, type: "phase" as const, at: "2026-05-28T00:00:01.000Z", name: "stale" },
+      ],
+      steps: [],
+    };
+    const foregroundRun = {
+      ...staleRun,
+      id: "wfr_foreground",
+      definitionHash: "sha256:foreground",
+      createdAt: "2026-05-29T00:00:00.490Z",
+      updatedAt: "2026-05-29T00:00:02.000Z",
+      events: [
+        {
+          sequence: 1,
+          type: "status" as const,
+          at: "2026-05-29T00:00:01.000Z",
+          status: "running" as const,
+        },
+        { sequence: 2, type: "phase" as const, at: "2026-05-29T00:00:02.000Z", name: "scope" },
+      ],
+    };
+    const interruptedForegroundRun = {
+      ...foregroundRun,
+      status: "interrupted" as const,
+      updatedAt: "2026-05-29T00:00:03.000Z",
+      events: [
+        ...foregroundRun.events,
+        {
+          sequence: 3,
+          type: "status" as const,
+          at: "2026-05-29T00:00:03.000Z",
+          status: "interrupted" as const,
+        },
+      ],
+    };
+    const listRuns = mock(async () => [staleRun, foregroundRun]);
+    const getRun = mock(async () => foregroundRun);
+    const interrupt = mock(async (input: { workspaceId: string; runId: string }) => {
+      expect(input).toEqual({ workspaceId: "workspace-1", runId: "wfr_foreground" });
+      return interruptedForegroundRun;
+    });
+    const api = {
+      workflows: {
+        listRuns,
+        getRun,
+        interrupt,
+      },
+    };
+
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowRunToolCall
+              args={{
+                name: "deep-research",
+                args: { topic: "workflow cards" },
+                run_in_background: false,
+              }}
+              status="executing"
+              workspaceId="workspace-1"
+              startedAt={Date.parse("2026-05-29T00:00:00.500Z")}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    await waitFor(() => expect(view.getByText("wfr_foreground")).toBeTruthy());
+    expect(getWorkflowHeader(view).textContent).toContain("executing");
+    expect(view.queryByText("wfr_stale")).toBeNull();
+    expect(view.queryByText("stale")).toBeNull();
+    expect(view.getAllByText("built-in").length).toBeGreaterThan(0);
+    expect(view.getByText("Workflow events (1)")).toBeTruthy();
+    expect(view.getByText("scope")).toBeTruthy();
+    expect(listRuns).toHaveBeenCalledWith({ workspaceId: "workspace-1" });
+
+    fireEvent.click(view.getByRole("button", { name: "Interrupt workflow" }));
+
+    await waitFor(() => expect(interrupt).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getWorkflowHeader(view).textContent).toContain("interrupted"));
+  });
+
+  test("does not attach ambiguous foreground workflow run matches", async () => {
+    const firstRun = {
+      id: "wfr_first",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:first",
+      args: { topic: "workflow cards" },
+      status: "running" as const,
+      createdAt: "2026-05-29T00:00:01.000Z",
+      updatedAt: "2026-05-29T00:00:02.000Z",
+      events: [
+        { sequence: 1, type: "phase" as const, at: "2026-05-29T00:00:02.000Z", name: "first" },
+      ],
+      steps: [],
+    };
+    const secondRun = {
+      ...firstRun,
+      id: "wfr_second",
+      definitionHash: "sha256:second",
+      updatedAt: "2026-05-29T00:00:03.000Z",
+      events: [
+        { sequence: 1, type: "phase" as const, at: "2026-05-29T00:00:03.000Z", name: "second" },
+      ],
+    };
+    const listRuns = mock(async () => [firstRun, secondRun]);
+    const getRun = mock(async () => secondRun);
+    const api = {
+      workflows: {
+        listRuns,
+        getRun,
+      },
+    };
+
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowRunToolCall
+              args={{
+                name: "deep-research",
+                args: { topic: "workflow cards" },
+                run_in_background: false,
+              }}
+              status="executing"
+              workspaceId="workspace-1"
+              startedAt={Date.parse("2026-05-29T00:00:00.500Z")}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    await waitFor(() => expect(listRuns).toHaveBeenCalledWith({ workspaceId: "workspace-1" }));
+    expect(getWorkflowHeader(view).textContent).toContain("executing");
+    expect(view.queryByText("wfr_first")).toBeNull();
+    expect(view.queryByText("wfr_second")).toBeNull();
+    expect(view.queryByText("first")).toBeNull();
+    expect(view.queryByText("second")).toBeNull();
+    expect(view.queryByRole("button", { name: "Interrupt workflow" })).toBeNull();
+    expect(getRun).not.toHaveBeenCalled();
+  });
+
+  test("keeps the newest workflow refresh snapshot when polls resolve out of order", async () => {
+    const originalSetInterval = globalThis.window.setInterval;
+    const originalClearInterval = globalThis.window.clearInterval;
+    globalThis.window.setInterval = ((handler: TimerHandler) => {
+      if (typeof handler === "function") {
+        const callback = handler as () => void;
+        queueMicrotask(callback);
+      }
+      return 1;
+    }) as typeof globalThis.window.setInterval;
+    globalThis.window.clearInterval = (() => undefined) as typeof globalThis.window.clearInterval;
+
+    try {
+      const runningRun = {
+        id: "wfr_ordered",
+        workspaceId: "workspace-1",
+        definition: {
+          name: "deep-research",
+          description: "Deep research",
+          scope: "built-in" as const,
+          executable: true,
+        },
+        definitionSource: "export default function workflow() { return null; }",
+        definitionHash: "sha256:ordered",
+        args: { topic: "workflow cards" },
+        status: "running" as const,
+        createdAt: "2026-05-29T00:00:00.000Z",
+        updatedAt: "2026-05-29T00:00:01.000Z",
+        events: [
+          { sequence: 1, type: "phase" as const, at: "2026-05-29T00:00:01.000Z", name: "initial" },
+        ],
+        steps: [],
+      };
+      const olderRun = {
+        ...runningRun,
+        updatedAt: "2026-05-29T00:00:03.000Z",
+        events: [
+          { sequence: 2, type: "phase" as const, at: "2026-05-29T00:00:03.000Z", name: "older" },
+        ],
+      };
+      const newerRun = {
+        ...runningRun,
+        updatedAt: "2026-05-29T00:00:03.000Z",
+        events: [
+          { sequence: 3, type: "phase" as const, at: "2026-05-29T00:00:03.000Z", name: "newer" },
+        ],
+      };
+      const refreshes: Array<(run: typeof runningRun) => void> = [];
+      const api = {
+        workflows: {
+          getRun: mock(
+            async () =>
+              await new Promise<typeof runningRun>((resolve) => {
+                refreshes.push(resolve);
+              })
+          ),
+        },
+      };
+
+      const view = render(
+        <APIHarness client={api}>
+          <ThemeProvider forcedTheme="dark">
+            <TooltipProvider>
+              <WorkflowRunToolCall
+                args={{
+                  name: "deep-research",
+                  args: { topic: "workflow cards" },
+                  run_in_background: true,
+                }}
+                status="completed"
+                result={{ status: "running", runId: "wfr_ordered", result: null, run: runningRun }}
+              />
+            </TooltipProvider>
+          </ThemeProvider>
+        </APIHarness>
+      );
+
+      await waitFor(() => expect(refreshes.length).toBeGreaterThanOrEqual(2));
+      refreshes[1]?.(newerRun);
+      await waitFor(() => expect(view.getByText("newer")).toBeTruthy());
+
+      refreshes[0]?.(olderRun);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(view.getByText("newer")).toBeTruthy();
+      expect(view.queryByText("older")).toBeNull();
+    } finally {
+      globalThis.window.setInterval = originalSetInterval;
+      globalThis.window.clearInterval = originalClearInterval;
+    }
+  });
+
+  test("keeps newer poll snapshots when an older action response resolves later", async () => {
+    const runningRun = {
+      id: "wfr_action_ordered",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:action-ordered",
+      args: { topic: "workflow cards" },
+      status: "running" as const,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:01.000Z",
+      events: [
+        { sequence: 1, type: "phase" as const, at: "2026-05-29T00:00:01.000Z", name: "initial" },
+      ],
+      steps: [],
+    };
+    const olderRun = {
+      ...runningRun,
+      status: "interrupted" as const,
+      updatedAt: "2026-05-29T00:00:02.000Z",
+      events: [
+        { sequence: 2, type: "phase" as const, at: "2026-05-29T00:00:02.000Z", name: "older" },
+      ],
+    };
+    const newerRun = {
+      ...runningRun,
+      updatedAt: "2026-05-29T00:00:03.000Z",
+      events: [
+        { sequence: 3, type: "phase" as const, at: "2026-05-29T00:00:03.000Z", name: "newer" },
+      ],
+    };
+    const refreshes: Array<(run: typeof runningRun) => void> = [];
+    const pendingInterrupt: { resolve?: (run: typeof olderRun) => void } = {};
+    const api = {
+      workflows: {
+        getRun: mock(
+          async () =>
+            await new Promise<typeof runningRun>((resolve) => {
+              refreshes.push(resolve);
+            })
+        ),
+        interrupt: mock(
+          async () =>
+            await new Promise<typeof olderRun>((resolve) => {
+              pendingInterrupt.resolve = resolve;
+            })
+        ),
+      },
+    };
+
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowRunToolCall
+              args={{
+                name: "deep-research",
+                args: { topic: "workflow cards" },
+                run_in_background: true,
+              }}
+              status="completed"
+              result={{
+                status: "running",
+                runId: "wfr_action_ordered",
+                result: null,
+                run: runningRun,
+              }}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    await waitFor(() => expect(refreshes.length).toBe(1));
+    fireEvent.click(view.getByText("Interrupt workflow"));
+    await waitFor(() => expect(pendingInterrupt.resolve).toBeDefined());
+
+    refreshes[0]?.(newerRun);
+    await waitFor(() => expect(view.getByText("newer")).toBeTruthy());
+
+    const completeInterrupt = pendingInterrupt.resolve;
+    if (completeInterrupt == null) {
+      throw new Error("Expected interrupt to be pending");
+    }
+    completeInterrupt(olderRun);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(view.getByText("newer")).toBeTruthy();
+    expect(view.queryByText("older")).toBeNull();
   });
 
   test("refreshes a running workflow from the API and shows the completed result", async () => {

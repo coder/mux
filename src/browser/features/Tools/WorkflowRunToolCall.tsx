@@ -53,6 +53,8 @@ interface WorkflowRunToolCallProps {
   args: WorkflowRunToolArgs;
   result?: WorkflowRunToolResult;
   status?: ToolStatus;
+  workspaceId?: string;
+  startedAt?: number;
 }
 
 type WorkflowRunAction = "interrupt" | "resume";
@@ -84,10 +86,7 @@ async function updateWorkflowRunFromAction(input: {
       input.setResumingRunId(input.runId);
     }
     if ("id" in nextRun) {
-      input.setRefreshedRun(nextRun);
-      if (nextRun.status !== "interrupted") {
-        input.setResumingRunId(null);
-      }
+      input.setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, nextRun));
       return;
     }
     const refreshed = await input.api.workflows.getRun({
@@ -95,10 +94,7 @@ async function updateWorkflowRunFromAction(input: {
       runId: input.runId,
     });
     if (refreshed != null) {
-      input.setRefreshedRun(refreshed);
-      if (refreshed.status !== "interrupted") {
-        input.setResumingRunId(null);
-      }
+      input.setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, refreshed));
     }
   } catch (error) {
     if (input.action === "resume" && !resumeRequestAccepted) {
@@ -479,6 +475,115 @@ const AUTO_COLLAPSE_WORKFLOW_STATUSES = new Set(["completed"]);
 
 const REFRESHING_WORKFLOW_STATUSES = new Set(["pending", "running", "backgrounded"]);
 
+const FOREGROUND_WORKFLOW_DISCOVERY_SKEW_MS = 1_000;
+
+const DISCOVERABLE_FOREGROUND_WORKFLOW_STATUSES = new Set(["pending", "running", "backgrounded"]);
+
+function getWorkflowRunTimestamp(value: string): number | null {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function stringifyWorkflowArgs(value: unknown): string | null {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
+
+function workflowArgsEqual(left: unknown, right: unknown): boolean {
+  const leftJson = stringifyWorkflowArgs(left);
+  const rightJson = stringifyWorkflowArgs(right);
+  return leftJson != null && rightJson != null && leftJson === rightJson;
+}
+
+function isFreshEnoughForToolCall(run: WorkflowRunRecord, startedAt: number | undefined): boolean {
+  if (startedAt == null) {
+    return true;
+  }
+  const createdAt = getWorkflowRunTimestamp(run.createdAt);
+  if (createdAt == null) {
+    return true;
+  }
+  // Tool-call timestamps are monotonic stream timestamps; run.createdAt is workflow-service wall
+  // time. Allow a small skew for same-tick creation without accepting clearly stale runs.
+  return createdAt >= startedAt - FOREGROUND_WORKFLOW_DISCOVERY_SKEW_MS;
+}
+
+function getLatestWorkflowEventSequence(run: WorkflowRunRecord): number {
+  return run.events.reduce((maxSequence, event) => Math.max(maxSequence, event.sequence), 0);
+}
+
+function compareWorkflowRunSnapshots(left: WorkflowRunRecord, right: WorkflowRunRecord): number {
+  const leftUpdatedAt = getWorkflowRunTimestamp(left.updatedAt);
+  const rightUpdatedAt = getWorkflowRunTimestamp(right.updatedAt);
+  if (leftUpdatedAt != null && rightUpdatedAt != null && leftUpdatedAt !== rightUpdatedAt) {
+    return leftUpdatedAt - rightUpdatedAt;
+  }
+  if (leftUpdatedAt != null && rightUpdatedAt == null) {
+    return 1;
+  }
+  if (leftUpdatedAt == null && rightUpdatedAt != null) {
+    return -1;
+  }
+  return getLatestWorkflowEventSequence(left) - getLatestWorkflowEventSequence(right);
+}
+
+function getNewestWorkflowRunSnapshot(
+  current: WorkflowRunRecord | null,
+  next: WorkflowRunRecord
+): WorkflowRunRecord {
+  if (current == null || current.id !== next.id) {
+    return next;
+  }
+  return compareWorkflowRunSnapshots(current, next) > 0 ? current : next;
+}
+
+function findForegroundWorkflowRun(input: {
+  runs: readonly WorkflowRunRecord[];
+  args: WorkflowRunToolArgs;
+  startedAt?: number;
+}): WorkflowRunRecord | null {
+  assert(input.args.name.length > 0, "findForegroundWorkflowRun requires a workflow name");
+  const invocationArgs = input.args.args ?? {};
+  const candidates = input.runs.filter(
+    (run) =>
+      run.definition.name === input.args.name &&
+      DISCOVERABLE_FOREGROUND_WORKFLOW_STATUSES.has(run.status) &&
+      workflowArgsEqual(run.args ?? {}, invocationArgs) &&
+      isFreshEnoughForToolCall(run, input.startedAt)
+  );
+  if (candidates.length !== 1) {
+    return null;
+  }
+  return candidates[0] ?? null;
+}
+
+function selectWorkflowRunSnapshot(input: {
+  runId?: string;
+  baseRun?: WorkflowRunRecord;
+  refreshedRun: WorkflowRunRecord | null;
+}): { runId?: string; run?: WorkflowRunRecord } {
+  const runId = input.runId ?? input.baseRun?.id ?? input.refreshedRun?.id;
+  if (runId == null) {
+    return {};
+  }
+  if (input.refreshedRun?.id !== runId) {
+    return input.baseRun == null ? { runId } : { runId, run: input.baseRun };
+  }
+  if (input.baseRun?.id !== runId) {
+    return { runId, run: input.refreshedRun };
+  }
+  return {
+    runId,
+    run:
+      compareWorkflowRunSnapshots(input.refreshedRun, input.baseRun) >= 0
+        ? input.refreshedRun
+        : input.baseRun,
+  };
+}
+
 function getLatestResultEvent(run: WorkflowRunRecord | null | undefined): unknown {
   return run?.events.findLast((event) => event.type === "result")?.result;
 }
@@ -488,7 +593,7 @@ function shouldRefreshWorkflow(status: string): boolean {
 }
 
 function toToolStatus(status: string): ToolStatus {
-  if (status === "running") {
+  if (status === "running" || status === "executing") {
     return "executing";
   }
   if (
@@ -507,6 +612,8 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   args,
   result,
   status = "pending",
+  workspaceId,
+  startedAt,
 }) => {
   const apiState = useContext(APIContext);
   const commandRegistry = useOptionalCommandRegistry();
@@ -519,8 +626,13 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   const [refreshedRun, setRefreshedRun] = useState<WorkflowRunRecord | null>(null);
   const [resumingRunId, setResumingRunId] = useState<string | null>(null);
   const baseRun = successResult?.run;
-  const runId = successResult?.runId ?? baseRun?.id;
-  const run = refreshedRun?.id === runId ? refreshedRun : baseRun;
+  const selectedRun = selectWorkflowRunSnapshot({
+    runId: successResult?.runId,
+    baseRun,
+    refreshedRun,
+  });
+  const runId = selectedRun.runId;
+  const run = selectedRun.run;
   const displayStatus = run?.status ?? successResult?.status ?? status;
   const resultValue = successResult?.result ?? getLatestResultEvent(run);
   const reportMarkdown = getReportMarkdown(resultValue);
@@ -555,14 +667,31 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     useState<WorkflowPromotionTarget | null>(null);
   const savingPromotionTargetRef = useRef<WorkflowPromotionTarget | null>(null);
   const displayDefinition = promotedDefinition ?? run?.definition;
+  // A uniquely discovered foreground run is actionable before the blocking tool call returns.
+  const discoveredForegroundRunConfirmed =
+    status === "executing" &&
+    args.run_in_background !== true &&
+    workspaceId != null &&
+    refreshedRun != null &&
+    runId === refreshedRun.id &&
+    refreshedRun.workspaceId === workspaceId;
+  const runIdentityConfirmed =
+    successResult?.runId != null || baseRun?.id != null || discoveredForegroundRunConfirmed;
   const canInterrupt =
+    runIdentityConfirmed &&
     apiState?.api != null &&
     run?.workspaceId != null &&
     (displayStatus === "running" || displayStatus === "backgrounded");
   const canResume =
-    apiState?.api != null && run?.workspaceId != null && displayStatus === "interrupted";
+    runIdentityConfirmed &&
+    apiState?.api != null &&
+    run?.workspaceId != null &&
+    displayStatus === "interrupted";
   const canPromote =
-    run?.workspaceId != null && run.definition.scope === "scratch" && promotedDefinition == null;
+    runIdentityConfirmed &&
+    run?.workspaceId != null &&
+    run.definition.scope === "scratch" &&
+    promotedDefinition == null;
   const canSavePromotedWorkflow =
     apiState?.api != null &&
     runId != null &&
@@ -627,6 +756,12 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
         setSavingPromotionTarget(null);
       });
   };
+
+  useEffect(() => {
+    if (resumingRunId === runId && run?.status !== "interrupted") {
+      setResumingRunId(null);
+    }
+  }, [resumingRunId, run?.status, runId]);
 
   const saveScratchWorkflowRef = useRef(saveScratchWorkflow);
   saveScratchWorkflowRef.current = saveScratchWorkflow;
@@ -723,6 +858,40 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   useEffect(() => {
     if (
       apiState?.api == null ||
+      workspaceId == null ||
+      runId != null ||
+      status !== "executing" ||
+      args.run_in_background === true
+    ) {
+      return;
+    }
+
+    let ignore = false;
+    const discover = async () => {
+      try {
+        const runs = await apiState.api.workflows.listRuns({ workspaceId });
+        const foregroundRun = findForegroundWorkflowRun({ runs, args, startedAt });
+        if (!ignore && foregroundRun != null) {
+          setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, foregroundRun));
+        }
+      } catch (error) {
+        console.error("Failed to discover foreground workflow run:", error);
+      }
+    };
+
+    void discover();
+    const interval = window.setInterval(() => {
+      void discover();
+    }, 2_000);
+    return () => {
+      ignore = true;
+      window.clearInterval(interval);
+    };
+  }, [apiState?.api, args, runId, startedAt, status, workspaceId]);
+
+  useEffect(() => {
+    if (
+      apiState?.api == null ||
       runId == null ||
       run?.workspaceId == null ||
       (!shouldRefreshWorkflow(displayStatus) && resumingRunId !== runId)
@@ -738,7 +907,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
           runId,
         });
         if (!ignore && nextRun != null) {
-          setRefreshedRun(nextRun);
+          setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, nextRun));
           if (nextRun.status !== "interrupted") {
             setResumingRunId(null);
           }
