@@ -31,6 +31,7 @@ import {
   AgentIdSchema,
   AgentSkillPackageSchema,
   SkillNameSchema,
+  WorkflowActionDescriptorSchema,
   WorkflowDefinitionDescriptorSchema,
   WorkflowNameSchema,
   WorkflowRunRecordSchema,
@@ -809,6 +810,14 @@ export const WorkflowReadToolResultSchema = z
   })
   .strict();
 
+export const WorkflowActionListToolArgsSchema = z.object({}).strict();
+
+export const WorkflowActionListToolResultSchema = z
+  .object({
+    actions: z.array(WorkflowActionDescriptorSchema),
+  })
+  .strict();
+
 export const WorkflowRunToolArgsSchema = z
   .object({
     name: WorkflowNameSchema,
@@ -1556,6 +1565,11 @@ export const TOOL_DEFINITIONS = {
     description:
       "Read a durable workflow definition's descriptor and source by name. Use this to inspect expected args or understand a workflow before running it. Before authoring new workflow JS, read the built-in workflow-authoring skill for available globals, schema limits, and replay rules.",
     schema: WorkflowReadToolArgsSchema,
+  },
+  workflow_action_list: {
+    description:
+      "List workflow actions available in this workspace, including built-in, global, and trusted project actions. Use this before authoring workflow JS that calls action.<namespace>.<name>; each returned action includes metadata with inputSchema/outputSchema, effect, permissions, timeoutMs, and hasReconcile when executable.",
+    schema: WorkflowActionListToolArgsSchema,
   },
   workflow_run: {
     description:
@@ -2339,7 +2353,9 @@ export function getAvailableTools(
     "task_apply_git_patch",
     "task_terminate",
     "task_list",
-    ...(enableDynamicWorkflows ? ["workflow_list", "workflow_read", "workflow_run"] : []),
+    ...(enableDynamicWorkflows
+      ? ["workflow_list", "workflow_read", "workflow_action_list", "workflow_run"]
+      : []),
     ...(enableAgentReport ? ["agent_report"] : []),
     "get_goal",
     "complete_goal",

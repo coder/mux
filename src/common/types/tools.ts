@@ -30,6 +30,7 @@ import type {
   TaskTerminateToolResultSchema,
   TOOL_DEFINITIONS,
   WebFetchToolResultSchema,
+  WorkflowActionListToolResultSchema,
   WorkflowListToolResultSchema,
   WorkflowReadToolResultSchema,
   WorkflowRunToolResultSchema,
@@ -274,6 +275,17 @@ export type WorkflowReadToolArgs = z.infer<typeof TOOL_DEFINITIONS.workflow_read
 export type WorkflowReadToolSuccessResult = z.infer<typeof WorkflowReadToolResultSchema>;
 
 export type WorkflowReadToolResult = WorkflowReadToolSuccessResult | ToolErrorResult;
+
+// Workflow Action Tool Types
+export type WorkflowActionListToolArgs = z.infer<
+  typeof TOOL_DEFINITIONS.workflow_action_list.schema
+>;
+
+export type WorkflowActionListToolSuccessResult = z.infer<
+  typeof WorkflowActionListToolResultSchema
+>;
+
+export type WorkflowActionListToolResult = WorkflowActionListToolSuccessResult | ToolErrorResult;
 
 // Workflow Run Tool Types
 export type WorkflowRunToolArgs = z.infer<typeof TOOL_DEFINITIONS.workflow_run.schema>;

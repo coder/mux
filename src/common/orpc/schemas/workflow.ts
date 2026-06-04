@@ -35,6 +35,8 @@ export const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   ])
 );
 
+export const WorkflowActionScopeSchema = z.enum(["project", "global", "built-in"]);
+
 export const WorkflowActionEffectSchema = z.enum(["read", "workspace", "external"]);
 
 export const WorkflowActionMetadataSchema = z.object({
@@ -51,6 +53,24 @@ export const WorkflowActionMetadataSchema = z.object({
     .max(24 * 60 * 60 * 1000)
     .optional(),
 });
+
+const WorkflowActionDescriptorBaseSchema = z.object({
+  name: z.string().min(1),
+  scope: WorkflowActionScopeSchema,
+  sourcePath: z.string().min(1),
+});
+
+export const WorkflowActionDescriptorSchema = z.discriminatedUnion("executable", [
+  WorkflowActionDescriptorBaseSchema.extend({
+    executable: z.literal(true),
+    metadata: WorkflowActionMetadataSchema,
+    hasReconcile: z.boolean(),
+  }).strict(),
+  WorkflowActionDescriptorBaseSchema.extend({
+    executable: z.literal(false),
+    blockedReason: z.string().min(1),
+  }).strict(),
+]);
 
 export const WorkflowDefinitionDescriptorSchema = z
   .object({

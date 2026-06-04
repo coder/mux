@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
+import { WorkflowActionRegistry } from "./WorkflowActionRegistry";
 import { WorkflowDefinitionStore } from "./WorkflowDefinitionStore";
 import { WorkflowRunStore } from "./WorkflowRunStore";
 import { WorkflowService } from "./WorkflowService";
@@ -70,6 +71,110 @@ async function waitForWorkflowRunFileStatus(
 }
 
 describe("WorkflowService", () => {
+  test("lists workflow actions with statically parsed metadata", async () => {
+    using tmp = new DisposableTempDir("workflow-service-actions");
+    const workspaceRoot = path.join(tmp.path, "project");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const projectActionRoot = path.join(workspaceRoot, ".mux", "actions");
+    const globalActionRoot = path.join(tmp.path, "mux-home", "actions");
+    await fs.mkdir(projectActionRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(projectActionRoot, "echo.js"),
+      `
+        module.exports.metadata = {
+          version: 1,
+          description: "Echo action",
+          effect: "read",
+          inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" } } },
+          outputSchema: { type: "object" },
+        };
+        module.exports.execute = async function (input) { return input; };
+      `,
+      "utf-8"
+    );
+
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: projectActionRoot,
+        globalRoot: globalActionRoot,
+      }),
+      runStore: new WorkflowRunStore({ sessionDir: tmp.path }),
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          return { taskId: "task_1", reportMarkdown: "unused" };
+        },
+      },
+      runnerId: "runner-a",
+    });
+
+    const actions = await service.listActions({ projectTrusted: true });
+    const action = actions.find((candidate) => candidate.name === "echo");
+
+    expect(action).toEqual({
+      name: "echo",
+      scope: "project",
+      sourcePath: path.join(projectActionRoot, "echo.js"),
+      executable: true,
+      metadata: {
+        version: 1,
+        description: "Echo action",
+        effect: "read",
+        inputSchema: {
+          type: "object",
+          required: ["name"],
+          properties: { name: { type: "string" } },
+        },
+        outputSchema: { type: "object" },
+      },
+      hasReconcile: false,
+    });
+  });
+
+  test("keeps action discovery available when one action has invalid metadata", async () => {
+    using tmp = new DisposableTempDir("workflow-service-actions-invalid");
+    const workspaceRoot = path.join(tmp.path, "project");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const projectActionRoot = path.join(workspaceRoot, ".mux", "actions");
+    const globalActionRoot = path.join(tmp.path, "mux-home", "actions");
+    await fs.mkdir(globalActionRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(globalActionRoot, "broken.js"),
+      `module.exports.metadata = { version: 1, description: "Missing effect" };`,
+      "utf-8"
+    );
+
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: projectActionRoot,
+        globalRoot: globalActionRoot,
+      }),
+      runStore: new WorkflowRunStore({ sessionDir: tmp.path }),
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          return { taskId: "task_1", reportMarkdown: "unused" };
+        },
+      },
+      runnerId: "runner-a",
+    });
+
+    const actions = await service.listActions({ projectTrusted: true });
+    const action = actions.find((candidate) => candidate.name === "broken");
+
+    expect(action).toMatchObject({
+      name: "broken",
+      scope: "global",
+      sourcePath: path.join(globalActionRoot, "broken.js"),
+      executable: false,
+    });
+    expect(action?.executable === false ? action.blockedReason : "").toContain("effect");
+  });
+
   test("starts a named workflow and persists the captured definition source", async () => {
     using tmp = new DisposableTempDir("workflow-service");
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");

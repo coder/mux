@@ -1,11 +1,13 @@
 import * as crypto from "node:crypto";
 
 import type {
+  WorkflowActionDescriptor,
   WorkflowDefinitionDescriptor,
   WorkflowRunRecord,
   WorkflowRunStatus,
 } from "@/common/types/workflow";
 import assert from "@/common/utils/assert";
+import { getErrorMessage } from "@/common/utils/errors";
 import type { IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import type { WorkflowActionRegistry } from "./WorkflowActionRegistry";
 import { WorkflowActionRunner } from "./WorkflowActionRunner";
@@ -143,6 +145,39 @@ export class WorkflowService {
     projectTrusted: boolean;
   }): Promise<WorkflowDefinitionDescriptor[]> {
     return await this.definitionStore.listDefinitions(options);
+  }
+
+  async listActions(options: { projectTrusted: boolean }): Promise<WorkflowActionDescriptor[]> {
+    const registry = this.actionRegistry;
+    if (registry == null) {
+      return [];
+    }
+
+    const actions = await registry.listActions(options);
+    const descriptors: WorkflowActionDescriptor[] = [];
+    for (const action of actions) {
+      try {
+        const resolvedAction = await registry.resolveAction(action.name, options);
+        const description = await this.actionRunner.describe(resolvedAction);
+        descriptors.push({
+          name: resolvedAction.name,
+          scope: resolvedAction.scope,
+          sourcePath: resolvedAction.sourcePath,
+          executable: true,
+          metadata: description.metadata,
+          hasReconcile: description.hasReconcile,
+        });
+      } catch (error) {
+        descriptors.push({
+          name: action.name,
+          scope: action.scope,
+          sourcePath: action.sourcePath,
+          executable: false,
+          blockedReason: getErrorMessage(error),
+        });
+      }
+    }
+    return descriptors;
   }
 
   async readDefinition(input: {

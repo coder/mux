@@ -414,11 +414,13 @@ describe("TOOL_DEFINITIONS", () => {
     const disabledTools = getAvailableTools("openai:gpt-4o", { enableDynamicWorkflows: false });
     expect(disabledTools).not.toContain("workflow_list");
     expect(disabledTools).not.toContain("workflow_read");
+    expect(disabledTools).not.toContain("workflow_action_list");
     expect(disabledTools).not.toContain("workflow_run");
 
     const enabledTools = getAvailableTools("openai:gpt-4o", { enableDynamicWorkflows: true });
     expect(enabledTools).toContain("workflow_list");
     expect(enabledTools).toContain("workflow_read");
+    expect(enabledTools).toContain("workflow_action_list");
     expect(enabledTools).toContain("workflow_run");
   });
 
