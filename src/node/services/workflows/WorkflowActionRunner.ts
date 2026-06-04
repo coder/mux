@@ -1,5 +1,6 @@
 import * as crypto from "node:crypto";
 import { spawn } from "node:child_process";
+import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
@@ -59,11 +60,14 @@ interface WorkflowActionRunnerPayload {
   input: unknown;
   cwd: string;
   artifactDir: string;
+  execPidPath: string;
   resultPath: string;
 }
 
 const WORKFLOW_ACTION_STDIO_LIMIT_BYTES = 64 * 1024;
 const WORKFLOW_ACTION_RESULT_LIMIT_BYTES = 1024 * 1024;
+const WORKFLOW_ACTION_EXEC_PID_LIMIT_BYTES = 16 * 1024;
+const WORKFLOW_ACTION_EXEC_PID_FILENAME = ".mux-action-exec-pids.json";
 const WORKFLOW_ACTION_RESULT_FILENAME = ".mux-action-result.json";
 
 interface BoundedTextCapture {
@@ -236,7 +240,9 @@ export class WorkflowActionRunner {
   }> {
     await fs.mkdir(options.artifactDir, { recursive: true });
     const resultPath = path.join(options.artifactDir, WORKFLOW_ACTION_RESULT_FILENAME);
+    const execPidPath = path.join(options.artifactDir, WORKFLOW_ACTION_EXEC_PID_FILENAME);
     await fs.rm(resultPath, { force: true });
+    await fs.rm(execPidPath, { force: true });
     const attemptId = crypto.randomUUID();
     const payload: WorkflowActionRunnerPayload = {
       attemptId,
@@ -248,6 +254,7 @@ export class WorkflowActionRunner {
       input: options.input,
       cwd: options.cwd,
       artifactDir: options.artifactDir,
+      execPidPath,
       resultPath,
     };
     const startedAt = Date.now();
@@ -267,12 +274,29 @@ export class WorkflowActionRunner {
     let signal: string | null = null;
     let timedOut = false;
     let aborted = false;
+    let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
     const killChild = () => {
       if (child.exitCode !== null || child.signalCode !== null) {
         return;
       }
+      killTrackedExecProcesses(execPidPath);
       if (child.pid != null) {
-        killProcessTree(child.pid);
+        if (process.platform === "win32") {
+          killProcessTree(child.pid);
+        } else {
+          try {
+            process.kill(-child.pid, "SIGTERM");
+          } catch {
+            killProcessTree(child.pid);
+          }
+          forceKillTimer ??= setTimeout(() => {
+            killTrackedExecProcesses(execPidPath);
+            if (child.pid != null) {
+              killProcessTree(child.pid);
+            }
+          }, 100);
+          forceKillTimer.unref?.();
+        }
       } else {
         child.kill("SIGKILL");
       }
@@ -317,6 +341,10 @@ export class WorkflowActionRunner {
     } finally {
       clearTimeout(timeout);
       options.abortSignal?.removeEventListener("abort", abortChild);
+      if (forceKillTimer != null) {
+        clearTimeout(forceKillTimer);
+      }
+      await fs.rm(execPidPath, { force: true });
     }
 
     const durationMs = Date.now() - startedAt;
@@ -459,6 +487,26 @@ async function readArtifactListing(resultPath: string): Promise<WorkflowActionAr
     return [];
   }
   return [];
+}
+
+function killTrackedExecProcesses(execPidPath: string): void {
+  let rawPids: unknown;
+  try {
+    if (fsSync.statSync(execPidPath).size > WORKFLOW_ACTION_EXEC_PID_LIMIT_BYTES) {
+      return;
+    }
+    rawPids = JSON.parse(fsSync.readFileSync(execPidPath, "utf-8"));
+  } catch {
+    return;
+  }
+  if (!Array.isArray(rawPids)) {
+    return;
+  }
+  for (const rawPid of rawPids) {
+    if (typeof rawPid === "number" && Number.isFinite(rawPid) && rawPid > 0) {
+      killProcessTree(rawPid);
+    }
+  }
 }
 
 async function statOptional(filePath: string): Promise<Awaited<ReturnType<typeof fs.stat>> | null> {
@@ -793,6 +841,7 @@ class StaticActionLiteralParser {
 
 const WORKFLOW_ACTION_CHILD_SOURCE = String.raw`
 const { createRequire } = require("node:module");
+const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { spawn, execFileSync } = require("node:child_process");
@@ -869,6 +918,40 @@ function killProcessTree(pid) {
     killPid(pid);
   }
 }
+
+const activeExecPids = new Set();
+
+function writeExecPidFile(execPidPath) {
+  if (typeof execPidPath !== "string" || execPidPath.length === 0) return;
+  try {
+    fsSync.writeFileSync(execPidPath, JSON.stringify(Array.from(activeExecPids)), "utf-8");
+  } catch {}
+}
+
+function trackExecPid(execPidPath, pid) {
+  if (!Number.isFinite(pid) || pid <= 0) return;
+  activeExecPids.add(pid);
+  writeExecPidFile(execPidPath);
+}
+
+function untrackExecPid(execPidPath, pid) {
+  activeExecPids.delete(pid);
+  writeExecPidFile(execPidPath);
+}
+
+function killActiveExecProcesses() {
+  for (const pid of Array.from(activeExecPids)) {
+    killProcessTree(pid);
+  }
+}
+
+function handleShutdown() {
+  killActiveExecProcesses();
+  process.exit(143);
+}
+
+process.once("SIGTERM", handleShutdown);
+process.once("SIGINT", handleShutdown);
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -969,8 +1052,11 @@ function assertSafeArtifactName(name) {
   if (path.isAbsolute(name) || name.split(/[\\/]+/).includes("..")) {
     throw new Error("Artifact name must stay inside the action artifact directory");
   }
-  if (path.normalize(name) === ".mux-action-result.json") {
-    throw new Error("Artifact name is reserved for workflow action results");
+  if (
+    path.normalize(name) === ".mux-action-result.json" ||
+    path.normalize(name) === ".mux-action-exec-pids.json"
+  ) {
+    throw new Error("Artifact name is reserved for workflow action internals");
   }
 }
 
@@ -983,10 +1069,13 @@ async function execCommand(command, args = [], options = {}) {
   }
   const child = spawn(command, args, {
     cwd: options.cwd,
-    detached: false,
+    detached: process.platform !== "win32",
     env: options.env ? { ...process.env, ...options.env } : process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  if (child.pid != null) {
+    trackExecPid(options.execPidPath, child.pid);
+  }
   const stdout = createCapture();
   const stderr = createCapture();
   let exitCode = null;
@@ -1015,12 +1104,19 @@ async function execCommand(command, args = [], options = {}) {
     exitCode = code;
     signal = childSignal;
   });
-  await new Promise((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", resolve);
-  });
-  if (timer != null) {
-    clearTimeout(timer);
+  try {
+    await new Promise((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", resolve);
+    });
+  } finally {
+    if (timer != null) {
+      clearTimeout(timer);
+    }
+    if (child.pid != null) {
+      killProcessTree(child.pid);
+      untrackExecPid(options.execPidPath, child.pid);
+    }
   }
   return { exitCode, signal, stdout: finishCapture(stdout), stderr: finishCapture(stderr), timedOut };
 }
@@ -1062,7 +1158,8 @@ async function main() {
         effect: metadata.effect,
       },
       cwd: payload.cwd,
-      exec: async (command, args, options = {}) => await execCommand(command, args, { cwd: payload.cwd, ...options }),
+      exec: async (command, args, options = {}) =>
+        await execCommand(command, args, { cwd: payload.cwd, ...options, execPidPath: payload.execPidPath }),
       writeArtifact: async (name, value) => {
         assertSafeArtifactName(name);
         if (artifacts.length >= MAX_ARTIFACT_COUNT) {

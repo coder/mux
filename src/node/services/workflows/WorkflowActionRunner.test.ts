@@ -222,7 +222,7 @@ describe("WorkflowActionRunner", () => {
         timeoutMs: 10_000,
         artifactDir: path.join(tmp.path, "artifacts"),
       }),
-      /reserved for workflow action results/
+      /reserved for workflow action internals/
     );
   });
 
@@ -250,6 +250,32 @@ describe("WorkflowActionRunner", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 500));
 
+    await expectRejects(fs.access(markerPath), /no such file|ENOENT/i);
+  });
+
+  test("cleans up ctx.exec descendants left behind by a completed command", async () => {
+    using tmp = new DisposableTempDir("workflow-action-exec-background-cleanup");
+    const markerPath = path.join(tmp.path, "survived.txt");
+    const sourcePath = path.join(tmp.path, "exec-background-cleanup.js");
+    const source = `
+      module.exports.metadata = { version: 1, description: "Exec background cleanup", effect: "read" };
+      module.exports.execute = async (_input, ctx) => {
+        const result = await ctx.exec("sh", ["-c", ${JSON.stringify(`(sleep 0.25; echo survived > ${markerPath}) >/dev/null 2>&1 &`)}]);
+        return { exitCode: result.exitCode };
+      };
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    const result = await runner.execute(createAction(sourcePath, source), {
+      input: null,
+      cwd: tmp.path,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts"),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    expect(result.output).toEqual({ exitCode: 0 });
     await expectRejects(fs.access(markerPath), /no such file|ENOENT/i);
   });
 
