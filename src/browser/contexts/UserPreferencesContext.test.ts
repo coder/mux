@@ -2,11 +2,17 @@ import { describe, expect, test } from "bun:test";
 
 import {
   createUserPreferenceSaveQueue,
+  hydrateUserPreferencesLocalCache,
   mergeMissingLocalPreferences,
   overlayDirtyLocalValues,
   prunePreferenceScopes,
 } from "./UserPreferencesContext";
-import { PROJECT_ORDER_KEY, UI_THEME_KEY, VIM_ENABLED_KEY } from "@/common/constants/storage";
+import {
+  LAUNCH_BEHAVIOR_KEY,
+  PROJECT_ORDER_KEY,
+  UI_THEME_KEY,
+  VIM_ENABLED_KEY,
+} from "@/common/constants/storage";
 import type { UserPreferences } from "@/common/config/schemas/userPreferences";
 
 class MemoryStorage implements Storage {
@@ -58,6 +64,23 @@ async function waitUntil(assertion: () => void): Promise<void> {
 }
 
 describe("UserPreferencesProvider bridge helpers", () => {
+  test("hydrates backend preferences into the local startup cache", async () => {
+    const storage = new MemoryStorage();
+
+    await hydrateUserPreferencesLocalCache({
+      storage,
+      configClient: {
+        getConfig: () =>
+          Promise.resolve({
+            userPreferences: { navigation: { launchBehavior: "last-workspace" } },
+          }),
+        saveConfig: () => Promise.resolve(),
+      },
+    });
+
+    expect(JSON.parse(storage.getItem(LAUNCH_BEHAVIOR_KEY) ?? "null")).toBe("last-workspace");
+  });
+
   test("backfills only local preferences that are missing from backend config", () => {
     const storage = new MemoryStorage();
     storage.setJSON(UI_THEME_KEY, "light");
@@ -135,26 +158,23 @@ describe("UserPreferencesProvider bridge helpers", () => {
   test("save queue serializes in-flight saves and persists the latest pending preferences", async () => {
     const controller = new AbortController();
     const saves: Array<UserPreferences | null | undefined> = [];
-    const firstGetConfig = { release: undefined as (() => void) | undefined };
-    let getConfigCalls = 0;
+    const firstSave = { release: undefined as (() => void) | undefined };
+    let saveCalls = 0;
     let currentPreferences: UserPreferences | undefined = { appearance: { theme: "dark" } };
     let dirtyClears = 0;
 
     const queue = createUserPreferenceSaveQueue({
       signal: controller.signal,
       configClient: {
-        getConfig: async () => {
-          getConfigCalls += 1;
-          if (getConfigCalls === 1) {
+        getConfig: () => Promise.resolve({}),
+        saveConfig: async (input) => {
+          saveCalls += 1;
+          if (saveCalls === 1) {
             await new Promise<void>((resolve) => {
-              firstGetConfig.release = resolve;
+              firstSave.release = resolve;
             });
           }
-          return { taskSettings: "task-settings" };
-        },
-        saveConfig: (input) => {
           saves.push(input.userPreferences);
-          return Promise.resolve();
         },
       },
       getCurrentPreferences: () => currentPreferences,
@@ -170,10 +190,10 @@ describe("UserPreferencesProvider bridge helpers", () => {
     currentPreferences = { appearance: { theme: "light" } };
     queue(currentPreferences);
 
-    await waitUntil(() => expect(firstGetConfig.release).toBeDefined());
-    const releaseFirst = firstGetConfig.release;
+    await waitUntil(() => expect(firstSave.release).toBeDefined());
+    const releaseFirst = firstSave.release;
     if (!releaseFirst) {
-      throw new Error("Expected first getConfig release callback");
+      throw new Error("Expected first save release callback");
     }
     releaseFirst();
 

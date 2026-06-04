@@ -487,6 +487,28 @@ describe("router config.saveConfig", () => {
     });
   });
 
+  test("saveConfig preserves task settings when user preference saves omit them", async () => {
+    await config.editConfig((current) => ({
+      ...current,
+      taskSettings: {
+        ...DEFAULT_TASK_SETTINGS,
+        maxParallelAgentTasks: 7,
+        preserveSubagentsUntilArchive: true,
+      },
+    }));
+    const client = createRouterClient(router(), { context: createContext() });
+
+    await client.config.saveConfig({
+      userPreferences: { appearance: { theme: "dark" } },
+    });
+
+    expect(config.loadConfigOrDefault().taskSettings).toEqual({
+      ...DEFAULT_TASK_SETTINGS,
+      maxParallelAgentTasks: 7,
+      preserveSubagentsUntilArchive: true,
+    });
+  });
+
   test("saveConfig preserves existing user preferences when omitted", async () => {
     await config.editConfig((current) => ({
       ...current,

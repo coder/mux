@@ -2095,7 +2095,7 @@ export const config = {
   saveConfig: {
     input: z.object({
       userPreferences: UserPreferencesSchema.nullish(),
-      taskSettings: ResolvedTaskSettingsSchema,
+      taskSettings: ResolvedTaskSettingsSchema.nullish(),
       advisorModelString: AdvisorModelStringSchema.nullish(),
       advisorThinkingLevel: AdvisorThinkingLevelSchema.nullish(),
       advisorMaxUsesPerTurn: AdvisorMaxUsesPerTurnSchema.nullish(),

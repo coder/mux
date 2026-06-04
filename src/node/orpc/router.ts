@@ -1152,11 +1152,14 @@ export const router = (authToken?: string) => {
         .output(schemas.config.saveConfig.output)
         .handler(async ({ context, input }) => {
           await context.config.editConfig((config) => {
-            const normalizedTaskSettings = mergeTaskSettingsForConfigSave(
-              config.taskSettings,
-              input.taskSettings
-            );
-            const result = { ...config, taskSettings: normalizedTaskSettings };
+            const result = { ...config };
+
+            if (input.taskSettings != null) {
+              result.taskSettings = mergeTaskSettingsForConfigSave(
+                config.taskSettings,
+                input.taskSettings
+              );
+            }
 
             if (input.userPreferences !== undefined) {
               result.userPreferences = normalizeUserPreferences(input.userPreferences);

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import App from "../../App";
 import { AuthTokenModal } from "../AuthTokenModal/AuthTokenModal";
@@ -18,8 +18,95 @@ import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
 import { WorkspaceProvider, useWorkspaceContext } from "../../contexts/WorkspaceContext";
 import { RouterProvider } from "../../contexts/RouterContext";
 import { TelemetryEnabledProvider } from "../../contexts/TelemetryEnabledContext";
-import { UserPreferencesProvider } from "@/browser/contexts/UserPreferencesContext";
+import {
+  hydrateUserPreferencesLocalCache,
+  UserPreferencesProvider,
+} from "@/browser/contexts/UserPreferencesContext";
 import { TerminalRouterProvider } from "../../terminal/TerminalRouterContext";
+
+const USER_PREFERENCES_BOOTSTRAP_TIMEOUT_MS = 2000;
+
+function UserPreferencesStartupGate(props: { children: ReactNode }) {
+  const apiState = useAPI();
+  const [ready, setReady] = useState(false);
+  const bootstrappedRef = useRef(false);
+
+  useEffect(() => {
+    if (bootstrappedRef.current || !apiState.api) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<"timeout">((resolve) => {
+      timeoutId = setTimeout(resolve, USER_PREFERENCES_BOOTSTRAP_TIMEOUT_MS, "timeout");
+    });
+    const hydratePromise = hydrateUserPreferencesLocalCache({
+      configClient: apiState.api.config,
+      signal: abortController.signal,
+    }).catch((error) => {
+      console.warn("Failed to bootstrap user preferences:", error);
+      return undefined;
+    });
+
+    const startup = Promise.race([hydratePromise, timeoutPromise]);
+    // User preference hydration must happen before RouterProvider reads launch behavior, but
+    // startup still needs a hard fallback so a slow backend cannot trap users on the boot screen.
+    void startup
+      .then((result) => {
+        if (result === "timeout") {
+          abortController.abort();
+        }
+        if (abortController.signal.aborted && result !== "timeout") {
+          return;
+        }
+
+        bootstrappedRef.current = true;
+        setReady(true);
+      })
+      .finally(() => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      });
+
+    return () => {
+      abortController.abort();
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [apiState.api]);
+
+  if (bootstrappedRef.current || ready) {
+    return <>{props.children}</>;
+  }
+
+  if (apiState.status === "auth_required") {
+    return (
+      <AuthTokenModal
+        isOpen={true}
+        onSubmit={apiState.authenticate}
+        onSessionAuthenticated={apiState.retry}
+        error={apiState.error}
+      />
+    );
+  }
+
+  if (apiState.status === "error") {
+    return <StartupConnectionError error={apiState.error} onRetry={apiState.retry} />;
+  }
+
+  return (
+    <LoadingScreen
+      statusText={
+        apiState.status === "reconnecting"
+          ? `Reconnecting to backend (attempt ${apiState.attempt})...`
+          : "Loading preferences"
+      }
+    />
+  );
+}
 
 interface AppLoaderProps {
   /** Optional pre-created ORPC api?. If provided, skips internal connection setup. */
@@ -42,17 +129,19 @@ export function AppLoader(props: AppLoaderProps) {
   return (
     <ThemeProvider>
       <APIProvider client={props.client}>
-        <PolicyProvider>
-          <RouterProvider>
-            <ProjectProvider>
-              <WorkspaceProvider>
-                <UserPreferencesProvider>
-                  <AppLoaderInner />
-                </UserPreferencesProvider>
-              </WorkspaceProvider>
-            </ProjectProvider>
-          </RouterProvider>
-        </PolicyProvider>
+        <UserPreferencesStartupGate>
+          <PolicyProvider>
+            <RouterProvider>
+              <ProjectProvider>
+                <WorkspaceProvider>
+                  <UserPreferencesProvider>
+                    <AppLoaderInner />
+                  </UserPreferencesProvider>
+                </WorkspaceProvider>
+              </ProjectProvider>
+            </RouterProvider>
+          </PolicyProvider>
+        </UserPreferencesStartupGate>
       </APIProvider>
     </ThemeProvider>
   );

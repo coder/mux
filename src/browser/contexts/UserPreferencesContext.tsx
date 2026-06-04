@@ -32,12 +32,22 @@ function getLocalStorage(): Storage | null {
   return window.localStorage;
 }
 
-function writeBackendEntryToLocalStorage(entry: { key: string; value: unknown }) {
-  syncPersistedStateFromBackend(entry.key, entry.value);
+function writeBackendEntryToLocalStorage(entry: { key: string; value: unknown }, storage: Storage) {
+  if (storage === getLocalStorage()) {
+    syncPersistedStateFromBackend(entry.key, entry.value);
+    return;
+  }
+
+  storage.setItem(entry.key, JSON.stringify(entry.value));
 }
 
-function removeBackendEntryFromLocalStorage(key: string) {
-  syncPersistedStateFromBackend(key, undefined);
+function removeBackendEntryFromLocalStorage(key: string, storage: Storage) {
+  if (storage === getLocalStorage()) {
+    syncPersistedStateFromBackend(key, undefined);
+    return;
+  }
+
+  storage.removeItem(key);
 }
 
 export function overlayDirtyLocalValues(
@@ -86,7 +96,7 @@ function mirrorBackendPreferences(params: {
 
   for (const entry of backendEntries) {
     if (!params.dirtyKeys.has(entry.key)) {
-      writeBackendEntryToLocalStorage(entry);
+      writeBackendEntryToLocalStorage(entry, params.storage);
     }
   }
 
@@ -96,7 +106,7 @@ function mirrorBackendPreferences(params: {
 
   for (const key of getStoredUserPreferenceKeys(params.storage)) {
     if (!backendKeys.has(key) && !params.dirtyKeys.has(key)) {
-      removeBackendEntryFromLocalStorage(key);
+      removeBackendEntryFromLocalStorage(key, params.storage);
     }
   }
 }
@@ -148,16 +158,39 @@ export function prunePreferenceScopes(params: {
   return normalizeUserPreferences(next);
 }
 
-interface UserPreferenceConfigClient<TTaskSettings> {
-  getConfig: () => Promise<{ taskSettings: TTaskSettings; userPreferences?: unknown }>;
-  saveConfig: (input: {
-    taskSettings: TTaskSettings;
-    userPreferences?: UserPreferences | null;
-  }) => Promise<void>;
+interface UserPreferenceConfigClient {
+  getConfig: () => Promise<{ userPreferences?: unknown }>;
+  saveConfig: (input: { userPreferences?: UserPreferences | null }) => Promise<void>;
 }
 
-export function createUserPreferenceSaveQueue<TTaskSettings>(params: {
-  configClient: UserPreferenceConfigClient<TTaskSettings>;
+export async function hydrateUserPreferencesLocalCache(params: {
+  configClient: UserPreferenceConfigClient;
+  signal?: AbortSignal;
+  storage?: Storage | null;
+}): Promise<UserPreferences | undefined> {
+  const storage = params.storage ?? getLocalStorage();
+  if (!storage || params.signal?.aborted) {
+    return undefined;
+  }
+
+  const config = await params.configClient.getConfig();
+  if (params.signal?.aborted) {
+    return undefined;
+  }
+
+  const backendPreferences = normalizeUserPreferences(config.userPreferences);
+  mirrorBackendPreferences({
+    backendPreferences,
+    dirtyKeys: new Set(),
+    initial: true,
+    storage,
+  });
+
+  return mergeMissingLocalPreferences(backendPreferences, storage);
+}
+
+export function createUserPreferenceSaveQueue(params: {
+  configClient: UserPreferenceConfigClient;
   signal: AbortSignal;
   getCurrentPreferences: () => UserPreferences | undefined;
   clearDirtyKeys: () => void;
@@ -173,15 +206,7 @@ export function createUserPreferenceSaveQueue<TTaskSettings>(params: {
         const preferencesToSave = pendingSave;
         pendingSave = null;
         const savedFingerprint = stableStringify(preferencesToSave);
-        const config = await params.configClient.getConfig();
-        if (params.signal.aborted) {
-          return;
-        }
-
-        await params.configClient.saveConfig({
-          taskSettings: config.taskSettings,
-          userPreferences: preferencesToSave ?? null,
-        });
+        await params.configClient.saveConfig({ userPreferences: preferencesToSave ?? null });
 
         if (params.signal.aborted) {
           return;
@@ -367,19 +392,21 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
     }
 
     currentPreferencesRef.current = pruned;
-    for (const entry of entriesFromUserPreferences(pruned)) {
-      writeBackendEntryToLocalStorage(entry);
+    const storage = getLocalStorage();
+    if (storage) {
+      for (const entry of entriesFromUserPreferences(pruned)) {
+        writeBackendEntryToLocalStorage(entry, storage);
+      }
     }
 
     const prunedKeys = new Set(entriesFromUserPreferences(pruned).map((entry) => entry.key));
-    const storage = getLocalStorage();
     if (storage) {
       for (const key of getStoredUserPreferenceKeys(storage)) {
         if (
           !prunedKeys.has(key) &&
           hasUserPreferenceEntry(currentPreferencesRef.current, key) === false
         ) {
-          removeBackendEntryFromLocalStorage(key);
+          removeBackendEntryFromLocalStorage(key, storage);
         }
       }
     }
