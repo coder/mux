@@ -2195,7 +2195,7 @@ export class TaskService {
 
   listDescendantAgentTasks(
     workspaceId: string,
-    options?: { statuses?: AgentTaskStatus[] }
+    options?: { statuses?: AgentTaskStatus[]; excludeWorkflowTasks?: boolean }
   ): DescendantAgentTaskInfo[] {
     assert(workspaceId.length > 0, "listDescendantAgentTasks: workspaceId must be non-empty");
 
@@ -2207,9 +2207,9 @@ export class TaskService {
 
     const result: DescendantAgentTaskInfo[] = [];
 
-    const stack: Array<{ taskId: string; depth: number }> = [];
+    const stack: Array<{ taskId: string; depth: number; workflowOwned: boolean }> = [];
     for (const childTaskId of index.childrenByParent.get(workspaceId) ?? []) {
-      stack.push({ taskId: childTaskId, depth: 1 });
+      stack.push({ taskId: childTaskId, depth: 1, workflowOwned: false });
     }
 
     while (stack.length > 0) {
@@ -2222,8 +2222,12 @@ export class TaskService {
         `listDescendantAgentTasks: task ${next.taskId} is missing parentWorkspaceId`
       );
 
+      const workflowOwned = next.workflowOwned || entry.workflowTask != null;
       const status: AgentTaskStatus = entry.taskStatus ?? "running";
-      if (!statusFilter || statusFilter.has(status)) {
+      if (
+        (!statusFilter || statusFilter.has(status)) &&
+        !(options?.excludeWorkflowTasks === true && workflowOwned)
+      ) {
         result.push({
           taskId: next.taskId,
           status,
@@ -2239,7 +2243,7 @@ export class TaskService {
       }
 
       for (const childTaskId of index.childrenByParent.get(next.taskId) ?? []) {
-        stack.push({ taskId: childTaskId, depth: next.depth + 1 });
+        stack.push({ taskId: childTaskId, depth: next.depth + 1, workflowOwned });
       }
     }
 
@@ -2353,6 +2357,33 @@ export class TaskService {
       const entry = index.byId.get(taskId);
       return entry != null && hasCompletedAgentReport(entry);
     });
+  }
+
+  isWorkflowOwnedDescendantAgentTask(ancestorWorkspaceId: string, taskId: string): boolean {
+    assert(
+      ancestorWorkspaceId.length > 0,
+      "isWorkflowOwnedDescendantAgentTask: ancestorWorkspaceId required"
+    );
+    assert(taskId.length > 0, "isWorkflowOwnedDescendantAgentTask: taskId required");
+
+    const cfg = this.config.loadConfigOrDefault();
+    const index = this.buildAgentTaskIndex(cfg);
+    let current = taskId;
+    let workflowOwned = false;
+
+    for (let i = 0; i < 32; i++) {
+      const entry = index.byId.get(current);
+      workflowOwned ||= entry?.workflowTask != null;
+
+      const parent = index.parentById.get(current);
+      if (!parent) return false;
+      if (parent === ancestorWorkspaceId) return workflowOwned;
+      current = parent;
+    }
+
+    throw new Error(
+      `isWorkflowOwnedDescendantAgentTask: possible parentWorkspaceId cycle starting at ${taskId}`
+    );
   }
 
   async isDescendantAgentTask(ancestorWorkspaceId: string, taskId: string): Promise<boolean> {

@@ -19,7 +19,10 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
       const statuses =
         args.statuses && args.statuses.length > 0 ? args.statuses : [...DEFAULT_STATUSES];
 
-      const agentTasks = taskService.listDescendantAgentTasks(workspaceId, { statuses });
+      const agentTasks = taskService.listDescendantAgentTasks(workspaceId, {
+        statuses,
+        excludeWorkflowTasks: true,
+      });
       const tasks = [...agentTasks];
 
       if (config.backgroundProcessManager) {
@@ -35,6 +38,13 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
             proc.workspaceId === workspaceId ||
             (await taskService.isDescendantAgentTask(workspaceId, proc.workspaceId));
           if (!inScope) continue;
+
+          if (
+            proc.workspaceId !== workspaceId &&
+            taskService.isWorkflowOwnedDescendantAgentTask(workspaceId, proc.workspaceId)
+          ) {
+            continue;
+          }
 
           const status = proc.status === "running" ? "running" : "reported";
           if (!statuses.includes(status)) continue;

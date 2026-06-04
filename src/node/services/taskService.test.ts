@@ -3480,6 +3480,64 @@ describe("TaskService", () => {
     expect(tasks.find((workspace) => workspace.id === otherTaskId)?.taskStatus).toBe("running");
   });
 
+  test("listDescendantAgentTasks can exclude workflow-owned descendants", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const workflowTaskId = "task-workflow";
+    const workflowChildTaskId = "task-workflow-child";
+    const regularTaskId = "task-regular";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "workflow-task", workflowTaskId, {
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+          workflowTask: { runId: "wfr_target", stepId: "scope" },
+        }),
+        projectWorkspace(projectPath, "workflow-child", workflowChildTaskId, {
+          parentWorkspaceId: workflowTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "regular-task", regularTaskId, {
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    expect(
+      new Set(taskService.listDescendantAgentTasks(rootWorkspaceId).map((task) => task.taskId))
+    ).toEqual(new Set([regularTaskId, workflowChildTaskId, workflowTaskId]));
+    expect(
+      taskService
+        .listDescendantAgentTasks(rootWorkspaceId, {
+          excludeWorkflowTasks: true,
+        })
+        .map((task) => task.taskId)
+    ).toEqual([regularTaskId]);
+    expect(taskService.isWorkflowOwnedDescendantAgentTask(rootWorkspaceId, workflowTaskId)).toBe(
+      true
+    );
+    expect(
+      taskService.isWorkflowOwnedDescendantAgentTask(rootWorkspaceId, workflowChildTaskId)
+    ).toBe(true);
+    expect(taskService.isWorkflowOwnedDescendantAgentTask(rootWorkspaceId, regularTaskId)).toBe(
+      false
+    );
+  });
+
   test("listActiveDescendantAgentTaskIds can exclude workflow-owned descendants", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");

@@ -145,6 +145,125 @@ describe("bash + task_* (background bash tasks)", () => {
     });
   });
 
+  it("task_list excludes background bash tasks from workflow-owned descendants", async () => {
+    using tempDir = new TestTempDir("test-task-list-bash-workflow-owned");
+
+    const startTime = Date.parse("2025-01-01T00:00:00.000Z");
+    const list = mock(() => [
+      {
+        id: "workflow-proc",
+        workspaceId: "workflow-task",
+        status: "running" as const,
+        displayName: "Workflow Proc",
+        startTime,
+      },
+      {
+        id: "regular-proc",
+        workspaceId: "regular-task",
+        status: "running" as const,
+        displayName: "Regular Proc",
+        startTime,
+      },
+    ]);
+
+    const backgroundProcessManager = { list } as unknown as BackgroundProcessManager;
+
+    const taskService = {
+      listDescendantAgentTasks: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      isWorkflowOwnedDescendantAgentTask: mock(
+        (_: string, taskId: string) => taskId === "workflow-task"
+      ),
+    } as unknown as TaskService;
+
+    const tool = createTaskListTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "ws-1" }),
+      backgroundProcessManager,
+      taskService,
+    });
+
+    const result: unknown = await Promise.resolve(tool.execute!({}, mockToolCallOptions));
+
+    expect(result).toEqual({
+      tasks: [
+        {
+          taskId: "bash:regular-proc",
+          status: "running",
+          parentWorkspaceId: "regular-task",
+          title: "Regular Proc",
+          createdAt: new Date(startTime).toISOString(),
+          depth: 1,
+        },
+      ],
+    });
+  });
+
+  it("task_await omits workflow-owned background bash tasks when task_ids is omitted", async () => {
+    using tempDir = new TestTempDir("test-task-await-bash-workflow-owned");
+
+    const processes = [
+      {
+        id: "workflow-proc",
+        workspaceId: "workflow-task",
+        status: "running" as const,
+        displayName: "Workflow Proc",
+      },
+      {
+        id: "regular-proc",
+        workspaceId: "regular-task",
+        status: "running" as const,
+        displayName: "Regular Proc",
+      },
+    ];
+    const list = mock(() => processes);
+    const getProcess = mock((id: string) => processes.find((proc) => proc.id === id));
+    const getOutput = mock(() => ({
+      success: true as const,
+      status: "running" as const,
+      output: "ok",
+      elapsed_ms: 5,
+    }));
+
+    const backgroundProcessManager = {
+      list,
+      getProcess,
+      getOutput,
+    } as unknown as BackgroundProcessManager;
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      isWorkflowOwnedDescendantAgentTask: mock(
+        (_: string, taskId: string) => taskId === "workflow-task"
+      ),
+      waitForAgentReport: mock(() => Promise.resolve({ reportMarkdown: "ignored" })),
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "ws-1" }),
+      backgroundProcessManager,
+      taskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ timeout_secs: 0 }, mockToolCallOptions)
+    );
+
+    expect(getProcess).toHaveBeenCalledTimes(1);
+    expect(getProcess).toHaveBeenCalledWith("regular-proc");
+    expect(result).toEqual({
+      results: [
+        {
+          status: "running",
+          taskId: "bash:regular-proc",
+          output: "ok",
+          elapsed_ms: 5,
+          note: undefined,
+        },
+      ],
+    });
+  });
+
   it("task_terminate can terminate bash tasks", async () => {
     using tempDir = new TestTempDir("test-task-terminate-bash");
 

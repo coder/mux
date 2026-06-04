@@ -1542,7 +1542,7 @@ export const TOOL_DEFINITIONS = {
   task_list: {
     description:
       "List descendant tasks for the current workspace, including status + metadata. " +
-      "This includes sub-agent tasks and background bash tasks. " +
+      "This includes sub-agent tasks and background bash tasks, but omits workflow-owned sub-agents (and their background bash tasks) whose reports are consumed through their workflow run. " +
       "Use this after compaction or interruptions to rediscover which tasks are still active. " +
       "This is a discovery tool, NOT a waiting mechanism. If the current request actually depends on a task's output, call task_await with the specific task IDs you need; do not await all active tasks just because they appear here.",
     schema: TaskListToolArgsSchema,

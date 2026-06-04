@@ -224,6 +224,13 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             proc.workspaceId === workspaceId ||
             (await taskService.isDescendantAgentTask(workspaceId, proc.workspaceId));
           if (!inScope) continue;
+          if (
+            proc.workspaceId !== workspaceId &&
+            taskService.isWorkflowOwnedDescendantAgentTask(workspaceId, proc.workspaceId)
+          ) {
+            continue;
+          }
+
           bashTaskIds.push(toBashTaskId(proc.id));
         }
 
