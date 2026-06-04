@@ -95,6 +95,7 @@ import {
   type SubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
 import { getErrorMessage } from "@/common/utils/errors";
+import { WorkflowActionRegistry } from "@/node/services/workflows/WorkflowActionRegistry";
 import {
   shouldUseRuntimeWorkflowProjectIO,
   WorkflowDefinitionStore,
@@ -224,6 +225,13 @@ async function resolveWorkflowContext(
         projectRuntime: useRuntimeProjectIO ? runtime : undefined,
         projectCwd: useRuntimeProjectIO ? workspacePath : undefined,
       }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: runtime.normalizePath(".mux/actions", workspacePath),
+        globalRoot: path.join(context.config.rootDir, "actions"),
+        projectRuntime: useRuntimeProjectIO ? runtime : undefined,
+        projectCwd: useRuntimeProjectIO ? workspacePath : undefined,
+      }),
+      defaultActionCwd: workspacePath,
       runStore: new WorkflowRunStore({ sessionDir: context.config.getSessionDir(workspaceId) }),
       runtimeFactory: context.workflowRuntimeFactory,
       taskAdapterFactory: (runId) =>

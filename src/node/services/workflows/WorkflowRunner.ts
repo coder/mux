@@ -2,6 +2,8 @@ import { StructuredTaskOutputSchema, WorkflowResultSchema } from "@/common/orpc/
 import { TaskApplyGitPatchToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import type {
   StructuredTaskOutput,
+  WorkflowActionEffect,
+  WorkflowActionMetadata,
   WorkflowResult,
   WorkflowRunEvent,
 } from "@/common/types/workflow";
@@ -10,6 +12,13 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubset } from "@/common/utils/jsonSchemaSubset";
 import type { IJSRuntime, IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
+import type { ResolvedWorkflowAction, WorkflowActionRegistry } from "./WorkflowActionRegistry";
+import {
+  WorkflowActionExecutionError,
+  WorkflowActionRunner,
+  validateWorkflowActionMetadata,
+  type WorkflowActionExecutionResult,
+} from "./WorkflowActionRunner";
 import type { AppendWorkflowRunEventOptions, WorkflowRunStore } from "./WorkflowRunStore";
 import { assertWorkflowStepId, hashWorkflowStepInput } from "./workflowReplayKey";
 
@@ -68,6 +77,25 @@ export interface WorkflowApplyPatchResult {
   note?: string;
 }
 
+export interface WorkflowActionSpec {
+  id: string;
+  input: unknown;
+  timeoutMs?: number;
+  cwd?: string;
+}
+
+export interface WorkflowActionResult {
+  output: unknown;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  signal: string | null;
+  durationMs: number;
+  artifacts: Array<{ name: string; path: string; sizeBytes: number }>;
+  cached?: boolean;
+  reconciled?: boolean;
+}
+
 export interface WorkflowTaskAdapter {
   runAgent(
     spec: WorkflowAgentSpec,
@@ -106,6 +134,11 @@ export interface WorkflowRunnerOptions {
   runStore: WorkflowRunStore;
   runtimeFactory: IJSRuntimeFactory;
   taskAdapter: WorkflowTaskAdapter;
+  actionRegistry?: WorkflowActionRegistry;
+  actionRunner?: WorkflowActionRunner;
+  getProjectTrusted?: () => boolean | Promise<boolean>;
+  projectTrusted?: boolean;
+  defaultActionCwd?: string;
   runnerId: string;
   clock?: WorkflowRunnerClock;
 }
@@ -201,6 +234,10 @@ export class WorkflowRunner {
   private readonly runStore: WorkflowRunStore;
   private readonly runtimeFactory: IJSRuntimeFactory;
   private readonly taskAdapter: WorkflowTaskAdapter;
+  private readonly actionRegistry?: WorkflowActionRegistry;
+  private readonly actionRunner: WorkflowActionRunner;
+  private readonly getProjectTrusted: () => boolean | Promise<boolean>;
+  private readonly defaultActionCwd?: string;
   private readonly runnerId: string;
   private readonly clock: WorkflowRunnerClock;
   private readonly taskEventMutex = new AsyncMutex();
@@ -210,6 +247,10 @@ export class WorkflowRunner {
     this.runStore = options.runStore;
     this.runtimeFactory = options.runtimeFactory;
     this.taskAdapter = options.taskAdapter;
+    this.actionRegistry = options.actionRegistry;
+    this.actionRunner = options.actionRunner ?? new WorkflowActionRunner();
+    this.getProjectTrusted = options.getProjectTrusted ?? (() => options.projectTrusted ?? false);
+    this.defaultActionCwd = options.defaultActionCwd;
     this.runnerId = options.runnerId;
     this.clock = options.clock ?? DEFAULT_CLOCK;
   }
@@ -356,6 +397,19 @@ export class WorkflowRunner {
         setupRuntime.registerFunction("__workflowApplyPatch", async (rawSpec) => {
           try {
             return await this.runApplyPatchStep(runId, sequence, rawSpec, {
+              abortSignal: setupRuntime.getAbortSignal(),
+              leaseGuard,
+            });
+          } catch (error) {
+            if (isForegroundWaitBackgroundedError(error)) {
+              await markBackgrounded();
+            }
+            throw error;
+          }
+        });
+        setupRuntime.registerFunction("__workflowAction", async (rawName, rawSpec) => {
+          try {
+            return await this.runActionStep(runId, sequence, rawName, rawSpec, {
               abortSignal: setupRuntime.getAbortSignal(),
               leaseGuard,
             });
@@ -542,6 +596,279 @@ export class WorkflowRunner {
     if (run.status === "interrupted") {
       throw new Error(`Workflow run interrupted: ${runId}`);
     }
+  }
+
+  private async runActionStep(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    rawName: unknown,
+    rawSpec: unknown,
+    options: {
+      abortSignal?: AbortSignal;
+      leaseGuard: WorkflowRunnerLeaseGuard;
+    }
+  ): Promise<WorkflowActionResult> {
+    assert(typeof rawName === "string" && rawName.length > 0, "action requires a name");
+    const spec = parseWorkflowActionSpec(rawSpec);
+    assertWorkflowStepId(spec.id, "action");
+    const registry = this.actionRegistry;
+    assert(registry != null, "Workflow actions are not configured for this workflow runner");
+
+    const action = await registry.resolveAction(rawName, {
+      projectTrusted: await this.getProjectTrusted(),
+    });
+    const description = await this.actionRunner.describe(action);
+    const metadata = validateWorkflowActionMetadata(description.metadata);
+    assertWorkflowActionInput(metadata, spec.input, action.name);
+    const inputHash = hashWorkflowStepInput(spec.id, buildWorkflowActionReplayInput(action, spec));
+    options.leaseGuard.throwIfLost();
+    const existingStep = await this.runStore.getStep(runId, spec.id, inputHash);
+    if (existingStep?.status === "completed" && existingStep.result?.structuredOutput != null) {
+      const cached = normalizeWorkflowActionResult(existingStep.result.structuredOutput);
+      await this.appendEvent(runId, {
+        sequence: sequence.next(),
+        type: "action",
+        at: this.clock.nowIso(),
+        stepId: spec.id,
+        name: action.name,
+        status: "cached",
+        effect: metadata.effect,
+        sourcePath: action.sourcePath,
+        sourceHash: action.sourceHash,
+        details: cached,
+      });
+      return { ...cached, cached: true };
+    }
+
+    if (existingStep?.status === "started" && isMutatingWorkflowActionEffect(metadata.effect)) {
+      if (!description.hasReconcile) {
+        const message = `Workflow action ${action.name} has an incomplete ${metadata.effect} step and cannot be replayed without reconciliation`;
+        await this.appendWorkflowActionFailure(runId, sequence, spec, action, metadata, message, {
+          startedAt: existingStep.startedAt,
+          inputHash,
+        });
+        throw new Error(message);
+      }
+      return await this.reconcileActionStep(runId, sequence, {
+        spec,
+        action,
+        metadata,
+        inputHash,
+        startedAt: existingStep.startedAt,
+        abortSignal: options.abortSignal,
+        leaseGuard: options.leaseGuard,
+      });
+    }
+
+    return await this.executeActionStep(runId, sequence, {
+      spec,
+      action,
+      metadata,
+      inputHash,
+      startedAt: existingStep?.startedAt ?? this.clock.nowIso(),
+      abortSignal: options.abortSignal,
+      leaseGuard: options.leaseGuard,
+    });
+  }
+
+  private async executeActionStep(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    step: {
+      spec: WorkflowActionSpec;
+      action: ResolvedWorkflowAction;
+      metadata: WorkflowActionMetadata;
+      inputHash: string;
+      startedAt: string;
+      abortSignal?: AbortSignal;
+      leaseGuard: WorkflowRunnerLeaseGuard;
+    }
+  ): Promise<WorkflowActionResult> {
+    step.leaseGuard.throwIfLost();
+    await this.recordStepStarted(runId, {
+      stepId: step.spec.id,
+      inputHash: step.inputHash,
+      startedAt: step.startedAt,
+    });
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "action",
+      at: this.clock.nowIso(),
+      stepId: step.spec.id,
+      name: step.action.name,
+      status: "started",
+      effect: step.metadata.effect,
+      sourcePath: step.action.sourcePath,
+      sourceHash: step.action.sourceHash,
+      details: workflowActionEventDetails(step.metadata, step.spec),
+    });
+
+    try {
+      const rawResult = await this.actionRunner.execute(step.action, {
+        input: step.spec.input,
+        cwd: getWorkflowActionCwd(step.spec, step.action, this.defaultActionCwd),
+        timeoutMs: getWorkflowActionTimeoutMs(step.spec, step.metadata),
+        abortSignal: step.abortSignal,
+        artifactDir: this.runStore.getStepArtifactsDir(runId, step.spec.id, step.inputHash),
+      });
+      return await this.recordActionResult(runId, sequence, step, rawResult, "completed");
+    } catch (error) {
+      await this.recordActionError(runId, sequence, step, error);
+      throw error;
+    }
+  }
+
+  private async reconcileActionStep(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    step: {
+      spec: WorkflowActionSpec;
+      action: ResolvedWorkflowAction;
+      metadata: WorkflowActionMetadata;
+      inputHash: string;
+      startedAt: string;
+      abortSignal?: AbortSignal;
+      leaseGuard: WorkflowRunnerLeaseGuard;
+    }
+  ): Promise<WorkflowActionResult> {
+    step.leaseGuard.throwIfLost();
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "action",
+      at: this.clock.nowIso(),
+      stepId: step.spec.id,
+      name: step.action.name,
+      status: "started",
+      effect: step.metadata.effect,
+      sourcePath: step.action.sourcePath,
+      sourceHash: step.action.sourceHash,
+      details: { ...workflowActionEventDetails(step.metadata, step.spec), reconciliation: true },
+    });
+
+    try {
+      const rawResult = await this.actionRunner.reconcile(step.action, {
+        input: step.spec.input,
+        cwd: getWorkflowActionCwd(step.spec, step.action, this.defaultActionCwd),
+        timeoutMs: getWorkflowActionTimeoutMs(step.spec, step.metadata),
+        abortSignal: step.abortSignal,
+        artifactDir: this.runStore.getStepArtifactsDir(runId, step.spec.id, step.inputHash),
+      });
+      const result = await this.recordActionResult(runId, sequence, step, rawResult, "reconciled");
+      return { ...result, reconciled: true };
+    } catch (error) {
+      await this.recordActionError(runId, sequence, step, error);
+      throw error;
+    }
+  }
+
+  private async recordActionResult(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    step: {
+      spec: WorkflowActionSpec;
+      action: ResolvedWorkflowAction;
+      metadata: WorkflowActionMetadata;
+      inputHash: string;
+      startedAt: string;
+      leaseGuard: WorkflowRunnerLeaseGuard;
+    },
+    rawResult: WorkflowActionExecutionResult,
+    status: "completed" | "reconciled"
+  ): Promise<WorkflowActionResult> {
+    assertWorkflowActionOutput(step.metadata, rawResult.output, step.action.name);
+    step.leaseGuard.throwIfLost();
+    const result = normalizeWorkflowActionResult({
+      output: rawResult.output,
+      stdout: rawResult.stdout,
+      stderr: rawResult.stderr,
+      exitCode: rawResult.exitCode,
+      signal: rawResult.signal,
+      durationMs: rawResult.durationMs,
+      artifacts: rawResult.artifacts,
+      ...(status === "reconciled" ? { reconciled: true } : {}),
+    });
+    await this.recordStepCompleted(runId, {
+      stepId: step.spec.id,
+      inputHash: step.inputHash,
+      result: {
+        reportMarkdown: formatWorkflowActionReport(step.action.name, result),
+        structuredOutput: result,
+      },
+      startedAt: step.startedAt,
+      completedAt: this.clock.nowIso(),
+    });
+    step.leaseGuard.throwIfLost();
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "action",
+      at: this.clock.nowIso(),
+      stepId: step.spec.id,
+      name: step.action.name,
+      status,
+      effect: step.metadata.effect,
+      sourcePath: step.action.sourcePath,
+      sourceHash: step.action.sourceHash,
+      details: result,
+    });
+    return result;
+  }
+
+  private async recordActionError(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    step: {
+      spec: WorkflowActionSpec;
+      action: ResolvedWorkflowAction;
+      metadata: WorkflowActionMetadata;
+      inputHash: string;
+      startedAt: string;
+      leaseGuard: WorkflowRunnerLeaseGuard;
+    },
+    error: unknown
+  ): Promise<void> {
+    await this.appendWorkflowActionFailure(
+      runId,
+      sequence,
+      step.spec,
+      step.action,
+      step.metadata,
+      error,
+      {
+        startedAt: step.startedAt,
+        inputHash: step.inputHash,
+      }
+    );
+  }
+
+  private async appendWorkflowActionFailure(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    spec: WorkflowActionSpec,
+    action: ResolvedWorkflowAction,
+    metadata: WorkflowActionMetadata,
+    error: unknown,
+    step: { inputHash: string; startedAt: string }
+  ): Promise<void> {
+    const message = getErrorMessage(error);
+    await this.recordStepFailed(runId, {
+      stepId: spec.id,
+      inputHash: step.inputHash,
+      error: message,
+      startedAt: step.startedAt,
+      completedAt: this.clock.nowIso(),
+    });
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "action",
+      at: this.clock.nowIso(),
+      stepId: spec.id,
+      name: action.name,
+      status: "failed",
+      effect: metadata.effect,
+      sourcePath: action.sourcePath,
+      sourceHash: action.sourceHash,
+      details: workflowActionErrorDetails(error),
+    });
   }
 
   private async runApplyPatchStep(
@@ -1172,6 +1499,170 @@ class WorkflowEventSequence {
   }
 }
 
+function parseWorkflowActionSpec(rawSpec: unknown): WorkflowActionSpec {
+  assert(rawSpec != null && typeof rawSpec === "object", "action requires a spec object");
+  const spec = rawSpec as Record<string, unknown>;
+  assert(typeof spec.id === "string", "action replay boundary requires a stable id");
+  const parsed: WorkflowActionSpec = {
+    id: spec.id,
+    input: spec.input ?? null,
+  };
+  const timeoutMs = spec.timeoutMs ?? spec.timeout_ms;
+  if (timeoutMs !== undefined) {
+    assert(
+      typeof timeoutMs === "number" && Number.isInteger(timeoutMs) && timeoutMs > 0,
+      "action timeoutMs must be a positive integer"
+    );
+    parsed.timeoutMs = timeoutMs;
+  }
+  const cwd = spec.cwd ?? spec.worktreePath ?? spec.worktree_path;
+  if (cwd !== undefined) {
+    assert(typeof cwd === "string" && cwd.length > 0, "action cwd must be a non-empty string");
+    parsed.cwd = cwd;
+  }
+  return parsed;
+}
+
+function buildWorkflowActionReplayInput(
+  action: ResolvedWorkflowAction,
+  spec: WorkflowActionSpec
+): unknown {
+  return {
+    primitive: "action",
+    actionName: action.name,
+    scope: action.scope,
+    sourcePath: action.sourcePath,
+    sourceHash: action.sourceHash,
+    input: spec.input,
+    ...(spec.timeoutMs !== undefined ? { timeoutMs: spec.timeoutMs } : {}),
+    ...(spec.cwd !== undefined ? { cwd: spec.cwd } : {}),
+  };
+}
+
+function assertWorkflowActionInput(
+  metadata: WorkflowActionMetadata,
+  input: unknown,
+  actionName: string
+): void {
+  if (metadata.inputSchema === undefined) {
+    return;
+  }
+  const validation = validateJsonSchemaSubset(metadata.inputSchema, input);
+  if (!validation.success) {
+    throw new Error(
+      `action ${actionName} input failed schema validation: ${validation.errors
+        .map((error) => `${error.path}: ${error.message}`)
+        .join("; ")}`
+    );
+  }
+}
+
+function assertWorkflowActionOutput(
+  metadata: WorkflowActionMetadata,
+  output: unknown,
+  actionName: string
+): void {
+  if (metadata.outputSchema === undefined) {
+    return;
+  }
+  const validation = validateJsonSchemaSubset(metadata.outputSchema, output);
+  if (!validation.success) {
+    throw new Error(
+      `action ${actionName} output failed schema validation: ${validation.errors
+        .map((error) => `${error.path}: ${error.message}`)
+        .join("; ")}`
+    );
+  }
+}
+
+function isMutatingWorkflowActionEffect(effect: WorkflowActionEffect): boolean {
+  return effect === "workspace" || effect === "external";
+}
+
+function getWorkflowActionTimeoutMs(
+  spec: WorkflowActionSpec,
+  metadata: WorkflowActionMetadata
+): number {
+  return spec.timeoutMs ?? metadata.timeoutMs ?? 60_000;
+}
+
+function getWorkflowActionCwd(
+  spec: WorkflowActionSpec,
+  action: ResolvedWorkflowAction,
+  defaultCwd?: string
+): string {
+  return spec.cwd ?? defaultCwd ?? action.sourcePath.split(/[\\/][^\\/]*$/u)[0] ?? ".";
+}
+
+function workflowActionEventDetails(
+  metadata: WorkflowActionMetadata,
+  spec: WorkflowActionSpec
+): Record<string, unknown> {
+  return {
+    description: metadata.description,
+    effect: metadata.effect,
+    permissions: metadata.permissions ?? [],
+    timeoutMs: getWorkflowActionTimeoutMs(spec, metadata),
+    ...(spec.cwd !== undefined ? { cwd: spec.cwd } : {}),
+  };
+}
+
+function workflowActionErrorDetails(error: unknown): Record<string, unknown> {
+  if (error instanceof WorkflowActionExecutionError) {
+    return {
+      error: error.message,
+      stdout: error.stdout,
+      stderr: error.stderr,
+      exitCode: error.exitCode,
+      signal: error.signal,
+      durationMs: error.durationMs,
+      artifacts: error.artifacts,
+    };
+  }
+  return { error: getErrorMessage(error) };
+}
+
+function normalizeWorkflowActionResult(rawResult: unknown): WorkflowActionResult {
+  assert(rawResult != null && typeof rawResult === "object", "action result must be an object");
+  const record = rawResult as Record<string, unknown>;
+  assert(typeof record.durationMs === "number", "action result requires durationMs");
+  assert(Array.isArray(record.artifacts), "action result requires artifacts");
+  return {
+    output: record.output ?? null,
+    stdout: typeof record.stdout === "string" ? record.stdout : "",
+    stderr: typeof record.stderr === "string" ? record.stderr : "",
+    exitCode: typeof record.exitCode === "number" ? record.exitCode : null,
+    signal: typeof record.signal === "string" ? record.signal : null,
+    durationMs: record.durationMs,
+    artifacts: record.artifacts.map((artifact) => normalizeWorkflowActionArtifact(artifact)),
+    ...(record.cached === true ? { cached: true } : {}),
+    ...(record.reconciled === true ? { reconciled: true } : {}),
+  };
+}
+
+function normalizeWorkflowActionArtifact(artifact: unknown): {
+  name: string;
+  path: string;
+  sizeBytes: number;
+} {
+  assert(artifact != null && typeof artifact === "object", "action artifact must be an object");
+  const record = artifact as Record<string, unknown>;
+  assert(
+    typeof record.name === "string" && record.name.length > 0,
+    "action artifact requires name"
+  );
+  assert(
+    typeof record.path === "string" && record.path.length > 0,
+    "action artifact requires path"
+  );
+  assert(typeof record.sizeBytes === "number", "action artifact requires sizeBytes");
+  return { name: record.name, path: record.path, sizeBytes: record.sizeBytes };
+}
+
+function formatWorkflowActionReport(actionName: string, result: WorkflowActionResult): string {
+  return `Action ${actionName} completed in ${result.durationMs}ms.`;
+}
+
 function parseWorkflowApplyPatchSpec(rawSpec: unknown): WorkflowApplyPatchSpec {
   assert(rawSpec != null && typeof rawSpec === "object", "applyPatch requires a spec object");
   const spec = rawSpec as Record<string, unknown>;
@@ -1352,12 +1843,34 @@ function compileWorkflowSource(source: string): string {
   return `
 Date = undefined;
 Math.random = undefined;
+function __muxCreateWorkflowActionProxy(path) {
+  return new Proxy(function () {}, {
+    get: function (_target, prop) {
+      if (prop === "then") return undefined;
+      if (prop === "invoke") {
+        return function (name, spec) { return __workflowAction(name, spec); };
+      }
+      if (typeof prop !== "string") return undefined;
+      return __muxCreateWorkflowActionProxy(path.concat([prop]));
+    },
+    apply: function (_target, _thisArg, args) {
+      if (path.length === 0) {
+        return __workflowAction(args[0], args.length > 1 ? args[1] : {});
+      }
+      if (args.length === 2 && typeof args[0] === "string") {
+        return __workflowAction(path.join("."), { id: args[0], input: args[1] });
+      }
+      return __workflowAction(path.join("."), args[0]);
+    },
+  });
+}
 ${compiled}
 return (async () => await __muxWorkflow({
   args: __workflowArgs(),
   phase: __workflowPhase,
   log: __workflowLog,
   agent: __workflowAgent,
+  action: __muxCreateWorkflowActionProxy([]),
   applyPatch: __workflowApplyPatch,
   parallelAgents: __workflowParallelAgents,
 }))();

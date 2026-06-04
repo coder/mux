@@ -24,7 +24,7 @@ export const WorkflowRunStatusSchema = z.enum([
 ]);
 
 const IsoDateTimeSchema = z.string().datetime({ offset: true });
-const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
+export const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([
     z.string(),
     z.number(),
@@ -34,6 +34,23 @@ const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
     z.record(z.string(), JsonValueSchema),
   ])
 );
+
+export const WorkflowActionEffectSchema = z.enum(["read", "workspace", "external"]);
+
+export const WorkflowActionMetadataSchema = z.object({
+  version: z.union([z.number().int().positive(), z.string().min(1)]),
+  description: z.string().min(1).max(1024),
+  effect: WorkflowActionEffectSchema,
+  inputSchema: JsonValueSchema.optional(),
+  outputSchema: JsonValueSchema.optional(),
+  permissions: JsonValueSchema.optional(),
+  timeoutMs: z
+    .number()
+    .int()
+    .positive()
+    .max(24 * 60 * 60 * 1000)
+    .optional(),
+});
 
 export const WorkflowDefinitionDescriptorSchema = z
   .object({
@@ -97,6 +114,18 @@ export const WorkflowRunEventSchema = z.discriminatedUnion("type", [
     stepId: z.string().min(1),
     sourceTaskId: z.string().min(1),
     status: z.enum(["started", "applied", "conflict", "failed"]),
+    details: JsonValueSchema.optional(),
+  }),
+  z.object({
+    sequence: z.number().int().positive(),
+    type: z.literal("action"),
+    at: IsoDateTimeSchema,
+    stepId: z.string().min(1),
+    name: z.string().min(1),
+    status: z.enum(["started", "completed", "failed", "cached", "reconciled"]),
+    effect: WorkflowActionEffectSchema,
+    sourcePath: z.string().min(1).optional(),
+    sourceHash: z.string().min(1).optional(),
     details: JsonValueSchema.optional(),
   }),
   z.object({

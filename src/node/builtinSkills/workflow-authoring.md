@@ -17,8 +17,9 @@ Prefer a workflow when the task is a repeatable orchestration pattern, especiall
 - Adversarial verification / cross-checking of candidate findings.
 - Durable state so completed work is reused after resume/restart.
 - A reusable slash-invokable process, like deep research or deep review.
+- Durable calls into user-defined host actions under `.mux/actions` or `~/.mux/actions`.
 
-Do **not** create a workflow for a small one-off edit, a single simple investigation, or work that needs the conductor itself to run shell/filesystem/network operations. The conductor is intentionally limited; delegate those operations to sub-agents.
+Do **not** create a workflow for a small one-off edit or a single simple investigation. The conductor cannot run arbitrary host operations directly; use `action.*` only for explicit, metadata-declared workflow actions, and delegate open-ended shell/filesystem/web investigation to sub-agents.
 
 ## Before authoring
 
@@ -37,7 +38,7 @@ Scratch workflows must include a description header and a default exported funct
 
 ```js
 // description: Short workflow description
-export default function workflow({ args, phase, log, agent, parallelAgents, applyPatch }) {
+export default function workflow({ args, phase, log, agent, action, parallelAgents, applyPatch }) {
   phase("scope", { input: args.input });
   return { reportMarkdown: "Done" };
 }
@@ -50,7 +51,7 @@ Reusable project workflows live in `.mux/workflows/<name>.js`; global workflows 
 A workflow default export receives one object:
 
 ```js
-export default function workflow({ args, phase, log, agent, parallelAgents, applyPatch }) {}
+export default function workflow({ args, phase, log, agent, action, parallelAgents, applyPatch }) {}
 ```
 
 ### `args`
@@ -104,6 +105,54 @@ Returns:
 ```
 
 `taskId` is a host-issued patch artifact handle for workflow-owned child tasks. Pass the whole agent result as `applyPatch({ source: result })` instead of inventing task IDs.
+
+### `action.<namespace>.<name>(spec)`
+
+Runs a user-defined workflow action from `.mux/actions/**/*.js` or `~/.mux/actions/**/*.js`. Nested folders become namespaces: `.mux/actions/graphite/stackSnapshot.js` is called as `action.graphite.stackSnapshot(...)`. Project-local actions require Project Trust; global actions are available across projects.
+
+Action calls are durable replay steps. Completed results are reused when the action source hash and input identity match. Incomplete read-only actions may retry; incomplete mutating actions (`effect: "workspace"` or `"external"`) do not blindly re-run unless the action exports a safe `reconcile` hook.
+
+Required fields:
+
+- `id`: stable replay ID.
+
+Optional fields:
+
+- `input`: JSON input validated against the action's `inputSchema` when declared.
+- `timeoutMs`: per-call timeout override.
+- `cwd` / `worktreePath`: working directory for the action runner.
+
+```js
+const snapshot = action.graphite.stackSnapshot({
+  id: "snapshot-stack",
+  input: { base: "main" },
+});
+
+const viaName = action.invoke("graphite.stackSnapshot", {
+  id: "snapshot-stack-by-name",
+  input: { base: "main" },
+});
+```
+
+A JavaScript action exports metadata and an execute function:
+
+```js
+export const metadata = {
+  version: 1,
+  description: "Return stack frames for the current Graphite stack",
+  effect: "read", // "read" | "workspace" | "external"
+  inputSchema: { type: "object" },
+  outputSchema: { type: "object" },
+  permissions: [{ kind: "command", command: "gt" }],
+  timeoutMs: 30000,
+};
+
+export async function execute(input, ctx) {
+  const result = await ctx.exec("gt", ["stack", "--json"]);
+  if (result.exitCode !== 0) throw new Error(result.stderr || "gt stack failed");
+  return JSON.parse(result.stdout);
+}
+```
 
 ### `applyPatch(spec)`
 
@@ -221,9 +270,10 @@ function issueListSchema() {
 
 - Every `agent` / `parallelAgents` item and every `applyPatch` call must have a stable `id`.
 - The replay key includes the step ID and normalized spec, so changing prompts, schemas, patch source IDs, or apply options creates new work.
+- `action.*` calls replay completed results by stable `id`, action source path/hash, input, timeout, and cwd.
 - `applyPatch` is a durable mutation effect: completed apply/conflict/failed results are replayed from the journal and are not re-applied on resume.
-- The workflow conductor cannot call general tools, import modules, access Node, run shell, read files, use timers, or rely on `Date`/`Math.random`.
-- Put shell/filesystem/web investigation inside delegated sub-agent prompts.
+- The workflow conductor cannot call general tools, import modules, access Node, run shell, read files, use timers, or rely on `Date`/`Math.random`; only declared `action.*` calls can cross that boundary.
+- Put open-ended shell/filesystem/web investigation inside delegated sub-agent prompts, or package repeatable host operations as actions with metadata and schemas.
 - Cap model-produced fan-out before calling `parallelAgents`.
 - Return `{ reportMarkdown, structuredOutput }` so the parent agent and UI both get useful output.
 

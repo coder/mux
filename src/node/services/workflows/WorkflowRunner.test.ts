@@ -1,8 +1,12 @@
 /* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/no-unsafe-argument, @typescript-eslint/require-await */
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
 import { describe, expect, test } from "bun:test";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
+import { WorkflowActionRegistry } from "./WorkflowActionRegistry";
 import { WorkflowRunStore } from "./WorkflowRunStore";
 import {
   WorkflowRunBackgroundedError,
@@ -1240,6 +1244,242 @@ describe("WorkflowRunner", () => {
     });
 
     await expect(runner.run("wfr_missing_id")).rejects.toThrow(/stable id/);
+  });
+
+  test("runs user-defined workflow actions and persists action events", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-action");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const actionPath = path.join(projectRoot, "demo", "echo.js");
+    await fs.mkdir(path.dirname(actionPath), { recursive: true });
+    await fs.writeFile(
+      actionPath,
+      `export const metadata = {
+        version: 1,
+        description: "Echo a message",
+        effect: "read",
+        inputSchema: { type: "object", required: ["message"], properties: { message: { type: "string" } } },
+        outputSchema: { type: "object", required: ["echo"], properties: { echo: { type: "string" } } },
+      };
+      export async function execute(input, ctx) {
+        console.log("action stdout");
+        await ctx.writeArtifact("echo.json", { echo: input.message });
+        return { echo: input.message };
+      }`,
+      "utf-8"
+    );
+    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await store.createRun({
+      id: "wfr_action",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ action }) {
+        const result = action.demo.echo({ id: "echo", input: { message: "hello" } });
+        return { reportMarkdown: result.output.echo };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: tmp.path,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await expect(runner.run("wfr_action")).resolves.toEqual({ reportMarkdown: "hello" });
+    const run = await store.getRun("wfr_action");
+
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "action",
+          stepId: "echo",
+          name: "demo.echo",
+          status: "started",
+        }),
+        expect.objectContaining({
+          type: "action",
+          stepId: "echo",
+          name: "demo.echo",
+          status: "completed",
+        }),
+      ])
+    );
+    const actionStep = run.steps[0];
+    expect(actionStep?.stepId).toBe("echo");
+    expect(actionStep?.status).toBe("completed");
+    const structuredOutput = actionStep?.result?.structuredOutput;
+    if (
+      structuredOutput == null ||
+      typeof structuredOutput !== "object" ||
+      Array.isArray(structuredOutput)
+    ) {
+      throw new Error("Expected action step structured output");
+    }
+    const structuredOutputRecord = structuredOutput as Record<string, unknown>;
+    expect(structuredOutputRecord.output).toEqual({ echo: "hello" });
+    expect(structuredOutputRecord.stdout).toBe("action stdout\n");
+    const artifacts = structuredOutputRecord.artifacts;
+    if (!Array.isArray(artifacts)) {
+      throw new Error("Expected action artifacts");
+    }
+    expect(artifacts[0]).toEqual(expect.objectContaining({ name: "echo.json" }));
+  });
+
+  test("replays completed workflow action results without re-executing", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-action-replay");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const actionPath = path.join(projectRoot, "counter.js");
+    await fs.mkdir(projectRoot, { recursive: true });
+    await fs.writeFile(
+      actionPath,
+      `export const metadata = { version: 1, description: "Counter", effect: "read" };
+      export async function execute() { throw new Error("action should replay"); }`,
+      "utf-8"
+    );
+    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const actionSource = await fs.readFile(actionPath, "utf-8");
+    const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
+    const action = await actionRegistry.resolveAction("counter", { projectTrusted: true });
+    await store.createRun({
+      id: "wfr_action_replay",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ action }) {
+        const result = action.counter({ id: "count", input: { value: 1 } });
+        return { reportMarkdown: String(result.output.value) };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const inputHash = hashWorkflowStepInput("count", {
+      primitive: "action",
+      actionName: "counter",
+      scope: "project",
+      sourcePath: action.sourcePath,
+      sourceHash: action.sourceHash,
+      input: { value: 1 },
+    });
+    await store.recordStepCompleted("wfr_action_replay", {
+      stepId: "count",
+      inputHash,
+      result: {
+        reportMarkdown: "Action counter completed in 1ms.",
+        structuredOutput: {
+          output: { value: 7 },
+          stdout: "",
+          stderr: "",
+          exitCode: 0,
+          signal: null,
+          durationMs: 1,
+          artifacts: [],
+        },
+      },
+      startedAt: "2026-05-29T00:00:01.000Z",
+      completedAt: "2026-05-29T00:00:02.000Z",
+    });
+    expect(action.source).toBe(actionSource);
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      actionRegistry,
+      projectTrusted: true,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:03.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await expect(runner.run("wfr_action_replay")).resolves.toEqual({ reportMarkdown: "7" });
+    const run = await store.getRun("wfr_action_replay");
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "action", stepId: "count", status: "cached" }),
+      ])
+    );
+  });
+
+  test("does not rerun incomplete mutating workflow actions without reconciliation", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-action-mutating-replay");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const actionPath = path.join(projectRoot, "submit.js");
+    await fs.mkdir(projectRoot, { recursive: true });
+    await fs.writeFile(
+      actionPath,
+      `export const metadata = { version: 1, description: "Submit", effect: "external" };
+      export async function execute() { throw new Error("mutating action should not rerun"); }`,
+      "utf-8"
+    );
+    const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
+    const action = await actionRegistry.resolveAction("submit", { projectTrusted: true });
+    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await store.createRun({
+      id: "wfr_action_incomplete",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ action }) {
+        action.submit({ id: "submit", input: { pr: 1 } });
+        return { reportMarkdown: "submitted" };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await store.recordStepStarted("wfr_action_incomplete", {
+      stepId: "submit",
+      inputHash: hashWorkflowStepInput("submit", {
+        primitive: "action",
+        actionName: "submit",
+        scope: "project",
+        sourcePath: action.sourcePath,
+        sourceHash: action.sourceHash,
+        input: { pr: 1 },
+      }),
+      startedAt: "2026-05-29T00:00:01.000Z",
+    });
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      actionRegistry,
+      projectTrusted: true,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:02.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await expect(runner.run("wfr_action_incomplete")).rejects.toThrow(/cannot be replayed/);
+    const run = await store.getRun("wfr_action_incomplete");
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "action", stepId: "submit", status: "failed" }),
+      ])
+    );
   });
 
   test("does not expose mux tools, filesystem imports, or timers to workflow code", async () => {

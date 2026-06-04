@@ -126,6 +126,7 @@ import {
   filterWorkflowDisplayOnlyMessages,
 } from "@/common/utils/workflowRunMessages";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
+import { WorkflowActionRegistry } from "@/node/services/workflows/WorkflowActionRegistry";
 import {
   shouldUseRuntimeWorkflowProjectIO,
   WorkflowDefinitionStore,
@@ -1541,6 +1542,13 @@ export class AIService extends EventEmitter {
                 projectRuntime: useRuntimeProjectWorkflowIO ? runtime : undefined,
                 projectCwd: useRuntimeProjectWorkflowIO ? workspacePath : undefined,
               }),
+              actionRegistry: new WorkflowActionRegistry({
+                projectRoot: runtime.normalizePath(".mux/actions", workspacePath),
+                globalRoot: path.join(this.config.rootDir, "actions"),
+                projectRuntime: useRuntimeProjectWorkflowIO ? runtime : undefined,
+                projectCwd: useRuntimeProjectWorkflowIO ? workspacePath : undefined,
+              }),
+              defaultActionCwd: workspacePath,
               runStore: new WorkflowRunStore({
                 sessionDir: this.config.getSessionDir(workspaceId),
               }),

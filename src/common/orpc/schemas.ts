@@ -106,7 +106,10 @@ export {
 
 // Workflow schemas
 export {
+  JsonValueSchema,
   StructuredTaskOutputSchema,
+  WorkflowActionEffectSchema,
+  WorkflowActionMetadataSchema,
   WorkflowDefinitionDescriptorSchema,
   WorkflowDefinitionScopeSchema,
   WorkflowEventSequenceSchema,

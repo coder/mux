@@ -194,6 +194,8 @@ function getWorkflowEventLabel(event: WorkflowRunEvent): string {
       return `${event.stepId} / ${event.taskId} / ${event.status}`;
     case "patch":
       return `${event.stepId} / ${event.sourceTaskId} / ${event.status}`;
+    case "action":
+      return `${event.stepId} / ${event.name} / ${event.status}`;
     case "validation": {
       const verdict = event.success ? "passed" : "failed";
       return event.message
@@ -219,6 +221,8 @@ function getWorkflowEventDetail(event: WorkflowRunEvent): unknown {
       return event.result;
     case "patch":
       return event.details;
+    case "action":
+      return event.details;
     case "task":
     case "validation":
     case "error":
@@ -240,6 +244,16 @@ function getEventTone(event: WorkflowRunEvent): "normal" | "success" | "warning"
       : event.status === "started"
         ? "normal"
         : "warning";
+  }
+  if (event.type === "action") {
+    if (
+      event.status === "completed" ||
+      event.status === "cached" ||
+      event.status === "reconciled"
+    ) {
+      return "success";
+    }
+    return event.status === "failed" ? "warning" : "normal";
   }
   if (event.type === "result") {
     return "success";

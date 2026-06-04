@@ -518,6 +518,14 @@ export class WorkflowRunStore {
     await writeJsonAtomic(this.runFile(runId), runForDisk);
   }
 
+  getStepArtifactsDir(runId: string, stepId: string, inputHash: string): string {
+    assertValidWorkflowRunId(runId);
+    assert(stepId.length > 0, "WorkflowRunStore.getStepArtifactsDir: stepId is required");
+    assert(inputHash.length > 0, "WorkflowRunStore.getStepArtifactsDir: inputHash is required");
+    const stepKey = crypto.createHash("sha256").update(`${stepId}\0${inputHash}`).digest("hex");
+    return path.join(this.runDir(runId), "artifacts", stepKey);
+  }
+
   private workflowsDir(): string {
     return path.join(this.sessionDir, "workflows");
   }
