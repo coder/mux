@@ -328,6 +328,8 @@ interface WorkflowResultContinuationSender {
       skipAutoResumeReset?: boolean;
       synthetic?: boolean;
       agentInitiated?: boolean;
+      /** When true, reject instead of queueing if the workspace is busy. */
+      requireIdle?: boolean;
       startStreamInBackground?: boolean;
     }
   ): Promise<Result<void, SendMessageError>>;
@@ -1631,6 +1633,7 @@ export class AIService extends EventEmitter {
                     skipAutoResumeReset: true,
                     synthetic: true,
                     agentInitiated: true,
+                    requireIdle: true,
                     startStreamInBackground: true,
                   }
                 );

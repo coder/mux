@@ -1828,6 +1828,7 @@ export const router = (authToken?: string) => {
                       skipAutoResumeReset: true,
                       synthetic: true,
                       agentInitiated: true,
+                      requireIdle: true,
                       startStreamInBackground: true,
                     }
                   );
