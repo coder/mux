@@ -41,7 +41,7 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
 
           if (
             proc.workspaceId !== workspaceId &&
-            taskService.isWorkflowOwnedDescendantAgentTask(workspaceId, proc.workspaceId)
+            (await taskService.isWorkflowOwnedDescendantAgentTask(workspaceId, proc.workspaceId))
           ) {
             continue;
           }

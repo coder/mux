@@ -317,6 +317,8 @@ interface CompletedAgentReportCacheEntry {
   // Ancestor workspace IDs captured when the report was cached.
   // Used to keep descendant-scope checks working even if the task workspace is cleaned up.
   ancestorWorkspaceIds: string[];
+  // Ancestors for which the task report must only be consumed through a workflow run.
+  workflowOwnedAncestorWorkspaceIds?: string[];
 }
 
 interface ParentAutoResumeHint {
@@ -347,6 +349,14 @@ function hasAncestorWorkspaceId(
   ancestorWorkspaceId: string
 ): boolean {
   const ids = entry?.ancestorWorkspaceIds;
+  return Array.isArray(ids) && ids.includes(ancestorWorkspaceId);
+}
+
+function hasWorkflowOwnedAncestorWorkspaceId(
+  entry: { workflowOwnedAncestorWorkspaceIds?: unknown } | null | undefined,
+  ancestorWorkspaceId: string
+): boolean {
+  const ids = entry?.workflowOwnedAncestorWorkspaceIds;
   return Array.isArray(ids) && ids.includes(ancestorWorkspaceId);
 }
 
@@ -1821,6 +1831,7 @@ export class TaskService {
         reportMarkdown: artifact.reportMarkdown,
         title: artifact.title,
         structuredOutput: artifact.structuredOutput,
+        workflowOwnedAncestorWorkspaceIds: artifact.workflowOwnedAncestorWorkspaceIds,
         ancestorWorkspaceIds: artifact.ancestorWorkspaceIds,
       });
       this.enforceCompletedReportCacheLimit();
@@ -2359,7 +2370,10 @@ export class TaskService {
     });
   }
 
-  isWorkflowOwnedDescendantAgentTask(ancestorWorkspaceId: string, taskId: string): boolean {
+  async isWorkflowOwnedDescendantAgentTask(
+    ancestorWorkspaceId: string,
+    taskId: string
+  ): Promise<boolean> {
     assert(
       ancestorWorkspaceId.length > 0,
       "isWorkflowOwnedDescendantAgentTask: ancestorWorkspaceId required"
@@ -2367,7 +2381,34 @@ export class TaskService {
     assert(taskId.length > 0, "isWorkflowOwnedDescendantAgentTask: taskId required");
 
     const cfg = this.config.loadConfigOrDefault();
-    const index = this.buildAgentTaskIndex(cfg);
+    const indexResult = this.getWorkflowOwnedDescendantAgentTaskUsingIndex(
+      this.buildAgentTaskIndex(cfg),
+      ancestorWorkspaceId,
+      taskId
+    );
+    if (indexResult != null) {
+      return indexResult;
+    }
+
+    const cached = this.completedReportsByTaskId.get(taskId);
+    if (hasWorkflowOwnedAncestorWorkspaceId(cached, ancestorWorkspaceId)) {
+      return true;
+    }
+    if (hasAncestorWorkspaceId(cached, ancestorWorkspaceId)) {
+      return false;
+    }
+
+    const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
+    const persisted = await readSubagentReportArtifactsFile(sessionDir);
+    const entry = persisted.artifactsByChildTaskId[taskId];
+    return hasWorkflowOwnedAncestorWorkspaceId(entry, ancestorWorkspaceId);
+  }
+
+  private getWorkflowOwnedDescendantAgentTaskUsingIndex(
+    index: AgentTaskIndex,
+    ancestorWorkspaceId: string,
+    taskId: string
+  ): boolean | null {
     let current = taskId;
     let workflowOwned = false;
 
@@ -2376,13 +2417,13 @@ export class TaskService {
       workflowOwned ||= entry?.workflowTask != null;
 
       const parent = index.parentById.get(current);
-      if (!parent) return false;
+      if (!parent) return null;
       if (parent === ancestorWorkspaceId) return workflowOwned;
       current = parent;
     }
 
     throw new Error(
-      `isWorkflowOwnedDescendantAgentTask: possible parentWorkspaceId cycle starting at ${taskId}`
+      `getWorkflowOwnedDescendantAgentTaskUsingIndex: possible parentWorkspaceId cycle starting at ${taskId}`
     );
   }
 
@@ -4123,10 +4164,18 @@ export class TaskService {
 
     const isWorkflowOwnedChildReport = latestChildEntry?.workspace.workflowTask != null;
 
-    const parentById = this.buildAgentTaskIndex(cfgAfterReport).parentById;
+    const indexAfterReport = this.buildAgentTaskIndex(cfgAfterReport);
     const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(
-      parentById,
+      indexAfterReport.parentById,
       childWorkspaceId
+    );
+    const workflowOwnedAncestorWorkspaceIds = ancestorWorkspaceIds.filter(
+      (ancestorWorkspaceId) =>
+        this.getWorkflowOwnedDescendantAgentTaskUsingIndex(
+          indexAfterReport,
+          ancestorWorkspaceId,
+          childWorkspaceId
+        ) === true
     );
 
     // Persist the completed report in the session dirs of all ancestors so `task_await` can
@@ -4141,6 +4190,7 @@ export class TaskService {
           childTaskId: childWorkspaceId,
           parentWorkspaceId,
           ancestorWorkspaceIds,
+          workflowOwnedAncestorWorkspaceIds,
           reportMarkdown: reportArgs.reportMarkdown,
           model: latestChildEntry?.workspace.taskModelString,
           thinkingLevel: latestChildEntry?.workspace.taskThinkingLevel,
@@ -4270,14 +4320,23 @@ export class TaskService {
     this.markTaskForegroundRelevant(taskId);
 
     const cfg = this.config.loadConfigOrDefault();
-    const parentById = this.buildAgentTaskIndex(cfg).parentById;
-    const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(parentById, taskId);
+    const index = this.buildAgentTaskIndex(cfg);
+    const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(
+      index.parentById,
+      taskId
+    );
+    const workflowOwnedAncestorWorkspaceIds = ancestorWorkspaceIds.filter(
+      (ancestorWorkspaceId) =>
+        this.getWorkflowOwnedDescendantAgentTaskUsingIndex(index, ancestorWorkspaceId, taskId) ===
+        true
+    );
 
     this.completedReportsByTaskId.set(taskId, {
       reportMarkdown: report.reportMarkdown,
       title: report.title,
       structuredOutput: report.structuredOutput,
       ancestorWorkspaceIds,
+      workflowOwnedAncestorWorkspaceIds,
     });
     this.enforceCompletedReportCacheLimit();
 

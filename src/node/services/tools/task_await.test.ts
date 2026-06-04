@@ -313,6 +313,46 @@ describe("task_await tool", () => {
     expect(listBackgroundProcesses).toHaveBeenCalledTimes(0);
   });
 
+  it("rejects explicit workflow-owned agent task IDs", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-explicit-workflow-owned-agent");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "leaked" }));
+    const getAgentTaskStatuses = mock((taskIds: string[]) => {
+      expect(taskIds).toEqual(["workflow-task"]);
+      return new Map([["workflow-task", { exists: true, taskStatus: "reported" as const }]]);
+    });
+    const isWorkflowOwnedDescendantAgentTask = mock(
+      (_ancestorWorkspaceId: string, taskId: string) => Promise.resolve(taskId === "workflow-task")
+    );
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      isWorkflowOwnedDescendantAgentTask,
+      getAgentTaskStatuses,
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result = (await Promise.resolve(
+      tool.execute!({ task_ids: ["workflow-task"] }, mockToolCallOptions)
+    )) as { results: Array<{ status: string; taskId: string }> };
+
+    expect(result.results).toHaveLength(1);
+    const firstResult = result.results[0];
+    if (!firstResult) {
+      throw new Error("Expected one task_await result");
+    }
+    expect(firstResult.status).toBe("invalid_scope");
+    expect(firstResult.taskId).toBe("workflow-task");
+    expect(isWorkflowOwnedDescendantAgentTask).toHaveBeenCalledWith(
+      "parent-workspace",
+      "workflow-task"
+    );
+    expect(waitForAgentReport).toHaveBeenCalledTimes(0);
+  });
+
   it("falls back to not_found when bash suggestion discovery fails", async () => {
     using tempDir = new TestTempDir("test-task-await-tool-suggestion-fallback-on-list-error");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

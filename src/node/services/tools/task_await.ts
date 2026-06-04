@@ -211,6 +211,9 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         workspaceId,
         { excludeWorkflowTasks: true }
       );
+      const isWorkflowOwnedDescendantAgentTask = async (taskId: string): Promise<boolean> =>
+        (await taskService.isWorkflowOwnedDescendantAgentTask?.(workspaceId, taskId)) ?? false;
+
       const listInScopeBackgroundBashTaskIds = async (): Promise<string[]> => {
         if (!config.backgroundProcessManager) {
           return [];
@@ -226,7 +229,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           if (!inScope) continue;
           if (
             proc.workspaceId !== workspaceId &&
-            taskService.isWorkflowOwnedDescendantAgentTask(workspaceId, proc.workspaceId)
+            (await isWorkflowOwnedDescendantAgentTask(proc.workspaceId))
           ) {
             continue;
           }
@@ -308,7 +311,15 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               )
             ).filter((taskId): taskId is string => typeof taskId === "string");
 
-      const descendantAgentTaskIdSet = new Set(descendantAgentTaskIds);
+      const awaitableAgentTaskIds: string[] = [];
+      for (const taskId of descendantAgentTaskIds) {
+        if (await isWorkflowOwnedDescendantAgentTask(taskId)) {
+          continue;
+        }
+        awaitableAgentTaskIds.push(taskId);
+      }
+
+      const descendantAgentTaskIdSet = new Set(awaitableAgentTaskIds);
       const rejectedAgentTaskIds = agentTaskIds.filter(
         (taskId) => !descendantAgentTaskIdSet.has(taskId)
       );
@@ -395,6 +406,12 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             proc.workspaceId === workspaceId ||
             (await taskService.isDescendantAgentTask(workspaceId, proc.workspaceId));
           if (!inScope) {
+            return { status: "invalid_scope" as const, taskId };
+          }
+          if (
+            proc.workspaceId !== workspaceId &&
+            (await isWorkflowOwnedDescendantAgentTask(proc.workspaceId))
+          ) {
             return { status: "invalid_scope" as const, taskId };
           }
 
