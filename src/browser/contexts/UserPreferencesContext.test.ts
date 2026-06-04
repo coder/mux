@@ -7,6 +7,7 @@ import {
   mirrorBackendPreferences,
   overlayDirtyLocalValues,
   prunePreferenceScopes,
+  shouldBackfillLocalPreferences,
 } from "./UserPreferencesContext";
 import {
   LAUNCH_BEHAVIOR_KEY,
@@ -65,6 +66,33 @@ async function waitUntil(assertion: () => void): Promise<void> {
 }
 
 describe("UserPreferencesProvider bridge helpers", () => {
+  test("keeps local backfill active until backend preferences are initialized", () => {
+    expect(
+      shouldBackfillLocalPreferences({
+        backendPreferences: undefined,
+        userPreferencesInitialized: false,
+      })
+    ).toBe(true);
+    expect(
+      shouldBackfillLocalPreferences({
+        backendPreferences: undefined,
+        userPreferencesInitialized: undefined,
+      })
+    ).toBe(true);
+    expect(
+      shouldBackfillLocalPreferences({
+        backendPreferences: undefined,
+        userPreferencesInitialized: true,
+      })
+    ).toBe(false);
+    expect(
+      shouldBackfillLocalPreferences({
+        backendPreferences: { appearance: { theme: "dark" } },
+        userPreferencesInitialized: false,
+      })
+    ).toBe(false);
+  });
+
   test("hydrates backend preferences into the local startup cache", async () => {
     const storage = new MemoryStorage();
 

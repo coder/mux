@@ -193,6 +193,13 @@ interface UserPreferenceConfigClient {
   saveConfig: (input: { userPreferences?: UserPreferences | null }) => Promise<void>;
 }
 
+export function shouldBackfillLocalPreferences(params: {
+  backendPreferences: UserPreferences | undefined;
+  userPreferencesInitialized: boolean | undefined;
+}): boolean {
+  return params.userPreferencesInitialized !== true && params.backendPreferences === undefined;
+}
+
 export async function hydrateUserPreferencesLocalCache(params: {
   configClient: UserPreferenceConfigClient;
   signal?: AbortSignal;
@@ -209,16 +216,18 @@ export async function hydrateUserPreferencesLocalCache(params: {
   }
 
   const backendPreferences = normalizeUserPreferences(config.userPreferences);
-  const shouldBackfillLocalPreferences =
-    config.userPreferencesInitialized !== true && backendPreferences === undefined;
+  const shouldBackfill = shouldBackfillLocalPreferences({
+    backendPreferences,
+    userPreferencesInitialized: config.userPreferencesInitialized,
+  });
   mirrorBackendPreferences({
     backendPreferences,
     dirtyKeys: new Set(),
-    initial: shouldBackfillLocalPreferences,
+    initial: shouldBackfill,
     storage,
   });
 
-  return shouldBackfillLocalPreferences
+  return shouldBackfill
     ? mergeMissingLocalPreferences(backendPreferences, storage)
     : backendPreferences;
 }
@@ -346,23 +355,25 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
 
     savePreferencesRef.current = enqueueSave;
 
-    const applyBackendConfig = async (initial: boolean) => {
+    const applyBackendConfig = async () => {
       const config = await api.config.getConfig();
       if (signal.aborted) {
         return;
       }
 
       const backendPreferences = normalizeUserPreferences(config.userPreferences);
-      const shouldBackfillLocalPreferences =
-        initial && config.userPreferencesInitialized !== true && backendPreferences === undefined;
+      const shouldBackfill = shouldBackfillLocalPreferences({
+        backendPreferences,
+        userPreferencesInitialized: config.userPreferencesInitialized,
+      });
       mirrorBackendPreferences({
         backendPreferences,
         dirtyKeys: dirtyKeysRef.current,
-        initial: shouldBackfillLocalPreferences,
+        initial: shouldBackfill,
         storage,
       });
 
-      const withLocalBackfill = shouldBackfillLocalPreferences
+      const withLocalBackfill = shouldBackfill
         ? mergeMissingLocalPreferences(backendPreferences, storage)
         : backendPreferences;
       const nextPreferences = overlayDirtyLocalValues(
@@ -376,7 +387,7 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
       setHydrated(true);
 
       if (
-        shouldBackfillLocalPreferences &&
+        shouldBackfill &&
         stableStringify(nextPreferences) !== stableStringify(backendPreferences)
       ) {
         enqueueSave(nextPreferences);
@@ -397,7 +408,7 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
       enqueueSave(currentPreferencesRef.current);
     });
 
-    const initialSync = applyBackendConfig(!hydratedRef.current);
+    const initialSync = applyBackendConfig();
     initialSync.catch((error) => {
       console.warn("Failed to hydrate user preferences:", error);
     });
@@ -416,7 +427,7 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
           if (signal.aborted) {
             break;
           }
-          const refresh = applyBackendConfig(!hydratedRef.current);
+          const refresh = applyBackendConfig();
           refresh.catch((error) => {
             console.warn("Failed to refresh user preferences:", error);
           });
