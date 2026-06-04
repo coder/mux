@@ -145,10 +145,10 @@ export class WorkflowActionRegistry {
         sourceHash: await hashWorkflowActionSourceWithDependencies(sourcePath, source),
       };
     } catch (error) {
-      if (await localPathExists(sourcePath)) {
-        log.warn(`Skipping unreadable workflow action '${sourcePath}': ${getErrorMessage(error)}`);
+      if (isMissingPathError(error)) {
+        return null;
       }
-      return null;
+      throw new Error(`Unable to read workflow action '${sourcePath}': ${getErrorMessage(error)}`);
     }
   }
 
@@ -343,6 +343,14 @@ function actionNameFromRelativePath(relativePath: string): string | null {
     return null;
   }
   return segments.join(".");
+}
+
+function isMissingPathError(error: unknown): boolean {
+  if (error == null || typeof error !== "object" || !("code" in error)) {
+    return false;
+  }
+  const code = (error as { code?: unknown }).code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 async function localPathExists(filePath: string): Promise<boolean> {

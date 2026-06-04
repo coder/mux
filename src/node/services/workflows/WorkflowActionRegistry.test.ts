@@ -89,6 +89,31 @@ describe("WorkflowActionRegistry", () => {
     expect(resolved.sourceHash).toMatch(/^sha256:/);
   });
 
+  test("does not fall back to a global action when a trusted project action is invalid", async () => {
+    using tmp = new DisposableTempDir("workflow-actions-invalid-project");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const requires = Array.from({ length: 65 }, (_, index) => `require("./dep${index}.js");`).join(
+      "\n"
+    );
+    await writeAction(projectRoot, "tool.js", requires);
+    await writeAction(globalRoot, "tool.js", "module.exports = { global: true };");
+    for (let index = 0; index < 65; index += 1) {
+      await writeAction(projectRoot, `dep${index}.js`, "module.exports = {};\n");
+    }
+    const registry = new WorkflowActionRegistry({ projectRoot, globalRoot });
+
+    try {
+      await registry.resolveAction("tool", { projectTrusted: true });
+      throw new Error("Expected invalid project action to be rejected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect(error instanceof Error ? error.message : "").toMatch(
+        /static dependency limit exceeded/
+      );
+    }
+  });
+
   test("rejects runtime-backed project actions instead of executing them locally", async () => {
     using tmp = new DisposableTempDir("workflow-actions-runtime");
     const projectRoot = "/runtime/project/.mux/actions";

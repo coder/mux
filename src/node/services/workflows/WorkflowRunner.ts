@@ -653,11 +653,12 @@ export class WorkflowRunner {
     const unsafeMutatingAttempt = await this.findUnsafePriorActionAttempt(
       runId,
       spec.id,
+      inputHash,
       metadata.effect
     );
     if (unsafeMutatingAttempt != null) {
       if (unsafeMutatingAttempt.inputHash !== inputHash) {
-        const message = `Workflow action ${action.name} has an incomplete or failed mutating step with a different replay identity and cannot be replayed automatically`;
+        const message = `Workflow action ${action.name} has a prior mutating step with a different replay identity and cannot be replayed automatically`;
         await this.appendWorkflowActionFailure(runId, sequence, spec, action, metadata, message, {
           startedAt: unsafeMutatingAttempt.startedAt,
           inputHash,
@@ -716,24 +717,33 @@ export class WorkflowRunner {
   private async findUnsafePriorActionAttempt(
     runId: string,
     stepId: string,
+    currentInputHash: string,
     currentEffect: WorkflowActionEffect
   ): Promise<WorkflowStepRecord | null> {
     const run = await this.runStore.getRun(runId);
-    const priorAttempt =
-      run.steps.findLast(
-        (step) => step.stepId === stepId && (step.status === "started" || step.status === "failed")
-      ) ?? null;
-    if (priorAttempt == null) {
-      return null;
+    for (let index = run.steps.length - 1; index >= 0; index -= 1) {
+      const step = run.steps[index];
+      assert(step != null, "Workflow step index must resolve to a record");
+      if (step.stepId !== stepId || !isReplayUnsafeWorkflowActionStepStatus(step.status)) {
+        continue;
+      }
+      // Completed mutating actions have already performed their side effect; do not
+      // execute a drifted replay identity under the same durable step id.
+      if (step.status === "completed" && step.inputHash === currentInputHash) {
+        continue;
+      }
+      const priorEvent = run.events.findLast(
+        (event): event is Extract<WorkflowRunEvent, { type: "action" }> =>
+          event.type === "action" &&
+          event.stepId === stepId &&
+          isWorkflowActionEventStatusForStep(event.status, step.status)
+      );
+      const effect = priorEvent?.effect ?? currentEffect;
+      if (isMutatingWorkflowActionEffect(effect)) {
+        return step;
+      }
     }
-    const priorEvent = run.events.findLast(
-      (event): event is Extract<WorkflowRunEvent, { type: "action" }> =>
-        event.type === "action" &&
-        event.stepId === stepId &&
-        (event.status === "started" || event.status === "failed")
-    );
-    const effect = priorEvent?.effect ?? currentEffect;
-    return isMutatingWorkflowActionEffect(effect) ? priorAttempt : null;
+    return null;
   }
 
   private async executeActionStep(
@@ -1648,6 +1658,20 @@ function assertWorkflowActionOutput(
 
 function isMutatingWorkflowActionEffect(effect: WorkflowActionEffect): boolean {
   return effect === "workspace" || effect === "external";
+}
+
+function isReplayUnsafeWorkflowActionStepStatus(status: WorkflowStepRecord["status"]): boolean {
+  return status === "started" || status === "failed" || status === "completed";
+}
+
+function isWorkflowActionEventStatusForStep(
+  eventStatus: Extract<WorkflowRunEvent, { type: "action" }>["status"],
+  stepStatus: WorkflowStepRecord["status"]
+): boolean {
+  if (stepStatus === "completed") {
+    return eventStatus === "completed" || eventStatus === "reconciled";
+  }
+  return eventStatus === stepStatus;
 }
 
 function getWorkflowActionTimeoutMs(
