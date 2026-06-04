@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { createContext, useEffect, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { requireTestModule } from "@/browser/testUtils";
 import { RouterProvider } from "@/browser/contexts/RouterContext";
@@ -23,14 +23,18 @@ function registerProjectPageMocks() {
     default: () => <div data-testid="LottieMock" />,
   }));
 
+  const apiContextValue = {
+    api: null,
+    status: "connecting" as const,
+    error: null,
+    authenticate: () => undefined,
+    retry: () => undefined,
+  };
   void mock.module("@/browser/contexts/API", () => ({
-    useAPI: () => ({
-      api: null,
-      status: "connecting" as const,
-      error: null,
-      authenticate: () => undefined,
-      retry: () => undefined,
-    }),
+    APIContext: createContext(apiContextValue),
+    APIProvider: (props: { children: ReactNode }) => props.children,
+    useAPI: () => apiContextValue,
+    useOptionalAPI: () => apiContextValue,
   }));
 
   // Mock useProvidersConfig to return a configured provider so ChatInput renders
@@ -43,13 +47,21 @@ function registerProjectPageMocks() {
   }));
 
   // Mock ConfiguredProvidersBar to avoid tooltip/context dependencies
+  const providerBarFrameClass = "flex h-9 items-center justify-center gap-2 text-sm";
   void mock.module("@/browser/components/ConfiguredProvidersBar/ConfiguredProvidersBar", () => ({
-    ConfiguredProvidersBar: () => <div data-testid="ConfiguredProvidersBarMock" />,
+    CONFIGURED_PROVIDERS_BAR_FRAME_CLASS: providerBarFrameClass,
+    ConfiguredProvidersBar: () => (
+      <div className={providerBarFrameClass} data-component="ConfiguredProvidersBar" />
+    ),
+    ConfiguredProvidersBarSkeleton: () => (
+      <div className={providerBarFrameClass} data-component="ConfiguredProvidersBarSkeleton" />
+    ),
   }));
 
   // Mock ProjectContext to provide the minimal routing/project surface used by the
   // real WorkspaceProvider/AgentProvider stack without wiring the full app shell.
   void mock.module("@/browser/contexts/ProjectContext", () => ({
+    ProjectProvider: (props: { children: ReactNode }) => props.children,
     useProjectContext: () => ({
       userProjects: new Map(),
       systemProjectPath: null,
@@ -91,6 +103,8 @@ function registerProjectPageMocks() {
   // Mock ChatInput to simulate the old (buggy) behavior where onReady can fire again
   // on unrelated re-renders (e.g. workspace list updates).
   void mock.module("@/browser/features/ChatInput/index", () => ({
+    CREATION_CHAT_INPUT_SECTION_FRAME_CLASS:
+      "bg-surface-primary border-border-light min-h-56 w-full max-w-3xl rounded-lg border px-6 py-5 shadow-lg",
     ChatInput: (props: {
       onReady?: (api: {
         focus: () => void;
@@ -165,8 +179,8 @@ describe("ProjectPage", () => {
       </RouterProvider>
     );
 
-    await waitFor(() => expect(readyCalls).toBe(1));
     await waitFor(() => expect(focusMock).toHaveBeenCalledTimes(1));
+    const readyCallsAfterInitialHydration = readyCalls;
 
     // Simulate an unrelated App re-render that changes an inline callback identity.
     rerender(
@@ -179,7 +193,7 @@ describe("ProjectPage", () => {
       </RouterProvider>
     );
 
-    await waitFor(() => expect(readyCalls).toBe(2));
+    await waitFor(() => expect(readyCalls).toBeGreaterThan(readyCallsAfterInitialHydration));
 
     // Focus should not be re-triggered (would move caret to end).
     expect(focusMock).toHaveBeenCalledTimes(1);

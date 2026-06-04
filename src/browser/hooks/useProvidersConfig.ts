@@ -1,10 +1,65 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useAPI } from "@/browser/contexts/API";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { HAS_CONFIGURED_PROVIDER_CACHE_KEY } from "@/common/constants/storage";
 import type {
   ProviderConfigInfo,
   ProviderModelEntry,
   ProvidersConfigMap,
 } from "@/common/orpc/types";
+
+function hasConfiguredProvider(config: ProvidersConfigMap): boolean {
+  return Object.values(config).some((provider) => provider?.isConfigured);
+}
+
+function hasText(value: string | null | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+export function getOptimisticConfiguredProvider(
+  provider: string,
+  info: ProviderConfigInfo
+): ProviderConfigInfo {
+  const hasBaseUrl = hasText(info.baseUrl) || hasText(info.baseUrlResolved);
+  const hasModels = (info.models?.length ?? 0) > 0;
+  const isEnabled = info.isEnabled !== false;
+
+  const isConfigured = (() => {
+    if (!isEnabled) return false;
+
+    if (provider === "bedrock") {
+      return hasText(info.aws?.region);
+    }
+
+    if (provider === "mux-gateway") {
+      return info.couponCodeSet === true;
+    }
+
+    if (info.isCustom === true || info.providerType === "openai-compatible") {
+      return hasBaseUrl;
+    }
+
+    if (provider === "ollama") {
+      return hasBaseUrl || hasModels;
+    }
+
+    // This is a deliberately conservative browser-side mirror of the backend's
+    // computed configuredness. The backend refresh remains authoritative, but the
+    // local mirror prevents ProjectPage from hydrating through a stale provider branch.
+    return (
+      info.apiKeySet === true ||
+      info.apiKeyFile != null ||
+      info.apiKeySource === "env" ||
+      info.codexOauthSet === true
+    );
+  })();
+
+  return { ...info, isConfigured };
+}
+
+function updateHasConfiguredProviderCache(config: ProvidersConfigMap): void {
+  updatePersistedState(HAS_CONFIGURED_PROVIDER_CACHE_KEY, hasConfiguredProvider(config));
+}
 
 /**
  * Hook to get provider config with automatic refresh on config changes.
@@ -33,6 +88,7 @@ export function useProvidersConfig() {
       // Only update if this is the latest fetch (ignore stale responses)
       if (myVersion === fetchVersionRef.current) {
         configRef.current = cfg;
+        updateHasConfiguredProviderCache(cfg);
         setConfig(cfg);
       }
     } catch {
@@ -58,12 +114,17 @@ export function useProvidersConfig() {
       const prev = configRef.current;
       if (!prev) return;
 
+      const nextProvider = getOptimisticConfiguredProvider(provider, {
+        ...prev[provider],
+        ...updates,
+      });
       const next: ProvidersConfigMap = {
         ...prev,
-        [provider]: { ...prev[provider], ...updates },
+        [provider]: nextProvider,
       };
 
       configRef.current = next;
+      updateHasConfiguredProviderCache(next);
       setConfig(next);
     },
     []
@@ -88,12 +149,17 @@ export function useProvidersConfig() {
       const currentModels = prev[provider]?.models ?? [];
       const newModels = updater(currentModels);
 
+      const nextProvider = getOptimisticConfiguredProvider(provider, {
+        ...prev[provider],
+        models: newModels,
+      });
       const next: ProvidersConfigMap = {
         ...prev,
-        [provider]: { ...prev[provider], models: newModels },
+        [provider]: nextProvider,
       };
 
       configRef.current = next;
+      updateHasConfiguredProviderCache(next);
       setConfig(next);
       return newModels;
     },

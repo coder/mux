@@ -316,6 +316,13 @@ export function getTrunkBranchKey(projectPath: string): string {
 }
 
 /**
+ * Synchronous mirror of whether any provider was configured on the last provider config load.
+ * ProjectPage uses this to choose the same creation shell during hydration instead of
+ * briefly showing the wrong no-provider/configured-provider layout while config loads.
+ */
+export const HAS_CONFIGURED_PROVIDER_CACHE_KEY = "hasConfiguredProviderCache";
+
+/**
  * Get the localStorage key for whether to show the "Initialize with AGENTS.md" nudge for a project.
  * Set to true when a project is first added; cleared when user dismisses or runs /init.
  * Format: "agentsInitNudge:{projectPath}"

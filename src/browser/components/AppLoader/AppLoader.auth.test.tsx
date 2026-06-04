@@ -4,6 +4,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { useTheme } from "../../contexts/ThemeContext";
+import type { APIClient, UseAPIResult } from "../../contexts/API";
 import { installDom } from "../../../../tests/ui/dom";
 
 let cleanupDom: (() => void) | null = null;
@@ -27,37 +28,56 @@ void mock.module("lottie-react", () => ({
   default: () => <div data-testid="LottieMock" />,
 }));
 
-void mock.module("@/browser/contexts/API", () => ({
-  APIProvider: (props: { children: React.ReactNode }) => props.children,
-  useAPI: () => {
-    if (apiStatus === "auth_required") {
-      return {
-        api: null,
-        status: "auth_required" as const,
-        error: apiError,
-        authenticate: () => undefined,
-        retry: () => undefined,
-      };
-    }
-
-    if (apiStatus === "error") {
-      return {
-        api: null,
-        status: "error" as const,
-        error: apiError ?? "Connection error",
-        authenticate: () => undefined,
-        retry: () => undefined,
-      };
-    }
-
+function getMockAPIContextValue(): UseAPIResult {
+  if (apiStatus === "auth_required") {
     return {
       api: null,
-      status: "connecting" as const,
-      error: null,
+      status: "auth_required" as const,
+      error: apiError,
       authenticate: () => undefined,
       retry: () => undefined,
     };
+  }
+
+  if (apiStatus === "error") {
+    return {
+      api: null,
+      status: "error" as const,
+      error: apiError ?? "Connection error",
+      authenticate: () => undefined,
+      retry: () => undefined,
+    };
+  }
+
+  return {
+    api: null,
+    status: "connecting" as const,
+    error: null,
+    authenticate: () => undefined,
+    retry: () => undefined,
+  };
+}
+
+const MockAPIContext = React.createContext<UseAPIResult | null>(null);
+let injectedAPIValue: UseAPIResult | null = null;
+
+void mock.module("@/browser/contexts/API", () => ({
+  APIContext: MockAPIContext,
+  APIProvider: (props: { children: React.ReactNode; client?: APIClient }) => {
+    const value = props.client
+      ? {
+          api: props.client,
+          status: "connected" as const,
+          error: null,
+          authenticate: () => undefined,
+          retry: () => undefined,
+        }
+      : getMockAPIContextValue();
+    injectedAPIValue = value;
+    return <MockAPIContext.Provider value={value}>{props.children}</MockAPIContext.Provider>;
   },
+  useAPI: () => injectedAPIValue ?? getMockAPIContextValue(),
+  useOptionalAPI: () => injectedAPIValue ?? getMockAPIContextValue(),
 }));
 
 void mock.module("@/browser/components/LoadingScreen/LoadingScreen", () => ({
