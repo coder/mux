@@ -27,6 +27,9 @@ import { isPathInsideDir } from "@/node/utils/pathUtils";
 const SNAPSHOT_VERSION = 1;
 const SNAPSHOT_DIR_NAME = "archive-state";
 const SNAPSHOT_METADATA_FILE_NAME = "metadata.json";
+// Single source of truth for the "workspace missing from config" failure so the
+// message stays consistent across the several snapshot operations that guard on it.
+const WORKSPACE_NOT_FOUND_IN_CONFIG_ERROR = "Workspace not found in config";
 const NOOP_INIT_LOGGER: InitLogger = {
   logStep: () => undefined,
   logStdout: () => undefined,
@@ -105,7 +108,7 @@ export class WorktreeArchiveSnapshotService {
       args.workspaceId
     );
     if (!workspaceEntry) {
-      return Err("Workspace not found in config");
+      return Err(WORKSPACE_NOT_FOUND_IN_CONFIG_ERROR);
     }
 
     const workspaceName = getPersistedWorkspaceName(workspaceEntry.workspace);
@@ -165,7 +168,7 @@ export class WorktreeArchiveSnapshotService {
       args.workspaceId
     );
     if (!workspaceEntry) {
-      return Err("Workspace not found in config");
+      return Err(WORKSPACE_NOT_FOUND_IN_CONFIG_ERROR);
     }
 
     const workspaceName = getPersistedWorkspaceName(workspaceEntry.workspace);
@@ -239,7 +242,7 @@ export class WorktreeArchiveSnapshotService {
       args.workspaceId
     );
     if (!workspaceEntry) {
-      return Err("Workspace not found in config");
+      return Err(WORKSPACE_NOT_FOUND_IN_CONFIG_ERROR);
     }
 
     const workspaceName = getPersistedWorkspaceName(workspaceEntry.workspace);
@@ -424,7 +427,7 @@ export class WorktreeArchiveSnapshotService {
       args.workspaceId
     );
     if (!workspaceEntry) {
-      return Err("Workspace not found in config");
+      return Err(WORKSPACE_NOT_FOUND_IN_CONFIG_ERROR);
     }
 
     const snapshot = workspaceEntry.workspace.worktreeArchiveSnapshot;
