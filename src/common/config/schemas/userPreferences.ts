@@ -4,7 +4,6 @@ import { AUTO_COMPACTION_THRESHOLD_MIN } from "@/common/constants/ui";
 import {
   BASH_COLLAPSED_SUMMARY_MODES,
   EDITOR_TYPES,
-  LAUNCH_BEHAVIOR_KEY,
   TRANSCRIPT_DENSITIES,
   normalizeEditorConfig,
   normalizeTerminalFontConfig,
@@ -15,14 +14,18 @@ import {
   type TranscriptDensity,
 } from "@/common/constants/storage";
 import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
-import {
-  ThinkingLevelSchema,
-  coerceThinkingLevel,
-  type ThinkingLevel,
-} from "@/common/types/thinking";
-import { isValidModelFormat, normalizeSelectedModel } from "@/common/utils/ai/models";
-import { normalizeAgentId } from "@/common/utils/agentIds";
+import { ThinkingLevelSchema } from "@/common/types/thinking";
 import { EXPIRATION_OPTIONS, type ExpirationValue } from "@/common/lib/shareExpiration";
+import {
+  isRecord,
+  parseAgentId,
+  parseBoolean,
+  parseEnum,
+  parseModelString,
+  parseNonEmptyString,
+  parseStringArray,
+  parseThinkingLevel,
+} from "@/common/preferences/userPreferenceParsing";
 
 const SHARE_EXPIRATION_VALUES = EXPIRATION_OPTIONS.map((option) => option.value) as [
   ExpirationValue,
@@ -131,22 +134,6 @@ export const UserPreferencesSchema = z.object({
 
 export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function parseBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function parseEnum<T extends string>(values: readonly T[], value: unknown): T | undefined {
-  return typeof value === "string" && values.includes(value as T) ? (value as T) : undefined;
-}
-
 function parseThemePreference(value: unknown): ThemePreferenceConfig | undefined {
   const parsed = ThemePreferenceSchema.safeParse(value);
   if (parsed.success) {
@@ -162,51 +149,6 @@ function parseThemePreference(value: unknown): ThemePreferenceConfig | undefined
   }
 
   return undefined;
-}
-
-function parseStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const item of value) {
-    const parsed = parseString(item);
-    if (!parsed || seen.has(parsed)) {
-      continue;
-    }
-    seen.add(parsed);
-    out.push(parsed);
-  }
-
-  return out.length > 0 ? out : undefined;
-}
-
-function parseModelString(value: unknown): string | undefined {
-  const parsed = parseString(value);
-  if (!parsed) {
-    return undefined;
-  }
-
-  if (parsed.startsWith("mux-gateway:") && !parsed.includes("/")) {
-    return undefined;
-  }
-
-  const normalized = normalizeSelectedModel(parsed);
-  return isValidModelFormat(normalized) ? normalized : undefined;
-}
-
-function parseAgentId(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return undefined;
-  }
-
-  return normalizeAgentId(value, "");
-}
-
-function parseThinkingLevel(value: unknown): ThinkingLevel | undefined {
-  return coerceThinkingLevel(value);
 }
 
 function parseTerminalFontConfig(value: unknown): TerminalFontConfig | undefined {
@@ -329,7 +271,7 @@ function parseWorkspaceCreationByProject(
     const entry: NonNullable<
       NonNullable<UserPreferences["workspaceCreation"]>["byProject"]
     >[string] = {};
-    const trunkBranch = parseString(rawEntry.trunkBranch);
+    const trunkBranch = parseNonEmptyString(rawEntry.trunkBranch);
     if (trunkBranch) {
       entry.trunkBranch = trunkBranch;
     }
@@ -374,7 +316,7 @@ function parseStringRecord(value: unknown): Record<string, string> | undefined {
 
   const out: Record<string, string> = {};
   for (const [key, rawValue] of Object.entries(value)) {
-    const parsed = parseString(rawValue);
+    const parsed = parseNonEmptyString(rawValue);
     if (parsed) {
       out[key] = parsed;
     }
@@ -462,18 +404,10 @@ export function normalizeUserPreferences(value: unknown): UserPreferences | unde
     const navigation: NonNullable<UserPreferences["navigation"]> = {};
     const launchBehavior = parseEnum<LaunchBehavior>(
       ["dashboard", "new-chat", "last-workspace"],
-      value.navigation[LAUNCH_BEHAVIOR_KEY]
+      value.navigation.launchBehavior
     );
     if (launchBehavior) {
       navigation.launchBehavior = launchBehavior;
-    } else {
-      const normalizedLaunchBehavior = parseEnum<LaunchBehavior>(
-        ["dashboard", "new-chat", "last-workspace"],
-        value.navigation.launchBehavior
-      );
-      if (normalizedLaunchBehavior) {
-        navigation.launchBehavior = normalizedLaunchBehavior;
-      }
     }
 
     const projectOrder = parseStringArray(value.navigation.projectOrder);

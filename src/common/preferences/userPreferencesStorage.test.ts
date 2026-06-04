@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 
 import {
   applyStoredUserPreference,
-  collectStoredUserPreferences,
   entriesFromUserPreferences,
   getStoredUserPreferenceEntries,
   hasUserPreferenceEntry,
@@ -45,6 +44,13 @@ class MemoryStorage {
   }
 }
 
+function collectForTest(storage: MemoryStorage) {
+  return getStoredUserPreferenceEntries(storage).reduce(
+    (preferences, entry) => applyStoredUserPreference(preferences, entry.key, entry.value),
+    undefined as Parameters<typeof applyStoredUserPreference>[0]
+  );
+}
+
 describe("user preference localStorage registry", () => {
   test("collects semantic preferences from legacy localStorage keys", () => {
     const storage = new MemoryStorage();
@@ -63,7 +69,7 @@ describe("user preference localStorage registry", () => {
     storage.setJSON(REVIEW_INCLUDE_UNCOMMITTED_KEY, true);
     storage.setJSON(getReviewDefaultBaseKey("/repo"), "origin/main");
 
-    expect(collectStoredUserPreferences(storage)).toEqual({
+    expect(collectForTest(storage)).toEqual({
       appearance: { theme: "dark" },
       navigation: { projectOrder: ["/repo"] },
       ai: {

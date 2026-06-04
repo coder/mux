@@ -34,10 +34,18 @@ import {
   type TranscriptDensity,
 } from "@/common/constants/storage";
 import { EXPIRATION_OPTIONS, type ExpirationValue } from "@/common/lib/shareExpiration";
-import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
-import { isValidModelFormat, normalizeSelectedModel } from "@/common/utils/ai/models";
-import { normalizeAgentId } from "@/common/utils/agentIds";
 import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
+import {
+  isRecord,
+  parseAgentId,
+  parseBoolean,
+  parseEnum,
+  parseModelString,
+  parseNonEmptyString,
+  parseRecord,
+  parseStringArray,
+  parseThinkingLevel,
+} from "@/common/preferences/userPreferenceParsing";
 
 export interface UserPreferenceStorageArea {
   readonly length: number;
@@ -81,10 +89,6 @@ const DYNAMIC_USER_PREFERENCE_PREFIXES = [
   getReviewDefaultBaseKey(""),
 ] as const;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function cloneUserPreferences(preferences: UserPreferences | undefined): UserPreferences {
   return preferences ? (JSON.parse(JSON.stringify(preferences)) as UserPreferences) : {};
 }
@@ -101,37 +105,6 @@ function parseStoredValue(raw: string | null): unknown {
   }
 }
 
-function parseNonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function parseBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function parseStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const item of value) {
-    const parsed = parseNonEmptyString(item);
-    if (!parsed || seen.has(parsed)) {
-      continue;
-    }
-    seen.add(parsed);
-    out.push(parsed);
-  }
-
-  return out.length > 0 ? out : undefined;
-}
-
-function parseEnum<T extends string>(values: readonly T[], value: unknown): T | undefined {
-  return typeof value === "string" && values.includes(value as T) ? (value as T) : undefined;
-}
-
 function parseLaunchBehavior(value: unknown): LaunchBehavior | undefined {
   return value === "dashboard" || value === "new-chat" || value === "last-workspace"
     ? value
@@ -144,40 +117,10 @@ function parseExpiration(value: unknown): ExpirationValue | undefined {
     : undefined;
 }
 
-function parseAgentId(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return undefined;
-  }
-
-  return normalizeAgentId(value, "");
-}
-
-function parseModel(value: unknown): string | undefined {
-  const parsed = parseNonEmptyString(value);
-  if (!parsed) {
-    return undefined;
-  }
-
-  if (parsed.startsWith("mux-gateway:") && !parsed.includes("/")) {
-    return undefined;
-  }
-
-  const normalized = normalizeSelectedModel(parsed);
-  return isValidModelFormat(normalized) ? normalized : undefined;
-}
-
-function parseThinkingLevel(value: unknown): ThinkingLevel | undefined {
-  return coerceThinkingLevel(value);
-}
-
 function parseThreshold(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100
     ? value
     : undefined;
-}
-
-function parseRuntimeConfig(value: unknown): Record<string, unknown> | undefined {
-  return isRecord(value) && Object.keys(value).length > 0 ? value : undefined;
 }
 
 function parseProjectScope(key: string, prefix: string): string | undefined {
@@ -415,7 +358,7 @@ export function applyStoredUserPreference(
 
   const projectModelPath = parseProjectScope(key, "model:");
   if (projectModelPath) {
-    const parsed = parseModel(value);
+    const parsed = parseModelString(value);
     if (!parsed) {
       return removeStoredUserPreference(next, key);
     }
@@ -475,7 +418,7 @@ export function applyStoredUserPreference(
 
   const runtimeProjectPath = readSuffix(key, getLastRuntimeConfigKey(""));
   if (runtimeProjectPath) {
-    const parsed = parseRuntimeConfig(value);
+    const parsed = parseRecord(value);
     if (!parsed) {
       return removeStoredUserPreference(next, key);
     }
@@ -691,21 +634,6 @@ export function readStoredUserPreferenceValue(
   return parseStoredValue(storage.getItem(key));
 }
 
-export function collectStoredUserPreferences(
-  storage: UserPreferenceStorageArea
-): UserPreferences | undefined {
-  let preferences: UserPreferences | undefined;
-  for (const key of getStoredUserPreferenceKeys(storage)) {
-    preferences = applyStoredUserPreference(
-      preferences,
-      key,
-      parseStoredValue(storage.getItem(key))
-    );
-  }
-
-  return preferences;
-}
-
 export function getStoredUserPreferenceEntries(
   storage: UserPreferenceStorageArea
 ): StoredUserPreferenceEntry[] {
@@ -739,24 +667,4 @@ export function hasUserPreferenceEntry(
   key: string
 ): boolean {
   return entriesFromUserPreferences(preferences).some((entry) => entry.key === key);
-}
-
-export function stableStringify(value: unknown): string {
-  return JSON.stringify(sortForStableStringify(value)) ?? "undefined";
-}
-
-function sortForStableStringify(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(sortForStableStringify);
-  }
-
-  if (!isRecord(value)) {
-    return value;
-  }
-
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(value).sort()) {
-    out[key] = sortForStableStringify(value[key]);
-  }
-  return out;
 }

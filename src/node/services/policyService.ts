@@ -13,6 +13,7 @@ import {
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { MCPServerTransport } from "@/common/types/mcp";
 import { compareVersions } from "@/node/services/coderService";
+import { stableStringify } from "@/common/utils/stableStringify";
 
 import packageJson from "../../../package.json";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -25,25 +26,6 @@ type ActivePolicySource =
   | { kind: "env"; value: string }
   | { kind: "governor"; origin: string; token: string }
   | { kind: "none" };
-
-function stableNormalize(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(stableNormalize);
-  }
-  if (value && typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    return Object.fromEntries(
-      Object.keys(obj)
-        .sort()
-        .map((key) => [key, stableNormalize(obj[key])])
-    );
-  }
-  return value;
-}
-
-function stableStringify(value: unknown): string {
-  return JSON.stringify(stableNormalize(value));
-}
 
 async function getClientVersion(): Promise<string> {
   // Prefer Electron's app version when available (authoritative in packaged apps).

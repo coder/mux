@@ -20,9 +20,9 @@ import {
   isUserPreferenceStorageKey,
   readStoredUserPreferenceValue,
   removeStoredUserPreference,
-  stableStringify,
 } from "@/common/preferences/userPreferencesStorage";
 import { normalizeOrder } from "@/common/utils/projectOrdering";
+import { stableStringify } from "@/common/utils/stableStringify";
 
 function getLocalStorage(): Storage | null {
   if (typeof window === "undefined" || !window.localStorage) {
@@ -40,7 +40,7 @@ function removeBackendEntryFromLocalStorage(key: string) {
   syncPersistedStateFromBackend(key, undefined);
 }
 
-function overlayDirtyLocalValues(
+export function overlayDirtyLocalValues(
   preferences: UserPreferences | undefined,
   dirtyKeys: Iterable<string>,
   storage: Storage
@@ -57,7 +57,7 @@ function overlayDirtyLocalValues(
   return next;
 }
 
-function mergeMissingLocalPreferences(
+export function mergeMissingLocalPreferences(
   backendPreferences: UserPreferences | undefined,
   storage: Storage
 ): UserPreferences | undefined {
@@ -101,7 +101,7 @@ function mirrorBackendPreferences(params: {
   }
 }
 
-function prunePreferenceScopes(params: {
+export function prunePreferenceScopes(params: {
   preferences: UserPreferences | undefined;
   projectPaths: Set<string>;
   workspaceIds: Set<string>;
@@ -148,6 +148,75 @@ function prunePreferenceScopes(params: {
   return normalizeUserPreferences(next);
 }
 
+interface UserPreferenceConfigClient<TTaskSettings> {
+  getConfig: () => Promise<{ taskSettings: TTaskSettings; userPreferences?: unknown }>;
+  saveConfig: (input: {
+    taskSettings: TTaskSettings;
+    userPreferences?: UserPreferences | null;
+  }) => Promise<void>;
+}
+
+export function createUserPreferenceSaveQueue<TTaskSettings>(params: {
+  configClient: UserPreferenceConfigClient<TTaskSettings>;
+  signal: AbortSignal;
+  getCurrentPreferences: () => UserPreferences | undefined;
+  clearDirtyKeys: () => void;
+  onError: (message: string, error: unknown) => void;
+}): (preferences: UserPreferences | undefined) => void {
+  let saveInFlight = false;
+  let pendingSave: UserPreferences | undefined | null = null;
+
+  const flush = async () => {
+    saveInFlight = true;
+    try {
+      while (pendingSave !== null && !params.signal.aborted) {
+        const preferencesToSave = pendingSave;
+        pendingSave = null;
+        const savedFingerprint = stableStringify(preferencesToSave);
+        const config = await params.configClient.getConfig();
+        if (params.signal.aborted) {
+          return;
+        }
+
+        await params.configClient.saveConfig({
+          taskSettings: config.taskSettings,
+          userPreferences: preferencesToSave ?? null,
+        });
+
+        if (params.signal.aborted) {
+          return;
+        }
+
+        if (stableStringify(params.getCurrentPreferences()) === savedFingerprint) {
+          params.clearDirtyKeys();
+        }
+      }
+    } catch (error) {
+      params.onError("Failed to persist user preferences:", error);
+    } finally {
+      saveInFlight = false;
+      if (pendingSave !== null && !params.signal.aborted) {
+        const retry = flush();
+        retry.catch((error) => {
+          params.onError("Failed to retry user preference persistence:", error);
+        });
+      }
+    }
+  };
+
+  return (preferences) => {
+    pendingSave = preferences;
+    if (saveInFlight) {
+      return;
+    }
+
+    const flushPromise = flush();
+    flushPromise.catch((error) => {
+      params.onError("Failed to flush user preference persistence:", error);
+    });
+  };
+}
+
 export function UserPreferencesProvider(props: { children: ReactNode }) {
   const { api } = useAPI();
   const projectContext = useProjectContext();
@@ -176,58 +245,18 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
     const abortController = new AbortController();
     const { signal } = abortController;
     let iterator: AsyncIterator<unknown> | null = null;
-    let saveInFlight = false;
-    let pendingSave: UserPreferences | undefined | null = null;
 
-    const enqueueSave = (preferences: UserPreferences | undefined) => {
-      pendingSave = preferences;
-      if (saveInFlight) {
-        return;
-      }
-
-      const flush = async () => {
-        saveInFlight = true;
-        try {
-          while (pendingSave !== null && !signal.aborted) {
-            const preferencesToSave = pendingSave;
-            pendingSave = null;
-            const savedFingerprint = stableStringify(preferencesToSave);
-            const config = await api.config.getConfig();
-            if (signal.aborted) {
-              return;
-            }
-
-            await api.config.saveConfig({
-              taskSettings: config.taskSettings,
-              userPreferences: preferencesToSave ?? null,
-            });
-
-            if (signal.aborted) {
-              return;
-            }
-
-            if (stableStringify(currentPreferencesRef.current) === savedFingerprint) {
-              dirtyKeysRef.current.clear();
-            }
-          }
-        } catch (error) {
-          console.warn("Failed to persist user preferences:", error);
-        } finally {
-          saveInFlight = false;
-          if (pendingSave !== null && !signal.aborted) {
-            const retry = flush();
-            retry.catch((error) => {
-              console.warn("Failed to retry user preference persistence:", error);
-            });
-          }
-        }
-      };
-
-      const flushPromise = flush();
-      flushPromise.catch((error) => {
-        console.warn("Failed to flush user preference persistence:", error);
-      });
-    };
+    const enqueueSave = createUserPreferenceSaveQueue({
+      configClient: api.config,
+      signal,
+      getCurrentPreferences: () => currentPreferencesRef.current,
+      clearDirtyKeys: () => {
+        dirtyKeysRef.current.clear();
+      },
+      onError: (message, error) => {
+        console.warn(message, error);
+      },
+    });
 
     savePreferencesRef.current = enqueueSave;
 
