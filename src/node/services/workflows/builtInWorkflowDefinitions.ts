@@ -1354,7 +1354,7 @@ function verificationSchema() {
 function finalSynthesisSchema() {
   return {
     type: "object",
-    required: ["verifiedIssueCount", "risk", "validationPlan"],
+    required: ["verifiedIssueCount", "verifiedIssueIds", "risk", "validationPlan"],
     additionalProperties: false,
     properties: {
       verifiedIssueCount: { type: "number" },

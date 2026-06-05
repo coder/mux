@@ -63,6 +63,7 @@ function createNoIssueDeepReviewTaskAdapter(taskCalls: WorkflowAgentSpec[]) {
             reportMarkdown: "# Deep Review\n\nNo verified issues.",
             structuredOutput: {
               verifiedIssueCount: 0,
+              verifiedIssueIds: [],
               risk: "low",
               validationPlan: [],
               discardedIssueCount: 0,
@@ -566,6 +567,7 @@ describe("built-in deep-review-workflow", () => {
                 reportMarkdown: "# Deep Review\n\n- P1 Missing await drops write failures.",
                 structuredOutput: {
                   verifiedIssueCount: 1,
+                  verifiedIssueIds: ["correctness-missing-await"],
                   risk: "medium",
                   validationPlan: ["bun test src/service.test.ts"],
                   discardedIssueCount: 0,
@@ -639,6 +641,7 @@ describe("built-in deep-review-workflow", () => {
         ],
         final: {
           verifiedIssueCount: 1,
+          verifiedIssueIds: ["correctness-missing-await"],
           risk: "medium",
           validationPlan: ["bun test src/service.test.ts"],
           discardedIssueCount: 0,
@@ -731,6 +734,7 @@ describe("built-in deep-review-workflow", () => {
                 reportMarkdown: "# Deep Review\n\nNo verified issues.",
                 structuredOutput: {
                   verifiedIssueCount: 0,
+                  verifiedIssueIds: [],
                   risk: "low",
                   validationPlan: ["Inspect captured Git snapshot"],
                   discardedIssueCount: 0,
@@ -2367,6 +2371,7 @@ describe("built-in deep-review-workflow", () => {
         verification: [],
         final: {
           verifiedIssueCount: 0,
+          verifiedIssueIds: [],
           risk: "low",
           validationPlan: [],
           discardedIssueCount: 0,
