@@ -61,7 +61,7 @@ function normalizePathCasingForComparison(value: string): string {
   return process.platform === "win32" ? value.toLowerCase() : value;
 }
 
-async function canonicalizePathForWorkspaceMatch(value: string): Promise<string> {
+export async function canonicalizePathForWorkspaceMatch(value: string): Promise<string> {
   const trimmed = value.trim();
   assert(trimmed.length > 0, "canonicalizePathForWorkspaceMatch: value must be non-empty");
 

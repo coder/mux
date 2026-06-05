@@ -1,4 +1,5 @@
 import { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } from "@agentclientprotocol/sdk";
+import type { ProjectConfig } from "../../src/common/types/project";
 import type { OnChatMode, WorkspaceChatMessage } from "../../src/common/orpc/types";
 import { MuxAgent } from "../../src/node/acp/agent";
 import type { ORPCClient, ServerConnection } from "../../src/node/acp/serverConnection";
@@ -6,18 +7,39 @@ import type { ORPCClient, ServerConnection } from "../../src/node/acp/serverConn
 type WorkspaceInfo = NonNullable<Awaited<ReturnType<ORPCClient["workspace"]["getInfo"]>>>;
 type WorkspaceActivityById = Awaited<ReturnType<ORPCClient["workspace"]["activity"]["list"]>>;
 
+interface WorkspaceCreateInput {
+  projectPath: string;
+  branchName?: string;
+  trunkBranch?: string;
+  title?: string;
+  runtimeConfig?: WorkspaceInfo["runtimeConfig"];
+  subProjectPath?: string;
+  pendingAutoTitle?: boolean;
+}
+
+interface WorkspaceForkInput {
+  sourceWorkspaceId: string;
+  newName?: string;
+  pendingAutoTitle?: boolean;
+}
+
 interface HarnessOptions {
   activeWorkspaces?: WorkspaceInfo[];
   archivedWorkspaces?: WorkspaceInfo[];
   workspaceActivity?: WorkspaceActivityById;
   onChatEvents?: WorkspaceChatMessage[];
   onChatStream?: AsyncIterable<WorkspaceChatMessage>;
+  requireTrustedProjectForCreate?: boolean;
+  projectEntries?: Array<[string, ProjectConfig]>;
   agentOptions?: ConstructorParameters<typeof MuxAgent>[2];
 }
 
 interface Harness {
   agent: MuxAgent;
   onChatCalls: Array<{ workspaceId: string; mode?: OnChatMode }>;
+  setTrustCalls: Array<{ projectPath: string; trusted: boolean }>;
+  createCalls: WorkspaceCreateInput[];
+  forkCalls: WorkspaceForkInput[];
   listCalls: Array<{ archived?: boolean } | undefined>;
 }
 
@@ -61,10 +83,36 @@ function createHarness(options?: HarnessOptions): Harness {
     allWorkspacesById.set(workspace.id, workspace);
   }
 
+  const setTrustCalls: Array<{ projectPath: string; trusted: boolean }> = [];
+  const createCalls: WorkspaceCreateInput[] = [];
+  const forkCalls: WorkspaceForkInput[] = [];
+  const projectsByPath = new Map<string, ProjectConfig>(options?.projectEntries ?? []);
   const onChatCalls: Array<{ workspaceId: string; mode?: OnChatMode }> = [];
   const listCalls: Array<{ archived?: boolean } | undefined> = [];
 
-  const client: Partial<ORPCClient> = {
+  const client = {
+    config: {
+      getConfig: async () => ({ agentAiDefaults: {} }),
+    },
+    projects: {
+      list: async () => Array.from(projectsByPath.entries()),
+      listBranches: async () => ({
+        branches: ["main"],
+        currentBranch: "main",
+        recommendedTrunk: "main",
+      }),
+      setTrust: async (input: { projectPath: string; trusted: boolean }) => {
+        setTrustCalls.push(input);
+        const currentProject = projectsByPath.get(input.projectPath) ?? { workspaces: [] };
+        projectsByPath.set(input.projectPath, {
+          ...currentProject,
+          trusted: input.trusted,
+        });
+      },
+    },
+    agents: {
+      list: async () => [],
+    },
     workspace: {
       list: async (input?: { archived?: boolean }) => {
         listCalls.push(input);
@@ -79,7 +127,58 @@ function createHarness(options?: HarnessOptions): Harness {
         onChatCalls.push(input);
         return sharedOnChatStream ?? createChatStream(onChatEvents);
       },
-    } as ORPCClient["workspace"],
+      create: async (input: WorkspaceCreateInput) => {
+        createCalls.push(input);
+        if (
+          options?.requireTrustedProjectForCreate === true &&
+          projectsByPath.get(input.projectPath)?.trusted !== true
+        ) {
+          return { success: false as const, error: "project not trusted" };
+        }
+
+        const workspaceId = `ws-created-${createCalls.length}`;
+        const metadata = createWorkspaceInfo({
+          id: workspaceId,
+          name: input.branchName ?? workspaceId,
+          title: input.title ?? input.branchName ?? workspaceId,
+          projectPath: input.projectPath,
+          subProjectPath: input.subProjectPath,
+          namedWorkspacePath: `${input.projectPath}/.mux/${input.branchName ?? workspaceId}`,
+          runtimeConfig: input.runtimeConfig ?? { type: "local" },
+        });
+        allWorkspacesById.set(workspaceId, metadata);
+        activeWorkspaces.push(metadata);
+        return { success: true as const, metadata };
+      },
+      fork: async (input: WorkspaceForkInput) => {
+        forkCalls.push(input);
+        const sourceWorkspace = allWorkspacesById.get(input.sourceWorkspaceId);
+        if (sourceWorkspace == null) {
+          return { success: false as const, error: "source workspace not found" };
+        }
+        if (
+          options?.requireTrustedProjectForCreate === true &&
+          projectsByPath.get(sourceWorkspace.projectPath)?.trusted !== true
+        ) {
+          return { success: false as const, error: "project not trusted" };
+        }
+
+        const workspaceId = `ws-forked-${forkCalls.length}`;
+        const metadata = createWorkspaceInfo({
+          ...sourceWorkspace,
+          id: workspaceId,
+          name: input.newName ?? workspaceId,
+          title: input.newName ?? workspaceId,
+          namedWorkspacePath: `${sourceWorkspace.projectPath}/.mux/${input.newName ?? workspaceId}`,
+        });
+        allWorkspacesById.set(workspaceId, metadata);
+        activeWorkspaces.push(metadata);
+        return { success: true as const, metadata };
+      },
+      sendMessage: async () => ({ success: true as const, data: undefined }),
+      updateModeAISettings: async () => ({ success: true as const, data: undefined }),
+      updateAgentAISettings: async () => ({ success: true as const, data: undefined }),
+    },
     agentSkills: {
       list: async () => [],
       listDiagnostics: async () => {
@@ -88,11 +187,11 @@ function createHarness(options?: HarnessOptions): Harness {
       get: async () => {
         throw new Error("createHarness: get not implemented for this test");
       },
-    } as ORPCClient["agentSkills"],
+    },
   };
 
   const server: ServerConnection = {
-    client: client as ORPCClient,
+    client: client as unknown as ORPCClient,
     baseUrl: "ws://127.0.0.1:1234",
     close: async () => undefined,
   };
@@ -115,6 +214,9 @@ function createHarness(options?: HarnessOptions): Harness {
   return {
     agent: agentInstance,
     onChatCalls,
+    setTrustCalls,
+    createCalls,
+    forkCalls,
     listCalls,
   };
 }
@@ -346,6 +448,97 @@ describe("ACP unstable session support", () => {
       workspaceId: "ws-live-to-full",
       mode: { type: "full" },
     });
+  });
+
+  it("trusts a loaded workspace before ACP /new creates a follow-on workspace", async () => {
+    const workspace = createWorkspaceInfo({
+      id: "ws-new-source",
+      projectPath: "/repo/follow-on",
+      namedWorkspacePath: "/repo/follow-on/.mux/ws-new-source",
+    });
+    const harness = createHarness({
+      activeWorkspaces: [workspace],
+      requireTrustedProjectForCreate: true,
+      projectEntries: [["/repo/follow-on", { workspaces: [], trusted: false }]],
+    });
+
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    await harness.agent.loadSession({
+      sessionId: "ws-new-source",
+      cwd: "/repo/follow-on",
+      mcpServers: [],
+    });
+
+    await harness.agent.prompt({
+      sessionId: "ws-new-source",
+      prompt: [{ type: "text", text: "/new" }],
+    });
+
+    expect(harness.setTrustCalls).toEqual([{ projectPath: "/repo/follow-on", trusted: true }]);
+    expect(harness.createCalls).toHaveLength(1);
+    expect(harness.createCalls[0]?.projectPath).toBe("/repo/follow-on");
+  });
+
+  it("trusts a loaded workspace before ACP /fork creates a follow-on workspace", async () => {
+    const workspace = createWorkspaceInfo({
+      id: "ws-fork-source",
+      projectPath: "/repo/fork-follow-on",
+      namedWorkspacePath: "/repo/fork-follow-on/.mux/ws-fork-source",
+    });
+    const harness = createHarness({
+      activeWorkspaces: [workspace],
+      requireTrustedProjectForCreate: true,
+      projectEntries: [["/repo/fork-follow-on", { workspaces: [], trusted: false }]],
+    });
+
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    await harness.agent.loadSession({
+      sessionId: "ws-fork-source",
+      cwd: "/repo/fork-follow-on",
+      mcpServers: [],
+    });
+
+    await harness.agent.prompt({
+      sessionId: "ws-fork-source",
+      prompt: [{ type: "text", text: "/fork" }],
+    });
+
+    expect(harness.setTrustCalls).toEqual([{ projectPath: "/repo/fork-follow-on", trusted: true }]);
+    expect(harness.forkCalls).toEqual([
+      { sourceWorkspaceId: "ws-fork-source", pendingAutoTitle: false },
+    ]);
+  });
+
+  it("trusts a loaded workspace before unstable_forkSession creates a follow-on workspace", async () => {
+    const workspace = createWorkspaceInfo({
+      id: "ws-rpc-fork-source",
+      projectPath: "/repo/rpc-fork-follow-on",
+      namedWorkspacePath: "/repo/rpc-fork-follow-on/.mux/ws-rpc-fork-source",
+    });
+    const harness = createHarness({
+      activeWorkspaces: [workspace],
+      requireTrustedProjectForCreate: true,
+      projectEntries: [["/repo/rpc-fork-follow-on", { workspaces: [], trusted: false }]],
+    });
+
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+    await harness.agent.loadSession({
+      sessionId: "ws-rpc-fork-source",
+      cwd: "/repo/rpc-fork-follow-on",
+      mcpServers: [],
+    });
+
+    const response = await harness.agent.unstable_forkSession({
+      sessionId: "ws-rpc-fork-source",
+      cwd: "/repo/rpc-fork-follow-on",
+      mcpServers: [],
+    });
+
+    expect(response.sessionId).toBe("ws-forked-1");
+    expect(harness.setTrustCalls).toEqual([
+      { projectPath: "/repo/rpc-fork-follow-on", trusted: true },
+    ]);
+    expect(harness.forkCalls).toEqual([{ sourceWorkspaceId: "ws-rpc-fork-source" }]);
   });
 
   it("evicts least-recently-used idle sessions when tracked session cap is exceeded", async () => {
