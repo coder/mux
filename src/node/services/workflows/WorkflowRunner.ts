@@ -85,6 +85,7 @@ export interface WorkflowActionSpec {
   input: unknown;
   timeoutMs?: number;
   cwd?: string;
+  builtInOnly?: boolean;
 }
 
 export interface WorkflowActionResult {
@@ -631,6 +632,7 @@ export class WorkflowRunner {
 
     const action = await registry.resolveAction(rawName, {
       projectTrusted: await this.getProjectTrusted(),
+      builtInOnly: spec.builtInOnly,
     });
     const cwd = getWorkflowActionCwd(spec, action, await this.getDefaultActionCwd(runId));
     const inputHash = hashWorkflowStepInput(
@@ -1619,6 +1621,11 @@ function parseWorkflowActionSpec(rawSpec: unknown): WorkflowActionSpec {
     assert(typeof cwd === "string" && cwd.length > 0, "action cwd must be a non-empty string");
     parsed.cwd = cwd;
   }
+  const builtInOnly = spec.builtInOnly ?? spec.builtinOnly ?? spec.builtin_only;
+  if (builtInOnly !== undefined) {
+    assert(typeof builtInOnly === "boolean", "action builtInOnly must be a boolean");
+    parsed.builtInOnly = builtInOnly;
+  }
   return parsed;
 }
 
@@ -1636,6 +1643,7 @@ function buildWorkflowActionReplayInput(
     input: spec.input,
     cwd,
     ...(spec.timeoutMs !== undefined ? { timeoutMs: spec.timeoutMs } : {}),
+    ...(spec.builtInOnly === true ? { builtInOnly: true } : {}),
   };
 }
 

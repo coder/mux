@@ -123,13 +123,15 @@ function parseStatusLine(line) {
   };
 }
 
-module.exports.execute = async function (_input, ctx) {
+module.exports.execute = async function (rawInput, ctx) {
+  const input = inputObject(rawInput);
+  const includeIgnored = input.includeIgnored !== false;
   const stdout = await runGit(ctx, [
     "status",
     "--porcelain=v1",
     "-b",
     "-uall",
-    "--ignored=traditional",
+    includeIgnored ? "--ignored=traditional" : "--ignored=no",
     "--ahead-behind",
   ]);
   const lines = stdout.split(/\r?\n/).filter(Boolean);

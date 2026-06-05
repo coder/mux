@@ -146,6 +146,26 @@ describe("WorkflowActionRegistry", () => {
     expect(resolved.source).toContain("global: true");
   });
 
+  test("can resolve built-in actions without user overrides", async () => {
+    using tmp = new DisposableTempDir("workflow-actions-built-in-only");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await writeAction(
+      globalRoot,
+      path.join("git", "status.js"),
+      "module.exports = { global: true };"
+    );
+    const registry = new WorkflowActionRegistry({ projectRoot, globalRoot });
+
+    const resolved = await registry.resolveAction("git.status", {
+      projectTrusted: true,
+      builtInOnly: true,
+    });
+
+    expect(resolved.scope).toBe("built-in");
+    expect(resolved.source).toContain("git status");
+  });
+
   test("does not fall back to a global action when a trusted project action is invalid", async () => {
     using tmp = new DisposableTempDir("workflow-actions-invalid-project");
     const projectRoot = path.join(tmp.path, "project-actions");

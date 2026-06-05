@@ -66,9 +66,20 @@ export class WorkflowActionRegistry {
 
   async resolveAction(
     name: string,
-    options: { projectTrusted: boolean }
+    options: { projectTrusted: boolean; builtInOnly?: boolean }
   ): Promise<ResolvedWorkflowAction> {
     const normalizedName = normalizeWorkflowActionName(name);
+    if (options.builtInOnly === true) {
+      const builtInAction = this.readBuiltInAction(normalizedName);
+      if (builtInAction == null) {
+        throw new Error(`Built-in workflow action not found: ${normalizedName}`);
+      }
+      if (this.projectRuntime != null) {
+        throw new Error("Workflow actions are not supported for runtime-backed workspaces yet");
+      }
+      return builtInAction;
+    }
+
     if (options.projectTrusted) {
       const projectAction = await this.readProjectAction(normalizedName);
       if (projectAction != null) {

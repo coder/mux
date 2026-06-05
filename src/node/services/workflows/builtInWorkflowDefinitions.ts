@@ -230,7 +230,7 @@ function normalizeDeepResearchTopic(args) {
   const readOnlyReviewPrompt =
     "This is a read-only deep code review task. Do not edit files, create commits, apply patches, push branches, or open PRs. Inspect repository evidence only as needed and report findings.\\n\\n";
   const input = normalizeDeepReviewArgs(args);
-  const gitContext = collectGitReviewContext(action, input, log);
+  const gitContext = shouldCollectGitReviewContext(input) ? collectGitReviewContext(action, input, log) : null;
   applyGitContextToReviewInput(input, gitContext);
   const maxCandidates = input.maxCandidates;
 
@@ -368,6 +368,7 @@ function normalizeDeepReviewArgs(args) {
     gitSnapshot: "",
     explicitDiff: false,
     explicitFiles: false,
+    includeGitContext: false,
     maxCandidates: 12,
   };
 
@@ -407,6 +408,10 @@ function normalizeDeepReviewArgs(args) {
     normalized.explicitFiles = normalized.files.length > 0;
   }
 
+  if (typeof args.includeGitContext === "boolean") {
+    normalized.includeGitContext = args.includeGitContext;
+  }
+
   if (typeof args.maxCandidates === "number" && args.maxCandidates > 0) {
     normalized.maxCandidates = Math.min(20, Math.max(1, Math.floor(args.maxCandidates)));
   }
@@ -414,58 +419,114 @@ function normalizeDeepReviewArgs(args) {
   return normalized;
 }
 
+function shouldCollectGitReviewContext(input) {
+  return input.includeGitContext || (!input.explicitFiles && !input.explicitDiff);
+}
+
 function collectGitReviewContext(action, input, log) {
   const gitInput = buildGitActionInput(input);
-  let status = null;
-  try {
-    status = action.git.status({ id: "git-status" }).output;
-  } catch (error) {
+  const failures = [];
+  const builtInOnly = true;
+  const status = tryGitAction(log, failures, "git.status", function () {
+    return action.git.status({
+      id: "git-status",
+      input: { includeIgnored: false },
+      builtInOnly,
+    }).output;
+  });
+  const changedFiles = tryGitAction(log, failures, "git.changedFiles", function () {
+    return action.git.changedFiles({
+      id: "git-changed-files",
+      input: gitInput,
+      builtInOnly,
+    }).output;
+  });
+  const diffStat = tryGitAction(log, failures, "git.diffStat", function () {
+    return action.git.diffStat({
+      id: "git-diff-stat",
+      input: gitInput,
+      builtInOnly,
+    }).output;
+  });
+  const diff = tryGitAction(log, failures, "git.diff", function () {
+    return action.git.diff({
+      id: "git-diff",
+      input: gitInput,
+      builtInOnly,
+    }).output;
+  });
+  const commits = tryGitAction(log, failures, "git.commitsBetween", function () {
+    const commitsInput = copyGitActionInput(gitInput);
+    commitsInput.limit = 20;
+    return action.git.commitsBetween({
+      id: "git-commits-between",
+      input: commitsInput,
+      builtInOnly,
+    }).output;
+  });
+  const context = {
+    status: isObject(status) ? status : null,
+    changedFiles: isObject(changedFiles) ? changedFiles : null,
+    diffStat: isObject(diffStat) ? diffStat : null,
+    diff: isObject(diff) ? diff : null,
+    commits: isObject(commits) ? commits : null,
+    failures: failures,
+    explicitRefs: Boolean(input.baseRef || input.headRef),
+  };
+  if (!hasAnyGitContext(context)) {
     log("Git workflow actions unavailable; continuing with caller-provided review context", {
-      error: formatError(error),
+      failures: failures,
     });
     return null;
   }
-
-  const changedFiles = tryGitAction(log, "git.changedFiles", function () {
-    return action.git.changedFiles({ id: "git-changed-files", input: gitInput }).output;
-  });
-  const diffStat = tryGitAction(log, "git.diffStat", function () {
-    return action.git.diffStat({ id: "git-diff-stat", input: gitInput }).output;
-  });
-  const diff = tryGitAction(log, "git.diff", function () {
-    return action.git.diff({ id: "git-diff", input: gitInput }).output;
-  });
-  const commits = tryGitAction(log, "git.commitsBetween", function () {
-    const commitsInput = copyGitActionInput(gitInput);
-    commitsInput.limit = 20;
-    return action.git.commitsBetween({ id: "git-commits-between", input: commitsInput }).output;
-  });
-  const context = {
-    status: status,
-    changedFiles: changedFiles,
-    diffStat: diffStat,
-    diff: diff,
-    commits: commits,
-  };
   const files = collectGitFiles(context);
   log("Captured Git review context", {
-    branch: status.branch,
+    branch: context.status ? context.status.branch : "unknown",
     fileCount: files.length,
-    hasDiff: diff != null && (hasText(diff.branch) || hasText(diff.staged) || hasText(diff.unstaged)),
+    hasDiff:
+      context.diff != null &&
+      (hasText(context.diff.branch) || hasText(context.diff.staged) || hasText(context.diff.unstaged)),
+    failureCount: failures.length,
   });
   return context;
 }
 
-function tryGitAction(log, name, fn) {
+function tryGitAction(log, failures, name, fn) {
   try {
     return fn();
   } catch (error) {
-    log("Git workflow action failed; continuing with partial review context", {
-      action: name,
-      error: formatError(error),
-    });
+    const failure = { action: name, error: formatError(error) };
+    failures.push(failure);
+    log("Git workflow action failed; continuing with partial review context", failure);
     return null;
   }
+}
+
+function hasAnyGitContext(gitContext) {
+  return Boolean(
+    gitContext.status ||
+      gitContext.changedFiles ||
+      gitContext.diffStat ||
+      gitContext.diff ||
+      gitContext.commits
+  );
+}
+
+function hasResolvedBranchContext(gitContext) {
+  return Boolean(
+    hasResolvedGitRefContext(gitContext.changedFiles) ||
+      hasResolvedGitRefContext(gitContext.diffStat) ||
+      hasResolvedGitRefContext(gitContext.diff) ||
+      hasResolvedGitRefContext(gitContext.commits)
+  );
+}
+
+function hasResolvedGitRefContext(value) {
+  return isObject(value) && hasText(value.base) && hasText(value.head) && hasText(value.mergeBase);
+}
+
+function isObject(value) {
+  return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
 function buildGitActionInput(input) {
@@ -484,6 +545,7 @@ function copyGitActionInput(input) {
 
 function applyGitContextToReviewInput(input, gitContext) {
   if (gitContext == null) return;
+  if ((input.explicitFiles || input.explicitDiff) && !input.includeGitContext) return;
   if (!input.explicitFiles) {
     const files = collectGitFiles(gitContext);
     if (files.length > 0) input.files = files;
@@ -492,7 +554,7 @@ function applyGitContextToReviewInput(input, gitContext) {
     const diff = renderGitDiff(gitContext.diff);
     if (diff.length > 0) input.diff = truncateText(diff, 60000);
   }
-  input.gitSnapshot = renderGitSnapshot(gitContext);
+  input.gitSnapshot = truncateText(renderGitSnapshot(gitContext), 20000);
 }
 
 function collectGitFiles(gitContext) {
@@ -550,6 +612,19 @@ function renderGitSnapshot(gitContext) {
         arrayLength(status.unstaged) +
         "; untracked " +
         arrayLength(status.untracked)
+    );
+  }
+  if (gitContext.explicitRefs && !hasResolvedBranchContext(gitContext)) {
+    sections.push(
+      "WARNING: Requested base/head refs could not be resolved for automatic branch diff and commit capture; Git context may include only repository status or working-tree changes."
+    );
+  }
+  if (Array.isArray(gitContext.failures) && gitContext.failures.length > 0) {
+    sections.push(
+      "Git context warnings:\\n" +
+        gitContext.failures.map(function (failure) {
+          return "- " + valueOrUnknown(failure.action) + ": " + valueOrUnknown(failure.error);
+        }).join("\\n")
     );
   }
   const files = collectGitFiles(gitContext);
