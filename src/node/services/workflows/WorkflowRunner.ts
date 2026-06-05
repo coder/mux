@@ -1550,34 +1550,25 @@ export class WorkflowRunner {
   ): Promise<void> {
     step.leaseGuard.throwIfLost();
     const taskId = getTaskIdFromUnknownAgentResult(step.rawResult);
-    await this.appendEvent(runId, {
-      sequence: sequence.next(),
-      type: "validation",
-      at: this.clock.nowIso(),
-      stepId: step.spec.id,
-      success: false,
-      message,
-    });
-    step.leaseGuard.throwIfLost();
-    await this.recordStepFailed(runId, {
-      stepId: step.spec.id,
-      inputHash: step.inputHash,
-      taskId,
-      error: message,
-      startedAt: step.startedAt,
-      completedAt: this.clock.nowIso(),
-    });
+    const failedAt = this.clock.nowIso();
+    sequence.next();
     if (taskId != null) {
-      step.leaseGuard.throwIfLost();
-      await this.appendEvent(runId, {
-        sequence: sequence.next(),
-        type: "task",
-        at: this.clock.nowIso(),
-        stepId: step.spec.id,
-        taskId,
-        status: "failed",
-      });
+      sequence.next();
     }
+    await this.runStore.recordStepFailedAndAppendTaskEvent(
+      runId,
+      {
+        stepId: step.spec.id,
+        inputHash: step.inputHash,
+        taskId,
+        error: message,
+        startedAt: step.startedAt,
+        completedAt: failedAt,
+        validationAt: failedAt,
+        taskFailedAt: failedAt,
+      },
+      { expectedLeaseOwnerId: this.runnerId }
+    );
   }
 
   private getTaskIdFromAgentResult(result: WorkflowAgentResult, stepId: string): string {

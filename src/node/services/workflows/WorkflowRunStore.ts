@@ -111,7 +111,12 @@ export class WorkflowRunStore {
   }
 
   async getRun(runId: string): Promise<WorkflowRunRecord> {
-    return await this.withWorkflowMutationLock(runId, async () => await this.getRunUnlocked(runId));
+    // UI polling must not wait behind the writer lock; while a mutation is in progress,
+    // fall back to the last atomic run.json snapshot instead of reading half-updated journals.
+    if (await this.hasActiveWorkflowMutationLock(runId)) {
+      return await this.getRunFileSnapshot(runId);
+    }
+    return await this.getRunUnlocked(runId);
   }
 
   async listRuns(): Promise<WorkflowRunRecord[]> {
@@ -261,34 +266,115 @@ export class WorkflowRunStore {
           status: "completed",
         });
         const run = await this.getRunUnlocked(runId);
-        if (run.status === "interrupted") {
-          throw new Error(`Workflow run interrupted: ${runId}`);
+        this.assertCanAppendStepRecord(runId, run);
+
+        let updatedRun = this.withStepRecord(run, record);
+        const eventsToAppend: WorkflowRunEvent[] = [];
+        if (
+          input.taskId != null &&
+          !updatedRun.events.some(
+            (event) =>
+              event.type === "task" &&
+              event.status === "completed" &&
+              event.stepId === input.stepId &&
+              event.taskId === input.taskId
+          )
+        ) {
+          const event = this.createNextEventForRun(
+            runId,
+            updatedRun,
+            {
+              type: "task",
+              at: input.completedAt,
+              stepId: input.stepId,
+              taskId: input.taskId,
+              status: "completed",
+            },
+            options
+          );
+          eventsToAppend.push(event);
+          updatedRun = this.withEvent(updatedRun, event);
         }
+
         await appendJsonLine(this.stepsFile(runId), record);
-        if (input.taskId == null) {
-          return;
-        }
-        const alreadyRecorded = run.events.some(
-          (event) =>
-            event.type === "task" &&
-            event.status === "completed" &&
-            event.stepId === input.stepId &&
-            event.taskId === input.taskId
-        );
-        if (alreadyRecorded) {
-          return;
-        }
-        await this.appendNextEventUnlocked(
+        await appendJsonLines(this.eventsFile(runId), eventsToAppend);
+        await this.writeRunFile(runId, updatedRun);
+      });
+    });
+  }
+
+  async recordStepFailedAndAppendTaskEvent(
+    runId: string,
+    input: {
+      stepId: string;
+      inputHash: string;
+      taskId?: string;
+      error: string;
+      startedAt: string;
+      completedAt: string;
+      validationAt: string;
+      taskFailedAt?: string;
+    },
+    options: AppendWorkflowRunEventOptions = {}
+  ): Promise<void> {
+    await this.withWorkflowMutationLock(runId, async () => {
+      await this.withExpectedLeaseOwner(runId, options.expectedLeaseOwnerId, async () => {
+        const record = WorkflowStepRecordSchema.parse({
+          stepId: input.stepId,
+          inputHash: input.inputHash,
+          taskId: input.taskId,
+          error: input.error,
+          startedAt: input.startedAt,
+          completedAt: input.completedAt,
+          status: "failed",
+        });
+        const run = await this.getRunUnlocked(runId);
+        this.assertCanAppendStepRecord(runId, run);
+
+        const validationEvent = this.createNextEventForRun(
           runId,
+          run,
           {
-            type: "task",
-            at: input.completedAt,
+            type: "validation",
+            at: input.validationAt,
             stepId: input.stepId,
-            taskId: input.taskId,
-            status: "completed",
+            success: false,
+            message: input.error,
           },
           options
         );
+        let updatedRun = this.withEvent(run, validationEvent);
+        updatedRun = this.withStepRecord(updatedRun, record);
+        const eventsToAppend: WorkflowRunEvent[] = [validationEvent];
+        if (
+          input.taskId != null &&
+          !updatedRun.events.some(
+            (event) =>
+              event.type === "task" &&
+              event.status === "failed" &&
+              event.stepId === input.stepId &&
+              event.taskId === input.taskId
+          )
+        ) {
+          const taskEvent = this.createNextEventForRun(
+            runId,
+            updatedRun,
+            {
+              type: "task",
+              at: input.taskFailedAt ?? input.completedAt,
+              stepId: input.stepId,
+              taskId: input.taskId,
+              status: "failed",
+            },
+            options
+          );
+          eventsToAppend.push(taskEvent);
+          updatedRun = this.withEvent(updatedRun, taskEvent);
+        }
+
+        await appendJsonLine(this.stepsFile(runId), record);
+        await appendJsonLines(this.eventsFile(runId), eventsToAppend);
+        await this.writeRunFile(runId, updatedRun);
       });
     });
   }
@@ -314,8 +400,9 @@ export class WorkflowRunStore {
         if (alreadyRecorded) {
           return;
         }
-        await this.appendNextEventUnlocked(
+        const event = this.createNextEventForRun(
           runId,
+          run,
           {
             type: "task",
             at: task.at,
@@ -325,6 +412,8 @@ export class WorkflowRunStore {
           },
           options
         );
+        await appendJsonLine(this.eventsFile(runId), event);
+        await this.writeRunFile(runId, this.withEvent(run, event));
       });
     });
   }
@@ -524,6 +613,29 @@ export class WorkflowRunStore {
     }
   }
 
+  private async hasActiveWorkflowMutationLock(runId: string): Promise<boolean> {
+    try {
+      const stat = await fs.stat(`${this.eventsFile(runId)}.lock`);
+      return Date.now() - stat.mtimeMs <= this.leaseMutationLockStaleMs();
+    } catch {
+      return false;
+    }
+  }
+
+  private async getRunFileSnapshot(runId: string): Promise<WorkflowRunRecord> {
+    const rawRun = JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as unknown;
+    const run = WorkflowRunRecordSchema.parse(rawRun);
+    const definitionSource = await fs.readFile(
+      path.join(this.runDir(runId), "definition.js"),
+      "utf-8"
+    );
+    return WorkflowRunRecordSchema.parse({
+      ...run,
+      definitionSource,
+      definitionHash: hashSource(definitionSource),
+    });
+  }
+
   private async getRunUnlocked(runId: string): Promise<WorkflowRunRecord> {
     const rawRun = JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as unknown;
     const partial = WorkflowRunRecordSchema.omit({ events: true, steps: true }).parse(rawRun);
@@ -552,12 +664,12 @@ export class WorkflowRunStore {
     event: WorkflowRunEventDraft,
     options: AppendWorkflowRunEventOptions = {}
   ): Promise<WorkflowRunRecord> {
-    const events = await this.readEvents(runId);
-    return await this.appendEventUnlocked(
-      runId,
-      { ...event, sequence: (events.at(-1)?.sequence ?? 0) + 1 } as WorkflowRunEvent,
-      options
-    );
+    const run = await this.getRunUnlocked(runId);
+    const parsedEvent = this.createNextEventForRun(runId, run, event, options);
+    await appendJsonLine(this.eventsFile(runId), parsedEvent);
+    const updatedRun = this.withEvent(run, parsedEvent);
+    await this.writeRunFile(runId, updatedRun);
+    return updatedRun;
   }
 
   private async appendEventUnlocked(
@@ -565,45 +677,82 @@ export class WorkflowRunStore {
     event: WorkflowRunEvent,
     options: AppendWorkflowRunEventOptions = {}
   ): Promise<WorkflowRunRecord> {
+    const run = await this.getRunUnlocked(runId);
     const parsedEvent = WorkflowRunEventSchema.parse(event);
-    const existingEvents = await this.readEvents(runId);
-    const ordered = WorkflowEventSequenceSchema.safeParse([...existingEvents, parsedEvent]);
+    this.assertCanAppendEvent(runId, run, parsedEvent, options);
+    await appendJsonLine(this.eventsFile(runId), parsedEvent);
+    const updatedRun = this.withEvent(run, parsedEvent);
+    await this.writeRunFile(runId, updatedRun);
+    return updatedRun;
+  }
+
+  private createNextEventForRun(
+    runId: string,
+    run: WorkflowRunRecord,
+    event: WorkflowRunEventDraft,
+    options: AppendWorkflowRunEventOptions = {}
+  ): WorkflowRunEvent {
+    const parsedEvent = WorkflowRunEventSchema.parse({
+      ...event,
+      sequence: (run.events.at(-1)?.sequence ?? 0) + 1,
+    });
+    this.assertCanAppendEvent(runId, run, parsedEvent, options);
+    return parsedEvent;
+  }
+
+  private assertCanAppendEvent(
+    runId: string,
+    run: WorkflowRunRecord,
+    event: WorkflowRunEvent,
+    options: AppendWorkflowRunEventOptions
+  ): void {
+    const ordered = WorkflowEventSequenceSchema.safeParse([...run.events, event]);
     if (!ordered.success) {
       throw new Error(`Workflow events must be strictly ordered: ${ordered.error.message}`);
     }
 
-    const run = await this.getRunUnlocked(runId);
     const isInterruptedResumeEvent =
-      parsedEvent.type === "status" &&
+      event.type === "status" &&
       options.allowInterruptedResume === true &&
-      parsedEvent.status === "running";
+      event.status === "running";
     const isFailedCheckpointRetryEvent =
-      parsedEvent.type === "status" &&
+      event.type === "status" &&
       options.allowFailedCheckpointRetry === true &&
       run.status === "failed" &&
-      parsedEvent.status === "running";
-    const isRepeatedInterruptedStatus =
-      parsedEvent.type === "status" && parsedEvent.status === "interrupted";
+      event.status === "running";
+    const isRepeatedInterruptedStatus = event.type === "status" && event.status === "interrupted";
     if (run.status === "interrupted" && !isInterruptedResumeEvent && !isRepeatedInterruptedStatus) {
       throw new Error(`Workflow run interrupted: ${runId}`);
     }
-    if (parsedEvent.type === "status") {
-      if (isTerminalRunStatus(run.status) && !isFailedCheckpointRetryEvent) {
-        throw new Error(
-          `Cannot transition workflow run from ${run.status} to ${parsedEvent.status}`
-        );
-      }
+    if (
+      event.type === "status" &&
+      isTerminalRunStatus(run.status) &&
+      !isFailedCheckpointRetryEvent
+    ) {
+      throw new Error(`Cannot transition workflow run from ${run.status} to ${event.status}`);
     }
+  }
 
-    await appendJsonLine(this.eventsFile(runId), parsedEvent);
-    const updatedRun = {
+  private assertCanAppendStepRecord(runId: string, run: WorkflowRunRecord): void {
+    if (run.status === "interrupted") {
+      throw new Error(`Workflow run interrupted: ${runId}`);
+    }
+  }
+
+  private withEvent(run: WorkflowRunRecord, event: WorkflowRunEvent): WorkflowRunRecord {
+    return WorkflowRunRecordSchema.parse({
       ...run,
-      events: [...run.events, parsedEvent],
-      status: parsedEvent.type === "status" ? parsedEvent.status : run.status,
-      updatedAt: parsedEvent.at,
-    } satisfies WorkflowRunRecord;
-    await this.writeRunFile(runId, updatedRun);
-    return updatedRun;
+      events: [...run.events, event],
+      status: event.type === "status" ? event.status : run.status,
+      updatedAt: event.at,
+    });
+  }
+
+  private withStepRecord(run: WorkflowRunRecord, record: WorkflowStepRecord): WorkflowRunRecord {
+    return WorkflowRunRecordSchema.parse({
+      ...run,
+      steps: mergeWorkflowStepRecords(run.steps, record),
+    });
   }
 
   private async readEvents(runId: string): Promise<WorkflowRunEvent[]> {
@@ -613,11 +762,7 @@ export class WorkflowRunStore {
 
   private async readSteps(runId: string): Promise<WorkflowStepRecord[]> {
     const records = await readJsonLines(this.stepsFile(runId), WorkflowStepRecordSchema);
-    const byKey = new Map<string, WorkflowStepRecord>();
-    for (const record of records) {
-      byKey.set(getWorkflowStepKey(record), record);
-    }
-    return Array.from(byKey.values());
+    return mergeWorkflowStepRecords(records);
   }
 
   private async appendStepRecord(
@@ -629,9 +774,7 @@ export class WorkflowRunStore {
       await this.withExpectedLeaseOwner(runId, options.expectedLeaseOwnerId, async () => {
         const parsedRecord = WorkflowStepRecordSchema.parse(record);
         const run = await this.getRunUnlocked(runId);
-        if (run.status === "interrupted") {
-          throw new Error(`Workflow run interrupted: ${runId}`);
-        }
+        this.assertCanAppendStepRecord(runId, run);
         await appendJsonLine(this.stepsFile(runId), parsedRecord);
       });
     });
@@ -689,6 +832,20 @@ function getWorkflowStepKey(step: WorkflowStepLookup): string {
   return `${step.stepId}\0${step.inputHash}`;
 }
 
+function mergeWorkflowStepRecords(
+  records: readonly WorkflowStepRecord[],
+  nextRecord?: WorkflowStepRecord
+): WorkflowStepRecord[] {
+  const byKey = new Map<string, WorkflowStepRecord>();
+  for (const record of records) {
+    byKey.set(getWorkflowStepKey(record), record);
+  }
+  if (nextRecord !== undefined) {
+    byKey.set(getWorkflowStepKey(nextRecord), nextRecord);
+  }
+  return Array.from(byKey.values());
+}
+
 function hashSource(source: string): string {
   return `sha256:${crypto.createHash("sha256").update(source).digest("hex")}`;
 }
@@ -696,6 +853,18 @@ function hashSource(source: string): string {
 async function appendJsonLine(filePath: string, value: unknown): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.appendFile(filePath, `${JSON.stringify(value)}\n`, "utf-8");
+}
+
+async function appendJsonLines(filePath: string, values: readonly unknown[]): Promise<void> {
+  if (values.length === 0) {
+    return;
+  }
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.appendFile(
+    filePath,
+    values.map((value) => JSON.stringify(value)).join("\n") + "\n",
+    "utf-8"
+  );
 }
 
 async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {

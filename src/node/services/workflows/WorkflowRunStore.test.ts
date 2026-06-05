@@ -178,6 +178,43 @@ describe("WorkflowRunStore", () => {
     });
   });
 
+  test("records failed steps and validation task events in the same run snapshot", async () => {
+    using tmp = new DisposableTempDir("workflow-runs-step-failed-task-snapshot");
+    const store = await createStore(tmp.path);
+
+    await store.recordStepFailedAndAppendTaskEvent("wfr_123", {
+      stepId: "source-b",
+      inputHash: "hash:source-b",
+      taskId: "task_source-b_bad",
+      error: "structured output failed schema validation",
+      startedAt: "2026-05-29T00:00:01.000Z",
+      completedAt: "2026-05-29T00:00:02.000Z",
+      validationAt: "2026-05-29T00:00:02.000Z",
+      taskFailedAt: "2026-05-29T00:00:02.000Z",
+    });
+    const run = await store.getRun("wfr_123");
+
+    expect(run.steps).toHaveLength(1);
+    expect(run.steps[0]).toMatchObject({
+      stepId: "source-b",
+      taskId: "task_source-b_bad",
+      status: "failed",
+      error: "structured output failed schema validation",
+    });
+    expect(run.events).toHaveLength(2);
+    expect(run.events[0]).toMatchObject({
+      type: "validation",
+      stepId: "source-b",
+      success: false,
+    });
+    expect(run.events[1]).toMatchObject({
+      type: "task",
+      stepId: "source-b",
+      taskId: "task_source-b_bad",
+      status: "failed",
+    });
+  });
+
   test("preserves interrupted runs unless explicit resume is allowed", async () => {
     using tmp = new DisposableTempDir("workflow-runs");
     const store = await createStore(tmp.path);
@@ -267,6 +304,29 @@ describe("WorkflowRunStore", () => {
     await expect(
       store.appendStatus("wfr_123", "interrupted", "2026-05-29T00:00:02.000Z")
     ).rejects.toThrow(/Cannot transition/);
+  });
+
+  test("uses the atomic run file snapshot while a writer lock is active", async () => {
+    using tmp = new DisposableTempDir("workflow-runs-active-writer-snapshot");
+    const store = await createStore(tmp.path);
+    await store.appendStatus("wfr_123", "running", "2026-05-29T00:00:01.000Z");
+    const lockDir = path.join(tmp.path, "workflows", "wfr_123", "events.jsonl.lock");
+    await fs.mkdir(lockDir);
+    await fs.appendFile(
+      path.join(tmp.path, "workflows", "wfr_123", "events.jsonl"),
+      `${JSON.stringify({
+        sequence: 2,
+        type: "status",
+        at: "2026-05-29T00:00:02.000Z",
+        status: "completed",
+      })}\n`,
+      "utf-8"
+    );
+
+    await expect(store.getRun("wfr_123")).resolves.toMatchObject({ status: "running" });
+
+    await fs.rm(lockDir, { recursive: true, force: true });
+    await expect(store.getRun("wfr_123")).resolves.toMatchObject({ status: "completed" });
   });
 
   test("does not overwrite terminal runs with later interrupt status", async () => {

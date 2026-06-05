@@ -3,8 +3,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, test } from "bun:test";
-import type { WorkflowRunRecord } from "@/common/types/workflow";
+import { describe, expect, spyOn, test } from "bun:test";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -69,19 +68,14 @@ function createRunner(store: WorkflowRunStore, taskAdapter: WorkflowTaskAdapter)
   });
 }
 
-async function waitForRunSnapshot(
-  store: WorkflowRunStore,
-  runId: string,
-  predicate: (run: WorkflowRunRecord) => boolean
-): Promise<WorkflowRunRecord> {
-  const deadline = Date.now() + 500;
-  let latest = await store.getRun(runId);
-  while (!predicate(latest) && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    latest = await store.getRun(runId);
-  }
-  expect(predicate(latest)).toBe(true);
-  return latest;
+function createDeferred() {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
 }
 
 describe("WorkflowRunner", () => {
@@ -897,6 +891,23 @@ describe("WorkflowRunner", () => {
     const sourceAReturnedPromise = new Promise<void>((resolve) => {
       sourceAReturned = resolve;
     });
+    const sourceARecorded = createDeferred();
+    const recordCompleted = store.recordStepCompletedAndAppendTaskEvent.bind(store);
+    spyOn(store, "recordStepCompletedAndAppendTaskEvent").mockImplementation(
+      async (runId, input, options) => {
+        try {
+          await recordCompleted(runId, input, options);
+        } catch (error) {
+          if (input.stepId === "source-a") {
+            sourceARecorded.reject(error);
+          }
+          throw error;
+        }
+        if (input.stepId === "source-a") {
+          sourceARecorded.resolve();
+        }
+      }
+    );
     const runner = createRunner(store, {
       async runAgent(spec, lifecycle) {
         await lifecycle?.onTaskCreated?.(`task_${spec.id}`);
@@ -911,11 +922,8 @@ describe("WorkflowRunner", () => {
 
     const runPromise = runner.run("wfr_parallel_incremental");
     await sourceAReturnedPromise;
-    const runDuringSlowSibling = await waitForRunSnapshot(
-      store,
-      "wfr_parallel_incremental",
-      (run) => run.steps.some((step) => step.stepId === "source-a" && step.status === "completed")
-    );
+    await sourceARecorded.promise;
+    const runDuringSlowSibling = await store.getRun("wfr_parallel_incremental");
 
     const sourceAStep = runDuringSlowSibling.steps.find((step) => step.stepId === "source-a");
     expect(sourceAStep).toMatchObject({
@@ -1079,6 +1087,23 @@ describe("WorkflowRunner", () => {
       releaseSourceA = resolve;
     });
     const calls: string[] = [];
+    const sourceBFailureRecorded = createDeferred();
+    const recordFailed = store.recordStepFailedAndAppendTaskEvent.bind(store);
+    spyOn(store, "recordStepFailedAndAppendTaskEvent").mockImplementation(
+      async (runId, input, options) => {
+        try {
+          await recordFailed(runId, input, options);
+        } catch (error) {
+          if (input.stepId === "source-b" && input.taskId === "task_source-b_bad") {
+            sourceBFailureRecorded.reject(error);
+          }
+          throw error;
+        }
+        if (input.stepId === "source-b" && input.taskId === "task_source-b_bad") {
+          sourceBFailureRecorded.resolve();
+        }
+      }
+    );
     const runner = createRunner(store, {
       async runAgent(spec) {
         calls.push(spec.id);
@@ -1102,12 +1127,8 @@ describe("WorkflowRunner", () => {
     });
 
     const runPromise = runner.run("wfr_parallel_validation_incremental");
-    const runDuringSlowSibling = await waitForRunSnapshot(
-      store,
-      "wfr_parallel_validation_incremental",
-      (run) =>
-        run.events.some((event) => event.type === "validation" && event.stepId === "source-b")
-    );
+    await sourceBFailureRecorded.promise;
+    const runDuringSlowSibling = await store.getRun("wfr_parallel_validation_incremental");
 
     const validationEvent = runDuringSlowSibling.events.find(
       (event) => event.type === "validation" && event.stepId === "source-b"
