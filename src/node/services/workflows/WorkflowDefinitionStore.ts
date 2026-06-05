@@ -6,9 +6,11 @@ import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import type { WorkflowDefinitionDescriptor, WorkflowName } from "@/common/types/workflow";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
+import { shellQuote } from "@/common/utils/shell";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { log } from "@/node/services/log";
 import { quoteRuntimeProbePath } from "@/node/services/tools/runtimePathShellQuote";
+import { execFileAsync } from "@/node/utils/disposableExec";
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import {
   BUILT_IN_WORKFLOW_DEFINITIONS,
@@ -56,9 +58,9 @@ interface ScannedWorkflowDefinition {
 }
 
 const DESCRIPTION_PREFIX = "// description:";
-// Workspace scratch workflows are edited through normal file tools, so keep generated drafts out
-// of the user's git status while leaving the ignore rule itself visible and reviewable.
-export const WORKFLOW_SCRATCH_GITIGNORE_CONTENT = "*\n!.gitignore\n";
+const WORKFLOW_SCRATCH_GIT_EXCLUDE_COMMENT = "# mux: local scratch workflow drafts";
+const LOCAL_GIT_COMMAND_TIMEOUT_MS = 5_000;
+const RUNTIME_GIT_COMMAND_TIMEOUT_SECONDS = 5;
 
 function parseWorkflowDescription(source: string): string | null {
   const firstMeaningfulLine = source
@@ -258,19 +260,190 @@ async function runtimePathExists(
   throw new Error(`Runtime workflow path probe failed: ${details}`);
 }
 
-async function ensureLocalScratchGitignore(scratchRoot: string): Promise<void> {
-  await fs.mkdir(scratchRoot, { recursive: true });
-  const gitignorePath = path.join(scratchRoot, ".gitignore");
-  await fs.writeFile(gitignorePath, WORKFLOW_SCRATCH_GITIGNORE_CONTENT, "utf-8");
+function stripTrailingLineEnding(value: string): string {
+  return value.replace(/\r?\n$/u, "");
 }
 
-async function ensureRuntimeScratchGitignore(runtime: Runtime, scratchRoot: string): Promise<void> {
-  await runtime.ensureDir(scratchRoot);
-  await writeFileString(
-    runtime,
-    runtime.normalizePath(".gitignore", scratchRoot),
-    WORKFLOW_SCRATCH_GITIGNORE_CONTENT
-  );
+function scratchGitExcludePatternFromPrefix(prefixOutput: string): string | null {
+  const prefix = stripTrailingLineEnding(prefixOutput).replace(/\/+$/u, "");
+  if (prefix.length === 0) {
+    return null;
+  }
+  assert(!prefix.startsWith("/"), "Workflow scratch Git prefix must be repo-relative");
+  assert(!prefix.includes("\0"), "Workflow scratch Git prefix must not contain NUL");
+  return `/${prefix}/`;
+}
+
+function gitExcludeContentWithPattern(content: string, pattern: string): string | null {
+  assert(pattern.startsWith("/"), "Workflow scratch Git exclude pattern must be root-relative");
+  if (content.split(/\r?\n/u).some((line) => line.trim() === pattern)) {
+    return null;
+  }
+
+  const separator = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
+  return `${content}${separator}${WORKFLOW_SCRATCH_GIT_EXCLUDE_COMMENT}\n${pattern}\n`;
+}
+
+async function writeLocalGitExcludePattern(excludePath: string, pattern: string): Promise<void> {
+  assert(excludePath.length > 0, "Workflow scratch Git exclude path is required");
+  await fs.mkdir(path.dirname(excludePath), { recursive: true });
+
+  let content = "";
+  try {
+    content = await fs.readFile(excludePath, "utf-8");
+  } catch {
+    content = "";
+  }
+
+  const nextContent = gitExcludeContentWithPattern(content, pattern);
+  if (nextContent != null) {
+    await fs.writeFile(excludePath, nextContent, "utf-8");
+  }
+}
+
+async function tryLocalGitStdout(cwd: string, args: readonly string[]): Promise<string | null> {
+  try {
+    using proc = execFileAsync("git", ["-C", cwd, ...args], {
+      timeoutMs: LOCAL_GIT_COMMAND_TIMEOUT_MS,
+    });
+    const result = await proc.result;
+    return stripTrailingLineEnding(result.stdout);
+  } catch {
+    return null;
+  }
+}
+
+async function localDirectoryExists(targetPath: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(targetPath);
+    return stat.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// Scratch drafts are workspace-local, but writing .scratch/.gitignore dirties clean repos.
+// Use repo-local Git excludes only once a scratch directory actually exists.
+async function ensureLocalScratchGitExclude(scratchRoot: string): Promise<void> {
+  if (!(await localDirectoryExists(scratchRoot))) {
+    return;
+  }
+
+  try {
+    const prefix = await tryLocalGitStdout(scratchRoot, ["rev-parse", "--show-prefix"]);
+    if (prefix == null) {
+      return;
+    }
+    const pattern = scratchGitExcludePatternFromPrefix(prefix);
+    if (pattern == null) {
+      return;
+    }
+
+    const excludePath = await tryLocalGitStdout(scratchRoot, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      "info/exclude",
+    ]);
+    if (excludePath == null || excludePath.length === 0) {
+      return;
+    }
+
+    await writeLocalGitExcludePattern(excludePath, pattern);
+  } catch (error) {
+    log.debug("Failed to install local scratch workflow Git exclude", {
+      scratchRoot,
+      error: getErrorMessage(error),
+    });
+  }
+}
+
+async function runtimeDirectoryExists(runtime: Runtime, targetPath: string): Promise<boolean> {
+  try {
+    const stat = await runtime.stat(targetPath);
+    return stat.isDirectory;
+  } catch {
+    return false;
+  }
+}
+
+async function tryRuntimeGitStdout(
+  runtime: Runtime,
+  commandCwd: string,
+  gitCwd: string,
+  args: readonly string[]
+): Promise<string | null> {
+  const command = `git -C ${quoteRuntimeProbePath(gitCwd)} ${args.map(shellQuote).join(" ")}`;
+  const result = await execBuffered(runtime, command, {
+    cwd: commandCwd,
+    timeout: RUNTIME_GIT_COMMAND_TIMEOUT_SECONDS,
+  });
+  if (result.exitCode !== 0) {
+    return null;
+  }
+  return stripTrailingLineEnding(result.stdout);
+}
+
+async function writeRuntimeGitExcludePattern(
+  runtime: Runtime,
+  excludePath: string,
+  pattern: string
+): Promise<void> {
+  assert(excludePath.length > 0, "Workflow scratch runtime Git exclude path is required");
+  await runtime.ensureDir(path.posix.dirname(excludePath));
+
+  let content = "";
+  try {
+    content = await readFileString(runtime, excludePath);
+  } catch {
+    content = "";
+  }
+
+  const nextContent = gitExcludeContentWithPattern(content, pattern);
+  if (nextContent != null) {
+    await writeFileString(runtime, excludePath, nextContent);
+  }
+}
+
+async function ensureRuntimeScratchGitExclude(
+  runtime: Runtime,
+  scratchRoot: string,
+  commandCwd: string
+): Promise<void> {
+  if (!(await runtimeDirectoryExists(runtime, scratchRoot))) {
+    return;
+  }
+
+  try {
+    const prefix = await tryRuntimeGitStdout(runtime, commandCwd, scratchRoot, [
+      "rev-parse",
+      "--show-prefix",
+    ]);
+    if (prefix == null) {
+      return;
+    }
+    const pattern = scratchGitExcludePatternFromPrefix(prefix);
+    if (pattern == null) {
+      return;
+    }
+
+    const excludePath = await tryRuntimeGitStdout(runtime, commandCwd, scratchRoot, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-path",
+      "info/exclude",
+    ]);
+    if (excludePath == null || excludePath.length === 0) {
+      return;
+    }
+
+    await writeRuntimeGitExcludePattern(runtime, excludePath, pattern);
+  } catch (error) {
+    log.debug("Failed to install runtime scratch workflow Git exclude", {
+      scratchRoot,
+      error: getErrorMessage(error),
+    });
+  }
 }
 
 function readBuiltInDefinitions(
@@ -423,7 +596,11 @@ export class WorkflowDefinitionStore {
           this.projectCwd != null,
           "WorkflowDefinitionStore.collectDefinitions: projectCwd missing"
         );
-        await ensureRuntimeScratchGitignore(this.projectRuntime, this.scratchRoot);
+        await ensureRuntimeScratchGitExclude(
+          this.projectRuntime,
+          this.scratchRoot,
+          this.projectCwd
+        );
         sources.push(
           await scanRuntimeDirectory(
             this.projectRuntime,
@@ -433,7 +610,7 @@ export class WorkflowDefinitionStore {
           )
         );
       } else {
-        await ensureLocalScratchGitignore(this.scratchRoot);
+        await ensureLocalScratchGitExclude(this.scratchRoot);
         sources.push(await scanDirectory(this.scratchRoot, "scratch"));
       }
     }

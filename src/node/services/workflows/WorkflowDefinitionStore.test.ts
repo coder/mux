@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { RUNTIME_MODE } from "@/common/types/runtime";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { TrueRemotePathMappedRuntime } from "@/node/services/tools/testHelpers";
+import { execFileAsync } from "@/node/utils/disposableExec";
 import {
   shouldDisableHostWorkflowActions,
   shouldUseRuntimeWorkflowProjectIO,
@@ -23,6 +24,35 @@ async function writeWorkflow(
     `// description: ${description}\nexport default async function workflow({ args }) { ${body} }\n`,
     "utf-8"
   );
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.stat(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runGit(cwd: string, args: readonly string[]): Promise<string> {
+  using proc = execFileAsync("git", ["-C", cwd, ...args], { timeoutMs: 5_000 });
+  const result = await proc.result;
+  return result.stdout.replace(/\r?\n$/u, "");
+}
+
+async function readGitExclude(repoPath: string): Promise<string> {
+  const excludePath = await runGit(repoPath, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-path",
+    "info/exclude",
+  ]);
+  try {
+    return await fs.readFile(excludePath, "utf-8");
+  } catch {
+    return "";
+  }
 }
 
 describe("WorkflowDefinitionStore", () => {
@@ -123,12 +153,45 @@ describe("WorkflowDefinitionStore", () => {
     expect(discovered.every((candidate) => candidate.scope !== "scratch")).toBe(true);
   });
 
-  test("discovers trusted workspace scratch workflows before reusable definitions and writes .gitignore", async () => {
+  test("does not create workspace scratch files while listing without scratch drafts", async () => {
     using tmp = new DisposableTempDir("workflow-definitions");
     const workspaceRoot = path.join(tmp.path, "project");
     const scratchRoot = path.join(workspaceRoot, ".mux", "workflows", ".scratch");
     const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
     const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await runGit(workspaceRoot, ["init"]);
+    const store = new WorkflowDefinitionStore({
+      scratchRoot,
+      projectRoot,
+      globalRoot,
+      builtIns: [],
+    });
+
+    const definitions = await store.listDefinitions({ projectTrusted: true });
+
+    let muxDirExists = true;
+    try {
+      await fs.stat(path.join(workspaceRoot, ".mux"));
+    } catch {
+      muxDirExists = false;
+    }
+    const gitExclude = await readGitExclude(workspaceRoot);
+    expect(definitions).toEqual([]);
+    expect(muxDirExists).toBe(false);
+    expect(gitExclude).not.toContain(".mux/workflows/.scratch");
+    expect(await runGit(workspaceRoot, ["status", "--short"])).toBe("");
+  });
+
+  test("discovers trusted workspace scratch workflows before reusable definitions and excludes scratch locally", async () => {
+    using tmp = new DisposableTempDir("workflow-definitions");
+    const repoRoot = path.join(tmp.path, "repo");
+    const workspaceRoot = path.join(repoRoot, "packages", "app");
+    const scratchRoot = path.join(workspaceRoot, ".mux", "workflows", ".scratch");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
     await writeWorkflow(globalRoot, "scratch-demo", "Global fallback");
     await writeWorkflow(
       scratchRoot,
@@ -151,7 +214,7 @@ describe("WorkflowDefinitionStore", () => {
 
     const definitions = await store.listDefinitions({ projectTrusted: true });
     const definition = await store.readDefinition("scratch-demo", { projectTrusted: true });
-    const gitignore = await fs.readFile(path.join(scratchRoot, ".gitignore"), "utf-8");
+    const gitExclude = await readGitExclude(workspaceRoot);
 
     expect(definitions).toEqual([
       {
@@ -165,7 +228,46 @@ describe("WorkflowDefinitionStore", () => {
     expect(definition.descriptor.scope).toBe("scratch");
     expect(definition.source).toContain("// description: Workspace scratch demo");
     expect(definition.source).toContain("reportMarkdown: 'scratch'");
-    expect(gitignore).toBe("*\n!.gitignore\n");
+    expect(await pathExists(path.join(scratchRoot, ".gitignore"))).toBe(false);
+    expect(gitExclude).toContain("# mux: local scratch workflow drafts");
+    expect(gitExclude).toContain("/packages/app/.mux/workflows/.scratch/");
+    expect(
+      await runGit(repoRoot, ["status", "--short", "--", "packages/app/.mux/workflows/.scratch"])
+    ).toBe("");
+
+    await writeWorkflow(projectRoot, "project-demo", "Project demo");
+    expect(
+      await runGit(repoRoot, [
+        "status",
+        "--short",
+        "--",
+        "packages/app/.mux/workflows/project-demo.js",
+      ])
+    ).toBe("?? packages/app/.mux/workflows/project-demo.js");
+  });
+
+  test("locally excludes an existing generated scratch gitignore", async () => {
+    using tmp = new DisposableTempDir("workflow-definitions");
+    const workspaceRoot = path.join(tmp.path, "project");
+    const scratchRoot = path.join(workspaceRoot, ".mux", "workflows", ".scratch");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await fs.mkdir(scratchRoot, { recursive: true });
+    await runGit(workspaceRoot, ["init"]);
+    await fs.writeFile(path.join(scratchRoot, ".gitignore"), "*\n!.gitignore\n", "utf-8");
+    const store = new WorkflowDefinitionStore({
+      scratchRoot,
+      projectRoot,
+      globalRoot,
+      builtIns: [],
+    });
+
+    const definitions = await store.listDefinitions({ projectTrusted: true });
+
+    const gitExclude = await readGitExclude(workspaceRoot);
+    expect(definitions).toEqual([]);
+    expect(gitExclude).toContain("/.mux/workflows/.scratch/");
+    expect(await runGit(workspaceRoot, ["status", "--short"])).toBe("");
   });
 
   test("omits workspace scratch workflows when the project is not trusted", async () => {
@@ -205,9 +307,12 @@ describe("WorkflowDefinitionStore", () => {
     const runtime = new TrueRemotePathMappedRuntime(tmp.path, remoteBase);
     const projectRoot = runtime.normalizePath(".mux/workflows", workspacePath);
     const scratchRoot = runtime.normalizePath(".mux/workflows/.scratch", workspacePath);
-    const localWorkflowRoot = path.join(tmp.path, "project", "feature", ".mux", "workflows");
+    const localWorkspaceRoot = path.join(tmp.path, "project", "feature");
+    const localWorkflowRoot = path.join(localWorkspaceRoot, ".mux", "workflows");
     const localScratchRoot = path.join(localWorkflowRoot, ".scratch");
     const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await fs.mkdir(localWorkspaceRoot, { recursive: true });
+    await runGit(localWorkspaceRoot, ["init"]);
     await writeWorkflow(
       localWorkflowRoot,
       "remote-demo",
@@ -247,8 +352,8 @@ describe("WorkflowDefinitionStore", () => {
     expect(definition.source).toContain("remote: true");
     expect(scratchDefinition.descriptor.sourcePath).toBe(`${scratchRoot}/scratch-remote.js`);
     expect(scratchDefinition.source).toContain("scratch: true");
-    const scratchGitignore = await fs.readFile(path.join(localScratchRoot, ".gitignore"), "utf-8");
-    expect(scratchGitignore).toBe("*\n!.gitignore\n");
+    expect(await pathExists(path.join(localScratchRoot, ".gitignore"))).toBe(false);
+    expect(await readGitExclude(localWorkspaceRoot)).toContain("/.mux/workflows/.scratch/");
     expect(promoted.sourcePath).toBe(`${projectRoot}/promoted-demo.js`);
     const promotedSource = await fs.readFile(
       path.join(localWorkflowRoot, "promoted-demo.js"),
