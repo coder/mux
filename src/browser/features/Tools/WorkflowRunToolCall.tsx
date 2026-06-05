@@ -1,7 +1,13 @@
 import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
 
 import { APIContext, type APIClient } from "@/browser/contexts/API";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/browser/components/Dialog/Dialog";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import {
   useOptionalCommandRegistry,
@@ -438,19 +444,55 @@ function WorkflowEventRow(props: {
   );
 }
 
+function WorkflowTaskReportDialogContent(props: {
+  taskId: string;
+  title: string;
+  reportMarkdown: string;
+}) {
+  assert(
+    props.reportMarkdown.trim().length > 0,
+    "WorkflowTaskReportDialogContent requires non-empty report markdown"
+  );
+
+  return (
+    <DialogContent className="flex max-h-[80vh] min-h-0 max-w-5xl flex-col overflow-hidden">
+      <DialogHeader>
+        <DialogTitle className="flex flex-col gap-1">
+          <span>Task report</span>
+          <span className="text-muted flex flex-wrap items-baseline gap-2 text-[11px] font-normal">
+            <span>{props.title}</span>
+            <code className="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px] leading-none">
+              {props.taskId}
+            </code>
+          </span>
+        </DialogTitle>
+      </DialogHeader>
+
+      <div className="min-h-0 flex-1 overflow-y-auto rounded bg-[var(--color-bg-secondary)] p-3">
+        <MarkdownRenderer content={props.reportMarkdown} />
+      </div>
+    </DialogContent>
+  );
+}
+
 function WorkflowTaskRow(props: {
   row: Extract<WorkflowDisplayRow, { kind: "task" }>;
   displayIndex: number;
   steps: readonly WorkflowStepRecord[];
   onNavigate: (taskId: string) => void;
+  onOpenReport: () => void;
 }) {
-  const [reportExpanded, setReportExpanded] = useState(false);
+  const [reportDialogOpen, setReportDialogOpen] = useState(false);
   const event = props.row.latestEvent;
   const label = getWorkflowEventLabel(event);
   const taskReportMarkdown = getTaskReportMarkdown(event, props.steps);
-  const canShowReport = taskReportMarkdown != null;
-  const reportId = `workflow-task-report-${props.row.firstEvent.sequence}-${event.taskId}`;
   const activateTaskRow = () => props.onNavigate(event.taskId);
+  const handleReportDialogOpenChange = (isOpen: boolean) => {
+    if (isOpen) {
+      props.onOpenReport();
+    }
+    setReportDialogOpen(isOpen);
+  };
   const onKeyDown: React.KeyboardEventHandler<HTMLDivElement> = (keyboardEvent) => {
     if (keyboardEvent.key !== "Enter" && keyboardEvent.key !== " ") {
       return;
@@ -493,35 +535,28 @@ function WorkflowTaskRow(props: {
 
   return (
     <li className="hover:bg-background/50">
-      {canShowReport ? (
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center">
-          {taskRow}
-          <button
-            type="button"
-            className={`${WORKFLOW_ACTION_BUTTON_CLASS} mr-2 gap-1 px-1.5 py-0.5 text-[10px]`}
-            aria-controls={reportId}
-            aria-expanded={reportExpanded}
-            aria-label={`${reportExpanded ? "Hide" : "Show"} report for ${event.taskId}`}
-            onClick={() => setReportExpanded((isExpanded) => !isExpanded)}
-          >
-            {reportExpanded ? (
-              <ChevronDown className="h-3 w-3" aria-hidden="true" />
-            ) : (
-              <ChevronRight className="h-3 w-3" aria-hidden="true" />
-            )}
-            Report
-          </button>
-        </div>
+      {taskReportMarkdown != null ? (
+        <Dialog open={reportDialogOpen} onOpenChange={handleReportDialogOpenChange}>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center">
+            {taskRow}
+            <DialogTrigger asChild>
+              <button
+                type="button"
+                className={`${WORKFLOW_ACTION_BUTTON_CLASS} mr-2 inline-flex items-center px-1.5 py-0.5 text-[10px] whitespace-nowrap`}
+                aria-label={`Open report for ${event.taskId}`}
+              >
+                Report
+              </button>
+            </DialogTrigger>
+          </div>
+          <WorkflowTaskReportDialogContent
+            taskId={event.taskId}
+            title={label}
+            reportMarkdown={taskReportMarkdown}
+          />
+        </Dialog>
       ) : (
         taskRow
-      )}
-      {reportExpanded && taskReportMarkdown != null && (
-        <div
-          id={reportId}
-          className="border-border bg-background/40 mx-2 mb-2 rounded border p-2 text-[11px]"
-        >
-          <MarkdownRenderer content={taskReportMarkdown} />
-        </div>
       )}
     </li>
   );
@@ -1157,6 +1192,9 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
                         displayIndex={index + 1}
                         steps={run?.steps ?? []}
                         onNavigate={(taskId) => workspaceStore.navigateToWorkspace(taskId)}
+                        onOpenReport={() => {
+                          userToggledExpansionRef.current = true;
+                        }}
                       />
                     ) : (
                       <WorkflowEventRow

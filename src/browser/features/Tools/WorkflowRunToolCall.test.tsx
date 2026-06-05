@@ -2,7 +2,17 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
-import { useEffect, type ReactNode } from "react";
+import {
+  cloneElement,
+  createContext,
+  isValidElement,
+  useContext,
+  useEffect,
+  type MouseEvent,
+  type MouseEventHandler,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 
 import { APIContext } from "@/browser/contexts/API";
 import {
@@ -13,6 +23,68 @@ import {
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+interface MockDialogContextValue {
+  open: boolean;
+  onOpenChange?: (open: boolean) => void;
+}
+
+const MockDialogContext = createContext<MockDialogContextValue | null>(null);
+
+interface MockDialogTriggerChildProps {
+  onClick?: MouseEventHandler<HTMLElement>;
+  "aria-expanded"?: boolean;
+  "aria-haspopup"?: "dialog";
+}
+
+void mock.module("@/browser/components/Dialog/Dialog", () => ({
+  Dialog: (props: {
+    open: boolean;
+    onOpenChange?: (open: boolean) => void;
+    children: ReactNode;
+  }) => (
+    <MockDialogContext.Provider value={{ open: props.open, onOpenChange: props.onOpenChange }}>
+      {props.children}
+    </MockDialogContext.Provider>
+  ),
+  DialogTrigger: (props: {
+    asChild?: boolean;
+    children: ReactElement<MockDialogTriggerChildProps>;
+  }) => {
+    const dialog = useContext(MockDialogContext);
+    if (!props.asChild || !isValidElement<MockDialogTriggerChildProps>(props.children)) {
+      throw new Error("Mock DialogTrigger expects asChild with a valid element");
+    }
+
+    return cloneElement(props.children, {
+      "aria-expanded": dialog?.open ?? false,
+      "aria-haspopup": "dialog",
+      onClick: (event: MouseEvent<HTMLElement>) => {
+        props.children.props.onClick?.(event);
+        dialog?.onOpenChange?.(true);
+      },
+    });
+  },
+  DialogContent: (props: { children: ReactNode; className?: string }) => {
+    const dialog = useContext(MockDialogContext);
+    if (dialog?.open !== true) {
+      return null;
+    }
+
+    return (
+      <div role="dialog" className={props.className}>
+        {props.children}
+        <button type="button" aria-label="Close" onClick={() => dialog.onOpenChange?.(false)}>
+          Close
+        </button>
+      </div>
+    );
+  },
+  DialogHeader: (props: { children: ReactNode }) => <div>{props.children}</div>,
+  DialogTitle: (props: { children: ReactNode; className?: string }) => (
+    <h2 className={props.className}>{props.children}</h2>
+  ),
+}));
+
 import { WorkflowRunToolCall } from "./WorkflowRunToolCall";
 
 function APIHarness(props: { client: unknown; children: ReactNode }) {
@@ -203,23 +275,24 @@ describe("WorkflowRunToolCall", () => {
     expect(taskEventRow.closest('[role="button"]')?.className).toContain("cursor-pointer");
     expect(taskEventRow.getAttribute("title")).toBeNull();
     expect(taskEventRow.closest("summary")).toBeNull();
-    const taskReportToggle = view.getByLabelText("Show report for task_scope");
+    const taskReportToggle = view.getByLabelText("Open report for task_scope");
     expect(taskReportToggle.closest('[role="button"]')).toBeNull();
 
     fireEvent.click(taskReportToggle);
 
-    await waitFor(() => expect(view.container.textContent).toContain("Child task report body."), {
-      timeout: 5_000,
+    await waitFor(() => {
+      const reportDialog = document.querySelector('[role="dialog"]');
+      expect(reportDialog?.textContent).toContain("Child task report body.");
     });
     await waitFor(() => expect(view.container.textContent).toContain("Workflow result body"));
-    const renderedText = view.container.textContent ?? "";
+    const renderedText = document.body.textContent ?? "";
     expect(renderedText.indexOf("confidence")).toBeLessThan(
       renderedText.indexOf("Workflow result body")
     );
     expect(renderedText).toContain("confidence");
   });
 
-  test("coalesces task attempts, navigates rows, and toggles completed reports separately", async () => {
+  test("coalesces task attempts, navigates rows, and opens completed reports separately", async () => {
     const navigatedTo: string[] = [];
     useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {
       navigatedTo.push(workspaceId);
@@ -333,15 +406,20 @@ describe("WorkflowRunToolCall", () => {
     expect(navigatedTo).toEqual(["task_retry", "task_live"]);
     expect(view.container.textContent).not.toContain("Completed task body.");
 
-    const reportToggle = view.getByLabelText("Show report for task_live");
+    const reportToggle = view.getByLabelText("Open report for task_live");
     expect(reportToggle.closest('[role="button"]')).toBeNull();
     fireEvent.click(reportToggle);
 
     expect(navigatedTo).toEqual(["task_retry", "task_live"]);
-    await waitFor(() => expect(view.container.textContent).toContain("Completed task body."));
+    await waitFor(() => {
+      const reportDialog = document.querySelector('[role="dialog"]');
+      expect(reportDialog?.textContent).toContain("Completed task body.");
+    });
 
-    fireEvent.click(view.getByLabelText("Hide report for task_live"));
-    expect(view.container.textContent).not.toContain("Completed task body.");
+    fireEvent.click(view.getByLabelText("Close"));
+    await waitFor(() => {
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+    });
   });
 
   test("renders executing foreground workflow status before the durable run is discovered", () => {
@@ -898,6 +976,121 @@ describe("WorkflowRunToolCall", () => {
 
     await waitFor(() => expect(view.getByText("manual result")).toBeTruthy());
     expect(view.getAllByText("completed").length).toBeGreaterThan(0);
+  });
+
+  test("keeps open task report dialog mounted after workflow auto-completes", async () => {
+    const runningRun = {
+      id: "wfr_report_auto",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:test",
+      args: { topic: "workflow cards" },
+      status: "running" as const,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:01.000Z",
+      events: [
+        {
+          sequence: 1,
+          type: "status" as const,
+          at: "2026-05-29T00:00:00.000Z",
+          status: "running" as const,
+        },
+        {
+          sequence: 2,
+          type: "task" as const,
+          at: "2026-05-29T00:00:01.000Z",
+          stepId: "report-step",
+          taskId: "task_report",
+          status: "completed" as const,
+        },
+      ],
+      steps: [
+        {
+          stepId: "report-step",
+          inputHash: "sha256:report",
+          status: "completed" as const,
+          taskId: "task_report",
+          startedAt: "2026-05-29T00:00:00.000Z",
+          completedAt: "2026-05-29T00:00:01.000Z",
+          result: { reportMarkdown: "## Running task report\n\nReport stays open." },
+        },
+      ],
+    };
+    const completedRun = {
+      ...runningRun,
+      status: "completed" as const,
+      updatedAt: "2026-05-29T00:00:02.000Z",
+      events: [
+        ...runningRun.events,
+        {
+          sequence: 3,
+          type: "result" as const,
+          at: "2026-05-29T00:00:02.000Z",
+          result: { reportMarkdown: "completed workflow result" },
+        },
+        {
+          sequence: 4,
+          type: "status" as const,
+          at: "2026-05-29T00:00:02.000Z",
+          status: "completed" as const,
+        },
+      ],
+    };
+    const pendingRefresh: { resolve?: (run: typeof completedRun) => void } = {};
+    const api = {
+      workflows: {
+        getRun: async () =>
+          await new Promise<typeof completedRun>((resolve) => {
+            pendingRefresh.resolve = resolve;
+          }),
+      },
+    };
+
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowRunToolCall
+              args={{
+                name: "deep-research",
+                args: { topic: "workflow cards" },
+                run_in_background: true,
+              }}
+              status="completed"
+              result={{
+                status: "running",
+                runId: "wfr_report_auto",
+                result: null,
+                run: runningRun,
+              }}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    await waitFor(() => expect(pendingRefresh.resolve).toBeDefined());
+    fireEvent.click(view.getByLabelText("Open report for task_report"));
+    await waitFor(() => {
+      expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
+        "Report stays open."
+      );
+    });
+
+    const completeRefresh = pendingRefresh.resolve;
+    if (completeRefresh == null) {
+      throw new Error("Expected workflow refresh to be pending");
+    }
+    completeRefresh(completedRun);
+
+    await waitFor(() => expect(view.getByText("completed workflow result")).toBeTruthy());
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Report stays open.");
   });
 
   test("shows interrupt action for running workflows and updates with the returned run", async () => {
