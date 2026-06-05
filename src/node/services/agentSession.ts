@@ -1311,12 +1311,20 @@ export class AgentSession {
     const workspaceAgentId = workspaceAgentIdCandidates[0] ?? WORKSPACE_DEFAULTS.agentId;
     const persistedAgentId = this.normalizeAgentIdForRetry(persistedRetrySendOptions?.agentId);
     const assistantAgentId = this.normalizeAgentIdForRetry(lastAssistantMessage?.metadata?.agentId);
-    const baseAgentId = persistedAgentId ?? assistantAgentId ?? workspaceAgentId;
-    const agentSettingsCandidates = [
-      baseAgentId,
-      ...workspaceAgentIdCandidates,
-      workspaceAgentId,
-    ].filter((agentId, index, candidates) => candidates.indexOf(agentId) === index);
+    // Child task workspaces carry their creation-time identity/settings in workspace metadata.
+    // Startup retry metadata can be stale after recovery sends restamp agentId to exec, so
+    // child retries must prefer the persisted workspace candidate before history metadata.
+    const isChildTaskWorkspace = workspaceMetadata?.parentWorkspaceId != null;
+    const baseAgentId = isChildTaskWorkspace
+      ? workspaceAgentId
+      : (persistedAgentId ?? assistantAgentId ?? workspaceAgentId);
+    const agentSettingsCandidateFields = isChildTaskWorkspace
+      ? [...workspaceAgentIdCandidates, baseAgentId, persistedAgentId, assistantAgentId]
+      : [baseAgentId, ...workspaceAgentIdCandidates, workspaceAgentId];
+    const agentSettingsCandidates = agentSettingsCandidateFields.filter(
+      (agentId, index, candidates): agentId is string =>
+        typeof agentId === "string" && candidates.indexOf(agentId) === index
+    );
 
     const agentSettings =
       agentSettingsCandidates
@@ -1325,17 +1333,20 @@ export class AgentSession {
     const compactSettings = workspaceMetadata?.aiSettingsByAgent?.compact;
 
     const persistedModel = this.normalizeStartupModel(persistedRetrySendOptions?.model);
-    const baseModel =
-      persistedModel ??
-      this.normalizeStartupModel(lastAssistantMessage?.metadata?.model) ??
-      this.normalizeStartupModel(agentSettings?.model) ??
-      DEFAULT_MODEL;
+    const assistantModel = this.normalizeStartupModel(lastAssistantMessage?.metadata?.model);
+    const agentSettingsModel = this.normalizeStartupModel(agentSettings?.model);
+    const baseModel = isChildTaskWorkspace
+      ? (agentSettingsModel ?? persistedModel ?? assistantModel ?? DEFAULT_MODEL)
+      : (persistedModel ?? assistantModel ?? agentSettingsModel ?? DEFAULT_MODEL);
 
     const persistedThinkingLevel = coerceThinkingLevel(persistedRetrySendOptions?.thinkingLevel);
-    const baseThinkingLevel =
-      persistedThinkingLevel ??
-      coerceThinkingLevel(lastAssistantMessage?.metadata?.thinkingLevel) ??
-      coerceThinkingLevel(agentSettings?.thinkingLevel);
+    const assistantThinkingLevel = coerceThinkingLevel(
+      lastAssistantMessage?.metadata?.thinkingLevel
+    );
+    const agentSettingsThinkingLevel = coerceThinkingLevel(agentSettings?.thinkingLevel);
+    const baseThinkingLevel = isChildTaskWorkspace
+      ? (agentSettingsThinkingLevel ?? persistedThinkingLevel ?? assistantThinkingLevel)
+      : (persistedThinkingLevel ?? assistantThinkingLevel ?? agentSettingsThinkingLevel);
 
     const persistedToolPolicy =
       lastUserMessage?.metadata?.toolPolicy ?? persistedRetrySendOptions?.toolPolicy;
