@@ -17,7 +17,10 @@ import type * as RuntimeStatusStoreModuleType from "@/browser/stores/RuntimeStat
 import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import * as TooltipModule from "../Tooltip/Tooltip";
 import * as WorkspaceStatusIndicatorModule from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
-import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
+import type {
+  AgentRowRenderMeta,
+  WorkspaceDelegatedActivity,
+} from "@/browser/utils/ui/workspaceFiltering";
 import type { StreamAbortReasonSnapshot } from "@/common/types/stream";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { WorkspaceSelection } from "./AgentListItem";
@@ -241,6 +244,7 @@ function renderWorkspaceItem(
     depth?: number;
     rowRenderMeta?: AgentRowRenderMeta;
     subAgentConnectorLayout?: "default" | "task-group-member";
+    delegatedActivity?: WorkspaceDelegatedActivity;
     completedChildrenExpanded?: boolean;
     onToggleCompletedChildren?: (workspaceId: string) => void;
     onSelectWorkspace?: (selection: WorkspaceSelection) => void;
@@ -257,6 +261,7 @@ function renderWorkspaceItem(
       depth={options.depth ?? options.rowRenderMeta?.depth}
       rowRenderMeta={options.rowRenderMeta}
       subAgentConnectorLayout={options.subAgentConnectorLayout}
+      delegatedActivity={options.delegatedActivity}
       completedChildrenExpanded={options.completedChildrenExpanded}
       onToggleCompletedChildren={options.onToggleCompletedChildren}
       onSelectWorkspace={options.onSelectWorkspace ?? (() => undefined)}
@@ -296,6 +301,115 @@ describe("AgentListItem", () => {
     cleanupDom?.();
     cleanupDom = null;
     mock.restore();
+  });
+
+  test("shows active delegated workflow work on idle workspace rows", () => {
+    const { row } = renderWorkspaceItem({
+      delegatedActivity: {
+        activeCount: 2,
+        queuedCount: 1,
+        workflowActiveCount: 2,
+        workflowQueuedCount: 1,
+      },
+    });
+    const rowView = within(row);
+
+    expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    expect(rowView.getByText("Workflow running · 2 sub-agents active · 1 queued")).toBeTruthy();
+    const descriptionId = row.getAttribute("aria-describedby");
+    expect(descriptionId).toBe(`workspace-status-description-${TEST_WORKSPACE_ID}`);
+    expect(document.getElementById(descriptionId ?? "")?.textContent).toContain(
+      "Workflow running · 2 sub-agents active · 1 queued"
+    );
+    expect(rowView.queryByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeNull();
+  });
+
+  test("keeps coordinator streaming copy ahead of delegated workflow work", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({ canInterrupt: true });
+
+    const { row } = renderWorkspaceItem({
+      delegatedActivity: {
+        activeCount: 1,
+        queuedCount: 0,
+        workflowActiveCount: 1,
+        workflowQueuedCount: 0,
+      },
+    });
+    const rowView = within(row);
+
+    expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    expect(rowView.getByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeTruthy();
+    expect(rowView.queryByText("Workflow running · 1 sub-agent active")).toBeNull();
+  });
+
+  test("keeps coordinator streaming copy ahead of active delegated work", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({ canInterrupt: true });
+
+    const { row } = renderWorkspaceItem({
+      delegatedActivity: {
+        activeCount: 1,
+        queuedCount: 0,
+        workflowActiveCount: 0,
+        workflowQueuedCount: 0,
+      },
+    });
+    const rowView = within(row);
+
+    expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    expect(rowView.getByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeTruthy();
+    expect(rowView.queryByText("1 sub-agent active")).toBeNull();
+  });
+
+  test("keeps own question status ahead of delegated workflow work", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({ awaitingUserQuestion: true });
+
+    const { row } = renderWorkspaceItem({
+      delegatedActivity: {
+        activeCount: 1,
+        queuedCount: 0,
+        workflowActiveCount: 1,
+        workflowQueuedCount: 0,
+      },
+    });
+    const rowView = within(row);
+
+    expect(row.querySelector(".bg-border-pending.border-surface-sky")).toBeTruthy();
+    expect(rowView.getByText("Mux has a few questions")).toBeTruthy();
+    expect(rowView.queryByText("Workflow running · 1 sub-agent active")).toBeNull();
+  });
+
+  test("shows queued delegated workflow work without marking the row active", () => {
+    const { row } = renderWorkspaceItem({
+      delegatedActivity: {
+        activeCount: 0,
+        queuedCount: 1,
+        workflowActiveCount: 0,
+        workflowQueuedCount: 1,
+      },
+    });
+    const rowView = within(row);
+
+    expect(row.querySelector(".workspace-status-dot-active")).toBeNull();
+    expect(rowView.getByText("Workflow queued · 1 sub-agent queued")).toBeTruthy();
+  });
+
+  test("keeps own system errors ahead of delegated workflow work", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({
+      lastAbortReason: createSystemAbortReason(),
+    });
+
+    const { row } = renderWorkspaceItem({
+      delegatedActivity: {
+        activeCount: 1,
+        queuedCount: 0,
+        workflowActiveCount: 1,
+        workflowQueuedCount: 0,
+      },
+    });
+    const rowView = within(row);
+
+    expect(row.querySelector(".bg-content-destructive.border-surface-destructive")).toBeTruthy();
+    expect(rowView.queryByText("Workflow running · 1 sub-agent active")).toBeNull();
   });
 
   test("keeps archiving feedback inline instead of rendering a secondary status row", () => {

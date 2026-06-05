@@ -326,12 +326,14 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
       }
       expect(getQuickArchiveButton(reportedCompletedRow)).toBeNull();
 
-      // Expanded rows with hidden status dots should show the completed-children indicator.
+      // Active delegated work keeps the parent status dot visible, so the
+      // completed-children chevron overlay stays hidden while the group is active.
+      expect(parentRow.querySelector(".workspace-status-dot-active")).not.toBeNull();
       expect(
         parentRow.querySelector(
           `[data-testid="completed-children-expanded-indicator-${parentWorkspace.id}"]`
         )
-      ).not.toBeNull();
+      ).toBeNull();
 
       // Scenario 4: the overflow menu switches to "Hide sub-agents" when expanded.
       fireEvent.click(parentActionsButton);
