@@ -347,8 +347,12 @@ function gitExcludeContentWithPattern(content: string, pattern: string): string 
 }
 
 function scratchGitignoreFallbackContent(content: string): string | null {
-  const trimmedContent = content.trimEnd();
-  if (trimmedContent.endsWith("*")) {
+  const lastPattern = content
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"))
+    .at(-1);
+  if (lastPattern === "*") {
     return null;
   }
   const separator = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
