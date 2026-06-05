@@ -1,9 +1,10 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 import { APIContext } from "@/browser/contexts/API";
 import { WorkflowRunToolCall } from "@/browser/features/Tools/WorkflowRunToolCall";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 
 const storyApi = {
@@ -164,6 +165,86 @@ const resumedForegroundDiscoveryRun: WorkflowRunRecord = {
   ],
 };
 
+const taskActionsRun: WorkflowRunRecord = {
+  id: "wfr_story_task_actions",
+  workspaceId: "workspace-1",
+  definition: {
+    name: "implementation",
+    description: "Implementation workflow",
+    scope: "built-in" as const,
+    executable: true,
+  },
+  definitionSource: "export default function workflow() { return null; }",
+  definitionHash: "sha256:story-task-actions",
+  args: { topic: "workflow task actions" },
+  status: "running" as const,
+  createdAt: "2026-05-29T00:00:00.000Z",
+  updatedAt: "2026-05-29T00:00:02.000Z",
+  events: [
+    {
+      sequence: 1,
+      type: "status" as const,
+      at: "2026-05-29T00:00:00.000Z",
+      status: "running" as const,
+    },
+    { sequence: 2, type: "phase" as const, at: "2026-05-29T00:00:00.000Z", name: "implementation" },
+    {
+      sequence: 3,
+      type: "task" as const,
+      at: "2026-05-29T00:00:01.000Z",
+      stepId: "summarize-source-15",
+      taskId: "7b1a07d84d",
+      status: "completed",
+    },
+    {
+      sequence: 4,
+      type: "task" as const,
+      at: "2026-05-29T00:00:02.000Z",
+      stepId: "extract-claims",
+      taskId: "a36921beca",
+      status: "started",
+    },
+  ],
+  steps: [
+    {
+      stepId: "summarize-source-15",
+      inputHash: "sha256:summarize",
+      status: "completed" as const,
+      taskId: "7b1a07d84d",
+      startedAt: "2026-05-29T00:00:01.000Z",
+      completedAt: "2026-05-29T00:00:02.000Z",
+      result: { reportMarkdown: "## Summary report\n\nCompleted task report body." },
+    },
+    {
+      stepId: "extract-claims",
+      inputHash: "sha256:extract",
+      status: "started" as const,
+      taskId: "a36921beca",
+      startedAt: "2026-05-29T00:00:02.000Z",
+    },
+  ],
+};
+
+function WorkflowTaskActionsStory(props: Parameters<typeof WorkflowRunToolCall>[0]) {
+  const [openedTaskId, setOpenedTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {
+      setOpenedTaskId(workspaceId);
+    });
+    return () => useWorkspaceStoreRaw().setNavigateToWorkspace(() => undefined);
+  }, []);
+
+  return (
+    <div className="space-y-2">
+      <WorkflowRunToolCall {...props} />
+      <div className="text-muted text-xs" aria-live="polite">
+        Last opened task: {openedTaskId ?? "none"}
+      </div>
+    </div>
+  );
+}
+
 function ForegroundWorkflowAPIProvider(props: { children: ReactNode }) {
   const currentRunRef = useRef(foregroundDiscoveryRun);
   const [, setRenderVersion] = useState(0);
@@ -205,6 +286,26 @@ function ForegroundWorkflowAPIProvider(props: { children: ReactNode }) {
     </APIContext.Provider>
   );
 }
+
+const taskActionsProps = {
+  args: {
+    name: "implementation",
+    args: { topic: "workflow task actions" },
+    run_in_background: true,
+  },
+  status: "completed" as const,
+  result: {
+    status: "running" as const,
+    runId: "wfr_story_task_actions",
+    result: null,
+    run: taskActionsRun,
+  },
+} satisfies Parameters<typeof WorkflowRunToolCall>[0];
+
+export const TaskActions: Story = {
+  render: () => <WorkflowTaskActionsStory {...taskActionsProps} />,
+  args: taskActionsProps,
+};
 
 export const RunningForegroundDiscovered: Story = {
   render: (args) => (

@@ -475,6 +475,12 @@ function WorkflowTaskReportDialogContent(props: {
   );
 }
 
+function shouldShowWorkflowTaskOpenAffordance(
+  event: WorkflowRunEvent
+): event is Extract<WorkflowRunEvent, { type: "task" }> {
+  return event.type === "task" && event.status === "started";
+}
+
 function WorkflowTaskRow(props: {
   row: Extract<WorkflowDisplayRow, { kind: "task" }>;
   displayIndex: number;
@@ -486,6 +492,8 @@ function WorkflowTaskRow(props: {
   const event = props.row.latestEvent;
   const label = getWorkflowEventLabel(event);
   const taskReportMarkdown = getTaskReportMarkdown(event, props.steps);
+  const showOpenAffordance =
+    taskReportMarkdown == null && shouldShowWorkflowTaskOpenAffordance(event);
   const activateTaskRow = () => props.onNavigate(event.taskId);
   const handleReportDialogOpenChange = (isOpen: boolean) => {
     if (isOpen) {
@@ -503,7 +511,11 @@ function WorkflowTaskRow(props: {
 
   const taskRow = (
     <div
-      className="grid cursor-pointer grid-cols-[3rem_4.75rem_minmax(0,1fr)] items-center gap-2 border-l-2 border-transparent px-2 py-1 text-[10px]"
+      className={`grid cursor-pointer items-center gap-2 border-l-2 border-transparent px-2 py-1 text-[10px] ${
+        showOpenAffordance
+          ? "grid-cols-[3rem_4.75rem_minmax(0,1fr)_auto]"
+          : "grid-cols-[3rem_4.75rem_minmax(0,1fr)]"
+      }`}
       role="button"
       tabIndex={0}
       aria-label={`Open workflow task ${event.taskId}`}
@@ -530,6 +542,15 @@ function WorkflowTaskRow(props: {
       </TooltipIfPresent>
       <span className={`w-fit font-mono uppercase ${getEventTypeClass(event)}`}>{event.type}</span>
       <span className="text-foreground truncate">{label}</span>
+      {/* Keep Open visual-only so the task row remains the single keyboard target. */}
+      {showOpenAffordance ? (
+        <span
+          className={`${WORKFLOW_ACTION_BUTTON_CLASS} pointer-events-none inline-flex items-center px-1.5 py-0.5 text-[10px] whitespace-nowrap`}
+          aria-hidden="true"
+        >
+          Open
+        </span>
+      ) : null}
     </div>
   );
 

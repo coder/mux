@@ -391,8 +391,10 @@ describe("WorkflowRunToolCall", () => {
     expect(view.queryByText("implement / task_live / started")).toBeNull();
     expect(view.getByText("implement / task_retry / started")).toBeTruthy();
     expect(view.getByText("apply-implement / task_live / started")).toBeTruthy();
+    expect(view.getByText("Open")).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Open" })).toBeNull();
 
-    fireEvent.click(view.getByText("implement / task_retry / started"));
+    fireEvent.click(view.getByText("Open"));
     expect(navigatedTo).toEqual(["task_retry"]);
 
     const completedTaskControl = view
