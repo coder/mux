@@ -15,6 +15,7 @@ import {
   getPendingScopeId,
   getPendingWorkspaceSendErrorKey,
   getProjectScopeId,
+  getSelectedRuntimeKey,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
@@ -767,7 +768,7 @@ describe("useCreationWorkspace", () => {
     const pendingInputKey = getInputKey(pendingScopeId);
     const pendingImagesKey = getInputAttachmentsKey(pendingScopeId);
     // Thinking is workspace-scoped, but this test doesn't set a project-scoped thinking preference.
-    expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
+    expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, undefined]);
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
   });
 
@@ -1128,8 +1129,12 @@ describe("useCreationWorkspace", () => {
     const pendingInputKey = getInputKey(pendingScopeId);
     const pendingImagesKey = getInputAttachmentsKey(pendingScopeId);
     const pendingErrorKey = getPendingWorkspaceSendErrorKey(TEST_WORKSPACE_ID);
-    expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
+    const pendingRuntimeKey = getSelectedRuntimeKey(pendingScopeId);
+    expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, undefined]);
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
+    // Regression guard: the pending runtime selection must also be cleared after creation so a
+    // returning blank composer doesn't restore a stale one-off runtime choice.
+    expect(updatePersistedStateCalls).toContainEqual([pendingRuntimeKey, undefined]);
     expect(updatePersistedStateCalls).toContainEqual([pendingErrorKey, sendError]);
   });
   test("onWorkspaceCreated is called before sendMessage resolves (no blocking)", async () => {

@@ -15,9 +15,8 @@ import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
+  DRAFT_SCOPED_FIELDS,
   getAgentIdKey,
-  getInputKey,
-  getInputAttachmentsKey,
   getModelKey,
   getNotifyOnResponseAutoEnableKey,
   getNotifyOnResponseKey,
@@ -569,8 +568,12 @@ export function useCreationWorkspace({
             return;
           }
 
-          updatePersistedState(getInputKey(pendingScopeId), "");
-          updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
+          // Clear every draft-scoped field (input, attachments, name, runtime, ...) so a
+          // returning blank composer for this pending scope starts from defaults rather than
+          // restoring stale draft state. Registry-driven so new draft fields clear automatically.
+          for (const field of DRAFT_SCOPED_FIELDS) {
+            updatePersistedState(field.key(pendingScopeId), undefined);
+          }
         };
 
         // Sync preferences before switching (keeps workspace settings consistent).
