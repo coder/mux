@@ -3204,6 +3204,14 @@ export class WorkspaceService extends EventEmitter {
 
         const persistedWorkspacePath = persistedWorkspace?.workspacePath;
 
+        // Tasks spawned with isolation: "none" share their parent workspace's checkout (their
+        // persisted path points at it). Physically deleting that directory would destroy the
+        // parent's working tree, so skip runtime deletion and only remove config/session state.
+        // Runtime deletion is keyed on the task's unique name today (a safe no-op), but guard
+        // explicitly so this stays correct if runtime deletion ever resolves the persisted path.
+        const taskSharesParentCheckout =
+          findWorkspaceEntry(configSnapshot, workspaceId)?.workspace.taskIsolation === "none";
+
         if (isMultiProject(metadata)) {
           const projects = getProjects(metadata);
           const deleteErrors: string[] = [];
@@ -3347,6 +3355,13 @@ export class WorkspaceService extends EventEmitter {
               `Failed to fully delete multi-project workspace from disk, but force=true. Removing from config. Errors: ${deleteErrors.join("; ")}`
             );
           }
+        } else if (taskSharesParentCheckout) {
+          // Shared checkout (isolation: "none"): do not touch the filesystem — the directory
+          // belongs to the parent workspace. Config/session cleanup below still runs.
+          log.debug("Skipping runtime deletion for shared-workspace task", {
+            workspaceId,
+            workspacePath: persistedWorkspacePath,
+          });
         } else {
           const projectPath = metadata.projectPath;
           const runtime = createRuntime(metadata.runtimeConfig, {

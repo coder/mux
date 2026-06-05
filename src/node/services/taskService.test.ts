@@ -1258,6 +1258,85 @@ describe("TaskService", () => {
     }
   }, 20_000);
 
+  test("isolation: none shares the parent worktree without forking or re-initializing", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = await createTestProject(rootDir);
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+    const parentPath = runtime.getWorkspacePath(projectPath, parentName);
+
+    const parentId = "1111111111";
+    const childTaskId = "2222222222";
+    stubStableIds(config, [childTaskId]);
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: parentPath,
+          id: parentId,
+          name: parentName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+      ],
+      testTaskSettings()
+    );
+
+    // orchestrateFork must NOT be called for isolation: "none"; runBackgroundInit is stubbed only
+    // so a stray call would be observable (it should not be invoked either).
+    const forkSpy = spyOn(forkOrchestrator, "orchestrateFork");
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+    try {
+      const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+      const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+      const result = await createAgentTask(taskService, parentId, "read-only analysis", {
+        isolation: "none",
+      });
+
+      expect(result.success).toBe(true);
+      assert(result.success, "Expected shared-workspace task to be created");
+      expect(result.data.status).toBe("running");
+      expect(result.data.taskId).toBe(childTaskId);
+
+      // No fork and no init: the sub-agent reuses the parent's live checkout.
+      expect(forkSpy).not.toHaveBeenCalled();
+      expect(runBackgroundInitSpy).not.toHaveBeenCalled();
+
+      // The persisted child entry points at the parent's checkout and is flagged shared.
+      const childEntry = findWorkspaceInConfig(config, childTaskId);
+      assert(childEntry, "Expected child task workspace to be persisted");
+      expect(childEntry.path).toBe(parentPath);
+      expect(childEntry.taskIsolation).toBe("none");
+      expect(childEntry.runtimeConfig?.type).toBe("worktree");
+
+      expect(sendMessage).toHaveBeenCalledWith(
+        childTaskId,
+        "read-only analysis",
+        expect.anything(),
+        expect.objectContaining({ agentInitiated: true })
+      );
+    } finally {
+      runBackgroundInitSpy.mockRestore();
+      forkSpy.mockRestore();
+    }
+  }, 20_000);
+
   test("interrupts queued tasks when the primary project loses trust before dequeue", async () => {
     const config = await createTestConfig(rootDir);
 

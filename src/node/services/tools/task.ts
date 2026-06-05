@@ -7,9 +7,14 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import {
   TaskToolResultSchema,
   TOOL_DEFINITIONS,
+  buildTaskToolAgentArgsSchema,
   buildTaskToolDescription,
 } from "@/common/utils/tools/toolDefinitions";
-import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
+import {
+  RUNTIME_MODE,
+  runtimeModeSupportsSharedTaskWorkspace,
+  type RuntimeMode,
+} from "@/common/types/runtime";
 import type { TaskCreatedEvent } from "@/common/types/stream";
 import { log } from "@/node/services/log";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
@@ -26,16 +31,20 @@ import {
 import { normalizeModelInput } from "@/common/utils/ai/normalizeModelInput";
 import { coerceNonEmptyString } from "@/node/services/taskUtils";
 
+/** Resolve the parent workspace's runtime mode from the injected MUX_RUNTIME env. */
+function resolveRuntimeMode(config: ToolConfiguration): RuntimeMode | undefined {
+  const runtimeValue = config.muxEnv?.MUX_RUNTIME;
+  return runtimeValue != null && Object.values(RUNTIME_MODE).includes(runtimeValue as RuntimeMode)
+    ? (runtimeValue as RuntimeMode)
+    : undefined;
+}
+
 /**
  * Build dynamic task tool description with runtime-specific workspace visibility
  * guidance and the currently available sub-agents.
  */
 function buildTaskDescription(config: ToolConfiguration): string {
-  const runtimeValue = config.muxEnv?.MUX_RUNTIME;
-  const runtimeMode =
-    runtimeValue != null && Object.values(RUNTIME_MODE).includes(runtimeValue as RuntimeMode)
-      ? (runtimeValue as RuntimeMode)
-      : undefined;
+  const runtimeMode = resolveRuntimeMode(config);
   const baseDescription = buildTaskToolDescription(runtimeMode);
   const subagents = config.availableSubagents?.filter((a) => a.subagentRunnable) ?? [];
 
@@ -306,9 +315,16 @@ function normalizePendingTaskStatuses(params: {
 }
 
 export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
+  // Only advertise the `isolation` parameter on runtimes where sharing the parent checkout is
+  // supported. On local runtimes the field is omitted from the schema entirely, so it never
+  // enters LLM context.
+  const runtimeMode = resolveRuntimeMode(config);
+  const inputSchema = buildTaskToolAgentArgsSchema({
+    includeIsolation: runtimeModeSupportsSharedTaskWorkspace(runtimeMode),
+  });
   return tool({
     description: buildTaskDescription(config),
-    inputSchema: TOOL_DEFINITIONS.task.schema,
+    inputSchema,
     execute: async (args, { abortSignal, toolCallId }): Promise<unknown> => {
       // Defensive: tool() should have already validated args via inputSchema,
       // but keep runtime validation here to preserve type-safety.
@@ -340,6 +356,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         variants,
         model,
         thinking,
+        isolation,
       } = validatedArgs;
       const requestedAgentId =
         typeof agentId === "string" && agentId.trim().length > 0 ? agentId : subagent_type;
@@ -390,6 +407,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           ...(aiOverrides.thinkingLevel != null
             ? { thinkingLevel: aiOverrides.thinkingLevel }
             : {}),
+          ...(isolation != null ? { isolation } : {}),
           ...(parentRuntimeAiSettings != null ? { parentRuntimeAiSettings } : {}),
           bestOf:
             taskGroupId != null

@@ -63,6 +63,96 @@ describe("task tool", () => {
     expect(tool.description).toContain("Uncommitted changes from the parent are not available");
   });
 
+  // The advertised inputSchema is the raw (strict) Zod schema. A `.strict()` schema that omits
+  // `isolation` rejects the field outright, proving it never enters LLM context for that runtime.
+  const parseWithIsolation = (tool: ReturnType<typeof createTaskTool>) =>
+    (tool.inputSchema as { safeParse: (v: unknown) => { success: boolean } }).safeParse({
+      agentId: "explore",
+      prompt: "look",
+      title: "Look",
+      isolation: "none",
+    });
+
+  it("omits the isolation parameter from the schema on local runtimes", () => {
+    using tempDir = new TestTempDir("test-task-tool-local-isolation-schema");
+    const tool = createTaskTool({
+      ...createTestToolConfig(tempDir.path),
+      muxEnv: { MUX_RUNTIME: "local" },
+    });
+
+    expect(parseWithIsolation(tool).success).toBe(false);
+  });
+
+  it("advertises the isolation parameter in the schema on worktree runtimes", () => {
+    using tempDir = new TestTempDir("test-task-tool-worktree-isolation-schema");
+    const tool = createTaskTool({
+      ...createTestToolConfig(tempDir.path),
+      muxEnv: { MUX_RUNTIME: "worktree" },
+    });
+
+    expect(parseWithIsolation(tool).success).toBe(true);
+  });
+
+  it("forwards isolation to taskService.create", async () => {
+    using tempDir = new TestTempDir("test-task-tool-isolation-passthrough");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const create = mock((_: { isolation?: unknown }) =>
+      Ok({ taskId: "child-task", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      muxEnv: { MUX_RUNTIME: "worktree" },
+      taskService,
+    });
+
+    await Promise.resolve(
+      tool.execute!(
+        {
+          subagent_type: "explore",
+          prompt: "read-only look",
+          title: "Child task",
+          run_in_background: true,
+          isolation: "none",
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0]?.[0]?.isolation).toBe("none");
+  });
+
+  it("omits isolation from taskService.create when not provided", async () => {
+    using tempDir = new TestTempDir("test-task-tool-isolation-default");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const create = mock((_: { isolation?: unknown }) =>
+      Ok({ taskId: "child-task", kind: "agent" as const, status: "queued" as const })
+    );
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      muxEnv: { MUX_RUNTIME: "worktree" },
+      taskService,
+    });
+
+    await Promise.resolve(
+      tool.execute!(
+        { subagent_type: "explore", prompt: "do it", title: "Child task", run_in_background: true },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0]?.[0]?.isolation).toBeUndefined();
+  });
+
   it("should return immediately when run_in_background is true", async () => {
     using tempDir = new TestTempDir("test-task-tool");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

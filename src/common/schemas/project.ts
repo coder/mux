@@ -173,6 +173,15 @@ export const WorkspaceConfigSchema = z.object({
     description:
       "Trunk branch used to create/init this agent task workspace (used for restart-safe init on queued tasks).",
   }),
+  taskIsolation: z
+    .enum(["fork", "none"])
+    .optional()
+    .meta({
+      description:
+        'Workspace isolation for an agent task. "none" means the task shares its parent workspace\'s ' +
+        "checkout (no fork): its `path` points at the parent's checkout, init is skipped, and removal " +
+        'must not delete that shared directory. Absent/"fork" is the isolated default.',
+    }),
   mcp: WorkspaceMCPOverridesSchema.optional().meta({
     description:
       "LEGACY: Per-workspace MCP overrides (migrated to <workspace>/.mux/mcp.local.jsonc)",

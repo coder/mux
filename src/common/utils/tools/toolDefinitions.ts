@@ -37,7 +37,11 @@ import {
   WorkflowRunRecordSchema,
   WorkflowRunStatusSchema,
 } from "@/common/orpc/schemas";
-import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
+import {
+  RUNTIME_MODE,
+  runtimeModeSupportsSharedTaskWorkspace,
+  type RuntimeMode,
+} from "@/common/types/runtime";
 import {
   BASH_HARD_MAX_LINES,
   BASH_MAX_LINE_BYTES,
@@ -198,6 +202,18 @@ const TaskToolVariantSchema = z.string().trim().min(1);
 
 const TaskToolVariantsSchema = z.array(TaskToolVariantSchema).min(1).max(20);
 
+/** Sub-agent workspace isolation modes. `fork` matches the historical default. */
+export const TASK_ISOLATION_VALUES = ["fork", "none"] as const;
+export type TaskIsolation = (typeof TASK_ISOLATION_VALUES)[number];
+const TaskIsolationSchema = z.enum(TASK_ISOLATION_VALUES);
+
+const TASK_ISOLATION_PARAM_DESCRIPTION =
+  'Workspace isolation for the sub-agent. "fork" (the default) runs it in an isolated copy of this ' +
+  'workspace created from committed state. "none" runs it directly in this workspace\'s checkout, ' +
+  "sharing the working tree (including uncommitted changes) and skipping the fork + init overhead. " +
+  'Use "none" only for read-only analysis (e.g. the explore agent) or when you instruct the sub-agent ' +
+  "to avoid editing shared files, since it can otherwise modify the same files concurrently. Omit to fork.";
+
 function getTaskRuntimeVisibilityGuidance(runtimeMode: RuntimeMode | undefined): string {
   switch (runtimeMode) {
     case RUNTIME_MODE.LOCAL:
@@ -231,6 +247,13 @@ function getTaskRuntimeVisibilityGuidance(runtimeMode: RuntimeMode | undefined):
 }
 
 export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): string {
+  const isolationGuidance = runtimeModeSupportsSharedTaskWorkspace(runtimeMode)
+    ? "\n\nWorkspace isolation: by default each sub-agent runs in a forked copy of this workspace. " +
+      'On this runtime you may pass isolation: "none" to run the sub-agent directly in this workspace\'s ' +
+      "checkout (shared working tree, including uncommitted changes), skipping the fork + init overhead. " +
+      'Reserve isolation: "none" for read-only analysis (e.g. the explore agent) or when you instruct the ' +
+      "sub-agent to avoid editing shared files, since concurrent edits to the same files are possible. "
+    : "";
   return (
     "Spawn a sub-agent task (child workspace). " +
     "\n\nIMPORTANT: Whether a sub-agent can see uncommitted changes depends on the runtime. " +
@@ -254,87 +277,123 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
     "Use run_in_background: true when launching multiple tasks in parallel so you can act on each as it completes via task_await (which returns on the first completion by default); a foreground grouped spawn (run_in_background: false) instead blocks until every sibling finishes and returns all reports at once. " +
     "Do not call task_await in the same parallel tool-call batch; wait for the returned task metadata first. " +
+    isolationGuidance +
     "Use the bash tool to run shell commands."
   );
 }
 
-const TaskToolAgentArgsSchema = z
+/** Shared validation across both task-arg schema variants (with/without `isolation`). */
+function refineTaskToolAgentArgs(
+  args: {
+    agentId?: string | null;
+    subagent_type?: string | null;
+    prompt: string;
+    n?: number | null;
+    variants?: string[] | null;
+  },
+  ctx: z.RefinementCtx
+): void {
+  const hasAgentId = typeof args.agentId === "string" && args.agentId.length > 0;
+  const hasSubagentType = typeof args.subagent_type === "string" && args.subagent_type.length > 0;
+
+  if (!hasAgentId && !hasSubagentType) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide agentId (preferred) or subagent_type",
+      path: ["agentId"],
+    });
+    return;
+  }
+
+  // GPT models often send both fields with identical values — allow that.
+  // Only reject when they conflict, since the handler silently prefers agentId.
+  if (hasAgentId && hasSubagentType && args.agentId !== args.subagent_type) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "agentId and subagent_type must match when both are provided",
+      path: ["agentId"],
+    });
+    return;
+  }
+
+  if (args.n != null && args.variants != null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "n and variants are mutually exclusive",
+      path: ["variants"],
+    });
+  }
+
+  if (args.variants == null) {
+    return;
+  }
+
+  const uniqueVariants = new Set(args.variants);
+  if (uniqueVariants.size !== args.variants.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "variants must be unique",
+      path: ["variants"],
+    });
+  }
+
+  if (!args.prompt.includes(TASK_VARIANT_PLACEHOLDER)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `prompt must reference ${TASK_VARIANT_PLACEHOLDER} when variants are provided`,
+      path: ["prompt"],
+    });
+  }
+}
+
+const taskToolBaseShape = {
+  // Prefer agentId. subagent_type is a deprecated alias for backwards compatibility.
+  agentId: TaskAgentIdSchema.nullish(),
+  subagent_type: SubagentTypeSchema.nullish(),
+  prompt: z.string().min(1),
+  title: z.string().min(1),
+  run_in_background: z.boolean().default(false),
+  n: TaskToolBestOfCountSchema.nullish().describe(
+    "Optional best-of count. Use n when several agents should try the same prompt independently. Mutually exclusive with variants; omit both for a single task. Only use grouped runs for sub-agents without interfering side effects, such as read-only agents like explore."
+  ),
+  variants: TaskToolVariantsSchema.nullish().describe(
+    `Optional labels for sibling runs of the same prompt template. Use variants when the task should be repeated across labeled lanes such as issue numbers, commit windows, or frontend/backend/tests/docs review lanes. Mutually exclusive with n. When provided, Mux launches one sibling per label and substitutes ${TASK_VARIANT_PLACEHOLDER} in the prompt.`
+  ),
+  model: TaskToolModelSchema.nullish().describe(
+    "Optional model override for the sub-agent, parsed with the same alias logic as the UI (an alias or a full 'provider:model' string). Omit this unless the user explicitly instructed a specific model — by default the sub-agent inherits the parent's model. Do not assume any particular model is available."
+  ),
+  thinking: TaskToolThinkingSchema.nullish().describe(
+    "Optional thinking/reasoning-level override for the sub-agent. Accepts a level name (off, low, medium, high, xhigh, max) or a numeric index (resolved against the chosen model). Omit this unless the user explicitly instructed a specific thinking level — by default the sub-agent inherits the parent's thinking level."
+  ),
+};
+
+// Canonical schema (always includes `isolation`) — used for the execute() re-parse and token
+// counting so `isolation` is accepted regardless of the runtime the args were produced on.
+export const TaskToolArgsSchema = z
   .object({
-    // Prefer agentId. subagent_type is a deprecated alias for backwards compatibility.
-    agentId: TaskAgentIdSchema.nullish(),
-    subagent_type: SubagentTypeSchema.nullish(),
-    prompt: z.string().min(1),
-    title: z.string().min(1),
-    run_in_background: z.boolean().default(false),
-    n: TaskToolBestOfCountSchema.nullish().describe(
-      "Optional best-of count. Use n when several agents should try the same prompt independently. Mutually exclusive with variants; omit both for a single task. Only use grouped runs for sub-agents without interfering side effects, such as read-only agents like explore."
-    ),
-    variants: TaskToolVariantsSchema.nullish().describe(
-      `Optional labels for sibling runs of the same prompt template. Use variants when the task should be repeated across labeled lanes such as issue numbers, commit windows, or frontend/backend/tests/docs review lanes. Mutually exclusive with n. When provided, Mux launches one sibling per label and substitutes ${TASK_VARIANT_PLACEHOLDER} in the prompt.`
-    ),
-    model: TaskToolModelSchema.nullish().describe(
-      "Optional model override for the sub-agent, parsed with the same alias logic as the UI (an alias or a full 'provider:model' string). Omit this unless the user explicitly instructed a specific model — by default the sub-agent inherits the parent's model. Do not assume any particular model is available."
-    ),
-    thinking: TaskToolThinkingSchema.nullish().describe(
-      "Optional thinking/reasoning-level override for the sub-agent. Accepts a level name (off, low, medium, high, xhigh, max) or a numeric index (resolved against the chosen model). Omit this unless the user explicitly instructed a specific thinking level — by default the sub-agent inherits the parent's thinking level."
-    ),
+    ...taskToolBaseShape,
+    isolation: TaskIsolationSchema.nullish().describe(TASK_ISOLATION_PARAM_DESCRIPTION),
   })
   .strict()
-  .superRefine((args, ctx) => {
-    const hasAgentId = typeof args.agentId === "string" && args.agentId.length > 0;
-    const hasSubagentType = typeof args.subagent_type === "string" && args.subagent_type.length > 0;
+  .superRefine(refineTaskToolAgentArgs);
 
-    if (!hasAgentId && !hasSubagentType) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Provide agentId (preferred) or subagent_type",
-        path: ["agentId"],
-      });
-      return;
-    }
+// Variant WITHOUT `isolation`, advertised on runtimes that cannot share the parent checkout (e.g.
+// local). `.strict()` makes it reject the field outright, so it never enters LLM context there.
+const TaskToolArgsSchemaWithoutIsolation = z
+  .object(taskToolBaseShape)
+  .strict()
+  .superRefine(refineTaskToolAgentArgs);
 
-    // GPT models often send both fields with identical values — allow that.
-    // Only reject when they conflict, since the handler silently prefers agentId.
-    if (hasAgentId && hasSubagentType && args.agentId !== args.subagent_type) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "agentId and subagent_type must match when both are provided",
-        path: ["agentId"],
-      });
-      return;
-    }
-
-    if (args.n != null && args.variants != null) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "n and variants are mutually exclusive",
-        path: ["variants"],
-      });
-    }
-
-    if (args.variants == null) {
-      return;
-    }
-
-    const uniqueVariants = new Set(args.variants);
-    if (uniqueVariants.size !== args.variants.length) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "variants must be unique",
-        path: ["variants"],
-      });
-    }
-
-    if (!args.prompt.includes(TASK_VARIANT_PLACEHOLDER)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: `prompt must reference ${TASK_VARIANT_PLACEHOLDER} when variants are provided`,
-        path: ["prompt"],
-      });
-    }
-  });
-
-export const TaskToolArgsSchema = TaskToolAgentArgsSchema;
+/**
+ * Pick the task tool input schema for a runtime. `isolation` is only advertised on runtimes that
+ * support sharing the parent checkout (see {@link runtimeModeSupportsSharedTaskWorkspace}); on
+ * local runtimes the parameter is omitted from the schema entirely so it never enters LLM context.
+ */
+export function buildTaskToolAgentArgsSchema(options: {
+  includeIsolation: boolean;
+}): typeof TaskToolArgsSchema | typeof TaskToolArgsSchemaWithoutIsolation {
+  return options.includeIsolation ? TaskToolArgsSchema : TaskToolArgsSchemaWithoutIsolation;
+}
 
 const TaskToolSpawnedTaskSchema = z
   .object({
