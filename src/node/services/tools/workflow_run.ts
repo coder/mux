@@ -1,6 +1,9 @@
 import { tool } from "ai";
 
+import { getErrorMessage } from "@/common/utils/errors";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
+import { log } from "@/node/services/log";
+import { recordAgentWorkflowRunReference } from "@/node/services/agentWorkflowRunReferences";
 import {
   WorkflowRunToolResultSchema,
   TOOL_DEFINITIONS,
@@ -23,6 +26,36 @@ function requireBackgroundWorkflowStart(
   return workflowService.startNamedWorkflowInBackground.bind(workflowService);
 }
 
+async function recordBackgroundWorkflowRun(
+  config: ToolConfiguration,
+  runId: string,
+  createdAtMs: number
+): Promise<void> {
+  const workspaceSessionDir = config.workspaceSessionDir;
+  if (workspaceSessionDir == null || workspaceSessionDir.length === 0) {
+    log.warn("Skipping agent workflow run reference without workspace session dir", { runId });
+    return;
+  }
+
+  try {
+    await recordAgentWorkflowRunReference({ workspaceSessionDir, runId, createdAtMs });
+  } catch (error: unknown) {
+    // History scanning is still a best-effort fallback for the current context epoch; failing the
+    // tool here would strand a workflow that already started successfully.
+    log.warn("Failed to record agent workflow run reference", {
+      runId,
+      error: getErrorMessage(error),
+    });
+  }
+}
+
+function isBackgroundWorkflowResult(
+  args: { run_in_background?: boolean | null },
+  status: string
+): boolean {
+  return args.run_in_background === true || status === "backgrounded";
+}
+
 export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.workflow_run.description,
@@ -37,6 +70,7 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
         projectTrusted: config.trusted === true,
         args: args.args ?? {},
       };
+      const invocationStartedAtMs = Date.now();
       const result =
         args.run_in_background === true
           ? await requireBackgroundWorkflowStart(workflowService)(startInput)
@@ -44,6 +78,10 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
               ...startInput,
               ...(options.abortSignal != null ? { abortSignal: options.abortSignal } : {}),
             });
+
+      if (isBackgroundWorkflowResult(args, result.status)) {
+        await recordBackgroundWorkflowRun(config, result.runId, invocationStartedAtMs);
+      }
 
       const run = await workflowService.getRun?.({ workspaceId, runId: result.runId });
 

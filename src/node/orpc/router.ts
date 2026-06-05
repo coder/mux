@@ -131,6 +131,19 @@ function shouldExposeRawQueryError(error: unknown): boolean {
   return RAW_QUERY_USER_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
 
+const WORKFLOW_CONTINUATION_RETRY_DELAY_MS = 1_000;
+const WORKSPACE_BUSY_IDLE_ONLY_SEND_MESSAGE = "Workspace is busy; idle-only send was skipped.";
+
+function isWorkspaceBusyIdleOnlySend(error: { type: string; raw?: string }): boolean {
+  return (
+    error.type === "unknown" && error.raw?.includes(WORKSPACE_BUSY_IDLE_ONLY_SEND_MESSAGE) === true
+  );
+}
+
+function waitForWorkflowContinuationRetry(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, WORKFLOW_CONTINUATION_RETRY_DELAY_MS));
+}
+
 /**
  * Resolves runtime and discovery path for agent operations.
  * - When workspaceId is provided: uses workspace's runtime config (SSH, local, worktree)
@@ -1809,18 +1822,6 @@ export const router = (authToken?: string) => {
                     });
                     return;
                   }
-                  const invocationCurrent =
-                    await context.workspaceService.isWorkflowInvocationCurrent(
-                      input.workspaceId,
-                      runId
-                    );
-                  if (!invocationCurrent) {
-                    log.debug("Skipping superseded slash workflow continuation", {
-                      workspaceId: input.workspaceId,
-                      runId,
-                    });
-                    return;
-                  }
                   const commandPrefix = rawCommandForContinuation.split(/\s+/u)[0] ?? input.name;
                   const workflowResultMessage = buildWorkflowResultContextMessage({
                     rawCommand: rawCommandForContinuation,
@@ -1830,34 +1831,54 @@ export const router = (authToken?: string) => {
                     result,
                     run,
                   });
-                  const sendResult = await context.workspaceService.sendMessage(
-                    input.workspaceId,
-                    workflowResultMessage,
-                    {
-                      ...continuationOptions,
-                      skipAiSettingsPersistence: true,
-                      muxMetadata: {
-                        type: WORKFLOW_RESULT_METADATA_TYPE,
-                        rawCommand: rawCommandForContinuation,
-                        commandPrefix,
+                  for (;;) {
+                    const invocationCurrent =
+                      await context.workspaceService.isWorkflowInvocationCurrent(
+                        input.workspaceId,
+                        runId
+                      );
+                    if (!invocationCurrent) {
+                      log.debug("Skipping superseded slash workflow continuation", {
+                        workspaceId: input.workspaceId,
                         runId,
-                        requestedModel: continuationOptions.model,
-                      },
-                    },
-                    {
-                      skipAutoResumeReset: true,
-                      synthetic: true,
-                      agentInitiated: true,
-                      requireIdle: true,
-                      startStreamInBackground: true,
+                      });
+                      return;
                     }
-                  );
-                  if (!sendResult.success) {
-                    log.warn("Failed to continue slash workflow after completion", {
-                      workspaceId: input.workspaceId,
-                      runId,
-                      error: sendResult.error,
-                    });
+
+                    const sendResult = await context.workspaceService.sendMessage(
+                      input.workspaceId,
+                      workflowResultMessage,
+                      {
+                        ...continuationOptions,
+                        skipAiSettingsPersistence: true,
+                        muxMetadata: {
+                          type: WORKFLOW_RESULT_METADATA_TYPE,
+                          rawCommand: rawCommandForContinuation,
+                          commandPrefix,
+                          runId,
+                          requestedModel: continuationOptions.model,
+                        },
+                      },
+                      {
+                        skipAutoResumeReset: true,
+                        synthetic: true,
+                        agentInitiated: true,
+                        requireIdle: true,
+                        startStreamInBackground: true,
+                      }
+                    );
+                    if (sendResult.success) {
+                      return;
+                    }
+                    if (!isWorkspaceBusyIdleOnlySend(sendResult.error)) {
+                      log.warn("Failed to continue slash workflow after completion", {
+                        workspaceId: input.workspaceId,
+                        runId,
+                        error: sendResult.error,
+                      });
+                      return;
+                    }
+                    await waitForWorkflowContinuationRetry();
                   }
                 }
               : undefined;

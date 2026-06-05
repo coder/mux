@@ -122,6 +122,7 @@ import {
 } from "@/common/types/message";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 import {
+  WORKFLOW_RESULT_METADATA_TYPE,
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
   WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
   buildWorkflowRunCardMessage,
@@ -283,6 +284,95 @@ function isWorkflowInvocationMessage(message: MuxMessage, runId: string): boolea
       typeof output === "object" &&
       (output as Record<string, unknown>).runId === runId
     );
+  });
+}
+
+function isInternalResumeAutoCompactionMessage(message: MuxMessage): boolean {
+  const muxMetadata = message.metadata?.muxMetadata;
+  if (muxMetadata?.type !== "compaction-request" || muxMetadata.source !== "auto-compaction") {
+    return false;
+  }
+  return muxMetadata.parsed.followUpContent?.dispatchOptions?.source === "internal-resume";
+}
+
+function isSyntheticManualSupersessionMessage(message: MuxMessage): boolean {
+  const muxMetadata = message.metadata?.muxMetadata;
+  return (
+    message.metadata?.synthetic === true &&
+    muxMetadata?.type === "compaction-request" &&
+    muxMetadata.source === "auto-compaction" &&
+    !isInternalResumeAutoCompactionMessage(message)
+  );
+}
+
+function isManualUserSupersessionMessage(message: MuxMessage): boolean {
+  return (
+    message.role === "user" &&
+    (message.metadata?.synthetic !== true || isSyntheticManualSupersessionMessage(message))
+  );
+}
+
+function isWorkflowResultContinuationMessage(message: MuxMessage, runId: string): boolean {
+  return (
+    message.metadata?.muxMetadata?.type === WORKFLOW_RESULT_METADATA_TYPE &&
+    message.metadata.muxMetadata.runId === runId
+  );
+}
+
+function isResetBoundaryMessage(message: MuxMessage): boolean {
+  return message.metadata?.contextBoundaryKind === CONTEXT_BOUNDARY_KINDS.RESET;
+}
+
+function isFailedWorkflowRunSnapshot(value: unknown, runId: string): boolean {
+  if (value == null || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return record.id === runId && record.status === "failed";
+}
+
+function isTerminalWorkflowTaskAwaitRecord(
+  record: Record<string, unknown>,
+  runId: string
+): boolean {
+  if (record.taskId !== runId) {
+    return false;
+  }
+  if (record.status === "completed" || record.status === "interrupted") {
+    return true;
+  }
+  if (record.status === "error") {
+    return isFailedWorkflowRunSnapshot(record.run, runId);
+  }
+  return false;
+}
+
+function isTerminalWorkflowTaskAwaitResultMessage(message: MuxMessage, runId: string): boolean {
+  if (message.role !== "assistant") {
+    return false;
+  }
+
+  return message.parts.some((part) => {
+    if (part.type !== "dynamic-tool" || part.toolName !== "task_await") {
+      return false;
+    }
+    if (part.state !== "output-available") {
+      return false;
+    }
+    const output = part.output;
+    if (output == null || typeof output !== "object") {
+      return false;
+    }
+    const results = (output as Record<string, unknown>).results;
+    if (!Array.isArray(results)) {
+      return false;
+    }
+    return results.some((result) => {
+      if (result == null || typeof result !== "object") {
+        return false;
+      }
+      return isTerminalWorkflowTaskAwaitRecord(result as Record<string, unknown>, runId);
+    });
   });
 }
 
@@ -5886,7 +5976,40 @@ export class WorkspaceService extends EventEmitter {
     assert(workspaceId.length > 0, "isWorkflowInvocationCurrent requires workspaceId");
     assert(runId.length > 0, "isWorkflowInvocationCurrent requires runId");
 
-    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    let current = false;
+    let foundDecision = false;
+    const historyResult = await this.historyService.iterateFullHistory(
+      workspaceId,
+      "backward",
+      (messages) => {
+        for (const message of messages) {
+          if (isManualUserSupersessionMessage(message)) {
+            current = false;
+            foundDecision = true;
+            return false;
+          }
+          if (isResetBoundaryMessage(message)) {
+            current = false;
+            foundDecision = true;
+            return false;
+          }
+          if (
+            isWorkflowResultContinuationMessage(message, runId) ||
+            isTerminalWorkflowTaskAwaitResultMessage(message, runId)
+          ) {
+            current = false;
+            foundDecision = true;
+            return false;
+          }
+          if (isWorkflowInvocationMessage(message, runId)) {
+            current = true;
+            foundDecision = true;
+            return false;
+          }
+        }
+        return undefined;
+      }
+    );
     if (!historyResult.success) {
       log.warn("Could not read history before workflow continuation", {
         workspaceId,
@@ -5896,14 +6019,7 @@ export class WorkspaceService extends EventEmitter {
       return false;
     }
 
-    const runCardIndex = historyResult.data.findIndex((message) =>
-      isWorkflowInvocationMessage(message, runId)
-    );
-    if (runCardIndex === -1) {
-      return false;
-    }
-
-    return !historyResult.data.slice(runCardIndex + 1).some((message) => message.role === "user");
+    return foundDecision && current;
   }
 
   async sendMessage(
@@ -6085,8 +6201,12 @@ export class WorkspaceService extends EventEmitter {
           agentInitiated: internal?.agentInitiated,
         });
 
+        if (effectiveQueueDispatchMode != null && !internal?.skipAutoResumeReset) {
+          this.taskService?.resetAutoResumeCount?.(workspaceId);
+        }
+
         if (effectiveQueueDispatchMode === "tool-end") {
-          this.taskService?.backgroundForegroundWaitsForWorkspace(workspaceId);
+          this.taskService?.backgroundForegroundWaitsForWorkspace?.(workspaceId);
         }
 
         return Ok(undefined);

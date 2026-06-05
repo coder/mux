@@ -429,7 +429,8 @@ export const TaskAwaitToolArgsSchema = z
       .array(z.string().min(1))
       .nullish()
       .describe(
-        "List of task IDs or workflow run IDs to await — use only real IDs returned by prior task, bash, workflow_run, or task_list tool results; never fabricate an ID. " +
+        "List of task IDs or workflow run IDs to await — use only real IDs returned by prior task, bash, or workflow_run results; never fabricate an ID. " +
+          "task_list can rediscover sub-agent/background bash IDs, but workflow run rediscovery is done by omitting task_ids. " +
           "When omitted, waits for active descendant tasks and workflow runs of the current workspace, excluding workflow-owned sub-agents and their background bash tasks because those results are consumed through workflow runs."
       ),
     filter: z
@@ -1513,6 +1514,7 @@ export const TOOL_DEFINITIONS = {
       "Wait for one or more tasks or workflow runs to produce output. " +
       "\n\nWHEN TO USE: only call task_await when the current user request depends on a task's output, or when synthesis/integration of a previously-spawned task is the next logical step. " +
       "Do not call task_await solely because active tasks exist; for unrelated user messages, respond directly and let tasks continue in the background. " +
+      "If a synthetic/system follow-up explicitly says active background tasks or workflow runs block your turn, treat that as a dependency and await the listed IDs. " +
       "\n\nIMPORTANT: Do not call task_await in the same parallel tool-call batch as task or bash — " +
       "the taskId is not available until the spawning tool returns. " +
       "Always wait for the task/bash tool result first, then call task_await in a subsequent step. " +
@@ -1559,7 +1561,9 @@ export const TOOL_DEFINITIONS = {
   },
   workflow_run: {
     description:
-      "Start a durable workflow run by workflow name. Workflows coordinate delegated agent tasks and preserve run state for replay/resume. To create a scratch workflow, first read the built-in workflow-authoring skill, then write .mux/workflows/.scratch/<name>.js with a // description: header and default exported function, then run it by name.",
+      "Start a durable workflow run by workflow name. Workflows coordinate delegated agent tasks and preserve run state for replay/resume. " +
+      "When you start a workflow in the background, you MUST await that workflow run with task_await before ending any turn that depends on it; pass the returned runId in task_ids just like a background task ID. " +
+      "To create a scratch workflow, first read the built-in workflow-authoring skill, then write .mux/workflows/.scratch/<name>.js with a // description: header and default exported function, then run it by name.",
     schema: WorkflowRunToolArgsSchema,
   },
   agent_report: {
