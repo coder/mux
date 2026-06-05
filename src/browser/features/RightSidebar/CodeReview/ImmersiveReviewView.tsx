@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { flushSync } from "react-dom";
 import {
   ArrowLeft,
   Check,
@@ -19,7 +20,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
-import { SelectableDiffRenderer } from "../../Shared/DiffRenderer";
+import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
+import { preloadHighlightedDiff, SelectableDiffRenderer } from "../../Shared/DiffRenderer";
 import { ImmersiveMinimap } from "./ImmersiveMinimap";
 import { ImmersiveReviewAgentStatusBar } from "./ImmersiveReviewAgentStatusBar";
 import {
@@ -28,10 +30,13 @@ import {
   parseDiffLines,
 } from "./immersiveMinimapMath";
 import { KeycapGroup } from "@/browser/components/Keycap/Keycap";
+import { useTheme } from "@/browser/contexts/ThemeContext";
 import { useAPI } from "@/browser/contexts/API";
 import { formatLineRangeCompact } from "@/browser/utils/review/lineRange";
 import {
   findAdjacentFileHunkId,
+  findNextHunkId,
+  findNextHunkIdAfterFileRemoval,
   flattenFileTreeLeaves,
   getFileHunks,
   sortHunksInFileOrder,
@@ -49,7 +54,9 @@ import {
   EXIT_CODE_TOO_MANY_LINES,
   processFileContents,
 } from "@/browser/utils/fileRead";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
+import { getReviewSelectedHunkKey } from "@/common/constants/storage";
 import {
   parseReviewLineRange,
   type DiffHunk,
@@ -154,15 +161,96 @@ interface OverlayRevealIdentity {
 const MAX_FULL_FILE_CONTEXT_LINES = 1500;
 const MAX_FULL_FILE_CONTEXT_BYTES = 256 * 1024;
 
+const FULL_FILE_CONTEXT_REVEAL_TIMEOUT_MS = 5_000;
 const LINE_JUMP_SIZE = 10;
 // Keep syntax highlighting on for larger review files now that per-line tooltip overhead is gone,
 // but still cap it to avoid pathological DOM costs on extremely large diffs.
 const MAX_HIGHLIGHTED_DIFF_LINES = 4000;
 const ACTIVE_LINE_OUTLINE = "1px solid hsl(from var(--color-review-accent) h s l / 0.45)";
+const HUNK_RANGE_OUTLINE_COLOR = "hsl(from var(--color-review-accent) h s l / 0.45)";
 const LIKE_NOTE_PREFIX = "I like this change";
 const DISLIKE_NOTE_PREFIX = "I don't like this change";
 const EMPTY_REVIEWS: Review[] = [];
 const EMPTY_COMMENT_LINE_INDICES = new Set<number>();
+
+const REVEAL_SKELETON_LINE_WIDTHS: readonly string[] = [
+  "w-[72%]",
+  "w-[46%]",
+  "w-[88%]",
+  "w-[61%]",
+  "w-[80%]",
+  "w-[52%]",
+  "w-[70%]",
+  "w-[92%]",
+  "w-[44%]",
+  "w-[83%]",
+  "w-[58%]",
+  "w-[76%]",
+  "w-[49%]",
+  "w-[87%]",
+  "w-[65%]",
+  "w-[79%]",
+  "w-[54%]",
+  "w-[91%]",
+  "w-[68%]",
+  "w-[42%]",
+  "w-[74%]",
+  "w-[85%]",
+  "w-[57%]",
+  "w-[78%]",
+];
+
+function ImmersiveDiffRevealLoadingState(props: { label: string }) {
+  return (
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label={props.label}
+      data-testid="immersive-diff-reveal-skeleton"
+      className="mx-auto flex h-full w-full max-w-5xl flex-col gap-3 overflow-hidden px-4 py-5 select-none"
+    >
+      {/* Match the transcript hydration shimmer instead of a centered spinner: the
+          diff-shaped placeholder keeps the hidden geometry swap feeling like code
+          is hydrating in place rather than a blocking modal flash. */}
+      <Skeleton variant="shimmer" className="mb-1 block h-3 w-40 rounded" />
+      <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-hidden">
+        {REVEAL_SKELETON_LINE_WIDTHS.map((width, rowIndex) => (
+          <div
+            key={rowIndex}
+            className="grid grid-cols-[3.5rem_1fr] items-center gap-3"
+            style={{ opacity: Math.max(0.28, 1 - rowIndex * 0.03) }}
+          >
+            <Skeleton variant="shimmer" className="block h-3 w-8 rounded" />
+            <Skeleton variant="shimmer" className={cn("block h-3.5 rounded", width)} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const FULL_FILE_CONTEXT_TIMEOUT = Symbol("full-file-context-timeout");
+
+async function withFullFileContextTimeout<T>(
+  promise: Promise<T>
+): Promise<T | typeof FULL_FILE_CONTEXT_TIMEOUT> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<typeof FULL_FILE_CONTEXT_TIMEOUT>((resolve) => {
+        timeoutId = setTimeout(
+          () => resolve(FULL_FILE_CONTEXT_TIMEOUT),
+          FULL_FILE_CONTEXT_REVEAL_TIMEOUT_MS
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
 
 function getFileBaseName(filePath: string): string {
   const segments = filePath.split(/[\\/]/);
@@ -471,25 +559,48 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const notesSidebarRef = useRef<HTMLDivElement>(null);
+  const hunkJumpScrollBlockRef = useRef<ScrollLogicalPosition>("center");
   const hunkJumpRef = useRef(false);
   const pendingJumpSelectAllHunkIdRef = useRef<string | null>(null);
   const { api } = useAPI();
+  const { theme } = useTheme();
 
   const {
     fileTree,
     hunks,
     allHunks,
-    selectedHunkId,
-    onSelectHunk,
+    selectedHunkId: externalSelectedHunkId,
+    onSelectHunk: commitSelectedHunk,
     onToggleRead,
     onMarkFileAsRead,
-    onExit,
+    onExit: commitExit,
     onReviewNote,
     isRead,
     isTouchImmersive,
     assistedHunkIds,
     assistedCommentByHunkId,
   } = props;
+  const selectedHunkStorageKey = getReviewSelectedHunkKey(props.workspaceId);
+  const [selectedHunkId, setSelectedHunkId] = useState<string | null>(externalSelectedHunkId);
+  const externalSelectedHunkIdRef = useRef<string | null>(externalSelectedHunkId);
+  const ignoredExternalSelectionEchoRef = useRef<string | null>(null);
+  useEffect(() => {
+    externalSelectedHunkIdRef.current = externalSelectedHunkId;
+    if (ignoredExternalSelectionEchoRef.current === externalSelectedHunkId) {
+      ignoredExternalSelectionEchoRef.current = null;
+      return;
+    }
+
+    setSelectedHunkId(externalSelectedHunkId);
+  }, [externalSelectedHunkId]);
+  const onSelectHunk = useCallback((hunkId: string | null) => {
+    setSelectedHunkId(hunkId);
+  }, []);
+  const onExit = useCallback(() => {
+    commitSelectedHunk(selectedHunkId);
+    commitExit();
+  }, [commitExit, commitSelectedHunk, selectedHunkId]);
+
   const selectedAssistedComment =
     selectedHunkId !== null ? (assistedCommentByHunkId?.get(selectedHunkId) ?? null) : null;
   const isSelectedAssisted =
@@ -601,6 +712,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     return currentFileHunks[0] ?? null;
   }, [selectedHunkId, currentFileHunks]);
 
+  const selectedHunkRef = useRef<DiffHunk | null>(selectedHunk);
+  useEffect(() => {
+    selectedHunkRef.current = selectedHunk;
+  }, [selectedHunk]);
+
   const shouldReserveAssistedBannerSlot =
     assistedHunkIds != null &&
     activeFilePath != null &&
@@ -640,15 +756,15 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     [activeFilePath, currentFileHunks, props.workspaceId]
   );
 
-  // Hold diff reveal until geometry-changing overlay swaps have been positioned.
-  // This covers file switches and same-file hydration from compact hunk overlays
-  // into full-file context, so the browser never paints an unanchored diff tree.
+  // Hold diff reveal until overlay geometry swaps have been positioned. File
+  // switches and same-file content swaps are covered by a scrollport-sized
+  // shimmer overlay while hidden layout effects scroll the target hunk into place.
   const [revealedOverlayIdentity, setRevealedOverlayIdentity] =
     useState<OverlayRevealIdentity | null>(null);
   const revealAnimationFrameRef = useRef<number | null>(null);
 
-  // Load full file context only when it is cheap. The hunk overlay remains visible
-  // while this request is pending so file switches do not block on bash/base64 I/O.
+  // Load full file context only when it is cheap. If disk I/O or highlighting stalls,
+  // fail open to the compact hunk overlay instead of trapping the review behind loading.
   useEffect(() => {
     const apiClient = api;
     const filePath = activeFilePath;
@@ -674,6 +790,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
     const resolvedApi: NonNullable<typeof api> = apiClient;
     const resolvedFilePath: string = filePath;
+    const resolvedFileHunks = currentFileHunks;
+    const resolvedTheme = theme;
     let cancelled = false;
 
     setActiveFileContentState({
@@ -698,15 +816,22 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     async function loadActiveFileContent() {
       // Keep plain file reads on the shared container root so immersive review can open
       // sibling-project files without forcing the primary repo checkout.
-      const fileResult = await resolvedApi.workspace.executeBash({
-        workspaceId: props.workspaceId,
-        script: buildReadFileScript(resolvedFilePath, {
-          maxSizeBytes: MAX_FULL_FILE_CONTEXT_BYTES,
-          maxLineCount: MAX_FULL_FILE_CONTEXT_LINES,
-        }),
-      });
+      const fileResult = await withFullFileContextTimeout(
+        resolvedApi.workspace.executeBash({
+          workspaceId: props.workspaceId,
+          script: buildReadFileScript(resolvedFilePath, {
+            maxSizeBytes: MAX_FULL_FILE_CONTEXT_BYTES,
+            maxLineCount: MAX_FULL_FILE_CONTEXT_LINES,
+          }),
+        })
+      );
 
       if (cancelled) {
+        return;
+      }
+
+      if (fileResult === FULL_FILE_CONTEXT_TIMEOUT) {
+        settleLoadedContent(null, false);
         return;
       }
 
@@ -730,6 +855,29 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         data.type === "text" && isWithinFullFileContextLineBudget(data.content)
           ? data.content
           : null;
+
+      if (content != null) {
+        const hydratedOverlay = buildOverlayFromFileContent(content, resolvedFileHunks);
+        if (hydratedOverlay.lineHunkIds.length <= MAX_HIGHLIGHTED_DIFF_LINES) {
+          // Preload syntax tokens before swapping compact hunks to full-file context so
+          // users do not see plain fallback rows flash into colored Shiki spans.
+          const preloadResult = await withFullFileContextTimeout(
+            preloadHighlightedDiff({
+              content: hydratedOverlay.content,
+              filePath: resolvedFilePath,
+              themeMode: resolvedTheme,
+            })
+          );
+          if (cancelled) {
+            return;
+          }
+          if (preloadResult === FULL_FILE_CONTEXT_TIMEOUT) {
+            settleLoadedContent(null, false);
+            return;
+          }
+        }
+      }
+
       settleLoadedContent(content, content != null || isDeterministicBudgetMiss);
     }
 
@@ -744,8 +892,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     activeFileContentCacheKey,
     activeFilePath,
     api,
+    currentFileHunks,
     props.workspaceId,
     shouldLoadFullFileContext,
+    theme,
   ]);
 
   const isActiveFileContentSettled =
@@ -772,16 +922,74 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     return buildOverlayFromHunks(currentFileHunks);
   }, [resolvedActiveFileContent, currentFileHunks]);
 
+  const shouldEnableHighlighting = overlayData.lineHunkIds.length <= MAX_HIGHLIGHTED_DIFF_LINES;
   const activeOverlayRevealIdentity = useMemo<OverlayRevealIdentity | null>(
     () => (activeFilePath ? { filePath: activeFilePath, content: overlayData.content } : null),
     [activeFilePath, overlayData.content]
   );
+  const activeOverlayHighlightKey = activeOverlayRevealIdentity
+    ? `${activeOverlayRevealIdentity.filePath}\u0000${activeOverlayRevealIdentity.content}`
+    : null;
+  const [settledOverlayHighlightKey, setSettledOverlayHighlightKey] = useState<string | null>(null);
+  const isActiveFileRevealPending =
+    activeFilePath !== null && revealedOverlayIdentity?.filePath !== activeFilePath;
   const isActiveOverlayRevealPending =
     activeOverlayRevealIdentity !== null &&
     !isSameOverlayRevealIdentity(revealedOverlayIdentity, activeOverlayRevealIdentity);
-  const isActiveFileRevealPending =
-    activeFilePath !== null && revealedOverlayIdentity?.filePath !== activeFilePath;
-  const revealLoadingLabel = isActiveFileRevealPending ? "Loading file..." : "Preparing diff...";
+  const isHappyDomEnvironment = typeof window !== "undefined" && "happyDOM" in window;
+  // Only worker-backed highlighting is safe to use as a reveal prerequisite; tests and
+  // other non-worker shells fall back to slower main-thread highlighting.
+  const canWaitForOverlayHighlight = typeof Worker !== "undefined" && !isHappyDomEnvironment;
+  const shouldWaitForFullFileContextReveal = Boolean(
+    isActiveFileRevealPending && shouldLoadFullFileContext && !isActiveFileContentSettled
+  );
+  const shouldWaitForOverlayHighlight = Boolean(
+    canWaitForOverlayHighlight &&
+    isActiveOverlayRevealPending &&
+    shouldEnableHighlighting &&
+    activeOverlayHighlightKey
+  );
+  const isActiveOverlayHighlightReadyForReveal =
+    !shouldWaitForOverlayHighlight || settledOverlayHighlightKey === activeOverlayHighlightKey;
+  const isActiveOverlayReadyForReveal =
+    !shouldWaitForFullFileContextReveal && isActiveOverlayHighlightReadyForReveal;
+  // Gate every overlay geometry swap, not just file switches. Same-file hydration
+  // inserts context rows above the current hunk, so reveal only after the hidden
+  // layout pass scrolls the selected full-file row into place.
+  const isActiveOverlayReadyForRevealRef = useRef(isActiveOverlayReadyForReveal);
+  useLayoutEffect(() => {
+    isActiveOverlayReadyForRevealRef.current = isActiveOverlayReadyForReveal;
+  }, [isActiveOverlayReadyForReveal]);
+  const [revealOverlayHeight, setRevealOverlayHeight] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (!isActiveOverlayRevealPending) {
+      return;
+    }
+
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) {
+      return;
+    }
+
+    const updateRevealOverlayHeight = () => {
+      const nextHeight = Math.round(scrollContainer.clientHeight);
+      setRevealOverlayHeight((currentHeight) =>
+        currentHeight === nextHeight ? currentHeight : nextHeight
+      );
+    };
+
+    updateRevealOverlayHeight();
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateRevealOverlayHeight);
+    resizeObserver?.observe(scrollContainer);
+    window.addEventListener("resize", updateRevealOverlayHeight);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateRevealOverlayHeight);
+    };
+  }, [isActiveOverlayRevealPending]);
+  const revealLoadingLabel = "Loading file...";
 
   const scheduleOverlayReveal = useCallback((overlayIdentity: OverlayRevealIdentity) => {
     if (revealAnimationFrameRef.current !== null) {
@@ -789,14 +997,32 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     }
 
     revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
-      setRevealedOverlayIdentity((currentRevealedIdentity) =>
-        isSameOverlayRevealIdentity(activeOverlayRevealIdentityRef.current, overlayIdentity)
+      setRevealedOverlayIdentity((currentRevealedIdentity) => {
+        // A stale rAF from an earlier compact overlay must not reveal while a
+        // newer full-file hydration is still loading/highlighting.
+        if (!isActiveOverlayReadyForRevealRef.current) {
+          return currentRevealedIdentity;
+        }
+
+        return isSameOverlayRevealIdentity(activeOverlayRevealIdentityRef.current, overlayIdentity)
           ? overlayIdentity
-          : currentRevealedIdentity
-      );
+          : currentRevealedIdentity;
+      });
       revealAnimationFrameRef.current = null;
     });
   }, []);
+
+  const handleDiffHighlightSettledChange = useCallback(
+    (isSettled: boolean) => {
+      setSettledOverlayHighlightKey((currentKey) => {
+        if (isSettled) {
+          return activeOverlayHighlightKey;
+        }
+        return currentKey === activeOverlayHighlightKey ? null : currentKey;
+      });
+    },
+    [activeOverlayHighlightKey]
+  );
 
   const selectedHunkRange = useMemo(
     () => (selectedHunk ? (overlayData.hunkLineRanges.get(selectedHunk.id) ?? null) : null),
@@ -890,6 +1116,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // hide-read auto-advance without changing the main review panel's unread shortcut semantics.
   const readUndoStackRef = useRef<string[]>([]);
 
+  const setHunkJumpScroll = useCallback((block: ScrollLogicalPosition) => {
+    hunkJumpRef.current = true;
+    hunkJumpScrollBlockRef.current = block;
+  }, []);
+
   useLayoutEffect(() => {
     if (revealAnimationFrameRef.current !== null) {
       cancelAnimationFrame(revealAnimationFrameRef.current);
@@ -905,11 +1136,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
     if (isActiveOverlayRevealPending) {
       // The pending state is derived during render, not set from an effect, so
-      // file switches and same-file hydration swaps are hidden on their first
-      // paint until the scroll effect reveals the positioned overlay.
-      hunkJumpRef.current = true;
+      // file switches are hidden on their first paint until the scroll effect
+      // reveals the positioned overlay.
+      setHunkJumpScroll("center");
     }
-  }, [activeOverlayRevealIdentity, isActiveOverlayRevealPending]);
+  }, [activeOverlayRevealIdentity, isActiveOverlayRevealPending, setHunkJumpScroll]);
 
   useEffect(() => {
     return () => {
@@ -943,6 +1174,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       return;
     }
 
+    if (!isActiveOverlayReadyForReveal) {
+      return;
+    }
+
     // Fail open once selection is stable if we still cannot resolve a reveal target.
     if (selectedHunkRevealTargetLineIndex === null) {
       setRevealedOverlayIdentity(activeOverlayRevealIdentity);
@@ -951,6 +1186,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     activeOverlayRevealIdentity,
     currentFileHunks.length,
     hasResolvedSelectedHunkForReveal,
+    isActiveOverlayReadyForReveal,
     isActiveOverlayRevealPending,
     selectedHunkRevealTargetLineIndex,
   ]);
@@ -1011,9 +1247,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   // Refs keep hot-path callbacks stable so cursor movement doesn't trigger expensive re-renders.
   const activeLineIndexRef = useRef<number | null>(null);
+  const hunkJumpLineRangeRef = useRef<SelectedLineRange | null>(null);
   const selectedLineRangeRef = useRef<SelectedLineRange | null>(null);
   const selectedHunkIdRef = useRef<string | null>(selectedHunkId);
   const isReadRef = useRef(isRead);
+  const commitSelectedHunkRef = useRef(commitSelectedHunk);
   const onToggleReadRef = useRef(onToggleRead);
   const onSelectHunkRef = useRef(onSelectHunk);
   const allHunksRef = useRef(allHunks);
@@ -1022,7 +1260,48 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const previousSelectedHunkIdRef = useRef<string | null>(null);
   const previousSelectedHunkRangeRef = useRef<HunkLineRange | null>(null);
   const skipScrollUntilCursorSettlesRef = useRef(false);
+  const hunkRangeLineElementsRef = useRef<HTMLElement[]>([]);
   const highlightedLineElementRef = useRef<HTMLElement | null>(null);
+
+  const clearHunkJumpRangeHighlight = useCallback(() => {
+    for (const lineElement of hunkRangeLineElementsRef.current) {
+      lineElement.dataset.selected = "false";
+      lineElement.style.boxShadow = "";
+    }
+    hunkRangeLineElementsRef.current = [];
+  }, []);
+
+  const applyHunkJumpRangeHighlight = useCallback(
+    (range: SelectedLineRange) => {
+      clearHunkJumpRangeHighlight();
+      const startIndex = Math.min(range.startIndex, range.endIndex);
+      const endIndex = Math.max(range.startIndex, range.endIndex);
+      const highlightedElements: HTMLElement[] = [];
+
+      for (let lineIndex = startIndex; lineIndex <= endIndex; lineIndex += 1) {
+        const lineElement = containerRef.current?.querySelector<HTMLElement>(
+          `[data-line-index="${lineIndex}"]`
+        );
+        if (!lineElement) {
+          continue;
+        }
+
+        const edgeShadows = [
+          `inset 1px 0 0 ${HUNK_RANGE_OUTLINE_COLOR}`,
+          `inset -1px 0 0 ${HUNK_RANGE_OUTLINE_COLOR}`,
+          lineIndex === startIndex ? `inset 0 1px 0 ${HUNK_RANGE_OUTLINE_COLOR}` : null,
+          lineIndex === endIndex ? `inset 0 -1px 0 ${HUNK_RANGE_OUTLINE_COLOR}` : null,
+        ].filter((shadow): shadow is string => Boolean(shadow));
+
+        lineElement.dataset.selected = "true";
+        lineElement.style.boxShadow = edgeShadows.join(", ");
+        highlightedElements.push(lineElement);
+      }
+
+      hunkRangeLineElementsRef.current = highlightedElements;
+    },
+    [clearHunkJumpRangeHighlight]
+  );
 
   useEffect(() => {
     activeLineIndexRef.current = activeLineIndex;
@@ -1037,8 +1316,21 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   }, [selectedHunkId]);
 
   useEffect(() => {
+    return () => {
+      // Global immersive toggles or page teardown can unmount this view without
+      // calling onExit; persist directly instead of relying on parent cleanup.
+      updatePersistedState(selectedHunkStorageKey, selectedHunkIdRef.current);
+      commitSelectedHunkRef.current(selectedHunkIdRef.current);
+    };
+  }, [selectedHunkStorageKey]);
+
+  useEffect(() => {
     isReadRef.current = isRead;
   }, [isRead]);
+
+  useEffect(() => {
+    commitSelectedHunkRef.current = commitSelectedHunk;
+  }, [commitSelectedHunk]);
 
   useEffect(() => {
     onToggleReadRef.current = onToggleRead;
@@ -1070,6 +1362,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
     if (!selectedHunkRange || !resolvedSelectedHunkId) {
       pendingJumpSelectAllHunkIdRef.current = null;
+      clearHunkJumpRangeHighlight();
+      hunkJumpLineRangeRef.current = null;
       skipScrollUntilCursorSettlesRef.current = false;
       setActiveLineIndex(null);
       setSelectedLineRange(null);
@@ -1083,12 +1377,22 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       const modifiedStart = selectedHunkRange.firstModifiedIndex ?? selectedHunkRange.startIndex;
       const modifiedEnd = selectedHunkRange.lastModifiedIndex ?? selectedHunkRange.endIndex;
       skipScrollUntilCursorSettlesRef.current = activeLineIndexRef.current !== modifiedEnd;
-      setActiveLineIndex(modifiedEnd);
-      setSelectedLineRange({
+      hunkJumpLineRangeRef.current = {
         startIndex: modifiedStart,
         endIndex: modifiedEnd,
-      });
+      };
+      applyHunkJumpRangeHighlight(hunkJumpLineRangeRef.current);
+      setActiveLineIndex(modifiedEnd);
+      setSelectedLineRange(null);
       return;
+    }
+
+    if (
+      hunkJumpLineRangeRef.current &&
+      !isSelectionInsideRange(hunkJumpLineRangeRef.current, selectedHunkRange)
+    ) {
+      clearHunkJumpRangeHighlight();
+      hunkJumpLineRangeRef.current = null;
     }
 
     const cursorLineIndex = activeLineIndexRef.current;
@@ -1146,6 +1450,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       return null;
     });
   }, [
+    applyHunkJumpRangeHighlight,
+    clearHunkJumpRangeHighlight,
     overlayData.content,
     selectedHunk?.id,
     selectedHunkRange?.startIndex,
@@ -1179,10 +1485,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       }
 
       pendingJumpSelectAllHunkIdRef.current = null;
-      hunkJumpRef.current = true;
+      setHunkJumpScroll("center");
       onSelectHunk(targetHunkId);
     },
-    [activeFilePath, fileList, hunks, onSelectHunk]
+    [activeFilePath, fileList, hunks, onSelectHunk, setHunkJumpScroll]
   );
 
   const navigateHunk = useCallback(
@@ -1224,9 +1530,16 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         }
       }
 
+      const targetHunk = (selectedHunkIsFilteredOut ? allHunks : hunks).find(
+        (hunk) => hunk.id === targetHunkId
+      );
       pendingJumpSelectAllHunkIdRef.current = targetHunkId;
-      hunkJumpRef.current = true;
-      onSelectHunk(targetHunkId);
+      // Same-file J/K iteration should avoid re-centering every nearby hunk;
+      // nearest keeps the viewport anchored unless the target actually leaves view.
+      setHunkJumpScroll(targetHunk?.filePath === activeFilePath ? "nearest" : "center");
+      // Keyboard hunk iteration should commit before the next key event so the
+      // browser can paint each step without waiting for React's default batching.
+      flushSync(() => onSelectHunk(targetHunkId));
     },
     [
       activeFilePath,
@@ -1236,6 +1549,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       hunks,
       onSelectHunk,
       selectedHunkId,
+      setHunkJumpScroll,
       selectedHunkIsFilteredOut,
     ]
   );
@@ -1249,7 +1563,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
       const targetHunkId = findReviewHunkId(review, fileHunks) ?? fileHunks[0].id;
       pendingJumpSelectAllHunkIdRef.current = null;
-      hunkJumpRef.current = true;
+      setHunkJumpScroll("center");
       const targetRange =
         activeFilePath === review.data.filePath
           ? (overlayData.hunkLineRanges.get(targetHunkId) ?? null)
@@ -1264,6 +1578,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       }
 
       onSelectHunk(targetHunkId);
+      commitSelectedHunk(targetHunkId);
       // Force scroll effect to re-fire even when activeLineIndex is unchanged
       // (for example when the cursor is already inside the selected hunk).
       setScrollNonce((previousNonce) => previousNonce + 1);
@@ -1279,8 +1594,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     [
       activeFilePath,
       allHunks,
+      commitSelectedHunk,
       onSelectHunk,
       overlayData.hunkLineRanges,
+      setHunkJumpScroll,
       props.reviewActions?.onEditComment,
     ]
   );
@@ -1306,6 +1623,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const getCurrentLineSelection = useCallback((): SelectedLineRange | null => {
     if (selectedLineRange) {
       return selectedLineRange;
+    }
+
+    if (hunkJumpLineRangeRef.current) {
+      return hunkJumpLineRangeRef.current;
     }
 
     if (activeLineIndex === null) {
@@ -1338,7 +1659,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         Math.max(0, Math.min(lineCount - 1, lineIndex));
 
       const selection = selectionOverride ??
-        getCurrentLineSelection() ?? {
+        selectedLineRangeRef.current ??
+        hunkJumpLineRangeRef.current ?? {
           startIndex: activeLineIndexRef.current ?? 0,
           endIndex: activeLineIndexRef.current ?? 0,
         };
@@ -1354,7 +1676,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       const resolvedTarget =
         findHunkAtLine(cursorIndex, overlayData, currentFileHunks) ??
         findHunkAtLine(effectiveSelection.startIndex, overlayData, currentFileHunks);
-      const targetHunk = resolvedTarget?.hunk ?? selectedHunk;
+      const targetHunk = resolvedTarget?.hunk ?? selectedHunkRef.current;
       if (!targetHunk) {
         return;
       }
@@ -1385,7 +1707,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         cursorIndex,
       });
     },
-    [getCurrentLineSelection, selectedHunk, overlayData, currentFileHunks, onSelectHunk]
+    [overlayData, currentFileHunks, onSelectHunk]
   );
 
   const handleReviewNoteSubmit = useCallback(
@@ -1397,19 +1719,23 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       setInlineComposerRequest(null);
       // Clear the line selection so the next Shift+C targets the current keyboard
       // cursor (activeLineIndex) rather than the stale range from this comment.
+      clearHunkJumpRangeHighlight();
+      hunkJumpLineRangeRef.current = null;
       setSelectedLineRange(null);
       containerRef.current?.focus();
     },
-    [onReviewNote]
+    [clearHunkJumpRangeHighlight, onReviewNote]
   );
 
   const handleInlineComposerCancel = useCallback(() => {
     // Keep immersive parent state aligned with child composer teardown so canceled
     // keyboard-initiated requests do not linger or steal focus.
     setInlineComposerRequest(null);
+    clearHunkJumpRangeHighlight();
+    hunkJumpLineRangeRef.current = null;
     setSelectedLineRange(null);
     containerRef.current?.focus();
-  }, []);
+  }, [clearHunkJumpRangeHighlight]);
 
   const moveLineCursor = useCallback(
     (delta: number, extendRange: boolean) => {
@@ -1421,6 +1747,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       const currentIndex = activeLineIndexRef.current ?? selectedHunkRange?.startIndex ?? 0;
       const nextIndex = Math.max(0, Math.min(lineCount - 1, currentIndex + delta));
 
+      clearHunkJumpRangeHighlight();
+      hunkJumpLineRangeRef.current = null;
       setActiveLineIndex(nextIndex);
 
       if (extendRange) {
@@ -1436,32 +1764,136 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         onSelectHunk(lineHunkId);
       }
     },
-    [overlayData.lineHunkIds, selectedHunkRange, onSelectHunk]
+    [clearHunkJumpRangeHighlight, overlayData.lineHunkIds, selectedHunkRange, onSelectHunk]
   );
 
-  const resetViewCursorForHunk = useCallback((hunkId: string) => {
-    pendingJumpSelectAllHunkIdRef.current = null;
-    hunkJumpRef.current = true;
-    setSelectedLineRange(null);
+  const resetViewCursorForHunk = useCallback(
+    (hunkId: string) => {
+      pendingJumpSelectAllHunkIdRef.current = null;
+      setHunkJumpScroll("center");
+      setSelectedLineRange(null);
 
-    if (selectedHunkIdRef.current === hunkId) {
-      const hunkRange = hunkLineRangesRef.current.get(hunkId) ?? null;
-      setActiveLineIndex(hunkRange?.firstModifiedIndex ?? hunkRange?.startIndex ?? null);
-      setScrollNonce((previousNonce) => previousNonce + 1);
-    } else {
-      setActiveLineIndex(null);
-    }
+      if (selectedHunkIdRef.current === hunkId) {
+        const hunkRange = hunkLineRangesRef.current.get(hunkId) ?? null;
+        setActiveLineIndex(hunkRange?.firstModifiedIndex ?? hunkRange?.startIndex ?? null);
+        setScrollNonce((previousNonce) => previousNonce + 1);
+      } else {
+        setActiveLineIndex(null);
+      }
 
-    onSelectHunkRef.current(hunkId);
+      onSelectHunkRef.current(hunkId);
+    },
+    [setHunkJumpScroll]
+  );
+
+  const getNextHunkAfterMarkRead = useCallback(
+    (hunkId: string) => {
+      const navigationHunks = selectedHunkIsFilteredOut ? allHunks : hunks;
+      const targetHunkId = findNextHunkId(navigationHunks, hunkId);
+      if (!targetHunkId) {
+        return null;
+      }
+
+      return {
+        targetHunkId,
+        targetHunk: navigationHunks.find((hunk) => hunk.id === targetHunkId),
+      };
+    },
+    [allHunks, hunks, selectedHunkIsFilteredOut]
+  );
+
+  const selectNextHunkAfterMarkRead = useCallback(
+    (nextHunk: { targetHunkId: string; targetHunk: DiffHunk | undefined }) => {
+      pendingJumpSelectAllHunkIdRef.current = nextHunk.targetHunkId;
+      setHunkJumpScroll(nextHunk.targetHunk?.filePath === activeFilePath ? "nearest" : "center");
+      flushSync(() => onSelectHunkRef.current(nextHunk.targetHunkId));
+    },
+    [activeFilePath, setHunkJumpScroll]
+  );
+
+  const commitSelectionForParentAction = useCallback((hunkId: string) => {
+    flushSync(() => commitSelectedHunkRef.current(hunkId));
   }, []);
 
-  const handleToggleReadWithUndo = useCallback((hunkId: string) => {
-    const wasRead = isReadRef.current(hunkId);
-    readUndoStackRef.current = wasRead
-      ? readUndoStackRef.current.filter((trackedHunkId) => trackedHunkId !== hunkId)
-      : [...readUndoStackRef.current.filter((trackedHunkId) => trackedHunkId !== hunkId), hunkId];
-    onToggleReadRef.current(hunkId);
-  }, []);
+  const getNextHunkAfterMarkFileRead = useCallback(
+    (hunkId: string) => {
+      const navigationHunks = selectedHunkIsFilteredOut ? allHunks : hunks;
+      const currentHunk = navigationHunks.find((hunk) => hunk.id === hunkId);
+      if (!currentHunk) {
+        return null;
+      }
+
+      const targetHunkId = findNextHunkIdAfterFileRemoval(
+        navigationHunks,
+        hunkId,
+        currentHunk.filePath
+      );
+      if (!targetHunkId) {
+        return null;
+      }
+
+      return {
+        targetHunkId,
+        targetHunk: navigationHunks.find((hunk) => hunk.id === targetHunkId),
+      };
+    },
+    [allHunks, hunks, selectedHunkIsFilteredOut]
+  );
+
+  const selectNextHunkAfterMarkFileRead = useCallback(
+    (nextHunk: { targetHunkId: string; targetHunk: DiffHunk | undefined }) => {
+      pendingJumpSelectAllHunkIdRef.current = nextHunk.targetHunkId;
+      setHunkJumpScroll(nextHunk.targetHunk?.filePath === activeFilePath ? "nearest" : "center");
+      flushSync(() => onSelectHunkRef.current(nextHunk.targetHunkId));
+    },
+    [activeFilePath, setHunkJumpScroll]
+  );
+
+  const handleMarkFileAsRead = useCallback(
+    (hunkId: string) => {
+      const nextHunkAfterFileRead = getNextHunkAfterMarkFileRead(hunkId);
+      if (nextHunkAfterFileRead && externalSelectedHunkIdRef.current !== hunkId) {
+        ignoredExternalSelectionEchoRef.current = hunkId;
+      }
+
+      commitSelectionForParentAction(hunkId);
+      onMarkFileAsRead(hunkId);
+      if (nextHunkAfterFileRead) {
+        selectNextHunkAfterMarkFileRead(nextHunkAfterFileRead);
+      }
+    },
+    [
+      commitSelectionForParentAction,
+      getNextHunkAfterMarkFileRead,
+      onMarkFileAsRead,
+      selectNextHunkAfterMarkFileRead,
+    ]
+  );
+
+  const handleToggleReadWithUndo = useCallback(
+    (hunkId: string) => {
+      const wasRead = isReadRef.current(hunkId);
+      readUndoStackRef.current = wasRead
+        ? readUndoStackRef.current.filter((trackedHunkId) => trackedHunkId !== hunkId)
+        : [...readUndoStackRef.current.filter((trackedHunkId) => trackedHunkId !== hunkId), hunkId];
+      const nextHunkAfterRead = wasRead ? null : getNextHunkAfterMarkRead(hunkId);
+      if (nextHunkAfterRead && externalSelectedHunkIdRef.current !== hunkId) {
+        // Parent selection is intentionally stale during hot immersive navigation.
+        // Ignore the parent echo for this committed read action so it cannot replay
+        // over the local work-queue advance to the next hunk.
+        ignoredExternalSelectionEchoRef.current = hunkId;
+      }
+
+      commitSelectionForParentAction(hunkId);
+      onToggleReadRef.current(hunkId);
+      if (nextHunkAfterRead) {
+        // Immersive review is a keyboard-first work queue: marking a hunk read
+        // should advance even when the main panel is configured to keep read hunks visible.
+        selectNextHunkAfterMarkRead(nextHunkAfterRead);
+      }
+    },
+    [commitSelectionForParentAction, getNextHunkAfterMarkRead, selectNextHunkAfterMarkRead]
+  );
 
   const handleUndoLastRead = useCallback(() => {
     while (readUndoStackRef.current.length > 0) {
@@ -1489,6 +1921,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         onSelectHunk(resolvedHunk.hunk.id);
       }
 
+      clearHunkJumpRangeHighlight();
+      hunkJumpLineRangeRef.current = null;
       const anchorIndex = shiftKey
         ? (selectedLineRangeRef.current?.startIndex ?? activeLineIndexRef.current ?? lineIndex)
         : lineIndex;
@@ -1513,7 +1947,14 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         openComposer("", { startIndex: lineIndex, endIndex: lineIndex });
       }
     },
-    [overlayData, currentFileHunks, isTouchExperience, onSelectHunk, openComposer]
+    [
+      clearHunkJumpRangeHighlight,
+      overlayData,
+      currentFileHunks,
+      isTouchExperience,
+      onSelectHunk,
+      openComposer,
+    ]
   );
 
   const handleMinimapSelectLine = useCallback(
@@ -1523,10 +1964,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         onSelectHunk(hunkId);
       }
 
+      clearHunkJumpRangeHighlight();
       setActiveLineIndex(lineIndex);
       setSelectedLineRange(null);
     },
-    [overlayData.lineHunkIds, onSelectHunk]
+    [clearHunkJumpRangeHighlight, overlayData.lineHunkIds, onSelectHunk]
   );
 
   // Auto-focus only for keyboard-first immersive mode.
@@ -1717,7 +2159,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // since matchesKeybind for 'm' could match if shift isn't checked first
       if (matchesKeybind(e, KEYBINDS.MARK_FILE_READ)) {
         e.preventDefault();
-        if (selectedHunkId) onMarkFileAsRead(selectedHunkId);
+        if (selectedHunkId) {
+          handleMarkFileAsRead(selectedHunkId);
+        }
         return;
       }
 
@@ -1752,9 +2196,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     moveLineCursor,
     openComposer,
     selectedHunkId,
+    commitSelectionForParentAction,
     handleToggleReadWithUndo,
+    handleMarkFileAsRead,
     handleUndoLastRead,
-    onMarkFileAsRead,
     isTouchExperience,
   ]);
 
@@ -1847,11 +2292,16 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       highlightedLineElementRef.current = lineElement;
     }
 
-    const block = hunkJumpRef.current ? "center" : "nearest";
+    const block = hunkJumpRef.current ? hunkJumpScrollBlockRef.current : "nearest";
     hunkJumpRef.current = false;
+    hunkJumpScrollBlockRef.current = "center";
     lineElement.scrollIntoView({ behavior: "auto", block });
 
     if (!isActiveOverlayRevealPending || !activeOverlayRevealIdentity) {
+      return;
+    }
+
+    if (!isActiveOverlayReadyForReveal) {
       return;
     }
 
@@ -1864,6 +2314,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   }, [
     activeLineIndex,
     activeOverlayRevealIdentity,
+    isActiveOverlayReadyForReveal,
     isActiveOverlayRevealPending,
     isTouchExperience,
     overlayData.content,
@@ -1931,13 +2382,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     };
   }, [inlineComposerRequest, overlayData.lineHunkIds.length, selectedHunk]);
 
-  const shouldEnableHighlighting = overlayData.lineHunkIds.length <= MAX_HIGHLIGHTED_DIFF_LINES;
-
   return (
     <div
       ref={containerRef}
       tabIndex={isTouchExperience ? -1 : 0}
       className="flex h-full flex-col overflow-hidden outline-none"
+      data-selected-hunk-position={currentHunkIdx >= 0 ? currentHunkIdx + 1 : undefined}
+      data-current-file-hunk-count={currentFileHunks.length}
       data-testid="immersive-review-view"
     >
       {/* Header */}
@@ -2170,8 +2621,19 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           {/* Avoid top padding here; it reads as a blank block between the controls and diff. */}
           <div
             ref={scrollContainerRef}
-            className="scrollbar-none min-h-0 min-w-0 flex-1 overflow-y-auto pb-3"
+            className="scrollbar-none relative min-h-0 min-w-0 flex-1 overflow-y-auto pb-3 [overflow-anchor:none]"
           >
+            {isActiveOverlayRevealPending && currentFileHunks.length > 0 && !isReviewComplete && (
+              <div className="sticky top-0 z-10 h-0 overflow-visible">
+                <div
+                  className="bg-dark/95 min-h-56 overflow-hidden"
+                  data-testid="immersive-diff-reveal-overlay"
+                  style={revealOverlayHeight == null ? undefined : { height: revealOverlayHeight }}
+                >
+                  <ImmersiveDiffRevealLoadingState label={revealLoadingLabel} />
+                </div>
+              </div>
+            )}
             {props.isLoading && currentFileHunks.length === 0 ? (
               <div className="text-muted flex items-center justify-center py-12 text-sm">
                 <span className="animate-pulse">Loading diff...</span>
@@ -2207,15 +2669,12 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                 {activeFilePath ? "No hunks for this file" : "No files to review"}
               </div>
             ) : (
-              <div className="bg-dark relative overflow-hidden">
-                {isActiveOverlayRevealPending && (
-                  <div
-                    className="bg-dark/95 text-muted absolute inset-0 z-10 flex items-center justify-center text-sm"
-                    data-testid="immersive-diff-reveal-overlay"
-                  >
-                    <span className="animate-pulse">{revealLoadingLabel}</span>
-                  </div>
+              <div
+                className={cn(
+                  "bg-dark relative overflow-hidden",
+                  isActiveOverlayRevealPending && "min-h-56"
                 )}
+              >
                 <div
                   className={cn(isActiveOverlayRevealPending && "invisible")}
                   data-testid="immersive-diff-reveal-stage"
@@ -2229,6 +2688,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                     fontSize="11px"
                     maxHeight="none"
                     className="rounded-none border-0 [&>div]:overflow-x-visible"
+                    onHighlightSettledChange={handleDiffHighlightSettledChange}
                     onReviewNote={handleReviewNoteSubmit}
                     onComposerCancel={handleInlineComposerCancel}
                     reviewActions={diffReviewActions}
