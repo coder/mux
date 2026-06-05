@@ -2160,9 +2160,10 @@ export class MuxAgent implements Agent {
     const normalizedProjectPath = normalizePathForWorkspaceMatch(projectPath);
     const projectEntries = await this.server.client.projects.list();
     const projects = deriveProjectHierarchy(new Map<string, ProjectConfig>(projectEntries));
+    const existingProjectPath = findProjectPathByNormalizedPath(normalizedProjectPath, projects);
 
-    if (projects.has(normalizedProjectPath)) {
-      const scope = resolveWorkspaceCreationScope(normalizedProjectPath, projects);
+    if (existingProjectPath != null) {
+      const scope = resolveWorkspaceCreationScope(existingProjectPath, projects);
       assert(
         scope.projectPath.trim().length > 0,
         "resolveAcpWorkspaceCreationScope: owning project path must be non-empty"
@@ -2181,6 +2182,19 @@ export class MuxAgent implements Agent {
   private assertInitialized(methodName: string): void {
     assert(this.initialized, `${methodName}: initialize must be called first`);
   }
+}
+
+function findProjectPathByNormalizedPath(
+  normalizedProjectPath: string,
+  projects: ReadonlyMap<string, ProjectConfig>
+): string | undefined {
+  for (const projectPath of projects.keys()) {
+    if (normalizePathForWorkspaceMatch(projectPath) === normalizedProjectPath) {
+      return projectPath;
+    }
+  }
+
+  return undefined;
 }
 
 function findContainingTopLevelProjectPath(
