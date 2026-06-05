@@ -504,27 +504,16 @@ async function ensureLocalScratchGitExclude(scratchRoot: string): Promise<void> 
 
     await writeLocalGitExcludePattern(excludePath, pattern);
 
-    if (await localDirectoryExists(scratchRoot)) {
-      const fallbackProbePath = path.join(scratchRoot, ".gitignore");
-      const ignored = await isLocalGitIgnored(workspaceRoot, fallbackProbePath);
-      if (ignored === false) {
-        await writeLocalScratchGitignoreFallback(scratchRoot);
-      }
+    const fallbackProbePath = path.join(scratchRoot, ".gitignore");
+    const ignored = await isLocalGitIgnored(workspaceRoot, fallbackProbePath);
+    if (ignored === false) {
+      await writeLocalScratchGitignoreFallback(scratchRoot);
     }
   } catch (error) {
     log.debug("Failed to install local scratch workflow Git exclude", {
       scratchRoot,
       error: getErrorMessage(error),
     });
-  }
-}
-
-async function runtimeDirectoryExists(runtime: Runtime, targetPath: string): Promise<boolean> {
-  try {
-    const stat = await runtime.stat(targetPath);
-    return stat.isDirectory;
-  } catch {
-    return false;
   }
 }
 
@@ -672,12 +661,10 @@ async function ensureRuntimeScratchGitExclude(
 
     await writeRuntimeGitExcludePattern(runtime, commandCwd, excludePath, pattern);
 
-    if (await runtimeDirectoryExists(runtime, scratchRoot)) {
-      const fallbackProbePath = runtime.normalizePath(".gitignore", scratchRoot);
-      const ignored = await isRuntimeGitIgnored(runtime, commandCwd, commandCwd, fallbackProbePath);
-      if (ignored === false) {
-        await writeRuntimeScratchGitignoreFallback(runtime, commandCwd, scratchRoot);
-      }
+    const fallbackProbePath = runtime.normalizePath(".gitignore", scratchRoot);
+    const ignored = await isRuntimeGitIgnored(runtime, commandCwd, commandCwd, fallbackProbePath);
+    if (ignored === false) {
+      await writeRuntimeScratchGitignoreFallback(runtime, commandCwd, scratchRoot);
     }
   } catch (error) {
     log.debug("Failed to install runtime scratch workflow Git exclude", {

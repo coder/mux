@@ -304,7 +304,7 @@ describe("WorkflowDefinitionStore", () => {
     ).toContain("packages/app0/.mux/workflows/.scratch/sibling.js");
   });
 
-  test("adds a self-ignored fallback when repo rules unignore workflow files", async () => {
+  test("adds a self-ignored fallback before repo rules can unignore the first draft", async () => {
     using tmp = new DisposableTempDir("workflow-definitions");
     const workspaceRoot = path.join(tmp.path, "project");
     const scratchRoot = path.join(workspaceRoot, ".mux", "workflows", ".scratch");
@@ -317,7 +317,6 @@ describe("WorkflowDefinitionStore", () => {
       "/.mux/\n!/.mux/\n!/.mux/workflows/\n!/.mux/workflows/**\n",
       "utf-8"
     );
-    await writeWorkflow(scratchRoot, "scratch-demo", "Workspace scratch demo");
     const store = new WorkflowDefinitionStore({
       scratchRoot,
       projectRoot,
@@ -325,12 +324,24 @@ describe("WorkflowDefinitionStore", () => {
       builtIns: [],
     });
 
-    await store.listDefinitions({ projectTrusted: true });
+    const definitions = await store.listDefinitions({ projectTrusted: true });
 
+    expect(definitions).toEqual([]);
     expect(await readGitExclude(workspaceRoot)).toContain("/.mux/workflows/.scratch/");
     expect(await fs.readFile(path.join(scratchRoot, ".gitignore"), "utf-8")).toContain(
       "# mux: hide scratch workflow drafts when repo rules unignore workflows\n*\n"
     );
+    expect(
+      await runGit(workspaceRoot, [
+        "status",
+        "--short",
+        "--untracked-files=all",
+        "--",
+        ".mux/workflows/.scratch",
+      ])
+    ).toBe("");
+
+    await writeWorkflow(scratchRoot, "scratch-demo", "Workspace scratch demo");
     expect(
       await runGit(workspaceRoot, [
         "status",
