@@ -303,7 +303,7 @@ const taskActionsProps = {
 } satisfies Parameters<typeof WorkflowRunToolCall>[0];
 
 export const TaskActions: Story = {
-  render: () => <WorkflowTaskActionsStory {...taskActionsProps} />,
+  render: (args) => <WorkflowTaskActionsStory {...taskActionsProps} {...args} />,
   args: taskActionsProps,
 };
 

@@ -391,11 +391,18 @@ describe("WorkflowRunToolCall", () => {
     expect(view.queryByText("implement / task_live / started")).toBeNull();
     expect(view.getByText("implement / task_retry / started")).toBeTruthy();
     expect(view.getByText("apply-implement / task_live / started")).toBeTruthy();
-    expect(view.getByText("Open")).toBeTruthy();
+    const openAffordance = view.getByText("Open");
+    expect(openAffordance.getAttribute("aria-hidden")).toBe("true");
+    const activeTaskControl = view.getByRole("button", {
+      name: "Open workflow task task_retry",
+    });
+    expect(activeTaskControl.contains(openAffordance)).toBe(true);
     expect(view.queryByRole("button", { name: "Open" })).toBeNull();
 
-    fireEvent.click(view.getByText("Open"));
+    fireEvent.click(activeTaskControl);
     expect(navigatedTo).toEqual(["task_retry"]);
+    fireEvent.keyDown(activeTaskControl, { key: "Enter" });
+    expect(navigatedTo).toEqual(["task_retry", "task_retry"]);
 
     const completedTaskControl = view
       .getByText("implement / task_live / completed")
@@ -405,14 +412,14 @@ describe("WorkflowRunToolCall", () => {
     }
 
     fireEvent.keyDown(completedTaskControl, { key: "Enter" });
-    expect(navigatedTo).toEqual(["task_retry", "task_live"]);
+    expect(navigatedTo).toEqual(["task_retry", "task_retry", "task_live"]);
     expect(view.container.textContent).not.toContain("Completed task body.");
 
     const reportToggle = view.getByLabelText("Open report for task_live");
     expect(reportToggle.closest('[role="button"]')).toBeNull();
     fireEvent.click(reportToggle);
 
-    expect(navigatedTo).toEqual(["task_retry", "task_live"]);
+    expect(navigatedTo).toEqual(["task_retry", "task_retry", "task_live"]);
     await waitFor(() => {
       const reportDialog = document.querySelector('[role="dialog"]');
       expect(reportDialog?.textContent).toContain("Completed task body.");
