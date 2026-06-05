@@ -3,6 +3,7 @@ import {
   getModelKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
+  getServiceTierKey,
   getDisableWorkspaceAgentsKey,
 } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -14,6 +15,8 @@ import {
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { ServiceTier } from "@/common/config/schemas/providersConfig";
+import { withServiceTierOverride } from "@/common/utils/ai/serviceTier";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -66,6 +69,19 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
 
   const providerOptions = getProviderOptions();
 
+  // Mirror useSendMessageOptions: attach the per-chat service-tier override for models
+  // that honor it (OpenAI today) so non-React send paths (resume, idle-compaction, plan
+  // execution) stay consistent with interactive sends.
+  const serviceTierOverride = readPersistedState<ServiceTier | null>(
+    getServiceTierKey(workspaceId),
+    null
+  );
+  const effectiveProviderOptions = withServiceTierOverride(
+    providerOptions,
+    serviceTierOverride,
+    baseModel
+  );
+
   const disableWorkspaceAgents = readPersistedState<boolean>(
     getDisableWorkspaceAgentsKey(workspaceId),
     false
@@ -75,7 +91,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     model: baseModel,
     agentId,
     thinkingLevel,
-    providerOptions,
+    providerOptions: effectiveProviderOptions,
     disableWorkspaceAgents,
     experiments: {
       programmaticToolCalling: isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING),

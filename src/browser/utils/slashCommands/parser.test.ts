@@ -111,6 +111,32 @@ describe("commandParser", () => {
       expectParse("/sonnet  ", { type: "model-help" }); // whitespace only
     });
 
+    it("should parse /fast and /slow as service-tier one-shots", () => {
+      expectParse("/fast ship it", {
+        type: "model-oneshot",
+        serviceTier: "priority",
+        message: "ship it",
+      });
+      expectParse("/slow take your time", {
+        type: "model-oneshot",
+        serviceTier: "flex",
+        message: "take your time",
+      });
+    });
+
+    it("should preserve multiline messages for service-tier one-shots", () => {
+      expectParse("/fast first line\nsecond line", {
+        type: "model-oneshot",
+        serviceTier: "priority",
+        message: "first line\nsecond line",
+      });
+    });
+
+    it("should return model-help for /fast or /slow without a message", () => {
+      expectParse("/fast", { type: "model-help" });
+      expectParse("/slow   ", { type: "model-help" }); // whitespace only
+    });
+
     it("should return unknown-command for unknown aliases", () => {
       expectParse("/xyz do something", {
         type: "unknown-command",

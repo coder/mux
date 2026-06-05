@@ -7,6 +7,8 @@ import { SLASH_COMMAND_DEFINITION_MAP } from "./registry";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 import { parseThinkingInput, type ParsedThinkingInput } from "@/common/types/thinking";
+import { getServiceTierForCommandKey } from "@/common/utils/ai/serviceTier";
+import type { ServiceTier } from "@/common/config/schemas/providersConfig";
 
 /**
  * Parse a raw command string into a structured command
@@ -118,7 +120,7 @@ export function getSlashCommandDefinitions(): readonly SlashCommandDefinition[] 
 }
 
 /**
- * Parse a oneshot command key into model + thinking overrides.
+ * Parse a oneshot command key into model / thinking / service-tier overrides.
  *
  * Supported forms:
  * - "haiku"        → model override only (existing behavior)
@@ -126,12 +128,25 @@ export function getSlashCommandDefinitions(): readonly SlashCommandDefinition[] 
  * - "haiku+medium" → model + named thinking level
  * - "+0"           → thinking-only override (use current model)
  * - "+high"        → thinking-only override with named level
+ * - "fast"/"slow"  → service-tier-only override (use current model)
+ *
+ * `/fast` and `/slow` deliberately reuse the model-oneshot path so message
+ * extraction, the bare-key → help fallback, and the rendered command prefix all
+ * behave exactly like `/<model>` one-shots.
  *
  * Returns null if the key doesn't match any valid oneshot pattern.
  */
-function parseOneshotCommandKey(
-  key: string
-): { modelString?: string; thinkingLevel?: ParsedThinkingInput } | null {
+function parseOneshotCommandKey(key: string): {
+  modelString?: string;
+  thinkingLevel?: ParsedThinkingInput;
+  serviceTier?: ServiceTier;
+} | null {
+  // Service-tier one-shots (/fast, /slow) carry no model/thinking change.
+  const serviceTier = getServiceTierForCommandKey(key);
+  if (serviceTier) {
+    return { serviceTier };
+  }
+
   const plusIndex = key.indexOf("+");
 
   if (plusIndex === -1) {

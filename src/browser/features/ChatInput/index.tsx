@@ -31,6 +31,7 @@ import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { ThinkingSliderComponent } from "@/browser/components/ThinkingSlider/ThinkingSlider";
+import { ServiceTierPicker } from "@/browser/components/ServiceTierPicker/ServiceTierPicker";
 import {
   getAllowedRuntimeModesForUi,
   isParsedRuntimeAllowedByPolicy,
@@ -39,7 +40,8 @@ import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
-import { normalizeSelectedModel } from "@/common/utils/ai/models";
+import { normalizeSelectedModel, getModelName } from "@/common/utils/ai/models";
+import { supportsServiceTier, withServiceTierOverride } from "@/common/utils/ai/serviceTier";
 import {
   useAdditionalSystemContextHydrated,
   useAdditionalSystemContextSnapshot,
@@ -713,10 +715,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   }, [variant, startTutorial]);
 
   // Get current send message options from shared hook (must be at component top level)
-  // For creation variant, use project-scoped key; for workspace, use workspace ID
-  const sendMessageOptions = useSendMessageOptions(
-    variant === "workspace" ? props.workspaceId : getProjectScopeId(creationParentProjectPath)
-  );
+  // For creation variant, use project-scoped key; for workspace, use workspace ID.
+  // Shared so the service-tier override and send options resolve the same scope.
+  const sendOptionsScopeId =
+    variant === "workspace" ? props.workspaceId : getProjectScopeId(creationParentProjectPath);
+  const sendMessageOptions = useSendMessageOptions(sendOptionsScopeId);
   const additionalSystemContext = useAdditionalSystemContextSnapshot(
     variant === "workspace" ? props.workspaceId : ""
   );
@@ -2483,6 +2486,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       const modelOverride = modelOneShot?.modelString;
 
+      // /fast and /slow one-shot tier override only applies to models that honor service
+      // tiers (OpenAI today). Block with a clear message (preserving the composer) rather
+      // than silently dropping the tier when the active model can't use it.
+      const tierOverride = modelOneShot?.serviceTier;
+      if (tierOverride && !supportsServiceTier(modelOverride ?? baseModel)) {
+        pushToast({
+          type: "error",
+          message: `Fast/Slow isn't supported by ${getModelName(modelOverride ?? baseModel)}`,
+        });
+        return;
+      }
+
       // Regular message (or /<model-alias> one-shot override) - send directly via API
       const messageTextForSend = modelOneShot?.message ?? skillInvocation?.userText ?? messageText;
       const skillMuxMetadata = skillInvocation
@@ -2661,11 +2676,24 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             : undefined;
         const goalInterventionPolicy = overrides?.goalInterventionPolicy;
 
+        // One-shot /fast or /slow rides in providerOptions for this message only,
+        // layering over any persisted per-chat service tier from useSendMessageOptions.
+        const oneshotProviderOptions = tierOverride
+          ? {
+              providerOptions: withServiceTierOverride(
+                sendMessageOptions.providerOptions ?? {},
+                tierOverride,
+                modelOverride ?? baseModel
+              ),
+            }
+          : {};
+
         const sendOptions = {
           ...sendMessageOptions,
           ...compactionOptions,
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
+          ...oneshotProviderOptions,
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
           ...(goalInterventionPolicy ? { goalInterventionPolicy } : {}),
           ...(overrides?.queueDispatchMode
@@ -3212,6 +3240,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 >
                   <ThinkingSliderComponent modelString={baseModel} />
                 </div>
+
+                {/* Service-tier (Fast/Slow) speed override. Renders its own root only for
+                    models that support service tiers (OpenAI/GPT today); otherwise it returns
+                    null and occupies no layout space (no stray flex gap). */}
+                <ServiceTierPicker modelString={baseModel} scopeId={sendOptionsScopeId} />
               </div>
 
               <div
