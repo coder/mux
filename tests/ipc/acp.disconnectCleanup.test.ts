@@ -296,6 +296,27 @@ describe("ACP disconnect cleanup for untouched session/new workspaces", () => {
     expect(harness.createCalls).toEqual([]);
   });
 
+  it("uses the containing parent when ACP starts from an unregistered descendant", async () => {
+    const parentPath = "/repo/monorepo";
+    const packagePath = "/repo/monorepo/packages/unregistered";
+    const harness = createHarness({
+      requireTrustedProjectForCreate: true,
+      projectEntries: [[parentPath, { workspaces: [], trusted: false }]],
+    });
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: packagePath,
+      mcpServers: [],
+      _meta: { trunkBranch: "main" },
+    });
+
+    expect(newSessionResponse.sessionId).toBe("ws-1");
+    expect(harness.setTrustCalls).toEqual([{ projectPath: parentPath, trusted: true }]);
+    expect(harness.createCalls[0]?.projectPath).toBe(parentPath);
+    expect(harness.createCalls[0]?.subProjectPath).toBeUndefined();
+  });
+
   it("trusts the owning parent when ACP starts from a registered sub-project", async () => {
     const parentPath = "/repo/monorepo";
     const childPath = "/repo/monorepo/packages/api";

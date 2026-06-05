@@ -38,7 +38,11 @@ import type { CompactionRequestData } from "@/common/types/message";
 import { buildAgentSkillMetadata } from "@/common/types/message";
 import { isWorktreeRuntime, type RuntimeConfig, type RuntimeMode } from "@/common/types/runtime";
 import type { ProjectConfig } from "@/common/types/project";
-import { deriveProjectHierarchy, resolveWorkspaceCreationScope } from "@/common/utils/subProjects";
+import {
+  deriveProjectHierarchy,
+  isPathDescendant,
+  resolveWorkspaceCreationScope,
+} from "@/common/utils/subProjects";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { negotiateCapabilities, type NegotiatedCapabilities } from "./capabilities";
 import { AGENT_MODE_CONFIG_ID, buildConfigOptions, handleSetConfigOption } from "./configOptions";
@@ -2154,29 +2158,51 @@ export class MuxAgent implements Agent {
   ): Promise<AcpWorkspaceCreationScope> {
     const normalizedProjectPath = normalizePathForWorkspaceMatch(projectPath);
     const projectEntries = await this.server.client.projects.list();
-    const projects = new Map<string, ProjectConfig>(projectEntries);
-    if (!projects.has(normalizedProjectPath)) {
-      projects.set(normalizedProjectPath, { workspaces: [] });
+    const projects = deriveProjectHierarchy(new Map<string, ProjectConfig>(projectEntries));
+
+    if (projects.has(normalizedProjectPath)) {
+      const scope = resolveWorkspaceCreationScope(normalizedProjectPath, projects);
+      assert(
+        scope.projectPath.trim().length > 0,
+        "resolveAcpWorkspaceCreationScope: owning project path must be non-empty"
+      );
+
+      return {
+        projectPath: scope.projectPath,
+        subProjectPath: scope.subProjectPath ?? undefined,
+      };
     }
 
-    const scope = resolveWorkspaceCreationScope(
-      normalizedProjectPath,
-      deriveProjectHierarchy(projects)
-    );
-    assert(
-      scope.projectPath.trim().length > 0,
-      "resolveAcpWorkspaceCreationScope: owning project path must be non-empty"
-    );
-
-    return {
-      projectPath: scope.projectPath,
-      subProjectPath: scope.subProjectPath ?? undefined,
-    };
+    const parentProjectPath = findContainingTopLevelProjectPath(normalizedProjectPath, projects);
+    return { projectPath: parentProjectPath ?? normalizedProjectPath };
   }
 
   private assertInitialized(methodName: string): void {
     assert(this.initialized, `${methodName}: initialize must be called first`);
   }
+}
+
+function findContainingTopLevelProjectPath(
+  projectPath: string,
+  projects: ReadonlyMap<string, ProjectConfig>
+): string | undefined {
+  let closestParentPath: string | undefined;
+
+  for (const [candidatePath, candidateConfig] of projects) {
+    if (candidateConfig.parentProjectPath != null) {
+      continue;
+    }
+
+    if (!isPathDescendant(candidatePath, projectPath)) {
+      continue;
+    }
+
+    if (closestParentPath == null || candidatePath.length > closestParentPath.length) {
+      closestParentPath = candidatePath;
+    }
+  }
+
+  return closestParentPath;
 }
 
 async function resolveAcpNewSessionProjectPath(
