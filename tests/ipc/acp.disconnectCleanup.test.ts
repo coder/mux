@@ -41,6 +41,28 @@ interface Harness {
   connectionClosed: Promise<void>;
 }
 
+function findTestParentProjectPath(
+  projectPath: string,
+  projectsByPath: ReadonlyMap<string, ProjectConfig>
+): string | undefined {
+  let parentProjectPath: string | undefined;
+  for (const [candidatePath, candidateConfig] of projectsByPath) {
+    if (candidateConfig.parentProjectPath != null) {
+      continue;
+    }
+
+    const descendantPrefix = `${candidatePath}${path.sep}`;
+    if (!projectPath.startsWith(descendantPrefix)) {
+      continue;
+    }
+
+    if (parentProjectPath == null || candidatePath.length > parentProjectPath.length) {
+      parentProjectPath = candidatePath;
+    }
+  }
+  return parentProjectPath;
+}
+
 function createWorkspaceInfo(overrides?: Partial<WorkspaceInfo>): WorkspaceInfo {
   return {
     id: "ws-default",
@@ -126,6 +148,21 @@ function createHarness(options?: HarnessOptions): Harness {
       getConfig: async () => ({}),
     },
     projects: {
+      create: async (input: { projectPath: string }) => {
+        const parentProjectPath = findTestParentProjectPath(input.projectPath, projectsByPath);
+        const projectConfig: ProjectConfig = {
+          workspaces: [],
+          parentProjectPath,
+        };
+        projectsByPath.set(input.projectPath, projectConfig);
+        return {
+          success: true as const,
+          data: {
+            projectConfig,
+            normalizedPath: input.projectPath,
+          },
+        };
+      },
       list: async () => Array.from(projectsByPath.entries()),
       listBranches: async () => ({
         branches: ["main"],
@@ -345,9 +382,12 @@ describe("ACP disconnect cleanup for untouched session/new workspaces", () => {
       });
 
       expect(newSessionResponse.sessionId).toBe("ws-1");
-      expect(harness.setTrustCalls).toEqual([{ projectPath: parentPath, trusted: true }]);
+      expect(harness.setTrustCalls).toEqual([
+        { projectPath: packagePath, trusted: true },
+        { projectPath: parentPath, trusted: true },
+      ]);
       expect(harness.createCalls[0]?.projectPath).toBe(parentPath);
-      expect(harness.createCalls[0]?.subProjectPath).toBeUndefined();
+      expect(harness.createCalls[0]?.subProjectPath).toBe(packagePath);
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }

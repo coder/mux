@@ -2181,7 +2181,19 @@ export class MuxAgent implements Agent {
       parentProjectPath != null &&
       (await pathsShareGitTopLevel(parentProjectPath, normalizedProjectPath))
     ) {
-      return { projectPath: parentProjectPath };
+      const createProjectResult = await this.server.client.projects.create({
+        projectPath: normalizedProjectPath,
+      });
+      if (!createProjectResult.success) {
+        throw new Error(
+          `resolveAcpWorkspaceCreationScope: failed to register sub-project '${normalizedProjectPath}': ${createProjectResult.error}`
+        );
+      }
+
+      return {
+        projectPath: parentProjectPath,
+        subProjectPath: createProjectResult.data.normalizedPath,
+      };
     }
 
     return { projectPath: normalizedProjectPath };
