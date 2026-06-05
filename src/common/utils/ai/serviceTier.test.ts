@@ -55,10 +55,23 @@ describe("serviceTier helpers", () => {
   });
 
   describe("supportsServiceTier", () => {
-    it("is supported only for OpenAI models today", () => {
+    it("is supported for direct OpenAI models", () => {
       expect(supportsServiceTier(OPENAI_MODEL)).toBe(true);
       expect(supportsServiceTier(ANTHROPIC_MODEL)).toBe(false);
       expect(supportsServiceTier("google:gemini-3.1-pro-preview")).toBe(false);
+    });
+
+    it("is NOT supported for non-passthrough gateway-routed OpenAI models", () => {
+      // openrouter:openai/gpt-5 canonicalizes to "openai", but openrouter is a
+      // non-passthrough gateway, so the backend drops serviceTier — a silent no-op.
+      expect(supportsServiceTier("openrouter:openai/gpt-5")).toBe(false);
+      // github-copilot is another non-passthrough gateway (canonical github-copilot).
+      expect(supportsServiceTier("github-copilot:gpt-5.5")).toBe(false);
+    });
+
+    it("is supported for passthrough gateway-routed OpenAI models", () => {
+      // mux-gateway is a passthrough gateway: it forwards openai provider options.
+      expect(supportsServiceTier("mux-gateway:openai/gpt-4o")).toBe(true);
     });
   });
 

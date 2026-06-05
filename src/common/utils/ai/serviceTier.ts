@@ -14,7 +14,8 @@
 
 import { type ServiceTier } from "@/common/config/schemas/providersConfig";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
-import { getModelProvider } from "./models";
+import { PROVIDER_DEFINITIONS } from "@/common/constants/providers";
+import { getExplicitGatewayPrefix, getModelProvider } from "./models";
 
 /** Wire value for the user-facing "Fast" speed. */
 export const SERVICE_TIER_FAST: ServiceTier = "priority";
@@ -62,12 +63,27 @@ export function getServiceTierForCommandKey(key: string): ServiceTier | null {
 /**
  * Whether a model honors a chat-level service-tier override.
  *
- * Today only OpenAI (GPT-class) models support `service_tier`, so we gate on the
- * provider. This is intentionally a single helper so the UI affordance, the send
- * path, and future providers all share one definition of "supported".
+ * Today only OpenAI (GPT-class) models support `service_tier`. Critically, the
+ * backend only forwards `providerOptions.openai.serviceTier` when the request is
+ * routed either directly to OpenAI or through a *passthrough* gateway. Non-passthrough
+ * gateways (e.g. openrouter, github-copilot) drop the field, so a model like
+ * `openrouter:openai/gpt-5` — which canonicalizes to `openai` — would silently ignore
+ * the tier. We mirror that routing here so the UI never advertises a no-op override.
+ *
+ * This is intentionally a single helper so the UI affordance, the send path, and
+ * future providers all share one definition of "supported".
  */
 export function supportsServiceTier(modelString: string): boolean {
-  return getModelProvider(modelString) === "openai";
+  if (getModelProvider(modelString) !== "openai") {
+    return false;
+  }
+  const gatewayPrefix = getExplicitGatewayPrefix(modelString);
+  if (gatewayPrefix) {
+    // Only passthrough gateways forward OpenAI provider options to the request.
+    const def = PROVIDER_DEFINITIONS[gatewayPrefix];
+    return def != null && "passthrough" in def && def.passthrough === true;
+  }
+  return true;
 }
 
 /**
