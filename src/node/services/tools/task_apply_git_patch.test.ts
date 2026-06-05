@@ -267,6 +267,84 @@ describe("task_apply_git_patch tool", () => {
     );
   }, 20_000);
 
+  it("cleans staged patch files between dry-run and real apply when temp dir is inside the repo", async () => {
+    const childRepo = path.join(rootDir, "child");
+    const targetRepo = path.join(rootDir, "target");
+    for (const repo of [childRepo, targetRepo]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+      initGitRepo(repo);
+    }
+
+    await commitFile(childRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "README.md", "hello", "base");
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+    await commitFile(childRepo, "README.md", "hello\nchild", "child change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const muxRoot = path.join(rootDir, "mux");
+    const currentWorkspaceId = "current-workspace";
+    const sessionDir = path.join(muxRoot, "sessions", currentWorkspaceId);
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    await writeWorkspaceConfig({
+      muxRoot,
+      workspaceId: currentWorkspaceId,
+      workspaceName: "current",
+      primaryProjectPath: targetRepo,
+      projects: [{ projectPath: targetRepo, projectName: "project" }],
+    });
+
+    const childTaskId = "child-task-cleanup";
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId: currentWorkspaceId,
+      childTaskId,
+      projectArtifacts: [
+        await buildReadyProjectArtifact({
+          sessionDir,
+          childTaskId,
+          storageKey: "project",
+          projectPath: targetRepo,
+          projectName: "project",
+          childRepo,
+          baseSha,
+          headSha,
+        }),
+      ],
+    });
+
+    const tool = createTaskApplyGitPatchTool({
+      ...getTestDeps(),
+      workspaceId: currentWorkspaceId,
+      cwd: targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: path.join(targetRepo, ".mux", "tmp"),
+      workspaceSessionDir: sessionDir,
+    });
+
+    const dryRun = (await tool.execute!(
+      { task_id: childTaskId, dry_run: true },
+      mockToolCallOptions
+    )) as { success: boolean };
+    expect(dryRun.success).toBe(true);
+    expect(execSync("git status --porcelain", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      ""
+    );
+
+    const realApply = (await tool.execute!({ task_id: childTaskId }, mockToolCallOptions)) as {
+      success: boolean;
+      projectResults: Array<{ status: string }>;
+    };
+
+    expect(realApply.success).toBe(true);
+    expect(realApply.projectResults[0]).toMatchObject({ status: "applied" });
+    expect(execSync("git log -1 --pretty=%s", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      "child change"
+    );
+    expect(execSync("git status --porcelain", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      ""
+    );
+  }, 20_000);
+
   it("applies only the requested project_path", async () => {
     const childRepoA = path.join(rootDir, "child-a");
     const childRepoB = path.join(rootDir, "child-b");

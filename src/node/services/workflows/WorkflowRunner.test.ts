@@ -261,6 +261,60 @@ describe("WorkflowRunner", () => {
     );
   });
 
+  test("omits undefined optional patch fields before persisting structured output", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-apply-patch-undefined-fields");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_apply_patch_undefined_fields",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent, applyPatch }) {
+        const implementation = agent({ id: "implement", prompt: "Implement" });
+        const applied = applyPatch({ id: "apply-implement", source: implementation, target: "parent" });
+        return { reportMarkdown: applied.status };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        return { taskId: "task_impl", reportMarkdown: "implemented" };
+      },
+      async applyPatch(spec) {
+        return {
+          success: true,
+          taskId: spec.sourceTaskId,
+          projectResults: [
+            {
+              projectPath: "/repo",
+              projectName: "repo",
+              status: "applied",
+              note: undefined,
+            },
+          ],
+          note: undefined,
+        };
+      },
+    });
+
+    await expect(runner.run("wfr_apply_patch_undefined_fields")).resolves.toEqual({
+      reportMarkdown: "applied",
+    });
+    const run = await store.getRun("wfr_apply_patch_undefined_fields");
+    const step = run.steps.find((entry) => entry.stepId === "apply-implement");
+
+    expect(step?.status).toBe("completed");
+    expect(step?.result?.structuredOutput).toEqual({
+      success: true,
+      status: "applied",
+      taskId: "task_impl",
+      projectResults: [{ projectPath: "/repo", projectName: "repo", status: "applied" }],
+    });
+  });
+
   test("classifies nested failedPatchSubject applyPatch results as conflicts", async () => {
     using tmp = new DisposableTempDir("workflow-runner-apply-patch-nested-subject");
     const store = new WorkflowRunStore({

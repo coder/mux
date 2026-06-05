@@ -1857,7 +1857,7 @@ function normalizeWorkflowApplyPatchResult(rawResult: unknown): WorkflowApplyPat
       ? "conflict"
       : "failed";
 
-  return {
+  return stripUndefinedDeep({
     success: parsed.success,
     status,
     taskId: parsed.taskId,
@@ -1869,7 +1869,23 @@ function normalizeWorkflowApplyPatchResult(rawResult: unknown): WorkflowApplyPat
     ...(failedPatchSubject !== undefined ? { failedPatchSubject } : {}),
     ...(parsed.success ? {} : { error: parsed.error }),
     ...(parsed.note !== undefined ? { note: parsed.note } : {}),
-  };
+  }) as WorkflowApplyPatchResult;
+}
+
+function stripUndefinedDeep(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stripUndefinedDeep);
+  }
+  if (value == null || typeof value !== "object") {
+    return value;
+  }
+  const output: Record<string, unknown> = {};
+  for (const [key, nestedValue] of Object.entries(value)) {
+    if (nestedValue !== undefined) {
+      output[key] = stripUndefinedDeep(nestedValue);
+    }
+  }
+  return output;
 }
 
 function getFailedPatchSubjectFromPatchResult(

@@ -648,255 +648,301 @@ async function applyProjectPatch(params: {
     abortSignal: params.abortSignal,
   });
 
-  const flags: string[] = [];
-  if (params.threeWay) flags.push("--3way");
+  try {
+    const flags: string[] = [];
+    if (params.threeWay) flags.push("--3way");
 
-  const nhp = gitNoHooksPrefix(params.trusted);
+    const nhp = gitNoHooksPrefix(params.trusted);
 
-  if (params.dryRun) {
-    const dryRunId = `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 8)}`;
-    const dryRunWorktreePath = path.posix.join(
-      params.runtimeTempDir,
-      `mux-git-am-dry-run-${params.taskId}-${params.projectArtifact.storageKey}-${dryRunId}`
-    );
+    if (params.dryRun) {
+      const dryRunId = `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 8)}`;
+      const dryRunWorktreePath = path.posix.join(
+        params.runtimeTempDir,
+        `mux-git-am-dry-run-${params.taskId}-${params.projectArtifact.storageKey}-${dryRunId}`
+      );
 
-    const addResult = await execBuffered(
-      params.runtime,
-      `${nhp}git worktree add --detach ${shellQuote(dryRunWorktreePath)} HEAD`,
-      { cwd: params.repoCwd, timeout: 60 }
-    );
-    if (addResult.exitCode !== 0) {
-      return {
-        success: false,
-        projectResult: {
-          projectPath: params.projectArtifact.projectPath,
-          projectName: params.projectArtifact.projectName,
-          status: "failed",
-          error: addResult.stderr.trim() || addResult.stdout.trim() || "git worktree add failed",
-        },
-      };
-    }
-
-    try {
-      const beforeHeadSha = await tryRevParseHead({
-        runtime: params.runtime,
-        cwd: dryRunWorktreePath,
-      });
-
-      const amCmd = `${nhp}git am ${flags.join(" ")} ${shellQuote(remotePatchPath)}`.trim();
-      const amResult = await execBuffered(params.runtime, amCmd, {
-        cwd: dryRunWorktreePath,
-        timeout: 300,
-      });
-
-      if (amResult.exitCode !== 0) {
-        const stderr = amResult.stderr.trim();
-        const stdout = amResult.stdout.trim();
-        const errorOutput = [stderr, stdout]
-          .filter((s) => s.length > 0)
-          .join("\n")
-          .trim();
-
-        const conflictPaths = await tryGetConflictPaths({
-          runtime: params.runtime,
-          cwd: dryRunWorktreePath,
-        });
-        const failedPatchSubject = parseFailedPatchSubjectFromGitAmOutput(errorOutput);
-
+      const addResult = await execBuffered(
+        params.runtime,
+        `${nhp}git worktree add --detach ${shellQuote(dryRunWorktreePath)} HEAD`,
+        { cwd: params.repoCwd, timeout: 60 }
+      );
+      if (addResult.exitCode !== 0) {
         return {
           success: false,
           projectResult: {
             projectPath: params.projectArtifact.projectPath,
             projectName: params.projectArtifact.projectName,
             status: "failed",
-            conflictPaths,
-            failedPatchSubject,
-            error:
-              errorOutput.length > 0
-                ? errorOutput
-                : `git am failed (exitCode=${amResult.exitCode})`,
-            note: mergeNotes(
-              patchResolution.note,
-              "Dry run failed; the patch does not apply cleanly against the current HEAD. If this is a parent integration workspace, do not attempt a real apply here; delegate conflict resolution to a sub-agent that can replay and resolve the patch. Dedicated reconciliation workspaces can proceed with real apply plus manual conflict resolution (`git am --continue` / `git am --abort`)."
-            ),
+            error: addResult.stderr.trim() || addResult.stdout.trim() || "git worktree add failed",
           },
         };
       }
 
-      const appliedCommits = await getAppliedCommits({
+      try {
+        const beforeHeadSha = await tryRevParseHead({
+          runtime: params.runtime,
+          cwd: dryRunWorktreePath,
+        });
+
+        const amCmd = `${nhp}git am ${flags.join(" ")} ${shellQuote(remotePatchPath)}`.trim();
+        const amResult = await execBuffered(params.runtime, amCmd, {
+          cwd: dryRunWorktreePath,
+          timeout: 300,
+        });
+
+        if (amResult.exitCode !== 0) {
+          const stderr = amResult.stderr.trim();
+          const stdout = amResult.stdout.trim();
+          const errorOutput = [stderr, stdout]
+            .filter((s) => s.length > 0)
+            .join("\n")
+            .trim();
+
+          const conflictPaths = await tryGetConflictPaths({
+            runtime: params.runtime,
+            cwd: dryRunWorktreePath,
+          });
+          const failedPatchSubject = parseFailedPatchSubjectFromGitAmOutput(errorOutput);
+
+          return {
+            success: false,
+            projectResult: {
+              projectPath: params.projectArtifact.projectPath,
+              projectName: params.projectArtifact.projectName,
+              status: "failed",
+              conflictPaths,
+              failedPatchSubject,
+              error:
+                errorOutput.length > 0
+                  ? errorOutput
+                  : `git am failed (exitCode=${amResult.exitCode})`,
+              note: mergeNotes(
+                patchResolution.note,
+                "Dry run failed; the patch does not apply cleanly against the current HEAD. If this is a parent integration workspace, do not attempt a real apply here; delegate conflict resolution to a sub-agent that can replay and resolve the patch. Dedicated reconciliation workspaces can proceed with real apply plus manual conflict resolution (`git am --continue` / `git am --abort`)."
+              ),
+            },
+          };
+        }
+
+        const appliedCommits = await getAppliedCommits({
+          runtime: params.runtime,
+          cwd: dryRunWorktreePath,
+          beforeHeadSha,
+          commitCountHint: params.projectArtifact.commitCount,
+          includeSha: false,
+        });
+
+        return {
+          success: true,
+          projectResult: {
+            projectPath: params.projectArtifact.projectPath,
+            projectName: params.projectArtifact.projectName,
+            status: "applied",
+            appliedCommits,
+            note: mergeNotes(patchResolution.note, "Dry run succeeded; no commits were applied."),
+          },
+        };
+      } finally {
+        try {
+          const abortResult = await execBuffered(params.runtime, `${nhp}git am --abort`, {
+            cwd: dryRunWorktreePath,
+            timeout: 30,
+          });
+          if (abortResult.exitCode !== 0) {
+            log.debug("task_apply_git_patch: dry-run git am --abort failed", {
+              taskId: params.taskId,
+              workspaceId: params.workspaceId,
+              cwd: params.repoCwd,
+              dryRunWorktreePath,
+              exitCode: abortResult.exitCode,
+              stderr: abortResult.stderr.trim(),
+              stdout: abortResult.stdout.trim(),
+            });
+          }
+        } catch (error: unknown) {
+          log.debug("task_apply_git_patch: dry-run git am --abort threw", {
+            taskId: params.taskId,
+            workspaceId: params.workspaceId,
+            cwd: params.repoCwd,
+            dryRunWorktreePath,
+            error,
+          });
+        }
+
+        try {
+          const removeResult = await execBuffered(
+            params.runtime,
+            `${nhp}git worktree remove --force ${shellQuote(dryRunWorktreePath)}`,
+            { cwd: params.repoCwd, timeout: 60 }
+          );
+          if (removeResult.exitCode !== 0) {
+            log.debug("task_apply_git_patch: dry-run git worktree remove failed", {
+              taskId: params.taskId,
+              workspaceId: params.workspaceId,
+              cwd: params.repoCwd,
+              dryRunWorktreePath,
+              exitCode: removeResult.exitCode,
+              stderr: removeResult.stderr.trim(),
+              stdout: removeResult.stdout.trim(),
+            });
+          }
+        } catch (error: unknown) {
+          log.debug("task_apply_git_patch: dry-run git worktree remove threw", {
+            taskId: params.taskId,
+            workspaceId: params.workspaceId,
+            cwd: params.repoCwd,
+            dryRunWorktreePath,
+            error,
+          });
+        }
+
+        try {
+          const pruneResult = await execBuffered(params.runtime, "git worktree prune", {
+            cwd: params.repoCwd,
+            timeout: 60,
+          });
+          if (pruneResult.exitCode !== 0) {
+            log.debug("task_apply_git_patch: dry-run git worktree prune failed", {
+              taskId: params.taskId,
+              workspaceId: params.workspaceId,
+              cwd: params.repoCwd,
+              exitCode: pruneResult.exitCode,
+              stderr: pruneResult.stderr.trim(),
+              stdout: pruneResult.stdout.trim(),
+            });
+          }
+        } catch (error: unknown) {
+          log.debug("task_apply_git_patch: dry-run git worktree prune threw", {
+            taskId: params.taskId,
+            workspaceId: params.workspaceId,
+            cwd: params.repoCwd,
+            error,
+          });
+        }
+      }
+    }
+
+    const beforeHeadSha = await tryRevParseHead({ runtime: params.runtime, cwd: params.repoCwd });
+
+    const amCmd = `${nhp}git am ${flags.join(" ")} ${shellQuote(remotePatchPath)}`.trim();
+    const amResult = await execBuffered(params.runtime, amCmd, {
+      cwd: params.repoCwd,
+      timeout: 300,
+    });
+
+    if (amResult.exitCode !== 0) {
+      const stderr = amResult.stderr.trim();
+      const stdout = amResult.stdout.trim();
+      const errorOutput = [stderr, stdout]
+        .filter((s) => s.length > 0)
+        .join("\n")
+        .trim();
+
+      const conflictPaths = await tryGetConflictPaths({
         runtime: params.runtime,
-        cwd: dryRunWorktreePath,
-        beforeHeadSha,
-        commitCountHint: params.projectArtifact.commitCount,
-        includeSha: false,
+        cwd: params.repoCwd,
       });
+      const failedPatchSubject = parseFailedPatchSubjectFromGitAmOutput(errorOutput);
+      const gitAmInProgress = await isGitAmInProgress({
+        runtime: params.runtime,
+        cwd: params.repoCwd,
+      });
+      const conflictRecoveryNote =
+        conflictPaths.length > 0 || gitAmInProgress
+          ? "git am stopped in conflict-recovery state. Resolve conflicts/issues and run `git am --continue`, or run `git am --abort` to restore a clean working tree and delegate resolution to a sub-agent."
+          : "git am failed before entering conflict-recovery state. Review the error output above and fix the patch/input before retrying.";
 
       return {
-        success: true,
+        success: false,
         projectResult: {
           projectPath: params.projectArtifact.projectPath,
           projectName: params.projectArtifact.projectName,
-          status: "applied",
-          appliedCommits,
-          note: mergeNotes(patchResolution.note, "Dry run succeeded; no commits were applied."),
+          status: "failed",
+          conflictPaths,
+          failedPatchSubject,
+          error:
+            errorOutput.length > 0 ? errorOutput : `git am failed (exitCode=${amResult.exitCode})`,
+          note: mergeNotes(patchResolution.note, conflictRecoveryNote),
         },
       };
-    } finally {
-      try {
-        const abortResult = await execBuffered(params.runtime, `${nhp}git am --abort`, {
-          cwd: dryRunWorktreePath,
-          timeout: 30,
-        });
-        if (abortResult.exitCode !== 0) {
-          log.debug("task_apply_git_patch: dry-run git am --abort failed", {
-            taskId: params.taskId,
-            workspaceId: params.workspaceId,
-            cwd: params.repoCwd,
-            dryRunWorktreePath,
-            exitCode: abortResult.exitCode,
-            stderr: abortResult.stderr.trim(),
-            stdout: abortResult.stdout.trim(),
-          });
-        }
-      } catch (error: unknown) {
-        log.debug("task_apply_git_patch: dry-run git am --abort threw", {
-          taskId: params.taskId,
-          workspaceId: params.workspaceId,
-          cwd: params.repoCwd,
-          dryRunWorktreePath,
-          error,
-        });
-      }
-
-      try {
-        const removeResult = await execBuffered(
-          params.runtime,
-          `${nhp}git worktree remove --force ${shellQuote(dryRunWorktreePath)}`,
-          { cwd: params.repoCwd, timeout: 60 }
-        );
-        if (removeResult.exitCode !== 0) {
-          log.debug("task_apply_git_patch: dry-run git worktree remove failed", {
-            taskId: params.taskId,
-            workspaceId: params.workspaceId,
-            cwd: params.repoCwd,
-            dryRunWorktreePath,
-            exitCode: removeResult.exitCode,
-            stderr: removeResult.stderr.trim(),
-            stdout: removeResult.stdout.trim(),
-          });
-        }
-      } catch (error: unknown) {
-        log.debug("task_apply_git_patch: dry-run git worktree remove threw", {
-          taskId: params.taskId,
-          workspaceId: params.workspaceId,
-          cwd: params.repoCwd,
-          dryRunWorktreePath,
-          error,
-        });
-      }
-
-      try {
-        const pruneResult = await execBuffered(params.runtime, "git worktree prune", {
-          cwd: params.repoCwd,
-          timeout: 60,
-        });
-        if (pruneResult.exitCode !== 0) {
-          log.debug("task_apply_git_patch: dry-run git worktree prune failed", {
-            taskId: params.taskId,
-            workspaceId: params.workspaceId,
-            cwd: params.repoCwd,
-            exitCode: pruneResult.exitCode,
-            stderr: pruneResult.stderr.trim(),
-            stdout: pruneResult.stdout.trim(),
-          });
-        }
-      } catch (error: unknown) {
-        log.debug("task_apply_git_patch: dry-run git worktree prune threw", {
-          taskId: params.taskId,
-          workspaceId: params.workspaceId,
-          cwd: params.repoCwd,
-          error,
-        });
-      }
     }
-  }
 
-  const beforeHeadSha = await tryRevParseHead({ runtime: params.runtime, cwd: params.repoCwd });
+    const headCommitSha = await tryRevParseHead({ runtime: params.runtime, cwd: params.repoCwd });
 
-  const amCmd = `${nhp}git am ${flags.join(" ")} ${shellQuote(remotePatchPath)}`.trim();
-  const amResult = await execBuffered(params.runtime, amCmd, {
-    cwd: params.repoCwd,
-    timeout: 300,
-  });
-
-  if (amResult.exitCode !== 0) {
-    const stderr = amResult.stderr.trim();
-    const stdout = amResult.stdout.trim();
-    const errorOutput = [stderr, stdout]
-      .filter((s) => s.length > 0)
-      .join("\n")
-      .trim();
-
-    const conflictPaths = await tryGetConflictPaths({
+    const appliedCommits = await getAppliedCommits({
       runtime: params.runtime,
       cwd: params.repoCwd,
+      beforeHeadSha,
+      commitCountHint: params.projectArtifact.commitCount,
+      includeSha: true,
     });
-    const failedPatchSubject = parseFailedPatchSubjectFromGitAmOutput(errorOutput);
-    const gitAmInProgress = await isGitAmInProgress({
-      runtime: params.runtime,
-      cwd: params.repoCwd,
-    });
-    const conflictRecoveryNote =
-      conflictPaths.length > 0 || gitAmInProgress
-        ? "git am stopped in conflict-recovery state. Resolve conflicts/issues and run `git am --continue`, or run `git am --abort` to restore a clean working tree and delegate resolution to a sub-agent."
-        : "git am failed before entering conflict-recovery state. Review the error output above and fix the patch/input before retrying.";
+
+    if (!params.isReplay) {
+      await markSubagentGitPatchArtifactApplied({
+        workspaceId: params.artifactWorkspaceId,
+        workspaceSessionDir: params.artifactSessionDir,
+        childTaskId: params.taskId,
+        projectPath: params.projectArtifact.projectPath,
+        appliedAtMs: Date.now(),
+      });
+    }
 
     return {
-      success: false,
+      success: true,
       projectResult: {
         projectPath: params.projectArtifact.projectPath,
         projectName: params.projectArtifact.projectName,
-        status: "failed",
-        conflictPaths,
-        failedPatchSubject,
-        error:
-          errorOutput.length > 0 ? errorOutput : `git am failed (exitCode=${amResult.exitCode})`,
-        note: mergeNotes(patchResolution.note, conflictRecoveryNote),
+        status: "applied",
+        appliedCommits,
+        headCommitSha,
+        note: patchResolution.note,
       },
     };
-  }
-
-  const headCommitSha = await tryRevParseHead({ runtime: params.runtime, cwd: params.repoCwd });
-
-  const appliedCommits = await getAppliedCommits({
-    runtime: params.runtime,
-    cwd: params.repoCwd,
-    beforeHeadSha,
-    commitCountHint: params.projectArtifact.commitCount,
-    includeSha: true,
-  });
-
-  if (!params.isReplay) {
-    await markSubagentGitPatchArtifactApplied({
-      workspaceId: params.artifactWorkspaceId,
-      workspaceSessionDir: params.artifactSessionDir,
-      childTaskId: params.taskId,
-      projectPath: params.projectArtifact.projectPath,
-      appliedAtMs: Date.now(),
+  } finally {
+    await cleanupRuntimePatchFile({
+      runtime: params.runtime,
+      repoCwd: params.repoCwd,
+      remotePatchPath,
+      taskId: params.taskId,
+      workspaceId: params.workspaceId,
     });
   }
+}
 
-  return {
-    success: true,
-    projectResult: {
-      projectPath: params.projectArtifact.projectPath,
-      projectName: params.projectArtifact.projectName,
-      status: "applied",
-      appliedCommits,
-      headCommitSha,
-      note: patchResolution.note,
-    },
-  };
+async function cleanupRuntimePatchFile(params: {
+  runtime: ToolConfiguration["runtime"];
+  repoCwd: string;
+  remotePatchPath: string;
+  taskId: string;
+  workspaceId: string;
+}): Promise<void> {
+  try {
+    const result = await execBuffered(
+      params.runtime,
+      `rm -f ${shellQuote(params.remotePatchPath)}`,
+      {
+        cwd: params.repoCwd,
+        timeout: 30,
+      }
+    );
+    if (result.exitCode !== 0) {
+      log.debug("task_apply_git_patch: patch file cleanup failed", {
+        taskId: params.taskId,
+        workspaceId: params.workspaceId,
+        remotePatchPath: params.remotePatchPath,
+        exitCode: result.exitCode,
+        stderr: result.stderr.trim(),
+        stdout: result.stdout.trim(),
+      });
+    }
+  } catch (error: unknown) {
+    log.debug("task_apply_git_patch: patch file cleanup threw", {
+      taskId: params.taskId,
+      workspaceId: params.workspaceId,
+      remotePatchPath: params.remotePatchPath,
+      error,
+    });
+  }
 }
 
 export async function applyTaskGitPatchArtifact(
