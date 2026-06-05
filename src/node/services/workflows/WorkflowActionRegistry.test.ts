@@ -109,6 +109,7 @@ describe("WorkflowActionRegistry", () => {
     const byName = new Map(actions.map((action) => [action.name, action]));
     expect(byName.get("git.status")?.scope).toBe("built-in");
     expect(byName.get("git.commitsBetween")?.scope).toBe("built-in");
+    expect(byName.get("git.diff")?.scope).toBe("built-in");
     expect(byName.get("git.diffStat")?.scope).toBe("built-in");
     expect(byName.get("git.changedFiles")?.scope).toBe("built-in");
   });
@@ -143,6 +144,26 @@ describe("WorkflowActionRegistry", () => {
 
     expect(resolved.scope).toBe("global");
     expect(resolved.source).toContain("global: true");
+  });
+
+  test("can resolve built-in actions without user overrides", async () => {
+    using tmp = new DisposableTempDir("workflow-actions-built-in-only");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await writeAction(
+      globalRoot,
+      path.join("git", "status.js"),
+      "module.exports = { global: true };"
+    );
+    const registry = new WorkflowActionRegistry({ projectRoot, globalRoot });
+
+    const resolved = await registry.resolveAction("git.status", {
+      projectTrusted: true,
+      builtInOnly: true,
+    });
+
+    expect(resolved.scope).toBe("built-in");
+    expect(resolved.source).toContain("git status");
   });
 
   test("does not fall back to a global action when a trusted project action is invalid", async () => {

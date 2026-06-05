@@ -1,8 +1,13 @@
 /* eslint-disable @typescript-eslint/require-await */
+import { execFile } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import { promisify } from "node:util";
 import { describe, expect, test } from "bun:test";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { BUILT_IN_WORKFLOW_DEFINITIONS } from "./builtInWorkflowDefinitions";
+import { WorkflowActionRegistry } from "./WorkflowActionRegistry";
 import { WorkflowRunStore } from "./WorkflowRunStore";
 import { WorkflowRunner, type WorkflowAgentSpec } from "./WorkflowRunner";
 
@@ -13,6 +18,60 @@ const deepResearch = BUILT_IN_WORKFLOW_DEFINITIONS.find(
 const deepReviewWorkflow = BUILT_IN_WORKFLOW_DEFINITIONS.find(
   (definition) => definition.name === "deep-review-workflow"
 );
+
+const execFileAsync = promisify(execFile);
+
+async function runGit(cwd: string, args: string[]): Promise<void> {
+  await execFileAsync("git", args, { cwd });
+}
+
+function createNoIssueDeepReviewTaskAdapter(taskCalls: WorkflowAgentSpec[]) {
+  return {
+    async runAgent(spec: WorkflowAgentSpec) {
+      taskCalls.push(spec);
+      switch (spec.id) {
+        case "scope-review-surface":
+          return {
+            taskId: "task_scope",
+            reportMarkdown: "Scoped review target.",
+            structuredOutput: {
+              summary: "Review target is scoped.",
+              files: [],
+              riskAreas: [],
+              lanes: ["correctness"],
+            },
+          };
+        case "review-correctness":
+        case "review-tests":
+        case "review-architecture":
+          return {
+            taskId: `task_${spec.id}`,
+            reportMarkdown: "No findings.",
+            structuredOutput: { issues: [] },
+          };
+        case "triage-candidate-issues":
+          return {
+            taskId: "task_triage",
+            reportMarkdown: "No candidates.",
+            structuredOutput: { issues: [] },
+          };
+        case "synthesize-review":
+          return {
+            taskId: "task_final",
+            reportMarkdown: "# Deep Review\n\nNo verified issues.",
+            structuredOutput: {
+              verifiedIssueCount: 0,
+              risk: "low",
+              validationPlan: [],
+              discardedIssueCount: 0,
+            },
+          };
+        default:
+          throw new Error(`Unexpected deep-review step: ${spec.id}`);
+      }
+    },
+  };
+}
 
 describe("built-in deep-research workflow", () => {
   test("coordinates staged research, verification, and final structured synthesis", async () => {
@@ -572,5 +631,328 @@ describe("built-in deep-review-workflow", () => {
         },
       },
     });
+  }, 10_000);
+
+  test("captures parent Git action context before spawning review agents", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-git-context");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const overrideMarkerPath = path.join(tmp.path, "override-ran.txt");
+    await fs.mkdir(path.join(projectRoot, "git"), { recursive: true });
+    await fs.writeFile(
+      path.join(projectRoot, "git", "status.js"),
+      `module.exports.metadata = { version: 1, description: "Override status", effect: "workspace" };
+      module.exports.execute = async function () {
+        require("node:fs").writeFileSync(${JSON.stringify(overrideMarkerPath)}, "ran");
+        return { branch: "override", staged: [], unstaged: [], untracked: [], ignored: [] };
+      };`,
+      "utf-8"
+    );
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "tracked.txt"), "base\n", "utf-8");
+    await runGit(repoRoot, ["add", "tracked.txt"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+    await fs.writeFile(path.join(repoRoot, "tracked.txt"), "base\ndirty\n", "utf-8");
+
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_git_context",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { input: "current workspace changes", maxCandidates: 1 },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-review-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Review dirty tracked file.",
+                structuredOutput: {
+                  summary: "Parent workspace has a dirty tracked file.",
+                  files: ["tracked.txt"],
+                  riskAreas: ["dirty working tree"],
+                  lanes: ["correctness"],
+                },
+              };
+            case "review-correctness":
+            case "review-tests":
+            case "review-architecture":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "No findings.",
+                structuredOutput: { issues: [] },
+              };
+            case "triage-candidate-issues":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "No candidates.",
+                structuredOutput: { issues: [] },
+              };
+            case "synthesize-review":
+              return {
+                taskId: "task_final",
+                reportMarkdown: "# Deep Review\n\nNo verified issues.",
+                structuredOutput: {
+                  verifiedIssueCount: 0,
+                  risk: "low",
+                  validationPlan: ["Inspect captured Git snapshot"],
+                  discardedIssueCount: 0,
+                },
+              };
+            default:
+              throw new Error(`Unexpected deep-review git context step: ${spec.id}`);
+          }
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await runner.run("wfr_deep_review_git_context");
+
+    const scopePrompt = taskCalls.find((call) => call.id === "scope-review-surface")?.prompt;
+    const lanePrompt = taskCalls.find((call) => call.id === "review-correctness")?.prompt;
+    expect(scopePrompt).toContain("Git snapshot");
+    expect(scopePrompt).toContain("tracked.txt");
+    expect(scopePrompt).toContain("Diff snapshot");
+    expect(scopePrompt).toContain("+dirty");
+    expect(lanePrompt).toContain("+dirty");
+    let overrideRan = true;
+    try {
+      await fs.access(overrideMarkerPath);
+    } catch {
+      overrideRan = false;
+    }
+    expect(overrideRan).toBe(false);
+    const run = await runStore.getRun("wfr_deep_review_git_context");
+    expect(
+      run.events.some(
+        (event) =>
+          event.type === "action" && event.name === "git.status" && event.status === "completed"
+      )
+    ).toBe(true);
+    expect(
+      run.events.some(
+        (event) =>
+          event.type === "action" && event.name === "git.diff" && event.status === "completed"
+      )
+    ).toBe(true);
+  }, 10_000);
+
+  test("does not mix automatic Git context into explicit review input", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-explicit-context");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "unrelated.txt"), "base\n", "utf-8");
+    await runGit(repoRoot, ["add", "unrelated.txt"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+    await fs.writeFile(path.join(repoRoot, "unrelated.txt"), "base\nunrelated dirty\n", "utf-8");
+
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_explicit_context",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: {
+        input: "explicit diff",
+        files: ["explicit.txt"],
+        diff: "diff --git a/explicit.txt b/explicit.txt\n+explicit change",
+        maxCandidates: 1,
+      },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: createNoIssueDeepReviewTaskAdapter(taskCalls),
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await runner.run("wfr_deep_review_explicit_context");
+
+    const prompts = taskCalls.map((call) => call.prompt).join("\n---\n");
+    expect(prompts).toContain("explicit.txt");
+    expect(prompts).toContain("+explicit change");
+    expect(prompts).not.toContain("Git snapshot");
+    expect(prompts).not.toContain("unrelated.txt");
+    expect(prompts).not.toContain("unrelated dirty");
+    const explicitRun = await runStore.getRun("wfr_deep_review_explicit_context");
+    expect(explicitRun.events.some((event) => event.type === "action")).toBe(false);
+  }, 10_000);
+
+  test("continues with diff context when status output is too large", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-status-fallback");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "tracked.txt"), "base\n", "utf-8");
+    await runGit(repoRoot, ["add", "tracked.txt"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+    await fs.writeFile(path.join(repoRoot, "tracked.txt"), "base\ndirty\n", "utf-8");
+    for (let index = 0; index < 1300; index += 1) {
+      await fs.writeFile(
+        path.join(repoRoot, `untracked-${String(index).padStart(4, "0")}-${"x".repeat(48)}.txt`),
+        "x",
+        "utf-8"
+      );
+    }
+
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_status_fallback",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { input: "current workspace changes", maxCandidates: 1 },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: createNoIssueDeepReviewTaskAdapter(taskCalls),
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await runner.run("wfr_deep_review_status_fallback");
+
+    const scopePrompt = taskCalls.find((call) => call.id === "scope-review-surface")?.prompt;
+    expect(scopePrompt).toContain("Git context warnings");
+    expect(scopePrompt).toContain("git.status");
+    expect(scopePrompt).toContain("Diff snapshot");
+    expect(scopePrompt).toContain("+dirty");
+  }, 10_000);
+
+  test("warns when explicit refs cannot be resolved", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-invalid-ref");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "tracked.txt"), "base\n", "utf-8");
+    await runGit(repoRoot, ["add", "tracked.txt"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_invalid_ref",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: {
+        input: "invalid ref review",
+        baseRef: "missing-base",
+        headRef: "HEAD",
+        maxCandidates: 1,
+      },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: createNoIssueDeepReviewTaskAdapter(taskCalls),
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await runner.run("wfr_deep_review_invalid_ref");
+
+    const scopePrompt = taskCalls.find((call) => call.id === "scope-review-surface")?.prompt;
+    expect(scopePrompt).toContain("Base ref: missing-base");
+    expect(scopePrompt).toContain("WARNING: Requested base/head refs could not be resolved");
   }, 10_000);
 });

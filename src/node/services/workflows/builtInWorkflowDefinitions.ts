@@ -223,19 +223,22 @@ function normalizeDeepResearchTopic(args) {
     name: "deep-review-workflow",
     description:
       "Coordinate adversarial review agents to find, verify, and synthesize code review findings.",
-    source: `export default function deepReviewWorkflow({ args, phase, log, agent, parallelAgents }) {
+    source: `export default function deepReviewWorkflow({ args, phase, log, agent, action, parallelAgents }) {
   const exploreAgentId = "explore";
   const reasoningAgentId = "exec";
   // Scope discovery stays on Explore; review judgment uses Exec for users with fast Explore defaults.
   const readOnlyReviewPrompt =
     "This is a read-only deep code review task. Do not edit files, create commits, apply patches, push branches, or open PRs. Inspect repository evidence only as needed and report findings.\\n\\n";
   const input = normalizeDeepReviewArgs(args);
+  const gitContext = shouldCollectGitReviewContext(input) ? collectGitReviewContext(action, input, log) : null;
+  applyGitContextToReviewInput(input, gitContext);
   const maxCandidates = input.maxCandidates;
 
   phase("scope", {
     target: input.target,
     fileCount: input.files.length,
     hasDiffSnapshot: input.diff.length > 0,
+    hasGitSnapshot: input.gitSnapshot.length > 0,
   });
   const scope = agent({
     id: "scope-review-surface",
@@ -362,6 +365,10 @@ function normalizeDeepReviewArgs(args) {
     diff: "",
     files: [],
     instructions: "",
+    gitSnapshot: "",
+    explicitDiff: false,
+    explicitFiles: false,
+    includeGitContext: false,
     maxCandidates: 12,
   };
 
@@ -385,7 +392,10 @@ function normalizeDeepReviewArgs(args) {
   if (typeof args.headRef === "string") normalized.headRef = args.headRef.trim();
   else if (typeof args.head === "string") normalized.headRef = args.head.trim();
 
-  if (typeof args.diff === "string") normalized.diff = args.diff;
+  if (typeof args.diff === "string" && args.diff.trim().length > 0) {
+    normalized.diff = args.diff;
+    normalized.explicitDiff = true;
+  }
   if (typeof args.instructions === "string") normalized.instructions = args.instructions.trim();
   else if (typeof args.notes === "string") normalized.instructions = args.notes.trim();
 
@@ -395,6 +405,11 @@ function normalizeDeepReviewArgs(args) {
     }).map(function (file) {
       return file.trim();
     });
+    normalized.explicitFiles = normalized.files.length > 0;
+  }
+
+  if (typeof args.includeGitContext === "boolean") {
+    normalized.includeGitContext = args.includeGitContext;
   }
 
   if (typeof args.maxCandidates === "number" && args.maxCandidates > 0) {
@@ -404,12 +419,302 @@ function normalizeDeepReviewArgs(args) {
   return normalized;
 }
 
+function shouldCollectGitReviewContext(input) {
+  return input.includeGitContext || (!input.explicitFiles && !input.explicitDiff);
+}
+
+function collectGitReviewContext(action, input, log) {
+  const gitInput = buildGitActionInput(input);
+  const failures = [];
+  const builtInOnly = true;
+  const status = tryGitAction(log, failures, "git.status", function () {
+    return action.git.status({
+      id: "git-status",
+      input: { includeIgnored: false },
+      builtInOnly,
+    }).output;
+  });
+  const changedFiles = tryGitAction(log, failures, "git.changedFiles", function () {
+    return action.git.changedFiles({
+      id: "git-changed-files",
+      input: gitInput,
+      builtInOnly,
+    }).output;
+  });
+  const diffStat = tryGitAction(log, failures, "git.diffStat", function () {
+    return action.git.diffStat({
+      id: "git-diff-stat",
+      input: gitInput,
+      builtInOnly,
+    }).output;
+  });
+  const diff = tryGitAction(log, failures, "git.diff", function () {
+    return action.git.diff({
+      id: "git-diff",
+      input: gitInput,
+      builtInOnly,
+    }).output;
+  });
+  const commits = tryGitAction(log, failures, "git.commitsBetween", function () {
+    const commitsInput = copyGitActionInput(gitInput);
+    commitsInput.limit = 20;
+    return action.git.commitsBetween({
+      id: "git-commits-between",
+      input: commitsInput,
+      builtInOnly,
+    }).output;
+  });
+  const context = {
+    status: isObject(status) ? status : null,
+    changedFiles: isObject(changedFiles) ? changedFiles : null,
+    diffStat: isObject(diffStat) ? diffStat : null,
+    diff: isObject(diff) ? diff : null,
+    commits: isObject(commits) ? commits : null,
+    failures: failures,
+    explicitRefs: Boolean(input.baseRef || input.headRef),
+  };
+  if (!hasAnyGitContext(context)) {
+    log("Git workflow actions unavailable; continuing with caller-provided review context", {
+      failures: failures,
+    });
+    return null;
+  }
+  const files = collectGitFiles(context);
+  log("Captured Git review context", {
+    branch: context.status ? context.status.branch : "unknown",
+    fileCount: files.length,
+    hasDiff:
+      context.diff != null &&
+      (hasText(context.diff.branch) || hasText(context.diff.staged) || hasText(context.diff.unstaged)),
+    failureCount: failures.length,
+  });
+  return context;
+}
+
+function tryGitAction(log, failures, name, fn) {
+  try {
+    return fn();
+  } catch (error) {
+    const failure = { action: name, error: formatError(error) };
+    failures.push(failure);
+    log("Git workflow action failed; continuing with partial review context", failure);
+    return null;
+  }
+}
+
+function hasAnyGitContext(gitContext) {
+  return Boolean(
+    gitContext.status ||
+      gitContext.changedFiles ||
+      gitContext.diffStat ||
+      gitContext.diff ||
+      gitContext.commits
+  );
+}
+
+function hasResolvedBranchContext(gitContext) {
+  return Boolean(
+    hasResolvedGitRefContext(gitContext.changedFiles) ||
+      hasResolvedGitRefContext(gitContext.diffStat) ||
+      hasResolvedGitRefContext(gitContext.diff) ||
+      hasResolvedGitRefContext(gitContext.commits)
+  );
+}
+
+function hasResolvedGitRefContext(value) {
+  return isObject(value) && hasText(value.base) && hasText(value.head) && hasText(value.mergeBase);
+}
+
+function isObject(value) {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function buildGitActionInput(input) {
+  const gitInput = {};
+  if (input.baseRef) gitInput.base = input.baseRef;
+  if (input.headRef) gitInput.head = input.headRef;
+  return gitInput;
+}
+
+function copyGitActionInput(input) {
+  const copy = {};
+  if (input.base) copy.base = input.base;
+  if (input.head) copy.head = input.head;
+  return copy;
+}
+
+function applyGitContextToReviewInput(input, gitContext) {
+  if (gitContext == null) return;
+  if ((input.explicitFiles || input.explicitDiff) && !input.includeGitContext) return;
+  if (!input.explicitFiles) {
+    const files = collectGitFiles(gitContext);
+    if (files.length > 0) input.files = files;
+  }
+  if (!input.explicitDiff && gitContext.diff != null) {
+    const diff = renderGitDiff(gitContext.diff);
+    if (diff.length > 0) input.diff = truncateText(diff, 60000);
+  }
+  input.gitSnapshot = truncateText(renderGitSnapshot(gitContext), 20000);
+}
+
+function collectGitFiles(gitContext) {
+  const files = [];
+  if (gitContext == null) return files;
+  if (gitContext.changedFiles != null) {
+    addFileEntries(files, gitContext.changedFiles.branch);
+    addFileEntries(files, gitContext.changedFiles.staged);
+    addFileEntries(files, gitContext.changedFiles.unstaged);
+    addFilePaths(files, gitContext.changedFiles.untracked);
+  }
+  if (gitContext.status != null) {
+    addFileEntries(files, gitContext.status.staged);
+    addFileEntries(files, gitContext.status.unstaged);
+    addFilePaths(files, gitContext.status.untracked);
+  }
+  return files;
+}
+
+function addFileEntries(files, entries) {
+  if (!Array.isArray(entries)) return;
+  for (const entry of entries) {
+    if (entry && typeof entry === "object") {
+      addFilePath(files, entry.path);
+      addFilePath(files, entry.oldPath);
+    }
+  }
+}
+
+function addFilePaths(files, paths) {
+  if (!Array.isArray(paths)) return;
+  for (const path of paths) {
+    addFilePath(files, path);
+  }
+}
+
+function addFilePath(files, path) {
+  if (typeof path !== "string") return;
+  const trimmed = path.trim();
+  if (trimmed.length === 0 || files.indexOf(trimmed) !== -1) return;
+  files.push(trimmed);
+}
+
+function renderGitSnapshot(gitContext) {
+  const sections = [];
+  if (gitContext.status != null) {
+    const status = gitContext.status;
+    sections.push(
+      "Repository status: branch " +
+        valueOrUnknown(status.branch) +
+        (status.upstream ? " tracking " + status.upstream : "") +
+        "; staged " +
+        arrayLength(status.staged) +
+        "; unstaged " +
+        arrayLength(status.unstaged) +
+        "; untracked " +
+        arrayLength(status.untracked)
+    );
+  }
+  if (gitContext.explicitRefs && !hasResolvedBranchContext(gitContext)) {
+    sections.push(
+      "WARNING: Requested base/head refs could not be resolved for automatic branch diff and commit capture; Git context may include only repository status or working-tree changes."
+    );
+  }
+  if (Array.isArray(gitContext.failures) && gitContext.failures.length > 0) {
+    sections.push(
+      "Git context warnings:\\n" +
+        gitContext.failures.map(function (failure) {
+          return "- " + valueOrUnknown(failure.action) + ": " + valueOrUnknown(failure.error);
+        }).join("\\n")
+    );
+  }
+  const files = collectGitFiles(gitContext);
+  if (files.length > 0) {
+    sections.push("Changed files from parent workspace Git snapshot: " + files.join(", "));
+  }
+  if (gitContext.commits != null && Array.isArray(gitContext.commits.commits)) {
+    const commits = gitContext.commits.commits;
+    if (commits.length > 0) {
+      sections.push(
+        "Commits since " +
+          valueOrUnknown(gitContext.commits.base) +
+          ":\\n" +
+          commits.map(function (commit) {
+            return "- " + valueOrUnknown(commit.shortHash) + " " + valueOrUnknown(commit.subject);
+          }).join("\\n")
+      );
+    }
+  }
+  if (gitContext.diffStat != null) {
+    const statSections = [];
+    if (hasText(gitContext.diffStat.branch)) statSections.push("Branch diff stat:\\n" + gitContext.diffStat.branch);
+    if (hasText(gitContext.diffStat.staged)) statSections.push("Staged diff stat:\\n" + gitContext.diffStat.staged);
+    if (hasText(gitContext.diffStat.unstaged)) statSections.push("Unstaged diff stat:\\n" + gitContext.diffStat.unstaged);
+    if (statSections.length > 0) sections.push(statSections.join("\\n\\n"));
+  }
+  if (gitContext.status != null && arrayLength(gitContext.status.untracked) > 0) {
+    sections.push(
+      "Untracked file contents are not included in the automatic diff snapshot; review agents only receive their paths unless the caller supplied args.diff."
+    );
+  }
+  if (gitContext.diff != null && isDiffTruncated(gitContext.diff)) {
+    sections.push("One or more automatic diff sections were truncated by workflow action output limits.");
+  }
+  return sections.join("\\n\\n");
+}
+
+function renderGitDiff(diff) {
+  const parts = [];
+  if (hasText(diff.branch)) {
+    parts.push("Branch diff (" + valueOrUnknown(diff.base) + ".." + valueOrUnknown(diff.head) + ")\\n" + diff.branch);
+  }
+  if (hasText(diff.staged)) {
+    parts.push("Staged diff\\n" + diff.staged);
+  }
+  if (hasText(diff.unstaged)) {
+    parts.push("Unstaged diff\\n" + diff.unstaged);
+  }
+  if (isDiffTruncated(diff)) {
+    parts.push("NOTE: one or more diff sections were truncated by workflow action output limits.");
+  }
+  return parts.join("\\n\\n");
+}
+
+function isDiffTruncated(diff) {
+  return Boolean(
+    diff &&
+      diff.truncated &&
+      (diff.truncated.branch || diff.truncated.staged || diff.truncated.unstaged)
+  );
+}
+
+function truncateText(text, maxLength) {
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength) + "\\n[truncated by deep-review-workflow after " + maxLength + " characters]";
+}
+
+function hasText(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function arrayLength(value) {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function valueOrUnknown(value) {
+  return typeof value === "string" && value.length > 0 ? value : "unknown";
+}
+
+function formatError(error) {
+  return error && typeof error.message === "string" ? error.message : String(error);
+}
+
 function renderReviewInput(input) {
   return [
     "Target: " + input.target,
     input.baseRef ? "Base ref: " + input.baseRef : "",
     input.headRef ? "Head ref: " + input.headRef : "",
     input.files.length > 0 ? "Files: " + input.files.join(", ") : "",
+    input.gitSnapshot ? "Git snapshot:\\n" + input.gitSnapshot : "",
     input.instructions ? "Reviewer instructions: " + input.instructions : "",
     input.diff ? "Diff snapshot:\\n~~~diff\\n" + input.diff + "\\n~~~" : "",
   ].filter(Boolean).join("\\n");

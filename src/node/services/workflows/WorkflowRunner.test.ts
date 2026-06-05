@@ -1472,6 +1472,7 @@ describe("WorkflowRunner", () => {
         const commits = action.git.commitsBetween({ id: "commits", input: { base: "main" } });
         const status = action.git.status({ id: "status" });
         const changed = action.git.changedFiles({ id: "changed", input: { base: "main" } });
+        const diff = action.git.diff({ id: "diff", input: { base: "main" } });
         const diffStat = action.git.diffStat({ id: "diff-stat", input: { base: "main" } });
         return {
           reportMarkdown: JSON.stringify({
@@ -1481,6 +1482,9 @@ describe("WorkflowRunner", () => {
             untracked: status.output.untracked,
             ignored: status.output.ignored,
             branchFiles: changed.output.branch.map((file) => file.path),
+            branchDiff: diff.output.branch,
+            unstagedDiff: diff.output.unstaged,
+            diffTruncated: diff.output.truncated,
             branchStat: diffStat.output.branch,
           }),
         };
@@ -1515,6 +1519,9 @@ describe("WorkflowRunner", () => {
       untracked: string[];
       ignored: string[];
       branchFiles: string[];
+      branchDiff: string;
+      unstagedDiff: string;
+      diffTruncated: { branch: boolean; staged: boolean; unstaged: boolean };
       branchStat: string;
     };
 
@@ -1525,6 +1532,9 @@ describe("WorkflowRunner", () => {
     expect(parsed.untracked).toContain("new.txt");
     expect(parsed.ignored).toContain("ignored.txt");
     expect(parsed.branchFiles).toContain("feature.txt");
+    expect(parsed.branchDiff).toContain("feature.txt");
+    expect(parsed.unstagedDiff).toContain("+dirty");
+    expect(parsed.diffTruncated).toEqual({ branch: false, staged: false, unstaged: false });
     expect(parsed.branchStat).toContain("feature.txt");
     const run = await store.getRun("wfr_built_in_git_actions");
     expect(run.events).toEqual(
@@ -1535,6 +1545,7 @@ describe("WorkflowRunner", () => {
           status: "completed",
         }),
         expect.objectContaining({ type: "action", name: "git.status", status: "completed" }),
+        expect.objectContaining({ type: "action", name: "git.diff", status: "completed" }),
         expect.objectContaining({ type: "action", name: "git.diffStat", status: "completed" }),
         expect.objectContaining({ type: "action", name: "git.changedFiles", status: "completed" }),
       ])
