@@ -575,7 +575,8 @@ export class WorkflowRunner {
     event: WorkflowRunEvent,
     options: AppendWorkflowRunEventOptions = {}
   ) {
-    return await this.runStore.appendEvent(runId, event, {
+    const { sequence: _storeAssignedSequence, ...eventDraft } = event;
+    return await this.runStore.appendNextEvent(runId, eventDraft, {
       ...options,
       expectedLeaseOwnerId: this.runnerId,
     });
@@ -1205,26 +1206,24 @@ export class WorkflowRunner {
         ...options.waitOptions,
         abortSignal: batchAbortController.signal,
       };
-      const pendingRuns = currentPending.map(async (step) => {
-        return await this.runOrResumeAgentStep(runId, sequence, {
-          spec:
-            step.attempt === 1
-              ? step.spec
-              : buildRetryAgentSpec(
-                  step.spec,
-                  step.attempt - 1,
-                  step.retryMessage ?? "previous attempt failed"
-                ),
-          inputHash: step.inputHash,
-          startedAt: step.startedAt,
-          taskId: step.taskId,
-          leaseGuard: options.leaseGuard,
-          waitOptions: batchWaitOptions,
-        });
-      });
-      const guardedRuns = pendingRuns.map(async (pendingRun) => {
+      const guardedRuns = currentPending.map(async (step, pendingIndex) => {
         try {
-          return await pendingRun;
+          const rawResult = await this.runOrResumeAgentStep(runId, sequence, {
+            spec:
+              step.attempt === 1
+                ? step.spec
+                : buildRetryAgentSpec(
+                    step.spec,
+                    step.attempt - 1,
+                    step.retryMessage ?? "previous attempt failed"
+                  ),
+            inputHash: step.inputHash,
+            startedAt: step.startedAt,
+            taskId: step.taskId,
+            leaseGuard: options.leaseGuard,
+            waitOptions: batchWaitOptions,
+          });
+          return { pendingIndex, step, rawResult };
         } catch (error) {
           if (isForegroundWaitBackgroundedError(error)) {
             foregroundBackgrounded = true;
@@ -1232,44 +1231,55 @@ export class WorkflowRunner {
           } else if (!foregroundBackgrounded) {
             await interruptRemainingTasks();
           }
-          throw error;
+          return { pendingIndex, step, error };
         }
       });
-      let rawResults: WorkflowAgentResult[];
+      const unsettledRuns = new Map(guardedRuns.map((run, index) => [index, run]));
       try {
-        rawResults = await Promise.all(guardedRuns);
-      } catch (error) {
-        await Promise.allSettled(guardedRuns);
-        if (foregroundBackgrounded) {
-          throw createForegroundWaitBackgroundedError();
+        while (unsettledRuns.size > 0) {
+          const settled = await Promise.race(unsettledRuns.values());
+          unsettledRuns.delete(settled.pendingIndex);
+          if ("error" in settled) {
+            await Promise.allSettled(unsettledRuns.values());
+            if (foregroundBackgrounded) {
+              throw createForegroundWaitBackgroundedError();
+            }
+            throw settled.error;
+          }
+          try {
+            results[settled.step.index] = await this.recordAgentResult(runId, sequence, {
+              ...settled.step,
+              leaseGuard: options.leaseGuard,
+              rawResult: settled.rawResult,
+            });
+          } catch (error) {
+            if (
+              !isRetryableAgentOutputError(error) ||
+              settled.step.attempt >= WORKFLOW_AGENT_MAX_ATTEMPTS
+            ) {
+              await interruptRemainingTasks();
+              await Promise.allSettled(unsettledRuns.values());
+              throw error;
+            }
+            options.leaseGuard.throwIfLost();
+            await this.recordAgentRetry(
+              runId,
+              sequence,
+              settled.step.spec.id,
+              settled.step.attempt,
+              error
+            );
+            pending.push({
+              ...settled.step,
+              startedAt: this.clock.nowIso(),
+              taskId: undefined,
+              attempt: settled.step.attempt + 1,
+              retryMessage: getErrorMessage(error),
+            });
+          }
         }
-        throw error;
       } finally {
         upstreamAbortSignal?.removeEventListener("abort", abortBatch);
-      }
-      for (const [pendingIndex, rawResult] of rawResults.entries()) {
-        const step = currentPending[pendingIndex];
-        assert(step != null, "WorkflowRunner.runAgentStepsInParallel: missing pending step");
-        try {
-          results[step.index] = await this.recordAgentResult(runId, sequence, {
-            ...step,
-            leaseGuard: options.leaseGuard,
-            rawResult,
-          });
-        } catch (error) {
-          if (!isRetryableAgentOutputError(error) || step.attempt >= WORKFLOW_AGENT_MAX_ATTEMPTS) {
-            throw error;
-          }
-          options.leaseGuard.throwIfLost();
-          await this.recordAgentRetry(runId, sequence, step.spec.id, step.attempt, error);
-          pending.push({
-            ...step,
-            startedAt: this.clock.nowIso(),
-            taskId: undefined,
-            attempt: step.attempt + 1,
-            retryMessage: getErrorMessage(error),
-          });
-        }
       }
     }
     return results;
@@ -1464,25 +1474,17 @@ export class WorkflowRunner {
     assert(task.status.length > 0, "WorkflowRunner: task event status is required");
 
     await using _lock = await this.taskEventMutex.acquire();
-    const run = await this.runStore.getRun(runId);
-    const alreadyRecorded = run.events.some(
-      (event) =>
-        event.type === "task" &&
-        event.status === task.status &&
-        event.stepId === task.stepId &&
-        event.taskId === task.taskId
+    sequence.next();
+    await this.runStore.appendTaskEventIfMissing(
+      runId,
+      {
+        stepId: task.stepId,
+        taskId: task.taskId,
+        status: task.status,
+        at: this.clock.nowIso(),
+      },
+      { expectedLeaseOwnerId: this.runnerId }
     );
-    if (alreadyRecorded) {
-      return;
-    }
-    await this.appendEvent(runId, {
-      sequence: sequence.next(),
-      type: "task",
-      at: this.clock.nowIso(),
-      stepId: task.stepId,
-      taskId: task.taskId,
-      status: task.status,
-    });
   }
 
   private async recordAgentResult(
@@ -1517,23 +1519,20 @@ export class WorkflowRunner {
     }
     step.leaseGuard.throwIfLost();
     const taskId = this.getTaskIdFromAgentResult(step.rawResult, step.spec.id);
-    await this.recordStepCompleted(runId, {
-      stepId: step.spec.id,
-      inputHash: step.inputHash,
-      taskId,
-      result,
-      startedAt: step.startedAt,
-      completedAt: this.clock.nowIso(),
-    });
-    step.leaseGuard.throwIfLost();
-    await this.appendEvent(runId, {
-      sequence: sequence.next(),
-      type: "task",
-      at: this.clock.nowIso(),
-      stepId: step.spec.id,
-      taskId,
-      status: "completed",
-    });
+    const completedAt = this.clock.nowIso();
+    sequence.next();
+    await this.runStore.recordStepCompletedAndAppendTaskEvent(
+      runId,
+      {
+        stepId: step.spec.id,
+        inputHash: step.inputHash,
+        taskId,
+        result,
+        startedAt: step.startedAt,
+        completedAt,
+      },
+      { expectedLeaseOwnerId: this.runnerId }
+    );
     return result;
   }
 

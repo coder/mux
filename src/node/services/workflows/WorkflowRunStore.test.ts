@@ -122,6 +122,62 @@ describe("WorkflowRunStore", () => {
     ).rejects.toThrow(/strictly ordered/);
   });
 
+  test("assigns unique event sequences when appending next events concurrently", async () => {
+    using tmp = new DisposableTempDir("workflow-runs-append-next");
+    const store = await createStore(tmp.path);
+
+    await Promise.all([
+      store.appendNextEvent("wfr_123", {
+        type: "log",
+        at: "2026-05-29T00:00:01.000Z",
+        message: "first",
+      }),
+      store.appendNextEvent("wfr_123", {
+        type: "log",
+        at: "2026-05-29T00:00:02.000Z",
+        message: "second",
+      }),
+      store.appendNextEvent("wfr_123", {
+        type: "log",
+        at: "2026-05-29T00:00:03.000Z",
+        message: "third",
+      }),
+    ]);
+
+    const sequences = (await store.getRun("wfr_123")).events.map((event) => event.sequence);
+
+    expect(sequences).toEqual([1, 2, 3]);
+  });
+
+  test("records completed steps and task events in the same run snapshot", async () => {
+    using tmp = new DisposableTempDir("workflow-runs-step-task-snapshot");
+    const store = await createStore(tmp.path);
+
+    await store.recordStepCompletedAndAppendTaskEvent("wfr_123", {
+      stepId: "source-a",
+      inputHash: "hash:source-a",
+      taskId: "task_source-a",
+      result: { reportMarkdown: "source-a" },
+      startedAt: "2026-05-29T00:00:01.000Z",
+      completedAt: "2026-05-29T00:00:02.000Z",
+    });
+    const run = await store.getRun("wfr_123");
+
+    expect(run.steps).toHaveLength(1);
+    expect(run.steps[0]).toMatchObject({
+      stepId: "source-a",
+      taskId: "task_source-a",
+      status: "completed",
+    });
+    expect(run.events).toHaveLength(1);
+    expect(run.events[0]).toMatchObject({
+      type: "task",
+      stepId: "source-a",
+      taskId: "task_source-a",
+      status: "completed",
+    });
+  });
+
   test("preserves interrupted runs unless explicit resume is allowed", async () => {
     using tmp = new DisposableTempDir("workflow-runs");
     const store = await createStore(tmp.path);
