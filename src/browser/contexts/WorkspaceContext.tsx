@@ -73,6 +73,10 @@ import type { APIClient } from "@/browser/contexts/API";
 import { getErrorMessage } from "@/common/utils/errors";
 import type { WorkspaceCreationScope } from "@/common/utils/subProjects";
 
+// Single source of truth for the guard used when the IPC API client is unavailable, so the
+// message can't drift between the workspace-context operations that surface it.
+const API_NOT_CONNECTED_ERROR = "API not connected";
+
 /**
  * One-time best-effort migration: if the backend doesn't have model preferences yet,
  * persist explicit localStorage values so future port/origin changes keep them.
@@ -1290,7 +1294,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       trunkBranch: string,
       runtimeConfig?: RuntimeConfig
     ) => {
-      if (!api) throw new Error("API not connected");
+      if (!api) throw new Error(API_NOT_CONNECTED_ERROR);
       console.assert(
         typeof trunkBranch === "string" && trunkBranch.trim().length > 0,
         "Expected trunk branch to be provided when creating a workspace"
@@ -1333,7 +1337,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       workspaceId: string,
       options?: { force?: boolean }
     ): Promise<{ success: boolean; error?: string }> => {
-      if (!api) return { success: false, error: "API not connected" };
+      if (!api) return { success: false, error: API_NOT_CONNECTED_ERROR };
 
       // Capture state before the async operation.
       // We check currentWorkspaceId (from URL) rather than selectedWorkspace
@@ -1403,7 +1407,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       workspaceId: string,
       newTitle: string
     ): Promise<{ success: boolean; error?: string }> => {
-      if (!api) return { success: false, error: "API not connected" };
+      if (!api) return { success: false, error: API_NOT_CONNECTED_ERROR };
       try {
         const result = await api.workspace.updateTitle({ workspaceId, title: newTitle });
         if (result.success) {
@@ -1428,7 +1432,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     async (
       workspaceId: string
     ): Promise<{ success: boolean; error?: string; data?: ArchivePreflightResult }> => {
-      if (!api) return { success: false, error: "API not connected" };
+      if (!api) return { success: false, error: API_NOT_CONNECTED_ERROR };
 
       try {
         const result = await api.workspace.preflightArchive({ workspaceId });
@@ -1448,7 +1452,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       workspaceId: string,
       options?: { acknowledgedUntrackedPaths?: string[] }
     ): Promise<{ success: boolean; error?: string; data?: ArchiveWorkspaceResult }> => {
-      if (!api) return { success: false, error: "API not connected" };
+      if (!api) return { success: false, error: API_NOT_CONNECTED_ERROR };
 
       try {
         const result = await api.workspace.archive({
@@ -1500,7 +1504,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   const unarchiveWorkspace = useCallback(
     async (workspaceId: string): Promise<{ success: boolean; error?: string }> => {
-      if (!api) return { success: false, error: "API not connected" };
+      if (!api) return { success: false, error: API_NOT_CONNECTED_ERROR };
       try {
         const result = await api.workspace.unarchive({ workspaceId });
         if (result.success) {
