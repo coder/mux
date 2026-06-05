@@ -67,7 +67,7 @@ import { isAbortError } from "@/browser/utils/isAbortError";
 import { findAdjacentWorkspaceId } from "@/browser/utils/ui/workspaceDomNav";
 import { useRouter } from "@/browser/contexts/RouterContext";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
-import { normalizeAgentId } from "@/common/utils/agentIds";
+import { normalizeAgentId, resolvePersistedAgentId } from "@/common/utils/agentIds";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { APIClient } from "@/browser/contexts/API";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -177,12 +177,8 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
 
   const workspaceId = metadata.id;
 
-  const metadataAgentId = metadata.agentId ?? metadata.agentType;
-  if (
-    shouldSeedWorkspaceAgentIdFromBackend(metadata) &&
-    typeof metadataAgentId === "string" &&
-    metadataAgentId.trim().length > 0
-  ) {
+  const metadataAgentId = resolvePersistedAgentId(metadata, "");
+  if (shouldSeedWorkspaceAgentIdFromBackend(metadata) && metadataAgentId.length > 0) {
     const key = getAgentIdKey(workspaceId);
     const normalized = normalizeAgentId(metadataAgentId);
     const existing = readPersistedState<string | undefined>(key, undefined);

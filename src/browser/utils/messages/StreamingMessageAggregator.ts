@@ -236,7 +236,10 @@ interface StreamingContext {
   /** Map of tool call start times for in-progress tool calls (backend timestamps) */
   pendingToolStarts: Map<string, number>;
 
-  /** Mode (plan/exec) */
+  /** Agent id active for this stream. */
+  agentId?: string;
+
+  /** Legacy base mode (plan/exec/compact). */
   mode?: string;
 
   /** Effective thinking level after model policy clamping */
@@ -1988,6 +1991,7 @@ export class StreamingMessageAggregator {
       serverFirstTokenTime: null,
       toolExecutionMs: 0,
       pendingToolStarts: new Map(),
+      agentId: data.agentId,
       mode: data.mode,
       thinkingLevel: data.thinkingLevel,
     };
@@ -2007,6 +2011,8 @@ export class StreamingMessageAggregator {
         );
         context.clockOffsetMs = Date.now() - context.lastServerTimestamp;
 
+        context.agentId = data.agentId ?? existingContext.agentId;
+
         // Preserve in-flight timing context so reconnect doesn't reset active tool timing stats.
         context.serverFirstTokenTime = existingContext.serverFirstTokenTime;
         context.toolExecutionMs = existingContext.toolExecutionMs;
@@ -2018,6 +2024,9 @@ export class StreamingMessageAggregator {
         existingMessage.metadata.model = data.model;
         existingMessage.metadata.routedThroughGateway = data.routedThroughGateway;
         existingMessage.metadata.routeProvider = routeProvider;
+        if (data.agentId != null) {
+          existingMessage.metadata.agentId = data.agentId;
+        }
         existingMessage.metadata.mode = data.mode;
         existingMessage.metadata.thinkingLevel = data.thinkingLevel;
       }
@@ -2046,6 +2055,7 @@ export class StreamingMessageAggregator {
       model: data.model,
       routedThroughGateway: data.routedThroughGateway,
       routeProvider,
+      agentId: data.agentId,
       mode: data.mode,
       thinkingLevel: data.thinkingLevel,
       ...(carriedMuxMetadata !== undefined ? { muxMetadata: carriedMuxMetadata } : {}),

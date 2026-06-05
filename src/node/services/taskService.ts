@@ -20,7 +20,10 @@ import {
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
-import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import {
+  createRuntimeContextForWorkspace,
+  createRuntimeForWorkspace,
+} from "@/node/runtime/runtimeHelpers";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, Runtime } from "@/node/runtime/Runtime";
@@ -57,7 +60,11 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { AgentIdSchema } from "@/common/orpc/schemas";
-import { normalizeAgentId } from "@/common/utils/agentIds";
+import {
+  normalizeAgentId,
+  resolvePersistedAgentId,
+  resolvePersistedAgentIdCandidates,
+} from "@/common/utils/agentIds";
 import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService";
 import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
@@ -312,6 +319,14 @@ const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 // Task-recovery paths must stay deterministic and editing-capable even when
 // workspace/default agent preferences evolve (e.g., auto router defaults).
 const TASK_RECOVERY_FALLBACK_AGENT_ID = "exec";
+
+function resolveTaskAgentIdForResume(workspace: {
+  agentId?: string;
+  agentType?: string;
+  parentWorkspaceId?: string | null;
+}): string {
+  return resolvePersistedAgentId(workspace, TASK_RECOVERY_FALLBACK_AGENT_ID);
+}
 
 const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
 
@@ -1045,57 +1060,98 @@ export class TaskService {
     projectPath: string;
     workspace: Pick<
       WorkspaceConfigEntry,
-      "id" | "name" | "path" | "runtimeConfig" | "agentId" | "agentType"
+      "id" | "name" | "path" | "runtimeConfig" | "agentId" | "agentType" | "parentWorkspaceId"
     >;
   }): Promise<boolean> {
     assert(entry.projectPath.length > 0, "isPlanLikeTaskWorkspace: projectPath must be non-empty");
 
-    const rawAgentId = coerceNonEmptyString(entry.workspace.agentId ?? entry.workspace.agentType);
-    if (!rawAgentId) {
+    const agentIdCandidates = resolvePersistedAgentIdCandidates(entry.workspace);
+    if (agentIdCandidates.length === 0) {
       return false;
-    }
-
-    const normalizedAgentId = rawAgentId.trim().toLowerCase();
-    const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
-    if (!parsedAgentId.success) {
-      return normalizedAgentId === "plan";
     }
 
     const workspacePath = coerceNonEmptyString(entry.workspace.path);
     const workspaceName = coerceNonEmptyString(entry.workspace.name) ?? entry.workspace.id;
     const runtimeConfig = entry.workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG;
     if (!workspacePath || !workspaceName) {
-      return parsedAgentId.data === "plan";
+      return agentIdCandidates.includes("plan");
     }
 
-    try {
-      const runtime = createRuntimeForWorkspace({
-        runtimeConfig,
-        projectPath: entry.projectPath,
-        name: workspaceName,
-      });
-      const agentDefinition = await readAgentDefinition(runtime, workspacePath, parsedAgentId.data);
-      const chain = await resolveAgentInheritanceChain({
-        runtime,
-        workspacePath,
-        agentId: agentDefinition.id,
-        agentDefinition,
-        workspaceId: entry.workspace.id ?? workspaceName,
-      });
+    const cfg = this.config.loadConfigOrDefault();
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig,
+      projectPath: entry.projectPath,
+      name: workspaceName,
+    });
+    const agentDiscoveryCandidates: Array<{ runtime: Runtime; workspacePath: string }> = [
+      { runtime, workspacePath },
+    ];
 
-      if (agentDefinition.id === "compact") {
-        return false;
+    const parentEntry = entry.workspace.parentWorkspaceId
+      ? findWorkspaceEntry(cfg, entry.workspace.parentWorkspaceId)
+      : null;
+    const parentWorkspaceName = coerceNonEmptyString(parentEntry?.workspace.name);
+    if (parentEntry != null && parentWorkspaceName != null) {
+      try {
+        agentDiscoveryCandidates.push(
+          createRuntimeContextForWorkspace({
+            runtimeConfig: parentEntry.workspace.runtimeConfig ?? runtimeConfig,
+            projectPath: parentEntry.projectPath,
+            name: parentWorkspaceName,
+            namedWorkspacePath: coerceNonEmptyString(parentEntry.workspace.path),
+          })
+        );
+      } catch (error: unknown) {
+        log.debug("Failed to build parent task agent-discovery runtime", {
+          workspaceId: entry.workspace.id,
+          parentWorkspaceId: entry.workspace.parentWorkspaceId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    for (const agentId of agentIdCandidates) {
+      let fallbackChain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
+      let fallbackAgentId: string | undefined;
+      for (const discovery of agentDiscoveryCandidates) {
+        try {
+          const agentDefinition = await readAgentDefinition(
+            discovery.runtime,
+            discovery.workspacePath,
+            agentId
+          );
+          const chain = await resolveAgentInheritanceChain({
+            runtime: discovery.runtime,
+            workspacePath: discovery.workspacePath,
+            agentId: agentDefinition.id,
+            agentDefinition,
+            workspaceId: entry.workspace.id ?? workspaceName,
+          });
+
+          if (agentDefinition.scope === "project") {
+            return agentDefinition.id === "compact" ? false : isPlanLikeInResolvedChain(chain);
+          }
+          fallbackChain ??= chain;
+          fallbackAgentId ??= agentDefinition.id;
+        } catch (error: unknown) {
+          log.debug("Failed to resolve task agent mode from discovery path", {
+            workspaceId: entry.workspace.id,
+            agentId,
+            agentDiscoveryPath: discovery.workspacePath,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
 
-      return isPlanLikeInResolvedChain(chain);
-    } catch (error: unknown) {
-      log.debug("Failed to resolve task agent mode; falling back to agentId check", {
-        workspaceId: entry.workspace.id,
-        agentId: parsedAgentId.data,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return parsedAgentId.data === "plan";
+      if (fallbackChain != null) {
+        if (fallbackAgentId === "compact") {
+          return false;
+        }
+        return isPlanLikeInResolvedChain(fallbackChain);
+      }
     }
+
+    return agentIdCandidates.includes("plan");
   }
 
   private async emitWorkspaceMetadata(workspaceId: string): Promise<void> {
@@ -1223,7 +1279,7 @@ export class TaskService {
       });
 
       const model = task.taskModelString ?? defaultModel;
-      const agentId = task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
+      const agentId = resolveTaskAgentIdForResume(task);
       log.info("[startup] Resuming running task", {
         taskId: task.id,
         taskName: task.name,
@@ -1385,12 +1441,11 @@ export class TaskService {
         ? appendSubagentFileReportInstructions(basePrompt, args.workflowTask)
         : basePrompt;
 
-    const agentIdRaw = coerceNonEmptyString(args.agentId ?? args.agentType);
-    if (!agentIdRaw) {
+    const normalizedAgentId = normalizeAgentId(args.agentId ?? args.agentType, "");
+    if (!normalizedAgentId) {
       return Err("Task.create: agentId is required");
     }
 
-    const normalizedAgentId = normalizeAgentId(agentIdRaw, "");
     const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
     if (!parsedAgentId.success) {
       return Err(`Task.create: invalid agentId (${normalizedAgentId})`);
@@ -3414,32 +3469,69 @@ export class TaskService {
           this.opResolver
         );
         let skipInitHook = false;
-        const agentIdRaw = coerceNonEmptyString(task.agentId ?? task.agentType);
-        if (agentIdRaw) {
-          const parsedAgentId = AgentIdSchema.safeParse(normalizeAgentId(agentIdRaw, ""));
-          if (parsedAgentId.success) {
-            const isInPlace = taskEntry.projectPath === parentWorkspaceName;
-            const parentWorkspacePath =
-              coerceNonEmptyString(parentEntry.workspace.path) ??
-              (isInPlace
-                ? taskEntry.projectPath
-                : runtime.getWorkspacePath(taskEntry.projectPath, parentWorkspaceName));
+        const agentIdCandidates = resolvePersistedAgentIdCandidates(task);
+        if (agentIdCandidates.length > 0) {
+          const discoveryContexts: Array<{ runtime: Runtime; workspacePath: string }> = [
+            { runtime: runtimeForTaskWorkspace, workspacePath },
+          ];
+          try {
+            discoveryContexts.push(
+              createRuntimeContextForWorkspace({
+                runtimeConfig: parentEntry.workspace.runtimeConfig ?? parentRuntimeConfig,
+                projectPath: parentEntry.projectPath,
+                name: parentWorkspaceName,
+                namedWorkspacePath: coerceNonEmptyString(parentEntry.workspace.path),
+              })
+            );
+          } catch (error: unknown) {
+            log.debug("Queued task: failed to build parent agent-discovery runtime", {
+              taskId,
+              parentWorkspaceId: parentId,
+              error: getErrorMessage(error),
+            });
+          }
 
-            try {
-              const frontmatter = await resolveAgentFrontmatter(
-                runtime,
-                parentWorkspacePath,
-                parsedAgentId.data
-              );
-              skipInitHook = frontmatter.subagent?.skip_init_hook === true;
-            } catch (error: unknown) {
-              log.debug("Queued task: failed to read agent definition for skip_init_hook", {
-                taskId,
-                agentId: parsedAgentId.data,
-                error: getErrorMessage(error),
-              });
+          let resolvedSkipInitHook: boolean | undefined;
+          for (const agentId of agentIdCandidates) {
+            let fallbackSkipInitHook: boolean | undefined;
+            for (const discovery of discoveryContexts) {
+              try {
+                const definition = await readAgentDefinition(
+                  discovery.runtime,
+                  discovery.workspacePath,
+                  agentId
+                );
+                const frontmatter = await resolveAgentFrontmatter(
+                  discovery.runtime,
+                  discovery.workspacePath,
+                  definition.id,
+                  {
+                    skipScopesAbove: getSkipScopesAboveForKnownScope(definition.scope),
+                  }
+                );
+                const candidateSkipInitHook = frontmatter.subagent?.skip_init_hook === true;
+                if (definition.scope === "project") {
+                  resolvedSkipInitHook = candidateSkipInitHook;
+                  break;
+                }
+                fallbackSkipInitHook ??= candidateSkipInitHook;
+              } catch (error: unknown) {
+                log.debug("Queued task: failed to read agent definition for skip_init_hook", {
+                  taskId,
+                  agentId,
+                  agentDiscoveryPath: discovery.workspacePath,
+                  error: getErrorMessage(error),
+                });
+              }
+            }
+
+            resolvedSkipInitHook ??= fallbackSkipInitHook;
+            if (resolvedSkipInitHook != null) {
+              break;
             }
           }
+
+          skipInitHook = resolvedSkipInitHook ?? false;
         }
 
         runBackgroundInit(
@@ -3474,7 +3566,7 @@ export class TaskService {
           queuedPrompt,
           {
             model,
-            agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
+            agentId: resolveTaskAgentIdForResume(task),
             thinkingLevel: task.taskThinkingLevel,
             experiments: task.taskExperiments,
           },
@@ -3497,7 +3589,7 @@ export class TaskService {
           taskId,
           {
             model,
-            agentId: task.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID,
+            agentId: resolveTaskAgentIdForResume(task),
             thinkingLevel: task.taskThinkingLevel,
             experiments: task.taskExperiments,
           },
@@ -3707,7 +3799,7 @@ export class TaskService {
     const isPlanLike = await this.isPlanLikeTaskWorkspace(entry);
     const completionToolName = isPlanLike ? "propose_plan" : "agent_report";
     const model = entry.workspace.taskModelString ?? defaultModel;
-    const agentId = entry.workspace.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
+    const agentId = resolveTaskAgentIdForResume(entry.workspace);
     const startedAt = Date.now();
     const sendResult = await this.workspaceService.sendMessage(
       workspaceId,
@@ -4448,9 +4540,7 @@ export class TaskService {
           continue;
         }
 
-        const workspaceAgentId = coerceNonEmptyString(
-          workspace.agentId ?? workspace.agentType
-        )?.toLowerCase();
+        const workspaceAgentId = resolvePersistedAgentId(workspace, "");
         if (requestedAgentId && workspaceAgentId && workspaceAgentId !== requestedAgentId) {
           continue;
         }

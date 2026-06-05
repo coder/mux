@@ -425,6 +425,67 @@ describe("AgentSession startup auto-retry recovery", () => {
     session.dispose();
   });
 
+  test("startup auto-retry prefers child workspace agent settings over stale retry metadata", async () => {
+    const workspaceId = "startup-retry-child-stale-agent";
+    const workspaceMetadata: WorkspaceMetadata = {
+      id: workspaceId,
+      name: workspaceId,
+      projectName: "project",
+      projectPath: "/tmp/project",
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+      parentWorkspaceId: "parent-workspace",
+      agentId: "exec",
+      agentType: "explore",
+      aiSettingsByAgent: {
+        exec: { model: "openai:gpt-5.5", thinkingLevel: "high" },
+        explore: { model: "openai:gpt-5.5-low", thinkingLevel: "low" },
+      },
+    };
+    const { session, historyService, cleanup } = await createAgentSessionHarness({
+      workspaceId,
+      aiServiceOverrides: {
+        getWorkspaceMetadata: mock(() => Promise.resolve(Ok(workspaceMetadata))),
+      },
+    });
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Interrupted child task turn", {
+        timestamp: Date.now(),
+        retrySendOptions: {
+          model: "openai:gpt-5.5",
+          agentId: "exec",
+          thinkingLevel: "high",
+        },
+      })
+    );
+    expect(appendResult.success).toBe(true);
+
+    session.ensureStartupAutoRetryCheck();
+
+    const startupCheckPromise = (
+      session as unknown as { startupAutoRetryCheckPromise: Promise<void> | null }
+    ).startupAutoRetryCheckPromise;
+    await startupCheckPromise;
+
+    const retryOptions = (
+      session as unknown as {
+        lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
+      }
+    ).lastAutoRetryResumeRequest;
+    expect(retryOptions).toBeDefined();
+    if (!retryOptions) {
+      throw new Error("Expected startup retry options");
+    }
+
+    expect(retryOptions.options.agentId).toBe("explore");
+    expect(retryOptions.options.model).toBe("openai:gpt-5.5-low");
+    expect(retryOptions.options.thinkingLevel).toBe("low");
+
+    session.dispose();
+  });
+
   test("replays pending auto-retry schedule during reconnect catch-up", async () => {
     const workspaceId = "startup-retry-replay-snapshot";
     const { session, historyService, cleanup } = await createSessionBundle(workspaceId);

@@ -1,8 +1,18 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
+
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+
+let workspaceContextMock: { workspaceMetadata: Map<string, FrontendWorkspaceMetadata> } | null =
+  null;
+
+void mock.module("@/browser/contexts/WorkspaceContext", () => ({
+  useOptionalWorkspaceContext: () => workspaceContextMock,
+  toWorkspaceSelection: (workspace: FrontendWorkspaceMetadata) => workspace,
+}));
 
 void mock.module("./SubagentTranscriptDialog", () => ({
   SubagentTranscriptDialog: () => null,
@@ -61,6 +71,7 @@ describe("TaskAwaitToolCall", () => {
   });
 
   afterEach(() => {
+    workspaceContextMock = null;
     cleanup();
     mock.restore();
     globalThis.window = originalWindow;
@@ -77,5 +88,34 @@ describe("TaskAwaitToolCall", () => {
     expect(timer.dataset.startedAt).toBe(String(startedAt));
     expect(timer.dataset.prefix).toBe("elapsed ");
     expect(timer.dataset.separator).toBe("");
+  });
+
+  test("uses valid legacy agentType for task_await rows when agentId is invalid", () => {
+    workspaceContextMock = {
+      workspaceMetadata: new Map([
+        [
+          "task-1",
+          {
+            id: "task-1",
+            name: "agent_explore_task",
+            projectName: "project",
+            projectPath: "/project",
+            runtimeConfig: { type: "local" },
+            namedWorkspacePath: "/project/task",
+            parentWorkspaceId: "parent-1",
+            agentId: "???",
+            agentType: "explore",
+            taskStatus: "running",
+          },
+        ],
+      ]),
+    };
+
+    const view = renderTaskAwaitToolCall();
+
+    fireEvent.click(view.getByText("task_await"));
+
+    expect(view.getByText("explore")).toBeDefined();
+    expect(view.queryByText("???")).toBeNull();
   });
 });

@@ -576,25 +576,42 @@ describe("TaskService", () => {
     if (!queued.success) return;
     expect(queued.data.status).toBe("queued");
 
-    // Free the slot by marking the first task as reported.
+    // Free the slot by marking the first task as reported. Also simulate a legacy queued
+    // task that only has agentType so dequeue preserves Explore instead of falling back to Exec.
     await config.editConfig((cfg) => {
       for (const [_project, project] of cfg.projects) {
         const ws = project.workspaces.find((w) => w.id === running.data.taskId);
         if (ws) {
           ws.taskStatus = "reported";
         }
+        const queuedWs = project.workspaces.find((w) => w.id === queued.data.taskId);
+        if (queuedWs) {
+          queuedWs.agentId = "";
+        }
       }
       return cfg;
     });
 
-    await taskService.initialize();
-
-    expect(sendMessage).toHaveBeenCalledWith(
-      queued.data.taskId,
-      "task 2",
-      expect.anything(),
-      expect.objectContaining({ allowQueuedAgentTask: true })
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
     );
+    try {
+      await taskService.initialize();
+
+      expect(sendMessage).toHaveBeenCalledWith(
+        queued.data.taskId,
+        "task 2",
+        expect.objectContaining({ agentId: "explore" }),
+        expect.objectContaining({ allowQueuedAgentTask: true })
+      );
+      expect(runBackgroundInitSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ skipInitHook: true }),
+        queued.data.taskId
+      );
+    } finally {
+      runBackgroundInitSpy.mockRestore();
+    }
 
     const cfg = config.loadConfigOrDefault();
     const started = Array.from(cfg.projects.values())
@@ -4850,7 +4867,7 @@ describe("TaskService", () => {
     );
   });
 
-  test("initialize uses propose_plan reminders for plan-inheriting awaiting_report tasks", async () => {
+  test("initialize uses legacy agentType when modern agentId is unavailable for awaiting_report tasks", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -4858,9 +4875,10 @@ describe("TaskService", () => {
     const childId = "child-custom-plan-222";
     const customAgentId = "custom_plan_runner";
     const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const parentWorkspacePath = path.join(projectPath, "parent");
     const childWorkspacePath = path.join(projectPath, "child-custom-plan");
 
-    const customAgentDir = path.join(childWorkspacePath, ".mux", "agents");
+    const customAgentDir = path.join(parentWorkspacePath, ".mux", "agents");
     await fsPromises.mkdir(customAgentDir, { recursive: true });
     await fsPromises.writeFile(
       path.join(customAgentDir, `${customAgentId}.md`),
@@ -4881,7 +4899,7 @@ describe("TaskService", () => {
       projectPath,
       [
         {
-          path: path.join(projectPath, "parent"),
+          path: parentWorkspacePath,
           id: parentId,
           name: "parent",
           runtimeConfig,
@@ -4891,8 +4909,73 @@ describe("TaskService", () => {
           id: childId,
           name: "agent_custom_plan_child",
           parentWorkspaceId: parentId,
-          agentId: customAgentId,
+          agentId: "missing-agent",
           agentType: customAgentId,
+          taskStatus: "awaiting_report",
+          runtimeConfig,
+        },
+      ],
+      testTaskSettings(1, 3)
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.initialize();
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("awaiting its final propose_plan"),
+      expect.objectContaining({
+        toolPolicy: [{ regex_match: "^propose_plan$", action: "require" }],
+      }),
+      expect.objectContaining({ synthetic: true })
+    );
+  });
+
+  test("initialize honors child project agent overrides before parent built-in fallback", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo-child-override");
+    const parentId = "parent-child-override-111";
+    const childId = "child-exec-override-222";
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const parentWorkspacePath = path.join(projectPath, "parent");
+    const childWorkspacePath = path.join(projectPath, "child-exec-override");
+
+    const childAgentDir = path.join(childWorkspacePath, ".mux", "agents");
+    await fsPromises.mkdir(childAgentDir, { recursive: true });
+    await fsPromises.writeFile(
+      path.join(childAgentDir, "exec.md"),
+      [
+        "---",
+        "name: Child Exec Override",
+        "base: plan",
+        "subagent:",
+        "  runnable: true",
+        "---",
+        "Child plan-like Exec override for restart handling tests.",
+        "",
+      ].join("\n")
+    );
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: parentWorkspacePath,
+          id: parentId,
+          name: "parent",
+          runtimeConfig,
+        },
+        {
+          path: childWorkspacePath,
+          id: childId,
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentId: "exec",
+          agentType: "exec",
           taskStatus: "awaiting_report",
           runtimeConfig,
         },
@@ -6602,7 +6685,7 @@ describe("TaskService", () => {
     ).toHaveLength(1);
   });
 
-  test("agent_report generates git format-patch artifact for exec tasks before cleanup", async () => {
+  test("agent_report uses legacy exec agentType for git format-patch eligibility", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -6640,7 +6723,7 @@ describe("TaskService", () => {
           name: "agent_exec_child",
           parentWorkspaceId: parentId,
           agentType: "exec",
-          agentId: "exec",
+          agentId: "explore",
           taskStatus: "running",
           runtimeConfig: { type: "local" },
           taskBaseCommitSha: baseCommitSha,
@@ -8929,10 +9012,11 @@ describe("TaskService", () => {
     const childId = "child-plan-222";
     const childAgentId = options?.childAgentId ?? "plan";
     const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const parentWorkspacePath = path.join(projectPath, "parent");
     const childWorkspacePath = path.join(projectPath, "child-plan");
 
     if (childAgentId !== "plan") {
-      const customAgentDir = path.join(childWorkspacePath, ".mux", "agents");
+      const customAgentDir = path.join(parentWorkspacePath, ".mux", "agents");
       await fsPromises.mkdir(customAgentDir, { recursive: true });
       await fsPromises.writeFile(
         path.join(customAgentDir, `${childAgentId}.md`),
@@ -8956,7 +9040,7 @@ describe("TaskService", () => {
       projectPath,
       [
         {
-          path: path.join(projectPath, "parent"),
+          path: parentWorkspacePath,
           id: parentId,
           name: "parent",
           runtimeConfig,

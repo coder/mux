@@ -1259,6 +1259,8 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "name: Explore",
       "description: Read-only exploration of repository, environment, web, etc. Useful for investigation before making changes.",
       "base: exec",
+      "prompt:",
+      "  append: false",
       "ui:",
       "  hidden: true",
       "subagent:",
