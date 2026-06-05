@@ -257,6 +257,13 @@ export function useCreationWorkspace({
   const [runtimeAvailabilityState, setRuntimeAvailabilityState] =
     useState<RuntimeAvailabilityState>({ status: "loading" });
 
+  const creationDraftScopeId =
+    projectPath.trim().length > 0
+      ? typeof draftId === "string" && draftId.trim().length > 0
+        ? getDraftScopeId(projectPath, draftId)
+        : getPendingScopeId(projectPath)
+      : null;
+
   // Centralized draft workspace settings with automatic persistence
   const {
     settings,
@@ -265,16 +272,11 @@ export function useCreationWorkspace({
     setSelectedRuntime,
     setDefaultRuntimeChoice,
     setTrunkBranch,
-  } = useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
+  } = useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk, creationDraftScopeId);
 
   // Persist draft workspace name generation state per draft (so multiple drafts don't share a
   // single auto-naming/manual-name state).
-  const workspaceNameScopeId =
-    projectPath.trim().length > 0
-      ? typeof draftId === "string" && draftId.trim().length > 0
-        ? getDraftScopeId(projectPath, draftId)
-        : getPendingScopeId(projectPath)
-      : null;
+  const workspaceNameScopeId = creationDraftScopeId;
 
   // Project scope ID for reading send options at send time
   const projectScopeId = getProjectScopeId(projectPath);

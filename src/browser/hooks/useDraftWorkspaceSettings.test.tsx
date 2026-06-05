@@ -21,6 +21,7 @@ import {
   getModelKey,
   getProjectScopeId,
   getRuntimeKey,
+  getSelectedRuntimeKey,
 } from "@/common/constants/storage";
 import { CODER_RUNTIME_PLACEHOLDER } from "@/common/types/runtime";
 import type * as DraftWorkspaceSettingsModule from "./useDraftWorkspaceSettings";
@@ -266,6 +267,88 @@ describe("useDraftWorkspaceSettings", () => {
 
     await waitFor(() => {
       expect(result.current.settings.selectedRuntime).toEqual({ mode: "ssh", host: "dev@host" });
+    });
+  });
+
+  test("restores selected runtime from draft state", async () => {
+    const projectPath = "/tmp/project";
+    const draftScopeId = "__draft__/tmp/project/draft-a";
+
+    const wrapper = createWrapper(projectPath);
+
+    const first = renderHook(
+      () => useDraftWorkspaceSettings(projectPath, ["main"], "main", draftScopeId),
+      { wrapper }
+    );
+
+    act(() => {
+      first.result.current.setSelectedRuntime({
+        mode: "docker",
+        image: "node:20",
+        shareCredentials: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(first.result.current.settings.selectedRuntime).toEqual({
+        mode: "docker",
+        image: "node:20",
+        shareCredentials: true,
+      });
+    });
+
+    first.unmount();
+
+    const second = renderHook(
+      () => useDraftWorkspaceSettings(projectPath, ["main"], "main", draftScopeId),
+      { wrapper }
+    );
+
+    await waitFor(() => {
+      expect(second.result.current.settings.selectedRuntime).toEqual({
+        mode: "docker",
+        image: "node:20",
+        shareCredentials: true,
+      });
+    });
+
+    expect(readPersistedState<unknown>(getSelectedRuntimeKey(draftScopeId), null)).toEqual({
+      mode: "docker",
+      image: "node:20",
+      shareCredentials: true,
+    });
+  });
+
+  test("keeps selected runtime scoped to each draft", async () => {
+    const projectPath = "/tmp/project";
+    const draftScopeA = "__draft__/tmp/project/draft-a";
+    const draftScopeB = "__draft__/tmp/project/draft-b";
+
+    updatePersistedState(getSelectedRuntimeKey(draftScopeA), {
+      mode: "ssh",
+      host: "dev@host",
+    });
+    updatePersistedState(getSelectedRuntimeKey(draftScopeB), {
+      mode: "local",
+    });
+
+    const wrapper = createWrapper(projectPath);
+
+    const first = renderHook(
+      () => useDraftWorkspaceSettings(projectPath, ["main"], "main", draftScopeA),
+      { wrapper }
+    );
+    const second = renderHook(
+      () => useDraftWorkspaceSettings(projectPath, ["main"], "main", draftScopeB),
+      { wrapper }
+    );
+
+    await waitFor(() => {
+      expect(first.result.current.settings.selectedRuntime).toEqual({
+        mode: "ssh",
+        host: "dev@host",
+      });
+      expect(second.result.current.settings.selectedRuntime).toEqual({ mode: "local" });
     });
   });
 

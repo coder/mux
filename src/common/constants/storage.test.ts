@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   copyWorkspaceStorage,
   deleteWorkspaceStorage,
+  DRAFT_SCOPED_FIELDS,
   getDraftScopeId,
   getInputAttachmentsKey,
+  getSelectedRuntimeKey,
   normalizeTranscriptDensity,
 } from "@/common/constants/storage";
 
@@ -95,5 +97,35 @@ describe("storage workspace-scoped keys", () => {
     deleteWorkspaceStorage(workspaceId);
 
     expect(localStorage.getItem(key)).toBeNull();
+  });
+
+  // Guards that draft-scoped registry fields automatically participate in fork-copy and
+  // delete-cleanup. If a new draft field is added without persistence wiring, or the runtime
+  // selection regresses to project/global scope, these expectations break.
+  test("copyWorkspaceStorage copies the draft-scoped runtime selection", () => {
+    const source = "ws-source";
+    const dest = "ws-dest";
+    const value = JSON.stringify({ mode: "docker", image: "node:20" });
+
+    localStorage.setItem(getSelectedRuntimeKey(source), value);
+    copyWorkspaceStorage(source, dest);
+
+    expect(localStorage.getItem(getSelectedRuntimeKey(dest))).toBe(value);
+  });
+
+  test("deleteWorkspaceStorage removes every persistent draft-scoped field", () => {
+    const workspaceId = "ws-draft-delete";
+
+    for (const field of DRAFT_SCOPED_FIELDS) {
+      if (field.persistence !== "persistent") continue;
+      localStorage.setItem(field.key(workspaceId), "value");
+    }
+
+    deleteWorkspaceStorage(workspaceId);
+
+    for (const field of DRAFT_SCOPED_FIELDS) {
+      if (field.persistence !== "persistent") continue;
+      expect(localStorage.getItem(field.key(workspaceId))).toBeNull();
+    }
   });
 });

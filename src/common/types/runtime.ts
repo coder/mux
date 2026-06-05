@@ -2,10 +2,10 @@
  * Runtime configuration types for workspace execution environments
  */
 
-import type { z } from "zod";
+import { z } from "zod";
 import type { RuntimeConfigSchema } from "../orpc/schemas";
 import { RuntimeEnablementIdSchema, RuntimeModeSchema } from "../orpc/schemas";
-import type { CoderWorkspaceConfig } from "../orpc/schemas/coder";
+import { CoderWorkspaceConfigSchema, type CoderWorkspaceConfig } from "../orpc/schemas/coder";
 
 // Re-export CoderWorkspaceConfig type from schema (single source of truth)
 export type { CoderWorkspaceConfig };
@@ -79,13 +79,33 @@ export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 /**
  * Parsed runtime result - discriminated union based on mode.
  * SSH requires host, Docker requires image, others have no extra args.
+ *
+ * Schema-backed so persisted/UI values can be validated and normalized by
+ * construction (e.g. draft state read from localStorage) instead of hand-rolled
+ * per-field guards. `ParsedRuntime` is derived from this schema as the single
+ * source of truth for the shape.
  */
-export type ParsedRuntime =
-  | { mode: "local" }
-  | { mode: "worktree" }
-  | { mode: "ssh"; host: string; coder?: CoderWorkspaceConfig }
-  | { mode: "docker"; image: string; shareCredentials?: boolean }
-  | { mode: "devcontainer"; configPath: string; shareCredentials?: boolean };
+export const ParsedRuntimeSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal(RUNTIME_MODE.LOCAL) }),
+  z.object({ mode: z.literal(RUNTIME_MODE.WORKTREE) }),
+  z.object({
+    mode: z.literal(RUNTIME_MODE.SSH),
+    host: z.string(),
+    coder: CoderWorkspaceConfigSchema.optional(),
+  }),
+  z.object({
+    mode: z.literal(RUNTIME_MODE.DOCKER),
+    image: z.string(),
+    shareCredentials: z.boolean().optional(),
+  }),
+  z.object({
+    mode: z.literal(RUNTIME_MODE.DEVCONTAINER),
+    configPath: z.string(),
+    shareCredentials: z.boolean().optional(),
+  }),
+]);
+
+export type ParsedRuntime = z.infer<typeof ParsedRuntimeSchema>;
 
 /**
  * Parse runtime string from localStorage or UI input into structured result.

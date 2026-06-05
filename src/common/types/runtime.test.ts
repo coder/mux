@@ -1,5 +1,10 @@
 import { describe, it, expect } from "@jest/globals";
-import { parseRuntimeModeAndHost, buildRuntimeString, CODER_RUNTIME_PLACEHOLDER } from "./runtime";
+import {
+  parseRuntimeModeAndHost,
+  buildRuntimeString,
+  CODER_RUNTIME_PLACEHOLDER,
+  ParsedRuntimeSchema,
+} from "./runtime";
 
 describe("parseRuntimeModeAndHost", () => {
   it("parses SSH mode with host", () => {
@@ -107,5 +112,45 @@ describe("round-trip parsing and building", () => {
     const built = buildRuntimeString({ mode: "ssh", host: CODER_RUNTIME_PLACEHOLDER });
     const parsed = parseRuntimeModeAndHost(built);
     expect(parsed).toEqual({ mode: "ssh", host: CODER_RUNTIME_PLACEHOLDER });
+  });
+});
+
+describe("ParsedRuntimeSchema", () => {
+  it("rejects unknown modes and missing discriminant fields", () => {
+    expect(ParsedRuntimeSchema.safeParse({ mode: "nope" }).success).toBe(false);
+    // SSH without host is invalid.
+    expect(ParsedRuntimeSchema.safeParse({ mode: "ssh" }).success).toBe(false);
+    // Docker without image is invalid.
+    expect(ParsedRuntimeSchema.safeParse({ mode: "docker" }).success).toBe(false);
+    expect(ParsedRuntimeSchema.safeParse(null).success).toBe(false);
+  });
+
+  it("strips unknown keys so corrupt persisted values normalize cleanly", () => {
+    const parsed = ParsedRuntimeSchema.safeParse({
+      mode: "docker",
+      image: "node:20",
+      shareCredentials: true,
+      bogus: "drop-me",
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data).toEqual({
+      mode: "docker",
+      image: "node:20",
+      shareCredentials: true,
+    });
+  });
+
+  it("keeps a valid Coder SSH selection while stripping extra coder fields", () => {
+    const parsed = ParsedRuntimeSchema.safeParse({
+      mode: "ssh",
+      host: CODER_RUNTIME_PLACEHOLDER,
+      coder: { existingWorkspace: true, junk: 1 },
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data).toEqual({
+      mode: "ssh",
+      host: CODER_RUNTIME_PLACEHOLDER,
+      coder: { existingWorkspace: true },
+    });
   });
 });
