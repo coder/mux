@@ -202,6 +202,32 @@ describe("WorkflowActionRunner", () => {
     });
   });
 
+  test("keeps ctx.exec output out of action diagnostics", async () => {
+    using tmp = new DisposableTempDir("workflow-action-exec-diagnostics");
+    const sourcePath = path.join(tmp.path, "exec-diagnostics.js");
+    const source = `
+      module.exports.metadata = { version: 1, description: "Exec diagnostics", effect: "read" };
+      module.exports.execute = async (_input, ctx) => {
+        console.log("action log");
+        const result = await ctx.exec(process.execPath, ["-e", "process.stdout.write('cmd stdout'); process.stderr.write('cmd stderr')"]);
+        return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode };
+      };
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    const result = await runner.execute(createAction(sourcePath, source), {
+      input: null,
+      cwd: tmp.path,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts"),
+    });
+
+    expect(result.output).toEqual({ stdout: "cmd stdout", stderr: "cmd stderr", exitCode: 0 });
+    expect(result.stdout).toBe("action log\n");
+    expect(result.stderr).toBe("");
+  });
+
   test("built-in git actions reject truncated command output", async () => {
     using tmp = new DisposableTempDir("workflow-action-git-truncated");
     const repoRoot = path.join(tmp.path, "repo");

@@ -1806,6 +1806,9 @@ describe("WorkflowRunner", () => {
     expect(parsed.ignored).toContain("ignored.txt");
     expect(parsed.branchFiles).toContain("feature.txt");
     expect(parsed.branchDiff).toContain("feature.txt");
+    expect(parsed.branchDiff).toContain("diff --git");
+    expect(parsed.branchDiff).toContain("+feature");
+    expect(parsed.branchStat).not.toContain("diff --git");
     expect(parsed.unstagedDiff).toContain("+dirty");
     expect(parsed.diffTruncated).toEqual({ branch: false, staged: false, unstaged: false });
     expect(parsed.branchStat).toContain("feature.txt");

@@ -992,7 +992,10 @@ function captureResult(capture) {
 
 function listChildPids(pid) {
   try {
-    return execFileSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf-8" })
+    return execFileSync("ps", ["-axo", "pid=,ppid="], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
       .trim()
       .split(/\n+/)
       .map((line) => line.trim().split(/\s+/).map((value) => Number(value)))
@@ -1328,11 +1331,9 @@ async function execCommand(command, args = [], options = {}) {
   timer?.unref?.();
   child.stdout?.on("data", (chunk) => {
     appendCapture(stdout, chunk);
-    process.stdout.write(chunk);
   });
   child.stderr?.on("data", (chunk) => {
     appendCapture(stderr, chunk);
-    process.stderr.write(chunk);
   });
   child.on("exit", (code, childSignal) => {
     exitCode = code;
