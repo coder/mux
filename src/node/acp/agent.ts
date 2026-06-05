@@ -305,8 +305,7 @@ export class MuxAgent implements Agent {
       // repo.  Worktree/SSH runtimes require a trunk branch for workspace creation.
       let trunkBranch = meta.trunkBranch;
       if (trunkBranch == null || trunkBranch.trim().length === 0) {
-        const branchInfo = await this.server.client.projects.listBranches({ projectPath });
-        trunkBranch = branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
+        trunkBranch = await this.resolveRecommendedTrunkBranch(projectPath);
       }
 
       const createResult = await this.server.client.workspace.create({
@@ -624,6 +623,18 @@ export class MuxAgent implements Agent {
     return Promise.resolve({});
   }
 
+  /**
+   * Resolve the trunk branch for a project from backend branch discovery,
+   * falling back to DEFAULT_TRUNK_BRANCH when none is recommended. The ACP
+   * `session/new` path and the `/new` slash command both create workspaces
+   * from a bare project path and previously inlined this same two-step
+   * lookup; sharing it keeps the trunk fallback in one place.
+   */
+  private async resolveRecommendedTrunkBranch(projectPath: string): Promise<string> {
+    const branchInfo = await this.server.client.projects.listBranches({ projectPath });
+    return branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
+  }
+
   private async sendWorkspaceMessageAndAwaitTurn(args: {
     sessionId: string;
     workspaceId: string;
@@ -886,10 +897,7 @@ export class MuxAgent implements Agent {
 
         // Resolve trunk from project defaults — /new no longer accepts overrides
         // (it now mirrors /fork's seamless flow).
-        const branchInfo = await this.server.client.projects.listBranches({
-          projectPath: workspaceInfo.projectPath,
-        });
-        const trunkBranch = branchInfo.recommendedTrunk ?? DEFAULT_TRUNK_BRANCH;
+        const trunkBranch = await this.resolveRecommendedTrunkBranch(workspaceInfo.projectPath);
 
         const hasStartMessage =
           parsedCommand.startMessage != null && parsedCommand.startMessage.trim().length > 0;
