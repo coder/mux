@@ -86,6 +86,56 @@ export function buildLargeDiffPreview(diff: string): LargeDiffPreview | null {
   };
 }
 
+interface DiffLineDeltaPreview {
+  additions: number;
+  deletions: number;
+  additionsLabel: string;
+  deletionsLabel: string;
+  title: string;
+}
+
+function formatLineDeltaTitle(count: number, noun: "added" | "removed"): string {
+  return `${count.toLocaleString()} ${count === 1 ? "line" : "lines"} ${noun}`;
+}
+
+export function buildDiffLineDeltaPreview(diff: string): DiffLineDeltaPreview | null {
+  let additions = 0;
+  let deletions = 0;
+
+  try {
+    // Count parsed hunk payload lines instead of filtering raw +/- prefixes: real edited
+    // content can itself begin with +++ or ---, which looks like a file header in raw text.
+    for (const patch of parsePatch(diff)) {
+      for (const hunk of patch.hunks) {
+        for (const line of hunk.lines) {
+          if (line.startsWith("+")) {
+            additions += 1;
+          } else if (line.startsWith("-")) {
+            deletions += 1;
+          }
+        }
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  if (additions === 0 && deletions === 0) {
+    return null;
+  }
+
+  return {
+    additions,
+    deletions,
+    additionsLabel: `+${additions.toLocaleString()}`,
+    deletionsLabel: `-${deletions.toLocaleString()}`,
+    title: `${formatLineDeltaTitle(additions, "added")}, ${formatLineDeltaTitle(
+      deletions,
+      "removed"
+    )}`,
+  };
+}
+
 interface FileEditToolCallProps {
   toolName: "file_edit_replace_string" | "file_edit_replace_lines" | "file_edit_insert";
   args: FileEditOperationArgs;
@@ -169,6 +219,7 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
   const uiOnlyDiff = getToolOutputUiOnly(result)?.file_edit?.diff;
   const diff = result && result.success ? (uiOnlyDiff ?? result.diff) : undefined;
   const filePath = extractToolFilePath(args);
+  const diffLineDelta = diff ? buildDiffLineDeltaPreview(diff) : null;
   const largeDiffPreview = diff ? buildLargeDiffPreview(diff) : null;
   // Single nullable handle for the active preview so JSX truthiness checks narrow the type
   // directly (no separate boolean + repeated `&& largeDiffPreview` guards).
@@ -215,6 +266,17 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
             <FileIcon filePath={filePath} className="text-[15px] leading-none" />
             <span className="font-monospace truncate">{filePath}</span>
           </div>
+          {diffLineDelta && (
+            <span
+              className="counter-nums-mono shrink-0 text-[10px] whitespace-nowrap [@container(max-width:420px)]:hidden"
+              title={diffLineDelta.title}
+              aria-label={diffLineDelta.title}
+            >
+              <span className="text-success">{diffLineDelta.additionsLabel}</span>
+              <span className="text-muted">, </span>
+              <span className="text-danger">{diffLineDelta.deletionsLabel}</span>
+            </span>
+          )}
         </div>
         {!(result && result.success && diff) && (
           <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
