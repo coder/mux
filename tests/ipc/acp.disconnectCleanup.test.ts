@@ -1,8 +1,15 @@
+import { execFile } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { promisify } from "node:util";
 import { AgentSideConnection, PROTOCOL_VERSION, ndJsonStream } from "@agentclientprotocol/sdk";
 import type { ProjectConfig } from "../../src/common/types/project";
 import type { OnChatMode, WorkspaceChatMessage } from "../../src/common/orpc/types";
 import { MuxAgent } from "../../src/node/acp/agent";
 import type { ORPCClient, ServerConnection } from "../../src/node/acp/serverConnection";
+
+const execFileAsyncForTest = promisify(execFile);
 
 type WorkspaceInfo = NonNullable<Awaited<ReturnType<ORPCClient["workspace"]["getInfo"]>>>;
 
@@ -296,7 +303,7 @@ describe("ACP disconnect cleanup for untouched session/new workspaces", () => {
     expect(harness.createCalls).toEqual([]);
   });
 
-  it("uses the containing parent when ACP starts from an unregistered descendant", async () => {
+  it("keeps an unregistered descendant as its own project when git root cannot be verified", async () => {
     const parentPath = "/repo/monorepo";
     const packagePath = "/repo/monorepo/packages/unregistered";
     const harness = createHarness({
@@ -312,9 +319,38 @@ describe("ACP disconnect cleanup for untouched session/new workspaces", () => {
     });
 
     expect(newSessionResponse.sessionId).toBe("ws-1");
-    expect(harness.setTrustCalls).toEqual([{ projectPath: parentPath, trusted: true }]);
-    expect(harness.createCalls[0]?.projectPath).toBe(parentPath);
+    expect(harness.setTrustCalls).toEqual([{ projectPath: packagePath, trusted: true }]);
+    expect(harness.createCalls[0]?.projectPath).toBe(packagePath);
     expect(harness.createCalls[0]?.subProjectPath).toBeUndefined();
+  });
+
+  it("uses the containing parent when an unregistered descendant shares the same git root", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-acp-git-root-"));
+    try {
+      const parentPath = path.join(tempDir, "monorepo");
+      const packagePath = path.join(parentPath, "packages", "api");
+      await fs.mkdir(packagePath, { recursive: true });
+      await execFileAsyncForTest("git", ["init", "-q"], { cwd: parentPath });
+
+      const harness = createHarness({
+        requireTrustedProjectForCreate: true,
+        projectEntries: [[parentPath, { workspaces: [], trusted: false }]],
+      });
+      await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+      const newSessionResponse = await harness.agent.newSession({
+        cwd: packagePath,
+        mcpServers: [],
+        _meta: { trunkBranch: "main" },
+      });
+
+      expect(newSessionResponse.sessionId).toBe("ws-1");
+      expect(harness.setTrustCalls).toEqual([{ projectPath: parentPath, trusted: true }]);
+      expect(harness.createCalls[0]?.projectPath).toBe(parentPath);
+      expect(harness.createCalls[0]?.subProjectPath).toBeUndefined();
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("trusts the owning parent when ACP starts from a registered sub-project", async () => {

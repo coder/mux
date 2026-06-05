@@ -31,6 +31,7 @@ import {
   WORDS_TO_TOKENS_RATIO,
   buildCompactionPrompt,
 } from "@/common/constants/ui";
+import { execFileAsync } from "@/node/utils/disposableExec";
 import { RuntimeConfigSchema } from "@/common/orpc/schemas";
 import type { OnChatMode, SendMessageOptions, WorkspaceChatMessage } from "@/common/orpc/types";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
@@ -2176,11 +2177,38 @@ export class MuxAgent implements Agent {
     }
 
     const parentProjectPath = findContainingTopLevelProjectPath(normalizedProjectPath, projects);
-    return { projectPath: parentProjectPath ?? normalizedProjectPath };
+    if (
+      parentProjectPath != null &&
+      (await pathsShareGitTopLevel(parentProjectPath, normalizedProjectPath))
+    ) {
+      return { projectPath: parentProjectPath };
+    }
+
+    return { projectPath: normalizedProjectPath };
   }
 
   private assertInitialized(methodName: string): void {
     assert(this.initialized, `${methodName}: initialize must be called first`);
+  }
+}
+
+async function pathsShareGitTopLevel(leftPath: string, rightPath: string): Promise<boolean> {
+  const [leftGitRoot, rightGitRoot] = await Promise.all([
+    readGitTopLevelForAcpScope(leftPath),
+    readGitTopLevelForAcpScope(rightPath),
+  ]);
+
+  return leftGitRoot != null && leftGitRoot === rightGitRoot;
+}
+
+async function readGitTopLevelForAcpScope(projectPath: string): Promise<string | null> {
+  try {
+    using proc = execFileAsync("git", ["-C", projectPath, "rev-parse", "--show-toplevel"]);
+    const { stdout } = await proc.result;
+    const trimmed = stdout.trim();
+    return trimmed.length > 0 ? normalizePathForWorkspaceMatch(trimmed) : null;
+  } catch {
+    return null;
   }
 }
 
