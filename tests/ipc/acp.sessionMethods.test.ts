@@ -337,6 +337,37 @@ describe("ACP unstable session support", () => {
     expect(harness.listCalls.slice(0, 2)).toEqual([{ archived: false }, { archived: true }]);
   });
 
+  it("lists and resumes sessions from a sub-project cwd", async () => {
+    const workspace = createWorkspaceInfo({
+      id: "ws-sub-project",
+      projectPath: "/repo/monorepo",
+      subProjectPath: "/repo/monorepo/packages/api",
+      namedWorkspacePath: "/repo/monorepo/.mux/ws-sub-project",
+    });
+    const harness = createHarness({
+      activeWorkspaces: [workspace],
+      onChatEvents: [{ type: "caught-up" } as WorkspaceChatMessage],
+    });
+
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const listResponse = await harness.agent.unstable_listSessions({
+      cwd: "/repo/monorepo/packages/api",
+    });
+    expect(listResponse.sessions.map((session) => session.sessionId)).toEqual(["ws-sub-project"]);
+    expect(listResponse.sessions.map((session) => session.cwd)).toEqual([
+      "/repo/monorepo/packages/api",
+    ]);
+
+    await expect(
+      harness.agent.loadSession({
+        sessionId: "ws-sub-project",
+        cwd: "/repo/monorepo/packages/api",
+        mcpServers: [],
+      })
+    ).resolves.toBeDefined();
+  });
+
   it("rejects invalid list cursor values", async () => {
     const harness = createHarness();
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });

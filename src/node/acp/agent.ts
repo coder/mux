@@ -453,8 +453,9 @@ export class MuxAgent implements Agent {
     return {
       sessions: page.map((workspace) => ({
         sessionId: workspace.id,
-        // Surface projectPath as cwd so session/list filtering matches editor cwd.
-        cwd: workspace.projectPath,
+        // Surface subProjectPath when present so ACP clients reconnecting from a
+        // package/sub-project cwd can list and resume the session they created.
+        cwd: workspace.subProjectPath ?? workspace.projectPath,
         title: workspace.title ?? workspace.name,
         updatedAt: toSessionUpdatedAt(workspace, workspaceActivity),
       })),
@@ -2295,11 +2296,19 @@ function dedupeWorkspacesById(workspaces: WorkspaceInfo[]): WorkspaceInfo[] {
 }
 
 function workspaceMatchesCwd(workspace: WorkspaceInfo, cwd: string): boolean {
-  // Match both projectPath and concrete workspace path so clients can filter by
-  // either the original project root or the runtime-specific working directory.
+  // Match project, sub-project, and concrete workspace paths so clients can
+  // filter by either their editor cwd or the runtime-specific working directory.
   const normalizedProjectPath = normalizePathForWorkspaceMatch(workspace.projectPath);
+  const normalizedSubProjectPath =
+    workspace.subProjectPath != null
+      ? normalizePathForWorkspaceMatch(workspace.subProjectPath)
+      : null;
   const normalizedWorkspacePath = normalizePathForWorkspaceMatch(workspace.namedWorkspacePath);
-  return normalizedProjectPath === cwd || normalizedWorkspacePath === cwd;
+  return (
+    normalizedProjectPath === cwd ||
+    normalizedSubProjectPath === cwd ||
+    normalizedWorkspacePath === cwd
+  );
 }
 
 function compareSessionRecency(
