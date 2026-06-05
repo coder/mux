@@ -109,6 +109,7 @@ describe("WorkflowActionRegistry", () => {
     const byName = new Map(actions.map((action) => [action.name, action]));
     expect(byName.get("git.status")?.scope).toBe("built-in");
     expect(byName.get("git.commitsBetween")?.scope).toBe("built-in");
+    expect(byName.get("git.diff")?.scope).toBe("built-in");
     expect(byName.get("git.diffStat")?.scope).toBe("built-in");
     expect(byName.get("git.changedFiles")?.scope).toBe("built-in");
   });

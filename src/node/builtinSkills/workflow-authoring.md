@@ -121,6 +121,7 @@ Built-in Git actions:
 
 - `action.git.status({ id })`: branch/upstream/ahead-behind plus staged, unstaged, untracked, and ignored files.
 - `action.git.commitsBetween({ id, input: { base?, trunk?, head?, limit? } })`: commits reachable from `head` (default `HEAD`) but not from the trunk/base branch. If `base`/`trunk` is omitted, the action tries `origin/HEAD`, then `main`, `master`, and `trunk`.
+- `action.git.diff({ id, input: { base?, trunk?, head? } })`: `git diff` output for branch, staged, and unstaged changes, with truncation flags when action output limits are hit.
 - `action.git.diffStat({ id, input: { base?, trunk?, head? } })`: `git diff --stat` output for branch, staged, and unstaged changes.
 - `action.git.changedFiles({ id, input: { base?, trunk?, head? } })`: changed file lists for branch, staged, unstaged, and untracked state.
 

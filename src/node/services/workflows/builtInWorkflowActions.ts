@@ -31,6 +31,17 @@ async function tryGit(ctx, args) {
   return result.exitCode === 0 ? result.stdout.trimEnd() : null;
 }
 
+async function captureGit(ctx, args, allowedExitCodes) {
+  const result = await ctx.exec("git", args);
+  if (!allowedExitCodes.includes(result.exitCode)) {
+    throw new Error((result.stderr || result.stdout || "git command failed").trim());
+  }
+  return {
+    text: result.stdout.trimEnd(),
+    truncated: result.stdoutTruncated || result.stderrTruncated,
+  };
+}
+
 async function resolveBase(ctx, input) {
   const explicitBase = optionalString(input.base) ?? optionalString(input.trunk);
   if (explicitBase != null) return explicitBase;
@@ -210,6 +221,53 @@ module.exports.execute = async function (rawInput, ctx) {
 };
 `;
 
+const GIT_DIFF_SOURCE = String.raw`
+module.exports.metadata = {
+  version: 1,
+  description: "Return git diff output for branch, staged, and unstaged changes",
+  effect: "read",
+  outputSchema: { type: "object" },
+  permissions: [{ kind: "command", command: "git diff" }],
+  timeoutMs: 10000,
+};
+
+${GIT_SHARED_HELPERS}
+
+module.exports.execute = async function (rawInput, ctx) {
+  const input = inputObject(rawInput);
+  const head = optionalString(input.head) ?? "HEAD";
+  const staged = await captureGit(ctx, ["diff", "--staged"], [0]);
+  const unstaged = await captureGit(ctx, ["diff"], [0]);
+  const base = await tryResolveBase(ctx, input);
+  if (base == null) {
+    return {
+      base: null,
+      head,
+      mergeBase: null,
+      branch: "",
+      staged: staged.text,
+      unstaged: unstaged.text,
+      truncated: { branch: false, staged: staged.truncated, unstaged: unstaged.truncated },
+    };
+  }
+  const mergeBase = await resolveMergeBase(ctx, base, head);
+  const branch = await captureGit(ctx, ["diff", mergeBase + ".." + head], [0]);
+  return {
+    base,
+    head,
+    mergeBase,
+    branch: branch.text,
+    staged: staged.text,
+    unstaged: unstaged.text,
+    truncated: {
+      branch: branch.truncated,
+      staged: staged.truncated,
+      unstaged: unstaged.truncated,
+    },
+  };
+};
+`;
+
 const GIT_CHANGED_FILES_SOURCE = String.raw`
 module.exports.metadata = {
   version: 1,
@@ -242,6 +300,7 @@ module.exports.execute = async function (rawInput, ctx) {
 export const BUILT_IN_WORKFLOW_ACTION_SOURCES = {
   "git.status": GIT_STATUS_SOURCE,
   "git.commitsBetween": GIT_COMMITS_BETWEEN_SOURCE,
+  "git.diff": GIT_DIFF_SOURCE,
   "git.diffStat": GIT_DIFF_STAT_SOURCE,
   "git.changedFiles": GIT_CHANGED_FILES_SOURCE,
 } as const;
