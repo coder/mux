@@ -2181,22 +2181,48 @@ export class MuxAgent implements Agent {
       parentProjectPath != null &&
       (await pathsShareGitTopLevel(parentProjectPath, normalizedProjectPath))
     ) {
-      const createProjectResult = await this.server.client.projects.create({
-        projectPath: normalizedProjectPath,
-      });
-      if (!createProjectResult.success) {
-        throw new Error(
-          `resolveAcpWorkspaceCreationScope: failed to register sub-project '${normalizedProjectPath}': ${createProjectResult.error}`
-        );
-      }
+      return await this.registerAcpSubProject(parentProjectPath, normalizedProjectPath);
+    }
 
-      return {
-        projectPath: parentProjectPath,
-        subProjectPath: createProjectResult.data.normalizedPath,
-      };
+    const gitTopLevel = await readGitTopLevelForAcpScope(normalizedProjectPath);
+    if (gitTopLevel != null && gitTopLevel !== normalizedProjectPath) {
+      const existingGitRootProjectPath = findProjectPathByNormalizedPath(gitTopLevel, projects);
+      const owningProjectPath =
+        existingGitRootProjectPath ?? (await this.registerAcpTopLevelProject(gitTopLevel));
+      return await this.registerAcpSubProject(owningProjectPath, normalizedProjectPath);
     }
 
     return { projectPath: normalizedProjectPath };
+  }
+
+  private async registerAcpTopLevelProject(projectPath: string): Promise<string> {
+    const createProjectResult = await this.server.client.projects.create({ projectPath });
+    if (!createProjectResult.success) {
+      throw new Error(
+        `resolveAcpWorkspaceCreationScope: failed to register project '${projectPath}': ${createProjectResult.error}`
+      );
+    }
+
+    return createProjectResult.data.normalizedPath;
+  }
+
+  private async registerAcpSubProject(
+    parentProjectPath: string,
+    subProjectPath: string
+  ): Promise<AcpWorkspaceCreationScope> {
+    const createProjectResult = await this.server.client.projects.create({
+      projectPath: subProjectPath,
+    });
+    if (!createProjectResult.success) {
+      throw new Error(
+        `resolveAcpWorkspaceCreationScope: failed to register sub-project '${subProjectPath}': ${createProjectResult.error}`
+      );
+    }
+
+    return {
+      projectPath: parentProjectPath,
+      subProjectPath: createProjectResult.data.normalizedPath,
+    };
   }
 
   private assertInitialized(methodName: string): void {

@@ -340,6 +340,35 @@ describe("ACP disconnect cleanup for untouched session/new workspaces", () => {
     expect(harness.createCalls).toEqual([]);
   });
 
+  it("registers the git top-level and requested cwd for fresh subdirectory launches", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-acp-fresh-git-root-"));
+    try {
+      const parentPath = path.join(tempDir, "monorepo");
+      const packagePath = path.join(parentPath, "packages", "api");
+      await fs.mkdir(packagePath, { recursive: true });
+      await execFileAsyncForTest("git", ["init", "-q"], { cwd: parentPath });
+
+      const harness = createHarness({ requireTrustedProjectForCreate: true });
+      await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+      const newSessionResponse = await harness.agent.newSession({
+        cwd: packagePath,
+        mcpServers: [],
+        _meta: { trunkBranch: "main" },
+      });
+
+      expect(newSessionResponse.sessionId).toBe("ws-1");
+      expect(harness.setTrustCalls).toEqual([
+        { projectPath: packagePath, trusted: true },
+        { projectPath: parentPath, trusted: true },
+      ]);
+      expect(harness.createCalls[0]?.projectPath).toBe(parentPath);
+      expect(harness.createCalls[0]?.subProjectPath).toBe(packagePath);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps an unregistered descendant as its own project when git root cannot be verified", async () => {
     const parentPath = "/repo/monorepo";
     const packagePath = "/repo/monorepo/packages/unregistered";
