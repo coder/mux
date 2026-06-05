@@ -823,7 +823,14 @@ export const WorkflowRunToolArgsSchema = z
   .object({
     name: WorkflowNameSchema,
     args: z.unknown().nullish(),
-    run_in_background: z.boolean().nullish().default(false),
+    run_in_background: z
+      .boolean()
+      .nullish()
+      .default(false)
+      .describe(
+        "Defaults to false. Prefer foreground mode for a single workflow; when the returned status is completed, the result is available directly. " +
+          "Set true only when you will start another workflow/task or do independent work while it runs. If workflow_run returns status=running or status=backgrounded, await the returned runId with task_await before using the result."
+      ),
   })
   .strict();
 
@@ -1524,9 +1531,9 @@ export const TOOL_DEFINITIONS = {
       "\n\nWHEN TO USE: only call task_await when the current user request depends on a task's output, or when synthesis/integration of a previously-spawned task is the next logical step. " +
       "Do not call task_await solely because active tasks exist; for unrelated user messages, respond directly and let tasks continue in the background. " +
       "If a synthetic/system follow-up explicitly says active background tasks or workflow runs block your turn, treat that as a dependency and await the listed IDs. " +
-      "\n\nIMPORTANT: Do not call task_await in the same parallel tool-call batch as task or bash — " +
-      "the taskId is not available until the spawning tool returns. " +
-      "Always wait for the task/bash tool result first, then call task_await in a subsequent step. " +
+      "\n\nIMPORTANT: Do not call task_await in the same parallel tool-call batch as task, bash, or workflow_run — " +
+      "the taskId/runId is not available until the spawning tool returns. " +
+      "Always wait for the task/bash/workflow_run tool result first, then call task_await in a subsequent step. " +
       "When omitting task_ids to await active tasks/workflows, ensure at least one background task or workflow was already spawned in a prior step. Omitted task_ids exclude workflow-owned sub-agents and their background bash tasks because those results are consumed through workflow runs. " +
       "\n\nAgent tasks and workflow runs return reports when completed. " +
       "Bash tasks return incremental output while running and a final reportMarkdown when they exit. " +
@@ -1574,9 +1581,12 @@ export const TOOL_DEFINITIONS = {
     schema: WorkflowActionListToolArgsSchema,
   },
   workflow_run: {
+    // Prefer foreground workflows so callers do not waste a turn polling when no other work can proceed.
     description:
       "Start a durable workflow run by workflow name. Workflows coordinate delegated agent tasks and preserve run state for replay/resume. " +
-      "When you start a workflow in the background, you MUST await that workflow run with task_await before ending any turn that depends on it; pass the returned runId in task_ids just like a background task ID. " +
+      "Prefer the default foreground mode (`run_in_background` omitted or false) so completed workflows return their result without an extra task_await round-trip. " +
+      "If workflow_run returns status=running or status=backgrounded, await the returned runId with task_await before using or reporting the workflow output. " +
+      "Use background mode only when you intend to start another workflow/task or do independent work while the workflow runs. " +
       "To create a scratch workflow, first read the built-in workflow-authoring skill, then write .mux/workflows/.scratch/<name>.js with a // description: header and default exported function, then run it by name.",
     schema: WorkflowRunToolArgsSchema,
   },

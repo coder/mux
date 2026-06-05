@@ -33,7 +33,7 @@ Do **not** create a workflow for a small one-off edit or a single simple investi
    ```
 
 5. Use normal file tools (`file_read`, `file_edit_insert`, `file_edit_replace_string`) to author the JavaScript.
-6. Run it by name with `workflow_run`.
+6. Run it by name with `workflow_run`; prefer foreground mode (omit `run_in_background` or set it to `false`) unless you have another workflow/task or independent work to run while it completes. If `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` before using the result.
 
 Scratch workflows must include a description header and a default exported function:
 
@@ -46,6 +46,10 @@ export default function workflow({ args, phase, log, agent, action, parallelAgen
 ```
 
 Reusable project workflows live in `.mux/workflows/<name>.js`; global workflows live in `~/.mux/workflows/<name>.js`. Project and scratch workflows require Project Trust.
+
+## Running workflows
+
+Default to foreground workflow runs. When a foreground `workflow_run` returns `status: "completed"`, the final result is available directly, avoiding an unnecessary `task_await` call just to discover completion. Set `run_in_background: true` only when another workflow/task or unrelated work can proceed in parallel. If any `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` with `task_await` before using the result.
 
 ## Available workflow globals
 
