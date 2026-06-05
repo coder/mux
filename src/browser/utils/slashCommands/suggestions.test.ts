@@ -52,20 +52,6 @@ describe("getSlashCommandSuggestions", () => {
     expect(labels).toContain("/model");
   });
 
-  it("suggests /fast and /slow service-tier one-shots", () => {
-    const suggestions = getSlashCommandSuggestions("/");
-    const labels = suggestions.map((s) => s.display);
-
-    expect(labels).toContain("/fast");
-    expect(labels).toContain("/slow");
-  });
-
-  it("filters service-tier one-shots by prefix", () => {
-    const suggestions = getSlashCommandSuggestions("/fa");
-    expect(suggestions.map((s) => s.display)).toContain("/fast");
-    expect(suggestions.map((s) => s.display)).not.toContain("/slow");
-  });
-
   it("includes agent skills when provided in context", () => {
     const suggestions = getSlashCommandSuggestions("/", {
       agentSkills: [

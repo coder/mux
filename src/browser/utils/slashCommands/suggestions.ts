@@ -5,7 +5,6 @@
 import { matchesNameBySegmentPrefix } from "@/browser/utils/suggestionMatching";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
-import { SERVICE_TIER_COMMAND_KEYS } from "@/common/utils/ai/serviceTier";
 import { getSlashCommandDefinitions } from "./parser";
 import { isSlashCommandVisible, SLASH_COMMAND_DEFINITION_MAP } from "./registry";
 import type {
@@ -89,7 +88,6 @@ function buildTopLevelSuggestions(
     .filter((workflow) => !SLASH_COMMAND_DEFINITION_MAP.has(workflow.name))
     .filter((workflow) => !skillNames.has(workflow.name))
     .filter((workflow) => !Object.hasOwn(MODEL_ABBREVIATIONS, workflow.name))
-    .filter((workflow) => !SERVICE_TIER_COMMAND_KEYS.includes(workflow.name as never))
     .map((workflow) => ({
       key: workflow.name,
       description: `${workflow.description} (${workflow.scope} workflow)`,
@@ -128,30 +126,11 @@ function buildTopLevelSuggestions(
     })
   );
 
-  // Service-tier one-shot suggestions (/fast, /slow). These reuse the model-oneshot
-  // send path; "Fast"/"Slow" wording keeps them provider-agnostic for future models.
-  const serviceTierDefinitions: SuggestionDefinition[] = [
-    { key: "fast", description: "Send one message on the Fast service tier (lower latency)" },
-    { key: "slow", description: "Send one message on the Slow service tier (lower cost)" },
-  ];
-
-  const serviceTierSuggestions = filterAndMapSuggestions(
-    serviceTierDefinitions,
-    partial,
-    (definition) => ({
-      id: `model-oneshot:${definition.key}`,
-      display: `/${definition.key}`,
-      description: definition.description,
-      replacement: `/${definition.key} `,
-    })
-  );
-
   return [
     ...commandSuggestions,
     ...skillSuggestions,
     ...workflowSuggestions,
     ...modelAliasSuggestions,
-    ...serviceTierSuggestions,
   ];
 }
 

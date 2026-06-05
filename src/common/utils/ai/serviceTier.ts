@@ -1,5 +1,5 @@
 /**
- * Service-tier helpers shared across the send path, slash commands, and UI.
+ * Service-tier helpers shared across the send path and UI.
  *
  * A "service tier" tells the provider how to schedule a request. OpenAI exposes
  * this as `service_tier` (e.g. `priority` for low latency, `flex` for cheaper but
@@ -46,21 +46,6 @@ export function getServiceTierSpeedLabel(speed: ServiceTierSpeed): string {
 }
 
 /**
- * Slash-command keys that map to a one-shot service tier (e.g. `/fast`, `/slow`).
- * Kept as a const map so the parser, suggestions, and workflow-collision guards
- * stay in sync from a single source.
- */
-export const SERVICE_TIER_COMMAND_KEYS = ["fast", "slow"] as const;
-export type ServiceTierCommandKey = (typeof SERVICE_TIER_COMMAND_KEYS)[number];
-
-/** Resolve a slash-command key into its service tier, or null when it isn't one. */
-export function getServiceTierForCommandKey(key: string): ServiceTier | null {
-  if (key === "fast") return SERVICE_TIER_FAST;
-  if (key === "slow") return SERVICE_TIER_SLOW;
-  return null;
-}
-
-/**
  * Whether a model honors a chat-level service-tier override.
  *
  * Today only OpenAI (GPT-class) models support `service_tier`. Critically, the
@@ -91,8 +76,8 @@ export function supportsServiceTier(modelString: string): boolean {
  *
  * Returns the options unchanged when there is no override or the model can't use
  * service tiers, so a stale override never leaks onto an unsupported request.
- * Centralized here so every send path (interactive hook, non-React storage path,
- * and one-shot `/fast` `/slow`) applies the override identically.
+ * Centralized here so every send path (interactive hook and non-React storage path)
+ * applies the override identically.
  */
 export function withServiceTierOverride(
   providerOptions: MuxProviderOptions,

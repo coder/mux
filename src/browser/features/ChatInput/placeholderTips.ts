@@ -51,8 +51,6 @@ export const PLACEHOLDER_TIPS: readonly string[] = [
   "Try /btw <question> to ask a side question without nudging the agent",
   "Try /haiku <msg> to send just this message on a different model",
   "Try /+high <msg> to crank up reasoning for this message only",
-  "Try /fast <msg> to send one message on a faster service tier",
-  "Try /slow <msg> to send one message on a cheaper service tier",
   "Try /compact to summarize the conversation when context gets tight",
   "Try /fork <start> to branch this chat into a new workspace",
   "Try /plan to view or edit the current plan inline",

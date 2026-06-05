@@ -13,7 +13,6 @@ import type { ExperimentId } from "@/common/constants/experiments";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { WorkflowDefinitionDescriptor } from "@/common/types/workflow";
 import type { ParsedThinkingInput } from "@/common/types/thinking";
-import type { ServiceTier } from "@/common/config/schemas/providersConfig";
 
 export type ParsedCommand =
   | { type: "model-set"; modelString: string }
@@ -23,8 +22,6 @@ export type ParsedCommand =
       modelString?: string;
       /** One-shot thinking level override — named (ThinkingLevel) or numeric index (resolved at send time against the model's policy). */
       thinkingLevel?: ParsedThinkingInput;
-      /** One-shot service-tier (Fast/Slow) override applied for this message only (e.g. "/fast", "/slow"). */
-      serviceTier?: ServiceTier;
       message: string;
     }
   | { type: "model-help" }

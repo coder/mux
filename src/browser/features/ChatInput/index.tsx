@@ -40,8 +40,7 @@ import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
-import { normalizeSelectedModel, getModelName } from "@/common/utils/ai/models";
-import { supportsServiceTier, withServiceTierOverride } from "@/common/utils/ai/serviceTier";
+import { normalizeSelectedModel } from "@/common/utils/ai/models";
 import {
   useAdditionalSystemContextHydrated,
   useAdditionalSystemContextSnapshot,
@@ -2486,18 +2485,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       const modelOverride = modelOneShot?.modelString;
 
-      // /fast and /slow one-shot tier override only applies to models that honor service
-      // tiers (OpenAI today). Block with a clear message (preserving the composer) rather
-      // than silently dropping the tier when the active model can't use it.
-      const tierOverride = modelOneShot?.serviceTier;
-      if (tierOverride && !supportsServiceTier(modelOverride ?? baseModel)) {
-        pushToast({
-          type: "error",
-          message: `Fast/Slow isn't supported by ${getModelName(modelOverride ?? baseModel)}`,
-        });
-        return;
-      }
-
       // Regular message (or /<model-alias> one-shot override) - send directly via API
       const messageTextForSend = modelOneShot?.message ?? skillInvocation?.userText ?? messageText;
       const skillMuxMetadata = skillInvocation
@@ -2676,24 +2663,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             : undefined;
         const goalInterventionPolicy = overrides?.goalInterventionPolicy;
 
-        // One-shot /fast or /slow rides in providerOptions for this message only,
-        // layering over any persisted per-chat service tier from useSendMessageOptions.
-        const oneshotProviderOptions = tierOverride
-          ? {
-              providerOptions: withServiceTierOverride(
-                sendMessageOptions.providerOptions ?? {},
-                tierOverride,
-                modelOverride ?? baseModel
-              ),
-            }
-          : {};
-
         const sendOptions = {
           ...sendMessageOptions,
           ...compactionOptions,
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
-          ...oneshotProviderOptions,
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
           ...(goalInterventionPolicy ? { goalInterventionPolicy } : {}),
           ...(overrides?.queueDispatchMode

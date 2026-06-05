@@ -1,7 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import {
-  getServiceTierForCommandKey,
   getServiceTierSpeed,
   getServiceTierSpeedLabel,
   SERVICE_TIER_FAST,
@@ -14,24 +13,6 @@ const OPENAI_MODEL = "openai:gpt-5.5";
 const ANTHROPIC_MODEL = "anthropic:claude-haiku-4-5";
 
 describe("serviceTier helpers", () => {
-  describe("getServiceTierForCommandKey", () => {
-    it("maps /fast and /slow to provider wire tiers", () => {
-      expect(getServiceTierForCommandKey("fast")).toBe(SERVICE_TIER_FAST);
-      expect(getServiceTierForCommandKey("slow")).toBe(SERVICE_TIER_SLOW);
-    });
-
-    it("uses OpenAI priority/flex as the Fast/Slow wire values", () => {
-      expect(SERVICE_TIER_FAST).toBe("priority");
-      expect(SERVICE_TIER_SLOW).toBe("flex");
-    });
-
-    it("returns null for non service-tier keys", () => {
-      expect(getServiceTierForCommandKey("haiku")).toBeNull();
-      expect(getServiceTierForCommandKey("compact")).toBeNull();
-      expect(getServiceTierForCommandKey("")).toBeNull();
-    });
-  });
-
   describe("getServiceTierSpeed", () => {
     it("collapses concrete tiers into UI speed buckets", () => {
       expect(getServiceTierSpeed("priority")).toBe("fast");
