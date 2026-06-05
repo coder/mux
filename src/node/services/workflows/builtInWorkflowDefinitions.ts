@@ -392,6 +392,7 @@ function runDeepReviewFix(context) {
     baseFix.skippedReason = preflight.skippedReason;
     return baseFix;
   }
+  let expectedHeadSha = preflight.expectedHeadSha;
 
   const selected = selectFixIssues(context.candidates, context.verifications, input, context.final);
   baseFix.selectedIssues = selected.map(function (item) {
@@ -433,10 +434,11 @@ function runDeepReviewFix(context) {
       continue;
     }
 
-    const application = safeApplyPatch(context.applyPatch, "apply-fix-" + index, fixerResult);
+    const application = safeApplyPatch(context.applyPatch, "apply-fix-" + index, fixerResult, expectedHeadSha);
     application.issueId = item.issueId;
     baseFix.applications.push(application);
     if (application.status === "applied") {
+      expectedHeadSha = getAppliedHeadCommitSha(application) || expectedHeadSha;
       integratedIssues.push(item.issueId);
       continue;
     }
@@ -464,11 +466,12 @@ function runDeepReviewFix(context) {
       continue;
     }
     if (resolutionOutput.status === "resolved" && resolutionOutput.commitCreated === true) {
-      const resolvedApplication = safeApplyPatch(context.applyPatch, "apply-resolved-fix-" + index, resolver);
+      const resolvedApplication = safeApplyPatch(context.applyPatch, "apply-resolved-fix-" + index, resolver, expectedHeadSha);
       resolvedApplication.issueId = item.issueId;
       resolution.applyStatus = resolvedApplication.status;
       baseFix.applications.push(resolvedApplication);
       if (resolvedApplication.status === "applied") {
+        expectedHeadSha = getAppliedHeadCommitSha(resolvedApplication) || expectedHeadSha;
         integratedIssues.push(item.issueId);
       } else {
         baseFix.unresolved.push({ issueId: item.issueId, reason: resolvedApplication.error || resolvedApplication.status });
@@ -511,13 +514,17 @@ function collectFixPreflight(action, log, input, gitContext) {
   if (!isCurrentReviewHead(input, status)) {
     return { skippedReason: "auto-fix requires the reviewed head ref to be the current checked-out branch" };
   }
-  if (!matchesReviewedGitSnapshot(gitContext, status)) {
-    return { skippedReason: "auto-fix requires the current Git branch and HEAD to match the reviewed snapshot" };
+  const reviewedSnapshot = getReviewedGitSnapshot(gitContext);
+  if (!reviewedSnapshot) {
+    return { skippedReason: "auto-fix requires a reviewed Git branch and HEAD snapshot" };
+  }
+  if (!matchesReviewedGitBranch(reviewedSnapshot, status)) {
+    return { skippedReason: "auto-fix requires the current Git branch to match the reviewed snapshot" };
   }
   if (arrayLength(status.staged) > 0 || arrayLength(status.unstaged) > 0 || arrayLength(status.untracked) > 0) {
     return { skippedReason: "auto-fix requires a clean committed local worktree" };
   }
-  return { status: status };
+  return { status: status, expectedHeadSha: reviewedSnapshot.headSha };
 }
 
 function isCurrentReviewHead(input, status) {
@@ -531,16 +538,18 @@ function isCurrentReviewHead(input, status) {
   return branch.length > 0 && (headRef === branch || headRef === "refs/heads/" + branch);
 }
 
-function matchesReviewedGitSnapshot(gitContext, status) {
+function getReviewedGitSnapshot(gitContext) {
   const reviewedStatus = gitContext && isObject(gitContext.status) ? gitContext.status : null;
-  if (!reviewedStatus) return true;
-  const reviewedBranch = typeof reviewedStatus.branch === "string" ? reviewedStatus.branch : "";
+  if (!reviewedStatus) return null;
+  const branch = typeof reviewedStatus.branch === "string" ? reviewedStatus.branch : "";
+  const headSha = typeof reviewedStatus.headSha === "string" ? reviewedStatus.headSha : "";
+  if (!branch || !headSha) return null;
+  return { branch: branch, headSha: headSha };
+}
+
+function matchesReviewedGitBranch(reviewedSnapshot, status) {
   const currentBranch = typeof status.branch === "string" ? status.branch : "";
-  if (reviewedBranch && currentBranch && reviewedBranch !== currentBranch) return false;
-  const reviewedHeadSha = typeof reviewedStatus.headSha === "string" ? reviewedStatus.headSha : "";
-  const currentHeadSha = typeof status.headSha === "string" ? status.headSha : "";
-  if (reviewedHeadSha && currentHeadSha && reviewedHeadSha !== currentHeadSha) return false;
-  return true;
+  return currentBranch.length > 0 && currentBranch === reviewedSnapshot.branch;
 }
 
 function looksNonLocalTarget(target) {
@@ -575,7 +584,7 @@ function getFinalIssueFilter(final) {
     for (const id of ids) map[id] = true;
     return { kind: "ids", ids: map };
   }
-  return { kind: "all" };
+  return { kind: "none" };
 }
 
 function stableIssueId(issue, index) {
@@ -584,16 +593,15 @@ function stableIssueId(issue, index) {
 
 function findVerificationForIssue(issue, issueId, index, verifications) {
   for (const verification of verifications) {
-    if (verification && verification.issueId === issueId) return verification;
-    if (issue && typeof issue.id === "string" && verification && verification.issueId === issue.id) return verification;
+    if (!hasNonEmptyIssueId(verification)) continue;
+    if (verification.issueId === issueId) return verification;
+    if (issue && typeof issue.id === "string" && verification.issueId === issue.id) return verification;
   }
-  const sameIndexVerification = verifications[index] || null;
-  if (sameIndexVerification && hasNonEmptyIssueId(sameIndexVerification)) return null;
-  return sameIndexVerification;
+  return null;
 }
 
 function hasNonEmptyIssueId(verification) {
-  return typeof verification.issueId === "string" && verification.issueId.trim().length > 0;
+  return verification && typeof verification.issueId === "string" && verification.issueId.trim().length > 0;
 }
 
 function matchesReportedIssueId(output, expectedIssueId) {
@@ -635,9 +643,11 @@ function summarizeResolution(issueId, result) {
   };
 }
 
-function safeApplyPatch(applyPatch, id, source) {
+function safeApplyPatch(applyPatch, id, source, expectedHeadSha) {
   try {
-    const result = applyPatch({ id: id, source: source, target: "parent", onConflict: "return" });
+    const spec = { id: id, source: source, target: "parent", onConflict: "return" };
+    if (expectedHeadSha) spec.expectedHeadSha = expectedHeadSha;
+    const result = applyPatch(spec);
     return normalizePatchApplication(source, result);
   } catch (error) {
     return {
@@ -654,11 +664,26 @@ function normalizePatchApplication(source, result) {
     sourceTaskId: source ? source.taskId : undefined,
     status: status,
     appliedCommits: result ? result.appliedCommits : undefined,
+    headCommitSha: result ? result.headCommitSha : undefined,
     conflictPaths: result ? result.conflictPaths : undefined,
     failedPatchSubject: result ? result.failedPatchSubject : undefined,
     error: result ? result.error : undefined,
     projectResults: result ? result.projectResults : undefined,
   };
+}
+
+function getAppliedHeadCommitSha(application) {
+  if (application && typeof application.headCommitSha === "string" && application.headCommitSha.length > 0) {
+    return application.headCommitSha;
+  }
+  const projectResults = application && Array.isArray(application.projectResults) ? application.projectResults : [];
+  for (let index = projectResults.length - 1; index >= 0; index -= 1) {
+    const projectResult = projectResults[index];
+    if (projectResult && typeof projectResult.headCommitSha === "string" && projectResult.headCommitSha.length > 0) {
+      return projectResult.headCommitSha;
+    }
+  }
+  return "";
 }
 
 function buildFixPrompt(input, item) {

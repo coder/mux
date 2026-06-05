@@ -926,6 +926,10 @@ describe("built-in deep-review-workflow", () => {
     await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 1;\n", "utf-8");
     await runGit(repoRoot, ["add", "service.ts"]);
     await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    const { stdout: reviewedHeadStdout } = await execFileAsync("git", ["rev-parse", "HEAD"], {
+      cwd: repoRoot,
+    });
+    const reviewedHeadSha = reviewedHeadStdout.trim();
 
     const issue = {
       id: "await-write",
@@ -1026,6 +1030,7 @@ describe("built-in deep-review-workflow", () => {
                 reportMarkdown: "# Deep Review\n\n- P1 Missing await drops write failures.",
                 structuredOutput: {
                   verifiedIssueCount: 1,
+                  verifiedIssueIds: ["await-write"],
                   risk: "medium",
                   validationPlan: ["bun test src/service.test.ts"],
                   discardedIssueCount: 1,
@@ -1096,7 +1101,12 @@ describe("built-in deep-review-workflow", () => {
     ]);
     expect(taskCalls.find((call) => call.id === "validate-auto-fixes")?.agentId).toBe("explore");
     expect(applyCalls).toEqual([
-      expect.objectContaining({ id: "apply-fix-0", sourceTaskId: "task_fix_0", target: "parent" }),
+      expect.objectContaining({
+        id: "apply-fix-0",
+        sourceTaskId: "task_fix_0",
+        target: "parent",
+        expectedHeadSha: reviewedHeadSha,
+      }),
     ]);
     expect(run.events.filter((event) => event.type === "phase").map((event) => event.name)).toEqual(
       [
@@ -1310,7 +1320,7 @@ describe("built-in deep-review-workflow", () => {
     });
   }, 10_000);
 
-  test("auto-fix skips candidates when verifier reports a different issue ID", async () => {
+  test("auto-fix skips candidates when verifier reports an empty issue ID", async () => {
     if (!deepReviewWorkflow) {
       throw new Error("Expected built-in deep-review-workflow workflow");
     }
@@ -1390,9 +1400,9 @@ describe("built-in deep-review-workflow", () => {
             case "verify-issue-0":
               return {
                 taskId: "task_verify_0",
-                reportMarkdown: "Wrong issue id.",
+                reportMarkdown: "Empty issue id.",
                 structuredOutput: {
-                  issueId: "some-other-issue",
+                  issueId: "",
                   verdict: "valid",
                   confidence: "high",
                   rationale: "This should not authorize await-write.",
@@ -1560,6 +1570,7 @@ describe("built-in deep-review-workflow", () => {
                 reportMarkdown: "# Deep Review\n\nTwo findings.",
                 structuredOutput: {
                   verifiedIssueCount: 2,
+                  verifiedIssueIds: ["needs-more-info", "skip-me"],
                   risk: "medium",
                   validationPlan: [],
                   discardedIssueCount: 0,
@@ -1816,14 +1827,13 @@ describe("built-in deep-review-workflow", () => {
 
     expect(taskCalls.map((call) => call.id)).not.toContain("fix-issue-0");
     expect(result.reportMarkdown).toContain(
-      "auto-fix requires the current Git branch and HEAD to match the reviewed snapshot"
+      "auto-fix requires the current Git branch to match the reviewed snapshot"
     );
     expect(result).toMatchObject({
       structuredOutput: {
         fix: {
           requested: true,
-          skippedReason:
-            "auto-fix requires the current Git branch and HEAD to match the reviewed snapshot",
+          skippedReason: "auto-fix requires the current Git branch to match the reviewed snapshot",
           selectedIssues: [],
         },
       },
@@ -1925,6 +1935,7 @@ describe("built-in deep-review-workflow", () => {
                 reportMarkdown: "# Deep Review\n\n- P2 Cache key omits branch.",
                 structuredOutput: {
                   verifiedIssueCount: 1,
+                  verifiedIssueIds: ["conflicting-fix"],
                   risk: "medium",
                   validationPlan: ["bun test src/service.test.ts"],
                   discardedIssueCount: 0,

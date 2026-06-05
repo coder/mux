@@ -63,6 +63,7 @@ export interface WorkflowApplyPatchSpec {
   target: "parent";
   projectPath?: string;
   threeWay: boolean;
+  expectedHeadSha?: string;
   force: boolean;
 }
 
@@ -1931,6 +1932,14 @@ function parseWorkflowApplyPatchSpec(rawSpec: unknown): WorkflowApplyPatchSpec {
     threeWay: spec.threeWay !== false && spec.three_way !== false,
     force: spec.force === true,
   };
+  const expectedHeadSha = spec.expectedHeadSha ?? spec.expected_head_sha;
+  if (expectedHeadSha !== undefined) {
+    assert(
+      typeof expectedHeadSha === "string" && expectedHeadSha.length > 0,
+      "applyPatch expectedHeadSha must be a non-empty string"
+    );
+    parsed.expectedHeadSha = expectedHeadSha;
+  }
   if (typeof spec.projectPath === "string" && spec.projectPath.length > 0) {
     parsed.projectPath = spec.projectPath;
   } else if (typeof spec.project_path === "string" && spec.project_path.length > 0) {

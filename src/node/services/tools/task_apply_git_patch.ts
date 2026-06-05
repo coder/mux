@@ -18,6 +18,7 @@ import { gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
 import { isPathInsideDir } from "@/node/utils/pathUtils";
 import {
   getSubagentGitPatchMboxPath,
+  isSafeSubagentGitPatchPathComponent,
   markSubagentGitPatchArtifactApplied,
   matchesProjectArtifactProjectPath,
   readSubagentGitPatchArtifact,
@@ -568,6 +569,44 @@ async function resolvePatchPath(params: {
   return { patchPath, note: patchPathNote };
 }
 
+function validatePatchRuntimePathComponent(value: string, label: string): string | undefined {
+  if (isSafeSubagentGitPatchPathComponent(value)) {
+    return undefined;
+  }
+  return `${label} must be a safe path component.`;
+}
+
+function buildRuntimeTempPath(params: {
+  runtimeTempDir: string;
+  filename: string;
+  purpose: string;
+}): string {
+  const runtimePath = path.posix.join(params.runtimeTempDir, params.filename);
+  assert(
+    isPathInsideDir(params.runtimeTempDir, runtimePath),
+    `task_apply_git_patch ${params.purpose} path must stay inside runtimeTempDir`
+  );
+  return runtimePath;
+}
+
+async function checkExpectedHead(params: {
+  runtime: ToolConfiguration["runtime"];
+  cwd: string;
+  expectedHeadSha?: string;
+}): Promise<string | undefined> {
+  if (params.expectedHeadSha == null) {
+    return undefined;
+  }
+  const currentHeadSha = await tryRevParseHead({ runtime: params.runtime, cwd: params.cwd });
+  if (currentHeadSha == null) {
+    return "Could not determine current HEAD before applying patch.";
+  }
+  if (currentHeadSha !== params.expectedHeadSha) {
+    return `Current HEAD ${currentHeadSha} does not match expected HEAD ${params.expectedHeadSha}.`;
+  }
+  return undefined;
+}
+
 async function applyProjectPatch(params: {
   taskId: string;
   workspaceId: string;
@@ -584,13 +623,32 @@ async function applyProjectPatch(params: {
   dryRun: boolean;
   threeWay: boolean;
   force: boolean;
+  expectedHeadSha?: string;
   isReplay: boolean;
   abortSignal?: AbortSignal;
 }): Promise<{ success: boolean; projectResult: TaskApplyGitPatchProjectResult }> {
-  const remotePatchPath = path.posix.join(
-    params.runtimeTempDir,
-    `mux-task-${params.taskId}-${params.projectArtifact.storageKey}-series.mbox`
+  const taskIdError = validatePatchRuntimePathComponent(params.taskId, "task_id");
+  const storageKeyError = validatePatchRuntimePathComponent(
+    params.projectArtifact.storageKey,
+    "storageKey"
   );
+  if (taskIdError != null || storageKeyError != null) {
+    return {
+      success: false,
+      projectResult: {
+        projectPath: params.projectArtifact.projectPath,
+        projectName: params.projectArtifact.projectName,
+        status: "failed",
+        error: taskIdError ?? storageKeyError,
+      },
+    };
+  }
+
+  const remotePatchPath = buildRuntimeTempPath({
+    runtimeTempDir: params.runtimeTempDir,
+    filename: `mux-task-${params.taskId}-${params.projectArtifact.storageKey}-series.mbox`,
+    purpose: "patch copy",
+  });
 
   await cleanupRuntimePatchFile({
     runtime: params.runtime,
@@ -654,6 +712,24 @@ async function applyProjectPatch(params: {
     }
   }
 
+  const expectedHeadError = await checkExpectedHead({
+    runtime: params.runtime,
+    cwd: params.repoCwd,
+    expectedHeadSha: params.expectedHeadSha,
+  });
+  if (expectedHeadError != null) {
+    return {
+      success: false,
+      projectResult: {
+        projectPath: params.projectArtifact.projectPath,
+        projectName: params.projectArtifact.projectName,
+        status: "failed",
+        error: expectedHeadError,
+        note: patchResolution.note,
+      },
+    };
+  }
+
   try {
     await copyLocalFileToRuntime({
       runtime: params.runtime,
@@ -668,11 +744,29 @@ async function applyProjectPatch(params: {
     const nhp = gitNoHooksPrefix(params.trusted);
 
     if (params.dryRun) {
+      const dryRunHeadError = await checkExpectedHead({
+        runtime: params.runtime,
+        cwd: params.repoCwd,
+        expectedHeadSha: params.expectedHeadSha,
+      });
+      if (dryRunHeadError != null) {
+        return {
+          success: false,
+          projectResult: {
+            projectPath: params.projectArtifact.projectPath,
+            projectName: params.projectArtifact.projectName,
+            status: "failed",
+            error: dryRunHeadError,
+            note: patchResolution.note,
+          },
+        };
+      }
       const dryRunId = `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 8)}`;
-      const dryRunWorktreePath = path.posix.join(
-        params.runtimeTempDir,
-        `mux-git-am-dry-run-${params.taskId}-${params.projectArtifact.storageKey}-${dryRunId}`
-      );
+      const dryRunWorktreePath = buildRuntimeTempPath({
+        runtimeTempDir: params.runtimeTempDir,
+        filename: `mux-git-am-dry-run-${params.taskId}-${params.projectArtifact.storageKey}-${dryRunId}`,
+        purpose: "dry-run worktree",
+      });
 
       const addResult = await execBuffered(
         params.runtime,
@@ -835,6 +929,24 @@ async function applyProjectPatch(params: {
       }
     }
 
+    const applyHeadError = await checkExpectedHead({
+      runtime: params.runtime,
+      cwd: params.repoCwd,
+      expectedHeadSha: params.expectedHeadSha,
+    });
+    if (applyHeadError != null) {
+      return {
+        success: false,
+        projectResult: {
+          projectPath: params.projectArtifact.projectPath,
+          projectName: params.projectArtifact.projectName,
+          status: "failed",
+          error: applyHeadError,
+          note: patchResolution.note,
+        },
+      };
+    }
+
     const beforeHeadSha = await tryRevParseHead({ runtime: params.runtime, cwd: params.repoCwd });
 
     const amCmd = `${nhp}git am ${flags.join(" ")} ${shellQuote(remotePatchPath)}`.trim();
@@ -974,6 +1086,21 @@ export async function applyTaskGitPatchArtifact(
   const dryRun = parsedArgs.dry_run === true;
   const threeWay = parsedArgs.three_way !== false;
   const force = parsedArgs.force === true;
+  const expectedHeadSha = parsedArgs.expected_head_sha ?? undefined;
+
+  if (!isSafeSubagentGitPatchPathComponent(taskId)) {
+    return parseToolResult(
+      TaskApplyGitPatchToolResultSchema,
+      {
+        success: false as const,
+        taskId,
+        dryRun,
+        error: "Invalid task_id.",
+        note: "task_id must be a safe path component.",
+      },
+      "task_apply_git_patch"
+    );
+  }
 
   await config.runtime.ensureDir(config.runtimeTempDir, options.abortSignal);
 
@@ -1155,6 +1282,7 @@ export async function applyTaskGitPatchArtifact(
       dryRun,
       threeWay,
       force,
+      expectedHeadSha,
       isReplay,
       abortSignal: options.abortSignal,
     });

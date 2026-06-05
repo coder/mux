@@ -617,6 +617,13 @@ export const TaskApplyGitPatchToolArgsSchema = z
       .describe(
         "When true, attempt to apply the patch in a temporary git worktree and then discard it (does not modify the current workspace)."
       ),
+    expected_head_sha: z
+      .string()
+      .min(1)
+      .nullish()
+      .describe(
+        "When provided, refuse to apply unless the target repository HEAD matches this SHA."
+      ),
     three_way: z.boolean().nullish().default(true).describe("When true, run git am with --3way"),
     force: z
       .boolean()

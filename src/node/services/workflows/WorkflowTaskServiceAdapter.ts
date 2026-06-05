@@ -121,6 +121,7 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     const baseArgs: TaskApplyGitPatchArgs = {
       task_id: spec.sourceTaskId,
       ...(spec.projectPath != null ? { project_path: spec.projectPath } : {}),
+      ...(spec.expectedHeadSha != null ? { expected_head_sha: spec.expectedHeadSha } : {}),
       three_way: spec.threeWay,
       force: spec.force,
     };
