@@ -75,6 +75,83 @@ async function listDirectory(requestedPath: string): Promise<FileTreeNode> {
   };
 }
 
+// Maximum bytes to read when serving a file to the frontend.
+// Guards against accidentally streaming huge files over IPC.
+const MAX_READ_BYTES = 512 * 1024;
+
+/**
+ * Verify `targetPath` is contained within `rootPath` (no directory traversal).
+ * Uses `path.relative` so it works correctly on both POSIX and Windows.
+ */
+function isWithinRoot(rootPath: string, targetPath: string): boolean {
+  const rel = path.relative(rootPath, targetPath);
+  return !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+/**
+ * List immediate children (files and directories) of `dirPath` inside `rootPath`.
+ */
+async function listProjectFiles(
+  rootPath: string,
+  dirPath: string
+): Promise<Array<{ name: string; path: string; isDirectory: boolean }>> {
+  const normalizedRoot = path.resolve(rootPath);
+  const normalizedDir = path.resolve(dirPath);
+
+  if (normalizedDir !== normalizedRoot && !isWithinRoot(normalizedRoot, normalizedDir)) {
+    throw new Error("Access denied: path is outside the project root");
+  }
+
+  const entries = await fsPromises.readdir(normalizedDir, { withFileTypes: true });
+  return entries.map((entry) => ({
+    name: entry.name,
+    path: path.join(normalizedDir, entry.name),
+    isDirectory: entry.isDirectory(),
+  }));
+}
+
+/**
+ * Read a text file within `rootPath`. Rejects binary files and truncates files
+ * over MAX_READ_BYTES. Returns the content and whether it was truncated.
+ */
+async function readProjectFile(
+  rootPath: string,
+  filePath: string
+): Promise<{ content: string; truncated: boolean }> {
+  const normalizedRoot = path.resolve(rootPath);
+  const normalizedFile = path.resolve(filePath);
+
+  if (!isWithinRoot(normalizedRoot, normalizedFile)) {
+    throw new Error("Access denied: path is outside the project root");
+  }
+
+  const stat = await fsPromises.stat(normalizedFile);
+  if (stat.isDirectory()) {
+    throw new Error("Cannot read a directory as a file");
+  }
+
+  const bytesToRead = Math.min(stat.size, MAX_READ_BYTES);
+  const truncated = stat.size > MAX_READ_BYTES;
+
+  const handle = await fsPromises.open(normalizedFile, "r");
+  try {
+    const buffer = Buffer.alloc(bytesToRead);
+    await handle.read(buffer, 0, bytesToRead, 0);
+
+    // Detect binary by scanning the first 8 KB for null bytes.
+    const sampleSize = Math.min(bytesToRead, 8192);
+    for (let i = 0; i < sampleSize; i++) {
+      if (buffer[i] === 0) {
+        throw new Error("Binary files cannot be displayed as text");
+      }
+    }
+
+    return { content: buffer.toString("utf-8"), truncated };
+  } finally {
+    await handle.close();
+  }
+}
+
 interface CloneProjectParams {
   repoUrl: string;
   cloneParentDir?: string | null;
@@ -1312,6 +1389,24 @@ export class ProjectService {
         success: false as const,
         error: getErrorMessage(error),
       };
+    }
+  }
+
+  async listProjectFiles(rootPath: string, dirPath: string) {
+    try {
+      const entries = await listProjectFiles(rootPath, dirPath);
+      return { success: true as const, data: entries };
+    } catch (error) {
+      return { success: false as const, error: getErrorMessage(error) };
+    }
+  }
+
+  async readProjectFile(rootPath: string, filePath: string) {
+    try {
+      const result = await readProjectFile(rootPath, filePath);
+      return { success: true as const, data: result };
+    } catch (error) {
+      return { success: false as const, error: getErrorMessage(error) };
     }
   }
 

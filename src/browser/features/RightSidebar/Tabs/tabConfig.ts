@@ -53,6 +53,13 @@ const TAB_CONFIG_DEF = {
     defaultOrder: 35,
     paletteKeywords: ["goal", "target", "objective"],
   },
+  files: {
+    name: "Files",
+    contentClassName: "overflow-hidden p-0",
+    featureFlag: EXPERIMENT_IDS.FILE_BROWSER,
+    defaultOrder: 45,
+    paletteKeywords: ["files", "explorer", "file browser", "browse", "readme"],
+  },
   desktop: {
     name: "Desktop",
     contentClassName: "overflow-hidden p-0",

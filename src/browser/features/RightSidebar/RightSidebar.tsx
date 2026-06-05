@@ -673,6 +673,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const api = apiState.api;
   const desktopExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
   const browserExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_BROWSER);
+  const fileBrowserExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.FILE_BROWSER);
   // Child task workspaces can't run goal actions — backend rejects them
   // via `WorkspaceGoalService.assertParentWorkspace`. We use this flag
   // both to hide the Goal tab below and to gate any inline goal UX.
@@ -692,6 +693,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const [llmDebugLogsEnabled, setLlmDebugLogsEnabled] = React.useState<boolean | null>(null);
   const [desktopAvailable, setDesktopAvailable] = React.useState<boolean | null>(null);
   const [browserAvailable, setBrowserAvailable] = React.useState<boolean | null>(null);
+  const [fileBrowserAvailable, setFileBrowserAvailable] = React.useState<boolean | null>(null);
   const debugLogsLocalOverrideRef = React.useRef(false);
 
   const setGoalWithSingleConflictRetry = async (intent: {
@@ -960,6 +962,31 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       return prev;
     });
   }, [browserAvailable, initialActiveTab, setLayoutRaw]);
+
+  React.useEffect(() => {
+    setFileBrowserAvailable(fileBrowserExperimentEnabled);
+  }, [fileBrowserExperimentEnabled]);
+
+  React.useEffect(() => {
+    if (fileBrowserAvailable == null) {
+      return;
+    }
+
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      const hasFiles = collectAllTabs(prev.root).includes("files");
+
+      if (fileBrowserAvailable && !hasFiles) {
+        return addTabToFocusedTabset(prev, "files", false);
+      }
+
+      if (!fileBrowserAvailable && hasFiles) {
+        return removeTabEverywhere(prev, "files");
+      }
+
+      return prev;
+    });
+  }, [fileBrowserAvailable, initialActiveTab, setLayoutRaw]);
 
   React.useEffect(() => {
     setLayoutRaw((prevRaw) => {

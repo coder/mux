@@ -20,6 +20,7 @@ import { StatsContainer } from "@/browser/features/RightSidebar/StatsContainer";
 import { ReviewPanel } from "@/browser/features/RightSidebar/CodeReview/ReviewPanel";
 import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
 import { BrowserTab } from "@/browser/features/RightSidebar/BrowserTab";
+import { FilesTab } from "@/browser/features/RightSidebar/FilesTab/FilesTab";
 import { DevToolsTab } from "@/browser/features/RightSidebar/DevToolsTab";
 import { GoalTab, type GoalCreateIntent } from "@/browser/features/RightSidebar/GoalTab";
 import type { GoalSnapshot, GoalStatus } from "@/common/types/goal";
@@ -29,6 +30,7 @@ import {
   BrowserTabLabel,
   DebugTabLabel,
   DesktopTabLabel,
+  FilesTabLabel,
   GoalTabLabel,
   InstructionsTabLabel,
   OutputTabLabel,
@@ -162,6 +164,14 @@ const TAB_RENDERERS = {
     renderPanel: (ctx) => (
       <ErrorBoundary workspaceInfo="Desktop tab">
         <DesktopPanel workspaceId={ctx.workspaceId} />
+      </ErrorBoundary>
+    ),
+  },
+  files: {
+    Label: FilesTabLabel,
+    renderPanel: (ctx) => (
+      <ErrorBoundary workspaceInfo="Files tab">
+        <FilesTab projectPath={ctx.projectPath} />
       </ErrorBoundary>
     ),
   },

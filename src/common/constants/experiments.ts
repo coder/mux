@@ -18,6 +18,7 @@ export const EXPERIMENT_IDS = {
   PORTABLE_DESKTOP: "portable-desktop",
   DYNAMIC_WORKFLOWS: "dynamic-workflows",
   SUBAGENT_FILE_REPORTS: "subagent-file-reports",
+  FILE_BROWSER: "file-browser",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -146,6 +147,15 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Subagent File Reports",
     description:
       "Submit subagent task reports through workspace files (`report.md` and `structured-output.json`)",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.FILE_BROWSER]: {
+    id: EXPERIMENT_IDS.FILE_BROWSER,
+    name: "File Browser",
+    description:
+      "Show a Files tab in the right sidebar to browse and read project files (markdown, code, etc.) inline",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

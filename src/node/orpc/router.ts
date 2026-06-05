@@ -2527,6 +2527,18 @@ export const router = (authToken?: string) => {
         .handler(({ context }) => {
           return context.windowService.restartApp();
         }),
+      listProjectFiles: t
+        .input(schemas.general.listProjectFiles.input)
+        .output(schemas.general.listProjectFiles.output)
+        .handler(async ({ context, input }) => {
+          return context.projectService.listProjectFiles(input.rootPath, input.dirPath);
+        }),
+      readProjectFile: t
+        .input(schemas.general.readProjectFile.input)
+        .output(schemas.general.readProjectFile.output)
+        .handler(async ({ context, input }) => {
+          return context.projectService.readProjectFile(input.rootPath, input.filePath);
+        }),
       openInEditor: t
         .input(schemas.general.openInEditor.input)
         .output(schemas.general.openInEditor.output)

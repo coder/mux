@@ -11,6 +11,7 @@ import React from "react";
 import {
   BugPlay,
   ExternalLink,
+  FolderOpen,
   Monitor,
   Globe,
   Sparkles,
@@ -155,6 +156,14 @@ export const BrowserTabLabel: React.FC = () => (
   <span className="inline-flex items-center gap-1">
     <Globe className="h-3 w-3 shrink-0" />
     Browser
+  </span>
+);
+
+/** Files tab label with folder icon */
+export const FilesTabLabel: React.FC = () => (
+  <span className="inline-flex items-center gap-1">
+    <FolderOpen className="h-3 w-3 shrink-0" />
+    Files
   </span>
 );
 

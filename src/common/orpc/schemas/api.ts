@@ -2548,6 +2548,28 @@ export const general = {
     output: ResultSchema(FileTreeNodeSchema),
   },
   /**
+   * List files and directories immediately inside `dirPath`, which must be
+   * within (or equal to) `rootPath`. Used by the Files tab file browser.
+   */
+  listProjectFiles: {
+    input: z.object({ rootPath: z.string(), dirPath: z.string() }),
+    output: ResultSchema(
+      z.array(z.object({ name: z.string(), path: z.string(), isDirectory: z.boolean() })),
+      z.string()
+    ),
+  },
+  /**
+   * Read the text content of a file within a project root.
+   * Binary files are rejected; files over 512 KB are truncated.
+   */
+  readProjectFile: {
+    input: z.object({ rootPath: z.string(), filePath: z.string() }),
+    output: ResultSchema(
+      z.object({ content: z.string(), truncated: z.boolean() }),
+      z.string()
+    ),
+  },
+  /**
    * Create a directory at the specified path.
    * Creates parent directories recursively if they don't exist (like mkdir -p).
    */
