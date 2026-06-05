@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   applyLocalPreferenceWrite,
+  canPrunePreferenceScopes,
   createUserPreferenceSaveQueue,
   hydrateUserPreferencesLocalCache,
   mergeMissingLocalPreferences,
@@ -229,6 +230,24 @@ describe("UserPreferencesProvider bridge helpers", () => {
     ).toEqual({
       appearance: { theme: "flexoki-dark" },
     });
+  });
+
+  test("only prunes scoped preferences after successful project and workspace loads", () => {
+    const ready = {
+      hydrated: true,
+      projectLoading: false,
+      projectLoaded: true,
+      projectLoadError: null,
+      workspaceLoading: false,
+      workspaceLoaded: true,
+      workspaceLoadError: null,
+    };
+
+    expect(canPrunePreferenceScopes(ready)).toBe(true);
+    expect(canPrunePreferenceScopes({ ...ready, projectLoaded: false })).toBe(false);
+    expect(canPrunePreferenceScopes({ ...ready, workspaceLoaded: false })).toBe(false);
+    expect(canPrunePreferenceScopes({ ...ready, projectLoadError: "failed" })).toBe(false);
+    expect(canPrunePreferenceScopes({ ...ready, workspaceLoadError: "failed" })).toBe(false);
   });
 
   test("prunes project and workspace scoped preferences that no longer exist", () => {

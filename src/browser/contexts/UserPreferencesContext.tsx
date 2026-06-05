@@ -157,6 +157,26 @@ export function prunePreferenceScopes(params: {
   return normalizeUserPreferences(next);
 }
 
+export function canPrunePreferenceScopes(params: {
+  hydrated: boolean;
+  projectLoading: boolean;
+  projectLoaded: boolean;
+  projectLoadError: string | null | undefined;
+  workspaceLoading: boolean;
+  workspaceLoaded: boolean;
+  workspaceLoadError: string | null | undefined;
+}): boolean {
+  return (
+    params.hydrated &&
+    !params.projectLoading &&
+    params.projectLoaded &&
+    params.projectLoadError == null &&
+    !params.workspaceLoading &&
+    params.workspaceLoaded &&
+    params.workspaceLoadError == null
+  );
+}
+
 const USER_PREFERENCE_SAVE_RETRY_BASE_DELAY_MS = 250;
 const USER_PREFERENCE_SAVE_RETRY_MAX_DELAY_MS = 5000;
 
@@ -470,7 +490,17 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
   }, [api]);
 
   useEffect(() => {
-    if (!hydrated || projectContext.loading || workspaceContext.loading) {
+    if (
+      !canPrunePreferenceScopes({
+        hydrated,
+        projectLoading: projectContext.loading,
+        projectLoaded: projectContext.loaded,
+        projectLoadError: projectContext.loadError,
+        workspaceLoading: workspaceContext.loading,
+        workspaceLoaded: workspaceContext.loaded,
+        workspaceLoadError: workspaceContext.loadError,
+      })
+    ) {
       return;
     }
 
@@ -508,8 +538,12 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
   }, [
     hydrated,
     projectContext.loading,
+    projectContext.loaded,
+    projectContext.loadError,
     projectContext.userProjects,
     workspaceContext.loading,
+    workspaceContext.loaded,
+    workspaceContext.loadError,
     workspaceContext.workspaceMetadata,
   ]);
 

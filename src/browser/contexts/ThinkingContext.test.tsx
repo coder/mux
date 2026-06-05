@@ -151,6 +151,8 @@ function createWorkspaceContextValue(): WorkspaceContextValue {
   return {
     workspaceMetadata: metadataMap,
     loading: false,
+    loaded: true,
+    loadError: null,
     workspaceDraftPromotionsByProject: {},
     promoteWorkspaceDraft: () => undefined,
     createWorkspace: () =>

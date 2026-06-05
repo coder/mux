@@ -410,6 +410,8 @@ function findExistingEmptyDraft(
 export interface WorkspaceMetadataContextValue {
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
   loading: boolean;
+  loaded: boolean;
+  loadError: string | null;
 }
 
 const WorkspaceMetadataContext = createContext<WorkspaceMetadataContextValue | undefined>(
@@ -495,18 +497,18 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
 }
 
 const WorkspaceActionsContext = createContext<
-  Omit<WorkspaceContext, "workspaceMetadata" | "loading"> | undefined
+  Omit<WorkspaceContext, "workspaceMetadata" | "loading" | "loaded" | "loadError"> | undefined
 >(undefined);
 
 export const WorkspaceContext = {
   Provider(props: { value: WorkspaceContext; children: ReactNode }) {
-    const { workspaceMetadata, loading, ...actionsValue } = props.value;
+    const { workspaceMetadata, loading, loaded, loadError, ...actionsValue } = props.value;
 
     // Some focused tests only need to provide metadata. Route the public provider
     // shape into the split contexts so they avoid mounting WorkspaceProvider and
     // its API subscriptions.
     return (
-      <WorkspaceMetadataContext.Provider value={{ workspaceMetadata, loading }}>
+      <WorkspaceMetadataContext.Provider value={{ workspaceMetadata, loading, loaded, loadError }}>
         <WorkspaceActionsContext.Provider value={actionsValue}>
           {props.children}
         </WorkspaceActionsContext.Provider>
@@ -678,6 +680,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [workspaceStore]
   );
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [workspaceDraftPromotionsByProject, setWorkspaceDraftPromotionsByProject] =
     useState<WorkspaceDraftPromotionsByProject>({});
@@ -996,7 +1000,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   }, [workspaceMetadata]);
 
   const loadWorkspaceMetadata = useCallback(async () => {
-    if (!api) return false; // Return false to indicate metadata wasn't loaded
+    if (!api) {
+      setLoaded(false);
+      setLoadError("API not connected");
+      return false; // Return false to indicate metadata wasn't attempted.
+    }
 
     try {
       const metadataList = await api.workspace.list();
@@ -1013,27 +1021,47 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       }
 
       setWorkspaceMetadata(metadataMap);
-      return true; // Return true to indicate metadata was loaded
+      setLoaded(true);
+      setLoadError(null);
+      return true; // Return true to indicate metadata was attempted.
     } catch (error) {
       console.error("Failed to load workspace metadata:", error);
-      setWorkspaceMetadata(new Map());
-      return true; // Still return true - we tried to load, just got empty result
+      // Keep the previous metadata map on failure so scoped preferences are not pruned.
+      setLoadError(getErrorMessage(error));
+      return true; // Still return true because the request completed with a failure.
     }
   }, [setWorkspaceMetadata, api]);
 
   // Load metadata once on mount (and again when api becomes available)
   useEffect(() => {
-    void (async () => {
-      const loaded = await loadWorkspaceMetadata();
-      if (!loaded) {
+    let cancelled = false;
+    setLoading(true);
+
+    const initialLoad = async () => {
+      const attempted = await loadWorkspaceMetadata();
+      if (!attempted || cancelled) {
         // api not available yet - effect will run again when api connects
         return;
       }
       // After loading metadata (which may trigger migration), reload projects
       // to ensure frontend has the updated config with workspace IDs
       await refreshProjects();
-      setLoading(false);
-    })();
+      if (!cancelled) {
+        setLoading(false);
+      }
+    };
+
+    const loadPromise = initialLoad();
+    loadPromise.catch((error) => {
+      if (!cancelled) {
+        setLoadError(getErrorMessage(error));
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [loadWorkspaceMetadata, refreshProjects]);
 
   // URL restoration is now handled by RouterContext which parses the URL on load
@@ -1803,8 +1831,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // Split into two context values so metadata-Map churn doesn't re-render
   // components that only need actions/selection/drafts.
   const metadataValue = useMemo<WorkspaceMetadataContextValue>(
-    () => ({ workspaceMetadata, loading }),
-    [workspaceMetadata, loading]
+    () => ({ workspaceMetadata, loading, loaded, loadError }),
+    [workspaceMetadata, loading, loaded, loadError]
   );
 
   const actionsValue = useMemo(
@@ -1885,7 +1913,10 @@ export function useWorkspaceMetadata(): WorkspaceMetadataContextValue {
  * stable across metadata-Map changes, so sidebar-like components that don't
  * need the full Map can avoid re-renders.
  */
-export function useWorkspaceActions(): Omit<WorkspaceContext, "workspaceMetadata" | "loading"> {
+export function useWorkspaceActions(): Omit<
+  WorkspaceContext,
+  "workspaceMetadata" | "loading" | "loaded" | "loadError"
+> {
   const context = useContext(WorkspaceActionsContext);
   if (!context) {
     throw new Error("useWorkspaceActions must be used within WorkspaceProvider");

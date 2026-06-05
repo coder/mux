@@ -111,6 +111,21 @@ describe("WorkspaceContext", () => {
     );
   });
 
+  test("exposes workspace metadata load failures without marking metadata as loaded", async () => {
+    createMockAPI({
+      workspace: {
+        list: () => Promise.reject(new Error("workspace metadata unavailable")),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(ctx().loaded).toBe(false);
+    expect(ctx().loadError).toContain("workspace metadata unavailable");
+    expect(ctx().workspaceMetadata.size).toBe(0);
+  });
+
   test("subscribes to new workspace immediately when metadata event fires", async () => {
     const { workspace: workspaceApi } = createMockAPI({
       workspace: {

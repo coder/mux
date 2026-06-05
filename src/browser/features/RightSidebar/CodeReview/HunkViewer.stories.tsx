@@ -74,6 +74,8 @@ function createStubWorkspaceContextValue(): WorkspaceContextValue {
   return {
     workspaceMetadata: new Map(),
     loading: false,
+    loaded: true,
+    loadError: null,
     workspaceDraftPromotionsByProject: {},
     promoteWorkspaceDraft: () => undefined,
     createWorkspace: () =>
