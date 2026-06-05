@@ -330,6 +330,18 @@ describe("task_apply_git_patch tool", () => {
       ""
     );
 
+    const stalePatchPath = path.join(
+      targetRepo,
+      ".mux",
+      "tmp",
+      `mux-task-${childTaskId}-project-series.mbox`
+    );
+    await fsPromises.mkdir(path.dirname(stalePatchPath), { recursive: true });
+    await fsPromises.writeFile(stalePatchPath, "stale patch copy", "utf-8");
+    expect(execSync("git status --porcelain", { cwd: targetRepo, encoding: "utf-8" })).toContain(
+      ".mux/"
+    );
+
     const realApply = (await tool.execute!({ task_id: childTaskId }, mockToolCallOptions)) as {
       success: boolean;
       projectResults: Array<{ status: string }>;
@@ -340,6 +352,95 @@ describe("task_apply_git_patch tool", () => {
     expect(execSync("git log -1 --pretty=%s", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
       "child change"
     );
+    expect(execSync("git status --porcelain", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      ""
+    );
+  }, 20_000);
+
+  it("cleans repo-local patch files when the runtime copy fails", async () => {
+    const childRepo = path.join(rootDir, "child-copy-fails");
+    const targetRepo = path.join(rootDir, "target-copy-fails");
+    for (const repo of [childRepo, targetRepo]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+      initGitRepo(repo);
+    }
+
+    await commitFile(childRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "README.md", "hello", "base");
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+    await commitFile(childRepo, "README.md", "hello\nchild", "child change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const muxRoot = path.join(rootDir, "mux-copy-fails");
+    const currentWorkspaceId = "current-workspace-copy-fails";
+    const sessionDir = path.join(muxRoot, "sessions", currentWorkspaceId);
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    await writeWorkspaceConfig({
+      muxRoot,
+      workspaceId: currentWorkspaceId,
+      workspaceName: "current",
+      primaryProjectPath: targetRepo,
+      projects: [{ projectPath: targetRepo, projectName: "project" }],
+    });
+
+    const childTaskId = "child-task-copy-fails";
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId: currentWorkspaceId,
+      childTaskId,
+      projectArtifacts: [
+        await buildReadyProjectArtifact({
+          sessionDir,
+          childTaskId,
+          storageKey: "project",
+          projectPath: targetRepo,
+          projectName: "project",
+          childRepo,
+          baseSha,
+          headSha,
+        }),
+      ],
+    });
+
+    const runtimeTempDir = path.join(targetRepo, ".mux", "tmp");
+    const leakedPatchPath = path.join(
+      runtimeTempDir,
+      `mux-task-${childTaskId}-project-series.mbox`
+    );
+    const baseRuntime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+    const failingRuntime = Object.create(baseRuntime) as typeof baseRuntime;
+    failingRuntime.writeFile = (remotePath: string) =>
+      new WritableStream<Uint8Array>({
+        async write(chunk) {
+          await fsPromises.mkdir(path.dirname(remotePath), { recursive: true });
+          await fsPromises.writeFile(remotePath, chunk);
+          throw new Error("simulated copy failure");
+        },
+      });
+    const tool = createTaskApplyGitPatchTool({
+      ...getTestDeps(),
+      workspaceId: currentWorkspaceId,
+      cwd: targetRepo,
+      runtime: failingRuntime,
+      runtimeTempDir,
+      workspaceSessionDir: sessionDir,
+    });
+
+    let copyFailure: unknown;
+    try {
+      await tool.execute!({ task_id: childTaskId }, mockToolCallOptions);
+    } catch (error) {
+      copyFailure = error;
+    }
+    expect(copyFailure).toBeInstanceOf(Error);
+    expect(copyFailure instanceof Error ? copyFailure.message : "").toContain(
+      "simulated copy failure"
+    );
+    const leakedPatchExists = await fsPromises.stat(leakedPatchPath).then(
+      () => true,
+      () => false
+    );
+    expect(leakedPatchExists).toBe(false);
     expect(execSync("git status --porcelain", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
       ""
     );

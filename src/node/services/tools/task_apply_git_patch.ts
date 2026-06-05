@@ -74,6 +74,11 @@ async function copyLocalFileToRuntime(params: {
 
     await writer.close();
   } catch (error) {
+    try {
+      await writer.abort(error);
+    } catch {
+      // The stream may already be errored; cleanup still proceeds in the caller's finally block.
+    }
     writer.releaseLock();
     throw error;
   } finally {
@@ -582,6 +587,19 @@ async function applyProjectPatch(params: {
   isReplay: boolean;
   abortSignal?: AbortSignal;
 }): Promise<{ success: boolean; projectResult: TaskApplyGitPatchProjectResult }> {
+  const remotePatchPath = path.posix.join(
+    params.runtimeTempDir,
+    `mux-task-${params.taskId}-${params.projectArtifact.storageKey}-series.mbox`
+  );
+
+  await cleanupRuntimePatchFile({
+    runtime: params.runtime,
+    repoCwd: params.repoCwd,
+    remotePatchPath,
+    taskId: params.taskId,
+    workspaceId: params.workspaceId,
+  });
+
   const patchResolution = await resolvePatchPath({
     taskId: params.taskId,
     artifactSessionDir: params.artifactSessionDir,
@@ -636,19 +654,14 @@ async function applyProjectPatch(params: {
     }
   }
 
-  const remotePatchPath = path.posix.join(
-    params.runtimeTempDir,
-    `mux-task-${params.taskId}-${params.projectArtifact.storageKey}-series.mbox`
-  );
-
-  await copyLocalFileToRuntime({
-    runtime: params.runtime,
-    localPath: patchResolution.patchPath,
-    remotePath: remotePatchPath,
-    abortSignal: params.abortSignal,
-  });
-
   try {
+    await copyLocalFileToRuntime({
+      runtime: params.runtime,
+      localPath: patchResolution.patchPath,
+      remotePath: remotePatchPath,
+      abortSignal: params.abortSignal,
+    });
+
     const flags: string[] = [];
     if (params.threeWay) flags.push("--3way");
 

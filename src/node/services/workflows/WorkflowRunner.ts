@@ -86,6 +86,7 @@ export interface WorkflowActionSpec {
   timeoutMs?: number;
   cwd?: string;
   builtInOnly?: boolean;
+  cache?: boolean;
 }
 
 export interface WorkflowActionResult {
@@ -644,6 +645,10 @@ export class WorkflowRunner {
     const description = await this.actionRunner.describe(action);
     const metadata = validateWorkflowActionMetadata(description.metadata);
     assertWorkflowActionInput(metadata, spec.input, action.name);
+    assert(
+      spec.cache !== false || metadata.effect === "read",
+      "action cache=false is only supported for read actions"
+    );
 
     const unsafeMutatingAttempt = await this.findUnsafePriorActionAttempt(
       runId,
@@ -681,7 +686,11 @@ export class WorkflowRunner {
     }
 
     const existingStep = await this.runStore.getStep(runId, spec.id, inputHash);
-    if (existingStep?.status === "completed" && existingStep.result?.structuredOutput != null) {
+    if (
+      spec.cache !== false &&
+      existingStep?.status === "completed" &&
+      existingStep.result?.structuredOutput != null
+    ) {
       const cached = normalizeWorkflowActionResult(existingStep.result.structuredOutput);
       await this.appendEvent(runId, {
         sequence: sequence.next(),
@@ -704,7 +713,10 @@ export class WorkflowRunner {
       metadata,
       inputHash,
       cwd,
-      startedAt: existingStep?.startedAt ?? this.clock.nowIso(),
+      startedAt:
+        spec.cache === false
+          ? this.clock.nowIso()
+          : (existingStep?.startedAt ?? this.clock.nowIso()),
       abortSignal: options.abortSignal,
       leaseGuard: options.leaseGuard,
     });
@@ -986,9 +998,32 @@ export class WorkflowRunner {
     assertWorkflowStepId(spec.id, "applyPatch");
     const inputHash = hashWorkflowStepInput(spec.id, spec);
     options.leaseGuard.throwIfLost();
+    const unsafePriorAttempt = await this.findUnsafePriorApplyPatchAttempt(
+      runId,
+      spec.id,
+      inputHash
+    );
+    if (unsafePriorAttempt != null) {
+      const message =
+        unsafePriorAttempt.inputHash === inputHash
+          ? `Workflow applyPatch step ${spec.id} has an incomplete or failed patch attempt and cannot be replayed automatically`
+          : `Workflow applyPatch step ${spec.id} has a prior patch attempt with a different replay identity and cannot be replayed automatically`;
+      await this.recordApplyPatchReplayFailure(runId, sequence, spec, inputHash, {
+        message,
+        startedAt: unsafePriorAttempt.startedAt,
+      });
+      throw new Error(message);
+    }
+
     const existingStep = await this.runStore.getStep(runId, spec.id, inputHash);
     if (existingStep?.status === "completed" && existingStep.result?.structuredOutput != null) {
-      return normalizeWorkflowApplyPatchResult(existingStep.result.structuredOutput);
+      const cached = normalizeWorkflowApplyPatchResult(existingStep.result.structuredOutput);
+      await this.recordPatchTerminalEventIfMissing(runId, sequence, {
+        stepId: spec.id,
+        sourceTaskId: spec.sourceTaskId,
+        result: cached,
+      });
+      return cached;
     }
 
     options.leaseGuard.throwIfLost();
@@ -1080,6 +1115,53 @@ export class WorkflowRunner {
       owningStep != null,
       `applyPatch source taskId ${taskId} was not produced by a completed workflow agent step`
     );
+  }
+  private async findUnsafePriorApplyPatchAttempt(
+    runId: string,
+    stepId: string,
+    currentInputHash: string
+  ): Promise<WorkflowStepRecord | null> {
+    const run = await this.runStore.getRun(runId);
+    for (let index = run.steps.length - 1; index >= 0; index -= 1) {
+      const step = run.steps[index];
+      assert(step != null, "Workflow step index must resolve to a record");
+      if (step.stepId !== stepId) {
+        continue;
+      }
+      if (step.status === "completed" && step.inputHash === currentInputHash) {
+        continue;
+      }
+      if (step.status === "started" || step.status === "failed" || step.status === "completed") {
+        return step;
+      }
+    }
+    return null;
+  }
+
+  private async recordApplyPatchReplayFailure(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    spec: WorkflowApplyPatchSpec,
+    inputHash: string,
+    failure: { message: string; startedAt: string }
+  ): Promise<void> {
+    await this.recordStepFailed(runId, {
+      stepId: spec.id,
+      inputHash,
+      taskId: spec.sourceTaskId,
+      error: failure.message,
+      startedAt: failure.startedAt,
+      completedAt: this.clock.nowIso(),
+    });
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "patch",
+      at: this.clock.nowIso(),
+      stepId: spec.id,
+      sourceTaskId: spec.sourceTaskId,
+      status: "failed",
+      details: { error: failure.message, replayBlocked: true },
+    });
   }
 
   private async runAgentStep(
@@ -1487,6 +1569,38 @@ export class WorkflowRunner {
     );
   }
 
+  private async recordPatchTerminalEventIfMissing(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    patch: { stepId: string; sourceTaskId: string; result: WorkflowApplyPatchResult }
+  ): Promise<void> {
+    assert(runId.length > 0, "WorkflowRunner.recordPatchTerminalEventIfMissing: runId is required");
+    assert(patch.stepId.length > 0, "WorkflowRunner: patch event stepId is required");
+    assert(patch.sourceTaskId.length > 0, "WorkflowRunner: patch event sourceTaskId is required");
+
+    await using _lock = await this.taskEventMutex.acquire();
+    const run = await this.runStore.getRun(runId);
+    const alreadyRecorded = run.events.some(
+      (event) =>
+        event.type === "patch" &&
+        event.status === patch.result.status &&
+        event.stepId === patch.stepId &&
+        event.sourceTaskId === patch.sourceTaskId
+    );
+    if (alreadyRecorded) {
+      return;
+    }
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "patch",
+      at: this.clock.nowIso(),
+      stepId: patch.stepId,
+      sourceTaskId: patch.sourceTaskId,
+      status: patch.result.status,
+      details: patch.result,
+    });
+  }
+
   private async recordAgentResult(
     runId: string,
     sequence: WorkflowEventSequence,
@@ -1616,6 +1730,11 @@ function parseWorkflowActionSpec(rawSpec: unknown): WorkflowActionSpec {
     assert(typeof builtInOnly === "boolean", "action builtInOnly must be a boolean");
     parsed.builtInOnly = builtInOnly;
   }
+  const cache = spec.cache;
+  if (cache !== undefined) {
+    assert(typeof cache === "boolean", "action cache must be a boolean");
+    parsed.cache = cache;
+  }
   return parsed;
 }
 
@@ -1634,6 +1753,7 @@ function buildWorkflowActionReplayInput(
     cwd,
     ...(spec.timeoutMs !== undefined ? { timeoutMs: spec.timeoutMs } : {}),
     ...(spec.builtInOnly === true ? { builtInOnly: true } : {}),
+    ...(spec.cache === false ? { cache: false } : {}),
   };
 }
 

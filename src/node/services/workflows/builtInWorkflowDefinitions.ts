@@ -334,7 +334,7 @@ function normalizeDeepResearchTopic(args) {
     agentId: reasoningAgentId,
     prompt:
       readOnlyReviewPrompt +
-      "Write the final code review. Include only findings that remain actionable after adversarial verification. Use severity P0-P4, file paths, and concrete evidence. If there are no verified issues, say so clearly. Include questions and a validation plan.\\n\\n" +
+      "Write the final code review. Include only findings that remain actionable after adversarial verification. Use severity P0-P4, file paths, issue IDs, and concrete evidence. If there are no verified issues, say so clearly. Include questions and a validation plan. Set verifiedIssueIds to the issue IDs included in the final review when any are verified.\\n\\n" +
       "Scoped review surface:\\n" +
       JSON.stringify(scope.structuredOutput, null, 2) +
       "\\n\\nTriaged issues:\\n" +
@@ -368,6 +368,7 @@ function normalizeDeepResearchTopic(args) {
     candidates: candidates,
     verifications: verifications,
     final: final.structuredOutput,
+    gitContext: gitContext,
     exploreAgentId: exploreAgentId,
     reasoningAgentId: reasoningAgentId,
   });
@@ -386,13 +387,13 @@ function runDeepReviewFix(context) {
     resolutions: [],
     unresolved: [],
   };
-  const preflight = collectFixPreflight(context.action, context.log, input);
+  const preflight = collectFixPreflight(context.action, context.log, input, context.gitContext);
   if (preflight.skippedReason) {
     baseFix.skippedReason = preflight.skippedReason;
     return baseFix;
   }
 
-  const selected = selectFixIssues(context.candidates, context.verifications, input);
+  const selected = selectFixIssues(context.candidates, context.verifications, input, context.final);
   baseFix.selectedIssues = selected.map(function (item) {
     return summarizeFixIssue(item.issueId, item.issue);
   });
@@ -421,6 +422,10 @@ function runDeepReviewFix(context) {
     const attempt = summarizeFixAttempt(item.issueId, fixerResult);
     baseFix.attempts.push(attempt);
     const attemptOutput = fixerResult && fixerResult.structuredOutput ? fixerResult.structuredOutput : {};
+    if (!matchesReportedIssueId(attemptOutput, item.issueId)) {
+      baseFix.unresolved.push({ issueId: item.issueId, reason: issueIdMismatchReason("fixer", item.issueId, attemptOutput) });
+      continue;
+    }
     if (attemptOutput.status !== "fixed" || attemptOutput.commitCreated !== true) {
       if (attemptOutput.status !== "already-fixed") {
         baseFix.unresolved.push({ issueId: item.issueId, reason: attemptOutput.status || "not-fixed" });
@@ -450,6 +455,10 @@ function runDeepReviewFix(context) {
     const resolution = summarizeResolution(item.issueId, resolver);
     baseFix.resolutions.push(resolution);
     const resolutionOutput = resolver && resolver.structuredOutput ? resolver.structuredOutput : {};
+    if (!matchesReportedIssueId(resolutionOutput, item.issueId)) {
+      baseFix.unresolved.push({ issueId: item.issueId, reason: issueIdMismatchReason("resolver", item.issueId, resolutionOutput) });
+      continue;
+    }
     if (resolutionOutput.status === "already-resolved") {
       integratedIssues.push(item.issueId);
       continue;
@@ -482,15 +491,16 @@ function runDeepReviewFix(context) {
   return baseFix;
 }
 
-function collectFixPreflight(action, log, input) {
+function collectFixPreflight(action, log, input, gitContext) {
   if (input.explicitDiff) return { skippedReason: "auto-fix requires a local current workspace target, not an explicit diff" };
   if (looksNonLocalTarget(input.target)) return { skippedReason: "auto-fix requires a local current workspace target" };
   let status = null;
   try {
     status = action.git.status({
       id: "fix-git-status",
-      input: { includeIgnored: false },
+      input: { includeIgnored: false, head: input.headRef || "HEAD" },
       builtInOnly: true,
+      cache: false,
     }).output;
   } catch (error) {
     const message = formatError(error);
@@ -498,10 +508,39 @@ function collectFixPreflight(action, log, input) {
     return { skippedReason: "auto-fix requires a fresh local Git status" };
   }
   if (!isObject(status)) return { skippedReason: "auto-fix requires a fresh local Git status" };
+  if (!isCurrentReviewHead(input, status)) {
+    return { skippedReason: "auto-fix requires the reviewed head ref to be the current checked-out branch" };
+  }
+  if (!matchesReviewedGitSnapshot(gitContext, status)) {
+    return { skippedReason: "auto-fix requires the current Git branch and HEAD to match the reviewed snapshot" };
+  }
   if (arrayLength(status.staged) > 0 || arrayLength(status.unstaged) > 0 || arrayLength(status.untracked) > 0) {
     return { skippedReason: "auto-fix requires a clean committed local worktree" };
   }
   return { status: status };
+}
+
+function isCurrentReviewHead(input, status) {
+  if (!input.headRef) return true;
+  const headRef = String(input.headRef).trim();
+  if (!headRef || headRef === "HEAD") return true;
+  const headSha = typeof status.headSha === "string" ? status.headSha : "";
+  const requestedHeadSha = typeof status.requestedHeadSha === "string" ? status.requestedHeadSha : "";
+  if (headSha && requestedHeadSha) return headSha === requestedHeadSha;
+  const branch = typeof status.branch === "string" ? status.branch : "";
+  return branch.length > 0 && (headRef === branch || headRef === "refs/heads/" + branch);
+}
+
+function matchesReviewedGitSnapshot(gitContext, status) {
+  const reviewedStatus = gitContext && isObject(gitContext.status) ? gitContext.status : null;
+  if (!reviewedStatus) return true;
+  const reviewedBranch = typeof reviewedStatus.branch === "string" ? reviewedStatus.branch : "";
+  const currentBranch = typeof status.branch === "string" ? status.branch : "";
+  if (reviewedBranch && currentBranch && reviewedBranch !== currentBranch) return false;
+  const reviewedHeadSha = typeof reviewedStatus.headSha === "string" ? reviewedStatus.headSha : "";
+  const currentHeadSha = typeof status.headSha === "string" ? status.headSha : "";
+  if (reviewedHeadSha && currentHeadSha && reviewedHeadSha !== currentHeadSha) return false;
+  return true;
 }
 
 function looksNonLocalTarget(target) {
@@ -509,12 +548,15 @@ function looksNonLocalTarget(target) {
   return text.indexOf("http://") !== -1 || text.indexOf("https://") !== -1 || /(^|\\s)(pr|pull request)\\s*#?\\d+/.test(text);
 }
 
-function selectFixIssues(candidates, verifications, input) {
+function selectFixIssues(candidates, verifications, input, final) {
   const selected = [];
   const allowedIds = input.fixIssueIds || [];
+  const finalFilter = getFinalIssueFilter(final);
+  if (finalFilter.kind === "none") return selected;
   for (let index = 0; index < candidates.length; index += 1) {
     const issue = candidates[index];
     const issueId = stableIssueId(issue, index);
+    if (finalFilter.kind === "ids" && finalFilter.ids[issueId] !== true) continue;
     if (allowedIds.length > 0 && allowedIds.indexOf(issueId) === -1) continue;
     const verification = findVerificationForIssue(issue, issueId, index, verifications);
     if (!verification || verification.verdict !== "valid" || verification.confidence === "low") continue;
@@ -522,6 +564,18 @@ function selectFixIssues(candidates, verifications, input) {
     if (selected.length >= input.maxFixes) break;
   }
   return selected;
+}
+
+function getFinalIssueFilter(final) {
+  if (final && final.verifiedIssueCount === 0) return { kind: "none" };
+  if (final && Array.isArray(final.verifiedIssueIds)) {
+    const ids = sanitizeStringArray(final.verifiedIssueIds);
+    if (ids.length === 0) return { kind: "none" };
+    const map = {};
+    for (const id of ids) map[id] = true;
+    return { kind: "ids", ids: map };
+  }
+  return { kind: "all" };
 }
 
 function stableIssueId(issue, index) {
@@ -533,7 +587,22 @@ function findVerificationForIssue(issue, issueId, index, verifications) {
     if (verification && verification.issueId === issueId) return verification;
     if (issue && typeof issue.id === "string" && verification && verification.issueId === issue.id) return verification;
   }
-  return verifications[index] || null;
+  const sameIndexVerification = verifications[index] || null;
+  if (sameIndexVerification && hasNonEmptyIssueId(sameIndexVerification)) return null;
+  return sameIndexVerification;
+}
+
+function hasNonEmptyIssueId(verification) {
+  return typeof verification.issueId === "string" && verification.issueId.trim().length > 0;
+}
+
+function matchesReportedIssueId(output, expectedIssueId) {
+  return output && output.issueId === expectedIssueId;
+}
+
+function issueIdMismatchReason(source, expectedIssueId, output) {
+  const reported = output && typeof output.issueId === "string" && output.issueId.length > 0 ? output.issueId : "<missing>";
+  return source + " reported issueId " + reported + " for " + expectedIssueId;
 }
 
 function summarizeFixIssue(issueId, issue) {
@@ -619,7 +688,7 @@ function buildValidationPrompt(input, final, fixResult) {
 
 function renderFixMarkdown(fix) {
   const appliedCount = countStatus(fix.applications, "applied") + countStatus(fix.attempts, "already-fixed") + countStatus(fix.resolutions, "already-resolved");
-  const conflictResolvedCount = countStatus(fix.resolutions, "resolved") + countStatus(fix.resolutions, "already-resolved");
+  const conflictResolvedCount = countResolvedConflicts(fix.resolutions);
   const validationStatus = fix.validation ? fix.validation.status : "not-run";
   let markdown = "\\n\\n---\\n\\n## Auto-fix results\\n\\n";
   if (fix.skippedReason) {
@@ -632,7 +701,60 @@ function renderFixMarkdown(fix) {
   markdown += "- Not fixed: " + fix.unresolved.length + "\\n";
   markdown += "- Conflicts resolved: " + conflictResolvedCount + "\\n";
   markdown += "- Validation: " + validationStatus + "\\n";
+  markdown += renderFixFailureDetails(fix);
   return markdown;
+}
+
+function countResolvedConflicts(resolutions) {
+  let count = 0;
+  for (const resolution of resolutions || []) {
+    if (!resolution) continue;
+    if (resolution.status === "already-resolved") count += 1;
+    else if (resolution.status === "resolved" && resolution.applyStatus === "applied") count += 1;
+  }
+  return count;
+}
+
+function renderFixFailureDetails(fix) {
+  let markdown = "";
+  if (fix.unresolved && fix.unresolved.length > 0) {
+    markdown += "\\nUnresolved issues:\\n";
+    for (const unresolved of fix.unresolved) {
+      markdown += "- " + renderFixIssueLabel(fix, unresolved.issueId) + ": " + unresolved.reason + "\\n";
+    }
+  }
+  const failedApplications = (fix.applications || []).filter(function (application) {
+    return application && application.status !== "applied";
+  });
+  if (failedApplications.length > 0) {
+    markdown += "\\nPatch application details:\\n";
+    for (const application of failedApplications) {
+      const details = renderPatchApplicationDetails(application);
+      markdown += "- " + renderFixIssueLabel(fix, application.issueId) + ": " + application.status + (details ? " — " + details : "") + "\\n";
+    }
+  }
+  if (fix.validation && Array.isArray(fix.validation.failures) && fix.validation.failures.length > 0) {
+    markdown += "\\nValidation failures:\\n";
+    for (const failure of fix.validation.failures) {
+      markdown += "- " + failure + "\\n";
+    }
+  }
+  return markdown;
+}
+
+function renderPatchApplicationDetails(application) {
+  const details = [];
+  if (application.conflictPaths && application.conflictPaths.length > 0) details.push("conflicts: " + application.conflictPaths.join(", "));
+  if (application.failedPatchSubject) details.push("failed patch: " + application.failedPatchSubject);
+  if (application.error) details.push(application.error);
+  return details.join("; ");
+}
+
+function renderFixIssueLabel(fix, issueId) {
+  for (const issue of fix.selectedIssues || []) {
+    if (issue && issue.issueId === issueId && issue.title) return issueId + " (" + issue.title + ")";
+  }
+  return issueId;
 }
 
 function countStatus(items, status) {
@@ -765,25 +887,25 @@ function normalizeDeepReviewArgs(args) {
 }
 
 function applyFixFlags(normalized, text) {
-  let target = text;
-  if (hasToken(target, "--fix")) {
-    normalized.fix = true;
-    target = removeToken(target, "--fix");
+  const parsed = parseTrailingFixFlags(text);
+  for (const flag of parsed.flags) {
+    if (flag === "--fix") normalized.fix = true;
+    else if (flag === "--no-fix") normalized.fix = false;
   }
-  if (hasToken(target, "--no-fix")) {
-    normalized.fix = false;
-    target = removeToken(target, "--no-fix");
-  }
-  target = target.trim().split(/ +/).join(" ");
+  const target = parsed.target.trim().split(/ +/).join(" ");
   if (target) normalized.target = target;
 }
 
-function hasToken(text, token) {
-  return (" " + text + " ").indexOf(" " + token + " ") !== -1;
-}
-
-function removeToken(text, token) {
-  return (" " + text + " ").split(" " + token + " ").join(" ").trim();
+function parseTrailingFixFlags(text) {
+  const parts = String(text || "").trim().split(/ +/).filter(Boolean);
+  const flags = [];
+  while (parts.length > 0) {
+    const last = parts[parts.length - 1];
+    if (last !== "--fix" && last !== "--no-fix") break;
+    flags.unshift(last);
+    parts.pop();
+  }
+  return { target: parts.join(" "), flags: flags };
 }
 
 function sanitizeStringArray(values) {
@@ -1213,6 +1335,7 @@ function finalSynthesisSchema() {
       verifiedIssueCount: { type: "number" },
       risk: { type: "string", enum: ["low", "medium", "high"] },
       validationPlan: { type: "array", items: { type: "string" } },
+      verifiedIssueIds: { type: "array", items: { type: "string" } },
       discardedIssueCount: { type: "number" },
     },
   };

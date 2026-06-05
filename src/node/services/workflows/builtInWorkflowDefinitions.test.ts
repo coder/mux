@@ -1123,6 +1123,324 @@ describe("built-in deep-review-workflow", () => {
     });
   }, 10_000);
 
+  test("auto-fix uses final synthesis issue IDs and rejects mismatched fixer output", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-fix-final-gate");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 1;\n", "utf-8");
+    await runGit(repoRoot, ["add", "service.ts"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+
+    const keptIssue = {
+      id: "kept-by-final",
+      severity: "P1",
+      category: "correctness",
+      title: "Final review keeps this issue",
+      rationale: "The final synthesis includes this issue.",
+      evidence: "service.ts has a kept issue.",
+      filePaths: ["service.ts"],
+      suggestedFix: "Fix only this issue.",
+      validation: "Run targeted tests.",
+      confidence: "high",
+    };
+    const droppedIssue = {
+      ...keptIssue,
+      id: "dropped-by-final",
+      title: "Final review drops this issue",
+      rationale: "The final synthesis omits this candidate.",
+    };
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_fix_final_gate",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { fix: true, input: "current workspace changes", maxCandidates: 2 },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const applyCalls: unknown[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-review-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped.",
+                structuredOutput: {
+                  summary: "Review service code.",
+                  files: ["service.ts"],
+                  riskAreas: ["correctness"],
+                  lanes: ["correctness"],
+                },
+              };
+            case "review-correctness":
+            case "review-tests":
+            case "review-architecture":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "Findings.",
+                structuredOutput: {
+                  issues: spec.id === "review-correctness" ? [keptIssue, droppedIssue] : [],
+                },
+              };
+            case "triage-candidate-issues":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "Two candidates.",
+                structuredOutput: { issues: [keptIssue, droppedIssue] },
+              };
+            case "verify-issue-0":
+              return {
+                taskId: "task_verify_0",
+                reportMarkdown: "Kept issue is valid.",
+                structuredOutput: {
+                  issueId: "kept-by-final",
+                  verdict: "valid",
+                  confidence: "high",
+                  rationale: "Valid and included by final synthesis.",
+                },
+              };
+            case "verify-issue-1":
+              return {
+                taskId: "task_verify_1",
+                reportMarkdown: "Dropped issue is valid but omitted.",
+                structuredOutput: {
+                  issueId: "dropped-by-final",
+                  verdict: "valid",
+                  confidence: "high",
+                  rationale: "Valid but intentionally not included in the final review.",
+                },
+              };
+            case "synthesize-review":
+              return {
+                taskId: "task_final",
+                reportMarkdown: "# Deep Review\n\nOne final finding.",
+                structuredOutput: {
+                  verifiedIssueCount: 1,
+                  verifiedIssueIds: ["kept-by-final"],
+                  risk: "medium",
+                  validationPlan: [],
+                  discardedIssueCount: 1,
+                },
+              };
+            case "fix-issue-0":
+              expect(spec.prompt).toContain("kept-by-final");
+              expect(spec.prompt).not.toContain("dropped-by-final");
+              return {
+                taskId: "task_fix_0",
+                reportMarkdown: "Returned the wrong issue id.",
+                structuredOutput: {
+                  issueId: "dropped-by-final",
+                  status: "fixed",
+                  summary: "This should not be applied to the kept issue.",
+                  validation: [],
+                  commitCreated: true,
+                },
+              };
+            default:
+              throw new Error(`Unexpected final-gated auto-fix step: ${spec.id}`);
+          }
+        },
+        async applyPatch(spec) {
+          applyCalls.push(spec);
+          return { success: true, taskId: spec.sourceTaskId, projectResults: [] };
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_fix_final_gate");
+
+    expect(taskCalls.map((call) => call.id)).toEqual([
+      "scope-review-surface",
+      "review-correctness",
+      "review-tests",
+      "review-architecture",
+      "triage-candidate-issues",
+      "verify-issue-0",
+      "verify-issue-1",
+      "synthesize-review",
+      "fix-issue-0",
+    ]);
+    expect(applyCalls).toEqual([]);
+    expect(result.reportMarkdown).toContain(
+      "fixer reported issueId dropped-by-final for kept-by-final"
+    );
+    expect(result).toMatchObject({
+      structuredOutput: {
+        fix: {
+          selectedIssues: [{ issueId: "kept-by-final" }],
+          attempts: [{ issueId: "kept-by-final", status: "fixed" }],
+          applications: [],
+          unresolved: [
+            {
+              issueId: "kept-by-final",
+              reason: "fixer reported issueId dropped-by-final for kept-by-final",
+            },
+          ],
+        },
+      },
+    });
+  }, 10_000);
+
+  test("auto-fix skips candidates when verifier reports a different issue ID", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-fix-verifier-mismatch");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 1;\n", "utf-8");
+    await runGit(repoRoot, ["add", "service.ts"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+
+    const issue = {
+      id: "await-write",
+      severity: "P1",
+      category: "correctness",
+      title: "Missing await drops write failures",
+      rationale: "The service reports success before persistence completes.",
+      evidence: "service.ts calls persist() without awaiting it.",
+      filePaths: ["service.ts"],
+      suggestedFix: "Await persist() before returning success.",
+      validation: "Add a failing persistence regression test.",
+      confidence: "high",
+    };
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_fix_verifier_mismatch",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { fix: true, input: "current workspace changes", maxCandidates: 1 },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-review-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped.",
+                structuredOutput: {
+                  summary: "Review service code.",
+                  files: ["service.ts"],
+                  riskAreas: ["correctness"],
+                  lanes: ["correctness"],
+                },
+              };
+            case "review-correctness":
+            case "review-tests":
+            case "review-architecture":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "Findings.",
+                structuredOutput: { issues: spec.id === "review-correctness" ? [issue] : [] },
+              };
+            case "triage-candidate-issues":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "One candidate.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "verify-issue-0":
+              return {
+                taskId: "task_verify_0",
+                reportMarkdown: "Wrong issue id.",
+                structuredOutput: {
+                  issueId: "some-other-issue",
+                  verdict: "valid",
+                  confidence: "high",
+                  rationale: "This should not authorize await-write.",
+                },
+              };
+            case "synthesize-review":
+              return {
+                taskId: "task_final",
+                reportMarkdown: "# Deep Review\n\nOne final finding.",
+                structuredOutput: {
+                  verifiedIssueCount: 1,
+                  verifiedIssueIds: ["await-write"],
+                  risk: "medium",
+                  validationPlan: [],
+                  discardedIssueCount: 0,
+                },
+              };
+            default:
+              throw new Error(`Unexpected verifier-mismatch auto-fix step: ${spec.id}`);
+          }
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_fix_verifier_mismatch");
+
+    expect(taskCalls.map((call) => call.id)).not.toContain("fix-issue-0");
+    expect(result).toMatchObject({
+      structuredOutput: {
+        fix: {
+          requested: true,
+          selectedIssues: [],
+          attempts: [],
+          applications: [],
+          unresolved: [],
+        },
+      },
+    });
+  }, 10_000);
+
   test("auto-fix honors fixIssueIds and does not apply patches for non-fixed attempts", async () => {
     if (!deepReviewWorkflow) {
       throw new Error("Expected built-in deep-review-workflow workflow");
@@ -1368,6 +1686,150 @@ describe("built-in deep-review-workflow", () => {
     });
   }, 10_000);
 
+  test("auto-fix skips when explicit head ref is not the current branch", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-fix-noncurrent-head");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 1;\n", "utf-8");
+    await runGit(repoRoot, ["add", "service.ts"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_fix_noncurrent_head",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: {
+        fix: true,
+        input: "current workspace changes",
+        baseRef: "main",
+        headRef: "feature-branch",
+        maxCandidates: 1,
+      },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: createNoIssueDeepReviewTaskAdapter(taskCalls),
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_fix_noncurrent_head");
+
+    expect(taskCalls.map((call) => call.id)).not.toContain("fix-issue-0");
+    expect(result.reportMarkdown).toContain(
+      "auto-fix requires the reviewed head ref to be the current checked-out branch"
+    );
+    expect(result).toMatchObject({
+      structuredOutput: {
+        fix: {
+          requested: true,
+          skippedReason:
+            "auto-fix requires the reviewed head ref to be the current checked-out branch",
+          selectedIssues: [],
+        },
+      },
+    });
+  }, 10_000);
+
+  test("auto-fix skips when the checkout changes after review context is captured", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-fix-checkout-drift");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 1;\n", "utf-8");
+    await runGit(repoRoot, ["add", "service.ts"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_fix_checkout_drift",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { fix: true, input: "current workspace changes", maxCandidates: 1 },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          if (spec.id === "synthesize-review") {
+            await runGit(repoRoot, ["checkout", "-b", "feature"]);
+          }
+          return createNoIssueDeepReviewTaskAdapter([]).runAgent(spec);
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_fix_checkout_drift");
+
+    expect(taskCalls.map((call) => call.id)).not.toContain("fix-issue-0");
+    expect(result.reportMarkdown).toContain(
+      "auto-fix requires the current Git branch and HEAD to match the reviewed snapshot"
+    );
+    expect(result).toMatchObject({
+      structuredOutput: {
+        fix: {
+          requested: true,
+          skippedReason:
+            "auto-fix requires the current Git branch and HEAD to match the reviewed snapshot",
+          selectedIssues: [],
+        },
+      },
+    });
+  }, 10_000);
+
   test("auto-fix delegates conflict resolution and applies resolver patch", async () => {
     if (!deepReviewWorkflow) {
       throw new Error("Expected built-in deep-review-workflow workflow");
@@ -1580,6 +2042,258 @@ describe("built-in deep-review-workflow", () => {
         },
       },
     });
+  }, 10_000);
+
+  test("auto-fix rejects mismatched resolver output and reports conflict details", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-fix-resolver-mismatch");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 1;\n", "utf-8");
+    await runGit(repoRoot, ["add", "service.ts"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+
+    const issue = {
+      id: "conflicting-fix",
+      severity: "P2",
+      category: "correctness",
+      title: "Branch-specific stale result is reused",
+      rationale: "The cache key omits the branch name.",
+      evidence: "src/service.ts stores one result for all branches.",
+      filePaths: ["src/service.ts"],
+      suggestedFix: "Include the branch in the cache key.",
+      validation: "Add a branch-specific regression test.",
+      confidence: "high",
+    };
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_fix_resolver_mismatch",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { fix: true, input: "current workspace changes", maxCandidates: 1 },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const applyCallIds: string[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-review-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped.",
+                structuredOutput: {
+                  summary: "Review service cache code.",
+                  files: ["src/service.ts"],
+                  riskAreas: ["cache keying"],
+                  lanes: ["correctness"],
+                },
+              };
+            case "review-correctness":
+            case "review-tests":
+            case "review-architecture":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "Findings.",
+                structuredOutput: { issues: spec.id === "review-correctness" ? [issue] : [] },
+              };
+            case "triage-candidate-issues":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "One candidate.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "verify-issue-0":
+              return {
+                taskId: "task_verify_0",
+                reportMarkdown: "Issue is valid.",
+                structuredOutput: {
+                  issueId: "conflicting-fix",
+                  verdict: "valid",
+                  confidence: "medium",
+                  rationale: "The stale cache is reachable.",
+                },
+              };
+            case "synthesize-review":
+              return {
+                taskId: "task_final",
+                reportMarkdown: "# Deep Review\n\n- P2 Cache key omits branch.",
+                structuredOutput: {
+                  verifiedIssueCount: 1,
+                  verifiedIssueIds: ["conflicting-fix"],
+                  risk: "medium",
+                  validationPlan: ["bun test src/service.test.ts"],
+                  discardedIssueCount: 0,
+                },
+              };
+            case "fix-issue-0":
+              return {
+                taskId: "task_fix_0",
+                reportMarkdown: "Fixed cache key.",
+                structuredOutput: {
+                  issueId: "conflicting-fix",
+                  status: "fixed",
+                  summary: "Included branch in cache key.",
+                  validation: ["bun test src/service.test.ts"],
+                  commitCreated: true,
+                },
+              };
+            case "resolve-fix-0-conflict":
+              return {
+                taskId: "task_resolve_0",
+                reportMarkdown: "Resolved the wrong issue.",
+                structuredOutput: {
+                  issueId: "other-issue",
+                  status: "resolved",
+                  summary: "This should not be attributed to conflicting-fix.",
+                  validation: [],
+                  commitCreated: true,
+                },
+              };
+            default:
+              throw new Error(`Unexpected resolver-mismatch step: ${spec.id}`);
+          }
+        },
+        async applyPatch(spec) {
+          applyCallIds.push(spec.id);
+          return {
+            success: false,
+            taskId: spec.sourceTaskId,
+            error: "Patch conflict",
+            conflictPaths: ["conflict.ts"],
+            failedPatchSubject: "fix cache key",
+            projectResults: [
+              {
+                projectPath: repoRoot,
+                projectName: "repo",
+                status: "failed",
+                failedPatchSubject: "fix cache key",
+                conflictPaths: ["conflict.ts"],
+              },
+            ],
+          };
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_fix_resolver_mismatch");
+
+    expect(taskCalls.map((call) => call.id)).toEqual([
+      "scope-review-surface",
+      "review-correctness",
+      "review-tests",
+      "review-architecture",
+      "triage-candidate-issues",
+      "verify-issue-0",
+      "synthesize-review",
+      "fix-issue-0",
+      "resolve-fix-0-conflict",
+    ]);
+    expect(applyCallIds).toEqual(["apply-fix-0"]);
+    expect(result.reportMarkdown).toContain("- Conflicts resolved: 0");
+    expect(result.reportMarkdown).toContain("conflict.ts");
+    expect(result.reportMarkdown).toContain(
+      "resolver reported issueId other-issue for conflicting-fix"
+    );
+    expect(result).toMatchObject({
+      structuredOutput: {
+        fix: {
+          applications: [
+            {
+              issueId: "conflicting-fix",
+              status: "conflict",
+              conflictPaths: ["conflict.ts"],
+              failedPatchSubject: "fix cache key",
+            },
+          ],
+          resolutions: [{ issueId: "conflicting-fix", status: "resolved" }],
+          unresolved: [
+            {
+              issueId: "conflicting-fix",
+              reason: "resolver reported issueId other-issue for conflicting-fix",
+            },
+          ],
+        },
+      },
+    });
+  }, 10_000);
+
+  test("prose mentions of --fix remain review-only", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-prose-fix-mention");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_prose_fix_mention",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { input: "review the deep-review-workflow --fix implementation", maxCandidates: 1 },
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: createNoIssueDeepReviewTaskAdapter(taskCalls),
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_prose_fix_mention");
+    const run = await runStore.getRun("wfr_deep_review_prose_fix_mention");
+
+    expect(taskCalls.map((call) => call.id)).not.toContain("fix-issue-0");
+    expect(run.events.filter((event) => event.type === "phase").map((event) => event.name)).toEqual(
+      ["scope", "lane-review", "triage-dedupe", "adversarial-verification", "final-synthesis"]
+    );
+    const structuredOutput = result.structuredOutput;
+    if (
+      structuredOutput == null ||
+      typeof structuredOutput !== "object" ||
+      Array.isArray(structuredOutput)
+    ) {
+      throw new Error("Expected deep-review result to include an object structuredOutput");
+    }
+    const structuredRecord = structuredOutput as Record<string, unknown>;
+    expect(structuredRecord.target).toBe("review the deep-review-workflow --fix implementation");
+    expect(Object.hasOwn(structuredRecord, "fix")).toBe(false);
   }, 10_000);
 
   test("--no-fix preserves review-only behavior even when --fix is also present", async () => {

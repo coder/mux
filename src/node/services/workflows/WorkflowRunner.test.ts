@@ -428,6 +428,87 @@ describe("WorkflowRunner", () => {
     await expect(runner.run("wfr_apply_patch_replay")).resolves.toEqual({
       reportMarkdown: "applied:task_impl",
     });
+    const run = await store.getRun("wfr_apply_patch_replay");
+    const patchEvent = run.events.find(
+      (event) =>
+        event.type === "patch" &&
+        event.stepId === "apply-implement" &&
+        event.sourceTaskId === "task_impl" &&
+        event.status === "applied"
+    );
+    expect(patchEvent).toMatchObject({ type: "patch", status: "applied" });
+    expect(patchEvent?.type === "patch" ? patchEvent.details : undefined).toMatchObject({
+      status: "applied",
+      taskId: "task_impl",
+    });
+  });
+
+  test("blocks replay of incomplete applyPatch steps instead of reapplying", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-apply-patch-started-replay");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    const agentSpec = { id: "implement", prompt: "Implement" };
+    const applySpec = {
+      id: "apply-implement",
+      sourceTaskId: "task_impl",
+      target: "parent",
+      threeWay: true,
+      force: false,
+    } as const;
+    await store.createRun({
+      id: "wfr_apply_patch_started_replay",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent, applyPatch }) {
+        const implementation = agent({ id: "implement", prompt: "Implement" });
+        const applied = applyPatch({ id: "apply-implement", source: implementation, target: "parent" });
+        return { reportMarkdown: applied.status + ":" + applied.taskId };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await store.recordStepCompleted("wfr_apply_patch_started_replay", {
+      stepId: agentSpec.id,
+      inputHash: hashWorkflowStepInput(agentSpec.id, agentSpec),
+      taskId: "task_impl",
+      result: { taskId: "task_impl", reportMarkdown: "implemented" },
+      startedAt: "2026-05-29T00:00:01.000Z",
+      completedAt: "2026-05-29T00:00:02.000Z",
+    });
+    await store.recordStepStarted("wfr_apply_patch_started_replay", {
+      stepId: applySpec.id,
+      inputHash: hashWorkflowStepInput(applySpec.id, applySpec),
+      taskId: "task_impl",
+      startedAt: "2026-05-29T00:00:03.000Z",
+    });
+    let applyCalls = 0;
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("agent should replay");
+      },
+      async applyPatch() {
+        applyCalls += 1;
+        throw new Error("patch should not be reapplied");
+      },
+    });
+
+    await expect(runner.run("wfr_apply_patch_started_replay")).rejects.toThrow(
+      /incomplete or failed patch attempt/
+    );
+    expect(applyCalls).toBe(0);
+    const run = await store.getRun("wfr_apply_patch_started_replay");
+    const failedPatchEvent = run.events.find(
+      (event) =>
+        event.type === "patch" && event.stepId === "apply-implement" && event.status === "failed"
+    );
+    expect(failedPatchEvent).toMatchObject({ type: "patch", status: "failed" });
+    expect(failedPatchEvent?.type === "patch" ? failedPatchEvent.details : undefined).toMatchObject(
+      {
+        replayBlocked: true,
+      }
+    );
   });
 
   test("rejects applyPatch sources that are not workflow-owned child tasks", async () => {
@@ -1961,6 +2042,92 @@ describe("WorkflowRunner", () => {
         expect.objectContaining({ type: "action", stepId: "count", status: "cached" }),
       ])
     );
+  });
+
+  test("reruns completed read actions when cache is disabled", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-action-no-cache");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const actionPath = path.join(projectRoot, "counter.js");
+    await fs.mkdir(projectRoot, { recursive: true });
+    await fs.writeFile(
+      actionPath,
+      `export const metadata = { version: 1, description: "Counter", effect: "read" };
+      export async function execute() { return { value: 9 }; }`,
+      "utf-8"
+    );
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
+    const action = await actionRegistry.resolveAction("counter", { projectTrusted: true });
+    await store.createRun({
+      id: "wfr_action_no_cache",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ action }) {
+        const result = action.counter({ id: "count", input: { value: 1 }, cache: false });
+        return { reportMarkdown: String(result.output.value) };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await store.recordStepCompleted("wfr_action_no_cache", {
+      stepId: "count",
+      inputHash: hashWorkflowStepInput("count", {
+        primitive: "action",
+        actionName: "counter",
+        scope: "project",
+        sourcePath: action.sourcePath,
+        sourceHash: action.sourceHash,
+        input: { value: 1 },
+        cwd: path.dirname(action.sourcePath),
+        cache: false,
+      }),
+      result: {
+        reportMarkdown: "Action counter completed in 1ms.",
+        structuredOutput: {
+          output: { value: 7 },
+          stdout: "",
+          stderr: "",
+          exitCode: 0,
+          signal: null,
+          durationMs: 1,
+          artifacts: [],
+        },
+      },
+      startedAt: "2026-05-29T00:00:01.000Z",
+      completedAt: "2026-05-29T00:00:02.000Z",
+    });
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      actionRegistry,
+      projectTrusted: true,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:03.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await expect(runner.run("wfr_action_no_cache")).resolves.toEqual({ reportMarkdown: "9" });
+    const run = await store.getRun("wfr_action_no_cache");
+    expect(run.events).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "action", stepId: "count", status: "cached" }),
+      ])
+    );
+    expect(run.steps.find((step) => step.stepId === "count")).toMatchObject({
+      status: "completed",
+      result: { structuredOutput: { output: { value: 9 } } },
+    });
   });
 
   test("replays completed workflow action results without loading action modules", async () => {

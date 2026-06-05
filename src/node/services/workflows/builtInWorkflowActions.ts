@@ -84,7 +84,7 @@ module.exports.metadata = {
   description: "Return branch, upstream, and working tree status for the current Git repository",
   effect: "read",
   outputSchema: { type: "object" },
-  permissions: [{ kind: "command", command: "git status" }],
+  permissions: [{ kind: "command", command: "git status" }, { kind: "command", command: "git rev-parse" }],
   timeoutMs: 10000,
 };
 
@@ -126,6 +126,9 @@ function parseStatusLine(line) {
 module.exports.execute = async function (rawInput, ctx) {
   const input = inputObject(rawInput);
   const includeIgnored = input.includeIgnored !== false;
+  const requestedHead = optionalString(input.head) ?? "HEAD";
+  const headSha = await tryGit(ctx, ["rev-parse", "--verify", "HEAD"]);
+  const requestedHeadSha = await tryGit(ctx, ["rev-parse", "--verify", requestedHead]);
   const stdout = await runGit(ctx, [
     "status",
     "--porcelain=v1",
@@ -155,6 +158,9 @@ module.exports.execute = async function (rawInput, ctx) {
   }
   return {
     ...header,
+    headSha,
+    requestedHead,
+    requestedHeadSha,
     clean: staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
     staged,
     unstaged,
