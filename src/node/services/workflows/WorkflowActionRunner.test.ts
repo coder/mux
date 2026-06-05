@@ -228,6 +228,41 @@ describe("WorkflowActionRunner", () => {
     expect(result.stderr).toBe("");
   });
 
+  test("keeps cleanup ps warnings out of action diagnostics", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    using tmp = new DisposableTempDir("workflow-action-ps-diagnostics");
+    const fakeBinDir = path.join(tmp.path, "bin");
+    const fakePsPath = path.join(fakeBinDir, "ps");
+    const sourcePath = path.join(tmp.path, "ps-diagnostics.js");
+    const sentinel = "fake ps warning should stay hidden";
+    await fs.mkdir(fakeBinDir, { recursive: true });
+    await fs.writeFile(fakePsPath, `#!/bin/sh\nprintf '${sentinel}\\n' >&2\n`, "utf-8");
+    await fs.chmod(fakePsPath, 0o755);
+    const source = `
+      module.exports.metadata = { version: 1, description: "Ps diagnostics", effect: "read" };
+      module.exports.execute = async (_input, ctx) => {
+        process.env.PATH = ${JSON.stringify(fakeBinDir + path.delimiter)} + (process.env.PATH || "");
+        const result = await ctx.exec(process.execPath, ["-e", ""]);
+        return { exitCode: result.exitCode };
+      };
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    const result = await runner.execute(createAction(sourcePath, source), {
+      input: null,
+      cwd: tmp.path,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts"),
+    });
+
+    expect(result.output).toEqual({ exitCode: 0 });
+    expect(result.stderr).not.toContain(sentinel);
+    expect(result.stderr).toBe("");
+  });
+
   test("built-in git actions reject truncated command output", async () => {
     using tmp = new DisposableTempDir("workflow-action-git-truncated");
     const repoRoot = path.join(tmp.path, "repo");
