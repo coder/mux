@@ -72,12 +72,14 @@ export function supportsServiceTier(modelString: string): boolean {
 }
 
 /**
- * Merge a service-tier override into provider options for a given model.
+ * Reconcile a service-tier override against the *effective* model for a request.
  *
- * Returns the options unchanged when there is no override or the model can't use
- * service tiers, so a stale override never leaks onto an unsupported request.
- * Centralized here so every send path (interactive hook and non-React storage path)
- * applies the override identically.
+ * This is authoritative: it sets the tier when the model supports it and an override
+ * is present, and otherwise strips any previously-attached tier. The strip matters for
+ * composition with `/<model>` one-shots — a tier baked against the saved model must not
+ * linger when the one-shot switches to a model that can't honor it (and conversely, a
+ * tier dropped against a non-OpenAI saved model gets re-applied once the effective model
+ * is OpenAI). Centralized here so every send path applies the override identically.
  */
 export function withServiceTierOverride(
   providerOptions: MuxProviderOptions,
@@ -85,7 +87,12 @@ export function withServiceTierOverride(
   modelString: string
 ): MuxProviderOptions {
   if (!serviceTier || !supportsServiceTier(modelString)) {
-    return providerOptions;
+    // No override, or the model can't use service tiers: ensure no stale tier rides along.
+    if (providerOptions.openai?.serviceTier == null) {
+      return providerOptions;
+    }
+    const { serviceTier: _omit, ...openaiRest } = providerOptions.openai;
+    return { ...providerOptions, openai: openaiRest };
   }
   return {
     ...providerOptions,

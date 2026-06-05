@@ -85,6 +85,19 @@ describe("serviceTier helpers", () => {
       expect(result.openai).toBeUndefined();
     });
 
+    it("strips a stale tier when re-merged against an unsupported model", () => {
+      // Simulates a /<model> one-shot switching from an OpenAI saved model (tier baked in)
+      // to a non-OpenAI model: the tier must not ride along on the Anthropic request.
+      const input: MuxProviderOptions = {
+        openai: { wireFormat: "responses", serviceTier: "priority" },
+      };
+      const result = withServiceTierOverride(input, SERVICE_TIER_FAST, ANTHROPIC_MODEL);
+      expect(result.openai?.serviceTier).toBeUndefined();
+      expect(result.openai?.wireFormat).toBe("responses");
+      // Input is left untouched.
+      expect(input.openai?.serviceTier).toBe("priority");
+    });
+
     it("does not mutate the input options", () => {
       const input: MuxProviderOptions = { openai: { wireFormat: "responses" } };
       withServiceTierOverride(input, SERVICE_TIER_FAST, OPENAI_MODEL);

@@ -39,8 +39,10 @@ import {
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
+import { useServiceTier } from "@/browser/hooks/useServiceTier";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
+import { withServiceTierOverride } from "@/common/utils/ai/serviceTier";
 import {
   useAdditionalSystemContextHydrated,
   useAdditionalSystemContextSnapshot,
@@ -719,6 +721,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const sendOptionsScopeId =
     variant === "workspace" ? props.workspaceId : getProjectScopeId(creationParentProjectPath);
   const sendMessageOptions = useSendMessageOptions(sendOptionsScopeId);
+  // The persisted per-chat service tier is also read here so a /<model> one-shot can
+  // re-merge it against the effective (overridden) model. useSendMessageOptions bakes the
+  // tier against the saved model, which may differ from a one-shot model override.
+  const [serviceTierOverride] = useServiceTier(sendOptionsScopeId);
   const additionalSystemContext = useAdditionalSystemContextSnapshot(
     variant === "workspace" ? props.workspaceId : ""
   );
@@ -2667,6 +2673,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ...sendMessageOptions,
           ...compactionOptions,
           ...(modelOverride ? { model: modelOverride } : {}),
+          // Re-merge the per-chat service tier against the one-shot model so Fast/Slow
+          // composes with /<model>[+thinking]: useSendMessageOptions baked the tier against
+          // the saved model, which may not match (or support) the one-shot model override.
+          ...(modelOverride
+            ? {
+                providerOptions: withServiceTierOverride(
+                  sendMessageOptions.providerOptions ?? {},
+                  serviceTierOverride,
+                  modelOverride
+                ),
+              }
+            : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
           ...(goalInterventionPolicy ? { goalInterventionPolicy } : {}),
