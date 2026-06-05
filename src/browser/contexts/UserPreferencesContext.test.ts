@@ -9,6 +9,7 @@ import {
   mirrorBackendPreferences,
   overlayDirtyLocalValues,
   prunePreferenceScopes,
+  retryUserPreferenceHydration,
   shouldBackfillLocalPreferences,
 } from "./UserPreferencesContext";
 import {
@@ -287,6 +288,32 @@ describe("UserPreferencesProvider bridge helpers", () => {
       ai: { projectDefaults: { "/repo/a": { agentId: "exec" } } },
       notifications: { notifyOnResponseByWorkspace: { "ws-keep": true } },
     });
+  });
+
+  test("retries initial hydration failures until backend config loads", async () => {
+    const controller = new AbortController();
+    const errors: string[] = [];
+    let attempts = 0;
+
+    await retryUserPreferenceHydration({
+      signal: controller.signal,
+      applyBackendConfig: () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return Promise.reject(new Error("temporary config failure"));
+        }
+        return Promise.resolve();
+      },
+      getRetryDelayMs: () => 0,
+      waitForDelay: () => Promise.resolve(),
+      onError: (message) => {
+        errors.push(message);
+      },
+    });
+
+    expect(attempts).toBe(2);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("retrying");
   });
 
   test("save queue retries failed saves without dropping pending preferences", async () => {

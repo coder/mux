@@ -177,13 +177,13 @@ export function canPrunePreferenceScopes(params: {
   );
 }
 
-const USER_PREFERENCE_SAVE_RETRY_BASE_DELAY_MS = 250;
-const USER_PREFERENCE_SAVE_RETRY_MAX_DELAY_MS = 5000;
+const USER_PREFERENCE_RETRY_BASE_DELAY_MS = 250;
+const USER_PREFERENCE_RETRY_MAX_DELAY_MS = 5000;
 
-function getUserPreferenceSaveRetryDelayMs(retryAttempt: number): number {
+function getUserPreferenceRetryDelayMs(retryAttempt: number): number {
   return Math.min(
-    USER_PREFERENCE_SAVE_RETRY_BASE_DELAY_MS * 2 ** retryAttempt,
-    USER_PREFERENCE_SAVE_RETRY_MAX_DELAY_MS
+    USER_PREFERENCE_RETRY_BASE_DELAY_MS * 2 ** retryAttempt,
+    USER_PREFERENCE_RETRY_MAX_DELAY_MS
   );
 }
 
@@ -206,6 +206,30 @@ function waitForRetryDelay(delayMs: number, signal: AbortSignal): Promise<void> 
     }
     signal.addEventListener("abort", finish, { once: true });
   });
+}
+
+export async function retryUserPreferenceHydration(params: {
+  signal: AbortSignal;
+  applyBackendConfig: () => Promise<void>;
+  onError: (message: string, error: unknown) => void;
+  getRetryDelayMs?: (retryAttempt: number) => number;
+  waitForDelay?: (delayMs: number, signal: AbortSignal) => Promise<void>;
+}): Promise<void> {
+  const getRetryDelayMs = params.getRetryDelayMs ?? getUserPreferenceRetryDelayMs;
+  const waitForDelay = params.waitForDelay ?? waitForRetryDelay;
+  let retryAttempt = 0;
+
+  while (!params.signal.aborted) {
+    try {
+      await params.applyBackendConfig();
+      return;
+    } catch (error) {
+      const retryDelayMs = getRetryDelayMs(retryAttempt);
+      retryAttempt += 1;
+      params.onError(`Failed to hydrate user preferences, retrying in ${retryDelayMs}ms:`, error);
+      await waitForDelay(retryDelayMs, params.signal);
+    }
+  }
 }
 
 interface UserPreferenceConfigClient {
@@ -295,7 +319,7 @@ export function createUserPreferenceSaveQueue(params: {
             pendingSave = { value: preferencesToSave };
           }
 
-          const retryDelayMs = getUserPreferenceSaveRetryDelayMs(retryAttempt);
+          const retryDelayMs = getUserPreferenceRetryDelayMs(retryAttempt);
           retryAttempt += 1;
           params.onError(
             `Failed to persist user preferences, retrying in ${retryDelayMs}ms:`,
@@ -447,9 +471,15 @@ export function UserPreferencesProvider(props: { children: ReactNode }) {
       enqueueSave(currentPreferencesRef.current);
     });
 
-    const initialSync = applyBackendConfig();
+    const initialSync = retryUserPreferenceHydration({
+      signal,
+      applyBackendConfig,
+      onError: (message, error) => {
+        console.warn(message, error);
+      },
+    });
     initialSync.catch((error) => {
-      console.warn("Failed to hydrate user preferences:", error);
+      console.warn("Failed to retry user preference hydration:", error);
     });
 
     const subscription = (async () => {
