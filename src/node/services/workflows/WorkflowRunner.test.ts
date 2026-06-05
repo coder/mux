@@ -18,6 +18,8 @@ import { hashWorkflowStepInput } from "./workflowReplayKey";
 
 const execFileAsync = promisify(execFile);
 
+const WORKFLOW_RUNNER_TEST_STALE_LEASE_MS = 100;
+
 async function runGit(cwd: string, args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd });
 }
@@ -38,7 +40,10 @@ const source = `export default function workflow({ args, phase, log, agent }) {
 `;
 
 async function createRunStore(sessionDir: string) {
-  const store = new WorkflowRunStore({ sessionDir, staleLeaseMs: 10 });
+  const store = new WorkflowRunStore({
+    sessionDir,
+    staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+  });
   await store.createRun({
     id: "wfr_123",
     workspaceId: "workspace-1",
@@ -159,7 +164,10 @@ describe("WorkflowRunner", () => {
 
   test("returns child task IDs to workflow code", async () => {
     using tmp = new DisposableTempDir("workflow-runner-task-id");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_task_id",
       workspaceId: "workspace-1",
@@ -185,7 +193,10 @@ describe("WorkflowRunner", () => {
 
   test("applies workflow-owned child patches through a durable applyPatch step", async () => {
     using tmp = new DisposableTempDir("workflow-runner-apply-patch");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_apply_patch",
       workspaceId: "workspace-1",
@@ -242,7 +253,10 @@ describe("WorkflowRunner", () => {
 
   test("classifies nested failedPatchSubject applyPatch results as conflicts", async () => {
     using tmp = new DisposableTempDir("workflow-runner-apply-patch-nested-subject");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_apply_patch_nested_subject",
       workspaceId: "workspace-1",
@@ -295,7 +309,10 @@ describe("WorkflowRunner", () => {
 
   test("replays completed applyPatch steps without reapplying", async () => {
     using tmp = new DisposableTempDir("workflow-runner-apply-patch-replay");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     const agentSpec = { id: "implement", prompt: "Implement" };
     const applySpec = {
       id: "apply-implement",
@@ -351,7 +368,10 @@ describe("WorkflowRunner", () => {
 
   test("rejects applyPatch sources that are not workflow-owned child tasks", async () => {
     using tmp = new DisposableTempDir("workflow-runner-apply-patch-unowned");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_apply_patch_unowned",
       workspaceId: "workspace-1",
@@ -771,7 +791,10 @@ describe("WorkflowRunner", () => {
 
   test("runs parallelAgents specs concurrently and returns ordered results", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_parallel",
       workspaceId: "workspace-1",
@@ -832,7 +855,10 @@ describe("WorkflowRunner", () => {
 
   test("interrupts sibling parallelAgents when one child task fails", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_parallel_failure",
       workspaceId: "workspace-1",
@@ -876,7 +902,10 @@ describe("WorkflowRunner", () => {
 
   test("does not interrupt sibling parallelAgents when foreground wait backgrounds", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_parallel_backgrounded",
       workspaceId: "workspace-1",
@@ -927,7 +956,10 @@ describe("WorkflowRunner", () => {
 
   test("retries only failed parallelAgents steps after structured output validation errors", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_parallel_retry_validation",
       workspaceId: "workspace-1",
@@ -989,7 +1021,10 @@ describe("WorkflowRunner", () => {
 
   test("retries workflow agent steps that fail structured output validation", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_retry_validation",
       workspaceId: "workspace-1",
@@ -1061,7 +1096,10 @@ describe("WorkflowRunner", () => {
 
   test("stops retrying workflow agent validation after the maximum attempts", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_retry_exhausted",
       workspaceId: "workspace-1",
@@ -1101,7 +1139,10 @@ describe("WorkflowRunner", () => {
 
   test("validates workflow agent structured output against requested schema", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_schema",
       workspaceId: "workspace-1",
@@ -1151,7 +1192,10 @@ describe("WorkflowRunner", () => {
 
   test("applies sandbox limits before evaluating workflow source", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_limits",
       workspaceId: "workspace-1",
@@ -1214,7 +1258,10 @@ describe("WorkflowRunner", () => {
 
   test("supports async workflow function exports", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_async",
       workspaceId: "workspace-1",
@@ -1234,7 +1281,10 @@ describe("WorkflowRunner", () => {
 
   test("returns the normalized workflow result for JSON-serializable values", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_normalized_return",
       workspaceId: "workspace-1",
@@ -1256,7 +1306,10 @@ describe("WorkflowRunner", () => {
 
   test("marks empty workflow returns as failed runs", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_empty_return",
       workspaceId: "workspace-1",
@@ -1307,7 +1360,10 @@ describe("WorkflowRunner", () => {
 
   test("marks compile failures as failed runs", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_compile_error",
       workspaceId: "workspace-1",
@@ -1330,7 +1386,10 @@ describe("WorkflowRunner", () => {
 
   test("fails fast when a replay-boundary primitive omits a stable id", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_missing_id",
       workspaceId: "workspace-1",
@@ -1370,7 +1429,10 @@ describe("WorkflowRunner", () => {
       }`,
       "utf-8"
     );
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_action",
       workspaceId: "workspace-1",
@@ -1463,7 +1525,10 @@ describe("WorkflowRunner", () => {
     await runGit(repoRoot, ["commit", "-m", "ignore file"]);
     await fs.writeFile(path.join(repoRoot, "ignored.txt"), "ignored\n", "utf-8");
     await fs.writeFile(path.join(repoRoot, "new.txt"), "new\n", "utf-8");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_built_in_git_actions",
       workspaceId: "workspace-1",
@@ -1564,7 +1629,10 @@ describe("WorkflowRunner", () => {
       export async function execute() { throw new Error("action should replay"); }`,
       "utf-8"
     );
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     const actionSource = await fs.readFile(actionPath, "utf-8");
     const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
     const action = await actionRegistry.resolveAction("counter", { projectTrusted: true });
@@ -1647,7 +1715,10 @@ describe("WorkflowRunner", () => {
       export async function execute() { throw new Error("action should replay"); }`,
       "utf-8"
     );
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
     const action = await actionRegistry.resolveAction("counter", { projectTrusted: true });
     await store.createRun({
@@ -1724,7 +1795,10 @@ describe("WorkflowRunner", () => {
     );
     const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
     const action = await actionRegistry.resolveAction("submit", { projectTrusted: true });
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_action_incomplete",
       workspaceId: "workspace-1",
@@ -1799,7 +1873,10 @@ describe("WorkflowRunner", () => {
       }`,
       "utf-8"
     );
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_action_source_drift",
       workspaceId: "workspace-1",
@@ -1860,7 +1937,10 @@ describe("WorkflowRunner", () => {
     );
     const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
     const oldAction = await actionRegistry.resolveAction("submit", { projectTrusted: true });
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_action_completed_drift",
       workspaceId: "workspace-1",
@@ -1957,7 +2037,10 @@ describe("WorkflowRunner", () => {
     );
     const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
     const oldAction = await actionRegistry.resolveAction("submit", { projectTrusted: true });
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_action_completed_missing_event",
       workspaceId: "workspace-1",
@@ -2058,7 +2141,10 @@ describe("WorkflowRunner", () => {
     );
     const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
     const action = await actionRegistry.resolveAction("submit", { projectTrusted: true });
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_action_failed_mutating",
       workspaceId: "workspace-1",
@@ -2118,7 +2204,10 @@ describe("WorkflowRunner", () => {
       export async function execute() { throw new Error("action should replay"); }`,
       "utf-8"
     );
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
     const action = await actionRegistry.resolveAction("counter", { projectTrusted: true });
     await store.createRun({
@@ -2196,7 +2285,10 @@ describe("WorkflowRunner", () => {
     await fs.writeFile(actionPath, sourceB, "utf-8");
     const actionB = await actionRegistry.resolveAction("submit", { projectTrusted: true });
     await fs.writeFile(actionPath, sourceA, "utf-8");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_action_cache_unsafe_later",
       workspaceId: "workspace-1",
@@ -2321,7 +2413,10 @@ describe("WorkflowRunner", () => {
       }`,
       "utf-8"
     );
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_action_relative_cwd",
       workspaceId: "workspace-1",
@@ -2372,7 +2467,10 @@ describe("WorkflowRunner", () => {
       export async function execute() { throw new Error("action should replay"); }`,
       "utf-8"
     );
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
     const action = await actionRegistry.resolveAction("cwd", { projectTrusted: true });
     await store.createRun({
@@ -2448,7 +2546,10 @@ describe("WorkflowRunner", () => {
       export async function execute() { return { value: helper.value }; }`;
     await fs.writeFile(actionPath, actionSource, "utf-8");
     await fs.writeFile(helperPath, "module.exports = { value: 1 };", "utf-8");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
     const oldAction = await actionRegistry.resolveAction("counter", { projectTrusted: true });
     await store.createRun({
@@ -2526,7 +2627,10 @@ describe("WorkflowRunner", () => {
     );
     const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
     const oldAction = await actionRegistry.resolveAction("submit", { projectTrusted: true });
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_action_effect_drift",
       workspaceId: "workspace-1",
@@ -2610,7 +2714,10 @@ describe("WorkflowRunner", () => {
     );
     const actionRegistry = new WorkflowActionRegistry({ projectRoot, globalRoot });
     const oldAction = await actionRegistry.resolveAction("submit", { projectTrusted: true });
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_action_reconcile_drift",
       workspaceId: "workspace-1",
@@ -2682,7 +2789,10 @@ describe("WorkflowRunner", () => {
 
   test("does not expose mux tools, filesystem imports, or timers to workflow code", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
-    const store = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
     await store.createRun({
       id: "wfr_forbidden",
       workspaceId: "workspace-1",

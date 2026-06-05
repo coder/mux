@@ -315,9 +315,7 @@ export default function workflow({ args, agent }) {
     await expect(
       fs.readFile(path.join(scratchRoot, "scratch-research.js"), "utf-8")
     ).resolves.toContain("// description: Scratch research");
-    await expect(fs.readFile(path.join(scratchRoot, ".gitignore"), "utf-8")).resolves.toBe(
-      "*\n!.gitignore\n"
-    );
+    await expect(fs.readFile(path.join(scratchRoot, ".gitignore"), "utf-8")).rejects.toThrow();
   });
 
   test("lists definitions through the definition store trust gate", async () => {
