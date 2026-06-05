@@ -6,6 +6,10 @@ import { useAPI } from "@/browser/contexts/API";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 
+// Single source of truth for the guard shown when the IPC API client is unavailable, so the
+// message can't drift between the four picker fetch handlers that surface it.
+const API_NOT_CONNECTED_ERROR = "Mux API not connected.";
+
 interface OnePasswordVault {
   id: string;
   title: string;
@@ -50,7 +54,7 @@ export function OnePasswordPicker(props: OnePasswordPickerProps) {
   useEffect(() => {
     if (!api) {
       setVaults([]);
-      setError("Mux API not connected.");
+      setError(API_NOT_CONNECTED_ERROR);
       setLoading(false);
       return;
     }
@@ -112,7 +116,7 @@ export function OnePasswordPicker(props: OnePasswordPickerProps) {
     assert(vault.title.length > 0, "OnePasswordPicker: vault.title must be non-empty");
 
     if (!api) {
-      setError("Mux API not connected.");
+      setError(API_NOT_CONNECTED_ERROR);
       return;
     }
 
@@ -148,7 +152,7 @@ export function OnePasswordPicker(props: OnePasswordPickerProps) {
     assert(item.title.length > 0, "OnePasswordPicker: item.title must be non-empty");
 
     if (!api) {
-      setError("Mux API not connected.");
+      setError(API_NOT_CONNECTED_ERROR);
       return;
     }
 
@@ -191,7 +195,7 @@ export function OnePasswordPicker(props: OnePasswordPickerProps) {
     assert(field.title.length > 0, "OnePasswordPicker: field.title must be non-empty");
 
     if (!api) {
-      setError("Mux API not connected.");
+      setError(API_NOT_CONNECTED_ERROR);
       return;
     }
 
