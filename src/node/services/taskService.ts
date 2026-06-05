@@ -2653,10 +2653,14 @@ export class TaskService {
       forkedRuntimeConfig = parentRuntimeConfig;
       forkedFromSource = false;
       inheritedProjects = parentMeta.projects;
+      // Build the runtime with the child's identity but the parent's checkout path. Worktree/SSH
+      // runtimes honor this persisted path override (see *Runtime.getWorkspacePath), so cwd
+      // resolution and ensureReady land in the shared parent checkout instead of a name-derived
+      // directory that was never created. This mirrors the runtime rebuilt from the persisted entry.
       runtimeForTaskWorkspace = createRuntimeForWorkspace({
         runtimeConfig: parentRuntimeConfig,
         projectPath: parentMeta.projectPath,
-        name: parentMeta.name,
+        name: workspaceName,
         namedWorkspacePath: sharedWorkspacePath,
       });
       initLogger.logStep("Sharing parent workspace (isolation: none) — skipping fork and init");

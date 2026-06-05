@@ -26,21 +26,37 @@ export class WorktreeRuntime extends LocalBaseRuntime {
   private readonly worktreeManager: WorktreeManager;
   private readonly currentProjectPath?: string;
   private readonly currentWorkspaceName?: string;
+  // Persisted checkout path for this runtime's own workspace. Set when a workspace's on-disk path
+  // diverges from the name-derived worktree path — e.g. an isolation: "none" task that shares its
+  // parent's checkout (its name is unique but its path points at the parent's worktree).
+  private readonly currentWorkspacePath?: string;
 
   constructor(
     srcBaseDir: string,
     options?: {
       projectPath?: string;
       workspaceName?: string;
+      workspacePath?: string;
     }
   ) {
     super();
     this.worktreeManager = new WorktreeManager(srcBaseDir);
     this.currentProjectPath = options?.projectPath;
     this.currentWorkspaceName = options?.workspaceName;
+    this.currentWorkspacePath = options?.workspacePath;
   }
 
   getWorkspacePath(projectPath: string, workspaceName: string): string {
+    // Honor an explicit persisted path for this runtime's own workspace so callers (cwd resolution,
+    // ensureReady, agent discovery) land in the shared parent checkout instead of a name-derived
+    // directory that was never created. Mirrors SSHRuntime.getWorkspacePath.
+    if (
+      this.currentWorkspacePath &&
+      this.currentProjectPath === projectPath &&
+      this.currentWorkspaceName === workspaceName
+    ) {
+      return this.currentWorkspacePath;
+    }
     return this.worktreeManager.getWorkspacePath(projectPath, workspaceName);
   }
 
