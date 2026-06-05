@@ -6,6 +6,8 @@ import { BUILT_IN_WORKFLOW_DEFINITIONS } from "./builtInWorkflowDefinitions";
 import { WorkflowRunStore } from "./WorkflowRunStore";
 import { WorkflowRunner, type WorkflowAgentSpec } from "./WorkflowRunner";
 
+const BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS = 100;
+
 const deepResearch = BUILT_IN_WORKFLOW_DEFINITIONS.find(
   (definition) => definition.name === "deep-research"
 );
@@ -20,7 +22,10 @@ describe("built-in deep-research workflow", () => {
       throw new Error("Expected built-in deep-research workflow");
     }
     using tmp = new DisposableTempDir("deep-research-workflow");
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_research",
       workspaceId: "workspace-1",
@@ -210,7 +215,10 @@ describe("built-in deep-research workflow", () => {
       throw new Error("Expected built-in deep-research workflow");
     }
     using tmp = new DisposableTempDir("deep-research-empty-workflow");
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_research_empty",
       workspaceId: "workspace-1",
@@ -294,7 +302,10 @@ describe("built-in deep-research workflow", () => {
       throw new Error("Expected built-in deep-research workflow");
     }
     using tmp = new DisposableTempDir("deep-research-capped-workflow");
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_research_capped",
       workspaceId: "workspace-1",
@@ -403,7 +414,10 @@ describe("built-in deep-review-workflow", () => {
       throw new Error("Expected built-in deep-review-workflow workflow");
     }
     using tmp = new DisposableTempDir("deep-review-workflow");
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_workflow",
       workspaceId: "workspace-1",
