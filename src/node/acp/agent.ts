@@ -300,6 +300,11 @@ export class MuxAgent implements Agent {
       const projectPath = meta.projectPath ?? params.cwd.trim();
       assert(projectPath.length > 0, "newSession: projectPath/cwd must be non-empty");
 
+      // Launching mux as an ACP adapter from an editor for a concrete cwd is an
+      // explicit trust signal, matching other CLI-style ACP adapters that work in
+      // the selected directory without a separate desktop approval step.
+      await this.server.client.projects.setTrust({ projectPath, trusted: true });
+
       // When the ACP client doesn't supply a trunk branch (typical — editors only
       // send `cwd`, not mux-specific `_meta`), derive it from the project's git
       // repo.  Worktree/SSH runtimes require a trunk branch for workspace creation.

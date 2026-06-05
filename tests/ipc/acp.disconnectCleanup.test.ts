@@ -9,6 +9,7 @@ interface HarnessOptions {
   getReplayEvents?: (workspaceId: string) => WorkspaceChatMessage[];
   beforeCreateResolves?: Promise<void>;
   disconnectCleanupMaxWaitMs?: number;
+  requireTrustedProjectForCreate?: boolean;
 }
 
 interface Harness {
@@ -16,6 +17,7 @@ interface Harness {
   createdWorkspaceIds: string[];
   removeCalls: string[];
   replayChecks: string[];
+  setTrustCalls: Array<{ projectPath: string; trusted: boolean }>;
   closeConnection: () => void;
   connectionClosed: Promise<void>;
 }
@@ -96,6 +98,8 @@ function createHarness(options?: HarnessOptions): Harness {
   const createdWorkspaceIds: string[] = [];
   const removeCalls: string[] = [];
   const replayChecks: string[] = [];
+  const setTrustCalls: Array<{ projectPath: string; trusted: boolean }> = [];
+  const trustedProjectPaths = new Set<string>();
 
   const client = {
     config: {
@@ -107,7 +111,14 @@ function createHarness(options?: HarnessOptions): Harness {
         currentBranch: "main",
         recommendedTrunk: "main",
       }),
-      setTrust: async () => {},
+      setTrust: async (input: { projectPath: string; trusted: boolean }) => {
+        setTrustCalls.push(input);
+        if (input.trusted) {
+          trustedProjectPaths.add(input.projectPath);
+        } else {
+          trustedProjectPaths.delete(input.projectPath);
+        }
+      },
     },
     agents: {
       list: async () => [],
@@ -129,6 +140,16 @@ function createHarness(options?: HarnessOptions): Harness {
         title?: string;
         runtimeConfig?: WorkspaceInfo["runtimeConfig"];
       }) => {
+        if (
+          options?.requireTrustedProjectForCreate === true &&
+          !trustedProjectPaths.has(input.projectPath)
+        ) {
+          return {
+            success: false as const,
+            error: "project not trusted",
+          };
+        }
+
         const workspaceId = `ws-${workspacesById.size + 1}`;
         if (options?.beforeCreateResolves != null) {
           await options.beforeCreateResolves;
@@ -195,6 +216,7 @@ function createHarness(options?: HarnessOptions): Harness {
     createdWorkspaceIds,
     removeCalls,
     replayChecks,
+    setTrustCalls,
     closeConnection: closeInput,
     connectionClosed: connection.closed,
   };
@@ -211,6 +233,21 @@ async function waitForCondition(condition: () => boolean, timeoutMs = 1_000): Pr
 }
 
 describe("ACP disconnect cleanup for untouched session/new workspaces", () => {
+  it("trusts the ACP cwd before creating a session workspace", async () => {
+    const harness = createHarness({ requireTrustedProjectForCreate: true });
+    await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
+
+    const newSessionResponse = await harness.agent.newSession({
+      cwd: "/repo/acp-go-sdk",
+      mcpServers: [],
+      _meta: { trunkBranch: "main" },
+    });
+
+    expect(newSessionResponse.sessionId).toBe("ws-1");
+    expect(harness.setTrustCalls).toEqual([{ projectPath: "/repo/acp-go-sdk", trusted: true }]);
+    expect(harness.createdWorkspaceIds).toEqual(["ws-1"]);
+  });
+
   it("removes empty session/new workspace when connection closes", async () => {
     const harness = createHarness();
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
