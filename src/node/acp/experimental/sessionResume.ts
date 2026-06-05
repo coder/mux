@@ -61,7 +61,7 @@ function normalizePathCasingForComparison(value: string): string {
   return process.platform === "win32" ? value.toLowerCase() : value;
 }
 
-async function canonicalizePathForWorkspaceMatch(value: string): Promise<string> {
+export async function canonicalizePathForWorkspaceMatch(value: string): Promise<string> {
   const trimmed = value.trim();
   assert(trimmed.length > 0, "canonicalizePathForWorkspaceMatch: value must be non-empty");
 
@@ -94,15 +94,24 @@ export async function loadSessionFromWorkspace(
     throw new Error(`loadSessionFromWorkspace: workspace '${requestedSessionId}' was not found`);
   }
 
-  const [canonicalRequestedCwd, canonicalProjectPath, canonicalWorkspacePath] = await Promise.all([
+  const [
+    canonicalRequestedCwd,
+    canonicalProjectPath,
+    canonicalWorkspacePath,
+    canonicalSubProjectPath,
+  ] = await Promise.all([
     canonicalizePathForWorkspaceMatch(requestedCwd),
     canonicalizePathForWorkspaceMatch(workspace.projectPath),
     canonicalizePathForWorkspaceMatch(workspace.namedWorkspacePath),
+    workspace.subProjectPath != null
+      ? canonicalizePathForWorkspaceMatch(workspace.subProjectPath)
+      : Promise.resolve(null),
   ]);
 
   const cwdMatchesWorkspace =
     canonicalProjectPath === canonicalRequestedCwd ||
-    canonicalWorkspacePath === canonicalRequestedCwd;
+    canonicalWorkspacePath === canonicalRequestedCwd ||
+    canonicalSubProjectPath === canonicalRequestedCwd;
   assert(
     cwdMatchesWorkspace,
     `loadSessionFromWorkspace: workspace '${requestedSessionId}' is not in cwd '${requestedCwd}'`

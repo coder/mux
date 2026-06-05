@@ -312,6 +312,7 @@ function createHarness(options?: HarnessOptions): Harness {
       getConfig: async () => ({}),
     },
     projects: {
+      list: async () => [],
       listBranches: async () => ({
         branches: ["main"],
         currentBranch: "main",
