@@ -1611,6 +1611,191 @@ describe("built-in deep-review-workflow", () => {
     });
   }, 10_000);
 
+  test("auto-fix loop reports exhausted fix budget when verified issues remain", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-fix-loop-budget-exhausted");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 1;\n", "utf-8");
+    await runGit(repoRoot, ["add", "service.ts"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+
+    const issue = {
+      id: "persistent-budgeted-fix",
+      severity: "P1",
+      category: "correctness",
+      title: "Persistent budgeted fix",
+      rationale: "The issue remains after the one allowed fixer.",
+      evidence: "service.ts still has a bug.",
+      filePaths: ["service.ts"],
+      suggestedFix: "Fix service.ts.",
+      validation: "Run targeted tests.",
+      confidence: "high",
+    };
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_fix_loop_budget_exhausted",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: {
+        input: "current workspace changes --fix --loop",
+        maxCandidates: 1,
+        maxFixes: 1,
+        maxLoopIterations: 3,
+      },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const applyCalls: unknown[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-review-surface-loop-1":
+            case "scope-review-surface-loop-2":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "Scoped.",
+                structuredOutput: {
+                  summary: "Review service code.",
+                  files: ["service.ts"],
+                  riskAreas: ["correctness"],
+                  lanes: ["correctness"],
+                },
+              };
+            case "review-correctness-loop-1":
+            case "review-correctness-loop-2":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "Finding.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "review-tests-loop-1":
+            case "review-architecture-loop-1":
+            case "review-tests-loop-2":
+            case "review-architecture-loop-2":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "No findings.",
+                structuredOutput: { issues: [] },
+              };
+            case "triage-candidate-issues-loop-1":
+            case "triage-candidate-issues-loop-2":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "One candidate.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "verify-issue-0-loop-1":
+            case "verify-issue-0-loop-2":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "Issue is valid.",
+                structuredOutput: {
+                  issueId: "persistent-budgeted-fix",
+                  verdict: "valid",
+                  confidence: "high",
+                  rationale: "The issue remains valid.",
+                },
+              };
+            case "synthesize-review-loop-1":
+            case "synthesize-review-loop-2":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "# Deep Review\n\n- P1 Persistent budgeted fix.",
+                structuredOutput: {
+                  verifiedIssueCount: 1,
+                  verifiedIssueIds: ["persistent-budgeted-fix"],
+                  risk: "medium",
+                  validationPlan: ["bun test src/service.test.ts"],
+                  discardedIssueCount: 0,
+                },
+              };
+            case "fix-issue-0-loop-1":
+              return {
+                taskId: "task_fix_loop_1",
+                reportMarkdown: "Fixed budgeted issue.",
+                structuredOutput: {
+                  issueId: "persistent-budgeted-fix",
+                  status: "fixed",
+                  summary: "Fixed service.ts.",
+                  validation: ["bun test src/service.test.ts"],
+                  commitCreated: true,
+                },
+              };
+            case "validate-auto-fixes-loop-1":
+              return {
+                taskId: "task_validate_loop_1",
+                reportMarkdown: "Validation passed.",
+                structuredOutput: {
+                  status: "passed",
+                  commands: ["bun test src/service.test.ts"],
+                  summary: "Targeted tests passed.",
+                  failures: [],
+                },
+              };
+            default:
+              throw new Error(`Unexpected deep-review budget-exhausted step: ${spec.id}`);
+          }
+        },
+        async applyPatch(spec) {
+          applyCalls.push(spec);
+          return {
+            success: true,
+            status: "applied",
+            taskId: spec.sourceTaskId,
+            projectResults: [{ projectPath: repoRoot, projectName: "repo", status: "applied" }],
+          };
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_fix_loop_budget_exhausted");
+
+    const callIds = taskCalls.map((call) => call.id);
+    expect(callIds).toContain("scope-review-surface-loop-2");
+    expect(callIds).not.toContain("fix-issue-0-loop-2");
+    expect(callIds).not.toContain("scope-review-surface-loop-3");
+    expect(applyCalls).toHaveLength(1);
+    expect(result).toMatchObject({
+      structuredOutput: {
+        loop: {
+          completed: false,
+          iterations: 2,
+          remainingFixBudget: 0,
+          stopReason: "fix-budget-exhausted",
+        },
+        final: { verifiedIssueCount: 1 },
+      },
+    });
+  }, 10_000);
+
   test("auto-fix loop stops when a fixer reports already-fixed without changing state", async () => {
     if (!deepReviewWorkflow) {
       throw new Error("Expected built-in deep-review-workflow workflow");
