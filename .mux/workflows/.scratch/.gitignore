@@ -1,3 +1,0 @@
-# mux: hide scratch workflow drafts when repo rules unignore workflows
-*
-!.gitignore

@@ -185,6 +185,49 @@ done`,
     .filter((entry) => entry.length > 0);
 }
 
+async function runtimeScratchContentExists(
+  runtime: Runtime,
+  root: string,
+  cwd: string
+): Promise<boolean> {
+  assert(root.length > 0, "Workflow runtime scratch root is required");
+  const quotedRoot = quoteRuntimeProbePath(root);
+  const result = await execBuffered(
+    runtime,
+    `if [ ! -d ${quotedRoot} ]; then exit 0; fi
+find ${quotedRoot} -mindepth 1 -maxdepth 1 ! -name .gitignore -print -quit`,
+    { cwd, timeout: 5 }
+  );
+  return result.exitCode === 0 && result.stdout.trim().length > 0;
+}
+
+async function deleteRuntimeGeneratedScratchGitignore(
+  runtime: Runtime,
+  root: string,
+  cwd: string
+): Promise<boolean> {
+  assert(root.length > 0, "Workflow runtime scratch root is required");
+  const gitignorePath = runtime.normalizePath(".gitignore", root);
+  try {
+    if (!(await runtimePathExists(runtime, gitignorePath, cwd))) {
+      return false;
+    }
+    if (await runtimeScratchContentExists(runtime, root, cwd)) {
+      return false;
+    }
+    if (!isGeneratedScratchGitignoreContent(await readFileString(runtime, gitignorePath))) {
+      return false;
+    }
+    const result = await execBuffered(runtime, `rm -f -- ${quoteRuntimeProbePath(gitignorePath)}`, {
+      cwd,
+      timeout: 5,
+    });
+    return result.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
 async function scanRuntimeDirectory(
   runtime: Runtime,
   root: string,
@@ -346,12 +389,29 @@ function gitExcludeContentWithPattern(content: string, pattern: string): string 
   return `${content}${separator}${WORKFLOW_SCRATCH_GIT_EXCLUDE_COMMENT}\n${pattern}\n`;
 }
 
-function scratchGitignoreFallbackContent(content: string): string | null {
-  const lastPattern = content
+function isScratchGitignoreSelfException(pattern: string): boolean {
+  return pattern === "!.gitignore" || pattern === "!/.gitignore";
+}
+
+function scratchGitignorePatterns(content: string): string[] {
+  return content
     .split(/\r?\n/u)
     .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("#"))
-    .at(-1);
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+}
+
+function isGeneratedScratchGitignoreContent(content: string): boolean {
+  const patterns = scratchGitignorePatterns(content);
+  const draftPatterns = patterns.filter((pattern) => !isScratchGitignoreSelfException(pattern));
+  return (
+    draftPatterns.length > 0 &&
+    draftPatterns.every((pattern) => pattern === "*") &&
+    patterns.every((pattern) => pattern === "*" || isScratchGitignoreSelfException(pattern))
+  );
+}
+
+function scratchGitignoreFallbackContent(content: string): string | null {
+  const lastPattern = scratchGitignorePatterns(content).at(-1);
   if (lastPattern === "*") {
     return null;
   }
@@ -408,6 +468,24 @@ async function writeLocalScratchGitignoreFallback(scratchRoot: string): Promise<
   }
 }
 
+async function deleteLocalGeneratedScratchGitignore(scratchRoot: string): Promise<boolean> {
+  assert(scratchRoot.length > 0, "Workflow scratch root is required");
+  const gitignorePath = path.join(scratchRoot, ".gitignore");
+  try {
+    if (await localScratchContentExists(scratchRoot)) {
+      return false;
+    }
+    const content = await fs.readFile(gitignorePath, "utf-8");
+    if (!isGeneratedScratchGitignoreContent(content)) {
+      return false;
+    }
+    await fs.unlink(gitignorePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function tryLocalGitStdout(cwd: string, args: readonly string[]): Promise<string | null> {
   try {
     using proc = execFileAsync("git", ["-C", cwd, ...args], {
@@ -444,6 +522,16 @@ async function localDirectoryExists(targetPath: string): Promise<boolean> {
   try {
     const stat = await fs.stat(targetPath);
     return stat.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function localScratchContentExists(scratchRoot: string): Promise<boolean> {
+  assert(scratchRoot.length > 0, "Workflow scratch root is required");
+  try {
+    const entries = await fs.readdir(scratchRoot);
+    return entries.some((entry) => entry !== ".gitignore");
   } catch {
     return false;
   }
@@ -823,27 +911,54 @@ export class WorkflowDefinitionStore {
     if (this.scratchRoot != null && options.projectTrusted) {
       // Scratch workflows live under the workspace checkout, so treat them like project-local
       // code for trust gating rather than exposing repo-controlled files from untrusted projects.
+      // Keep plain workflow discovery read-only: only create/touch scratch ignore files once
+      // there is an actual scratch workflow candidate for Git to hide.
       if (this.projectRuntime != null) {
         assert(
           this.projectCwd != null,
           "WorkflowDefinitionStore.collectDefinitions: projectCwd missing"
         );
-        await ensureRuntimeScratchGitExclude(
+        const scratchDefinitions = await scanRuntimeDirectory(
           this.projectRuntime,
           this.scratchRoot,
-          this.projectCwd
+          this.projectCwd,
+          "scratch"
         );
-        sources.push(
-          await scanRuntimeDirectory(
+        const hasScratchContent =
+          scratchDefinitions.length > 0 ||
+          (await runtimeScratchContentExists(
             this.projectRuntime,
             this.scratchRoot,
-            this.projectCwd,
-            "scratch"
-          )
-        );
+            this.projectCwd
+          ));
+        if (hasScratchContent) {
+          await ensureRuntimeScratchGitExclude(
+            this.projectRuntime,
+            this.scratchRoot,
+            this.projectCwd
+          );
+        } else {
+          // Older eager versions may have left only the generated fallback behind;
+          // delete that stale file so upgrade returns the checkout to clean.
+          await deleteRuntimeGeneratedScratchGitignore(
+            this.projectRuntime,
+            this.scratchRoot,
+            this.projectCwd
+          );
+        }
+        sources.push(scratchDefinitions);
       } else {
-        await ensureLocalScratchGitExclude(this.scratchRoot);
-        sources.push(await scanDirectory(this.scratchRoot, "scratch"));
+        const scratchDefinitions = await scanDirectory(this.scratchRoot, "scratch");
+        const hasScratchContent =
+          scratchDefinitions.length > 0 || (await localScratchContentExists(this.scratchRoot));
+        if (hasScratchContent) {
+          await ensureLocalScratchGitExclude(this.scratchRoot);
+        } else {
+          // Older eager versions may have left only the generated fallback behind;
+          // delete that stale file so upgrade returns the checkout to clean.
+          await deleteLocalGeneratedScratchGitignore(this.scratchRoot);
+        }
+        sources.push(scratchDefinitions);
       }
     }
     if (options.projectTrusted) {
