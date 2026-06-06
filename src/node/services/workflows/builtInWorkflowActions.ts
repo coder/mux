@@ -129,6 +129,12 @@ module.exports.execute = async function (rawInput, ctx) {
   const requestedHead = optionalString(input.head) ?? "HEAD";
   const headSha = await tryGit(ctx, ["rev-parse", "--verify", "HEAD"]);
   const requestedHeadSha = await tryGit(ctx, ["rev-parse", "--verify", requestedHead]);
+  const requestedHeadRef = await tryGit(ctx, [
+    "rev-parse",
+    "--symbolic-full-name",
+    "--verify",
+    requestedHead,
+  ]);
   const stdout = await runGit(ctx, [
     "status",
     "--porcelain=v1",
@@ -161,6 +167,7 @@ module.exports.execute = async function (rawInput, ctx) {
     headSha,
     requestedHead,
     requestedHeadSha,
+    requestedHeadRef,
     clean: staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
     staged,
     unstaged,

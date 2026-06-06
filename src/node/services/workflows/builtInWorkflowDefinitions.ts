@@ -519,9 +519,11 @@ function getLoopStopReason(reviewResult, remainingFixBudget) {
   const fix = output.fix;
   if (!fix) return "no-fix-attempted";
   if (fix.skippedReason) return "fix-skipped";
-  if (fix.validation && fix.validation.status === "failed") return "validation-failed";
   if (!fix.selectedIssues || fix.selectedIssues.length === 0) return "no-fixable-issues";
   if (!fixHasProgress(fix)) return "no-fix-progress";
+  const validationStatus = fix.validation ? fix.validation.status : "not-run";
+  if (validationStatus === "failed") return "validation-failed";
+  if (validationStatus !== "passed") return "validation-not-run";
   if (remainingFixBudget <= 0) return "fix-budget-exhausted";
   return "";
 }
@@ -699,7 +701,6 @@ function collectFixPreflight(action, log, input, gitContext, stepSuffix) {
       id: workflowStepId("fix-git-status", stepSuffix),
       input: { includeIgnored: false, head: input.headRef || "HEAD" },
       builtInOnly: true,
-      cache: false,
     }).output;
   } catch (error) {
     const message = formatError(error);
@@ -730,8 +731,11 @@ function isCurrentReviewHead(input, status) {
   if (!input.headRef) return true;
   const headRef = String(input.headRef).trim();
   if (!headRef || headRef === "HEAD") return true;
-  const branch = typeof status.branch === "string" ? status.branch : "";
-  if (branch.length > 0 && (headRef === branch || headRef === "refs/heads/" + branch)) return true;
+  const branch = normalizedGitBranch(status.branch);
+  const currentBranchRef = branch ? "refs/heads/" + branch : "";
+  if (branch && (headRef === branch || headRef === currentBranchRef)) return true;
+  const requestedHeadRef = typeof status.requestedHeadRef === "string" ? status.requestedHeadRef : "";
+  if (requestedHeadRef.length > 0) return false;
   if (!isExplicitCommitShaRef(headRef)) return false;
   const headSha = typeof status.headSha === "string" ? status.headSha : "";
   const requestedHeadSha = typeof status.requestedHeadSha === "string" ? status.requestedHeadSha : "";
@@ -745,15 +749,22 @@ function isExplicitCommitShaRef(headRef) {
 function getReviewedGitSnapshot(gitContext) {
   const reviewedStatus = gitContext && isObject(gitContext.status) ? gitContext.status : null;
   if (!reviewedStatus) return null;
-  const branch = typeof reviewedStatus.branch === "string" ? reviewedStatus.branch : "";
+  const branch = normalizedGitBranch(reviewedStatus.branch);
   const headSha = typeof reviewedStatus.headSha === "string" ? reviewedStatus.headSha : "";
   if (!branch || !headSha) return null;
   return { branch: branch, headSha: headSha };
 }
 
 function matchesReviewedGitBranch(reviewedSnapshot, status) {
-  const currentBranch = typeof status.branch === "string" ? status.branch : "";
+  const currentBranch = normalizedGitBranch(status.branch);
   return currentBranch.length > 0 && currentBranch === reviewedSnapshot.branch;
+}
+
+function normalizedGitBranch(branch) {
+  if (typeof branch !== "string") return "";
+  const trimmed = branch.trim();
+  if (!trimmed || trimmed === "HEAD (no branch)") return "";
+  return trimmed;
 }
 
 function matchesReviewedGitHead(reviewedSnapshot, status) {

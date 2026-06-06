@@ -519,6 +519,47 @@ describe("WorkflowDefinitionStore", () => {
     expect(await fs.readFile(path.join(scratchRoot, ".gitignore"), "utf-8")).toBe(existingFallback);
   });
 
+  test("hides an untracked generated scratch gitignore when repo rules unignore workflows", async () => {
+    using tmp = new DisposableTempDir("workflow-definitions");
+    const workspaceRoot = path.join(tmp.path, "project");
+    const scratchRoot = path.join(workspaceRoot, ".mux", "workflows", ".scratch");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await fs.mkdir(scratchRoot, { recursive: true });
+    await runGit(workspaceRoot, ["init"]);
+    await fs.writeFile(
+      path.join(workspaceRoot, ".gitignore"),
+      "/.mux/\n!/.mux/\n!/.mux/workflows/\n!/.mux/workflows/**\n",
+      "utf-8"
+    );
+    const existingGitignore = "*\n!.gitignore\n";
+    await fs.writeFile(path.join(scratchRoot, ".gitignore"), existingGitignore, "utf-8");
+    await writeWorkflow(scratchRoot, "scratch-demo", "Workspace scratch demo");
+    const store = new WorkflowDefinitionStore({
+      scratchRoot,
+      projectRoot,
+      globalRoot,
+      builtIns: [],
+    });
+
+    const definitions = await store.listDefinitions({ projectTrusted: true });
+
+    const fallback = await fs.readFile(path.join(scratchRoot, ".gitignore"), "utf-8");
+    expect(definitions.map((definition) => definition.name)).toEqual(["scratch-demo"]);
+    expect(fallback).toBe(
+      `${existingGitignore}# mux: hide scratch workflow drafts when repo rules unignore workflows\n*\n`
+    );
+    expect(
+      await runGit(workspaceRoot, [
+        "status",
+        "--short",
+        "--untracked-files=all",
+        "--",
+        ".mux/workflows/.scratch",
+      ])
+    ).toBe("");
+  });
+
   test("serializes local exclude updates for multiple scratch roots in one repo", async () => {
     using tmp = new DisposableTempDir("workflow-definitions");
     const repoRoot = path.join(tmp.path, "repo");

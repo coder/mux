@@ -27,6 +27,11 @@ async function runGit(cwd: string, args: string[]): Promise<void> {
   await execFileAsync("git", args, { cwd });
 }
 
+async function readGit(cwd: string, args: string[]): Promise<string> {
+  const result = await execFileAsync("git", args, { cwd });
+  return result.stdout.trimEnd();
+}
+
 function createNoIssueDeepReviewTaskAdapter(taskCalls: WorkflowAgentSpec[]) {
   return {
     async runAgent(spec: WorkflowAgentSpec) {
@@ -1794,7 +1799,7 @@ describe("built-in deep-review-workflow", () => {
         final: { verifiedIssueCount: 1 },
       },
     });
-  }, 10_000);
+  }, 20_000);
 
   test("auto-fix loop stops when a fixer reports already-fixed without changing state", async () => {
     if (!deepReviewWorkflow) {
@@ -2117,6 +2122,176 @@ describe("built-in deep-review-workflow", () => {
           iterations: 1,
           remainingFixBudget: 4,
           stopReason: "validation-failed",
+        },
+      },
+    });
+  }, 10_000);
+
+  test("auto-fix loop stops when validation is not run", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-fix-loop-validation-not-run");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 1;\n", "utf-8");
+    await runGit(repoRoot, ["add", "service.ts"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+
+    const issue = {
+      id: "validation-not-run",
+      severity: "P1",
+      category: "correctness",
+      title: "Validation was not run after fix",
+      rationale: "The fix loop must stop unless validation passes.",
+      evidence: "service.ts has a bug.",
+      filePaths: ["service.ts"],
+      suggestedFix: "Fix service.ts.",
+      validation: "Run targeted tests.",
+      confidence: "high",
+    };
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_fix_loop_validation_not_run",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: {
+        input: "current workspace changes --fix --loop",
+        maxCandidates: 1,
+        maxLoopIterations: 3,
+      },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-review-surface-loop-1":
+              return {
+                taskId: "task_scope_loop_1",
+                reportMarkdown: "Scoped.",
+                structuredOutput: {
+                  summary: "Review service code.",
+                  files: ["service.ts"],
+                  riskAreas: ["correctness"],
+                  lanes: ["correctness"],
+                },
+              };
+            case "review-correctness-loop-1":
+              return {
+                taskId: "task_review_correctness_loop_1",
+                reportMarkdown: "Finding.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "review-tests-loop-1":
+            case "review-architecture-loop-1":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "No findings.",
+                structuredOutput: { issues: [] },
+              };
+            case "triage-candidate-issues-loop-1":
+              return {
+                taskId: "task_triage_loop_1",
+                reportMarkdown: "One candidate.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "verify-issue-0-loop-1":
+              return {
+                taskId: "task_verify_loop_1",
+                reportMarkdown: "Issue is valid.",
+                structuredOutput: {
+                  issueId: "validation-not-run",
+                  verdict: "valid",
+                  confidence: "high",
+                  rationale: "The issue is valid.",
+                },
+              };
+            case "synthesize-review-loop-1":
+              return {
+                taskId: "task_final_loop_1",
+                reportMarkdown: "# Deep Review\n\n- P1 Validation was not run after fix.",
+                structuredOutput: {
+                  verifiedIssueCount: 1,
+                  verifiedIssueIds: ["validation-not-run"],
+                  risk: "medium",
+                  validationPlan: ["bun test src/service.test.ts"],
+                  discardedIssueCount: 0,
+                },
+              };
+            case "fix-issue-0-loop-1":
+              return {
+                taskId: "task_fix_loop_1",
+                reportMarkdown: "Fixed issue.",
+                structuredOutput: {
+                  issueId: "validation-not-run",
+                  status: "fixed",
+                  summary: "Fixed service.ts.",
+                  validation: [],
+                  commitCreated: true,
+                },
+              };
+            case "validate-auto-fixes-loop-1":
+              return {
+                taskId: "task_validate_loop_1",
+                reportMarkdown: "Validation was not run.",
+                structuredOutput: {
+                  status: "not-run",
+                  commands: [],
+                  summary: "No validation commands were run.",
+                  failures: [],
+                },
+              };
+            default:
+              throw new Error(`Unexpected deep-review validation-not-run step: ${spec.id}`);
+          }
+        },
+        async applyPatch(spec) {
+          return {
+            success: true,
+            status: "applied",
+            taskId: spec.sourceTaskId,
+            projectResults: [{ projectPath: repoRoot, projectName: "repo", status: "applied" }],
+          };
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_fix_loop_validation_not_run");
+
+    expect(taskCalls.map((call) => call.id)).not.toContain("scope-review-surface-loop-2");
+    expect(result).toMatchObject({
+      structuredOutput: {
+        loop: {
+          completed: false,
+          iterations: 1,
+          remainingFixBudget: 4,
+          stopReason: "validation-not-run",
         },
       },
     });
@@ -3006,11 +3181,150 @@ describe("built-in deep-review-workflow", () => {
     });
   }, 10_000);
 
-  test("auto-fix skips non-current branch refs that resolve to current HEAD", async () => {
+  test("auto-fix skips detached HEAD checkouts", async () => {
     if (!deepReviewWorkflow) {
       throw new Error("Expected built-in deep-review-workflow workflow");
     }
-    using tmp = new DisposableTempDir("deep-review-workflow-fix-non-current-ref");
+    using tmp = new DisposableTempDir("deep-review-workflow-fix-detached-head");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 1;\n", "utf-8");
+    await runGit(repoRoot, ["add", "service.ts"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["checkout", "--detach", "HEAD"]);
+
+    const issue = {
+      id: "detached-head",
+      severity: "P2",
+      category: "correctness",
+      title: "Detached HEAD should not auto-fix",
+      rationale: "Auto-fix commits need a real checked-out branch.",
+      evidence: "The repository is detached at HEAD.",
+      filePaths: ["service.ts"],
+      suggestedFix: "Skip auto-fix while detached.",
+      validation: "Run targeted workflow tests.",
+      confidence: "high",
+    };
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_fix_detached_head",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { fix: true, input: "current workspace changes", maxCandidates: 1 },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const applyCalls: unknown[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-review-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped.",
+                structuredOutput: {
+                  summary: "Review service code.",
+                  files: ["service.ts"],
+                  riskAreas: ["correctness"],
+                  lanes: ["correctness"],
+                },
+              };
+            case "review-correctness":
+            case "review-tests":
+            case "review-architecture":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "Findings.",
+                structuredOutput: { issues: spec.id === "review-correctness" ? [issue] : [] },
+              };
+            case "triage-candidate-issues":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "One candidate.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "verify-issue-0":
+              return {
+                taskId: "task_verify_0",
+                reportMarkdown: "Issue is valid.",
+                structuredOutput: {
+                  issueId: "detached-head",
+                  verdict: "valid",
+                  confidence: "high",
+                  rationale: "The issue is valid.",
+                },
+              };
+            case "synthesize-review":
+              return {
+                taskId: "task_final",
+                reportMarkdown: "# Deep Review\n\n- P2 Detached HEAD should not auto-fix.",
+                structuredOutput: {
+                  verifiedIssueCount: 1,
+                  verifiedIssueIds: ["detached-head"],
+                  risk: "medium",
+                  validationPlan: ["bun test src/service.test.ts"],
+                  discardedIssueCount: 0,
+                },
+              };
+            default:
+              throw new Error(`Unexpected detached HEAD step: ${spec.id}`);
+          }
+        },
+        async applyPatch(spec) {
+          applyCalls.push(spec);
+          return { success: true, status: "applied", taskId: spec.sourceTaskId };
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_fix_detached_head");
+
+    expect(taskCalls.map((call) => call.id)).not.toContain("fix-issue-0");
+    expect(applyCalls).toEqual([]);
+    expect(result.reportMarkdown).toContain(
+      "auto-fix requires a reviewed Git branch and HEAD snapshot"
+    );
+    expect(result).toMatchObject({
+      structuredOutput: {
+        fix: {
+          requested: true,
+          skippedReason: "auto-fix requires a reviewed Git branch and HEAD snapshot",
+          selectedIssues: [],
+        },
+      },
+    });
+  }, 10_000);
+
+  test("auto-fix skips hex-like non-current branch refs that resolve to current HEAD", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-fix-hex-non-current-ref");
     const repoRoot = path.join(tmp.path, "repo");
     const projectRoot = path.join(tmp.path, "project-actions");
     const globalRoot = path.join(tmp.path, "global-actions");
@@ -3022,7 +3336,7 @@ describe("built-in deep-review-workflow", () => {
     await runGit(repoRoot, ["add", "service.ts"]);
     await runGit(repoRoot, ["commit", "-m", "base commit"]);
     await runGit(repoRoot, ["branch", "-M", "main"]);
-    await runGit(repoRoot, ["branch", "feature"]);
+    await runGit(repoRoot, ["branch", "deadbee"]);
 
     const issue = {
       id: "non-current-ref",
@@ -3030,7 +3344,7 @@ describe("built-in deep-review-workflow", () => {
       category: "correctness",
       title: "Non-current ref should not auto-fix",
       rationale: "The reviewed head names a different branch than the checkout.",
-      evidence: "feature points at the same commit as main.",
+      evidence: "deadbee points at the same commit as main.",
       filePaths: ["service.ts"],
       suggestedFix: "Skip auto-fix unless that branch is checked out.",
       validation: "Run targeted workflow tests.",
@@ -3047,7 +3361,7 @@ describe("built-in deep-review-workflow", () => {
         executable: true,
       },
       definitionSource: deepReviewWorkflow.source,
-      args: { fix: true, input: "current workspace changes", headRef: "feature", maxCandidates: 1 },
+      args: { fix: true, input: "current workspace changes", headRef: "deadbee", maxCandidates: 1 },
       defaultActionCwd: repoRoot,
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -3281,6 +3595,196 @@ describe("built-in deep-review-workflow", () => {
           requested: true,
           skippedReason: "auto-fix requires the current Git HEAD to match the reviewed snapshot",
           selectedIssues: [],
+        },
+      },
+    });
+  }, 10_000);
+
+  test("auto-fix checkpoint retry preserves completed patch after HEAD advances", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-fix-replay-head-advance");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 1;\n", "utf-8");
+    await runGit(repoRoot, ["add", "service.ts"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    const baseHead = await readGit(repoRoot, ["rev-parse", "HEAD"]);
+
+    const issue = {
+      id: "replay-head-advance",
+      severity: "P1",
+      category: "correctness",
+      title: "Replay must preserve applied patch progress",
+      rationale: "A retry should not rerun preflight against the post-patch HEAD.",
+      evidence: "service.ts needs a fix.",
+      filePaths: ["service.ts"],
+      suggestedFix: "Fix service.ts.",
+      validation: "Run targeted tests.",
+      confidence: "high",
+    };
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_fix_replay_head_advance",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { fix: true, input: "current workspace changes", maxCandidates: 1 },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const applyCalls: unknown[] = [];
+    let validationCalls = 0;
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-review-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped.",
+                structuredOutput: {
+                  summary: "Review service code.",
+                  files: ["service.ts"],
+                  riskAreas: ["correctness"],
+                  lanes: ["correctness"],
+                },
+              };
+            case "review-correctness":
+            case "review-tests":
+            case "review-architecture":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "Findings.",
+                structuredOutput: { issues: spec.id === "review-correctness" ? [issue] : [] },
+              };
+            case "triage-candidate-issues":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "One candidate.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "verify-issue-0":
+              return {
+                taskId: "task_verify_0",
+                reportMarkdown: "Issue is valid.",
+                structuredOutput: {
+                  issueId: "replay-head-advance",
+                  verdict: "valid",
+                  confidence: "high",
+                  rationale: "The issue is valid.",
+                },
+              };
+            case "synthesize-review":
+              return {
+                taskId: "task_final",
+                reportMarkdown:
+                  "# Deep Review\n\n- P1 Replay must preserve applied patch progress.",
+                structuredOutput: {
+                  verifiedIssueCount: 1,
+                  verifiedIssueIds: ["replay-head-advance"],
+                  risk: "medium",
+                  validationPlan: ["bun test src/service.test.ts"],
+                  discardedIssueCount: 0,
+                },
+              };
+            case "fix-issue-0":
+              return {
+                taskId: "task_fix_0",
+                reportMarkdown: "Fixed issue.",
+                structuredOutput: {
+                  issueId: "replay-head-advance",
+                  status: "fixed",
+                  summary: "Fixed service.ts.",
+                  validation: ["bun test src/service.test.ts"],
+                  commitCreated: true,
+                },
+              };
+            case "validate-auto-fixes":
+              validationCalls += 1;
+              if (validationCalls === 1) {
+                throw new Error("Execution interrupted");
+              }
+              return {
+                taskId: "task_validate_retry",
+                reportMarkdown: "Validation passed.",
+                structuredOutput: {
+                  status: "passed",
+                  commands: ["bun test src/service.test.ts"],
+                  summary: "Targeted tests passed.",
+                  failures: [],
+                },
+              };
+            default:
+              throw new Error(`Unexpected replay head advance step: ${spec.id}`);
+          }
+        },
+        async applyPatch(spec) {
+          applyCalls.push(spec);
+          await fs.writeFile(
+            path.join(repoRoot, "service.ts"),
+            "export const value = 2;\n",
+            "utf-8"
+          );
+          await runGit(repoRoot, ["add", "service.ts"]);
+          await runGit(repoRoot, ["commit", "-m", "apply auto-fix"]);
+          return {
+            success: true,
+            status: "applied",
+            taskId: spec.sourceTaskId,
+            headCommitSha: await readGit(repoRoot, ["rev-parse", "HEAD"]),
+            projectResults: [{ projectPath: repoRoot, projectName: "repo", status: "applied" }],
+          };
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    let firstFailure = "";
+    try {
+      await runner.run("wfr_deep_review_fix_replay_head_advance");
+    } catch (error) {
+      firstFailure = error instanceof Error ? error.message : String(error);
+    }
+    expect(firstFailure).toContain("Execution interrupted");
+    expect(await readGit(repoRoot, ["rev-parse", "HEAD"])).not.toBe(baseHead);
+
+    const retryResult = await runner.run("wfr_deep_review_fix_replay_head_advance", {
+      allowRetryFromFailedCheckpoint: true,
+    });
+
+    expect(applyCalls).toHaveLength(1);
+    expect(validationCalls).toBe(2);
+    expect(taskCalls.map((call) => call.id)).toContain("validate-auto-fixes");
+    expect(retryResult).toMatchObject({
+      structuredOutput: {
+        fix: {
+          requested: true,
+          applications: [{ status: "applied" }],
+          validation: { status: "passed" },
         },
       },
     });
