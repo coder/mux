@@ -615,7 +615,7 @@ function WorkflowTaskRow(props: {
                 className={`${WORKFLOW_ACTION_BUTTON_CLASS} inline-flex items-center px-1.5 py-0.5 text-[10px] whitespace-nowrap`}
                 aria-label={`Open report for ${event.taskId}`}
               >
-                Open
+                Report
               </button>
             </DialogTrigger>
           </div>

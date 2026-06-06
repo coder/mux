@@ -438,7 +438,7 @@ describe("WorkflowRunToolCall", () => {
     expect(navigatedTo).toEqual(["task_retry", "task_retry", "task_live"]);
 
     const reportToggle = view.getByLabelText("Open report for task_live");
-    expect(reportToggle.textContent).toBe("Open");
+    expect(reportToggle.textContent).toBe("Report");
     expect(reportToggle.closest('[role="button"]')).toBeNull();
     fireEvent.click(reportToggle);
 
