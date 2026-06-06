@@ -503,10 +503,9 @@ function WorkflowTaskRow(props: {
   const label = getWorkflowEventLabel(event);
   const taskReportMarkdown = getTaskReportMarkdown(event, props.steps);
   const taskStructuredOutput = getTaskStructuredOutput(event, props.steps);
-  // Completed task rows inspect structured output inline; keep workspace navigation as a separate action.
+  // Completed task rows inspect structured output inline; the dedicated Open button remains report-only.
   const canExpandStructuredOutput =
     event.status === "completed" && taskStructuredOutput !== undefined;
-  const showWorkspaceAction = canExpandStructuredOutput;
   const showOpenAffordance =
     taskReportMarkdown == null &&
     !canExpandStructuredOutput &&
@@ -585,37 +584,19 @@ function WorkflowTaskRow(props: {
     </div>
   );
 
-  const workspaceAction = showWorkspaceAction ? (
-    <button
-      type="button"
-      className={`${WORKFLOW_ACTION_BUTTON_CLASS} inline-flex items-center px-1.5 py-0.5 text-[10px] whitespace-nowrap`}
-      aria-label={`Open task workspace for ${event.taskId}`}
-      onClick={() => props.onNavigate(event.taskId)}
-    >
-      Workspace
-    </button>
-  ) : null;
-
   return (
     <li className="hover:bg-background/50">
       {taskReportMarkdown != null ? (
         <Dialog open={reportDialogOpen} onOpenChange={handleReportDialogOpenChange}>
-          <div
-            className={`grid ${
-              showWorkspaceAction
-                ? "grid-cols-[minmax(0,1fr)_auto_auto]"
-                : "grid-cols-[minmax(0,1fr)_auto]"
-            } items-center gap-1 pr-2`}
-          >
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1 pr-2">
             {taskRow}
-            {workspaceAction}
             <DialogTrigger asChild>
               <button
                 type="button"
                 className={`${WORKFLOW_ACTION_BUTTON_CLASS} inline-flex items-center px-1.5 py-0.5 text-[10px] whitespace-nowrap`}
                 aria-label={`Open report for ${event.taskId}`}
               >
-                Report
+                Open
               </button>
             </DialogTrigger>
           </div>
@@ -625,11 +606,6 @@ function WorkflowTaskRow(props: {
             reportMarkdown={taskReportMarkdown}
           />
         </Dialog>
-      ) : showWorkspaceAction ? (
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1 pr-2">
-          {taskRow}
-          {workspaceAction}
-        </div>
       ) : (
         taskRow
       )}
