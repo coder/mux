@@ -701,6 +701,7 @@ function collectFixPreflight(action, log, input, gitContext, stepSuffix) {
       id: workflowStepId("fix-git-status", stepSuffix),
       input: { includeIgnored: false, head: input.headRef || "HEAD" },
       builtInOnly: true,
+      cache: false,
     }).output;
   } catch (error) {
     const message = formatError(error);
@@ -717,9 +718,6 @@ function collectFixPreflight(action, log, input, gitContext, stepSuffix) {
   }
   if (!matchesReviewedGitBranch(reviewedSnapshot, status)) {
     return { skippedReason: "auto-fix requires the current Git branch to match the reviewed snapshot" };
-  }
-  if (!matchesReviewedGitHead(reviewedSnapshot, status)) {
-    return { skippedReason: "auto-fix requires the current Git HEAD to match the reviewed snapshot" };
   }
   if (arrayLength(status.staged) > 0 || arrayLength(status.unstaged) > 0 || arrayLength(status.untracked) > 0) {
     return { skippedReason: "auto-fix requires a clean committed local worktree" };
@@ -765,11 +763,6 @@ function normalizedGitBranch(branch) {
   const trimmed = branch.trim();
   if (!trimmed || trimmed === "HEAD (no branch)") return "";
   return trimmed;
-}
-
-function matchesReviewedGitHead(reviewedSnapshot, status) {
-  const currentHeadSha = typeof status.headSha === "string" ? status.headSha : "";
-  return currentHeadSha.length > 0 && currentHeadSha === reviewedSnapshot.headSha;
 }
 
 function looksNonLocalTarget(target) {

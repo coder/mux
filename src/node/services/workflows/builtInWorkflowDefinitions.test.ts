@@ -3461,7 +3461,7 @@ describe("built-in deep-review-workflow", () => {
     });
   }, 10_000);
 
-  test("auto-fix skips when same-branch HEAD changes after review context is captured", async () => {
+  test("auto-fix lets applyPatch reject same-branch HEAD drift", async () => {
     if (!deepReviewWorkflow) {
       throw new Error("Expected built-in deep-review-workflow workflow");
     }
@@ -3476,6 +3476,8 @@ describe("built-in deep-review-workflow", () => {
     await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 1;\n", "utf-8");
     await runGit(repoRoot, ["add", "service.ts"]);
     await runGit(repoRoot, ["commit", "-m", "base commit"]);
+
+    const reviewedHead = await readGit(repoRoot, ["rev-parse", "HEAD"]);
 
     const issue = {
       id: "head-drift",
@@ -3506,6 +3508,7 @@ describe("built-in deep-review-workflow", () => {
     });
 
     const taskCalls: WorkflowAgentSpec[] = [];
+    const applyCalls: Array<{ expectedHeadSha?: string }> = [];
     const runner = new WorkflowRunner({
       runStore,
       runtimeFactory: new QuickJSRuntimeFactory(),
@@ -3568,9 +3571,30 @@ describe("built-in deep-review-workflow", () => {
                   discardedIssueCount: 0,
                 },
               };
+            case "fix-issue-0":
+              return {
+                taskId: "task_fix_0",
+                reportMarkdown: "Fixed issue.",
+                structuredOutput: {
+                  issueId: "head-drift",
+                  status: "fixed",
+                  summary: "Fixed service.ts.",
+                  validation: ["bun test src/service.test.ts"],
+                  commitCreated: true,
+                },
+              };
             default:
               throw new Error(`Unexpected same-branch head drift step: ${spec.id}`);
           }
+        },
+        async applyPatch(spec) {
+          applyCalls.push({ expectedHeadSha: spec.expectedHeadSha });
+          return {
+            success: false,
+            status: "failed",
+            taskId: spec.sourceTaskId,
+            error: "Current HEAD does not match expected HEAD",
+          };
         },
       },
       actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
@@ -3585,16 +3609,16 @@ describe("built-in deep-review-workflow", () => {
 
     const result = await runner.run("wfr_deep_review_fix_head_drift");
 
-    expect(taskCalls.map((call) => call.id)).not.toContain("fix-issue-0");
-    expect(result.reportMarkdown).toContain(
-      "auto-fix requires the current Git HEAD to match the reviewed snapshot"
-    );
+    expect(taskCalls.map((call) => call.id)).toContain("fix-issue-0");
+    expect(applyCalls).toEqual([{ expectedHeadSha: reviewedHead }]);
     expect(result).toMatchObject({
       structuredOutput: {
         fix: {
           requested: true,
-          skippedReason: "auto-fix requires the current Git HEAD to match the reviewed snapshot",
-          selectedIssues: [],
+          applications: [{ status: "failed" }],
+          unresolved: [
+            { issueId: "head-drift", reason: "Current HEAD does not match expected HEAD" },
+          ],
         },
       },
     });
