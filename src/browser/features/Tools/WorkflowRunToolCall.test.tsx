@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {
   cloneElement,
   createContext,
@@ -292,7 +293,7 @@ describe("WorkflowRunToolCall", () => {
     expect(renderedText).toContain("confidence");
   });
 
-  test("coalesces task attempts, navigates active rows, expands completed outputs, and opens reports", async () => {
+  test("coalesces task attempts, navigates active rows, expands completed outputs, opens workspaces, and opens reports", async () => {
     const navigatedTo: string[] = [];
     useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {
       navigatedTo.push(workspaceId);
@@ -393,6 +394,8 @@ describe("WorkflowRunToolCall", () => {
       </ThemeProvider>
     );
 
+    const user = userEvent.setup({ document: view.container.ownerDocument });
+
     expect(view.getAllByText("implement / task_live / completed")).toHaveLength(1);
     expect(view.queryByText("implement / task_live / started")).toBeNull();
     expect(view.getByText("implement / task_retry / started")).toBeTruthy();
@@ -426,14 +429,32 @@ describe("WorkflowRunToolCall", () => {
     expect(view.container.textContent).toContain("testsPassed");
     expect(view.container.textContent).not.toContain("Completed task body.");
 
-    expect(view.queryByRole("button", { name: "Open task workspace for task_live" })).toBeNull();
+    fireEvent.click(completedTaskControl);
+    expect(completedTaskControl.getAttribute("aria-expanded")).toBe("false");
+    expect(view.container.textContent).not.toContain("filesChanged");
+
+    fireEvent.click(completedTaskControl);
+    expect(completedTaskControl.getAttribute("aria-expanded")).toBe("true");
+    expect(view.container.textContent).toContain("filesChanged");
+
+    const workspaceButton = view.getByRole("button", {
+      name: "Open task workspace for task_live",
+    });
+    expect(workspaceButton.textContent).toBe("Workspace");
+    fireEvent.click(workspaceButton);
+    expect(navigatedTo).toEqual(["task_retry", "task_retry", "task_live"]);
+
+    workspaceButton.focus();
+    expect(view.container.ownerDocument.activeElement).toBe(workspaceButton);
+    await user.keyboard("{Enter}");
+    expect(navigatedTo).toEqual(["task_retry", "task_retry", "task_live", "task_live"]);
 
     const reportToggle = view.getByLabelText("Open report for task_live");
-    expect(reportToggle.textContent).toBe("Open");
+    expect(reportToggle.textContent).toBe("Report");
     expect(reportToggle.closest('[role="button"]')).toBeNull();
     fireEvent.click(reportToggle);
 
-    expect(navigatedTo).toEqual(["task_retry", "task_retry"]);
+    expect(navigatedTo).toEqual(["task_retry", "task_retry", "task_live", "task_live"]);
     await waitFor(() => {
       const reportDialog = document.querySelector('[role="dialog"]');
       expect(reportDialog?.textContent).toContain("Completed task body.");
