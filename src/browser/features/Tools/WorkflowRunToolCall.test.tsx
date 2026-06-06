@@ -292,7 +292,7 @@ describe("WorkflowRunToolCall", () => {
     expect(renderedText).toContain("confidence");
   });
 
-  test("coalesces task attempts, navigates active rows, expands completed outputs, and opens reports", async () => {
+  test("coalesces task attempts, navigates active rows, expands completed outputs, opens workspaces, and opens reports", async () => {
     const navigatedTo: string[] = [];
     useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {
       navigatedTo.push(workspaceId);
@@ -426,14 +426,17 @@ describe("WorkflowRunToolCall", () => {
     expect(view.container.textContent).toContain("testsPassed");
     expect(view.container.textContent).not.toContain("Completed task body.");
 
-    expect(view.queryByRole("button", { name: "Open task workspace for task_live" })).toBeNull();
+    const workspaceToggle = view.getByRole("button", { name: "Open task workspace for task_live" });
+    expect(workspaceToggle.textContent).toBe("Workspace");
+    fireEvent.click(workspaceToggle);
+    expect(navigatedTo).toEqual(["task_retry", "task_retry", "task_live"]);
 
     const reportToggle = view.getByLabelText("Open report for task_live");
     expect(reportToggle.textContent).toBe("Open");
     expect(reportToggle.closest('[role="button"]')).toBeNull();
     fireEvent.click(reportToggle);
 
-    expect(navigatedTo).toEqual(["task_retry", "task_retry"]);
+    expect(navigatedTo).toEqual(["task_retry", "task_retry", "task_live"]);
     await waitFor(() => {
       const reportDialog = document.querySelector('[role="dialog"]');
       expect(reportDialog?.textContent).toContain("Completed task body.");
