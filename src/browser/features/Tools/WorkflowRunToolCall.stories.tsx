@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import type { WorkflowRunRecord } from "@/common/types/workflow";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { APIContext } from "@/browser/contexts/API";
 import { WorkflowRunToolCall } from "@/browser/features/Tools/WorkflowRunToolCall";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
@@ -165,6 +166,19 @@ const resumedForegroundDiscoveryRun: WorkflowRunRecord = {
   ],
 };
 
+function createTaskWorkspaceMetadata(workspaceId: string): FrontendWorkspaceMetadata {
+  return {
+    id: workspaceId,
+    name: workspaceId,
+    title: workspaceId,
+    projectPath: "/repo",
+    projectName: "repo",
+    namedWorkspacePath: `/repo/${workspaceId}`,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    runtimeConfig: { type: "local", srcBaseDir: "/tmp/mux-src" },
+  };
+}
+
 const taskActionsRun: WorkflowRunRecord = {
   id: "wfr_story_task_actions",
   workspaceId: "workspace-1",
@@ -236,10 +250,20 @@ function WorkflowTaskActionsStory(props: Parameters<typeof WorkflowRunToolCall>[
   const [openedTaskId, setOpenedTaskId] = useState<string | null>(null);
 
   useEffect(() => {
-    useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {
+    const workspaceStore = useWorkspaceStoreRaw();
+    workspaceStore.syncWorkspaces(
+      new Map([
+        ["7b1a07d84d", createTaskWorkspaceMetadata("7b1a07d84d")],
+        ["a36921beca", createTaskWorkspaceMetadata("a36921beca")],
+      ])
+    );
+    workspaceStore.setNavigateToWorkspace((workspaceId) => {
       setOpenedTaskId(workspaceId);
     });
-    return () => useWorkspaceStoreRaw().setNavigateToWorkspace(() => undefined);
+    return () => {
+      workspaceStore.setNavigateToWorkspace(() => undefined);
+      workspaceStore.syncWorkspaces(new Map());
+    };
   }, []);
 
   return (

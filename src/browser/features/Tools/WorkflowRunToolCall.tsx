@@ -1,4 +1,11 @@
-import React, { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, {
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { APIContext, type APIClient } from "@/browser/contexts/API";
 import {
@@ -489,6 +496,17 @@ function shouldShowWorkflowTaskOpenAffordance(
   return event.type === "task" && event.status === "started";
 }
 
+// Workflow history can outlive child task workspaces, so only render navigation
+// affordances when the live workspace registry still contains the task id.
+function useWorkflowTaskWorkspaceAvailable(taskId: string): boolean {
+  const workspaceStore = useWorkspaceStoreRaw();
+  return useSyncExternalStore(
+    workspaceStore.subscribeDerived,
+    () => workspaceStore.getWorkspaceMetadata(taskId) != null,
+    () => false
+  );
+}
+
 function WorkflowTaskRow(props: {
   row: Extract<WorkflowDisplayRow, { kind: "task" }>;
   displayIndex: number;
@@ -503,14 +521,15 @@ function WorkflowTaskRow(props: {
   const label = getWorkflowEventLabel(event);
   const taskReportMarkdown = getTaskReportMarkdown(event, props.steps);
   const taskStructuredOutput = getTaskStructuredOutput(event, props.steps);
+  const taskWorkspaceAvailable = useWorkflowTaskWorkspaceAvailable(event.taskId);
   // Completed task rows inspect structured output inline; keep workspace navigation as a separate action.
   const canExpandStructuredOutput =
     event.status === "completed" && taskStructuredOutput !== undefined;
-  const showWorkspaceAction = canExpandStructuredOutput;
+  const canNavigateViaRow = !canExpandStructuredOutput && taskWorkspaceAvailable;
+  const taskRowInteractive = canExpandStructuredOutput || canNavigateViaRow;
+  const showWorkspaceAction = canExpandStructuredOutput && taskWorkspaceAvailable;
   const showOpenAffordance =
-    taskReportMarkdown == null &&
-    !canExpandStructuredOutput &&
-    shouldShowWorkflowTaskOpenAffordance(event);
+    taskReportMarkdown == null && canNavigateViaRow && shouldShowWorkflowTaskOpenAffordance(event);
   const toggleStructuredOutput = () => {
     props.onInspectStructuredOutput();
     setStructuredOutputExpanded((isExpanded) => !isExpanded);
@@ -520,7 +539,9 @@ function WorkflowTaskRow(props: {
       toggleStructuredOutput();
       return;
     }
-    props.onNavigate(event.taskId);
+    if (taskWorkspaceAvailable) {
+      props.onNavigate(event.taskId);
+    }
   };
   const handleReportDialogOpenChange = (isOpen: boolean) => {
     if (isOpen) {
@@ -537,21 +558,25 @@ function WorkflowTaskRow(props: {
   };
   const taskRowAriaLabel = canExpandStructuredOutput
     ? `${structuredOutputExpanded ? "Collapse" : "Expand"} structured output for workflow task ${event.taskId}`
-    : `Open workflow task ${event.taskId}`;
+    : canNavigateViaRow
+      ? `Open workflow task ${event.taskId}`
+      : undefined;
 
   const taskRow = (
     <div
-      className={`grid cursor-pointer items-center gap-2 border-l-2 border-transparent px-2 py-1 text-[10px] ${
+      className={`grid items-center gap-2 border-l-2 border-transparent px-2 py-1 text-[10px] ${
+        taskRowInteractive ? "cursor-pointer" : ""
+      } ${
         showOpenAffordance
           ? "grid-cols-[3rem_4.75rem_minmax(0,1fr)_auto]"
           : "grid-cols-[3rem_4.75rem_minmax(0,1fr)]"
       }`}
-      role="button"
-      tabIndex={0}
+      role={taskRowInteractive ? "button" : undefined}
+      tabIndex={taskRowInteractive ? 0 : undefined}
       aria-expanded={canExpandStructuredOutput ? structuredOutputExpanded : undefined}
       aria-label={taskRowAriaLabel}
-      onClick={activateTaskRow}
-      onKeyDown={onKeyDown}
+      onClick={taskRowInteractive ? activateTaskRow : undefined}
+      onKeyDown={taskRowInteractive ? onKeyDown : undefined}
     >
       <TooltipIfPresent
         tooltip={

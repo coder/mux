@@ -3586,6 +3586,7 @@ export class WorkspaceStore {
 
     // Store metadata for name lookup
     this.workspaceMetadata.set(workspaceId, metadata);
+    this.derived.bump("workspaces");
 
     // Backend guarantees createdAt via config.ts - this should never be undefined
     assert(
@@ -3692,6 +3693,7 @@ export class WorkspaceStore {
     this.aggregators.delete(workspaceId);
     this.chatTransientState.delete(workspaceId);
     this.workspaceMetadata.delete(workspaceId);
+    this.derived.bump("workspaces");
     this.workspaceActivity.delete(workspaceId);
     this.refreshActiveGoalCount();
     this.workspaceTerminalActivity.delete(workspaceId);

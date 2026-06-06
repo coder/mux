@@ -15,6 +15,7 @@ import {
 } from "react";
 
 import { APIContext } from "@/browser/contexts/API";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import {
   CommandRegistryProvider,
   useCommandRegistry,
@@ -23,6 +24,19 @@ import {
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+function createWorkflowTaskWorkspaceMetadata(workspaceId: string): FrontendWorkspaceMetadata {
+  return {
+    id: workspaceId,
+    name: workspaceId,
+    title: workspaceId,
+    projectPath: "/repo",
+    projectName: "repo",
+    namedWorkspacePath: `/repo/${workspaceId}`,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    runtimeConfig: { type: "local", srcBaseDir: "/tmp/mux-src" },
+  };
+}
+
 interface MockDialogContextValue {
   open: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -136,6 +150,7 @@ describe("WorkflowRunToolCall", () => {
 
   afterEach(() => {
     useWorkspaceStoreRaw().setNavigateToWorkspace(() => undefined);
+    useWorkspaceStoreRaw().syncWorkspaces(new Map());
     cleanup();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
@@ -272,7 +287,7 @@ describe("WorkflowRunToolCall", () => {
     const taskEventRow = view.getByText("scope-topic / task_scope / completed");
     const taskEventIndex = view.getByText("#3");
     expect(taskEventIndex.className).toContain("cursor-help");
-    expect(taskEventRow.closest('[role="button"]')?.className).toContain("cursor-pointer");
+    expect(taskEventRow.closest('[role="button"]')).toBeNull();
     expect(taskEventRow.getAttribute("title")).toBeNull();
     expect(taskEventRow.closest("summary")).toBeNull();
     const taskReportToggle = view.getByLabelText("Open report for task_scope");
@@ -297,6 +312,12 @@ describe("WorkflowRunToolCall", () => {
     useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {
       navigatedTo.push(workspaceId);
     });
+    useWorkspaceStoreRaw().syncWorkspaces(
+      new Map([
+        ["task_live", createWorkflowTaskWorkspaceMetadata("task_live")],
+        ["task_retry", createWorkflowTaskWorkspaceMetadata("task_retry")],
+      ])
+    );
     const view = render(
       <ThemeProvider forcedTheme="dark">
         <TooltipProvider>
@@ -451,6 +472,88 @@ describe("WorkflowRunToolCall", () => {
     fireEvent.click(view.getByLabelText("Close"));
     await waitFor(() => {
       expect(document.querySelector('[role="dialog"]')).toBeNull();
+    });
+  });
+
+  test("hides task workspace actions when the task workspace is unavailable", async () => {
+    const navigatedTo: string[] = [];
+    useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {
+      navigatedTo.push(workspaceId);
+    });
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <TooltipProvider>
+          <WorkflowRunToolCall
+            args={{ name: "implementation", args: {}, run_in_background: true }}
+            status="executing"
+            result={{
+              status: "running",
+              runId: "wfr_missing_task_workspace",
+              result: null,
+              run: {
+                id: "wfr_missing_task_workspace",
+                workspaceId: "workspace-1",
+                definition: {
+                  name: "implementation",
+                  description: "Implementation",
+                  scope: "built-in",
+                  executable: true,
+                },
+                definitionSource: "export default function workflow() { return null; }",
+                definitionHash: "sha256:test",
+                args: {},
+                status: "running",
+                createdAt: "2026-05-29T00:00:00.000Z",
+                updatedAt: "2026-05-29T00:00:01.000Z",
+                events: [
+                  {
+                    sequence: 1,
+                    type: "task",
+                    at: "2026-05-29T00:00:00.000Z",
+                    stepId: "completed-task",
+                    taskId: "task_deleted_report",
+                    status: "completed",
+                  },
+                  {
+                    sequence: 2,
+                    type: "task",
+                    at: "2026-05-29T00:00:01.000Z",
+                    stepId: "running-task",
+                    taskId: "task_deleted_running",
+                    status: "started",
+                  },
+                ],
+                steps: [
+                  {
+                    stepId: "completed-task",
+                    inputHash: "sha256:completed",
+                    status: "completed",
+                    taskId: "task_deleted_report",
+                    startedAt: "2026-05-29T00:00:00.000Z",
+                    completedAt: "2026-05-29T00:00:01.000Z",
+                    result: {
+                      reportMarkdown: "## Deleted workspace report\n\nReport remains readable.",
+                    },
+                  },
+                ],
+              },
+            }}
+          />
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+
+    expect(view.queryByLabelText("Open task workspace for task_deleted_report")).toBeNull();
+    expect(view.queryByText("Open")).toBeNull();
+    expect(
+      view.queryByRole("button", { name: "Open workflow task task_deleted_running" })
+    ).toBeNull();
+    expect(navigatedTo).toEqual([]);
+
+    fireEvent.click(view.getByLabelText("Open report for task_deleted_report"));
+    await waitFor(() => {
+      const reportDialog = document.querySelector('[role="dialog"]');
+      expect(reportDialog?.textContent).toContain("Report remains readable.");
     });
   });
 
