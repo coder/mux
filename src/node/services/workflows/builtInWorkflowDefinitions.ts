@@ -730,11 +730,16 @@ function isCurrentReviewHead(input, status) {
   if (!input.headRef) return true;
   const headRef = String(input.headRef).trim();
   if (!headRef || headRef === "HEAD") return true;
+  const branch = typeof status.branch === "string" ? status.branch : "";
+  if (branch.length > 0 && (headRef === branch || headRef === "refs/heads/" + branch)) return true;
+  if (!isExplicitCommitShaRef(headRef)) return false;
   const headSha = typeof status.headSha === "string" ? status.headSha : "";
   const requestedHeadSha = typeof status.requestedHeadSha === "string" ? status.requestedHeadSha : "";
-  if (headSha && requestedHeadSha) return headSha === requestedHeadSha;
-  const branch = typeof status.branch === "string" ? status.branch : "";
-  return branch.length > 0 && (headRef === branch || headRef === "refs/heads/" + branch);
+  return Boolean(headSha && requestedHeadSha && headSha === requestedHeadSha);
+}
+
+function isExplicitCommitShaRef(headRef) {
+  return /^[0-9a-fA-F]{7,64}$/.test(headRef);
 }
 
 function getReviewedGitSnapshot(gitContext) {

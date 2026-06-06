@@ -2821,6 +2821,147 @@ describe("built-in deep-review-workflow", () => {
     });
   }, 10_000);
 
+  test("auto-fix skips non-current branch refs that resolve to current HEAD", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-fix-non-current-ref");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 1;\n", "utf-8");
+    await runGit(repoRoot, ["add", "service.ts"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+    await runGit(repoRoot, ["branch", "feature"]);
+
+    const issue = {
+      id: "non-current-ref",
+      severity: "P2",
+      category: "correctness",
+      title: "Non-current ref should not auto-fix",
+      rationale: "The reviewed head names a different branch than the checkout.",
+      evidence: "feature points at the same commit as main.",
+      filePaths: ["service.ts"],
+      suggestedFix: "Skip auto-fix unless that branch is checked out.",
+      validation: "Run targeted workflow tests.",
+      confidence: "high",
+    };
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    await runStore.createRun({
+      id: "wfr_deep_review_fix_non_current_ref",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { fix: true, input: "current workspace changes", headRef: "feature", maxCandidates: 1 },
+      defaultActionCwd: repoRoot,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const applyCalls: unknown[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-review-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped.",
+                structuredOutput: {
+                  summary: "Review service code.",
+                  files: ["service.ts"],
+                  riskAreas: ["correctness"],
+                  lanes: ["correctness"],
+                },
+              };
+            case "review-correctness":
+            case "review-tests":
+            case "review-architecture":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "Findings.",
+                structuredOutput: { issues: spec.id === "review-correctness" ? [issue] : [] },
+              };
+            case "triage-candidate-issues":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "One candidate.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "verify-issue-0":
+              return {
+                taskId: "task_verify_0",
+                reportMarkdown: "Issue is valid.",
+                structuredOutput: {
+                  issueId: "non-current-ref",
+                  verdict: "valid",
+                  confidence: "high",
+                  rationale: "The issue is valid.",
+                },
+              };
+            case "synthesize-review":
+              return {
+                taskId: "task_final",
+                reportMarkdown: "# Deep Review\n\n- P2 Non-current ref should not auto-fix.",
+                structuredOutput: {
+                  verifiedIssueCount: 1,
+                  verifiedIssueIds: ["non-current-ref"],
+                  risk: "medium",
+                  validationPlan: ["bun test src/service.test.ts"],
+                  discardedIssueCount: 0,
+                },
+              };
+            default:
+              throw new Error(`Unexpected non-current ref step: ${spec.id}`);
+          }
+        },
+        async applyPatch(spec) {
+          applyCalls.push(spec);
+          return { success: true, status: "applied", taskId: spec.sourceTaskId };
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_fix_non_current_ref");
+
+    expect(taskCalls.map((call) => call.id)).not.toContain("fix-issue-0");
+    expect(applyCalls).toEqual([]);
+    expect(result.reportMarkdown).toContain(
+      "auto-fix requires the reviewed head ref to be the current checked-out branch"
+    );
+    expect(result).toMatchObject({
+      structuredOutput: {
+        fix: {
+          requested: true,
+          skippedReason:
+            "auto-fix requires the reviewed head ref to be the current checked-out branch",
+          selectedIssues: [],
+        },
+      },
+    });
+  }, 10_000);
+
   test("auto-fix skips when same-branch HEAD changes after review context is captured", async () => {
     if (!deepReviewWorkflow) {
       throw new Error("Expected built-in deep-review-workflow workflow");
