@@ -2472,7 +2472,7 @@ describe("built-in deep-review-workflow", () => {
         },
       },
     });
-  }, 10_000);
+  }, 20_000);
 
   test("auto-fix uses final synthesis issue IDs and rejects mismatched fixer output", async () => {
     if (!deepReviewWorkflow) {

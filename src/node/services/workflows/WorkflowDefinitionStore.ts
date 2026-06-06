@@ -395,8 +395,7 @@ function isScratchGitignoreSelfException(pattern: string): boolean {
 
 function scratchGitignorePatterns(content: string): string[] {
   return content
-    .split(/?
-/u)
+    .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !line.startsWith("#"));
 }
@@ -416,12 +415,8 @@ function scratchGitignoreFallbackContent(content: string): string | null {
   if (lastPattern === "*") {
     return null;
   }
-  const separator = content.length > 0 && !content.endsWith("
-") ? "
-" : "";
-  return `${content}${separator}${WORKFLOW_SCRATCH_GITIGNORE_FALLBACK_COMMENT}
-*
-`;
+  const separator = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
+  return `${content}${separator}${WORKFLOW_SCRATCH_GITIGNORE_FALLBACK_COMMENT}\n*\n`;
 }
 
 async function writeLocalGitExcludePattern(excludePath: string, pattern: string): Promise<void> {
