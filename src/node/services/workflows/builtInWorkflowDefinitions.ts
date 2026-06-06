@@ -230,20 +230,93 @@ function normalizeDeepResearchTopic(args) {
   const readOnlyReviewPrompt =
     "This is a read-only deep code review task. Do not edit files, create commits, apply patches, push branches, or open PRs. Inspect repository evidence only as needed and report findings.\\n\\n";
   const input = normalizeDeepReviewArgs(args);
-  const gitContext = shouldCollectGitReviewContext(input) ? collectGitReviewContext(action, input, log) : null;
+  if (input.loop && !input.fix) {
+    throw new Error("--loop requires --fix for deep-review-workflow");
+  }
+  if (input.loop) {
+    return runDeepReviewLoop({
+      input: input,
+      phase: phase,
+      log: log,
+      agent: agent,
+      action: action,
+      parallelAgents: parallelAgents,
+      applyPatch: applyPatch,
+      exploreAgentId: exploreAgentId,
+      reasoningAgentId: reasoningAgentId,
+      readOnlyReviewPrompt: readOnlyReviewPrompt,
+    });
+  }
+  return runDeepReviewPass({
+    input: input,
+    phase: phase,
+    log: log,
+    agent: agent,
+    action: action,
+    parallelAgents: parallelAgents,
+    applyPatch: applyPatch,
+    exploreAgentId: exploreAgentId,
+    reasoningAgentId: reasoningAgentId,
+    readOnlyReviewPrompt: readOnlyReviewPrompt,
+    stepSuffix: "",
+    iteration: 0,
+    skipFixWhenNoVerifiedIssues: false,
+  }).reviewResult;
+}
+
+function runDeepReviewLoop(context) {
+  const passes = [];
+  let stopReason = "";
+  let remainingFixBudget = context.input.maxFixes;
+  for (let iteration = 1; iteration <= context.input.maxLoopIterations; iteration += 1) {
+    context.phase("loop-iteration", {
+      iteration: iteration,
+      maxIterations: context.input.maxLoopIterations,
+      remainingFixBudget: remainingFixBudget,
+    });
+    const iterationInput = cloneDeepReviewInput(context.input);
+    iterationInput.maxFixes = remainingFixBudget;
+    const pass = runDeepReviewPass({
+      input: iterationInput,
+      phase: context.phase,
+      log: context.log,
+      agent: context.agent,
+      action: context.action,
+      parallelAgents: context.parallelAgents,
+      applyPatch: context.applyPatch,
+      exploreAgentId: context.exploreAgentId,
+      reasoningAgentId: context.reasoningAgentId,
+      readOnlyReviewPrompt: context.readOnlyReviewPrompt,
+      stepSuffix: "loop-" + iteration,
+      iteration: iteration,
+      skipFixWhenNoVerifiedIssues: true,
+    });
+    passes.push(pass.reviewResult);
+    remainingFixBudget = Math.max(0, remainingFixBudget - countSelectedFixes(pass.reviewResult));
+    stopReason = getLoopStopReason(pass.reviewResult, remainingFixBudget);
+    if (stopReason) {
+      return buildLoopResult(context.input, passes, stopReason, remainingFixBudget);
+    }
+  }
+  return buildLoopResult(context.input, passes, "max-iterations", remainingFixBudget);
+}
+
+function runDeepReviewPass(context) {
+  const input = cloneDeepReviewInput(context.input);
+  const gitContext = shouldCollectGitReviewContext(input) ? collectGitReviewContext(context.action, input, context.log, context.stepSuffix) : null;
   applyGitContextToReviewInput(input, gitContext);
   const maxCandidates = input.maxCandidates;
 
-  phase("scope", {
+  context.phase("scope", withLoopIteration({
     target: input.target,
     fileCount: input.files.length,
     hasDiffSnapshot: input.diff.length > 0,
     hasGitSnapshot: input.gitSnapshot.length > 0,
-  });
-  const scope = agent({
-    id: "scope-review-surface",
+  }, context.iteration));
+  const scope = context.agent({
+    id: workflowStepId("scope-review-surface", context.stepSuffix),
     title: "Scope review surface",
-    agentId: exploreAgentId,
+    agentId: context.exploreAgentId,
     prompt:
       "Scope this code review. Identify changed files, likely intent, touched layers, highest-risk areas, and which review lanes should run. Use repository evidence; do not assume the diff is complete if refs are provided.\\n\\n" +
       renderReviewInput(input),
@@ -251,17 +324,17 @@ function normalizeDeepResearchTopic(args) {
   });
 
   const lanes = selectReviewLanes(scope.structuredOutput.lanes);
-  log("Selected deep review lanes", { lanes: lanes });
+  context.log("Selected deep review lanes", withLoopIteration({ lanes: lanes }, context.iteration));
 
-  phase("lane-review", { lanes: lanes });
-  const laneReviews = parallelAgents(
+  context.phase("lane-review", withLoopIteration({ lanes: lanes }, context.iteration));
+  const laneReviews = context.parallelAgents(
     lanes.map(function (lane) {
       return {
-        id: "review-" + lane,
+        id: workflowStepId("review-" + lane, context.stepSuffix),
         title: "Review lane: " + lane,
-        agentId: reasoningAgentId,
+        agentId: context.reasoningAgentId,
         prompt:
-          readOnlyReviewPrompt +
+          context.readOnlyReviewPrompt +
           lanePrompt(lane) +
           "\\n\\nReview target:\\n" +
           renderReviewInput(input) +
@@ -277,15 +350,15 @@ function normalizeDeepResearchTopic(args) {
       return review.structuredOutput.issues || [];
     })
   );
-  log("Lane review produced candidate issues", { count: laneIssues.length });
+  context.log("Lane review produced candidate issues", withLoopIteration({ count: laneIssues.length }, context.iteration));
 
-  phase("triage-dedupe", { candidateCount: laneIssues.length });
-  const triage = agent({
-    id: "triage-candidate-issues",
+  context.phase("triage-dedupe", withLoopIteration({ candidateCount: laneIssues.length }, context.iteration));
+  const triage = context.agent({
+    id: workflowStepId("triage-candidate-issues", context.stepSuffix),
     title: "Triage and dedupe review findings",
-    agentId: reasoningAgentId,
+    agentId: context.reasoningAgentId,
     prompt:
-      readOnlyReviewPrompt +
+      context.readOnlyReviewPrompt +
       "Deduplicate and triage these candidate code review findings. Merge duplicates, drop vague or non-actionable items, normalize severity, and preserve concrete evidence.\\n\\n" +
       "Review target:\\n" +
       renderReviewInput(input) +
@@ -294,21 +367,21 @@ function normalizeDeepResearchTopic(args) {
     outputSchema: issueListSchema(),
   });
   const candidates = (triage.structuredOutput.issues || []).slice(0, maxCandidates);
-  log("Triaged candidate issues", {
+  context.log("Triaged candidate issues", withLoopIteration({
     candidateCount: triage.structuredOutput.issues.length,
     selectedCount: candidates.length,
-  });
+  }, context.iteration));
 
-  phase("adversarial-verification", { candidateCount: candidates.length });
+  context.phase("adversarial-verification", withLoopIteration({ candidateCount: candidates.length }, context.iteration));
   const verificationResults = candidates.length > 0
-    ? parallelAgents(
+    ? context.parallelAgents(
         candidates.map(function (issue, index) {
           return {
-            id: "verify-issue-" + index,
+            id: workflowStepId("verify-issue-" + index, context.stepSuffix),
             title: "Verify review finding " + (index + 1),
-            agentId: reasoningAgentId,
+            agentId: context.reasoningAgentId,
             prompt:
-              readOnlyReviewPrompt +
+              context.readOnlyReviewPrompt +
               "Adversarially verify this code review finding. Try to disprove it. Inspect relevant code paths and tests. Decide whether it is valid, duplicate, overstated, not reproducible, or needs more information.\\n\\n" +
               "Review target:\\n" +
               renderReviewInput(input) +
@@ -322,18 +395,18 @@ function normalizeDeepResearchTopic(args) {
   const verifications = verificationResults.map(function (verification) {
     return verification.structuredOutput;
   });
-  log("Verified candidate issues", { count: verifications.length });
+  context.log("Verified candidate issues", withLoopIteration({ count: verifications.length }, context.iteration));
 
-  phase("final-synthesis", {
+  context.phase("final-synthesis", withLoopIteration({
     candidateCount: candidates.length,
     verificationCount: verifications.length,
-  });
-  const final = agent({
-    id: "synthesize-review",
+  }, context.iteration));
+  const final = context.agent({
+    id: workflowStepId("synthesize-review", context.stepSuffix),
     title: "Synthesize final deep review",
-    agentId: reasoningAgentId,
+    agentId: context.reasoningAgentId,
     prompt:
-      readOnlyReviewPrompt +
+      context.readOnlyReviewPrompt +
       "Write the final code review. Include only findings that remain actionable after adversarial verification. Use severity P0-P4, file paths, issue IDs, and concrete evidence. If there are no verified issues, say so clearly. Include questions and a validation plan. Set verifiedIssueIds to the issue IDs included in the final review when any are verified.\\n\\n" +
       "Scoped review surface:\\n" +
       JSON.stringify(scope.structuredOutput, null, 2) +
@@ -355,26 +428,132 @@ function normalizeDeepResearchTopic(args) {
       final: final.structuredOutput,
     },
   };
-  if (!input.fix) return reviewResult;
+  if (!input.fix) return { reviewResult: reviewResult, gitContext: gitContext };
+  if (context.skipFixWhenNoVerifiedIssues && !hasVerifiedIssues(final.structuredOutput)) {
+    return { reviewResult: reviewResult, gitContext: gitContext };
+  }
 
-  phase("fix-preflight", { requested: true });
+  context.phase("fix-preflight", withLoopIteration({ requested: true }, context.iteration));
   const fixResult = runDeepReviewFix({
     input: input,
-    action: action,
-    log: log,
-    agent: agent,
-    parallelAgents: parallelAgents,
-    applyPatch: applyPatch,
+    action: context.action,
+    log: context.log,
+    agent: context.agent,
+    parallelAgents: context.parallelAgents,
+    applyPatch: context.applyPatch,
     candidates: candidates,
     verifications: verifications,
     final: final.structuredOutput,
     gitContext: gitContext,
-    exploreAgentId: exploreAgentId,
-    reasoningAgentId: reasoningAgentId,
+    exploreAgentId: context.exploreAgentId,
+    reasoningAgentId: context.reasoningAgentId,
+    stepSuffix: context.stepSuffix,
   });
   reviewResult.structuredOutput.fix = fixResult;
   reviewResult.reportMarkdown = final.reportMarkdown + renderFixMarkdown(fixResult);
-  return reviewResult;
+  return { reviewResult: reviewResult, gitContext: gitContext };
+}
+
+function cloneDeepReviewInput(input) {
+  return {
+    target: input.target,
+    baseRef: input.baseRef,
+    headRef: input.headRef,
+    diff: input.diff,
+    files: input.files.slice(),
+    instructions: input.instructions,
+    gitSnapshot: input.gitSnapshot,
+    explicitDiff: input.explicitDiff,
+    explicitFiles: input.explicitFiles,
+    includeGitContext: input.includeGitContext,
+    maxCandidates: input.maxCandidates,
+    fix: input.fix,
+    loop: input.loop,
+    maxFixes: input.maxFixes,
+    maxLoopIterations: input.maxLoopIterations,
+    fixIssueIds: input.fixIssueIds.slice(),
+  };
+}
+
+function workflowStepId(baseId, suffix) {
+  return suffix ? baseId + "-" + suffix : baseId;
+}
+
+function withLoopIteration(details, iteration) {
+  if (iteration) details.iteration = iteration;
+  return details;
+}
+
+function hasVerifiedIssues(final) {
+  if (!final) return false;
+  if (typeof final.verifiedIssueCount === "number") return final.verifiedIssueCount > 0;
+  return Array.isArray(final.verifiedIssueIds) && final.verifiedIssueIds.length > 0;
+}
+
+function countSelectedFixes(reviewResult) {
+  const output = reviewResult && reviewResult.structuredOutput ? reviewResult.structuredOutput : {};
+  const fix = output.fix;
+  return fix && Array.isArray(fix.selectedIssues) ? fix.selectedIssues.length : 0;
+}
+
+function getLoopStopReason(reviewResult, remainingFixBudget) {
+  const output = reviewResult && reviewResult.structuredOutput ? reviewResult.structuredOutput : {};
+  if (!hasVerifiedIssues(output.final)) return "no-verified-issues";
+  const fix = output.fix;
+  if (!fix) return "no-fix-attempted";
+  if (fix.skippedReason) return "fix-skipped";
+  if (fix.validation && fix.validation.status === "failed") return "validation-failed";
+  if (!fix.selectedIssues || fix.selectedIssues.length === 0) return "no-fixable-issues";
+  if (!fixHasProgress(fix)) return "no-fix-progress";
+  if (remainingFixBudget <= 0) return "fix-budget-exhausted";
+  return "";
+}
+
+function fixHasProgress(fix) {
+  return countStatus(fix.applications, "applied") > 0;
+}
+
+function buildLoopResult(input, passes, stopReason, remainingFixBudget) {
+  const loop = {
+    requested: true,
+    completed: stopReason === "no-verified-issues",
+    iterations: passes.length,
+    maxIterations: input.maxLoopIterations,
+    remainingFixBudget: remainingFixBudget,
+    stopReason: stopReason,
+  };
+  const structuredOutput = {
+    target: input.target,
+    loop: loop,
+    passes: passes.map(function (pass, index) {
+      return {
+        iteration: index + 1,
+        result: pass.structuredOutput,
+      };
+    }),
+  };
+  if (passes.length > 0) {
+    const latest = passes[passes.length - 1].structuredOutput;
+    structuredOutput.latest = latest;
+    structuredOutput.final = latest.final || null;
+    if (latest.fix) structuredOutput.fix = latest.fix;
+  }
+  return {
+    reportMarkdown: renderLoopMarkdown(passes, loop),
+    structuredOutput: structuredOutput,
+  };
+}
+
+function renderLoopMarkdown(passes, loop) {
+  let markdown = "# Deep Review Loop\\n\\n";
+  markdown += "- Iterations: " + loop.iterations + " / " + loop.maxIterations + "\\n";
+  markdown += "- Stop reason: " + loop.stopReason + "\\n";
+  markdown += "- Completed: " + (loop.completed ? "yes" : "no") + "\\n";
+  for (let index = 0; index < passes.length; index += 1) {
+    markdown += "\\n\\n---\\n\\n## Loop iteration " + (index + 1) + "\\n\\n";
+    markdown += passes[index].reportMarkdown || "";
+  }
+  return markdown;
 }
 
 function runDeepReviewFix(context) {
@@ -387,7 +566,7 @@ function runDeepReviewFix(context) {
     resolutions: [],
     unresolved: [],
   };
-  const preflight = collectFixPreflight(context.action, context.log, input, context.gitContext);
+  const preflight = collectFixPreflight(context.action, context.log, input, context.gitContext, context.stepSuffix);
   if (preflight.skippedReason) {
     baseFix.skippedReason = preflight.skippedReason;
     return baseFix;
@@ -407,7 +586,7 @@ function runDeepReviewFix(context) {
   const fixerResults = context.parallelAgents(
     selected.map(function (item, index) {
       return {
-        id: "fix-issue-" + index,
+        id: workflowStepId("fix-issue-" + index, context.stepSuffix),
         title: "Fix verified review finding " + (index + 1),
         agentId: context.reasoningAgentId,
         prompt: buildFixPrompt(input, item),
@@ -434,7 +613,7 @@ function runDeepReviewFix(context) {
       continue;
     }
 
-    const application = safeApplyPatch(context.applyPatch, "apply-fix-" + index, fixerResult, expectedHeadSha);
+    const application = safeApplyPatch(context.applyPatch, workflowStepId("apply-fix-" + index, context.stepSuffix), fixerResult, expectedHeadSha);
     application.issueId = item.issueId;
     baseFix.applications.push(application);
     if (application.status === "applied") {
@@ -448,7 +627,7 @@ function runDeepReviewFix(context) {
     }
 
     const resolver = context.agent({
-      id: "resolve-fix-" + index + "-conflict",
+      id: workflowStepId("resolve-fix-" + index + "-conflict", context.stepSuffix),
       title: "Resolve auto-fix conflict " + (index + 1),
       agentId: context.reasoningAgentId,
       prompt: buildResolverPrompt(input, item, fixerResult, application, integratedIssues),
@@ -466,7 +645,7 @@ function runDeepReviewFix(context) {
       continue;
     }
     if (resolutionOutput.status === "resolved" && resolutionOutput.commitCreated === true) {
-      const resolvedApplication = safeApplyPatch(context.applyPatch, "apply-resolved-fix-" + index, resolver, expectedHeadSha);
+      const resolvedApplication = safeApplyPatch(context.applyPatch, workflowStepId("apply-resolved-fix-" + index, context.stepSuffix), resolver, expectedHeadSha);
       resolvedApplication.issueId = item.issueId;
       resolution.applyStatus = resolvedApplication.status;
       baseFix.applications.push(resolvedApplication);
@@ -483,7 +662,7 @@ function runDeepReviewFix(context) {
 
   if (integratedIssues.length > 0) {
     const validation = context.agent({
-      id: "validate-auto-fixes",
+      id: workflowStepId("validate-auto-fixes", context.stepSuffix),
       title: "Validate applied auto-fixes",
       agentId: context.exploreAgentId,
       prompt: buildValidationPrompt(input, context.final, baseFix),
@@ -494,13 +673,13 @@ function runDeepReviewFix(context) {
   return baseFix;
 }
 
-function collectFixPreflight(action, log, input, gitContext) {
+function collectFixPreflight(action, log, input, gitContext, stepSuffix) {
   if (input.explicitDiff) return { skippedReason: "auto-fix requires a local current workspace target, not an explicit diff" };
   if (looksNonLocalTarget(input.target)) return { skippedReason: "auto-fix requires a local current workspace target" };
   let status = null;
   try {
     status = action.git.status({
-      id: "fix-git-status",
+      id: workflowStepId("fix-git-status", stepSuffix),
       input: { includeIgnored: false, head: input.headRef || "HEAD" },
       builtInOnly: true,
       cache: false,
@@ -848,7 +1027,9 @@ function normalizeDeepReviewArgs(args) {
     includeGitContext: false,
     maxCandidates: 12,
     fix: false,
+    loop: false,
     maxFixes: 5,
+    maxLoopIterations: 5,
     fixIssueIds: [],
   };
 
@@ -901,11 +1082,17 @@ function normalizeDeepReviewArgs(args) {
   if (typeof args.maxFixes === "number" && args.maxFixes > 0) {
     normalized.maxFixes = Math.min(20, Math.max(1, Math.floor(args.maxFixes)));
   }
+  if (typeof args.maxLoopIterations === "number" && args.maxLoopIterations > 0) {
+    normalized.maxLoopIterations = Math.min(10, Math.max(1, Math.floor(args.maxLoopIterations)));
+  }
   if (Array.isArray(args.fixIssueIds)) {
     normalized.fixIssueIds = sanitizeStringArray(args.fixIssueIds);
   }
   if (typeof args.fix === "boolean") {
     normalized.fix = args.fix;
+  }
+  if (typeof args.loop === "boolean") {
+    normalized.loop = args.loop;
   }
 
   return normalized;
@@ -916,6 +1103,8 @@ function applyFixFlags(normalized, text) {
   for (const flag of parsed.flags) {
     if (flag === "--fix") normalized.fix = true;
     else if (flag === "--no-fix") normalized.fix = false;
+    else if (flag === "--loop") normalized.loop = true;
+    else if (flag === "--no-loop") normalized.loop = false;
   }
   const target = parsed.target.trim().split(/ +/).join(" ");
   if (target) normalized.target = target;
@@ -926,7 +1115,7 @@ function parseTrailingFixFlags(text) {
   const flags = [];
   while (parts.length > 0) {
     const last = parts[parts.length - 1];
-    if (last !== "--fix" && last !== "--no-fix") break;
+    if (last !== "--fix" && last !== "--no-fix" && last !== "--loop" && last !== "--no-loop") break;
     flags.unshift(last);
     parts.pop();
   }
@@ -947,34 +1136,34 @@ function shouldCollectGitReviewContext(input) {
   return input.includeGitContext || (!input.explicitFiles && !input.explicitDiff);
 }
 
-function collectGitReviewContext(action, input, log) {
+function collectGitReviewContext(action, input, log, stepSuffix) {
   const gitInput = buildGitActionInput(input);
   const failures = [];
   const builtInOnly = true;
   const status = tryGitAction(log, failures, "git.status", function () {
     return action.git.status({
-      id: "git-status",
+      id: workflowStepId("git-status", stepSuffix),
       input: { includeIgnored: false },
       builtInOnly,
     }).output;
   });
   const changedFiles = tryGitAction(log, failures, "git.changedFiles", function () {
     return action.git.changedFiles({
-      id: "git-changed-files",
+      id: workflowStepId("git-changed-files", stepSuffix),
       input: gitInput,
       builtInOnly,
     }).output;
   });
   const diffStat = tryGitAction(log, failures, "git.diffStat", function () {
     return action.git.diffStat({
-      id: "git-diff-stat",
+      id: workflowStepId("git-diff-stat", stepSuffix),
       input: gitInput,
       builtInOnly,
     }).output;
   });
   const diff = tryGitAction(log, failures, "git.diff", function () {
     return action.git.diff({
-      id: "git-diff",
+      id: workflowStepId("git-diff", stepSuffix),
       input: gitInput,
       builtInOnly,
     }).output;
@@ -983,7 +1172,7 @@ function collectGitReviewContext(action, input, log) {
     const commitsInput = copyGitActionInput(gitInput);
     commitsInput.limit = 20;
     return action.git.commitsBetween({
-      id: "git-commits-between",
+      id: workflowStepId("git-commits-between", stepSuffix),
       input: commitsInput,
       builtInOnly,
     }).output;
