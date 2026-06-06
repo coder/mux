@@ -268,14 +268,18 @@ function runDeepReviewLoop(context) {
   const passes = [];
   let stopReason = "";
   let remainingFixBudget = context.input.maxFixes;
+  let loopHeadRef = context.input.headRef;
   for (let iteration = 1; iteration <= context.input.maxLoopIterations; iteration += 1) {
     context.phase("loop-iteration", {
       iteration: iteration,
       maxIterations: context.input.maxLoopIterations,
       remainingFixBudget: remainingFixBudget,
     });
+    const budgetExhaustedReadOnlyCheck = remainingFixBudget <= 0;
     const iterationInput = cloneDeepReviewInput(context.input);
+    iterationInput.headRef = loopHeadRef;
     iterationInput.maxFixes = remainingFixBudget;
+    if (budgetExhaustedReadOnlyCheck) iterationInput.fix = false;
     const pass = runDeepReviewPass({
       input: iterationInput,
       phase: context.phase,
@@ -292,8 +296,15 @@ function runDeepReviewLoop(context) {
       skipFixWhenNoVerifiedIssues: true,
     });
     passes.push(pass.reviewResult);
+    if (budgetExhaustedReadOnlyCheck) {
+      stopReason = hasVerifiedIssues(pass.reviewResult.structuredOutput.final) ? "fix-budget-exhausted" : "no-verified-issues";
+      return buildLoopResult(context.input, passes, stopReason, remainingFixBudget);
+    }
+    const fixProgress = reviewResultHasFixProgress(pass.reviewResult);
     remainingFixBudget = Math.max(0, remainingFixBudget - countSelectedFixes(pass.reviewResult));
+    if (fixProgress) loopHeadRef = "";
     stopReason = getLoopStopReason(pass.reviewResult, remainingFixBudget);
+    if (stopReason === "fix-budget-exhausted" && iteration < context.input.maxLoopIterations) continue;
     if (stopReason) {
       return buildLoopResult(context.input, passes, stopReason, remainingFixBudget);
     }
@@ -488,6 +499,12 @@ function hasVerifiedIssues(final) {
   if (!final) return false;
   if (typeof final.verifiedIssueCount === "number") return final.verifiedIssueCount > 0;
   return Array.isArray(final.verifiedIssueIds) && final.verifiedIssueIds.length > 0;
+}
+
+function reviewResultHasFixProgress(reviewResult) {
+  const output = reviewResult && reviewResult.structuredOutput ? reviewResult.structuredOutput : {};
+  const fix = output.fix;
+  return Boolean(fix && fixHasProgress(fix));
 }
 
 function countSelectedFixes(reviewResult) {
@@ -700,6 +717,9 @@ function collectFixPreflight(action, log, input, gitContext, stepSuffix) {
   if (!matchesReviewedGitBranch(reviewedSnapshot, status)) {
     return { skippedReason: "auto-fix requires the current Git branch to match the reviewed snapshot" };
   }
+  if (!matchesReviewedGitHead(reviewedSnapshot, status)) {
+    return { skippedReason: "auto-fix requires the current Git HEAD to match the reviewed snapshot" };
+  }
   if (arrayLength(status.staged) > 0 || arrayLength(status.unstaged) > 0 || arrayLength(status.untracked) > 0) {
     return { skippedReason: "auto-fix requires a clean committed local worktree" };
   }
@@ -729,6 +749,11 @@ function getReviewedGitSnapshot(gitContext) {
 function matchesReviewedGitBranch(reviewedSnapshot, status) {
   const currentBranch = typeof status.branch === "string" ? status.branch : "";
   return currentBranch.length > 0 && currentBranch === reviewedSnapshot.branch;
+}
+
+function matchesReviewedGitHead(reviewedSnapshot, status) {
+  const currentHeadSha = typeof status.headSha === "string" ? status.headSha : "";
+  return currentHeadSha.length > 0 && currentHeadSha === reviewedSnapshot.headSha;
 }
 
 function looksNonLocalTarget(target) {
