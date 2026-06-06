@@ -292,7 +292,7 @@ describe("WorkflowRunToolCall", () => {
     expect(renderedText).toContain("confidence");
   });
 
-  test("coalesces task attempts, navigates rows, and opens completed reports separately", async () => {
+  test("coalesces task attempts, navigates active rows, expands completed outputs, and opens reports", async () => {
     const navigatedTo: string[] = [];
     useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {
       navigatedTo.push(workspaceId);
@@ -370,7 +370,13 @@ describe("WorkflowRunToolCall", () => {
                     taskId: "task_live",
                     startedAt: "2026-05-29T00:00:00.000Z",
                     completedAt: "2026-05-29T00:00:01.000Z",
-                    result: { reportMarkdown: "## Implement report\n\nCompleted task body." },
+                    result: {
+                      reportMarkdown: "## Implement report\n\nCompleted task body.",
+                      structuredOutput: {
+                        filesChanged: ["src/feature.ts"],
+                        testsPassed: true,
+                      },
+                    },
                   },
                   {
                     stepId: "apply-implement",
@@ -391,12 +397,11 @@ describe("WorkflowRunToolCall", () => {
     expect(view.queryByText("implement / task_live / started")).toBeNull();
     expect(view.getByText("implement / task_retry / started")).toBeTruthy();
     expect(view.getByText("apply-implement / task_live / started")).toBeTruthy();
-    const openAffordance = view.getByText("Open");
-    expect(openAffordance.getAttribute("aria-hidden")).toBe("true");
     const activeTaskControl = view.getByRole("button", {
       name: "Open workflow task task_retry",
     });
-    expect(activeTaskControl.contains(openAffordance)).toBe(true);
+    const openAffordance = activeTaskControl.querySelector('[aria-hidden="true"]');
+    expect(openAffordance?.textContent).toBe("Open");
     expect(view.queryByRole("button", { name: "Open" })).toBeNull();
 
     fireEvent.click(activeTaskControl);
@@ -404,22 +409,31 @@ describe("WorkflowRunToolCall", () => {
     fireEvent.keyDown(activeTaskControl, { key: "Enter" });
     expect(navigatedTo).toEqual(["task_retry", "task_retry"]);
 
-    const completedTaskControl = view
-      .getByText("implement / task_live / completed")
-      .closest('[role="button"]');
-    if (completedTaskControl == null) {
-      throw new Error("Expected completed task row to be keyboard focusable");
-    }
-
-    fireEvent.keyDown(completedTaskControl, { key: "Enter" });
-    expect(navigatedTo).toEqual(["task_retry", "task_retry", "task_live"]);
+    const completedTaskControl = view.getByRole("button", {
+      name: "Expand structured output for workflow task task_live",
+    });
+    expect(completedTaskControl.textContent).toContain("implement / task_live / completed");
+    expect(completedTaskControl.getAttribute("aria-expanded")).toBe("false");
+    expect(view.container.textContent).not.toContain("filesChanged");
     expect(view.container.textContent).not.toContain("Completed task body.");
 
+    fireEvent.keyDown(completedTaskControl, { key: "Enter" });
+
+    expect(navigatedTo).toEqual(["task_retry", "task_retry"]);
+    expect(completedTaskControl.getAttribute("aria-expanded")).toBe("true");
+    expect(view.container.textContent).toContain("filesChanged");
+    expect(view.container.textContent).toContain("src/feature.ts");
+    expect(view.container.textContent).toContain("testsPassed");
+    expect(view.container.textContent).not.toContain("Completed task body.");
+
+    expect(view.queryByRole("button", { name: "Open task workspace for task_live" })).toBeNull();
+
     const reportToggle = view.getByLabelText("Open report for task_live");
+    expect(reportToggle.textContent).toBe("Open");
     expect(reportToggle.closest('[role="button"]')).toBeNull();
     fireEvent.click(reportToggle);
 
-    expect(navigatedTo).toEqual(["task_retry", "task_retry", "task_live"]);
+    expect(navigatedTo).toEqual(["task_retry", "task_retry"]);
     await waitFor(() => {
       const reportDialog = document.querySelector('[role="dialog"]');
       expect(reportDialog?.textContent).toContain("Completed task body.");
@@ -1100,6 +1114,127 @@ describe("WorkflowRunToolCall", () => {
 
     await waitFor(() => expect(view.getByText("completed workflow result")).toBeTruthy());
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Report stays open.");
+  });
+
+  test("keeps expanded task structured output visible after workflow auto-completes", async () => {
+    const runningRun = {
+      id: "wfr_structured_auto",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:test",
+      args: { topic: "workflow cards" },
+      status: "running" as const,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:01.000Z",
+      events: [
+        {
+          sequence: 1,
+          type: "status" as const,
+          at: "2026-05-29T00:00:00.000Z",
+          status: "running" as const,
+        },
+        {
+          sequence: 2,
+          type: "task" as const,
+          at: "2026-05-29T00:00:01.000Z",
+          stepId: "structured-step",
+          taskId: "task_structured",
+          status: "completed" as const,
+        },
+      ],
+      steps: [
+        {
+          stepId: "structured-step",
+          inputHash: "sha256:structured",
+          status: "completed" as const,
+          taskId: "task_structured",
+          startedAt: "2026-05-29T00:00:00.000Z",
+          completedAt: "2026-05-29T00:00:01.000Z",
+          result: {
+            reportMarkdown: "## Structured task report\n\nReport remains available.",
+            structuredOutput: {
+              reviewSummary: "Keep this visible after completion.",
+            },
+          },
+        },
+      ],
+    };
+    const completedRun = {
+      ...runningRun,
+      status: "completed" as const,
+      updatedAt: "2026-05-29T00:00:02.000Z",
+      events: [
+        ...runningRun.events,
+        {
+          sequence: 3,
+          type: "result" as const,
+          at: "2026-05-29T00:00:02.000Z",
+          result: { reportMarkdown: "completed workflow result" },
+        },
+        {
+          sequence: 4,
+          type: "status" as const,
+          at: "2026-05-29T00:00:02.000Z",
+          status: "completed" as const,
+        },
+      ],
+    };
+    const pendingRefresh: { resolve?: (run: typeof completedRun) => void } = {};
+    const api = {
+      workflows: {
+        getRun: async () =>
+          await new Promise<typeof completedRun>((resolve) => {
+            pendingRefresh.resolve = resolve;
+          }),
+      },
+    };
+
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowRunToolCall
+              args={{
+                name: "deep-research",
+                args: { topic: "workflow cards" },
+                run_in_background: true,
+              }}
+              status="completed"
+              result={{
+                status: "running",
+                runId: "wfr_structured_auto",
+                result: null,
+                run: runningRun,
+              }}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    await waitFor(() => expect(pendingRefresh.resolve).toBeDefined());
+    fireEvent.click(
+      view.getByRole("button", {
+        name: "Expand structured output for workflow task task_structured",
+      })
+    );
+    expect(view.container.textContent).toContain("reviewSummary");
+
+    const completeRefresh = pendingRefresh.resolve;
+    if (completeRefresh == null) {
+      throw new Error("Expected workflow refresh to be pending");
+    }
+    completeRefresh(completedRun);
+
+    await waitFor(() => expect(view.getByText("completed workflow result")).toBeTruthy());
+    expect(view.container.textContent).toContain("reviewSummary");
+    expect(view.container.textContent).toContain("Keep this visible after completion.");
   });
 
   test("shows interrupt action for running workflows and updates with the returned run", async () => {

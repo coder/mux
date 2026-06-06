@@ -213,7 +213,14 @@ const taskActionsRun: WorkflowRunRecord = {
       taskId: "7b1a07d84d",
       startedAt: "2026-05-29T00:00:01.000Z",
       completedAt: "2026-05-29T00:00:02.000Z",
-      result: { reportMarkdown: "## Summary report\n\nCompleted task report body." },
+      result: {
+        reportMarkdown: "## Summary report\n\nCompleted task report body.",
+        structuredOutput: {
+          summary: "Source 15 is ready for downstream extraction.",
+          confidence: "high",
+          citations: 3,
+        },
+      },
     },
     {
       stepId: "extract-claims",
