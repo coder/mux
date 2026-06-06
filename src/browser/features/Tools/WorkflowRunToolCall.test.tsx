@@ -424,6 +424,12 @@ describe("WorkflowRunToolCall", () => {
     expect(view.container.textContent).toContain("filesChanged");
     expect(view.container.textContent).toContain("src/feature.ts");
     expect(view.container.textContent).toContain("testsPassed");
+    const structuredOutputRegion = view.getByRole("region", {
+      name: "Structured output for workflow task task_live",
+    });
+    expect(structuredOutputRegion.getAttribute("tabindex")).toBe("0");
+    structuredOutputRegion.focus();
+    expect(document.activeElement).toBe(structuredOutputRegion);
     expect(view.container.textContent).not.toContain("Completed task body.");
 
     const workspaceToggle = view.getByRole("button", { name: "Open task workspace for task_live" });

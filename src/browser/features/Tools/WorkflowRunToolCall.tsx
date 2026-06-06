@@ -636,7 +636,12 @@ function WorkflowTaskRow(props: {
       {canExpandStructuredOutput && structuredOutputExpanded ? (
         <div className="mx-2 mb-2 space-y-1">
           <div className="text-muted text-[10px] tracking-wide uppercase">Structured output</div>
-          <WorkflowJsonBlock value={taskStructuredOutput} className="max-h-[180px]" />
+          {/* The inline JSON is height-capped, so name/focus its own scroll region for keyboard users. */}
+          <WorkflowJsonBlock
+            value={taskStructuredOutput}
+            className="max-h-[180px]"
+            ariaLabel={`Structured output for workflow task ${event.taskId}`}
+          />
         </div>
       ) : null}
     </li>

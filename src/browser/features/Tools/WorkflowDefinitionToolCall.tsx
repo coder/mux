@@ -87,13 +87,21 @@ export function WorkflowSection(props: {
   );
 }
 
-export function WorkflowJsonBlock(props: { value: unknown; className?: string }) {
+export function WorkflowJsonBlock(props: {
+  value: unknown;
+  className?: string;
+  ariaLabel?: string;
+}) {
+  const isNamedScrollRegion = props.ariaLabel != null;
   return (
     <div
       className={cn(
         "border-border bg-code-bg max-h-[240px] overflow-auto rounded border p-2",
         props.className
       )}
+      role={isNamedScrollRegion ? "region" : undefined}
+      tabIndex={isNamedScrollRegion ? 0 : undefined}
+      aria-label={props.ariaLabel}
     >
       <JsonHighlight value={props.value} />
     </div>
