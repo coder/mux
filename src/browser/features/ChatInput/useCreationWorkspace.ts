@@ -53,7 +53,7 @@ import {
   getModelCapabilities,
   getModelCapabilitiesResolved,
 } from "@/common/utils/ai/modelCapabilities";
-import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
+import { normalizeModelInput } from "@/common/utils/ai/normalizeModelInput";
 import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
 import { getErrorMessage } from "@/common/utils/errors";
 import { normalizeAgentId } from "@/common/utils/agentIds";

@@ -1583,6 +1583,59 @@ describe("TaskService", () => {
     expect(childEntry?.taskThinkingLevel).toBe("xhigh");
   }, 20_000);
 
+  test("resolves a numeric thinking override against the inherited model's policy", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+
+    const parentId = "1111111111";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          // opus-4-6 allows [off, low, medium, high, xhigh]; index 9 clamps to the highest (xhigh).
+          aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "off" },
+        },
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await createAgentTask(taskService, parentId, "run with numeric thinking", {
+      thinkingLevel: 9,
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run with numeric thinking",
+      {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "explore",
+        thinkingLevel: "xhigh",
+        experiments: undefined,
+      },
+      { agentInitiated: true }
+    );
+
+    const postCfg = config.loadConfigOrDefault();
+    const childEntry = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === created.data.taskId);
+    expect(childEntry?.taskModelString).toBe("anthropic:claude-opus-4-6");
+    expect(childEntry?.taskThinkingLevel).toBe("xhigh");
+  }, 20_000);
+
   test("agentAiDefaults outrank workspace aiSettingsByAgent for same agent", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");

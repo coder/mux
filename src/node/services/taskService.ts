@@ -70,7 +70,7 @@ import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos"
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import { getTotalCost, sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { ParsedThinkingInput, ThinkingLevel } from "@/common/types/thinking";
 import type { ErrorEvent, StreamEndEvent } from "@/common/types/stream";
 import type { WorkflowRunStatus } from "@/common/types/workflow";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
@@ -83,7 +83,7 @@ import {
 } from "@/common/utils/tools/toolDefinitions";
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import { enforceThinkingPolicy, resolveThinkingInput } from "@/common/utils/thinking/policy";
 import { taskQueueDebug } from "@/node/services/taskQueueDebug";
 import { readSubagentGitPatchArtifact } from "@/node/services/subagentGitPatchArtifacts";
 import {
@@ -136,7 +136,12 @@ export interface TaskCreateArgs {
   /** Human-readable title for the task (displayed in sidebar) */
   title: string;
   modelString?: string;
-  thinkingLevel?: ThinkingLevel;
+  /**
+   * Explicit thinking override. Named levels apply directly; a numeric index is
+   * deferred (ParsedThinkingInput) and resolved against the chosen model's policy
+   * in resolveTaskAISettings, mirroring the UI's `/model+level` semantics.
+   */
+  thinkingLevel?: ParsedThinkingInput;
   parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
   /** Shared grouping metadata when one tool call spawns multiple sibling tasks. */
   bestOf?: {
@@ -970,7 +975,7 @@ export class TaskService {
     };
     agentId: string;
     modelString?: string;
-    thinkingLevel?: ThinkingLevel;
+    thinkingLevel?: ParsedThinkingInput;
     parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
   }): {
     taskModelString: string;
@@ -993,8 +998,14 @@ export class TaskService {
     const canonicalModel = normalizeToCanonical(taskModelString).trim();
     assert(canonicalModel.length > 0, "resolveTaskAISettings: resolved model must be non-empty");
 
+    // Resolve an explicit override first so numeric thinking indices map into the
+    // chosen model's allowed levels (named levels pass through unchanged).
+    const overrideThinkingLevel =
+      params.thinkingLevel != null
+        ? resolveThinkingInput(params.thinkingLevel, canonicalModel)
+        : undefined;
     const requestedThinkingLevel: ThinkingLevel =
-      params.thinkingLevel ??
+      overrideThinkingLevel ??
       subagentDefault?.thinkingLevel ??
       agentDefault?.thinkingLevel ??
       parentRuntimeAiSettings?.thinkingLevel ??

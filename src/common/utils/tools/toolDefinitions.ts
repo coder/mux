@@ -184,6 +184,16 @@ const TaskAgentIdSchema = z.preprocess(
 
 const TaskToolBestOfCountSchema = z.number().int().min(1).max(20);
 
+// Model/thinking overrides for the spawned sub-agent. Accepted as free-form strings
+// so they can be parsed with the SAME logic as the UI (alias resolution for model;
+// named levels OR numeric indices for thinking). A numeric thinking value may arrive
+// as a JSON number, so coerce it to a string before parsing in the handler.
+const TaskToolModelSchema = z.string().trim().min(1);
+const TaskToolThinkingSchema = z.preprocess(
+  (value) => (typeof value === "number" ? String(value) : value),
+  z.string().trim().min(1)
+);
+
 const TaskToolVariantSchema = z.string().trim().min(1);
 
 const TaskToolVariantsSchema = z.array(TaskToolVariantSchema).min(1).max(20);
@@ -259,6 +269,12 @@ const TaskToolAgentArgsSchema = z
     ),
     variants: TaskToolVariantsSchema.nullish().describe(
       `Optional labels for sibling runs of the same prompt template. Use variants when the task should be repeated across labeled lanes such as issue numbers, commit windows, or frontend/backend/tests/docs review lanes. Mutually exclusive with n. When provided, Mux launches one sibling per label and substitutes ${TASK_VARIANT_PLACEHOLDER} in the prompt.`
+    ),
+    model: TaskToolModelSchema.nullish().describe(
+      "Optional model override for the sub-agent, parsed with the same alias logic as the UI (an alias or a full 'provider:model' string). Omit this unless the user explicitly instructed a specific model — by default the sub-agent inherits the parent's model. Do not assume any particular model is available."
+    ),
+    thinking: TaskToolThinkingSchema.nullish().describe(
+      "Optional thinking/reasoning-level override for the sub-agent. Accepts a level name (off, low, medium, high, xhigh, max) or a numeric index (resolved against the chosen model). Omit this unless the user explicitly instructed a specific thinking level — by default the sub-agent inherits the parent's thinking level."
     ),
   })
   .strict()

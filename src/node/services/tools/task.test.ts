@@ -129,6 +129,119 @@ describe("task tool", () => {
     });
   });
 
+  it("forwards a model alias and named thinking override to taskService.create", async () => {
+    using tempDir = new TestTempDir("test-task-tool-model-thinking-override");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const create = mock(
+      (_: {
+        modelString?: unknown;
+        thinkingLevel?: unknown;
+        parentRuntimeAiSettings?: { modelString?: unknown; thinkingLevel?: unknown };
+      }) => Ok({ taskId: "child-task", kind: "agent" as const, status: "queued" as const })
+    );
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      muxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "low" },
+      taskService,
+    });
+
+    await Promise.resolve(
+      tool.execute!(
+        {
+          subagent_type: "explore",
+          prompt: "do it",
+          title: "Child task",
+          run_in_background: true,
+          // "sonnet" is an alias; the handler must resolve it like the UI does.
+          model: "sonnet",
+          thinking: "high",
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledTimes(1);
+    const createArgs = create.mock.calls[0]?.[0];
+    expect(createArgs?.modelString).toBe("anthropic:claude-sonnet-4-6");
+    expect(createArgs?.thinkingLevel).toBe("high");
+    // Parent runtime hint is still forwarded so unspecified fields keep inheriting.
+    expect(createArgs?.parentRuntimeAiSettings).toEqual({
+      modelString: "openai:gpt-4o-mini",
+      thinkingLevel: "low",
+    });
+  });
+
+  it("forwards a numeric thinking override as a deferred index", async () => {
+    using tempDir = new TestTempDir("test-task-tool-numeric-thinking");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const create = mock((_: { thinkingLevel?: unknown }) =>
+      Ok({ taskId: "child-task", kind: "agent" as const, status: "queued" as const })
+    );
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+
+    const tool = createTaskTool({ ...baseConfig, taskService });
+
+    await Promise.resolve(
+      tool.execute!(
+        {
+          subagent_type: "explore",
+          prompt: "do it",
+          title: "Child task",
+          run_in_background: true,
+          // Numeric indices stay deferred (resolved against the model in taskService).
+          thinking: "2",
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledTimes(1);
+    const createArgs = create.mock.calls[0]?.[0];
+    expect(createArgs?.thinkingLevel).toBe(2);
+  });
+
+  it("rejects an invalid model override before spawning a task", async () => {
+    using tempDir = new TestTempDir("test-task-tool-invalid-model");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const create = mock(() =>
+      Ok({ taskId: "child-task", kind: "agent" as const, status: "queued" as const })
+    );
+    const taskService = { create } as unknown as TaskService;
+
+    const tool = createTaskTool({ ...baseConfig, taskService });
+
+    let caught: unknown = null;
+    try {
+      await Promise.resolve(
+        tool.execute!(
+          {
+            subagent_type: "explore",
+            prompt: "do it",
+            title: "Child task",
+            run_in_background: true,
+            model: "definitely-not-a-model",
+          },
+          mockToolCallOptions
+        )
+      );
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    if (caught instanceof Error) {
+      expect(caught.message).toMatch(/invalid model/i);
+    }
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("spawns best-of-n background tasks with shared grouping metadata", async () => {
     using tempDir = new TestTempDir("test-task-tool-best-of-background");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
