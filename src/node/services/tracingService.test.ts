@@ -79,6 +79,9 @@ describe("TracingService when enabled", () => {
   afterEach(async () => {
     await tracing?.shutdown();
     tracing = null;
+    // shutdown() releases our refs but the provider registered itself globally;
+    // unregister it so this test stays hermetic across the shared test process.
+    trace.disable();
   });
 
   test("produces real spans and propagates them as the active context", async () => {
