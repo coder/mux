@@ -142,6 +142,24 @@ describe("useStickyExpand", () => {
     expect(readPrefs("ws-1")).toEqual({ tools: { bash: true, file_read: true } });
   });
 
+  test("honors a legacy boolean tools preference as the per-tool fallback", () => {
+    // A prior build stored `tools` as a single shared boolean. Upgrading users must
+    // not silently lose that choice; it applies to every tool until the next toggle.
+    updatePersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey("ws-1"), {
+      tools: false,
+    } as unknown as AutoExpandPrefs);
+
+    const view = renderHook(() => useStickyExpand("tools", true), {
+      wrapper: makeWrapper("ws-1", "bash"),
+    });
+    // Fallback would be expanded (true), but the legacy collapsed preference wins.
+    expect(view.result.current.expanded).toBe(false);
+
+    // The next toggle migrates the key to the per-tool record shape.
+    act(() => view.result.current.toggleExpanded());
+    expect(readPrefs("ws-1")).toEqual({ tools: { bash: true } });
+  });
+
   test("opens on a late forceExpanded trigger and never auto-collapses it (latched)", () => {
     // Mirrors a task / task_await row whose error or failed-sub-task signal only
     // becomes known after mount (Codex P2). Seeding once would miss it.

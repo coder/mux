@@ -29,7 +29,12 @@ function readStoredPref(
   toolName: string | undefined
 ): boolean | undefined {
   if (kind === "thinking") return prefs.thinking;
-  return toolName == null ? undefined : prefs.tools?.[toolName];
+  const tools = prefs.tools;
+  // Back-compat: a prior build persisted `tools` as a single boolean shared by all
+  // tools. Honor that legacy value as the per-tool fallback so an upgrading user's
+  // choice isn't silently dropped (the next toggle migrates the key to the record).
+  if (typeof tools === "boolean") return tools;
+  return toolName == null ? undefined : tools?.[toolName];
 }
 
 /** Apply a toggle to the stored preferences, keying tools by their tool name. */
