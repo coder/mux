@@ -24,8 +24,8 @@ Meanwhile the ecosystem has converged on a clear answer: a **plugin** is a decla
 ## Glossary
 
 - **Plugin**: a versioned, installable bundle of Mux extension primitives (skills, hooks, MCP servers, agents, commands) described by a manifest.
-- **Plugin Manifest**: the `.mux-plugin/plugin.json` file declaring a plugin's identity and components.
-- **Marketplace**: an index (git repo, local path, or registry) listing installable plugins and their sources.
+- **Plugin Manifest**: the `.agents/plugin.json` file (vendor-neutral) declaring a plugin's identity and components.
+- **Marketplace**: an index (git repo, local path, or registry) listing installable plugins and their sources, registered under `.agents/plugins/marketplace.json`.
 - **Source**: where a plugin's bytes come from — git/GitHub, local path, or npm.
 - **Install Cache**: the on-disk location where resolved plugin versions live (`~/.mux/plugins/cache/...`).
 - **Plugin Trust**: the per-plugin grant a user gives before code-bearing components (hooks, MCP servers) are allowed to run.
@@ -76,8 +76,8 @@ This is the core comparison the design must account for. **Claude Code and Codex
 
 ## Goals
 
-1. Define a **declarative Mux plugin manifest** (`.mux-plugin/plugin.json`) that bundles skills, hooks, MCP servers, agents, and commands, mapping each onto Mux's existing loaders.
-2. Be **import-compatible with the Claude Code / Codex convention** (same component layout, accept `.claude-plugin`/`.codex-plugin`, `hooks/hooks.json` schema, expose `${MUX_PLUGIN_ROOT}` + `${CLAUDE_PLUGIN_ROOT}`), so existing plugins mostly "just work."
+1. Define a **declarative, vendor-neutral plugin manifest** (`.agents/plugin.json`) that bundles skills, hooks, MCP servers, agents, and commands, mapping each onto Mux's existing loaders.
+2. Be **import-compatible with the Claude Code / Codex convention** (same component layout, accept `.claude-plugin`/`.codex-plugin` manifests, `hooks/hooks.json` schema, expose `${AGENT_PLUGIN_ROOT}` + `${CLAUDE_PLUGIN_ROOT}`), so existing plugins mostly "just work."
 3. Define a **marketplace format** (`marketplace.json`) with **git/GitHub, local, and npm** sources, generalizing the existing `skills.sh` catalog rather than replacing it.
 4. Provide an **install/enable/version/update/uninstall lifecycle** with an install cache and pinning.
 5. Make **trust explicit**: code-bearing components (hooks, MCP servers) are disabled until the user grants per-plugin trust, enforced through `policyService`.
@@ -97,8 +97,8 @@ This is the core comparison the design must account for. **Claude Code and Codex
 
 ```
 my-plugin/
-├── .mux-plugin/
-│   └── plugin.json          # required manifest
+├── .agents/
+│   └── plugin.json          # required manifest (vendor-neutral)
 ├── skills/                  # agentskills.io skill folders (reuse existing loader)
 │   └── <skill-name>/SKILL.md
 ├── agents/                  # custom agent markdown
@@ -108,6 +108,8 @@ my-plugin/
 ├── .mcp.json                # MCP server definitions
 └── assets/                  # icons, etc.
 ```
+
+The manifest lives under the vendor-neutral `.agents/` directory (the same namespace Codex uses for marketplace registration) rather than a `mux`-branded folder, so a plugin repo is not tied to any one agent.
 
 `plugin.json` (superset-compatible with Claude Code / Codex):
 
@@ -132,7 +134,7 @@ my-plugin/
 }
 ```
 
-**Compatibility:** the loader also accepts `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`, and recognizes Codex's `interface{}` block (used only for nicer display when present). This makes the bulk of the existing Claude Code / Codex ecosystem installable in Mux unchanged.
+**Compatibility:** the loader resolves the manifest in priority order — `.agents/plugin.json` (canonical), then `.claude-plugin/plugin.json`, then `.codex-plugin/plugin.json` — and recognizes Codex's `interface{}` block (used only for nicer display when present). This makes the bulk of the existing Claude Code / Codex ecosystem installable in Mux unchanged while keeping the native authoring path vendor-neutral.
 
 ### Component mapping onto existing Mux systems
 
@@ -154,11 +156,11 @@ Mux today has shell-script hooks (`tool_pre`/`tool_post`/`tool_env`). To accept 
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "${MUX_PLUGIN_ROOT}/hooks/guard.sh" }],
+        "hooks": [{ "type": "command", "command": "${AGENT_PLUGIN_ROOT}/hooks/guard.sh" }],
       },
     ],
     "PostToolUse": [
-      { "hooks": [{ "type": "command", "command": "${MUX_PLUGIN_ROOT}/hooks/lint.sh" }] },
+      { "hooks": [{ "type": "command", "command": "${AGENT_PLUGIN_ROOT}/hooks/lint.sh" }] },
     ],
     "SessionStart": [{ "hooks": [{ "type": "command", "command": "..." }] }],
   },
@@ -166,14 +168,14 @@ Mux today has shell-script hooks (`tool_pre`/`tool_post`/`tool_env`). To accept 
 ```
 
 - Mux's existing `tool_pre`/`tool_post` map to `PreToolUse`/`PostToolUse`; we extend the event set (at minimum `SessionStart`, `UserPromptSubmit`, `Stop`, `SubagentStop`) over time.
-- Expose `${MUX_PLUGIN_ROOT}` and `${MUX_PLUGIN_DATA}`, plus `${CLAUDE_PLUGIN_ROOT}`/`${CLAUDE_PLUGIN_DATA}` aliases for portability.
+- Expose the vendor-neutral `${AGENT_PLUGIN_ROOT}` and `${AGENT_PLUGIN_DATA}`, plus `${CLAUDE_PLUGIN_ROOT}`/`${CLAUDE_PLUGIN_DATA}` aliases for portability with existing plugins.
 - Keep the existing standalone `.mux/tool_*` files working (they become the "project, no-plugin" path). This is additive, not a breaking change.
 
 Open question: whether to also support a richer in-process event bus like opencode's for first-party features — deferred (Non-goal #2).
 
 ### Marketplace format and sources
 
-`marketplace.json` (in a git repo root, a local dir, or fetched via the catalog API):
+Marketplaces are registered under the vendor-neutral `.agents/plugins/marketplace.json` — `<repo>/.agents/plugins/marketplace.json` for project/team marketplaces and `~/.agents/plugins/marketplace.json` for personal ones — matching Codex exactly so a marketplace repo is shareable across agents. Example `marketplace.json`:
 
 ```jsonc
 {
@@ -197,9 +199,11 @@ CLI / palette actions:
 
 ### Install, versioning, storage
 
-- Install cache: `~/.mux/plugins/cache/<marketplace>/<plugin>/<version>/` (mirrors Codex's layout).
+The split mirrors Codex: **marketplace registration/authoring is vendor-neutral (`.agents/`), but resolved installs and Mux-internal state stay Mux-owned** (because trust grants, version pinning, and any patching are tool-specific and must not be silently shared across agents).
+
+- Install cache: `~/.mux/plugins/cache/<marketplace>/<plugin>/<version>/` (Mux-owned; Codex likewise caches under `~/.codex/`, not `.agents/`).
 - Versioning: manifest `version` pins; absent → git SHA (Claude Code's behavior). Marketplace entry may pin/override.
-- Enablement state and per-plugin config persist in `~/.mux/config.json` (consistent with existing config), with a project-scoped opt-in via `.mux/`.
+- Enablement and per-plugin trust state persist in `~/.mux/config.json` (Mux-internal), with a project-scoped opt-in via the repo's `.agents/plugins/`.
 - Orphaned versions GC'd after a grace period so in-flight sessions keep working.
 
 ### Trust & security (the differentiator)
@@ -214,15 +218,16 @@ Plugins can carry **executable** components (hooks run shell, MCP servers run pr
 
 ### Compatibility strategy (compat vs native — the key decision)
 
-**Recommendation: native-but-compatible.** Use Mux-native paths/config as the source of truth (`.mux-plugin/`, `~/.mux/`), but make the loader accept the Claude Code / Codex layout and `hooks.json`/`marketplace.json` shapes, and expose `CLAUDE_PLUGIN_ROOT` aliases. Rationale:
+**Recommendation: vendor-neutral, compatible, with Mux-owned state.** Author and register against the vendor-neutral `.agents/` namespace (`.agents/plugin.json`, `.agents/plugins/marketplace.json`) that Codex already uses, accept the `.claude-plugin`/`.codex-plugin` layouts and the `hooks.json`/`marketplace.json` shapes, and expose `${AGENT_PLUGIN_ROOT}` + `${CLAUDE_PLUGIN_ROOT}`. Keep resolved installs, enablement, and trust state Mux-owned under `~/.mux/`. Rationale:
 
+- Authoring/distribution stays unbranded, so plugins and marketplaces are portable across agents rather than tied to Mux — the same bet Codex made with `.agents/`.
 - Claude Code + Codex have converged, so a small compatibility surface unlocks a large existing ecosystem (and the skills are already agentskills.io-standard).
-- We avoid coupling Mux's config/UX to a competitor's schema while still importing their content.
+- Trust and install state are intentionally _not_ shared across agents: a grant given to one tool must not implicitly authorize another, so that state stays under `~/.mux/`.
 - opencode-style code plugins are intentionally out of scope; their value (rich event bus) is a separate, first-party concern.
 
 ## Phasing
 
-1. **Plugin loader + manifest (declarative-only):** parse `.mux-plugin/plugin.json` (+ `.claude-plugin`/`.codex-plugin`), load `skills/`, `agents/`, `commands/` into existing registries with a `plugin` scope and namespacing. Local-source install only. No code execution. Low risk; immediately useful.
+1. **Plugin loader + manifest (declarative-only):** parse `.agents/plugin.json` (+ `.claude-plugin`/`.codex-plugin`), load `skills/`, `agents/`, `commands/` into existing registries with a `plugin` scope and namespacing. Local-source install only. No code execution. Low risk; immediately useful.
 2. **Marketplace + install lifecycle:** `marketplace.json`, sources (github/git, local, npm), install cache, enable/disable/update/uninstall, palette + CLI. Generalize `skills.sh` indexing.
 3. **Hooks + MCP from plugins, gated by trust:** event-keyed `hooks.json` runner, `.mcp.json` → `mcpServerManager`, the trust model, env vars. Highest risk (code execution) — lands last, behind explicit trust.
 4. **Polish / ecosystem:** Codex `interface{}` display metadata, managed allow/deny lists, validation command (`mux plugin validate`), docs page + cross-link from the skills docs.
