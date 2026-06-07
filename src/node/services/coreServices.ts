@@ -26,6 +26,7 @@ import { TaskService } from "@/node/services/taskService";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import type { PolicyService } from "@/node/services/policyService";
 import type { TelemetryService } from "@/node/services/telemetryService";
+import type { TracingService } from "@/node/services/tracingService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
@@ -41,6 +42,7 @@ export interface CoreServicesOptions {
   /** Optional cross-cutting services (desktop creates before core services). */
   policyService?: PolicyService;
   telemetryService?: TelemetryService;
+  tracingService?: TracingService;
   analyticsService?: GoalLifecycleAnalyticsSink;
   goalServiceOptions?: WorkspaceGoalServiceOptions;
   experimentsService?: ExperimentsService;
@@ -101,7 +103,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.telemetryService,
     opts.devToolsService,
     opts.opResolver,
-    opts.experimentsService
+    opts.experimentsService,
+    opts.tracingService
   );
 
   // MCP: allow callers to override which Config provides server definitions

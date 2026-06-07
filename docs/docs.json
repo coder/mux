@@ -119,6 +119,7 @@
             "pages": [
               "reference/debugging",
               "reference/telemetry",
+              "reference/tracing",
               "reference/storybook",
               "reference/benchmarking",
               "adr/0003-context-boundaries-for-compaction-and-reset",
@@ -177,6 +178,7 @@
     { "source": "/vscode-extension", "destination": "/integrations/vscode-extension" },
     { "source": "/acp", "destination": "/integrations/acp" },
     { "source": "/telemetry", "destination": "/reference/telemetry" },
+    { "source": "/tracing", "destination": "/reference/tracing" },
     { "source": "/storybook", "destination": "/reference/storybook" },
     { "source": "/benchmarking", "destination": "/reference/benchmarking" },
     { "source": "/debugging", "destination": "/reference/debugging" }

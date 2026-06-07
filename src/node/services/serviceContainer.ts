@@ -22,6 +22,7 @@ import { ServerService } from "@/node/services/serverService";
 import { MenuEventService } from "@/node/services/menuEventService";
 import { VoiceService } from "@/node/services/voiceService";
 import { TelemetryService } from "@/node/services/telemetryService";
+import { TracingService } from "@/node/services/tracingService";
 import type {
   ReasoningDeltaEvent,
   StreamAbortEvent,
@@ -114,6 +115,7 @@ export class ServiceContainer {
   public readonly mcpOauthService: McpOauthService;
   public readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   public readonly telemetryService: TelemetryService;
+  public readonly tracingService: TracingService;
   public readonly sessionTimingService: SessionTimingService;
   public readonly devToolsService: DevToolsService;
   public readonly browserSessionDiscoveryService: AgentBrowserSessionDiscoveryService;
@@ -144,6 +146,7 @@ export class ServiceContainer {
     // services via constructor params (no setter injection needed).
     this.policyService = new PolicyService(config);
     this.telemetryService = new TelemetryService(config.rootDir);
+    this.tracingService = new TracingService();
     this.experimentsService = new ExperimentsService({
       telemetryService: this.telemetryService,
       muxHome: config.rootDir,
@@ -174,6 +177,7 @@ export class ServiceContainer {
       workspaceMcpOverridesService: this.workspaceMcpOverridesService,
       policyService: this.policyService,
       telemetryService: this.telemetryService,
+      tracingService: this.tracingService,
       analyticsService: this.analyticsService,
       experimentsService: this.experimentsService,
       sessionTimingService: this.sessionTimingService,
@@ -443,6 +447,7 @@ export class ServiceContainer {
     await recordStep("extensionMetadata.initialize", () => this.extensionMetadata.initialize());
     // Initialize telemetry service
     await recordStep("telemetryService.initialize", () => this.telemetryService.initialize());
+    await recordStep("tracingService.initialize", () => this.tracingService.initialize());
 
     // Initialize policy service (startup gating)
     await recordStep("policyService.initialize", () => this.policyService.initialize());
@@ -552,6 +557,7 @@ export class ServiceContainer {
     this.browserBridgeTokenManager.dispose();
     await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
+    await this.tracingService.shutdown();
   }
 
   setProjectDirectoryPicker(picker: (initialPath?: string | null) => Promise<string | null>): void {

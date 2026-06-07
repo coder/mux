@@ -1,0 +1,84 @@
+---
+title: OpenTelemetry Tracing
+description: Export OTLP traces and spans for Mux agent activity to your own observability backend
+---
+
+Mux can emit [OpenTelemetry](https://opentelemetry.io/) traces so you can inspect
+agent turns — LLM requests, streaming, and tool calls — in any OTLP-compatible
+backend (Jaeger, Grafana Tempo, SigNoz, Honeycomb, ...). This is separate from
+the anonymous product [telemetry](/reference/telemetry): tracing is **off by
+default**, sends data only to the collector _you_ configure, and is meant for
+self-hosted observability and debugging.
+
+<Note>
+  Tracing is distinct from product telemetry. Setting `MUX_DISABLE_TELEMETRY=1` also disables
+  tracing.
+</Note>
+
+## Enabling
+
+Tracing turns on as soon as you point Mux at a collector using the standard
+OpenTelemetry environment variables — the same ones any OTEL application reads:
+
+```bash
+# Send traces to a local OTLP/HTTP collector (e.g. an OpenTelemetry Collector,
+# Jaeger, or Grafana Alloy listening on the default 4318 port).
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
+
+# Optional: override the service name (defaults to "mux").
+export OTEL_SERVICE_NAME="mux"
+
+mux
+```
+
+Other standard knobs are honored automatically because Mux uses the upstream
+exporter:
+
+- `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` — traces-only endpoint override.
+- `OTEL_EXPORTER_OTLP_HEADERS` — e.g. auth headers for a hosted backend
+  (`OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer <token>"`).
+- `OTEL_SDK_DISABLED=true` — standard OTEL kill switch.
+
+If none of these are set, no tracer is initialized and there is zero overhead.
+
+## What gets traced
+
+Each agent turn is a trace rooted at a `mux.stream` span. The
+[Vercel AI SDK](https://sdk.vercel.ai/)'s built-in telemetry contributes the
+nested LLM and tool spans, using standard `gen_ai.*`
+[semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/):
+
+```
+mux.stream                       (workspace, model, agent mode)
+└─ ai.streamText                 (one per request, incl. retries)
+   ├─ ai.streamText.doStream     (the provider HTTP/SSE call)
+   └─ ai.toolCall                (one per tool invocation)
+```
+
+The `mux.stream` span carries Mux-specific attributes the generic spans can't
+know:
+
+| Attribute              | Description                                  |
+| ---------------------- | -------------------------------------------- |
+| `mux.workspace.id`     | Random workspace ID (no project/path leaked) |
+| `mux.workspace.name`   | Workspace name, when available               |
+| `mux.agent.mode`       | Agent mode for the turn, when set            |
+| `mux.thinking_level`   | Effective thinking level, when set           |
+| `gen_ai.request.model` | Model string for the turn                    |
+
+## Prompt and response content
+
+Prompt and response bodies are **redacted by default**: spans record metadata
+(model, token counts, timings, status) but not message content. To attach
+inputs/outputs while debugging against a private collector, opt in explicitly:
+
+```bash
+export MUX_OTEL_RECORD_IO=1
+```
+
+Leave this unset for shared or hosted backends.
+
+## Source code
+
+- **Tracing service**: [`src/node/services/tracingService.ts`](https://github.com/coder/mux/blob/main/src/node/services/tracingService.ts)
+- **Stream instrumentation**: [`src/node/services/streamManager.ts`](https://github.com/coder/mux/blob/main/src/node/services/streamManager.ts)

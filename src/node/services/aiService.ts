@@ -72,6 +72,7 @@ import {
   readAdditionalSystemContext,
 } from "./additionalSystemContext";
 import type { TelemetryService } from "@/node/services/telemetryService";
+import type { TracingService } from "@/node/services/tracingService";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
@@ -408,7 +409,8 @@ export class AIService extends EventEmitter {
     telemetryService?: TelemetryService,
     devToolsService?: DevToolsService,
     opResolver?: ExternalSecretResolver,
-    experimentsService?: ExperimentsService
+    experimentsService?: ExperimentsService,
+    tracingService?: TracingService
   ) {
     super();
     // Increase max listeners to accommodate multiple concurrent workspace listeners
@@ -426,8 +428,11 @@ export class AIService extends EventEmitter {
     this.opResolver = opResolver;
     this.experimentsService = experimentsService;
     this.providerService = providerService;
-    this.streamManager = new StreamManager(historyService, sessionUsageService, () =>
-      this.providerService.getConfig()
+    this.streamManager = new StreamManager(
+      historyService,
+      sessionUsageService,
+      () => this.providerService.getConfig(),
+      tracingService
     );
     this.devToolsService = devToolsService;
     this.providerModelFactory = new ProviderModelFactory(

@@ -35,6 +35,8 @@ import {
   stripNoisyErrorPrefix,
   type StreamErrorPayload,
 } from "@/node/services/utils/sendMessageError";
+import type { Span, Attributes } from "@opentelemetry/api";
+import type { TracingService } from "./tracingService";
 import type { HistoryService } from "./historyService";
 import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usageHelpers";
 import { linkAbortSignal } from "@/node/utils/abort";
@@ -441,6 +443,10 @@ interface WorkspaceStreamInfo {
   lastStepUsage?: LanguageModelV2Usage;
   // Last step's provider metadata (for context window cache display)
   lastStepProviderMetadata?: Record<string, unknown>;
+  // OpenTelemetry root span for this agent turn. The AI SDK's per-request spans
+  // (ai.streamText, ai.toolCall, ...) nest under it because streamText() is
+  // invoked inside this span's context. Undefined when tracing is disabled.
+  turnSpan?: Span;
 }
 
 // Ensure per-stream part timestamps are strictly monotonic.
@@ -453,6 +459,35 @@ function nextPartTimestamp(streamInfo: WorkspaceStreamInfo): number {
   const timestamp = now <= last ? last + 1 : now;
   streamInfo.lastPartTimestamp = timestamp;
   return timestamp;
+}
+
+/**
+ * Build OTEL attributes for a mux.stream turn span. Only includes defined
+ * values — OpenTelemetry attribute values must not be undefined. Uses the
+ * gen_ai.* semantic convention for model so backends group it with the AI SDK's
+ * spans, plus mux.* keys for workspace/agent context the AI SDK can't know.
+ */
+function buildTurnSpanAttributes(
+  workspaceId: WorkspaceId,
+  modelString: string,
+  workspaceName: string | undefined,
+  thinkingLevel: string | undefined,
+  initialMetadata: Partial<MuxMetadata> | undefined
+): Attributes {
+  const attributes: Attributes = {
+    "mux.workspace.id": workspaceId as string,
+    "gen_ai.request.model": modelString,
+  };
+  if (workspaceName) {
+    attributes["mux.workspace.name"] = workspaceName;
+  }
+  if (thinkingLevel) {
+    attributes["mux.thinking_level"] = thinkingLevel;
+  }
+  if (initialMetadata?.mode) {
+    attributes["mux.agent.mode"] = initialMetadata.mode;
+  }
+  return attributes;
 }
 
 /**
@@ -471,6 +506,7 @@ export class StreamManager extends EventEmitter {
   private mcpServerManager?: MCPServerManager;
   private readonly sessionUsageService?: SessionUsageService;
   private readonly getProvidersConfig: () => ProvidersConfigMap | null;
+  private readonly tracingService?: TracingService;
   // Token tracker for live streaming statistics
   private tokenTracker = new StreamingTokenTracker();
   // Track OpenAI previousResponseIds that have been invalidated
@@ -480,12 +516,14 @@ export class StreamManager extends EventEmitter {
   constructor(
     historyService: HistoryService,
     sessionUsageService?: SessionUsageService,
-    getProvidersConfig?: () => ProvidersConfigMap | null
+    getProvidersConfig?: () => ProvidersConfigMap | null,
+    tracingService?: TracingService
   ) {
     super();
     this.historyService = historyService;
     this.sessionUsageService = sessionUsageService;
     this.getProvidersConfig = getProvidersConfig ?? (() => null);
+    this.tracingService = tracingService;
   }
 
   private getWorkspaceLogger(
@@ -1314,11 +1352,27 @@ export class StreamManager extends EventEmitter {
     abortController: AbortController,
     stepTracker?: StepMessageTracker
   ): Awaited<ReturnType<typeof streamText>> {
+    // When tracing is enabled, route the AI SDK's built-in telemetry through our
+    // tracer. This emits ai.streamText / ai.streamText.doStream / ai.toolCall
+    // spans with gen_ai.* attributes, nested under the active mux.stream span.
+    // Prompt/response bodies are redacted unless explicitly opted in.
+    const tracer = this.tracingService?.getTracer();
+    const experimentalTelemetry = tracer
+      ? {
+          isEnabled: true,
+          tracer,
+          functionId: "mux.stream",
+          recordInputs: this.tracingService?.recordIo ?? false,
+          recordOutputs: this.tracingService?.recordIo ?? false,
+        }
+      : undefined;
+
     return streamText({
       model: request.model,
       messages: request.messages,
       system: request.system,
       abortSignal: abortController.signal,
+      experimental_telemetry: experimentalTelemetry,
       prepareStep: async ({ messages: stepMessages }) => {
         // streamText runs multiple internal LLM calls (steps) when tools are enabled.
         // Extract supported attachments out of tool-result JSON so providers don't treat them as text.
@@ -1340,6 +1394,17 @@ export class StreamManager extends EventEmitter {
       maxOutputTokens: request.maxOutputTokens,
       ...(request.streamCallSettings ?? {}),
     });
+  }
+
+  /**
+   * Run `fn` with this turn's OTEL span active so any streamText() invoked
+   * inside it nests under mux.stream. Passthrough when tracing is disabled.
+   */
+  private runInTurnSpan<T>(streamInfo: WorkspaceStreamInfo, fn: () => T): T {
+    if (!this.tracingService) {
+      return fn();
+    }
+    return this.tracingService.runInSpanContext(streamInfo.turnSpan, fn);
   }
 
   /**
@@ -1392,13 +1457,34 @@ export class StreamManager extends EventEmitter {
       onStepMessages
     );
 
-    // Start streaming - this can throw immediately if API key is missing
+    // Root OTEL span for this agent turn. Created before streamText() so the AI
+    // SDK's spans nest beneath it (see WorkspaceStreamInfo.turnSpan). Carries
+    // mux-specific context the gen_ai.* spans don't have on their own.
+    const turnSpan = this.tracingService?.startSpan(
+      "mux.stream",
+      buildTurnSpanAttributes(
+        workspaceId,
+        modelString,
+        workspaceName,
+        thinkingLevel,
+        initialMetadata
+      )
+    );
+
+    // Start streaming - this can throw immediately if API key is missing.
+    // Invoke streamText() inside the turn span's context so its telemetry spans
+    // become children of mux.stream.
     let streamResult;
     try {
-      streamResult = this.createStreamResult(request, abortController, stepTracker);
+      streamResult = this.tracingService
+        ? this.tracingService.runInSpanContext(turnSpan, () =>
+            this.createStreamResult(request, abortController, stepTracker)
+          )
+        : this.createStreamResult(request, abortController, stepTracker);
     } catch (error) {
       // Clean up abort controller if stream creation fails
       abortController.abort();
+      this.tracingService?.endSpan(turnSpan, error);
       // Re-throw the error to be caught by startStream
       throw error;
     }
@@ -1436,6 +1522,7 @@ export class StreamManager extends EventEmitter {
       // Initialize cumulative tracking for multi-step streams
       cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       cumulativeProviderMetadata: undefined,
+      turnSpan,
     };
 
     // Atomically register the stream
@@ -1794,10 +1881,13 @@ export class StreamManager extends EventEmitter {
       workspaceLog,
     });
     streamInfo.currentStepStartIndex = 0;
-    streamInfo.streamResult = this.createStreamResult(
-      streamInfo.request,
-      streamInfo.abortController,
-      streamInfo.stepTracker
+    // Keep the retried request's AI SDK spans nested under the same turn span.
+    streamInfo.streamResult = this.runInTurnSpan(streamInfo, () =>
+      this.createStreamResult(
+        streamInfo.request,
+        streamInfo.abortController,
+        streamInfo.stepTracker
+      )
     );
     return true;
   }
@@ -1811,6 +1901,9 @@ export class StreamManager extends EventEmitter {
     historySequence: number
   ): Promise<void> {
     this.mcpServerManager?.acquireLease(workspaceId as string);
+
+    // Captured so the turn span (ended in finally) can record the failure.
+    let turnError: unknown;
 
     try {
       // Update state to streaming
@@ -2397,9 +2490,15 @@ export class StreamManager extends EventEmitter {
         }
       }
     } catch (error) {
+      turnError = error;
       await this.handleStreamFailure(workspaceId, streamInfo, error);
     } finally {
       this.mcpServerManager?.releaseLease(workspaceId as string);
+
+      // Finalize the turn span. The AI SDK has already closed its own child
+      // spans; this ends the mux.stream parent and records overall turn status.
+      this.tracingService?.endSpan(streamInfo.turnSpan, turnError);
+      streamInfo.turnSpan = undefined;
 
       // Guaranteed cleanup in all code paths
       // Clear any pending timers to prevent keeping process alive
@@ -2759,10 +2858,13 @@ export class StreamManager extends EventEmitter {
       ...(stepMessages ? { messages: stepMessages } : {}),
       providerOptions,
     };
-    streamInfo.streamResult = this.createStreamResult(
-      streamInfo.request,
-      streamInfo.abortController,
-      streamInfo.stepTracker
+    // Keep the retried request's AI SDK spans nested under the same turn span.
+    streamInfo.streamResult = this.runInTurnSpan(streamInfo, () =>
+      this.createStreamResult(
+        streamInfo.request,
+        streamInfo.abortController,
+        streamInfo.stepTracker
+      )
     );
 
     return true;
@@ -3086,6 +3188,10 @@ export class StreamManager extends EventEmitter {
         //   subsequently call stopStream() again (it already ran), so we'd never emit stream-abort/end.
         // In that case, immediately drop the registered stream and rely on the caller to handle UI.
         if (streamAbortController.signal.aborted) {
+          // processStreamWithCleanup won't run, so close the turn span here to
+          // avoid leaking it.
+          this.tracingService?.endSpan(streamInfo.turnSpan);
+          streamInfo.turnSpan = undefined;
           this.workspaceStreams.delete(typedWorkspaceId);
           return Ok(streamToken);
         }
