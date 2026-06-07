@@ -208,7 +208,25 @@ Authoritative counts: **mux 4**, **Codex 10**, **Claude Code 31**, **opencode ~3
 | MCP elicitation             | —           | `Elicitation` / `ElicitationResult`          | —                                | —                                                       |
 | Install / setup             | —           | `Setup`                                      | —                                | `installation.updated`                                  |
 
-**Target event set for the `hooks.json` bridge** (the common core shared by Claude Code and Codex, so plugins are portable): `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `SubagentStart`, `SubagentStop`, `Stop`, `PreCompact`, `PostCompact`. mux's existing `tool_pre`/`tool_post`/`init`/`tool_env` map onto `PreToolUse`/`PostToolUse`/(≈)`SessionStart`/(mux-specific) respectively; the rest are added incrementally.
+#### Prioritizing which events to add
+
+The **portable core** shared by Claude Code and Codex — `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `SubagentStart`, `SubagentStop`, `Stop`, `PreCompact`, `PostCompact` — defines the compatibility target: supporting these names lets ecosystem plugins' hooks run in Mux. But Mux should not adopt them uniformly. Mux's distinguishing shape is **many parallel worktree "lanes" that run long, get interrupted, resume, and compact**, so the events that pay off most are the ones tied to a _lane's lifecycle_, not the full Claude Code surface.
+
+Suggested priority:
+
+1. **`Stop` (lane finished).** Highest leverage for a parallel-agent product: run tests/lint/build on completion, auto-commit, notify that a specific lane is done (reusing the existing notification/heartbeat surface), or _block_ completion until checks pass (a generalized PR-readiness loop). This is what makes "many agents at once" manageable.
+2. **Worktree teardown.** A genuine gap: `.mux/init` covers worktree _creation_ but there is no destruction counterpart (see the "Worktree remove" row above, empty for Mux). Mux creates/destroys worktrees constantly, so a teardown hook (stop port-forwards, kill dev servers, remove containers) is the obvious missing bookend. This is Mux-native and sits _outside_ the portable core.
+3. **`PreCompact` / `PostCompact`.** Compaction is first-class and lossy in Mux (`compactionHandler`); a boundary hook lets users persist/re-inject the state that matters. Few agents have a reason to expose this — Mux does.
+4. **`SessionStart` (resume) and `UserPromptSubmit`.** `SessionStart` differs from `init` by also firing on _resume_ (Mux restarts/recovers sessions); `UserPromptSubmit` injects per-lane context (goal, branch, ticket) before the model sees the prompt.
+5. **`SubagentStop`** (validate/log delegated output) — useful but partly covered by workflows; treat as an escape hatch.
+
+Lower priority / likely skip: `PermissionRequest` overlaps the existing `policyService` (prefer policy config to a hook); `Notification`/`FileChanged`/`MessageDisplay`/task events are redundant with Mux's own notifications/watchers/task system or too high-frequency for a command-hook model (this is where opencode's observational bus fits and a shell-command hook does not).
+
+Mapping of existing files: `tool_pre`→`PreToolUse`, `tool_post`→`PostToolUse`, `init`≈ worktree-create (its own event), `tool_env` stays Mux-specific (bash env injection has no portable-core equivalent).
+
+#### Prerequisite: a structured decision protocol
+
+Today `tool_pre` is **exit-code, block-only**. That is enough for `PreToolUse`-as-guard, but the higher-value events above (`Stop` gating, `UserPromptSubmit` context injection, `PermissionRequest`) need a **structured JSON hook I/O** (decision `allow`/`deny`/`ask`, plus `modify`/`additionalContext`) like Claude Code's and Codex's. Adopting that protocol is a prerequisite for the richer events and should land with the Phase 3 hook bridge; the existing exit-code scripts remain supported as the simple path.
 
 ### Marketplace format and sources
 
@@ -266,7 +284,7 @@ Plugins can carry **executable** components (hooks run shell, MCP servers run pr
 
 1. **Plugin loader + manifest (declarative-only):** parse `.agents/plugin.json` (+ `.claude-plugin`/`.codex-plugin`), load `skills/`, `agents/`, `commands/` into existing registries with a `plugin` scope and namespacing. Local-source install only. No code execution. Low risk; immediately useful.
 2. **Marketplace + install lifecycle:** `marketplace.json`, sources (github/git, local, npm), install cache, enable/disable/update/uninstall, palette + CLI. Generalize `skills.sh` indexing.
-3. **Hooks + MCP from plugins, gated by trust:** event-keyed `hooks.json` runner, `.mcp.json` → `mcpServerManager`, the trust model, env vars. Highest risk (code execution) — lands last, behind explicit trust.
+3. **Hooks + MCP from plugins, gated by trust:** the structured decision protocol (prerequisite), the event-keyed `hooks.json` runner, `.mcp.json` → `mcpServerManager`, the trust model, env vars. Start with the lane-lifecycle priority events (`Stop`, worktree-teardown, `Pre`/`PostCompact`, `SessionStart` resume, `UserPromptSubmit`) plus the `PreToolUse`/`PostToolUse` bridge from existing scripts; add the rest of the portable core incrementally. Highest risk (code execution) — lands last, behind explicit trust.
 4. **Polish / ecosystem:** Codex `interface{}` display metadata, managed allow/deny lists, validation command (`mux plugin validate`), docs page + cross-link from the skills docs.
 
 ## Risks and open questions
