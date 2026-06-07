@@ -1,5 +1,5 @@
 ---
-author: @dcieslak19973
+author: dcieslak19973
 date: 2026-06-07
 ---
 
@@ -17,7 +17,7 @@ Status: Draft
 
 ## Problem Statement
 
-Mux already ships every individual extension primitive a coding agent needs — [agentskills.io](https://agentskills.io)-compliant skills, file-based tool hooks, MCP servers, and built-in/custom agents — but it has **no way to package, distribute, install, version, or trust them as a unit.** A user who wants "lint-on-edit + a Postgres MCP server + a migrations skill + a reviewer subagent" must wire each piece by hand, per workspace.
+Mux supports the individual extension primitives — [agentskills.io](https://agentskills.io)-compliant skills, file-based tool hooks, MCP servers, and built-in/custom agents — but each is configured independently. There is no way to package a related set of them together, or to distribute, install, and version that set as a unit. Sharing a coherent setup across machines or teammates means reproducing each piece separately.
 
 Meanwhile the ecosystem has converged on a clear answer: a **plugin** is a declarative bundle of those primitives behind a small manifest, distributed through a **marketplace** (typically a git repo). Claude Code and OpenAI Codex now share nearly the same manifest shape; opencode took a different (code-module + npm) route. This RFC proposes a Mux plugin + marketplace system that (a) reuses Mux's existing primitives, (b) is deliberately compatible with the Claude Code / Codex convention so the existing plugin ecosystem is largely portable, and (c) uses Mux's existing trust/runtime model as a security differentiator.
 
