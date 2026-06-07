@@ -23,9 +23,10 @@ export type ToolStatus =
 /**
  * Hook for managing tool expansion state.
  *
- * Backed by the per-workspace sticky preference (see useStickyExpand): every tool
- * shares the workspace's "tools" auto-expand intent, and `initialExpanded` is only
- * the fallback used until the user has expanded/collapsed a tool in this workspace.
+ * Backed by the per-workspace sticky preference (see useStickyExpand): the intent is
+ * keyed by tool name (resolved from ToolNameContext), so each tool remembers its own
+ * expand/collapse choice. `initialExpanded` is only the fallback used until the user
+ * has expanded/collapsed that tool in this workspace.
  */
 export function useToolExpansion(initialExpanded = false, options?: UseStickyExpandOptions) {
   return useStickyExpand("tools", initialExpanded, options);

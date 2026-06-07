@@ -8,16 +8,25 @@ import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 import { MessageListProvider } from "./MessageListContext";
+import { ToolNameProvider } from "./ToolNameContext";
 import { useStickyExpand, type AutoExpandPrefs } from "./useStickyExpand";
 
-function makeWrapper(workspaceId: string | null) {
+// Tool blocks key their preference by tool name, resolved from ToolNameContext, so
+// "tools" tests run under a provider. Defaults to "bash" for single-tool cases.
+function makeWrapper(workspaceId: string | null, toolName: string | null = "bash") {
   return function Wrapper(props: { children: React.ReactNode }) {
+    const withToolName =
+      toolName == null ? (
+        props.children
+      ) : (
+        <ToolNameProvider toolName={toolName}>{props.children}</ToolNameProvider>
+      );
     if (workspaceId == null) {
-      return <>{props.children}</>;
+      return <>{withToolName}</>;
     }
     return (
       <MessageListProvider value={{ workspaceId, latestMessageId: null }}>
-        {props.children}
+        {withToolName}
       </MessageListProvider>
     );
   };
@@ -53,14 +62,14 @@ describe("useStickyExpand", () => {
   });
 
   test("a stored preference wins over the fallback at mount", () => {
-    updatePersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey("ws-1"), { tools: true });
+    updatePersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey("ws-1"), { tools: { bash: true } });
     const overridden = renderHook(() => useStickyExpand("tools", false), {
       wrapper: makeWrapper("ws-1"),
     });
     expect(overridden.result.current.expanded).toBe(true);
 
     updatePersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey("ws-1"), {
-      tools: true,
+      tools: { bash: true },
       thinking: false,
     });
     const collapsed = renderHook(() => useStickyExpand("thinking", true), {
@@ -91,7 +100,9 @@ describe("useStickyExpand", () => {
     // Simulate another block (or a sibling component) flipping the workspace
     // preference to expanded. The present block must NOT react — no layout flash.
     act(() => {
-      updatePersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey("ws-1"), { tools: true });
+      updatePersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey("ws-1"), {
+        tools: { bash: true },
+      });
     });
     expect(blockA.result.current.expanded).toBe(false);
 
@@ -103,13 +114,32 @@ describe("useStickyExpand", () => {
   });
 
   test("preferences are scoped per workspace", () => {
-    updatePersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey("ws-1"), { tools: true });
+    updatePersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey("ws-1"), { tools: { bash: true } });
 
     const otherWorkspace = renderHook(() => useStickyExpand("tools", false), {
       wrapper: makeWrapper("ws-2"),
     });
     expect(otherWorkspace.result.current.expanded).toBe(false);
     expect(readPrefs("ws-2")).toEqual({});
+  });
+
+  test("preferences are scoped per tool name", () => {
+    // A choice made on one tool must not leak to a different tool.
+    const bash = renderHook(() => useStickyExpand("tools", false), {
+      wrapper: makeWrapper("ws-1", "bash"),
+    });
+    act(() => bash.result.current.toggleExpanded());
+    expect(readPrefs("ws-1")).toEqual({ tools: { bash: true } });
+
+    // A different tool still falls back to its own default and is unaffected.
+    const fileRead = renderHook(() => useStickyExpand("tools", false), {
+      wrapper: makeWrapper("ws-1", "file_read"),
+    });
+    expect(fileRead.result.current.expanded).toBe(false);
+
+    act(() => fileRead.result.current.toggleExpanded());
+    // Each tool name persists independently in the same workspace record.
+    expect(readPrefs("ws-1")).toEqual({ tools: { bash: true, file_read: true } });
   });
 
   test("opens on a late forceExpanded trigger and never auto-collapses it (latched)", () => {
@@ -140,11 +170,13 @@ describe("useStickyExpand", () => {
     act(() => result.current.setExpanded(false));
 
     expect(result.current.expanded).toBe(false);
-    expect(readPrefs("ws-1")).toEqual({ tools: false });
+    expect(readPrefs("ws-1")).toEqual({ tools: { bash: false } });
   });
 
   test("forceExpanded overrides a collapsed stored preference and does not persist", () => {
-    updatePersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey("ws-1"), { tools: false });
+    updatePersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey("ws-1"), {
+      tools: { bash: false },
+    });
 
     const { result } = renderHook(() => useStickyExpand("tools", false, { forceExpanded: true }), {
       wrapper: makeWrapper("ws-1"),
@@ -152,7 +184,7 @@ describe("useStickyExpand", () => {
 
     expect(result.current.expanded).toBe(true);
     // Seeding from forceExpanded must not rewrite the stored preference.
-    expect(readPrefs("ws-1")).toEqual({ tools: false });
+    expect(readPrefs("ws-1")).toEqual({ tools: { bash: false } });
   });
 
   test("degrades to local-only state with no persistence outside a workspace context", () => {

@@ -6,16 +6,21 @@ import type { ReactElement } from "react";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { MessageListProvider } from "@/browser/features/Messages/MessageListContext";
+import { ToolNameProvider } from "@/browser/features/Messages/ToolNameContext";
 import { getAutoExpandPrefsKey } from "@/common/constants/storage";
 import { buildDiffLineDeltaPreview, FileEditToolCall } from "./FileEditToolCall";
 
 const TEST_WORKSPACE_ID = "file-edit-tool-test";
+const TEST_TOOL_NAME = "file_edit_replace_string";
 
 function renderWithProviders(ui: ReactElement) {
   return render(
     <ThemeProvider forcedTheme="dark">
       <MessageListProvider value={{ workspaceId: TEST_WORKSPACE_ID, latestMessageId: null }}>
-        <TooltipProvider>{ui}</TooltipProvider>
+        {/* useStickyExpand keys the tool preference by tool name (from ToolNameContext). */}
+        <ToolNameProvider toolName={TEST_TOOL_NAME}>
+          <TooltipProvider>{ui}</TooltipProvider>
+        </ToolNameProvider>
       </MessageListProvider>
     </ThemeProvider>
   );
@@ -87,7 +92,7 @@ describe("FileEditToolCall expansion", () => {
   test("keeps the line delta visible in a collapsed successful edit", () => {
     globalThis.window.localStorage.setItem(
       getAutoExpandPrefsKey(TEST_WORKSPACE_ID),
-      JSON.stringify({ tools: false })
+      JSON.stringify({ tools: { [TEST_TOOL_NAME]: false } })
     );
     const diff = [
       "--- src/example.ts",
@@ -131,14 +136,17 @@ describe("FileEditToolCall expansion", () => {
     view.rerender(
       <ThemeProvider forcedTheme="dark">
         <MessageListProvider value={{ workspaceId: TEST_WORKSPACE_ID, latestMessageId: null }}>
-          <TooltipProvider>
-            <FileEditToolCall
-              toolName="file_edit_replace_string"
-              args={{ path: "src/example.ts", old_string: "old", new_string: "new" }}
-              result={{ success: false, error: "edit failed" }}
-              status="failed"
-            />
-          </TooltipProvider>
+          {/* Mirror renderWithProviders' tree so the row instance is reused, not remounted. */}
+          <ToolNameProvider toolName={TEST_TOOL_NAME}>
+            <TooltipProvider>
+              <FileEditToolCall
+                toolName="file_edit_replace_string"
+                args={{ path: "src/example.ts", old_string: "old", new_string: "new" }}
+                result={{ success: false, error: "edit failed" }}
+                status="failed"
+              />
+            </TooltipProvider>
+          </ToolNameProvider>
         </MessageListProvider>
       </ThemeProvider>
     );

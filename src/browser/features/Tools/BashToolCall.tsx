@@ -53,9 +53,9 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   status = "pending",
   startedAt,
 }) => {
-  // Bash shares the per-workspace "tools" auto-expand preference like every other tool
-  // (via useToolExpansion). It no longer special-cases the latest streaming command;
-  // live output still renders below when the row is expanded.
+  // Bash uses the per-workspace sticky auto-expand preference like every other tool
+  // (via useToolExpansion), keyed by tool name. It no longer special-cases the latest
+  // streaming command; live output still renders below when the row is expanded.
   const { expanded, toggleExpanded } = useToolExpansion();
   const [outputDialogOpen, setOutputDialogOpen] = useState(false);
   const bashCollapsedSummaryMode = useBashCollapsedSummaryMode();

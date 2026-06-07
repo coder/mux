@@ -9,6 +9,7 @@ import {
   extractHookOutput,
   extractHookDuration,
 } from "../Tools/Shared/HookOutputDisplay";
+import { ToolNameProvider } from "./ToolNameContext";
 
 interface ToolMessageProps {
   message: DisplayedMessage & { type: "tool" };
@@ -50,28 +51,31 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
 
   return (
     <div className={className}>
-      <ToolComponent
-        // Base props (all tools)
-        args={args}
-        result={result ?? null}
-        status={status}
-        toolName={toolName}
-        // Identity props (used by bash for live output, ask_user_question for caching)
-        workspaceId={workspaceId}
-        toolCallId={toolCallId}
-        // Bash-specific
-        startedAt={message.timestamp}
-        // FileEdit-specific
-        onReviewNote={onReviewNote}
-        // ProposePlan-specific
-        isLatest={isLatestProposePlan}
-        // BashOutput-specific
-        groupPosition={groupPosition}
-        // Task-specific
-        taskReportLinking={taskReportLinking}
-        // CodeExecution-specific
-        nestedCalls={message.nestedCalls}
-      />
+      {/* ToolNameProvider lets useStickyExpand key the auto-expand preference by tool name. */}
+      <ToolNameProvider toolName={toolName}>
+        <ToolComponent
+          // Base props (all tools)
+          args={args}
+          result={result ?? null}
+          status={status}
+          toolName={toolName}
+          // Identity props (used by bash for live output, ask_user_question for caching)
+          workspaceId={workspaceId}
+          toolCallId={toolCallId}
+          // Bash-specific
+          startedAt={message.timestamp}
+          // FileEdit-specific
+          onReviewNote={onReviewNote}
+          // ProposePlan-specific
+          isLatest={isLatestProposePlan}
+          // BashOutput-specific
+          groupPosition={groupPosition}
+          // Task-specific
+          taskReportLinking={taskReportLinking}
+          // CodeExecution-specific
+          nestedCalls={message.nestedCalls}
+        />
+      </ToolNameProvider>
       {hookOutput && <HookOutputDisplay output={hookOutput} durationMs={hookDuration} />}
     </div>
   );

@@ -4,16 +4,44 @@ import { getAutoExpandPrefsKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 import { useOptionalMessageListContext } from "./MessageListContext";
+import { useToolName } from "./ToolNameContext";
 
 /** Transcript block types that share a per-workspace sticky auto-expand preference. */
 export type ExpandableBlockKind = "thinking" | "tools";
 
 /**
- * Per-workspace, per-type record of the user's last expand/collapse intent.
+ * Per-workspace record of the user's last expand/collapse intent.
  * Persisted under getAutoExpandPrefsKey(workspaceId). A missing entry falls back
  * to each block's own default.
+ *
+ * Thinking blocks share one preference, but tool blocks are keyed by tool name so
+ * each tool (bash, file_read, task, …) remembers its own intent independently.
  */
-export type AutoExpandPrefs = Partial<Record<ExpandableBlockKind, boolean>>;
+export interface AutoExpandPrefs {
+  thinking?: boolean;
+  tools?: Record<string, boolean>;
+}
+
+/** Read the stored preference for a block, resolving tools by their tool name. */
+function readStoredPref(
+  prefs: AutoExpandPrefs,
+  kind: ExpandableBlockKind,
+  toolName: string | undefined
+): boolean | undefined {
+  if (kind === "thinking") return prefs.thinking;
+  return toolName == null ? undefined : prefs.tools?.[toolName];
+}
+
+/** Apply a toggle to the stored preferences, keying tools by their tool name. */
+function applyStoredPref(
+  prev: AutoExpandPrefs,
+  kind: ExpandableBlockKind,
+  toolName: string | undefined,
+  next: boolean
+): AutoExpandPrefs {
+  if (kind === "thinking") return { ...prev, thinking: next };
+  return toolName == null ? prev : { ...prev, tools: { ...prev.tools, [toolName]: next } };
+}
 
 export interface UseStickyExpandOptions {
   /**
@@ -47,11 +75,14 @@ interface StickyExpandState {
  *    the row on its rising edge (e.g. a task error arriving after mount) but never
  *    forces a collapse, so a present block is never torn closed.
  *  - A user toggle wins over everything and is the only thing that writes the
- *    preference, so FUTURE blocks of this kind inherit the choice.
+ *    preference, so FUTURE blocks of this kind inherit the choice. Tool blocks key
+ *    the preference by tool name, so each tool remembers its own intent rather than
+ *    sharing one global "tools" bucket.
  *
- * workspaceId comes from MessageListContext (which wraps the whole transcript), so
- * no prop-drilling is needed; outside that context (e.g. isolated tests) the hook
- * degrades to local-only state with no persistence.
+ * workspaceId comes from MessageListContext (which wraps the whole transcript) and
+ * the tool name from ToolNameContext (provided per tool row), so no prop-drilling is
+ * needed; outside those contexts (e.g. isolated tests) the hook degrades to
+ * local-only state with no persistence.
  */
 export function useStickyExpand(
   kind: ExpandableBlockKind,
@@ -60,6 +91,10 @@ export function useStickyExpand(
 ): StickyExpandState {
   const forceExpanded = options?.forceExpanded ?? false;
   const workspaceId = useOptionalMessageListContext()?.workspaceId;
+  // Tool blocks key their preference by tool name (each tool remembers its own
+  // intent); resolved from ToolNameContext so no prop-drilling is needed. Undefined
+  // for thinking blocks and outside a tool row.
+  const toolName = useToolName();
 
   // Snapshot the stored preference + fallback ONCE at mount. Freezing them is what
   // guarantees the present-block invariant: neither another block's preference write
@@ -69,7 +104,11 @@ export function useStickyExpand(
     pref:
       workspaceId == null
         ? undefined
-        : readPersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey(workspaceId), {})[kind],
+        : readStoredPref(
+            readPersistedState<AutoExpandPrefs>(getAutoExpandPrefsKey(workspaceId), {}),
+            kind,
+            toolName
+          ),
     fallback: fallbackExpanded,
   }));
 
@@ -102,15 +141,17 @@ export function useStickyExpand(
   const setExpanded = useCallback(
     (next: boolean): void => {
       setUserChoice(next);
-      if (workspaceId != null) {
+      // Persist only with a concrete target: a workspace, and—for tools—a tool name
+      // to key on. Future blocks of the same kind/tool then inherit the choice.
+      if (workspaceId != null && (kind !== "tools" || toolName != null)) {
         updatePersistedState<AutoExpandPrefs>(
           getAutoExpandPrefsKey(workspaceId),
-          (prev) => ({ ...prev, [kind]: next }),
+          (prev) => applyStoredPref(prev, kind, toolName, next),
           {}
         );
       }
     },
-    [workspaceId, kind]
+    [workspaceId, kind, toolName]
   );
 
   // expandedRef keeps toggleExpanded reading the latest value without taking a

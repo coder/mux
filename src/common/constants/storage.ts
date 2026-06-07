@@ -221,10 +221,12 @@ export function getPinnedTodoExpandedKey(workspaceId: string): string {
 /**
  * Get the localStorage key for per-workspace transcript auto-expand preferences.
  *
- * Stores the user's last expand/collapse intent per block type, shaped like
- * { thinking?: boolean; tools?: boolean } (see AutoExpandPrefs in
- * useStickyExpand.ts). New thinking/tool blocks inherit this as their initial
- * expand state; already-mounted blocks are never retroactively changed.
+ * Stores the user's last expand/collapse intent, shaped like
+ * { thinking?: boolean; tools?: Record<toolName, boolean> } (see AutoExpandPrefs in
+ * useStickyExpand.ts). Thinking blocks share one preference; tool blocks are keyed
+ * by tool name so each tool remembers its own intent. New thinking/tool blocks
+ * inherit this as their initial expand state; already-mounted blocks are never
+ * retroactively changed.
  *
  * Format: "auto-expand:{workspaceId}"
  */
