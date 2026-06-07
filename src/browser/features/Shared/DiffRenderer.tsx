@@ -562,47 +562,65 @@ function useHighlightedDiff(
   newStart: number,
   themeMode: ThemeMode
 ): HighlightedDiffState {
-  const cacheKey = getDiffCacheKey(content, language, oldStart, newStart, themeMode);
+  const cacheKey = useMemo(
+    () => getDiffCacheKey(content, language, oldStart, newStart, themeMode),
+    [content, language, oldStart, newStart, themeMode]
+  );
   const cachedResult = highlightedDiffCache.get(cacheKey);
   const isPlainText = isPlainTextLanguage(language);
 
-  // Sync fallback: plain-text chunks for instant render.
+  // Sync fallback: plain-text chunks for instant render. Cache hits return the
+  // preloaded highlighted chunks directly so tooltip/selection state inside the
+  // renderer does not rebuild a throwaway full-file fallback on every local render.
   const plainText = useMemo(
-    () => createPlainTextChunks(content, oldStart, newStart),
-    [content, oldStart, newStart]
+    () => cachedResult ?? createPlainTextChunks(content, oldStart, newStart),
+    [cachedResult, content, oldStart, newStart]
   );
 
-  const [state, setState] = useState<HighlightedDiffState>({
+  const [state, setState] = useState<HighlightedDiffState>(() => ({
     cacheKey,
     chunks: cachedResult ?? plainText,
     isSettled: cachedResult != null || isPlainText,
-  });
+  }));
 
   useEffect(() => {
+    const setHighlightedState = (nextState: HighlightedDiffState) => {
+      setState((currentState) => {
+        if (
+          currentState.cacheKey === nextState.cacheKey &&
+          currentState.chunks === nextState.chunks &&
+          currentState.isSettled === nextState.isSettled
+        ) {
+          return currentState;
+        }
+        return nextState;
+      });
+    };
+
     const cached = highlightedDiffCache.get(cacheKey);
     if (cached) {
-      setState({ cacheKey, chunks: cached, isSettled: true });
+      setHighlightedState({ cacheKey, chunks: cached, isSettled: true });
       return;
     }
 
     if (isPlainText) {
-      setState({ cacheKey, chunks: plainText, isSettled: true });
+      setHighlightedState({ cacheKey, chunks: plainText, isSettled: true });
       return;
     }
 
     // Show plain text immediately unless a caller preloaded this diff into the cache.
-    setState({ cacheKey, chunks: plainText, isSettled: false });
+    setHighlightedState({ cacheKey, chunks: plainText, isSettled: false });
 
     let cancelled = false;
     loadHighlightedDiff({ content, language, oldStart, newStart, themeMode })
       .then((highlighted) => {
         if (!cancelled) {
-          setState({ cacheKey, chunks: highlighted, isSettled: true });
+          setHighlightedState({ cacheKey, chunks: highlighted, isSettled: true });
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setState({ cacheKey, chunks: plainText, isSettled: true });
+          setHighlightedState({ cacheKey, chunks: plainText, isSettled: true });
         }
       });
 

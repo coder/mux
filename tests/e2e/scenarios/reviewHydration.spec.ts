@@ -4,6 +4,7 @@ import { REVIEW_SORT_ORDER_KEY } from "../../../src/common/constants/storage";
 import { STORAGE_KEYS } from "../../../src/constants/workspaceDefaults";
 import {
   disableReviewTutorial,
+  seedLargeReviewSingleFileDiff,
   seedReviewHydrationJumpDiff,
   seedReviewMarkReadIterationDiff,
 } from "../utils/reviewPerfFixture";
@@ -17,14 +18,20 @@ interface HydrationSample {
   t: number;
   overlayVisible: boolean;
   stageVisible: boolean;
+  minimapStageVisible: boolean;
   lineCount: number;
+  overlayLineCount: number | null;
+  selectedLineIndex: number | null;
   scrollTop: number | null;
   overlayTop: number | null;
   overlayHeight: number | null;
   scrollContainerTop: number | null;
   scrollContainerHeight: number | null;
+  minimapCanvasTop: number | null;
+  minimapCanvasHeight: number | null;
   selectedTop: number | null;
-  stageText: string;
+  activeFilePath: string | null;
+  overlayState: string | null;
 }
 
 async function primeReviewForHeadDiff(
@@ -72,23 +79,44 @@ async function startHydrationSampler(
     };
 
     const sample = () => {
+      const immersiveView = document.querySelector<HTMLElement>(
+        '[data-testid="immersive-review-view"]'
+      );
       const stage = document.querySelector<HTMLElement>(
         '[data-testid="immersive-diff-reveal-stage"]'
       );
       const overlay = document.querySelector<HTMLElement>(
         '[data-testid="immersive-diff-reveal-overlay"]'
       );
+      const minimapStage = document.querySelector<HTMLElement>(
+        '[data-testid="immersive-minimap-reveal-stage"]'
+      );
+      const minimapCanvas = document.querySelector<HTMLElement>(
+        '[data-testid="immersive-minimap-canvas"]'
+      );
       const lines = stage
         ? Array.from(stage.querySelectorAll<HTMLElement>("div[data-line-index]"))
         : [];
+      const selectedLineIndexText =
+        immersiveView?.dataset.selectedLineIndex ?? stage?.dataset.selectedLineIndex ?? null;
+      const parsedSelectedLineIndex =
+        selectedLineIndexText == null ? Number.NaN : Number.parseInt(selectedLineIndexText, 10);
+      const sampledLineIndex =
+        targetLineIndex ??
+        (Number.isFinite(parsedSelectedLineIndex) ? parsedSelectedLineIndex : null);
       const selectedLine =
-        targetLineIndex == null
+        sampledLineIndex == null
           ? null
-          : (stage?.querySelector<HTMLElement>(`div[data-line-index="${targetLineIndex}"]`) ??
+          : (stage?.querySelector<HTMLElement>(`div[data-line-index="${sampledLineIndex}"]`) ??
             null);
       const scrollContainer = stage?.closest<HTMLElement>(".overflow-y-auto") ?? null;
       const overlayRect = overlay?.getBoundingClientRect() ?? null;
       const scrollContainerRect = scrollContainer?.getBoundingClientRect() ?? null;
+      const minimapCanvasRect = minimapCanvas?.getBoundingClientRect() ?? null;
+      const overlayLineCountText =
+        immersiveView?.dataset.overlayLineCount ?? stage?.dataset.overlayLineCount ?? null;
+      const overlayLineCount =
+        overlayLineCountText == null ? Number.NaN : Number.parseInt(overlayLineCountText, 10);
 
       samples.push({
         t: performance.now() - startedAt,
@@ -97,11 +125,18 @@ async function startHydrationSampler(
         overlayHeight: overlayRect?.height ?? null,
         scrollContainerTop: scrollContainerRect?.top ?? null,
         scrollContainerHeight: scrollContainerRect?.height ?? null,
+        minimapStageVisible: isVisible(minimapStage),
+        minimapCanvasTop: minimapCanvasRect?.top ?? null,
+        minimapCanvasHeight: minimapCanvasRect?.height ?? null,
         stageVisible: isVisible(stage),
         lineCount: lines.length,
+        overlayLineCount: Number.isFinite(overlayLineCount) ? overlayLineCount : null,
+        selectedLineIndex: sampledLineIndex,
         scrollTop: scrollContainer?.scrollTop ?? null,
         selectedTop: selectedLine?.getBoundingClientRect().top ?? null,
-        stageText: stage?.textContent ?? "",
+        activeFilePath:
+          immersiveView?.dataset.activeFilePath ?? stage?.dataset.activeFilePath ?? null,
+        overlayState: immersiveView?.dataset.overlayState ?? stage?.dataset.overlayState ?? null,
       });
 
       if (running) {
@@ -195,7 +230,7 @@ test.describe("immersive review hydration stability", () => {
           })
         );
 
-        while (!immersiveView.textContent?.includes(filePath)) {
+        while (immersiveView.dataset.activeFilePath !== filePath) {
           await waitForFrame();
         }
         await waitForFrame();
@@ -222,11 +257,15 @@ test.describe("immersive review hydration stability", () => {
       ).toBeLessThanOrEqual(2);
     }
 
-    const hiddenStageSamples = samples.filter(
-      (sample) => !sample.stageVisible && sample.lineCount > 0
+    expect(overlaySamples.every((sample) => !sample.minimapStageVisible)).toBe(true);
+
+    const hiddenRevealSamples = samples.filter(
+      (sample) => !sample.stageVisible && sample.overlayVisible
     );
-    expect(hiddenStageSamples.length).toBeGreaterThan(0);
-    expect(hiddenStageSamples.every((sample) => sample.overlayVisible)).toBe(true);
+    expect(hiddenRevealSamples.length).toBeGreaterThan(0);
+    expect(
+      samples.filter((sample) => !sample.stageVisible).every((sample) => sample.overlayVisible)
+    ).toBe(true);
   });
 
   test("keeps Shift+M file-read advancement covered while read hunks are hidden", async ({
@@ -287,7 +326,7 @@ test.describe("immersive review hydration stability", () => {
         })
       );
 
-      while (!immersiveView.textContent?.includes(nextFilePath)) {
+      while (immersiveView.dataset.activeFilePath !== nextFilePath) {
         await waitForFrame();
       }
       await waitForFrame();
@@ -299,14 +338,21 @@ test.describe("immersive review hydration stability", () => {
     const samples = await stopHydrationSampler(page);
     const staleVisibleSamples = samples.filter(
       (sample) =>
-        sample.stageVisible && !sample.overlayVisible && sample.stageText.includes("ready-001-001")
+        sample.stageVisible &&
+        !sample.overlayVisible &&
+        sample.activeFilePath !== null &&
+        sample.activeFilePath !== diffSummary.filePaths[1]
     );
     expect(staleVisibleSamples).toEqual([]);
 
-    const hiddenStageSamples = samples.filter(
-      (sample) => !sample.stageVisible && sample.lineCount > 0
-    );
-    expect(hiddenStageSamples.every((sample) => sample.overlayVisible)).toBe(true);
+    expect(
+      samples
+        .filter((sample) => sample.overlayVisible)
+        .every((sample) => !sample.minimapStageVisible)
+    ).toBe(true);
+    expect(
+      samples.filter((sample) => !sample.stageVisible).every((sample) => sample.overlayVisible)
+    ).toBe(true);
   });
 
   test("keeps compact-to-full file hydration hidden until selected hunk geometry is stable", async ({
@@ -366,6 +412,7 @@ test.describe("immersive review hydration stability", () => {
     const overlayTops = visibleOverlaySamples.map((sample) => sample.overlayTop ?? 0);
     const overlayTopRange = Math.max(...overlayTops) - Math.min(...overlayTops);
     expect(overlayTopRange).toBeLessThanOrEqual(2);
+    expect(visibleOverlaySamples.every((sample) => !sample.minimapStageVisible)).toBe(true);
 
     const visibleSelectedSamples = samples.filter(
       (sample) =>
@@ -379,5 +426,119 @@ test.describe("immersive review hydration stability", () => {
     const selectedTops = visibleSelectedSamples.map((sample) => sample.selectedTop ?? 0);
     const selectedTopRange = Math.max(...selectedTops) - Math.min(...selectedTops);
     expect(selectedTopRange).toBeLessThanOrEqual(2);
+  });
+
+  test("keeps same-file J/K hunk iteration visually stable after hydration", async ({
+    page,
+    ui,
+    workspace,
+  }) => {
+    await disableReviewTutorial(page);
+    const diffSummary = seedLargeReviewSingleFileDiff(workspace.demoProject.workspacePath, {
+      hunkCount: 24,
+      hunkSpacing: 20,
+      lineCount: 600,
+    });
+    const expectedFullOverlayLineCount = diffSummary.lineCount + diffSummary.deletedLines;
+
+    await primeReviewForHeadDiff(page, workspace.demoProject.workspaceId);
+
+    await ui.projects.openFirstWorkspace();
+    await ui.metaSidebar.expectVisible();
+    await ui.metaSidebar.selectTab("Review");
+
+    const reviewPanel = page.getByTestId("review-panel");
+    await expect(reviewPanel).toBeVisible();
+    await expect(reviewPanel.getByText(`0/${diffSummary.hunkCount}`, { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
+
+    const immersiveButton = reviewPanel.getByRole("button", { name: "Enter immersive review" });
+    await expect(immersiveButton).toBeVisible();
+    await immersiveButton.dispatchEvent("click");
+
+    const immersiveReview = page.getByTestId("immersive-review-view");
+    await expect(immersiveReview).toBeVisible({ timeout: 20_000 });
+    await expect(immersiveReview).toHaveAttribute("data-selected-hunk-position", "1", {
+      timeout: 20_000,
+    });
+
+    const diffLineContainers = immersiveReview.locator(
+      '[data-testid="immersive-diff-reveal-stage"] div[data-line-index]'
+    );
+    await expect(diffLineContainers).toHaveCount(expectedFullOverlayLineCount, { timeout: 20_000 });
+    await expect(immersiveReview.getByTestId("immersive-diff-reveal-overlay")).not.toBeVisible({
+      timeout: 20_000,
+    });
+
+    await startHydrationSampler(page, null);
+    await immersiveReview.focus();
+    await page.evaluate(async () => {
+      const immersiveView = document.querySelector<HTMLElement>(
+        '[data-testid="immersive-review-view"]'
+      );
+      if (!immersiveView) {
+        throw new Error("Immersive review view was not found");
+      }
+
+      const waitForFrame = () =>
+        new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+      for (let step = 0; step < 10; step += 1) {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "j",
+            bubbles: true,
+            cancelable: true,
+          })
+        );
+
+        const expectedPosition = String(step + 2);
+        while (immersiveView.dataset.selectedHunkPosition !== expectedPosition) {
+          await waitForFrame();
+        }
+        await waitForFrame();
+      }
+    });
+
+    const samples = await stopHydrationSampler(page);
+    expect(samples.length).toBeGreaterThan(0);
+
+    const visibleCompactSamples = samples.filter(
+      (sample) =>
+        sample.stageVisible &&
+        !sample.overlayVisible &&
+        (sample.overlayLineCount ?? sample.lineCount) > 0 &&
+        (sample.overlayLineCount ?? sample.lineCount) < expectedFullOverlayLineCount
+    );
+    expect(visibleCompactSamples).toEqual([]);
+
+    const visibleSelectedSamples = samples.filter(
+      (sample) =>
+        sample.stageVisible &&
+        !sample.overlayVisible &&
+        sample.selectedTop !== null &&
+        sample.scrollContainerTop !== null &&
+        sample.scrollContainerHeight !== null
+    );
+    expect(visibleSelectedSamples.length).toBeGreaterThan(0);
+    for (const sample of visibleSelectedSamples) {
+      const containerTop = sample.scrollContainerTop ?? 0;
+      const containerBottom = containerTop + (sample.scrollContainerHeight ?? 0);
+      expect(sample.selectedTop ?? 0).toBeGreaterThanOrEqual(containerTop - 4);
+      expect(sample.selectedTop ?? 0).toBeLessThanOrEqual(containerBottom + 4);
+    }
+
+    const scrollSamples = samples
+      .filter(
+        (sample) => sample.stageVisible && !sample.overlayVisible && sample.scrollTop !== null
+      )
+      .map((sample) => sample.scrollTop ?? 0);
+    expect(scrollSamples.length).toBeGreaterThan(0);
+    let furthestScrollTop = scrollSamples[0] ?? 0;
+    for (const scrollTop of scrollSamples) {
+      expect(scrollTop).toBeGreaterThanOrEqual(furthestScrollTop - 4);
+      furthestScrollTop = Math.max(furthestScrollTop, scrollTop);
+    }
   });
 });

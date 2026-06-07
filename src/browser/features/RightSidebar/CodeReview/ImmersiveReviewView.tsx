@@ -20,10 +20,15 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
-import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
-import { preloadHighlightedDiff, SelectableDiffRenderer } from "../../Shared/DiffRenderer";
+import { SelectableDiffRenderer } from "../../Shared/DiffRenderer";
+import { ImmersiveDiffRevealLoadingState } from "./ImmersiveDiffRevealLoadingState";
 import { ImmersiveMinimap } from "./ImmersiveMinimap";
 import { ImmersiveReviewAgentStatusBar } from "./ImmersiveReviewAgentStatusBar";
+import {
+  useImmersiveOverlay,
+  type HunkLineRange,
+  type ImmersiveOverlayData,
+} from "./useImmersiveOverlay";
 import {
   buildNewLineNumberToIndexMap,
   buildOldLineNumberToIndexMap,
@@ -48,12 +53,6 @@ import {
   matchesKeybind,
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import {
-  buildReadFileScript,
-  EXIT_CODE_TOO_LARGE,
-  EXIT_CODE_TOO_MANY_LINES,
-  processFileContents,
-} from "@/browser/utils/fileRead";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { getReviewSelectedHunkKey } from "@/common/constants/storage";
@@ -140,117 +139,13 @@ interface PendingComposerHunkSwitch {
   toHunkId: string;
 }
 
-interface HunkLineRange {
-  startIndex: number;
-  endIndex: number;
-  firstModifiedIndex: number | null;
-  lastModifiedIndex: number | null;
-}
-
-interface ImmersiveOverlayData {
-  content: string;
-  lineHunkIds: Array<string | null>;
-  hunkLineRanges: Map<string, HunkLineRange>;
-}
-
-interface OverlayRevealIdentity {
-  filePath: string;
-  content: string;
-}
-
-const MAX_FULL_FILE_CONTEXT_LINES = 1500;
-const MAX_FULL_FILE_CONTEXT_BYTES = 256 * 1024;
-
-const FULL_FILE_CONTEXT_REVEAL_TIMEOUT_MS = 5_000;
 const LINE_JUMP_SIZE = 10;
-// Keep syntax highlighting on for larger review files now that per-line tooltip overhead is gone,
-// but still cap it to avoid pathological DOM costs on extremely large diffs.
-const MAX_HIGHLIGHTED_DIFF_LINES = 4000;
 const ACTIVE_LINE_OUTLINE = "1px solid hsl(from var(--color-review-accent) h s l / 0.45)";
 const HUNK_RANGE_OUTLINE_COLOR = "hsl(from var(--color-review-accent) h s l / 0.45)";
 const LIKE_NOTE_PREFIX = "I like this change";
 const DISLIKE_NOTE_PREFIX = "I don't like this change";
 const EMPTY_REVIEWS: Review[] = [];
 const EMPTY_COMMENT_LINE_INDICES = new Set<number>();
-
-const REVEAL_SKELETON_LINE_WIDTHS: readonly string[] = [
-  "w-[72%]",
-  "w-[46%]",
-  "w-[88%]",
-  "w-[61%]",
-  "w-[80%]",
-  "w-[52%]",
-  "w-[70%]",
-  "w-[92%]",
-  "w-[44%]",
-  "w-[83%]",
-  "w-[58%]",
-  "w-[76%]",
-  "w-[49%]",
-  "w-[87%]",
-  "w-[65%]",
-  "w-[79%]",
-  "w-[54%]",
-  "w-[91%]",
-  "w-[68%]",
-  "w-[42%]",
-  "w-[74%]",
-  "w-[85%]",
-  "w-[57%]",
-  "w-[78%]",
-];
-
-function ImmersiveDiffRevealLoadingState(props: { label: string }) {
-  return (
-    <div
-      role="status"
-      aria-busy="true"
-      aria-label={props.label}
-      data-testid="immersive-diff-reveal-skeleton"
-      className="mx-auto flex h-full w-full max-w-5xl flex-col gap-3 overflow-hidden px-4 py-5 select-none"
-    >
-      {/* Match the transcript hydration shimmer instead of a centered spinner: the
-          diff-shaped placeholder keeps the hidden geometry swap feeling like code
-          is hydrating in place rather than a blocking modal flash. */}
-      <Skeleton variant="shimmer" className="mb-1 block h-3 w-40 rounded" />
-      <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-hidden">
-        {REVEAL_SKELETON_LINE_WIDTHS.map((width, rowIndex) => (
-          <div
-            key={rowIndex}
-            className="grid grid-cols-[3.5rem_1fr] items-center gap-3"
-            style={{ opacity: Math.max(0.28, 1 - rowIndex * 0.03) }}
-          >
-            <Skeleton variant="shimmer" className="block h-3 w-8 rounded" />
-            <Skeleton variant="shimmer" className={cn("block h-3.5 rounded", width)} />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-const FULL_FILE_CONTEXT_TIMEOUT = Symbol("full-file-context-timeout");
-
-async function withFullFileContextTimeout<T>(
-  promise: Promise<T>
-): Promise<T | typeof FULL_FILE_CONTEXT_TIMEOUT> {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<typeof FULL_FILE_CONTEXT_TIMEOUT>((resolve) => {
-        timeoutId = setTimeout(
-          () => resolve(FULL_FILE_CONTEXT_TIMEOUT),
-          FULL_FILE_CONTEXT_REVEAL_TIMEOUT_MS
-        );
-      }),
-    ]);
-  } finally {
-    if (timeoutId !== null) {
-      clearTimeout(timeoutId);
-    }
-  }
-}
 
 function getFileBaseName(filePath: string): string {
   const segments = filePath.split(/[\\/]/);
@@ -291,177 +186,6 @@ function getReviewStatusSidebarClasses(status: Review["status"]): {
     badge: "bg-muted/25 text-muted",
     icon: "text-muted",
   };
-}
-
-function splitDiffLines(content: string): string[] {
-  const lines = content.split(/\r?\n/);
-  if (lines.length > 0 && lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-  return lines;
-}
-
-function normalizeFileLines(content: string): string[] {
-  // Normalize Windows CRLF to LF-equivalent lines so rows stay single-height in
-  // whitespace-preserving diff cells (embedded "\r" can render as extra breaks).
-  const lines = content
-    .split(/\r?\n/)
-    .map((line) => (line.endsWith("\r") ? line.slice(0, Math.max(0, line.length - 1)) : line));
-  return lines.filter((line, idx) => idx < lines.length - 1 || line !== "");
-}
-
-function isWithinFullFileContextLineBudget(content: string): boolean {
-  return normalizeFileLines(content).length <= MAX_FULL_FILE_CONTEXT_LINES;
-}
-
-function shouldAttemptFullFileContext(selectedHunk: DiffHunk | null): boolean {
-  if (!selectedHunk) {
-    return false;
-  }
-
-  const lastDisplayLine = selectedHunk.newStart + Math.max(selectedHunk.newLines, 1) - 1;
-  return lastDisplayLine <= MAX_FULL_FILE_CONTEXT_LINES;
-}
-
-function buildFileContentCacheKey(
-  workspaceId: string,
-  filePath: string,
-  sortedHunks: readonly DiffHunk[]
-): string {
-  const hunkSignature = sortedHunks.map((hunk) => hunk.id).join("|");
-  return [workspaceId, filePath, hunkSignature].join("\u0000");
-}
-
-function buildOverlayFromFileContent(
-  fileContent: string,
-  sortedHunks: DiffHunk[]
-): ImmersiveOverlayData {
-  const fileLines = normalizeFileLines(fileContent);
-  const contentLines: string[] = [];
-  const lineHunkIds: Array<string | null> = [];
-  const hunkLineRanges = new Map<string, HunkLineRange>();
-
-  let newLineIdx = 0;
-
-  const pushDisplayLine = (line: string, hunkId: string | null) => {
-    contentLines.push(line);
-    lineHunkIds.push(hunkId);
-  };
-
-  for (const hunk of sortedHunks) {
-    const hunkStartInNew = Math.max(0, hunk.newStart - 1);
-
-    while (newLineIdx < hunkStartInNew && newLineIdx < fileLines.length) {
-      pushDisplayLine(` ${fileLines[newLineIdx]}`, null);
-      newLineIdx += 1;
-    }
-
-    const hunkStartIndex = lineHunkIds.length;
-    let firstModifiedIndex: number | null = null;
-    let lastModifiedIndex: number | null = null;
-
-    for (const line of splitDiffLines(hunk.content)) {
-      const prefix = line[0] ?? " ";
-      if (prefix !== "+" && prefix !== "-" && prefix !== " ") {
-        continue;
-      }
-
-      if (prefix === "+" || prefix === "-") {
-        firstModifiedIndex ??= lineHunkIds.length;
-        lastModifiedIndex = lineHunkIds.length;
-      }
-
-      pushDisplayLine(`${prefix}${line.slice(1)}`, hunk.id);
-      if (prefix !== "-") {
-        newLineIdx += 1;
-      }
-    }
-
-    if (lineHunkIds.length > hunkStartIndex) {
-      hunkLineRanges.set(hunk.id, {
-        startIndex: hunkStartIndex,
-        endIndex: lineHunkIds.length - 1,
-        firstModifiedIndex,
-        lastModifiedIndex,
-      });
-    }
-  }
-
-  while (newLineIdx < fileLines.length) {
-    pushDisplayLine(` ${fileLines[newLineIdx]}`, null);
-    newLineIdx += 1;
-  }
-
-  return {
-    content: contentLines.join("\n"),
-    lineHunkIds,
-    hunkLineRanges,
-  };
-}
-
-function buildOverlayFromHunks(sortedHunks: DiffHunk[]): ImmersiveOverlayData {
-  const contentLines: string[] = [];
-  const lineHunkIds: Array<string | null> = [];
-  const hunkLineRanges = new Map<string, HunkLineRange>();
-
-  const pushDisplayLine = (line: string, hunkId: string | null) => {
-    contentLines.push(line);
-    lineHunkIds.push(hunkId);
-  };
-
-  const pushHeaderLine = (line: string) => {
-    // Header rows are intentionally excluded from lineHunkIds because DiffRenderer
-    // does not render @@ header lines in selectable output.
-    contentLines.push(line);
-  };
-
-  sortedHunks.forEach((hunk, index) => {
-    if (index > 0) {
-      pushDisplayLine(" ", null);
-    }
-
-    pushHeaderLine(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`);
-
-    const hunkStartIndex = lineHunkIds.length;
-    let firstModifiedIndex: number | null = null;
-    let lastModifiedIndex: number | null = null;
-
-    for (const line of splitDiffLines(hunk.content)) {
-      const prefix = line[0] ?? " ";
-      if (prefix !== "+" && prefix !== "-" && prefix !== " ") {
-        continue;
-      }
-
-      if (prefix === "+" || prefix === "-") {
-        firstModifiedIndex ??= lineHunkIds.length;
-        lastModifiedIndex = lineHunkIds.length;
-      }
-
-      pushDisplayLine(`${prefix}${line.slice(1)}`, hunk.id);
-    }
-
-    if (lineHunkIds.length > hunkStartIndex) {
-      hunkLineRanges.set(hunk.id, {
-        startIndex: hunkStartIndex,
-        endIndex: lineHunkIds.length - 1,
-        firstModifiedIndex,
-        lastModifiedIndex,
-      });
-    }
-  });
-
-  return {
-    content: contentLines.join("\n"),
-    lineHunkIds,
-    hunkLineRanges,
-  };
-}
-
-function isSameOverlayRevealIdentity(
-  lhs: OverlayRevealIdentity | null,
-  rhs: OverlayRevealIdentity | null
-): boolean {
-  return lhs?.filePath === rhs?.filePath && lhs?.content === rhs?.content;
 }
 
 function isSelectionInsideRange(selection: SelectedLineRange, range: HunkLineRange): boolean {
@@ -679,8 +403,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     return null;
   }, [selectedHunkId, hunks, allHunks, fileList, isReviewComplete]);
 
-  const activeOverlayRevealIdentityRef = useRef<OverlayRevealIdentity | null>(null);
-
   const selectedHunkFromAll = useMemo(
     () => (selectedHunkId ? (allHunks.find((item) => item.id === selectedHunkId) ?? null) : null),
     [selectedHunkId, allHunks]
@@ -734,295 +456,30 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     }
   }, [currentFileHunks, selectedHunkId, onSelectHunk]);
 
-  const [activeFileContentState, setActiveFileContentState] = useState<{
-    filePath: string | null;
-    content: string | null;
-    isSettled: boolean;
-  }>({
-    filePath: null,
-    content: null,
-    isSettled: true,
-  });
-  const fileContentCacheRef = useRef<Map<string, string | null>>(new Map());
-  const shouldLoadFullFileContext = useMemo(
-    () => shouldAttemptFullFileContext(selectedHunk),
-    [selectedHunk]
-  );
-  const activeFileContentCacheKey = useMemo(
-    () =>
-      activeFilePath
-        ? buildFileContentCacheKey(props.workspaceId, activeFilePath, currentFileHunks)
-        : null,
-    [activeFilePath, currentFileHunks, props.workspaceId]
-  );
-
-  // Hold diff reveal until overlay geometry swaps have been positioned. File
-  // switches and same-file content swaps are covered by a scrollport-sized
-  // shimmer overlay while hidden layout effects scroll the target hunk into place.
-  const [revealedOverlayIdentity, setRevealedOverlayIdentity] =
-    useState<OverlayRevealIdentity | null>(null);
-  const revealAnimationFrameRef = useRef<number | null>(null);
-
-  // Load full file context only when it is cheap. If disk I/O or highlighting stalls,
-  // fail open to the compact hunk overlay instead of trapping the review behind loading.
-  useEffect(() => {
-    const apiClient = api;
-    const filePath = activeFilePath;
-    const cacheKey = activeFileContentCacheKey;
-
-    const settleContent = (content: string | null) => {
-      setActiveFileContentState({
-        filePath: filePath ?? null,
-        content,
-        isSettled: true,
-      });
-    };
-
-    if (!filePath || !apiClient || !shouldLoadFullFileContext || !cacheKey) {
-      settleContent(null);
-      return;
-    }
-
-    if (fileContentCacheRef.current.has(cacheKey)) {
-      settleContent(fileContentCacheRef.current.get(cacheKey) ?? null);
-      return;
-    }
-
-    const resolvedApi: NonNullable<typeof api> = apiClient;
-    const resolvedFilePath: string = filePath;
-    const resolvedFileHunks = currentFileHunks;
-    const resolvedTheme = theme;
-    let cancelled = false;
-
-    setActiveFileContentState({
-      filePath: resolvedFilePath,
-      content: null,
-      isSettled: false,
-    });
-
-    const settleLoadedContent = (content: string | null, shouldCache: boolean) => {
-      if (shouldCache) {
-        fileContentCacheRef.current.set(cacheKey, content);
-      }
-      if (!cancelled) {
-        setActiveFileContentState({
-          filePath: resolvedFilePath,
-          content,
-          isSettled: true,
-        });
-      }
-    };
-
-    async function loadActiveFileContent() {
-      // Keep plain file reads on the shared container root so immersive review can open
-      // sibling-project files without forcing the primary repo checkout.
-      const fileResult = await withFullFileContextTimeout(
-        resolvedApi.workspace.executeBash({
-          workspaceId: props.workspaceId,
-          script: buildReadFileScript(resolvedFilePath, {
-            maxSizeBytes: MAX_FULL_FILE_CONTEXT_BYTES,
-            maxLineCount: MAX_FULL_FILE_CONTEXT_LINES,
-          }),
-        })
-      );
-
-      if (cancelled) {
-        return;
-      }
-
-      if (fileResult === FULL_FILE_CONTEXT_TIMEOUT) {
-        settleLoadedContent(null, false);
-        return;
-      }
-
-      if (!fileResult.success) {
-        settleLoadedContent(null, false);
-        return;
-      }
-
-      const bashResult = fileResult.data;
-      const isDeterministicBudgetMiss =
-        bashResult.exitCode === EXIT_CODE_TOO_LARGE ||
-        bashResult.exitCode === EXIT_CODE_TOO_MANY_LINES;
-
-      if (!bashResult.success && !bashResult.output) {
-        settleLoadedContent(null, isDeterministicBudgetMiss);
-        return;
-      }
-
-      const data = processFileContents(bashResult.output ?? "", bashResult.exitCode);
-      const content =
-        data.type === "text" && isWithinFullFileContextLineBudget(data.content)
-          ? data.content
-          : null;
-
-      if (content != null) {
-        const hydratedOverlay = buildOverlayFromFileContent(content, resolvedFileHunks);
-        if (hydratedOverlay.lineHunkIds.length <= MAX_HIGHLIGHTED_DIFF_LINES) {
-          // Preload syntax tokens before swapping compact hunks to full-file context so
-          // users do not see plain fallback rows flash into colored Shiki spans.
-          const preloadResult = await withFullFileContextTimeout(
-            preloadHighlightedDiff({
-              content: hydratedOverlay.content,
-              filePath: resolvedFilePath,
-              themeMode: resolvedTheme,
-            })
-          );
-          if (cancelled) {
-            return;
-          }
-          if (preloadResult === FULL_FILE_CONTEXT_TIMEOUT) {
-            settleLoadedContent(null, false);
-            return;
-          }
-        }
-      }
-
-      settleLoadedContent(content, content != null || isDeterministicBudgetMiss);
-    }
-
-    loadActiveFileContent().catch(() => {
-      settleLoadedContent(null, false);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    activeFileContentCacheKey,
-    activeFilePath,
-    api,
-    currentFileHunks,
-    props.workspaceId,
-    shouldLoadFullFileContext,
-    theme,
-  ]);
-
-  const isActiveFileContentSettled =
-    !activeFilePath ||
-    (activeFileContentState.filePath === activeFilePath && activeFileContentState.isSettled);
-
-  const resolvedActiveFileContent = isActiveFileContentSettled
-    ? activeFileContentState.content
-    : null;
-
-  const overlayData = useMemo<ImmersiveOverlayData>(() => {
-    if (currentFileHunks.length === 0) {
-      return {
-        content: "",
-        lineHunkIds: [],
-        hunkLineRanges: new Map<string, HunkLineRange>(),
-      };
-    }
-
-    if (resolvedActiveFileContent != null) {
-      return buildOverlayFromFileContent(resolvedActiveFileContent, currentFileHunks);
-    }
-
-    return buildOverlayFromHunks(currentFileHunks);
-  }, [resolvedActiveFileContent, currentFileHunks]);
-
-  const shouldEnableHighlighting = overlayData.lineHunkIds.length <= MAX_HIGHLIGHTED_DIFF_LINES;
-  const activeOverlayRevealIdentity = useMemo<OverlayRevealIdentity | null>(
-    () => (activeFilePath ? { filePath: activeFilePath, content: overlayData.content } : null),
-    [activeFilePath, overlayData.content]
-  );
-  const activeOverlayHighlightKey = activeOverlayRevealIdentity
-    ? `${activeOverlayRevealIdentity.filePath}\u0000${activeOverlayRevealIdentity.content}`
-    : null;
-  const [settledOverlayHighlightKey, setSettledOverlayHighlightKey] = useState<string | null>(null);
-  const isActiveFileRevealPending =
-    activeFilePath !== null && revealedOverlayIdentity?.filePath !== activeFilePath;
-  const isActiveOverlayRevealPending =
-    activeOverlayRevealIdentity !== null &&
-    !isSameOverlayRevealIdentity(revealedOverlayIdentity, activeOverlayRevealIdentity);
-  const isHappyDomEnvironment = typeof window !== "undefined" && "happyDOM" in window;
-  // Only worker-backed highlighting is safe to use as a reveal prerequisite; tests and
-  // other non-worker shells fall back to slower main-thread highlighting.
-  const canWaitForOverlayHighlight = typeof Worker !== "undefined" && !isHappyDomEnvironment;
-  const shouldWaitForFullFileContextReveal = Boolean(
-    isActiveFileRevealPending && shouldLoadFullFileContext && !isActiveFileContentSettled
-  );
-  const shouldWaitForOverlayHighlight = Boolean(
-    canWaitForOverlayHighlight &&
-    isActiveOverlayRevealPending &&
-    shouldEnableHighlighting &&
-    activeOverlayHighlightKey
-  );
-  const isActiveOverlayHighlightReadyForReveal =
-    !shouldWaitForOverlayHighlight || settledOverlayHighlightKey === activeOverlayHighlightKey;
-  const isActiveOverlayReadyForReveal =
-    !shouldWaitForFullFileContextReveal && isActiveOverlayHighlightReadyForReveal;
-  // Gate every overlay geometry swap, not just file switches. Same-file hydration
-  // inserts context rows above the current hunk, so reveal only after the hidden
-  // layout pass scrolls the selected full-file row into place.
-  const isActiveOverlayReadyForRevealRef = useRef(isActiveOverlayReadyForReveal);
-  useLayoutEffect(() => {
-    isActiveOverlayReadyForRevealRef.current = isActiveOverlayReadyForReveal;
-  }, [isActiveOverlayReadyForReveal]);
-  const [revealOverlayHeight, setRevealOverlayHeight] = useState<number | null>(null);
-  useLayoutEffect(() => {
-    if (!isActiveOverlayRevealPending) {
-      return;
-    }
-
-    const scrollContainer = scrollContainerRef.current;
-    if (!scrollContainer) {
-      return;
-    }
-
-    const updateRevealOverlayHeight = () => {
-      const nextHeight = Math.round(scrollContainer.clientHeight);
-      setRevealOverlayHeight((currentHeight) =>
-        currentHeight === nextHeight ? currentHeight : nextHeight
-      );
-    };
-
-    updateRevealOverlayHeight();
-    const resizeObserver =
-      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateRevealOverlayHeight);
-    resizeObserver?.observe(scrollContainer);
-    window.addEventListener("resize", updateRevealOverlayHeight);
-
-    return () => {
-      resizeObserver?.disconnect();
-      window.removeEventListener("resize", updateRevealOverlayHeight);
-    };
-  }, [isActiveOverlayRevealPending]);
-  const revealLoadingLabel = "Loading file...";
-
-  const scheduleOverlayReveal = useCallback((overlayIdentity: OverlayRevealIdentity) => {
-    if (revealAnimationFrameRef.current !== null) {
-      cancelAnimationFrame(revealAnimationFrameRef.current);
-    }
-
-    revealAnimationFrameRef.current = window.requestAnimationFrame(() => {
-      setRevealedOverlayIdentity((currentRevealedIdentity) => {
-        // A stale rAF from an earlier compact overlay must not reveal while a
-        // newer full-file hydration is still loading/highlighting.
-        if (!isActiveOverlayReadyForRevealRef.current) {
-          return currentRevealedIdentity;
-        }
-
-        return isSameOverlayRevealIdentity(activeOverlayRevealIdentityRef.current, overlayIdentity)
-          ? overlayIdentity
-          : currentRevealedIdentity;
-      });
-      revealAnimationFrameRef.current = null;
-    });
+  const setHunkJumpScroll = useCallback((block: ScrollLogicalPosition) => {
+    hunkJumpRef.current = true;
+    hunkJumpScrollBlockRef.current = block;
   }, []);
 
-  const handleDiffHighlightSettledChange = useCallback(
-    (isSettled: boolean) => {
-      setSettledOverlayHighlightKey((currentKey) => {
-        if (isSettled) {
-          return activeOverlayHighlightKey;
-        }
-        return currentKey === activeOverlayHighlightKey ? null : currentKey;
-      });
-    },
-    [activeOverlayHighlightKey]
-  );
+  const {
+    overlayData,
+    shouldEnableHighlighting,
+    isActiveOverlayRevealPending,
+    isActiveOverlayReadyForReveal,
+    activeOverlayRevealIdentity,
+    revealLoadingLabel,
+    revealActiveOverlayNow,
+    scheduleOverlayReveal,
+    handleDiffHighlightSettledChange,
+  } = useImmersiveOverlay({
+    api,
+    workspaceId: props.workspaceId,
+    activeFilePath,
+    currentFileHunks,
+    selectedHunk,
+    theme,
+    onRevealPending: setHunkJumpScroll,
+  });
 
   const selectedHunkRange = useMemo(
     () => (selectedHunk ? (overlayData.hunkLineRanges.get(selectedHunk.id) ?? null) : null),
@@ -1116,40 +573,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // hide-read auto-advance without changing the main review panel's unread shortcut semantics.
   const readUndoStackRef = useRef<string[]>([]);
 
-  const setHunkJumpScroll = useCallback((block: ScrollLogicalPosition) => {
-    hunkJumpRef.current = true;
-    hunkJumpScrollBlockRef.current = block;
-  }, []);
-
-  useLayoutEffect(() => {
-    if (revealAnimationFrameRef.current !== null) {
-      cancelAnimationFrame(revealAnimationFrameRef.current);
-      revealAnimationFrameRef.current = null;
-    }
-
-    activeOverlayRevealIdentityRef.current = activeOverlayRevealIdentity;
-
-    if (!activeOverlayRevealIdentity) {
-      setRevealedOverlayIdentity(null);
-      return;
-    }
-
-    if (isActiveOverlayRevealPending) {
-      // The pending state is derived during render, not set from an effect, so
-      // file switches are hidden on their first paint until the scroll effect
-      // reveals the positioned overlay.
-      setHunkJumpScroll("center");
-    }
-  }, [activeOverlayRevealIdentity, isActiveOverlayRevealPending, setHunkJumpScroll]);
-
-  useEffect(() => {
-    return () => {
-      if (revealAnimationFrameRef.current !== null) {
-        cancelAnimationFrame(revealAnimationFrameRef.current);
-      }
-    };
-  }, []);
-
   const selectedHunkRevealTargetLineIndex =
     selectedHunkRange?.firstModifiedIndex ?? selectedHunkRange?.startIndex ?? null;
   const revealTargetLineIndex = isActiveOverlayRevealPending
@@ -1165,7 +588,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
     // Fail open so the UI cannot get stuck if a file has no hunks.
     if (currentFileHunks.length === 0) {
-      setRevealedOverlayIdentity(activeOverlayRevealIdentity);
+      revealActiveOverlayNow();
       return;
     }
 
@@ -1180,7 +603,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
     // Fail open once selection is stable if we still cannot resolve a reveal target.
     if (selectedHunkRevealTargetLineIndex === null) {
-      setRevealedOverlayIdentity(activeOverlayRevealIdentity);
+      revealActiveOverlayNow();
     }
   }, [
     activeOverlayRevealIdentity,
@@ -1188,6 +611,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     hasResolvedSelectedHunkForReveal,
     isActiveOverlayReadyForReveal,
     isActiveOverlayRevealPending,
+    revealActiveOverlayNow,
     selectedHunkRevealTargetLineIndex,
   ]);
 
@@ -2382,11 +1806,25 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     };
   }, [inlineComposerRequest, overlayData.lineHunkIds.length, selectedHunk]);
 
+  const immersiveOverlayState = isReviewComplete
+    ? "complete"
+    : props.isLoading && currentFileHunks.length === 0
+      ? "loading"
+      : isActiveOverlayRevealPending
+        ? "pending"
+        : overlayData.content.length > 0
+          ? "revealed"
+          : "empty";
+
   return (
     <div
       ref={containerRef}
       tabIndex={isTouchExperience ? -1 : 0}
       className="flex h-full flex-col overflow-hidden outline-none"
+      data-active-file-path={activeFilePath ?? undefined}
+      data-overlay-line-count={overlayData.lineHunkIds.length}
+      data-overlay-state={immersiveOverlayState}
+      data-selected-line-index={activeLineIndex ?? selectedHunkRevealTargetLineIndex ?? undefined}
       data-selected-hunk-position={currentHunkIdx >= 0 ? currentHunkIdx + 1 : undefined}
       data-current-file-hunk-count={currentFileHunks.length}
       data-testid="immersive-review-view"
@@ -2619,86 +2057,93 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
               />
             ))}
           {/* Avoid top padding here; it reads as a blank block between the controls and diff. */}
-          <div
-            ref={scrollContainerRef}
-            className="scrollbar-none relative min-h-0 min-w-0 flex-1 overflow-y-auto pb-3 [overflow-anchor:none]"
-          >
-            {isActiveOverlayRevealPending && currentFileHunks.length > 0 && !isReviewComplete && (
-              <div className="sticky top-0 z-10 h-0 overflow-visible">
-                <div
-                  className="bg-dark/95 min-h-56 overflow-hidden"
-                  data-testid="immersive-diff-reveal-overlay"
-                  style={revealOverlayHeight == null ? undefined : { height: revealOverlayHeight }}
-                >
-                  <ImmersiveDiffRevealLoadingState label={revealLoadingLabel} />
+          <div className="relative min-h-0 min-w-0 flex-1">
+            <div
+              ref={scrollContainerRef}
+              className="scrollbar-none h-full min-h-0 min-w-0 overflow-y-auto pb-3 [overflow-anchor:none]"
+            >
+              {props.isLoading && currentFileHunks.length === 0 ? (
+                <div className="text-muted flex items-center justify-center py-12 text-sm">
+                  <span className="animate-pulse">Loading diff...</span>
                 </div>
-              </div>
-            )}
-            {props.isLoading && currentFileHunks.length === 0 ? (
-              <div className="text-muted flex items-center justify-center py-12 text-sm">
-                <span className="animate-pulse">Loading diff...</span>
-              </div>
-            ) : isReviewComplete ? (
-              <div className="flex min-h-full items-center justify-center px-6 py-12">
-                <div
-                  data-testid="immersive-review-complete"
-                  className="flex max-w-md flex-col items-center gap-4 text-center"
-                >
-                  <div className="bg-accent/10 text-accent rounded-full p-3">
-                    <CheckCircle2 aria-hidden="true" className="h-8 w-8" />
-                  </div>
-                  <div className="space-y-2">
-                    <h2 className="text-foreground text-base font-medium">Review complete</h2>
-                    <p className="text-muted text-sm leading-relaxed">
-                      You have already reviewed all {reviewedHunkLabel} in this diff. Return to chat
-                      to keep going, or reopen reviewed hunks from the review panel if you want
-                      another pass.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={onExit}
-                    className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+              ) : isReviewComplete ? (
+                <div className="flex min-h-full items-center justify-center px-6 py-12">
+                  <div
+                    data-testid="immersive-review-complete"
+                    className="flex max-w-md flex-col items-center gap-4 text-center"
                   >
-                    Return to chat
-                  </button>
+                    <div className="bg-accent/10 text-accent rounded-full p-3">
+                      <CheckCircle2 aria-hidden="true" className="h-8 w-8" />
+                    </div>
+                    <div className="space-y-2">
+                      <h2 className="text-foreground text-base font-medium">Review complete</h2>
+                      <p className="text-muted text-sm leading-relaxed">
+                        You have already reviewed all {reviewedHunkLabel} in this diff. Return to
+                        chat to keep going, or reopen reviewed hunks from the review panel if you
+                        want another pass.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onExit}
+                      className="bg-accent hover:bg-accent/80 text-accent-foreground inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
+                    >
+                      Return to chat
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ) : currentFileHunks.length === 0 ? (
-              <div className="text-muted flex items-center justify-center py-12 text-sm">
-                {activeFilePath ? "No hunks for this file" : "No files to review"}
-              </div>
-            ) : (
-              <div
-                className={cn(
-                  "bg-dark relative overflow-hidden",
-                  isActiveOverlayRevealPending && "min-h-56"
-                )}
-              >
+              ) : currentFileHunks.length === 0 ? (
+                <div className="text-muted flex items-center justify-center py-12 text-sm">
+                  {activeFilePath ? "No hunks for this file" : "No files to review"}
+                </div>
+              ) : (
                 <div
-                  className={cn(isActiveOverlayRevealPending && "invisible")}
-                  data-testid="immersive-diff-reveal-stage"
+                  className={cn(
+                    "bg-dark relative overflow-hidden",
+                    isActiveOverlayRevealPending && "min-h-56"
+                  )}
                 >
-                  <SelectableDiffRenderer
-                    content={overlayData.content}
-                    filePath={activeFilePath ?? currentFileHunks[0].filePath}
-                    inlineReviews={activeFileReviews}
-                    oldStart={1}
-                    newStart={1}
-                    fontSize="11px"
-                    maxHeight="none"
-                    className="rounded-none border-0 [&>div]:overflow-x-visible"
-                    onHighlightSettledChange={handleDiffHighlightSettledChange}
-                    onReviewNote={handleReviewNoteSubmit}
-                    onComposerCancel={handleInlineComposerCancel}
-                    reviewActions={diffReviewActions}
-                    enableHighlighting={shouldEnableHighlighting}
-                    selectedLineRange={selectedLineRange}
-                    onLineIndexSelect={handleLineIndexSelect}
-                    externalSelectionRequest={externalComposerSelectionRequest}
-                    externalEditRequest={inlineReviewEditRequest}
-                  />
+                  <div
+                    className={cn(isActiveOverlayRevealPending && "invisible")}
+                    data-active-file-path={activeFilePath ?? undefined}
+                    data-overlay-line-count={overlayData.lineHunkIds.length}
+                    data-overlay-state={immersiveOverlayState}
+                    data-selected-line-index={
+                      activeLineIndex ?? selectedHunkRevealTargetLineIndex ?? undefined
+                    }
+                    data-testid="immersive-diff-reveal-stage"
+                  >
+                    {overlayData.content.length > 0 && (
+                      <SelectableDiffRenderer
+                        content={overlayData.content}
+                        filePath={activeFilePath ?? currentFileHunks[0].filePath}
+                        inlineReviews={activeFileReviews}
+                        oldStart={1}
+                        newStart={1}
+                        fontSize="11px"
+                        maxHeight="none"
+                        className="rounded-none border-0 [&>div]:overflow-x-visible"
+                        onHighlightSettledChange={handleDiffHighlightSettledChange}
+                        onReviewNote={handleReviewNoteSubmit}
+                        onComposerCancel={handleInlineComposerCancel}
+                        reviewActions={diffReviewActions}
+                        enableHighlighting={shouldEnableHighlighting}
+                        selectedLineRange={selectedLineRange}
+                        onLineIndexSelect={handleLineIndexSelect}
+                        externalSelectionRequest={externalComposerSelectionRequest}
+                        externalEditRequest={inlineReviewEditRequest}
+                      />
+                    )}
+                  </div>
                 </div>
+              )}
+            </div>
+            {isActiveOverlayRevealPending && currentFileHunks.length > 0 && !isReviewComplete && (
+              <div
+                className="bg-dark/95 absolute inset-0 z-10 min-h-56 overflow-hidden"
+                data-testid="immersive-diff-reveal-overlay"
+              >
+                <ImmersiveDiffRevealLoadingState label={revealLoadingLabel} />
               </div>
             )}
           </div>

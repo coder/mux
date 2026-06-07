@@ -315,6 +315,131 @@ describe("ImmersiveReviewView", () => {
     expect(view.queryByTestId("immersive-assisted-banner")).toBeNull();
   });
 
+  test("normalizes CRLF hunk rows in compact overlays", () => {
+    const crlfHunk = createHunk({
+      id: "hunk-crlf",
+      oldStart: 5000,
+      newStart: 5000,
+      header: "@@ -5000 +5000 @@",
+      content: "-old crlf\r\n+new crlf\r\n context crlf\r",
+    });
+
+    const view = renderImmersiveReview({
+      fileTree: createFileTree(crlfHunk.filePath),
+      hunks: [crlfHunk],
+      allHunks: [crlfHunk],
+      selectedHunkId: crlfHunk.id,
+    });
+
+    expect(view.container.textContent ?? "").toContain("new crlf");
+    expect(view.container.textContent ?? "").not.toContain("\r");
+  });
+
+  test("defers the compact diff renderer while full-file context is pending", async () => {
+    type ExecuteBashResult = Awaited<ReturnType<MockApiClient["workspace"]["executeBash"]>>;
+    let resolveRead: (result: ExecuteBashResult) => void = () => {
+      throw new Error("executeBash was not called");
+    };
+    mockApi.workspace.executeBash = mock(
+      () =>
+        new Promise<ExecuteBashResult>((resolve) => {
+          resolveRead = resolve;
+        })
+    );
+
+    const view = renderImmersiveReview();
+
+    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalledTimes(1));
+    expect(view.getByTestId("immersive-diff-reveal-skeleton")).toBeTruthy();
+    // Full-file hydration is the expected end state for this hunk, so do not spend
+    // a hidden render/highlight pass on the compact hunk rows that would be thrown away.
+    expect(view.container.textContent ?? "").not.toContain("new line");
+
+    resolveRead({
+      success: true as const,
+      data: {
+        success: true,
+        output: encodeFileReadOutput("new line\ncontext after selected hunk\n"),
+        exitCode: 0,
+      },
+    });
+
+    await waitFor(() =>
+      expect(view.container.textContent ?? "").toContain("context after selected hunk")
+    );
+  });
+
+  test("keeps same-file compact-to-full hydration behind the reveal gate", async () => {
+    const nearHunk = createHunk({
+      id: "hunk-near",
+      newStart: 40,
+      newLines: 1,
+      header: "@@ -40 +40 @@",
+      content: "-old near line\n+new near line",
+    });
+    const farHunk = createHunk({
+      id: "hunk-far",
+      newStart: 5000,
+      newLines: 1,
+      header: "@@ -5000 +5000 @@",
+      content: "-old far line\n+new far line",
+    });
+    type ExecuteBashResult = Awaited<ReturnType<MockApiClient["workspace"]["executeBash"]>>;
+    let resolveRead: (result: ExecuteBashResult) => void = () => {
+      throw new Error("executeBash was not called");
+    };
+    mockApi.workspace.executeBash = mock(
+      () =>
+        new Promise<ExecuteBashResult>((resolve) => {
+          resolveRead = resolve;
+        })
+    );
+
+    const renderView = (selectedHunkId: string) => (
+      <ThemeProvider forcedTheme="dark">
+        <ImmersiveReviewView
+          workspaceId="workspace-1"
+          fileTree={createFileTree(nearHunk.filePath)}
+          hunks={[nearHunk, farHunk]}
+          allHunks={[nearHunk, farHunk]}
+          isRead={() => false}
+          onToggleRead={mock(() => undefined)}
+          onMarkFileAsRead={mock(() => undefined)}
+          selectedHunkId={selectedHunkId}
+          onSelectHunk={mock(() => undefined)}
+          onExit={mock(() => undefined)}
+          isTouchImmersive={true}
+          reviewsByFilePath={new Map()}
+          firstSeenMap={{}}
+        />
+      </ThemeProvider>
+    );
+
+    const view = render(renderView(farHunk.id));
+    expect(view.container.textContent ?? "").toContain("new far line");
+    expect(mockApi.workspace.executeBash).not.toHaveBeenCalled();
+
+    view.rerender(renderView(nearHunk.id));
+
+    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalledTimes(1));
+    expect(view.getByTestId("immersive-diff-reveal-skeleton")).toBeTruthy();
+    expect(view.container.textContent ?? "").not.toContain("new near line");
+    expect(view.container.textContent ?? "").not.toContain("new far line");
+
+    resolveRead({
+      success: true as const,
+      data: {
+        success: true,
+        output: encodeFileReadOutput("new near line\ncontext after selected hunk\n"),
+        exitCode: 0,
+      },
+    });
+
+    await waitFor(() =>
+      expect(view.container.textContent ?? "").toContain("context after selected hunk")
+    );
+  });
+
   test("loads full-file context for an in-budget selected hunk even when another hunk is far away", async () => {
     const nearHunk = createHunk({
       id: "hunk-near",
