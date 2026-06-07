@@ -173,6 +173,43 @@ Mux today has shell-script hooks (`tool_pre`/`tool_post`/`tool_env`). To accept 
 
 Open question: whether to also support a richer in-process event bus like opencode's for first-party features — deferred (Non-goal #2).
 
+#### Hook coverage across tools
+
+Three different models are in play, so "supported" is not directly comparable:
+
+- **mux** — a few named **script files** in `.mux/` (no event keys, no matchers); `tool_pre` can block via exit code.
+- **Claude Code / Codex** — **event-keyed `hooks.json`** commands with matchers and a JSON allow/deny/modify decision protocol. Codex's events are a strict subset of Claude Code's (same schema).
+- **opencode** — a **code event bus** (dotted event names); mostly observational, only `permission.asked` / `tool.execute.before` are decision points. Names don't map cleanly, so portability is realistically Claude Code ↔ Codex ↔ mux, _not_ opencode.
+
+Authoritative counts: **mux 4**, **Codex 10**, **Claude Code 31**, **opencode ~30**.
+
+| Lifecycle point             | mux         | Claude Code                                  | Codex                            | opencode (observational)                                |
+| --------------------------- | ----------- | -------------------------------------------- | -------------------------------- | ------------------------------------------------------- |
+| Session start               | —           | `SessionStart`                               | `SessionStart`                   | `session.created` / `server.connected`                  |
+| Session end                 | —           | `SessionEnd`                                 | —                                | `session.deleted`                                       |
+| Workspace/worktree create   | `.mux/init` | `WorktreeCreate`                             | —                                | —                                                       |
+| Worktree remove             | —           | `WorktreeRemove`                             | —                                | —                                                       |
+| User prompt submit          | —           | `UserPromptSubmit` (+`UserPromptExpansion`)  | `UserPromptSubmit`               | ≈ `tui.prompt.append`                                   |
+| **Pre-tool** (block/modify) | `tool_pre`  | `PreToolUse`                                 | `PreToolUse`                     | `tool.execute.before`                                   |
+| **Post-tool**               | `tool_post` | `PostToolUse` (+`…Failure`, `PostToolBatch`) | `PostToolUse`                    | `tool.execute.after`                                    |
+| Permission decision         | —           | `PermissionRequest` / `PermissionDenied`     | `PermissionRequest`              | `permission.asked` / `permission.replied`               |
+| Bash env setup              | `tool_env`  | —                                            | —                                | `shell.env`                                             |
+| Subagent start / stop       | —           | `SubagentStart` / `SubagentStop`             | `SubagentStart` / `SubagentStop` | —                                                       |
+| Turn stop                   | —           | `Stop` / `StopFailure`                       | `Stop`                           | `session.idle`                                          |
+| Compaction                  | —           | `PreCompact` / `PostCompact`                 | `PreCompact` / `PostCompact`     | `experimental.session.compacting` / `session.compacted` |
+| Notification                | —           | `Notification`                               | —                                | `tui.toast.show`                                        |
+| File changed on disk        | —           | `FileChanged`                                | —                                | `file.edited` / `file.watcher.updated`                  |
+| Cwd changed                 | —           | `CwdChanged`                                 | —                                | —                                                       |
+| Config changed              | —           | `ConfigChange`                               | —                                | —                                                       |
+| Instructions loaded         | —           | `InstructionsLoaded`                         | —                                | —                                                       |
+| Message display/stream      | —           | `MessageDisplay`                             | —                                | `message.part.updated`                                  |
+| Task created / completed    | —           | `TaskCreated` / `TaskCompleted`              | —                                | `todo.updated` (loose)                                  |
+| LSP diagnostics             | —           | —                                            | —                                | `lsp.client.diagnostics` / `lsp.updated`                |
+| MCP elicitation             | —           | `Elicitation` / `ElicitationResult`          | —                                | —                                                       |
+| Install / setup             | —           | `Setup`                                      | —                                | `installation.updated`                                  |
+
+**Target event set for the `hooks.json` bridge** (the common core shared by Claude Code and Codex, so plugins are portable): `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `SubagentStart`, `SubagentStop`, `Stop`, `PreCompact`, `PostCompact`. mux's existing `tool_pre`/`tool_post`/`init`/`tool_env` map onto `PreToolUse`/`PostToolUse`/(≈)`SessionStart`/(mux-specific) respectively; the rest are added incrementally.
+
 ### Marketplace format and sources
 
 Marketplaces are registered under the vendor-neutral `.agents/plugins/marketplace.json` — `<repo>/.agents/plugins/marketplace.json` for project/team marketplaces and `~/.agents/plugins/marketplace.json` for personal ones — matching Codex exactly so a marketplace repo is shareable across agents. Example `marketplace.json`:
@@ -245,6 +282,7 @@ Plugins can carry **executable** components (hooks run shell, MCP servers run pr
 ## Appendix: sources
 
 - Agent Skills spec — https://agentskills.io/specification
-- Claude Code plugins reference — https://code.claude.com/docs/en/plugins-reference ; marketplaces — https://code.claude.com/docs/en/plugin-marketplaces
-- Codex plugins — https://developers.openai.com/codex/plugins ; build — https://developers.openai.com/codex/plugins/build
+- Claude Code plugins reference — https://code.claude.com/docs/en/plugins-reference ; marketplaces — https://code.claude.com/docs/en/plugin-marketplaces ; hooks — https://code.claude.com/docs/en/hooks
+- Codex plugins — https://developers.openai.com/codex/plugins ; build — https://developers.openai.com/codex/plugins/build ; hooks — https://developers.openai.com/codex/hooks
 - opencode plugins — https://opencode.ai/docs/plugins/ ; config — https://opencode.ai/docs/config/
+- Mux hooks — `docs/hooks/` (`init`, `tools`, `environment-variables`)
