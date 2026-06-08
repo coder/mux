@@ -9,6 +9,10 @@ import {
   workflowExperimentEnabled,
 } from "./workflow";
 
+const BUN_EXECUTABLE = process.execPath;
+const WORKFLOW_ENTRY = path.join(import.meta.dir, "workflow.ts");
+const INDEX_ENTRY = path.join(import.meta.dir, "index.ts");
+
 async function getRejectedMessage(promise: Promise<unknown>): Promise<string> {
   try {
     await promise;
@@ -16,6 +20,12 @@ async function getRejectedMessage(promise: Promise<unknown>): Promise<string> {
     return error instanceof Error ? error.message : String(error);
   }
   throw new Error("Expected promise to reject");
+}
+
+async function trustProject(muxRoot: string, repo: string): Promise<void> {
+  await Bun.$`${BUN_EXECUTABLE} -e ${`import { Config } from "./src/node/config"; const c = new Config(); const cfg = c.loadConfigOrDefault(); cfg.projects.set(process.argv[1], { workspaces: [], trusted: true }); await c.saveConfig(cfg);`} ${repo}`
+    .env({ ...process.env, MUX_ROOT: muxRoot })
+    .quiet();
 }
 
 describe("mux workflow CLI helpers", () => {
@@ -52,6 +62,9 @@ describe("mux workflow CLI helpers", () => {
       base: "main",
     });
     expect(await parseWorkflowArgs({ argsFile })).toEqual({ fromFile: true });
+    expect(await parseWorkflowArgs({ argsStdin: true, stdinText: '{"fromStdin":true}' })).toEqual({
+      fromStdin: true,
+    });
     expect(await parseWorkflowArgs({ arg: ["strict=true", "count=2", "label=review"] })).toEqual({
       strict: true,
       count: 2,
@@ -70,6 +83,24 @@ describe("mux workflow CLI helpers", () => {
     expect(await resolveWorkflowProjectDir({ cwd: tmp.path, explicitDir: nested })).toBe(nested);
   });
 
+  test("CLI commands reject when dynamic-workflows is not enabled", async () => {
+    using tmp = new DisposableTempDir("workflow-cli-experiment");
+    const repo = path.join(tmp.path, "repo");
+    const muxRoot = path.join(tmp.path, "mux-root");
+    await fs.mkdir(repo, { recursive: true });
+    await fs.mkdir(muxRoot, { recursive: true });
+
+    const result = await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo}`
+      .env({ ...process.env, MUX_ROOT: muxRoot })
+      .nothrow()
+      .quiet();
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr.toString()).toContain(
+      "mux workflow requires the dynamic-workflows experiment"
+    );
+  });
+
   test("CLI run reports an actionable trust error for untrusted project workflows", async () => {
     using tmp = new DisposableTempDir("workflow-cli-untrusted");
     const repo = path.join(tmp.path, "repo");
@@ -85,7 +116,7 @@ export default function workflow() { return { reportMarkdown: "untrusted" }; }
     );
 
     const result =
-      await Bun.$`bun src/cli/workflow.ts run echo-review --dir ${repo} -e dynamic-workflows`
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run echo-review --dir ${repo} -e dynamic-workflows`
         .env({ ...process.env, MUX_ROOT: muxRoot })
         .nothrow()
         .quiet();
@@ -111,7 +142,7 @@ export default function workflow() { return { reportMarkdown: "should not run" }
     );
 
     const result =
-      await Bun.$`bun src/cli/workflow.ts run echo-review --dir ${repo} --runtime worktree -e dynamic-workflows`
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run echo-review --dir ${repo} --runtime worktree -e dynamic-workflows`
         .env({ ...process.env, MUX_ROOT: muxRoot })
         .nothrow()
         .quiet();
@@ -143,24 +174,37 @@ export default function workflow({ args }) {
 `,
       "utf-8"
     );
+    await fs.writeFile(
+      path.join(repo, ".mux", "workflows", "explode.js"),
+      `// description: Throw from workflow
+export default function workflow() { throw new Error("boom"); }
+`,
+      "utf-8"
+    );
 
-    await Bun.$`bun -e ${`import { Config } from "./src/node/config"; const c = new Config(); const cfg = c.loadConfigOrDefault(); cfg.projects.set(process.argv[1], { workspaces: [], trusted: true }); await c.saveConfig(cfg);`} ${repo}`
-      .env({ ...process.env, MUX_ROOT: muxRoot })
-      .quiet();
+    await trustProject(muxRoot, repo);
 
     const routedListOutput =
-      await Bun.$`bun src/cli/index.ts workflow list --dir ${repo} -e dynamic-workflows`
+      await Bun.$`${BUN_EXECUTABLE} ${INDEX_ENTRY} workflow list --dir ${repo} -e dynamic-workflows`
         .env({ ...process.env, MUX_ROOT: muxRoot })
         .text();
     expect(routedListOutput).toContain("echo-review\tproject\tEcho review input");
 
-    const listOutput = await Bun.$`bun src/cli/workflow.ts list --dir ${repo} -e dynamic-workflows`
-      .env({ ...process.env, MUX_ROOT: muxRoot })
-      .text();
+    const listOutput =
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo} -e dynamic-workflows`
+        .env({ ...process.env, MUX_ROOT: muxRoot })
+        .text();
     expect(listOutput).toContain("echo-review\tproject\tEcho review input");
+    const showOutput =
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} show echo-review --dir ${repo} --source -e dynamic-workflows`
+        .env({ ...process.env, MUX_ROOT: muxRoot })
+        .text();
+    expect(showOutput).toContain("scope: project");
+    expect(showOutput).toContain("description: Echo review input");
+    expect(showOutput).toContain("export default function workflow");
 
     const runOutput =
-      await Bun.$`bun src/cli/workflow.ts run echo-review --dir ${repo} --args-json ${'{"base":"main"}'} --json -e dynamic-workflows`
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run echo-review --dir ${repo} --args-json ${'{"base":"main"}'} --json -e dynamic-workflows`
         .env({ ...process.env, MUX_ROOT: muxRoot })
         .text();
     const lines = runOutput.trim().split("\n");
@@ -171,5 +215,54 @@ export default function workflow({ args }) {
       status: "completed",
       result: { reportMarkdown: 'Echo: {"base":"main"}' },
     });
+
+    const quietOutput =
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run echo-review --dir ${repo} "hello" --quiet -e dynamic-workflows`
+        .env({ ...process.env, MUX_ROOT: muxRoot })
+        .text();
+    expect(quietOutput).toBe('Echo: {"input":"hello"}\n');
+
+    const stdinProc = Bun.spawn(
+      [
+        BUN_EXECUTABLE,
+        WORKFLOW_ENTRY,
+        "run",
+        "echo-review",
+        "--dir",
+        repo,
+        "--args-stdin",
+        "--json",
+        "-e",
+        "dynamic-workflows",
+      ],
+      {
+        env: { ...process.env, MUX_ROOT: muxRoot },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      }
+    );
+    stdinProc.stdin.write('{"fromStdin":true}');
+    await stdinProc.stdin.end();
+    const [stdinStdout, stdinStderr, stdinExitCode] = await Promise.all([
+      new Response(stdinProc.stdout).text(),
+      new Response(stdinProc.stderr).text(),
+      stdinProc.exited,
+    ]);
+    expect(stdinExitCode).toBe(0);
+    expect(stdinStderr).toBe("");
+    const stdinEvent = JSON.parse(stdinStdout.trim()) as unknown;
+    expect(stdinEvent).toMatchObject({
+      type: "result",
+      status: "completed",
+      result: { reportMarkdown: 'Echo: {"fromStdin":true}' },
+    });
+
+    const failedRun =
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run explode --dir ${repo} -e dynamic-workflows`
+        .env({ ...process.env, MUX_ROOT: muxRoot })
+        .nothrow()
+        .quiet();
+    expect(failedRun.exitCode).toBe(1);
   });
 });

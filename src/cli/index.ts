@@ -61,11 +61,17 @@ if (subcommand === "run") {
   }
   process.argv.splice(env.firstArgIndex, 1); // Remove "workflow" since workflow.ts defines .name("mux workflow")
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const workflowCli = require("./workflow") as { main: () => Promise<number> };
-  void workflowCli.main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  });
+  const workflowCli = require("./workflow") as {
+    main: () => Promise<number>;
+    exitAfterStdoutFlush: (exitCode: number) => void;
+  };
+  void workflowCli
+    .main()
+    .then(workflowCli.exitAfterStdoutFlush)
+    .catch((error: unknown) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    });
 } else if (subcommand === "server") {
   process.argv.splice(env.firstArgIndex, 1);
   // eslint-disable-next-line @typescript-eslint/no-require-imports

@@ -5,7 +5,6 @@
 
 import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
-import * as fsSync from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
@@ -75,6 +74,8 @@ interface WorkflowCLIOptions {
   experiment: string[];
 }
 
+type WorkflowServices = ReturnType<typeof createCoreServices>;
+
 interface WorkflowContext {
   realConfig: Config;
   config: Config;
@@ -84,8 +85,9 @@ interface WorkflowContext {
   workspacePath: string;
   runtimeConfig: RuntimeConfig;
   projectTrusted: boolean;
-  services: ReturnType<typeof createCoreServices>;
+  services: WorkflowServices;
   session: AgentSession;
+  codexOauthService: CodexOauthService;
 }
 
 export function workflowExperimentEnabled(
@@ -244,18 +246,12 @@ function generateWorkspaceId(): string {
 
 async function copyPersistentConfig(realConfig: Config, config: Config): Promise<void> {
   const existingProviders = realConfig.loadProvidersConfig();
-  if (hasAnyConfiguredProvider(existingProviders)) {
-    fsSync.writeFileSync(
-      path.join(config.rootDir, "providers.jsonc"),
-      JSON.stringify(existingProviders, null, 2)
-    );
+  if (existingProviders != null && hasAnyConfiguredProvider(existingProviders)) {
+    config.saveProvidersConfig(existingProviders);
   }
   const existingSecrets = realConfig.loadSecretsConfig();
   if (Object.keys(existingSecrets).length > 0) {
-    fsSync.writeFileSync(
-      path.join(config.rootDir, "secrets.json"),
-      JSON.stringify(existingSecrets, null, 2)
-    );
+    await config.saveSecretsConfig(existingSecrets);
   }
 
   const existingConfig = realConfig.loadConfigOrDefault();
@@ -272,12 +268,74 @@ async function copyPersistentConfig(realConfig: Config, config: Config): Promise
 
 function buildExperimentsObject(experimentIds: readonly string[]) {
   return {
-    programmaticToolCalling: experimentIds.includes("programmatic-tool-calling"),
-    programmaticToolCallingExclusive: experimentIds.includes("programmatic-tool-calling-exclusive"),
-    execSubagentHardRestart: experimentIds.includes("exec-subagent-hard-restart"),
+    programmaticToolCalling: experimentIds.includes(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING),
+    programmaticToolCallingExclusive: experimentIds.includes(
+      EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
+    ),
+    execSubagentHardRestart: experimentIds.includes(EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART),
     dynamicWorkflows: true,
-    subagentFileReports: experimentIds.includes("subagent-file-reports"),
+    subagentFileReports: experimentIds.includes(EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS),
   };
+}
+
+function getProjectTrusted(realConfig: Config, projectDir: string): boolean {
+  return realConfig.loadConfigOrDefault().projects.get(projectDir)?.trusted ?? false;
+}
+
+function createDefinitionStore(input: {
+  realConfig: Config;
+  projectDir: string;
+}): WorkflowDefinitionStore {
+  const projectRoot = path.join(input.projectDir, ".mux", "workflows");
+  return new WorkflowDefinitionStore({
+    projectRoot,
+    scratchRoot: path.join(projectRoot, ".scratch"),
+    globalRoot: path.join(input.realConfig.rootDir, "workflows"),
+  });
+}
+
+async function disposeWorkflowResources(input: {
+  tempDir: DisposableTempDir;
+  services?: WorkflowServices;
+  session?: AgentSession;
+  codexOauthService?: CodexOauthService;
+}): Promise<void> {
+  try {
+    input.session?.dispose();
+  } catch (error) {
+    log.warn("mux workflow: failed to dispose session", { error: getErrorMessage(error) });
+  }
+  try {
+    input.services?.mcpServerManager.dispose();
+  } catch (error) {
+    log.warn("mux workflow: failed to dispose MCP server manager", {
+      error: getErrorMessage(error),
+    });
+  }
+  try {
+    await input.codexOauthService?.dispose();
+  } catch (error) {
+    log.warn("mux workflow: failed to dispose Codex OAuth service", {
+      error: getErrorMessage(error),
+    });
+  }
+  try {
+    await input.services?.backgroundProcessManager.terminateAll();
+  } catch (error) {
+    log.warn("mux workflow: failed to terminate background processes", {
+      error: getErrorMessage(error),
+    });
+  }
+  input.tempDir[Symbol.dispose]();
+}
+
+async function disposeWorkflowContext(ctx: WorkflowContext): Promise<void> {
+  await disposeWorkflowResources({
+    tempDir: ctx.tempDir,
+    services: ctx.services,
+    session: ctx.session,
+    codexOauthService: ctx.codexOauthService,
+  });
 }
 
 async function createWorkflowContext(options: {
@@ -285,6 +343,9 @@ async function createWorkflowContext(options: {
   projectDir: string;
 }): Promise<WorkflowContext> {
   const tempDir = new DisposableTempDir("mux-workflow");
+  let services: WorkflowServices | undefined;
+  let session: AgentSession | undefined;
+  let codexOauthService: CodexOauthService | undefined;
   try {
     const realConfig = new Config();
     const config = new Config(tempDir.path);
@@ -301,18 +362,17 @@ async function createWorkflowContext(options: {
     const workspaceId = generateWorkspaceId();
     assert(workspaceId.length > 0, "mux workflow generated an empty workspace id");
     const runtimeConfig = parseRuntimeConfig(options.opts.runtime);
-    const projectTrusted =
-      realConfig.loadConfigOrDefault().projects.get(options.projectDir)?.trusted ?? false;
+    const projectTrusted = getProjectTrusted(realConfig, options.projectDir);
 
-    const services = createCoreServices({
+    services = createCoreServices({
       config,
       extensionMetadataPath: path.join(tempDir.path, "extensionMetadata.json"),
       mcpConfig: realConfig,
     });
-    const codexOauthService = new CodexOauthService(config, services.providerService);
+    codexOauthService = new CodexOauthService(config, services.providerService);
     services.aiService.setCodexOauthService(codexOauthService);
 
-    const session = new AgentSession({
+    session = new AgentSession({
       workspaceId,
       config,
       historyService: services.historyService,
@@ -342,9 +402,10 @@ async function createWorkflowContext(options: {
       projectTrusted,
       services,
       session,
+      codexOauthService,
     };
   } catch (error) {
-    tempDir[Symbol.dispose]();
+    await disposeWorkflowResources({ tempDir, services, session, codexOauthService });
     throw error;
   }
 }
@@ -355,8 +416,6 @@ function createWorkflowService(input: {
   model: string;
   thinkingLevel: ParsedThinkingInput;
 }): WorkflowService {
-  const projectWorkflowRoot = path.join(input.ctx.projectDir, ".mux", "workflows");
-  const globalWorkflowRoot = path.join(input.ctx.realConfig.rootDir, "workflows");
   const projectActionRoot = path.join(input.ctx.projectDir, ".mux", "actions");
   const globalActionRoot = path.join(input.ctx.realConfig.rootDir, "actions");
   const experiments = buildExperimentsObject(input.opts.experiment);
@@ -368,10 +427,9 @@ function createWorkflowService(input: {
   const workspaceSessionDir = input.ctx.config.getSessionDir(input.ctx.workspaceId);
 
   return new WorkflowService({
-    definitionStore: new WorkflowDefinitionStore({
-      projectRoot: projectWorkflowRoot,
-      scratchRoot: path.join(projectWorkflowRoot, ".scratch"),
-      globalRoot: globalWorkflowRoot,
+    definitionStore: createDefinitionStore({
+      realConfig: input.ctx.realConfig,
+      projectDir: input.ctx.projectDir,
     }),
     actionRegistry: new WorkflowActionRegistry({
       projectRoot: projectActionRoot,
@@ -384,7 +442,7 @@ function createWorkflowService(input: {
         taskService: input.ctx.services.taskService,
         parentWorkspaceId: input.ctx.workspaceId,
         workflowRunId: runId,
-        defaultAgentId: "exec",
+        defaultAgentId: "explore",
         experiments,
         modelString: input.model,
         thinkingLevel: input.thinkingLevel,
@@ -411,13 +469,8 @@ async function runList(options: WorkflowCLIOptions): Promise<number> {
   });
   const realConfig = new Config();
   enforceWorkflowExperiment(realConfig, options.experiment);
-  const projectTrusted =
-    realConfig.loadConfigOrDefault().projects.get(projectDir)?.trusted ?? false;
-  const store = new WorkflowDefinitionStore({
-    projectRoot: path.join(projectDir, ".mux", "workflows"),
-    scratchRoot: path.join(projectDir, ".mux", "workflows", ".scratch"),
-    globalRoot: path.join(realConfig.rootDir, "workflows"),
-  });
+  const projectTrusted = getProjectTrusted(realConfig, projectDir);
+  const store = createDefinitionStore({ realConfig, projectDir });
   const definitions = await store.listDefinitions({ projectTrusted });
   if (options.json) {
     process.stdout.write(`${JSON.stringify(definitions)}\n`);
@@ -439,13 +492,8 @@ async function runShow(
   });
   const realConfig = new Config();
   enforceWorkflowExperiment(realConfig, options.experiment);
-  const projectTrusted =
-    realConfig.loadConfigOrDefault().projects.get(projectDir)?.trusted ?? false;
-  const store = new WorkflowDefinitionStore({
-    projectRoot: path.join(projectDir, ".mux", "workflows"),
-    scratchRoot: path.join(projectDir, ".mux", "workflows", ".scratch"),
-    globalRoot: path.join(realConfig.rootDir, "workflows"),
-  });
+  const projectTrusted = getProjectTrusted(realConfig, projectDir);
+  const store = createDefinitionStore({ realConfig, projectDir });
   const definition = await store.readDefinition(name, { projectTrusted });
   if (options.json) {
     process.stdout.write(`${JSON.stringify(definition)}\n`);
@@ -477,10 +525,12 @@ async function runWorkflow(
   const realConfig = new Config();
   enforceWorkflowExperiment(realConfig, options.experiment);
   parseRuntimeConfig(options.runtime);
+  const store = createDefinitionStore({ realConfig, projectDir });
   await assertProjectWorkflowTrusted({
     name,
+    store,
     projectDir,
-    projectTrusted: realConfig.loadConfigOrDefault().projects.get(projectDir)?.trusted ?? false,
+    projectTrusted: getProjectTrusted(realConfig, projectDir),
   });
 
   const args = await parseWorkflowArgs({
@@ -529,12 +579,13 @@ async function runWorkflow(
 
     return run?.status === "failed" || run?.status === "interrupted" ? 1 : 0;
   } finally {
-    ctx.tempDir[Symbol.dispose]();
+    await disposeWorkflowContext(ctx);
   }
 }
 
 async function assertProjectWorkflowTrusted(input: {
   name: string;
+  store: WorkflowDefinitionStore;
   projectDir: string;
   projectTrusted: boolean;
 }): Promise<void> {
@@ -544,6 +595,10 @@ async function assertProjectWorkflowTrusted(input: {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(input.name)) {
     return;
   }
+  if (await hasRunnableNonProjectWorkflow(input.store, input.name)) {
+    return;
+  }
+
   const workflowPath = path.join(input.projectDir, ".mux", "workflows", `${input.name}.js`);
   try {
     const stat = await fs.stat(workflowPath);
@@ -556,7 +611,36 @@ async function assertProjectWorkflowTrusted(input: {
     if (error instanceof Error && error.message.startsWith("Project trust is required")) {
       throw error;
     }
+    if (getNodeErrorCode(error) !== "ENOENT") {
+      log.debug("mux workflow: unable to inspect untrusted project workflow candidate", {
+        workflowPath,
+        error: getErrorMessage(error),
+      });
+    }
   }
+}
+
+async function hasRunnableNonProjectWorkflow(
+  store: WorkflowDefinitionStore,
+  name: string
+): Promise<boolean> {
+  try {
+    const definition = await store.readDefinition(name, { projectTrusted: false });
+    return definition.descriptor.scope !== "project" && definition.descriptor.scope !== "scratch";
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Workflow definition not found")) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function getNodeErrorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error == null || !("code" in error)) {
+    return null;
+  }
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
 }
 
 function extractReportMarkdown(result: unknown): string {
@@ -591,6 +675,20 @@ function configureLogging(options: Pick<WorkflowCLIOptions, "logLevel" | "verbos
     throw new Error(`Invalid log level "${options.logLevel}". Expected: error, warn, info, debug`);
   }
   log.setLevel(level as LogLevel);
+}
+
+export function exitAfterStdoutFlush(exitCode: number): void {
+  if (process.stdout.writableNeedDrain) {
+    const exit = () => process.exit(exitCode);
+    process.stdout.once("drain", exit);
+    // process.exit() can drop buffered stdout, but broken pipes or stuck
+    // backpressure should not keep a completed headless workflow alive.
+    process.stdout.once("error", exit);
+    process.stdout.once("close", exit);
+    setTimeout(exit, 1000).unref();
+    return;
+  }
+  process.exit(exitCode);
 }
 
 export async function main(): Promise<number> {
@@ -661,8 +759,10 @@ export async function main(): Promise<number> {
 }
 
 if (require.main === module) {
-  main().catch((error: unknown) => {
-    console.error(`Error: ${getErrorMessage(error)}`);
-    process.exit(1);
-  });
+  main()
+    .then(exitAfterStdoutFlush)
+    .catch((error: unknown) => {
+      console.error(`Error: ${getErrorMessage(error)}`);
+      process.exit(1);
+    });
 }
