@@ -4850,12 +4850,40 @@ export class AgentSession {
     return this.isPreparingTurn();
   }
 
-  async waitForIdle(): Promise<void> {
+  async waitForIdle(signal?: AbortSignal): Promise<void> {
+    assert(
+      signal == null || typeof signal.aborted === "boolean",
+      "waitForIdle signal must be an AbortSignal"
+    );
+    if (signal?.aborted === true) {
+      throw new Error("Waiting for session idle canceled.");
+    }
     if (this.turnPhase === TurnPhase.IDLE) {
       return;
     }
 
-    await new Promise<void>((resolve) => this.idleWaiters.push(resolve));
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const settle = (callback: () => void) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        signal?.removeEventListener("abort", abort);
+        callback();
+      };
+      const waiter = () => settle(resolve);
+      const abort = () => {
+        const waiterIndex = this.idleWaiters.indexOf(waiter);
+        if (waiterIndex !== -1) {
+          this.idleWaiters.splice(waiterIndex, 1);
+        }
+        settle(() => reject(new Error("Waiting for session idle canceled.")));
+      };
+
+      this.idleWaiters.push(waiter);
+      signal?.addEventListener("abort", abort, { once: true });
+    });
   }
 
   queueMessage(

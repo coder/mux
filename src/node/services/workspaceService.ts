@@ -473,39 +473,19 @@ function isArchiveLossyUntrackedFilesConfirmation(
   );
 }
 
-function waitForAgentSessionIdle(session: AgentSession, signal?: AbortSignal): Promise<void> {
+const WORKSPACE_IDLE_WAIT_CANCELED_MESSAGE =
+  "Workflow start canceled while waiting for workspace to become idle.";
+
+async function waitForAgentSessionIdle(session: AgentSession, signal?: AbortSignal): Promise<void> {
   assert(session instanceof AgentSession, "waitForAgentSessionIdle requires an AgentSession");
-  if (signal?.aborted === true) {
-    return Promise.reject(
-      new Error("Workflow start canceled while waiting for workspace to become idle.")
-    );
+  try {
+    await session.waitForIdle(signal);
+  } catch (error) {
+    if (signal?.aborted === true) {
+      throw new Error(WORKSPACE_IDLE_WAIT_CANCELED_MESSAGE);
+    }
+    throw new Error(getErrorMessage(error));
   }
-  if (signal == null) {
-    return session.waitForIdle();
-  }
-
-  return new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const settle = (callback: () => void) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      signal.removeEventListener("abort", abort);
-      callback();
-    };
-    const abort = () => {
-      settle(() =>
-        reject(new Error("Workflow start canceled while waiting for workspace to become idle."))
-      );
-    };
-
-    signal.addEventListener("abort", abort, { once: true });
-    session.waitForIdle().then(
-      () => settle(resolve),
-      (error: unknown) => settle(() => reject(new Error(getErrorMessage(error))))
-    );
-  });
 }
 
 interface FileCompletionsCacheEntry {
@@ -2165,7 +2145,7 @@ export class WorkspaceService extends EventEmitter {
 
     for (;;) {
       if (options?.signal?.aborted === true) {
-        throw new Error("Workflow start canceled while waiting for workspace to become idle.");
+        throw new Error(WORKSPACE_IDLE_WAIT_CANCELED_MESSAGE);
       }
 
       const session =
