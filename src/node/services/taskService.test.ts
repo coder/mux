@@ -547,6 +547,49 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  test("createMany launch failure preserves returned task metadata and launch error", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const sendMessage = mock((): Promise<Result<void>> => Promise.resolve(Err("Forbidden")));
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const result = await taskService.createMany([
+      {
+        parentWorkspaceId: parentId,
+        kind: "agent",
+        agentId: "explore",
+        prompt: "launch should fail",
+        title: "Failing task",
+      },
+    ]);
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const taskId = result.data[0]?.taskId;
+    assert(typeof taskId === "string" && taskId.length > 0, "created task id is required");
+
+    let launchError: unknown;
+    try {
+      await taskService.waitForAgentReport(taskId, {
+        timeoutMs: 10_000,
+        requestingWorkspaceId: parentId,
+      });
+    } catch (error: unknown) {
+      launchError = error;
+    }
+    assert(launchError instanceof Error, "waitForAgentReport should reject with launch error");
+    expect(launchError.message).toContain("Forbidden");
+
+    const taskEntry = Array.from(config.loadConfigOrDefault().projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === taskId);
+    expect(taskEntry?.taskStatus).toBe("interrupted");
+    expect(taskEntry?.taskLaunchError).toBe("Forbidden");
+  });
+
   test("queues tasks when maxParallelAgentTasks is reached and starts them when a slot frees", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc", "dddddddddd"], "eeeeeeeeee");

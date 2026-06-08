@@ -60,6 +60,7 @@ import {
   getSectionExpandedKey,
   getSectionTierKey,
   resolveEffectiveSectionId,
+  isRunningOrStartingTaskStatus,
   type AgentRowRenderMeta,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
@@ -2587,7 +2588,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                   let lastRunningSiblingIndex = -1;
                                   for (let index = siblings.length - 1; index >= 0; index -= 1) {
-                                    if (siblings[index]?.taskStatus === "running") {
+                                    if (
+                                      isRunningOrStartingTaskStatus(siblings[index]?.taskStatus)
+                                    ) {
                                       lastRunningSiblingIndex = index;
                                       break;
                                     }

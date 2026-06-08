@@ -106,6 +106,7 @@ import {
   computeOperationalBundleInfos,
   computeWorkBundleInfos,
 } from "@/browser/utils/messages/transcriptRenderProjection";
+import { isBlockedPreStreamTaskStatus } from "@/browser/utils/ui/workspaceFiltering";
 import { recordSyntheticReactRenderSample } from "@/browser/utils/perf/reactProfileCollector";
 
 // Perf e2e runs load the production bundle where React's onRender profiler callbacks may not
@@ -321,9 +322,13 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   // so the transcript stays readable while new sends remain disabled.
   const meta = workspaceMetadata.get(workspaceId);
   const transcriptOnly = meta?.transcriptOnly ?? false;
-  const isQueuedAgentTask = Boolean(meta?.parentWorkspaceId) && meta?.taskStatus === "queued";
+  const isPreStreamAgentTask =
+    Boolean(meta?.parentWorkspaceId) && isBlockedPreStreamTaskStatus(meta?.taskStatus);
+  const preStreamAgentTaskLabel = meta?.taskStatus === "starting" ? "Starting" : "Queued";
   const queuedAgentTaskPrompt =
-    isQueuedAgentTask && typeof meta?.taskPrompt === "string" && meta.taskPrompt.trim().length > 0
+    isPreStreamAgentTask &&
+    typeof meta?.taskPrompt === "string" &&
+    meta.taskPrompt.trim().length > 0
       ? meta.taskPrompt
       : null;
   const shouldShowQueuedAgentTaskPrompt =
@@ -1048,7 +1053,9 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
         node: (
           <div className="mt-4 mb-1 ml-auto w-fit max-w-full">
             <div className="rounded-lg border border-[var(--color-user-border)] bg-[var(--color-user-surface)] px-3 py-2 text-sm">
-              <div className="text-muted mb-1 text-[11px] font-medium">Queued</div>
+              <div className="text-muted mb-1 text-[11px] font-medium">
+                {preStreamAgentTaskLabel}
+              </div>
               <MarkdownRenderer
                 content={queuedAgentTaskPrompt ?? ""}
                 className="user-message-markdown text-foreground"
@@ -1528,7 +1535,8 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
               isTranscriptCaughtUp={isTranscriptCaughtUp}
               isHydratingTranscript={isHydratingTranscript}
               runtimeConfig={runtimeConfig}
-              isQueuedAgentTask={isQueuedAgentTask}
+              isPreStreamAgentTask={isPreStreamAgentTask}
+              preStreamAgentTaskStatus={meta?.taskStatus === "starting" ? "starting" : "queued"}
               isCompacting={isCompacting}
               shouldShowPinnedTodoList={shouldShowPinnedTodoList}
               shouldShowReviewsBanner={shouldShowReviewsBanner}
@@ -1580,7 +1588,8 @@ interface ChatInputPaneProps {
   projectName: string;
   workspaceName: string;
   runtimeConfig?: RuntimeConfig;
-  isQueuedAgentTask: boolean;
+  isPreStreamAgentTask: boolean;
+  preStreamAgentTaskStatus: "queued" | "starting";
   isCompacting: boolean;
   isStreamStarting: boolean;
   isTranscriptCaughtUp: boolean;
@@ -1695,12 +1704,14 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
       ),
     });
   }
-  if (props.isQueuedAgentTask) {
+  if (props.isPreStreamAgentTask) {
     addDecorationEntry({
-      key: "queued-agent-task",
+      key: "pre-stream-agent-task",
       node: (
         <div className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs">
-          This agent task is queued and will start automatically when a parallel slot is available.
+          {props.preStreamAgentTaskStatus === "starting"
+            ? "This agent task is starting and will become editable after launch accepts the initial prompt."
+            : "This agent task is queued and will start automatically when a parallel slot is available."}
         </div>
       ),
     });
@@ -1726,10 +1737,12 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onResetContext={props.onResetContext}
         onTruncateHistory={props.onTruncateHistory}
         onModelChange={props.onModelChange}
-        disabled={!props.projectName || !props.workspaceName || props.isQueuedAgentTask}
+        disabled={!props.projectName || !props.workspaceName || props.isPreStreamAgentTask}
         disabledReason={
-          props.isQueuedAgentTask
-            ? "Queued - waiting for an available parallel task slot. This will start automatically."
+          props.isPreStreamAgentTask
+            ? props.preStreamAgentTaskStatus === "starting"
+              ? "Starting - waiting for launch to accept the initial prompt."
+              : "Queued - waiting for an available parallel task slot. This will start automatically."
             : undefined
         }
         isTranscriptCaughtUp={props.isTranscriptCaughtUp}

@@ -56,7 +56,10 @@ interface WorkflowTaskServiceLike {
       experiments?: WorkflowTaskExperiments;
       modelString?: string;
       thinkingLevel?: ParsedThinkingInput;
-    }>
+    }>,
+    options?: {
+      onTaskReserved?: (index: number, result: TaskCreateResult) => Promise<void> | void;
+    }
   ): Promise<{ success: true; data: TaskCreateResult[] } | { success: false; error: string }>;
   waitForAgentReport(
     taskId: string,
@@ -217,7 +220,13 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     }
 
     const createResult = await this.taskService.createMany(
-      specs.map((spec) => this.buildCreateArgs(spec))
+      specs.map((spec) => this.buildCreateArgs(spec)),
+      {
+        onTaskReserved: async (index, result) => {
+          assert(result.taskId.length > 0, "createAgentTasks: taskId is required");
+          await lifecycle?.onTaskCreated?.(index, result.taskId);
+        },
+      }
     );
     if (!createResult.success) {
       throw new Error(createResult.error);
@@ -227,9 +236,8 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     }
 
     const created: Array<{ taskId: string; status: "queued" | "starting" | "running" }> = [];
-    for (const [index, result] of createResult.data.entries()) {
+    for (const result of createResult.data) {
       assert(result.taskId.length > 0, "createAgentTasks: taskId is required");
-      await lifecycle?.onTaskCreated?.(index, result.taskId);
       created.push({ taskId: result.taskId, status: result.status });
     }
     return created;

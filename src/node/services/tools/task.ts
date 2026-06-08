@@ -294,9 +294,11 @@ function normalizePendingTaskStatuses(params: {
       status:
         currentStatus === "queued"
           ? "queued"
-          : currentStatus === "interrupted"
-            ? "interrupted"
-            : "running",
+          : currentStatus === "starting"
+            ? "starting"
+            : currentStatus === "interrupted"
+              ? "interrupted"
+              : "running",
       groupKind: createdTask.groupKind,
       label: createdTask.label,
     };

@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/require-await */
+import assert from "node:assert/strict";
 import { describe, expect, mock, test } from "bun:test";
 import { Ok } from "@/common/types/result";
+import type { TaskCreateResult } from "@/node/services/taskService";
 import { WorkflowTaskServiceAdapter } from "./WorkflowTaskServiceAdapter";
 
 describe("WorkflowTaskServiceAdapter", () => {
@@ -128,11 +130,22 @@ describe("WorkflowTaskServiceAdapter", () => {
   });
 
   test("bulk creates workflow child tasks with workflow metadata", async () => {
-    const createMany = mock(async (_args: unknown[]) =>
-      Ok([
-        { taskId: "task_1", kind: "agent" as const, status: "starting" as const },
-        { taskId: "task_2", kind: "agent" as const, status: "queued" as const },
-      ])
+    const createMany = mock(
+      async (
+        _args: unknown[],
+        options?: {
+          onTaskReserved?: (index: number, result: TaskCreateResult) => Promise<void> | void;
+        }
+      ) => {
+        const results = [
+          { taskId: "task_1", kind: "agent" as const, status: "starting" as const },
+          { taskId: "task_2", kind: "agent" as const, status: "queued" as const },
+        ];
+        for (const [index, result] of results.entries()) {
+          await options?.onTaskReserved?.(index, result);
+        }
+        return Ok(results);
+      }
     );
     const create = mock(async () =>
       Ok({ taskId: "unused", kind: "agent" as const, status: "running" as const })
@@ -167,7 +180,7 @@ describe("WorkflowTaskServiceAdapter", () => {
       [0, "task_1"],
       [1, "task_2"],
     ]);
-    expect(createMany).toHaveBeenCalledWith([
+    expect(createMany.mock.calls[0]?.[0]).toEqual([
       {
         parentWorkspaceId: "parent_1",
         kind: "agent",
@@ -187,6 +200,11 @@ describe("WorkflowTaskServiceAdapter", () => {
         experiments: { dynamicWorkflows: true },
       },
     ]);
+    const createManyOptions: unknown = createMany.mock.calls[0]?.[1];
+    assert(createManyOptions != null && typeof createManyOptions === "object");
+    expect(typeof (createManyOptions as { onTaskReserved?: unknown }).onTaskReserved).toBe(
+      "function"
+    );
   });
 
   test("passes workflow wait options into report waits", async () => {

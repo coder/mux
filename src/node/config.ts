@@ -1382,7 +1382,7 @@ export class Config {
     }
 
     // Mark worktree workspaces with missing checkout directories as transcript-only.
-    // Queued agent tasks can briefly exist without a provisioned checkout, so keep
+    // Queued/starting agent tasks can briefly exist without a provisioned checkout, so keep
     // those workspaces interactive until the checkout is created.
     const workspacePathExists = await fs.promises
       .access(workspacePath)
@@ -1391,6 +1391,7 @@ export class Config {
     if (
       isWorktreeRuntime(metadata.runtimeConfig) &&
       metadata.taskStatus !== "queued" &&
+      metadata.taskStatus !== "starting" &&
       !workspacePathExists
     ) {
       result.transcriptOnly = true;

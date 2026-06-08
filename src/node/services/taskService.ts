@@ -300,6 +300,19 @@ interface TaskLaunchPlan {
   experiments?: TaskCreateArgs["experiments"];
 }
 
+interface TaskCreateManyOptions {
+  onTaskReserved?: (index: number, result: TaskCreateResult) => Promise<void> | void;
+}
+
+interface MaterializedTaskLaunch {
+  workspacePath: string;
+  trunkBranch: string;
+  forkedRuntimeConfig: RuntimeConfig;
+  runtimeForTaskWorkspace: Runtime;
+  inheritedProjects: WorkspaceMetadata["projects"];
+  sourceRuntimeConfigUpdate?: RuntimeConfig;
+}
+
 export interface TerminateAgentTaskResult {
   /** Task IDs terminated (includes descendants). */
   terminatedTaskIds: string[];
@@ -669,6 +682,16 @@ function getIsoNow(): string {
   return new Date().toISOString();
 }
 
+async function runtimePathExists(runtime: Runtime, path: string): Promise<boolean> {
+  assert(path.length > 0, "runtimePathExists: path must be non-empty");
+  try {
+    await runtime.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function readTaskBaseCommitShaByProjectPath(params: {
   workspaceId: string;
   workspaceName: string;
@@ -717,6 +740,9 @@ export class TaskService {
   private readonly deferredBestOfLocks = new MutexMap<string>();
   private readonly mutex = new AsyncMutex();
   private maybeStartQueuedTasksInFlight: Promise<void> | undefined;
+  private maybeStartQueuedTasksRerunRequested = false;
+  // Git worktree creation touches per-repository metadata; serialize that narrow phase per project
+  // while allowing post-fork init/send startup work for sibling tasks to overlap.
   private readonly reservedTaskLaunchByProjectPath = new Map<string, Promise<void>>();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
   private readonly pendingStartWaitersByTaskId = new Map<string, PendingTaskStartWaiter[]>();
@@ -1476,7 +1502,10 @@ export class TaskService {
     };
   }
 
-  async createMany(argsList: TaskCreateArgs[]): Promise<Result<TaskCreateResult[], string>> {
+  async createMany(
+    argsList: TaskCreateArgs[],
+    options: TaskCreateManyOptions = {}
+  ): Promise<Result<TaskCreateResult[], string>> {
     if (argsList.length === 0) {
       return Ok([]);
     }
@@ -1682,6 +1711,13 @@ export class TaskService {
       results.push({ taskId, kind: "agent", status });
     }
 
+    for (const [index, result] of results.entries()) {
+      // Workflow callers durably checkpoint returned task IDs before task records are persisted.
+      // If config persistence fails afterward, replay sees a started step whose task is not found
+      // and restarts it instead of duplicating an already-launched child after a crash.
+      await options.onTaskReserved?.(index, result);
+    }
+
     await this.config.editConfig((config) => {
       for (const plan of plans) {
         const runtime = createRuntimeForWorkspace({
@@ -1745,6 +1781,166 @@ export class TaskService {
     return Ok(results);
   }
 
+  private async cleanupMaterializedTaskWorkspace(
+    runtime: Runtime,
+    projectPath: string,
+    workspaceName: string,
+    taskId: string
+  ): Promise<void> {
+    assert(projectPath.length > 0, "cleanupMaterializedTaskWorkspace requires projectPath");
+    assert(workspaceName.length > 0, "cleanupMaterializedTaskWorkspace requires workspaceName");
+    assert(taskId.length > 0, "cleanupMaterializedTaskWorkspace requires taskId");
+
+    try {
+      const deleteResult = await runtime.deleteWorkspace(projectPath, workspaceName, true);
+      if (!deleteResult.success) {
+        log.error("Task launch cleanup: failed to delete materialized workspace", {
+          taskId,
+          error: deleteResult.error,
+        });
+      }
+    } catch (error: unknown) {
+      log.error("Task launch cleanup: runtime.deleteWorkspace threw", {
+        taskId,
+        error: getErrorMessage(error),
+      });
+    }
+
+    try {
+      const sessionDir = this.config.getSessionDir(taskId);
+      await fsPromises.rm(sessionDir, { recursive: true, force: true });
+    } catch (error: unknown) {
+      log.error("Task launch cleanup: failed to remove session directory", {
+        taskId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  private async getExistingMaterializedTaskLaunch(
+    plan: TaskLaunchPlan,
+    sourceRuntime: Runtime,
+    workspace: WorkspaceConfigEntry
+  ): Promise<MaterializedTaskLaunch | null> {
+    const workspacePath =
+      coerceNonEmptyString(workspace.path) ??
+      sourceRuntime.getWorkspacePath(plan.parentMeta.projectPath, plan.workspaceName);
+    if (!(await runtimePathExists(sourceRuntime, workspacePath))) {
+      return null;
+    }
+
+    const forkedRuntimeConfig = workspace.runtimeConfig ?? plan.taskRuntimeConfig;
+    const runtimeForTaskWorkspace = createRuntimeForWorkspace({
+      runtimeConfig: forkedRuntimeConfig,
+      projectPath: plan.parentMeta.projectPath,
+      name: plan.workspaceName,
+      namedWorkspacePath: workspacePath,
+    });
+    const trunkBranch =
+      coerceNonEmptyString(workspace.taskTrunkBranch) ??
+      coerceNonEmptyString(plan.preferredTrunkBranch) ??
+      coerceNonEmptyString(plan.parentMeta.name) ??
+      plan.workspaceName;
+
+    return {
+      workspacePath,
+      trunkBranch,
+      forkedRuntimeConfig,
+      runtimeForTaskWorkspace,
+      inheritedProjects: workspace.projects ?? plan.parentMeta.projects,
+    };
+  }
+
+  private async runProjectForkExclusive<T>(projectPath: string, fn: () => Promise<T>): Promise<T> {
+    assert(projectPath.length > 0, "runProjectForkExclusive requires projectPath");
+
+    const previousLaunch =
+      this.reservedTaskLaunchByProjectPath.get(projectPath) ?? Promise.resolve();
+    const run = previousLaunch.catch(() => undefined).then(fn);
+    const trackedLaunch = run
+      .then(
+        () => undefined,
+        () => undefined
+      )
+      .finally(() => {
+        if (this.reservedTaskLaunchByProjectPath.get(projectPath) === trackedLaunch) {
+          this.reservedTaskLaunchByProjectPath.delete(projectPath);
+        }
+      });
+    this.reservedTaskLaunchByProjectPath.set(projectPath, trackedLaunch);
+    return await run;
+  }
+
+  private async materializeReservedTaskWorkspace(
+    plan: TaskLaunchPlan,
+    sourceRuntime: Runtime,
+    initLogger: InitLogger
+  ): Promise<MaterializedTaskLaunch | null> {
+    const entry = findWorkspaceEntry(this.config.loadConfigOrDefault(), plan.taskId);
+    if (entry?.workspace.taskStatus !== "starting") {
+      return null;
+    }
+
+    const existing = await this.getExistingMaterializedTaskLaunch(
+      plan,
+      sourceRuntime,
+      entry.workspace
+    );
+    if (existing) {
+      taskQueueDebug("TaskService.startReservedAgentTask reusing materialized workspace", {
+        taskId: plan.taskId,
+        workspacePath: existing.workspacePath,
+      });
+      return existing;
+    }
+
+    const projectPath = stripTrailingSlashes(plan.parentMeta.projectPath);
+    return await this.runProjectForkExclusive(projectPath, async () => {
+      const entryBeforeFork = findWorkspaceEntry(this.config.loadConfigOrDefault(), plan.taskId);
+      if (entryBeforeFork?.workspace.taskStatus !== "starting") {
+        return null;
+      }
+
+      const forkResult = await orchestrateFork({
+        sourceRuntime,
+        projectPath: plan.parentMeta.projectPath,
+        sourceWorkspaceName: plan.parentMeta.name,
+        newWorkspaceName: plan.workspaceName,
+        initLogger,
+        config: this.config,
+        sourceWorkspaceId: plan.parentWorkspaceId,
+        sourceRuntimeConfig: plan.parentRuntimeConfig,
+        parentMetadata: plan.parentMeta,
+        allowCreateFallback: true,
+        ...(plan.preferredTrunkBranch != null
+          ? { preferredTrunkBranch: plan.preferredTrunkBranch }
+          : {}),
+        trusted:
+          this.config
+            .loadConfigOrDefault()
+            .projects.get(stripTrailingSlashes(plan.parentMeta.projectPath))?.trusted ?? false,
+        multiProjectExperimentEnabled: this.workspaceService.isExperimentEnabled(
+          EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
+        ),
+      });
+
+      if (!forkResult.success) {
+        throw new Error(`Task fork failed: ${forkResult.error}`);
+      }
+
+      return {
+        workspacePath: forkResult.data.workspacePath,
+        trunkBranch: forkResult.data.trunkBranch,
+        forkedRuntimeConfig: forkResult.data.forkedRuntimeConfig,
+        runtimeForTaskWorkspace: forkResult.data.targetRuntime,
+        inheritedProjects: forkResult.data.projects,
+        ...(forkResult.data.sourceRuntimeConfigUpdate != null
+          ? { sourceRuntimeConfigUpdate: forkResult.data.sourceRuntimeConfigUpdate }
+          : {}),
+      };
+    });
+  }
+
   private scheduleReservedTaskLaunch(plan: TaskLaunchPlan): void {
     assert(plan.taskId.length > 0, "scheduleReservedTaskLaunch requires taskId");
     void this.enqueueReservedTaskLaunch(plan).catch((error: unknown) => {
@@ -1791,48 +1987,51 @@ export class TaskService {
       name: plan.parentMeta.name,
     });
 
-    const forkResult = await orchestrateFork({
-      sourceRuntime: runtime,
-      projectPath: plan.parentMeta.projectPath,
-      sourceWorkspaceName: plan.parentMeta.name,
-      newWorkspaceName: plan.workspaceName,
-      initLogger,
-      config: this.config,
-      sourceWorkspaceId: plan.parentWorkspaceId,
-      sourceRuntimeConfig: plan.parentRuntimeConfig,
-      parentMetadata: plan.parentMeta,
-      allowCreateFallback: true,
-      ...(plan.preferredTrunkBranch != null
-        ? { preferredTrunkBranch: plan.preferredTrunkBranch }
-        : {}),
-      trusted:
-        this.config
-          .loadConfigOrDefault()
-          .projects.get(stripTrailingSlashes(plan.parentMeta.projectPath))?.trusted ?? false,
-      multiProjectExperimentEnabled: this.workspaceService.isExperimentEnabled(
-        EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
-      ),
-    });
-
-    if (forkResult.success && forkResult.data.sourceRuntimeConfigUpdate) {
-      await this.config.updateWorkspaceMetadata(plan.parentWorkspaceId, {
-        runtimeConfig: forkResult.data.sourceRuntimeConfigUpdate,
-      });
-      await this.emitWorkspaceMetadata(plan.parentWorkspaceId);
+    let materialized: MaterializedTaskLaunch | null;
+    try {
+      materialized = await this.materializeReservedTaskWorkspace(plan, runtime, initLogger);
+    } catch (error: unknown) {
+      initLogger.logComplete(-1);
+      throw error;
+    }
+    if (!materialized) {
+      initLogger.logComplete(-1);
+      return;
     }
 
-    if (!forkResult.success) {
+    const entryAfterMaterialize = findWorkspaceEntry(
+      this.config.loadConfigOrDefault(),
+      plan.taskId
+    );
+    if (!entryAfterMaterialize) {
       initLogger.logComplete(-1);
-      throw new Error(`Task fork failed: ${forkResult.error}`);
+      await this.cleanupMaterializedTaskWorkspace(
+        materialized.runtimeForTaskWorkspace,
+        plan.parentMeta.projectPath,
+        plan.workspaceName,
+        plan.taskId
+      );
+      return;
+    }
+    if (entryAfterMaterialize.workspace.taskStatus !== "starting") {
+      initLogger.logComplete(-1);
+      return;
+    }
+
+    if (materialized.sourceRuntimeConfigUpdate) {
+      await this.config.updateWorkspaceMetadata(plan.parentWorkspaceId, {
+        runtimeConfig: materialized.sourceRuntimeConfigUpdate,
+      });
+      await this.emitWorkspaceMetadata(plan.parentWorkspaceId);
     }
 
     const {
       workspacePath,
       trunkBranch,
       forkedRuntimeConfig,
-      targetRuntime: runtimeForTaskWorkspace,
-      projects: inheritedProjects,
-    } = forkResult.data;
+      runtimeForTaskWorkspace,
+      inheritedProjects,
+    } = materialized;
 
     this.configureMultiProjectRuntimeEnvResolver(runtimeForTaskWorkspace);
     const taskBaseCommitShaByProjectPath = await readTaskBaseCommitShaByProjectPath({
@@ -1865,7 +2064,18 @@ export class TaskService {
     await this.emitWorkspaceMetadata(plan.taskId);
 
     const entryBeforeSend = findWorkspaceEntry(this.config.loadConfigOrDefault(), plan.taskId);
-    if (entryBeforeSend?.workspace.taskStatus !== "starting") {
+    if (!entryBeforeSend) {
+      initLogger.logComplete(-1);
+      await this.cleanupMaterializedTaskWorkspace(
+        runtimeForTaskWorkspace,
+        plan.parentMeta.projectPath,
+        plan.workspaceName,
+        plan.taskId
+      );
+      return;
+    }
+    if (entryBeforeSend.workspace.taskStatus !== "starting") {
+      initLogger.logComplete(-1);
       return;
     }
 
@@ -1907,7 +2117,7 @@ export class TaskService {
         typeof sendResult.error === "string"
           ? sendResult.error
           : formatSendMessageError(sendResult.error).message;
-      await this.rollbackFailedTaskCreate(
+      await this.cleanupMaterializedTaskWorkspace(
         runtimeForTaskWorkspace,
         plan.parentMeta.projectPath,
         plan.workspaceName,
@@ -3613,17 +3823,30 @@ export class TaskService {
   }
 
   async maybeStartQueuedTasks(): Promise<void> {
-    // A foreground task waiter registers itself in waitForAgentReport's async setup. Yield once so
-    // immediate scheduler calls from the same turn see that foreground-awaiting state and avoid a
-    // nested-task deadlock at maxParallelAgentTasks=1.
-    await Promise.resolve();
     const existingRun = this.maybeStartQueuedTasksInFlight;
     if (existingRun != null) {
+      this.maybeStartQueuedTasksRerunRequested = true;
       await existingRun;
       return;
     }
 
-    const run = this.maybeStartQueuedTasksFromReservations().finally(() => {
+    // A foreground task waiter registers itself in waitForAgentReport's async setup. Yield once so
+    // immediate scheduler calls from the same turn see that foreground-awaiting state and avoid a
+    // nested-task deadlock at maxParallelAgentTasks=1.
+    await Promise.resolve();
+    const existingRunAfterYield = this.maybeStartQueuedTasksInFlight;
+    if (existingRunAfterYield != null) {
+      this.maybeStartQueuedTasksRerunRequested = true;
+      await existingRunAfterYield;
+      return;
+    }
+
+    const run = (async () => {
+      do {
+        this.maybeStartQueuedTasksRerunRequested = false;
+        await this.maybeStartQueuedTasksFromReservations();
+      } while (this.maybeStartQueuedTasksRerunRequested);
+    })().finally(() => {
       if (this.maybeStartQueuedTasksInFlight === run) {
         this.maybeStartQueuedTasksInFlight = undefined;
       }
@@ -3656,22 +3879,27 @@ export class TaskService {
           const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
           const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
           return aTime - bTime;
-        })
-        .slice(0, availableSlots);
+        });
 
+      let reservedSlots = 0;
       for (const task of queuedTasks) {
+        if (reservedSlots >= availableSlots) {
+          break;
+        }
         const taskId = task.id;
         assert(taskId != null && taskId.length > 0, "queued task id is required");
         if (this.aiService.isStreaming(taskId)) {
           await this.setTaskStatus(taskId, "running");
+          reservedSlots += 1;
           continue;
         }
 
         const queuedPrompt = coerceNonEmptyString(task.taskPrompt);
         if (!queuedPrompt) {
-          taskQueueDebug("TaskService.maybeStartQueuedTasks skipping legacy queued task", {
+          taskQueueDebug("TaskService.maybeStartQueuedTasks failing legacy queued task", {
             taskId,
           });
+          await this.markTaskLaunchFailed(taskId, "Queued task missing taskPrompt");
           continue;
         }
 
@@ -3781,6 +4009,7 @@ export class TaskService {
         await this.editWorkspaceEntry(taskId, (workspace) => {
           workspace.taskStatus = "starting";
         });
+        reservedSlots += 1;
 
         plans.push({
           taskId,
@@ -3806,30 +4035,21 @@ export class TaskService {
       }
     }
 
-    for (const plan of plans) {
-      await this.enqueueReservedTaskLaunch(plan);
-    }
+    await Promise.allSettled(
+      plans.map(async (plan) => {
+        try {
+          await this.enqueueReservedTaskLaunch(plan);
+        } catch (error: unknown) {
+          log.error("Failed to launch dequeued task", { taskId: plan.taskId, error });
+          await this.markTaskLaunchFailed(plan.taskId, getErrorMessage(error));
+        }
+      })
+    );
   }
 
   private async enqueueReservedTaskLaunch(plan: TaskLaunchPlan): Promise<void> {
     assert(plan.taskId.length > 0, "enqueueReservedTaskLaunch requires taskId");
-    const projectPath = stripTrailingSlashes(plan.parentMeta.projectPath);
-    assert(projectPath.length > 0, "enqueueReservedTaskLaunch requires projectPath");
-
-    const previousLaunch =
-      this.reservedTaskLaunchByProjectPath.get(projectPath) ?? Promise.resolve();
-    const launch = previousLaunch
-      .catch(() => undefined)
-      .then(async () => {
-        await this.startReservedAgentTask(plan);
-      });
-    const trackedLaunch = launch.finally(() => {
-      if (this.reservedTaskLaunchByProjectPath.get(projectPath) === trackedLaunch) {
-        this.reservedTaskLaunchByProjectPath.delete(projectPath);
-      }
-    });
-    this.reservedTaskLaunchByProjectPath.set(projectPath, trackedLaunch);
-    await launch;
+    await this.startReservedAgentTask(plan);
   }
 
   private async setTaskStatus(workspaceId: string, status: AgentTaskStatus): Promise<void> {

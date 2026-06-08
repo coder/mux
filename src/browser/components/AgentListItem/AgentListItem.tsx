@@ -11,9 +11,10 @@ import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import type {
-  AgentRowRenderMeta,
-  WorkspaceDelegatedActivity,
+import {
+  isRunningOrStartingTaskStatus,
+  type AgentRowRenderMeta,
+  type WorkspaceDelegatedActivity,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { cn } from "@/common/lib/utils";
 import {
@@ -1192,7 +1193,7 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
   if (rowMeta?.rowKind === "subagent") {
     // Connector geometry is driven by render metadata so visible siblings keep
     // consistent single/middle/last shapes as parents expand/collapse children.
-    const isElbowActive = props.metadata.taskStatus === "running";
+    const isElbowActive = isRunningOrStartingTaskStatus(props.metadata.taskStatus);
     const connectorLayout = props.subAgentConnectorLayout ?? "default";
     const connectorDepth = props.depth ?? rowMeta.depth;
     const connectorRailX = getSubAgentParentRailX(connectorDepth, connectorLayout);
