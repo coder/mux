@@ -515,6 +515,70 @@ describe("StreamingMessageAggregator", () => {
       });
     });
 
+    test("attaches workflow definition source preview to the persisted slash invocation", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const workflowSource = `// description: Review deeply\nexport default function deepReviewWorkflow() {\n  return { reportMarkdown: "done" };\n}`;
+      const command = createMuxMessage("workflow-command", "user", "/deep-review-workflow mux", {
+        timestamp: 1,
+        historySequence: 1,
+        muxMetadata: {
+          type: "workflow-trigger-display",
+          rawCommand: "/deep-review-workflow mux",
+          commandPrefix: "/deep-review-workflow",
+          runId: "wfr_preview",
+        },
+      });
+      const card = buildWorkflowRunCardMessage(
+        { name: "deep-review-workflow", args: { input: "mux" } },
+        {
+          runId: "wfr_preview",
+          status: "running",
+          result: null,
+          run: {
+            id: "wfr_preview",
+            workspaceId: "workspace-1",
+            definition: {
+              name: "deep-review-workflow",
+              description: "Review deeply",
+              scope: "built-in",
+              executable: true,
+            },
+            definitionSource: workflowSource,
+            definitionHash: "sha256-preview",
+            args: { input: "mux" },
+            status: "running",
+            createdAt: "2024-01-01T00:00:00.000Z",
+            updatedAt: "2024-01-01T00:00:01.000Z",
+            events: [],
+            steps: [],
+          },
+        },
+        2
+      );
+      card.metadata = {
+        timestamp: 2,
+        historySequence: 2,
+        synthetic: true,
+        uiVisible: true,
+        muxMetadata: { type: "workflow-run-card-display", runId: "wfr_preview" },
+      };
+
+      aggregator.loadHistoricalMessages([command, card], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed[0]).toMatchObject({
+        type: "user",
+        workflowDefinitionPreview: {
+          descriptor: {
+            name: "deep-review-workflow",
+            description: "Review deeply",
+            scope: "built-in",
+          },
+          source: workflowSource,
+        },
+      });
+    });
+
     test("should strip legacy goal-cleared label from displayed summaries", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       const legacySummary = createMuxMessage(

@@ -12,6 +12,7 @@ import type { SendMessageOptions } from "@/common/orpc/types";
 import type { z } from "zod";
 import type { AgentMode } from "./mode";
 import type { AgentSkillScope } from "./agentSkill";
+import type { WorkflowDefinitionDescriptor } from "./workflow";
 import type { ThinkingLevel } from "./thinking";
 import { type ReviewNoteData, formatReviewForModel } from "./review";
 
@@ -195,6 +196,11 @@ export function prepareUserMessageForSend(
   }
 
   return { finalText, metadata };
+}
+
+export interface WorkflowDefinitionPreviewForDisplay {
+  descriptor: WorkflowDefinitionDescriptor;
+  source?: string;
 }
 
 export interface InlineSkillSnapshotForDisplay {
@@ -692,6 +698,8 @@ export type DisplayedMessage =
        * They are not persisted on the user message itself.
        */
       inlineSkillSnapshots?: InlineSkillSnapshotMap;
+      /** Present when this message launched a workflow and the run record has definition content to preview. */
+      workflowDefinitionPreview?: WorkflowDefinitionPreviewForDisplay;
       /** Present when this message is a /compact command */
       compactionRequest?: {
         parsed: CompactionRequestData;

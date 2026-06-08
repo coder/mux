@@ -8,7 +8,7 @@ import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import type { DisplayedUserMessage, InlineSkillSnapshotMap } from "@/common/types/message";
 import type { EditingMessageState } from "@/browser/utils/chatEditing";
 import { UserMessage } from "./UserMessage";
-import { UserMessageContent } from "./UserMessageContent";
+import { UserMessageContent, WorkflowDefinitionPreviewCard } from "./UserMessageContent";
 import { installDom } from "../../../../tests/ui/dom";
 
 function createSkillSnapshot(skillName: string): InlineSkillSnapshotMap[string] {
@@ -57,6 +57,49 @@ describe("UserMessageContent inline skill rendering", () => {
     // full-suite coverage runs.
     const badgeTexts = getSkillBadges(view.container).map((badge) => badge.textContent);
     expect(badgeTexts).toContain("/deep-review");
+  });
+
+  test("renders workflow command preview content from the run definition snapshot", () => {
+    const workflowSource = `// description: Review deeply\nexport default function workflow() {\n  return { reportMarkdown: "done" };\n}`;
+    const view = render(
+      <WorkflowDefinitionPreviewCard
+        preview={{
+          descriptor: {
+            name: "deep-review-workflow",
+            description: "Review deeply",
+            scope: "built-in",
+            executable: true,
+          },
+          source: workflowSource,
+        }}
+      />
+    );
+
+    expect(view.getByText("deep-review-workflow")).toBeTruthy();
+    expect(view.getByText("Review deeply")).toBeTruthy();
+    expect(view.container.textContent).toContain("export default function workflow");
+  });
+
+  test("renders the slash workflow badge in sent user messages", () => {
+    const view = render(
+      <UserMessageContent
+        content="/deep-review-workflow Check this"
+        commandPrefix="/deep-review-workflow"
+        workflowDefinitionPreview={{
+          descriptor: {
+            name: "deep-review-workflow",
+            description: "Review deeply",
+            scope: "built-in",
+            executable: true,
+          },
+          source: "export default function workflow() {}",
+        }}
+        variant="sent"
+      />
+    );
+
+    const badgeTexts = getSkillBadges(view.container).map((badge) => badge.textContent);
+    expect(badgeTexts).toContain("/deep-review-workflow");
   });
 
   test("keeps edit-mode textarea content as raw text", () => {
