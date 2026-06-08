@@ -21,9 +21,20 @@ interface HoverClickPopoverProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-// Invisible hit-area bridge for bottom-aligned hover popovers; covers the sideOffset gap.
-const HOVER_BRIDGE_CLASSNAME =
-  "overflow-visible before:pointer-events-auto before:absolute before:-top-2 before:right-0 before:left-0 before:h-2 before:content-['']";
+// Invisible hit-area bridge for hover popovers; covers the sideOffset gap on the trigger-facing side.
+const HOVER_BRIDGE_BASE_CLASSNAME =
+  "overflow-visible before:pointer-events-auto before:absolute before:content-['']";
+
+const HOVER_BRIDGE_SIDE_CLASSNAMES = {
+  bottom: "before:-top-2 before:right-0 before:left-0 before:h-2",
+  top: "before:-bottom-2 before:right-0 before:left-0 before:h-2",
+  left: "before:top-0 before:-right-2 before:bottom-0 before:w-2",
+  right: "before:top-0 before:bottom-0 before:-left-2 before:w-2",
+} satisfies Record<NonNullable<PopoverContentProps["side"]>, string>;
+
+function getHoverBridgeClassName(side: PopoverContentProps["side"]): string {
+  return cn(HOVER_BRIDGE_BASE_CLASSNAME, HOVER_BRIDGE_SIDE_CLASSNAMES[side ?? "bottom"]);
+}
 
 function composeEventHandlers<E extends { defaultPrevented?: boolean }>(
   userHandler: ((event: E) => void) | undefined,
@@ -178,7 +189,7 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
         align={props.align}
         sideOffset={props.sideOffset}
         className={cn(
-          HOVER_BRIDGE_CLASSNAME,
+          getHoverBridgeClassName(props.side),
           props.contentClassName,
           props.contentProps?.className
         )}
