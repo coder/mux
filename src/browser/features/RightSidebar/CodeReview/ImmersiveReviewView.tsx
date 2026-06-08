@@ -25,6 +25,7 @@ import { ImmersiveDiffRevealLoadingState } from "./ImmersiveDiffRevealLoadingSta
 import { ImmersiveMinimap } from "./ImmersiveMinimap";
 import { ImmersiveReviewAgentStatusBar } from "./ImmersiveReviewAgentStatusBar";
 import {
+  buildFileHunksContentVersion,
   useImmersiveOverlay,
   type HunkLineRange,
   type ImmersiveOverlayData,
@@ -423,6 +424,17 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     [activeFileHunks, activeFilePath]
   );
 
+  // Version the cached full-file body by the active file's UNFILTERED diff content so it is
+  // re-read when the file's diff actually changes (a tool edits it / the diff is refreshed)
+  // but reused when a hunk is only filtered out by mark-read. `allHunks` is the complete
+  // diff set for the workspace (read-state independent), so this stays stable across
+  // marking hunks read while still busting on a real content change.
+  const activeFileContentVersion = useMemo(
+    () =>
+      activeFilePath ? buildFileHunksContentVersion(getFileHunks(allHunks, activeFilePath)) : "",
+    [allHunks, activeFilePath]
+  );
+
   const selectedHunk = useMemo(() => {
     if (selectedHunkId) {
       const matchingHunk = currentFileHunks.find((hunk) => hunk.id === selectedHunkId);
@@ -465,6 +477,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     overlayData,
     shouldEnableHighlighting,
     isActiveOverlayRevealPending,
+    isActiveFileRevealPending,
     isActiveOverlayReadyForReveal,
     activeOverlayRevealIdentity,
     revealLoadingLabel,
@@ -478,6 +491,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     currentFileHunks,
     selectedHunk,
     theme,
+    fileContentVersion: activeFileContentVersion,
     onRevealPending: setHunkJumpScroll,
   });
 
@@ -1810,7 +1824,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     ? "complete"
     : props.isLoading && currentFileHunks.length === 0
       ? "loading"
-      : isActiveOverlayRevealPending
+      : isActiveFileRevealPending
         ? "pending"
         : overlayData.content.length > 0
           ? "revealed"
@@ -2100,11 +2114,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                 <div
                   className={cn(
                     "bg-dark relative overflow-hidden",
-                    isActiveOverlayRevealPending && "min-h-56"
+                    isActiveFileRevealPending && "min-h-56"
                   )}
                 >
                   <div
-                    className={cn(isActiveOverlayRevealPending && "invisible")}
+                    className={cn(isActiveFileRevealPending && "invisible")}
                     data-active-file-path={activeFilePath ?? undefined}
                     data-overlay-line-count={overlayData.lineHunkIds.length}
                     data-overlay-state={immersiveOverlayState}
@@ -2138,7 +2152,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                 </div>
               )}
             </div>
-            {isActiveOverlayRevealPending && currentFileHunks.length > 0 && !isReviewComplete && (
+            {isActiveFileRevealPending && currentFileHunks.length > 0 && !isReviewComplete && (
               <div
                 className="bg-dark/95 absolute inset-0 z-10 min-h-56 overflow-hidden"
                 data-testid="immersive-diff-reveal-overlay"
@@ -2151,7 +2165,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
         {!isReviewComplete && !isTouchExperience && (
           <div
-            className={cn("h-full self-stretch", isActiveOverlayRevealPending && "invisible")}
+            className={cn("h-full self-stretch", isActiveFileRevealPending && "invisible")}
             data-testid="immersive-minimap-reveal-stage"
           >
             <ImmersiveMinimap

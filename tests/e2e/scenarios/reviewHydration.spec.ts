@@ -504,6 +504,10 @@ test.describe("immersive review hydration stability", () => {
     const samples = await stopHydrationSampler(page);
     expect(samples.length).toBeGreaterThan(0);
 
+    // Same-file J/K must never replay the loading cover: the file is already hydrated, so
+    // iterating hunks is an instant scroll, not a loading state.
+    expect(samples.filter((sample) => sample.overlayVisible)).toEqual([]);
+
     const visibleCompactSamples = samples.filter(
       (sample) =>
         sample.stageVisible &&
@@ -540,5 +544,87 @@ test.describe("immersive review hydration stability", () => {
       expect(scrollTop).toBeGreaterThanOrEqual(furthestScrollTop - 4);
       furthestScrollTop = Math.max(furthestScrollTop, scrollTop);
     }
+  });
+
+  test("keeps same-file mark-read iteration instant while read hunks are hidden", async ({
+    page,
+    ui,
+    workspace,
+  }) => {
+    await disableReviewTutorial(page);
+    const diffSummary = seedLargeReviewSingleFileDiff(workspace.demoProject.workspacePath, {
+      hunkCount: 24,
+      hunkSpacing: 20,
+      lineCount: 600,
+    });
+    const expectedFullOverlayLineCount = diffSummary.lineCount + diffSummary.deletedLines;
+
+    // Hide read hunks so marking a hunk read removes it from the visible set -- the
+    // overlay rebuild that previously re-read the file and replayed the loading cover.
+    await primeReviewForHeadDiff(page, workspace.demoProject.workspaceId, { showReadHunks: false });
+
+    await ui.projects.openFirstWorkspace();
+    await ui.metaSidebar.expectVisible();
+    await ui.metaSidebar.selectTab("Review");
+
+    const reviewPanel = page.getByTestId("review-panel");
+    await expect(reviewPanel).toBeVisible();
+    await expect(reviewPanel.getByText(`0/${diffSummary.hunkCount}`, { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
+
+    const immersiveButton = reviewPanel.getByRole("button", { name: "Enter immersive review" });
+    await expect(immersiveButton).toBeVisible();
+    await immersiveButton.dispatchEvent("click");
+
+    const immersiveReview = page.getByTestId("immersive-review-view");
+    await expect(immersiveReview).toBeVisible({ timeout: 20_000 });
+    await expect(immersiveReview).toHaveAttribute("data-selected-hunk-position", "1", {
+      timeout: 20_000,
+    });
+    // Wait for full-file hydration so the file is on screen before we start marking hunks.
+    const diffLineContainers = immersiveReview.locator(
+      '[data-testid="immersive-diff-reveal-stage"] div[data-line-index]'
+    );
+    await expect(diffLineContainers).toHaveCount(expectedFullOverlayLineCount, { timeout: 20_000 });
+    await expect(immersiveReview.getByTestId("immersive-diff-reveal-overlay")).not.toBeVisible({
+      timeout: 20_000,
+    });
+
+    await startHydrationSampler(page, null);
+    await immersiveReview.focus();
+    await page.evaluate(async () => {
+      const immersiveView = document.querySelector<HTMLElement>(
+        '[data-testid="immersive-review-view"]'
+      );
+      if (!immersiveView) {
+        throw new Error("Immersive review view was not found");
+      }
+
+      const waitForFrame = () =>
+        new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      const startPath = immersiveView.dataset.activeFilePath;
+      // Mark several hunks read within the same file; each removes the selected hunk and
+      // advances to the next one without leaving the file.
+      for (let step = 0; step < 8; step += 1) {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "m", bubbles: true, cancelable: true })
+        );
+        for (let frame = 0; frame < 6; frame += 1) {
+          await waitForFrame();
+        }
+        if (immersiveView.dataset.activeFilePath !== startPath) {
+          break;
+        }
+      }
+    });
+
+    const samples = await stopHydrationSampler(page);
+    expect(samples.length).toBeGreaterThan(0);
+
+    // The whole iteration stays in one file, so the loading cover must never appear and
+    // the diff stage must never be hidden behind it.
+    expect(samples.filter((sample) => sample.overlayVisible)).toEqual([]);
+    expect(samples.every((sample) => sample.stageVisible)).toBe(true);
   });
 });

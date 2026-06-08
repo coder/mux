@@ -43,7 +43,12 @@ export interface OverlayRevealIdentity {
 }
 
 interface ActiveFileContentState {
-  filePath: string | null;
+  /**
+   * Cache key (workspace + path + content version) this body was loaded for. Settled state
+   * is tracked by cache key, not just path, so an in-place edit (same path, new content
+   * version) is treated as unsettled and never renders the previous version's body.
+   */
+  cacheKey: string | null;
   content: string | null;
   isSettled: boolean;
 }
@@ -55,6 +60,12 @@ interface UseImmersiveOverlayDataInput {
   currentFileHunks: DiffHunk[];
   selectedHunk: DiffHunk | null;
   theme: ThemeMode;
+  /**
+   * Content version for the active file's diff, derived from the UNFILTERED file hunks.
+   * Busts the cached full-file body when the file's diff content changes (tool edit / diff
+   * refresh) without busting it when a hunk is merely filtered out by mark-read.
+   */
+  fileContentVersion: string;
 }
 
 interface UseImmersiveOverlayInput extends UseImmersiveOverlayDataInput {
@@ -74,6 +85,8 @@ export interface ImmersiveOverlayState {
   overlayData: ImmersiveOverlayData;
   shouldEnableHighlighting: boolean;
   isActiveOverlayRevealPending: boolean;
+  /** True only while switching to a different file (drives the loading cover). */
+  isActiveFileRevealPending: boolean;
   isActiveOverlayReadyForReveal: boolean;
   activeOverlayRevealIdentity: OverlayRevealIdentity | null;
   revealLoadingLabel: string;
@@ -149,10 +162,16 @@ function shouldAttemptFullFileContext(selectedHunk: DiffHunk | null): boolean {
 function buildFileContentCacheKey(
   workspaceId: string,
   filePath: string,
-  sortedHunks: readonly DiffHunk[]
+  fileContentVersion: string
 ): string {
-  const hunkSignature = sortedHunks.map((hunk) => hunk.id).join("|");
-  return [workspaceId, filePath, hunkSignature].join("\u0000");
+  // Cache raw file bodies per file path + content version. The on-disk content does not
+  // depend on which hunks are selected or marked read, so changing the visible hunk set
+  // (e.g. marking a hunk read while read hunks are hidden) must NOT invalidate this cache
+  // and force a re-read + loading flash. The version is derived from the file's UNFILTERED
+  // diff content, so it stays stable across read-state filtering but busts the cache when
+  // the file's diff actually changes (a tool edits the file and the diff is re-fetched),
+  // preventing reviewers from seeing a stale full-file body.
+  return [workspaceId, filePath, fileContentVersion].join("\u0000");
 }
 
 function buildContentKey(content: string, renderedLineCount: number): string {
@@ -164,6 +183,34 @@ function buildContentKey(content: string, renderedLineCount: number): string {
     hash = Math.imul(hash, 16777619);
   }
   return `${content.length}:${renderedLineCount}:${hash >>> 0}`;
+}
+
+/**
+ * Version key for a file's cached full-file body. FNV-1a over the file's diff hunk
+ * content (and headers) so the cached body is invalidated when the file's diff actually
+ * changes — e.g. a tool edits the file and the diff is re-fetched — but NOT when a hunk is
+ * filtered out of the visible set (marking a hunk read while read hunks are hidden), which
+ * leaves the underlying file content unchanged. Pass the UNFILTERED hunks for the file so
+ * read-state filtering does not bust the cache. Hunk ids cannot be used here: they hash
+ * file path + line ranges, so an in-place edit that preserves line ranges would not change
+ * them even though the file content differs.
+ */
+export function buildFileHunksContentVersion(fileHunks: readonly DiffHunk[]): string {
+  let hash = 2166136261;
+  const mix = (text: string) => {
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    // Boundary marker so concatenation-adjacent hunks cannot collide.
+    hash ^= 0x1f;
+    hash = Math.imul(hash, 16777619);
+  };
+  for (const hunk of fileHunks) {
+    mix(hunk.header);
+    mix(hunk.content);
+  }
+  return `${fileHunks.length}:${hash >>> 0}`;
 }
 
 function createOverlayData(
@@ -306,7 +353,7 @@ export function isSameOverlayRevealIdentity(
 
 function useImmersiveOverlayData(input: UseImmersiveOverlayDataInput) {
   const [activeFileContentState, setActiveFileContentState] = useState<ActiveFileContentState>({
-    filePath: null,
+    cacheKey: null,
     content: null,
     isSettled: true,
   });
@@ -318,10 +365,20 @@ function useImmersiveOverlayData(input: UseImmersiveOverlayDataInput) {
   const activeFileContentCacheKey = useMemo(
     () =>
       input.activeFilePath
-        ? buildFileContentCacheKey(input.workspaceId, input.activeFilePath, input.currentFileHunks)
+        ? buildFileContentCacheKey(
+            input.workspaceId,
+            input.activeFilePath,
+            input.fileContentVersion
+          )
         : null,
-    [input.activeFilePath, input.currentFileHunks, input.workspaceId]
+    [input.activeFilePath, input.fileContentVersion, input.workspaceId]
   );
+
+  // The raw file read does not depend on the hunk set, so read the latest hunks through a
+  // ref instead of a dependency. This keeps marking a hunk read (which mutates the hunk
+  // list) from re-running the read effect and re-entering the unsettled/loading state.
+  const currentFileHunksRef = useRef(input.currentFileHunks);
+  currentFileHunksRef.current = input.currentFileHunks;
 
   // Load full file context only when it is cheap. If disk I/O or highlighting stalls,
   // fail open to the compact hunk overlay instead of trapping the review behind loading.
@@ -330,12 +387,20 @@ function useImmersiveOverlayData(input: UseImmersiveOverlayDataInput) {
     const filePath = input.activeFilePath;
     const cacheKey = activeFileContentCacheKey;
 
+    // Short-circuit identical commits so cache-hit re-runs (e.g. after a hunk-set change)
+    // do not churn state and force a redundant render of the full-file overlay.
+    const commitContentState = (next: ActiveFileContentState) => {
+      setActiveFileContentState((current) =>
+        current.cacheKey === next.cacheKey &&
+        current.content === next.content &&
+        current.isSettled === next.isSettled
+          ? current
+          : next
+      );
+    };
+
     const settleContent = (content: string | null) => {
-      setActiveFileContentState({
-        filePath: filePath ?? null,
-        content,
-        isSettled: true,
-      });
+      commitContentState({ cacheKey, content, isSettled: true });
     };
 
     if (!filePath || !apiClient || !shouldLoadFullFileContext || !cacheKey) {
@@ -348,28 +413,21 @@ function useImmersiveOverlayData(input: UseImmersiveOverlayDataInput) {
       return;
     }
 
+    const resolvedCacheKey = cacheKey;
     const resolvedApi = apiClient;
     const resolvedFilePath = filePath;
-    const resolvedFileHunks = input.currentFileHunks;
+    const resolvedFileHunks = currentFileHunksRef.current;
     const resolvedTheme = input.theme;
     let cancelled = false;
 
-    setActiveFileContentState({
-      filePath: resolvedFilePath,
-      content: null,
-      isSettled: false,
-    });
+    commitContentState({ cacheKey: resolvedCacheKey, content: null, isSettled: false });
 
     const settleLoadedContent = (content: string | null, shouldCache: boolean) => {
       if (shouldCache) {
-        fileContentCacheRef.current.set(cacheKey, content);
+        fileContentCacheRef.current.set(resolvedCacheKey, content);
       }
       if (!cancelled) {
-        setActiveFileContentState({
-          filePath: resolvedFilePath,
-          content,
-          isSettled: true,
-        });
+        commitContentState({ cacheKey: resolvedCacheKey, content, isSettled: true });
       }
     };
 
@@ -452,20 +510,49 @@ function useImmersiveOverlayData(input: UseImmersiveOverlayDataInput) {
     activeFileContentCacheKey,
     input.activeFilePath,
     input.api,
-    input.currentFileHunks,
     input.theme,
     input.workspaceId,
     shouldLoadFullFileContext,
   ]);
 
+  // Track settled state by cache key (path + content version), not just path, so an
+  // in-place edit (same path, new version) is unsettled until the new body loads -- we must
+  // never render the previous version's body for a same-path content change.
   const isActiveFileContentSettled =
     !input.activeFilePath ||
-    (activeFileContentState.filePath === input.activeFilePath && activeFileContentState.isSettled);
+    (activeFileContentState.cacheKey === activeFileContentCacheKey &&
+      activeFileContentState.isSettled);
 
-  const resolvedActiveFileContent =
-    isActiveFileContentSettled && shouldLoadFullFileContext ? activeFileContentState.content : null;
+  // Resolve an already-loaded body straight from the cache during render. Revisiting a
+  // file (or rebuilding the overlay after a hunk-set change) then reuses the cached body
+  // immediately instead of waiting for the read effect to re-commit it, so the stage never
+  // blanks behind the loading cover for content we already have.
+  const cachedFullFileContent =
+    shouldLoadFullFileContext &&
+    activeFileContentCacheKey != null &&
+    fileContentCacheRef.current.has(activeFileContentCacheKey)
+      ? (fileContentCacheRef.current.get(activeFileContentCacheKey) ?? null)
+      : undefined;
+  const hasCachedFullFileContent = cachedFullFileContent !== undefined;
+
+  const resolvedActiveFileContent = !shouldLoadFullFileContext
+    ? null
+    : hasCachedFullFileContent
+      ? cachedFullFileContent
+      : isActiveFileContentSettled
+        ? activeFileContentState.content
+        : null;
+
+  // Only blank the stage (hidden behind the file-switch cover) while a *different* file's
+  // body is still loading with nothing cached to show. Same-file overlay rebuilds keep
+  // rendering the overlay we already have, so they reveal in place without a skeleton.
+  const renderedFilePathRef = useRef<string | null>(null);
+  const isSwitchingToNewFile = input.activeFilePath !== renderedFilePathRef.current;
   const shouldDeferOverlayRender = Boolean(
-    shouldLoadFullFileContext && !isActiveFileContentSettled
+    shouldLoadFullFileContext &&
+    !hasCachedFullFileContent &&
+    !isActiveFileContentSettled &&
+    isSwitchingToNewFile
   );
 
   const overlayData = useMemo<ImmersiveOverlayData>(() => {
@@ -479,6 +566,15 @@ function useImmersiveOverlayData(input: UseImmersiveOverlayDataInput) {
 
     return buildOverlayFromHunks(input.currentFileHunks);
   }, [input.currentFileHunks, resolvedActiveFileContent, shouldDeferOverlayRender]);
+
+  // Remember the file whose overlay we actually rendered so the next switch can tell a
+  // genuine file change (defer + cover) apart from a same-file overlay rebuild (reveal in
+  // place). Updated after render via layout effect so the comparison above stays stable.
+  useLayoutEffect(() => {
+    if (!shouldDeferOverlayRender && input.activeFilePath != null) {
+      renderedFilePathRef.current = input.activeFilePath;
+    }
+  }, [shouldDeferOverlayRender, input.activeFilePath]);
 
   const shouldEnableHighlighting = overlayData.lineHunkIds.length <= MAX_HIGHLIGHTED_DIFF_LINES;
 
@@ -515,6 +611,14 @@ function useImmersiveOverlayReveal(input: UseImmersiveOverlayRevealInput) {
   const isActiveOverlayRevealPending =
     activeOverlayRevealIdentity !== null &&
     !isSameOverlayRevealIdentity(revealedOverlayIdentity, activeOverlayRevealIdentity);
+  // The loading cover only exists to hide the scroll jump when switching to a DIFFERENT
+  // file. Same-file overlay rebuilds (marking a hunk read while read hunks are hidden,
+  // compact->full hydration) keep the file on screen, so they update in place and must not
+  // replay the skeleton. We still track the content-key pending state above to re-run the
+  // hidden scroll pass that keeps the selected hunk in view across same-file rebuilds.
+  const isActiveFileRevealPending =
+    activeOverlayRevealIdentity !== null &&
+    revealedOverlayIdentity?.filePath !== activeOverlayRevealIdentity.filePath;
   const isHappyDomEnvironment = typeof window !== "undefined" && "happyDOM" in window;
   // Only worker-backed highlighting is safe to use as a reveal prerequisite; tests and
   // other non-worker shells fall back to slower main-thread highlighting.
@@ -597,13 +701,14 @@ function useImmersiveOverlayReveal(input: UseImmersiveOverlayRevealInput) {
       return;
     }
 
-    if (isActiveOverlayRevealPending) {
+    if (isActiveFileRevealPending) {
       // The pending state is derived during render, not set from an effect, so
       // file switches are hidden on their first paint until the scroll effect
-      // reveals the positioned overlay.
+      // reveals the positioned overlay. Only re-center for genuine file switches;
+      // same-file rebuilds keep the existing scroll block (e.g. "nearest").
       onRevealPending("center");
     }
-  }, [activeOverlayRevealIdentity, isActiveOverlayRevealPending, onRevealPending]);
+  }, [activeOverlayRevealIdentity, isActiveFileRevealPending, onRevealPending]);
 
   useEffect(() => {
     return () => {
@@ -616,6 +721,7 @@ function useImmersiveOverlayReveal(input: UseImmersiveOverlayRevealInput) {
   return {
     activeOverlayRevealIdentity,
     isActiveOverlayRevealPending,
+    isActiveFileRevealPending,
     isActiveOverlayReadyForReveal,
     revealLoadingLabel: "Loading file...",
     revealActiveOverlayNow,
