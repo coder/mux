@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 
 import type { WorkflowDefinitionDescriptor, WorkflowRunRecord } from "@/common/types/workflow";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
-import { WorkflowIndicatorView } from "./WorkflowIndicator";
+import { WorkflowIndicatorPopoverContent, WorkflowIndicatorView } from "./WorkflowIndicator";
 import {
   groupWorkflowDefinitionsByScope,
   summarizeWorkflowRuns,
@@ -100,33 +100,27 @@ describe("WorkflowIndicatorView", () => {
     expect(view.getByLabelText("2 workflows need attention")).toBeTruthy();
   });
 
-  test("opens the workflows tab from the popover action", async () => {
+  test("opens the workflows tab from the popover action", () => {
     let opened = false;
     const view = render(
-      <TooltipProvider>
-        <WorkflowIndicatorView
-          workspaceId="workspace-1"
-          onOpenWorkflowsTab={() => {
-            opened = true;
-          }}
-          snapshot={{
-            definitions: [],
-            definitionGroups: groupWorkflowDefinitionsByScope([]),
-            runs: [],
-            currentRuns: [],
-            historyRuns: [],
-            summary: summarizeWorkflowRuns([]),
-            isLoading: false,
-            error: null,
-          }}
-        />
-      </TooltipProvider>
+      <WorkflowIndicatorPopoverContent
+        onOpenWorkflowsTab={() => {
+          opened = true;
+        }}
+        snapshot={{
+          definitions: [],
+          definitionGroups: groupWorkflowDefinitionsByScope([]),
+          runs: [],
+          currentRuns: [],
+          historyRuns: [],
+          summary: summarizeWorkflowRuns([]),
+          isLoading: false,
+          error: null,
+        }}
+      />
     );
 
-    fireEvent.click(view.getByLabelText("Workflows"));
-    const body = within(view.container.ownerDocument.body);
-    const openTabButton = await waitFor(() => body.getByText("Open tab"));
-    fireEvent.click(openTabButton);
+    fireEvent.click(view.getByText("Open tab"));
 
     expect(opened).toBe(true);
   });

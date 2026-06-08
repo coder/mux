@@ -485,6 +485,9 @@ export class WorkflowRunStore {
     assert(ownerId.length > 0, "WorkflowRunStore.acquireLease: ownerId is required");
     const leaseFile = this.leaseFile(runId);
     const lockDir = `${leaseFile}.lock`;
+    // The lock itself must remain a non-recursive mkdir for atomicity, but its parent can be
+    // absent during resume/crash-recovery races in tests or after partial run directory repair.
+    await fs.mkdir(path.dirname(lockDir), { recursive: true });
     if (!(await acquireLeaseMutationLock(lockDir, Date.now(), this.leaseMutationLockStaleMs()))) {
       return false;
     }

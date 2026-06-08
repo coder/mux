@@ -387,6 +387,16 @@ describe("WorkflowRunStore", () => {
     });
   });
 
+  test("creates the run directory before acquiring a lease lock", async () => {
+    using tmp = new DisposableTempDir("workflow-runs");
+    const store = new WorkflowRunStore({ sessionDir: tmp.path });
+
+    await expect(store.acquireLease("wfr_missing", "runner-a", 1000)).resolves.toBe(true);
+    await expect(
+      fs.readFile(path.join(tmp.path, "workflows", "wfr_missing", "lease.json"), "utf-8")
+    ).resolves.toContain("runner-a");
+  });
+
   test("renews active leases so they are not reclaimed as stale", async () => {
     using tmp = new DisposableTempDir("workflow-runs");
     const store = await createStore(tmp.path);

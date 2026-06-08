@@ -83,47 +83,59 @@ export function WorkflowIndicatorView(props: WorkflowIndicatorViewProps) {
         align="end"
         className="bg-modal-bg border-separator-light w-72 overflow-visible rounded px-3 py-2 text-xs font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
       >
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-foreground font-medium">Workflows</div>
-            <button
-              type="button"
-              className="text-accent hover:underline"
-              onClick={openWorkflowsTab}
-            >
-              Open tab
-            </button>
-          </div>
-          <IndicatorSection title="Active and attention">
-            {props.snapshot.currentRuns.length === 0 ? (
-              <p className="text-muted">No active workflows</p>
-            ) : (
-              props.snapshot.currentRuns.slice(0, 5).map((run) => {
-                const presentation = getWorkflowStatusPresentation(run.status);
-                return (
-                  <div key={run.id} className="flex items-center justify-between gap-2">
-                    <span className="truncate">{run.definition.name}</span>
-                    <span className="text-muted shrink-0">{presentation.label}</span>
-                  </div>
-                );
-              })
-            )}
-          </IndicatorSection>
-          <IndicatorSection title="Available definitions">
-            {props.snapshot.definitions.length === 0 ? (
-              <p className="text-muted">No definitions found</p>
-            ) : (
-              <p className="text-muted">
-                {props.snapshot.definitionGroups.project.length} project ·{" "}
-                {props.snapshot.definitionGroups.global.length} global ·{" "}
-                {props.snapshot.definitionGroups["built-in"].length} built-in ·{" "}
-                {props.snapshot.definitionGroups.scratch.length} scratch
-              </p>
-            )}
-          </IndicatorSection>
-        </div>
+        <WorkflowIndicatorPopoverContent
+          snapshot={props.snapshot}
+          onOpenWorkflowsTab={openWorkflowsTab}
+        />
       </PopoverContent>
     </Popover>
+  );
+}
+
+export function WorkflowIndicatorPopoverContent(props: {
+  snapshot: WorkflowWorkspaceSnapshot;
+  onOpenWorkflowsTab: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-foreground font-medium">Workflows</div>
+        <button
+          type="button"
+          className="text-accent hover:underline"
+          onClick={props.onOpenWorkflowsTab}
+        >
+          Open tab
+        </button>
+      </div>
+      <IndicatorSection title="Active and attention">
+        {props.snapshot.currentRuns.length === 0 ? (
+          <p className="text-muted">No active workflows</p>
+        ) : (
+          props.snapshot.currentRuns.slice(0, 5).map((run) => {
+            const presentation = getWorkflowStatusPresentation(run.status);
+            return (
+              <div key={run.id} className="flex items-center justify-between gap-2">
+                <span className="truncate">{run.definition.name}</span>
+                <span className="text-muted shrink-0">{presentation.label}</span>
+              </div>
+            );
+          })
+        )}
+      </IndicatorSection>
+      <IndicatorSection title="Available definitions">
+        {props.snapshot.definitions.length === 0 ? (
+          <p className="text-muted">No definitions found</p>
+        ) : (
+          <p className="text-muted">
+            {props.snapshot.definitionGroups.project.length} project ·{" "}
+            {props.snapshot.definitionGroups.global.length} global ·{" "}
+            {props.snapshot.definitionGroups["built-in"].length} built-in ·{" "}
+            {props.snapshot.definitionGroups.scratch.length} scratch
+          </p>
+        )}
+      </IndicatorSection>
+    </div>
   );
 }
 
