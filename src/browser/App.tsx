@@ -190,7 +190,9 @@ function AppInner() {
   );
 
   const [isMultiProjectWorkspaceModalOpen, setMultiProjectWorkspaceModalOpen] = useState(false);
+  const agentBrowserEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_BROWSER);
   const dynamicWorkflowsEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
+  const portableDesktopEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
   const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
 
   // Left sidebar is drag-resizable (mirrors RightSidebar). Width is persisted globally;
@@ -709,6 +711,12 @@ function AppInner() {
     [handleNavigateWorkspace]
   );
 
+  const enabledRightSidebarFeatureFlags = new Set<string>();
+  if (agentBrowserEnabled) enabledRightSidebarFeatureFlags.add(EXPERIMENT_IDS.AGENT_BROWSER);
+  if (dynamicWorkflowsEnabled)
+    enabledRightSidebarFeatureFlags.add(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
+  if (portableDesktopEnabled) enabledRightSidebarFeatureFlags.add(EXPERIMENT_IDS.PORTABLE_DESKTOP);
+
   registerParamsRef.current = {
     userProjects,
     workspaceMetadata,
@@ -718,9 +726,7 @@ function AppInner() {
     onSetThinkingLevel: setThinkingLevelFromPalette,
     getMinThinkingOverride,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
-    enabledRightSidebarFeatureFlags: dynamicWorkflowsEnabled
-      ? new Set([EXPERIMENT_IDS.DYNAMIC_WORKFLOWS])
-      : undefined,
+    enabledRightSidebarFeatureFlags,
     onStartMultiProjectWorkspaceCreation: openNewMultiProjectWorkspaceFromPalette,
     multiProjectWorkspacesEnabled,
     onArchiveMergedWorkspacesInProject: archiveMergedWorkspacesInProjectFromPalette,

@@ -259,9 +259,16 @@ test("buildCoreSources includes create/switch workspace actions", () => {
 });
 
 test("right sidebar add-tool options respect enabled feature flags", async () => {
-  const withoutWorkflows = getActions();
-  const withWorkflows = getActions({
+  const withoutEnabledFlags = getActions();
+  const withWorkflowFlag = getActions({
     enabledRightSidebarFeatureFlags: new Set([EXPERIMENT_IDS.DYNAMIC_WORKFLOWS]),
+  });
+  const withAllFlaggedSidebarTabs = getActions({
+    enabledRightSidebarFeatureFlags: new Set([
+      EXPERIMENT_IDS.AGENT_BROWSER,
+      EXPERIMENT_IDS.DYNAMIC_WORKFLOWS,
+      EXPERIMENT_IDS.PORTABLE_DESKTOP,
+    ]),
   });
 
   const getToolOptionLabels = async (actions: ReturnType<typeof getActions>) => {
@@ -274,8 +281,12 @@ test("right sidebar add-tool options respect enabled feature flags", async () =>
     return options.map((option) => option.label);
   };
 
-  expect(await getToolOptionLabels(withoutWorkflows)).not.toContain("Workflows");
-  expect(await getToolOptionLabels(withWorkflows)).toContain("Workflows");
+  expect(await getToolOptionLabels(withoutEnabledFlags)).not.toContain("Workflows");
+  expect(await getToolOptionLabels(withWorkflowFlag)).toContain("Workflows");
+  const allFlaggedSidebarLabels = await getToolOptionLabels(withAllFlaggedSidebarTabs);
+  expect(allFlaggedSidebarLabels).toContain("Browser");
+  expect(allFlaggedSidebarLabels).toContain("Desktop");
+  expect(allFlaggedSidebarLabels).toContain("Workflows");
 });
 
 test("appearance commands offer auto when a manual theme is selected", () => {
