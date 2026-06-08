@@ -278,13 +278,15 @@ export interface TaskCreateResult {
   status: "queued" | "starting" | "running";
 }
 
+type TaskLaunchStart = { kind: "sendMessage"; prompt: string } | { kind: "resumeStream" };
+
 interface TaskLaunchPlan {
   taskId: string;
   parentWorkspaceId: string;
   parentMeta: WorkspaceMetadata;
   agentId: string;
   agentType: string;
-  prompt: string;
+  start: TaskLaunchStart;
   title: string;
   workspaceName: string;
   createdAt: string;
@@ -1693,7 +1695,7 @@ export class TaskService {
         parentMeta,
         agentId,
         agentType,
-        prompt,
+        start: { kind: "sendMessage", prompt },
         title: args.title,
         workspaceName,
         createdAt,
@@ -1755,7 +1757,7 @@ export class TaskService {
           workflowTask: plan.workflowTask,
           bestOf: plan.bestOf,
           taskStatus: plan.status,
-          taskPrompt: plan.prompt,
+          taskPrompt: plan.start.kind === "sendMessage" ? plan.start.prompt : undefined,
           taskTrunkBranch: trunkBranch,
           taskModelString: plan.taskModelString,
           taskThinkingLevel: plan.effectiveThinkingLevel,
@@ -1973,7 +1975,9 @@ export class TaskService {
   private async startReservedAgentTask(plan: TaskLaunchPlan): Promise<void> {
     assert(plan.taskId.length > 0, "startReservedAgentTask requires taskId");
     assert(plan.parentWorkspaceId.length > 0, "startReservedAgentTask requires parentWorkspaceId");
-    assert(plan.prompt.length > 0, "startReservedAgentTask requires prompt");
+    if (plan.start.kind === "sendMessage") {
+      assert(plan.start.prompt.length > 0, "startReservedAgentTask requires prompt");
+    }
 
     const entryAtStart = findWorkspaceEntry(this.config.loadConfigOrDefault(), plan.taskId);
     if (entryAtStart?.workspace.taskStatus !== "starting") {
@@ -2101,17 +2105,22 @@ export class TaskService {
       plan.taskId
     );
 
-    const sendResult = await this.workspaceService.sendMessage(
-      plan.taskId,
-      plan.prompt,
-      {
-        model: plan.taskModelString,
-        agentId: plan.agentId,
-        thinkingLevel: plan.effectiveThinkingLevel,
-        experiments: plan.experiments,
-      },
-      { allowQueuedAgentTask: true, agentInitiated: true }
-    );
+    const startOptions = {
+      model: plan.taskModelString,
+      agentId: plan.agentId,
+      thinkingLevel: plan.effectiveThinkingLevel,
+      experiments: plan.experiments,
+    };
+    const sendResult =
+      plan.start.kind === "sendMessage"
+        ? await this.workspaceService.sendMessage(plan.taskId, plan.start.prompt, startOptions, {
+            allowQueuedAgentTask: true,
+            agentInitiated: true,
+          })
+        : await this.workspaceService.resumeStream(plan.taskId, startOptions, {
+            allowQueuedAgentTask: true,
+            agentInitiated: true,
+          });
     if (!sendResult.success) {
       const message =
         typeof sendResult.error === "string"
@@ -3895,12 +3904,15 @@ export class TaskService {
         }
 
         const queuedPrompt = coerceNonEmptyString(task.taskPrompt);
-        if (!queuedPrompt) {
-          taskQueueDebug("TaskService.maybeStartQueuedTasks failing legacy queued task", {
+        const start: TaskLaunchStart = queuedPrompt
+          ? { kind: "sendMessage", prompt: queuedPrompt }
+          : { kind: "resumeStream" };
+        if (start.kind === "resumeStream") {
+          // Older queued task records stored the initial prompt only in chat history.
+          // Keep those upgrade-safe by resuming the existing pending stream instead of failing launch.
+          taskQueueDebug("TaskService.maybeStartQueuedTasks legacy resumeStream reservation", {
             taskId,
           });
-          await this.markTaskLaunchFailed(taskId, "Queued task missing taskPrompt");
-          continue;
         }
 
         const parentWorkspaceId = coerceNonEmptyString(task.parentWorkspaceId);
@@ -4017,7 +4029,7 @@ export class TaskService {
           parentMeta,
           agentId,
           agentType: task.agentType ?? agentId,
-          prompt: queuedPrompt,
+          start,
           title: task.title ?? workspaceName,
           workspaceName,
           createdAt,

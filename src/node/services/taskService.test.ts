@@ -698,6 +698,78 @@ describe("TaskService", () => {
     expect(started?.taskStatus).toBe("running");
   }, 20_000);
 
+  test("resumes legacy queued tasks that do not persist taskPrompt", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = await createTestProject(rootDir);
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+
+    const parentId = "1111111111";
+    const queuedTaskId = "task-queued";
+    const queuedWorkspaceName = "agent_explore_task-queued";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: runtime.getWorkspacePath(projectPath, parentName),
+          id: parentId,
+          name: parentName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+        {
+          path: runtime.getWorkspacePath(projectPath, queuedWorkspaceName),
+          id: queuedTaskId,
+          name: queuedWorkspaceName,
+          title: "Legacy queued task",
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+          parentWorkspaceId: parentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "queued",
+          taskModelString: defaultModel,
+          taskTrunkBranch: parentName,
+        },
+      ],
+      testTaskSettings(1, 3)
+    );
+
+    expect(findWorkspaceInConfig(config, queuedTaskId)?.taskPrompt).toBeUndefined();
+
+    const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+    try {
+      await taskService.initialize();
+
+      expect(resumeStream).toHaveBeenCalledWith(
+        queuedTaskId,
+        expect.objectContaining({ model: defaultModel, agentId: "explore" }),
+        expect.objectContaining({ allowQueuedAgentTask: true, agentInitiated: true })
+      );
+    } finally {
+      runBackgroundInitSpy.mockRestore();
+    }
+
+    const started = findWorkspaceInConfig(config, queuedTaskId);
+    expect(started?.taskStatus).toBe("running");
+  }, 20_000);
+
   test("does not count foreground-awaiting tasks towards maxParallelAgentTasks", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"], "dddddddddd");
