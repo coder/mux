@@ -785,6 +785,7 @@ describe("WorkflowRunner", () => {
         waitedFor.push(taskId);
         waitTimeoutMs = waitOptions?.timeoutMs;
         waitAbortSignal = waitOptions?.abortSignal;
+        expect(waitAbortSignal?.aborted).toBe(false);
         return { taskId, reportMarkdown: "summary" };
       },
     });
@@ -799,7 +800,7 @@ describe("WorkflowRunner", () => {
     );
     expect(startedEvents).toHaveLength(1);
     expect(waitTimeoutMs).toBeGreaterThan(5 * 60 * 1000);
-    expect(waitAbortSignal?.aborted).toBe(false);
+    expect(waitAbortSignal).toBeDefined();
   });
 
   test("adds one started task event when resuming legacy started steps", async () => {
