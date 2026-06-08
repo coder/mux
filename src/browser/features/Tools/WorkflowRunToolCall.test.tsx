@@ -475,6 +475,197 @@ describe("WorkflowRunToolCall", () => {
     });
   });
 
+  test("coalesces action start and completion events into one row with combined details", () => {
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <TooltipProvider>
+          <WorkflowRunToolCall
+            args={{ name: "action-list", args: {}, run_in_background: true }}
+            status="completed"
+            result={{
+              status: "completed",
+              runId: "wfr_action_rows",
+              result: null,
+              run: {
+                id: "wfr_action_rows",
+                workspaceId: "workspace-1",
+                definition: {
+                  name: "action-list",
+                  description: "Action list",
+                  scope: "built-in",
+                  executable: true,
+                },
+                definitionSource: "export default function workflow() { return null; }",
+                definitionHash: "sha256:actions",
+                args: {},
+                status: "completed",
+                createdAt: "2026-05-29T00:00:00.000Z",
+                updatedAt: "2026-05-29T00:00:02.000Z",
+                events: [
+                  {
+                    sequence: 1,
+                    type: "action",
+                    at: "2026-05-29T00:00:00.000Z",
+                    stepId: "git-status",
+                    name: "git.status",
+                    status: "started",
+                    effect: "read",
+                    sourcePath: "actions/git.ts",
+                    sourceHash: "sha256:git",
+                    details: { cwd: "/repo", input: { porcelain: true } },
+                  },
+                  {
+                    sequence: 2,
+                    type: "action",
+                    at: "2026-05-29T00:00:01.000Z",
+                    stepId: "git-status",
+                    name: "git.status",
+                    status: "completed",
+                    effect: "read",
+                    sourcePath: "actions/git.ts",
+                    sourceHash: "sha256:git",
+                    details: { stdout: "clean", durationMs: 12 },
+                  },
+                  {
+                    sequence: 3,
+                    type: "action",
+                    at: "2026-05-29T00:00:02.000Z",
+                    stepId: "git-diff",
+                    name: "git.diff",
+                    status: "started",
+                    effect: "read",
+                    sourcePath: "actions/git.ts",
+                    sourceHash: "sha256:git",
+                    details: { cwd: "/repo", input: { stat: false } },
+                  },
+                ],
+                steps: [],
+              },
+            }}
+          />
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+
+    fireEvent.click(getWorkflowHeader(view));
+
+    expect(view.getByText("Workflow events (2)")).toBeTruthy();
+    expect(view.getAllByText("git-status / git.status / completed")).toHaveLength(1);
+    expect(view.queryByText("git-status / git.status / started")).toBeNull();
+    expect(view.getByText("git-diff / git.diff / started")).toBeTruthy();
+    expect(view.getByText("#1").getAttribute("aria-label")).toBe("Raw event #1");
+
+    fireEvent.click(view.getByText("git-status / git.status / completed"));
+
+    expect(view.container.textContent).toContain("porcelain");
+    expect(view.container.textContent).toContain("durationMs");
+  });
+
+  test("preserves raw action rows when same-key starts overlap", () => {
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <TooltipProvider>
+          <WorkflowRunToolCall
+            args={{ name: "action-list", args: {}, run_in_background: true }}
+            status="completed"
+            result={{
+              status: "completed",
+              runId: "wfr_action_ambiguous_rows",
+              result: null,
+              run: {
+                id: "wfr_action_ambiguous_rows",
+                workspaceId: "workspace-1",
+                definition: {
+                  name: "action-list",
+                  description: "Action list",
+                  scope: "built-in",
+                  executable: true,
+                },
+                definitionSource: "export default function workflow() { return null; }",
+                definitionHash: "sha256:ambiguous-actions",
+                args: {},
+                status: "completed",
+                createdAt: "2026-05-29T00:00:00.000Z",
+                updatedAt: "2026-05-29T00:00:04.000Z",
+                events: [
+                  {
+                    sequence: 1,
+                    type: "action",
+                    at: "2026-05-29T00:00:00.000Z",
+                    stepId: "git-status",
+                    name: "git.status",
+                    status: "started",
+                    effect: "read",
+                    sourcePath: "actions/git.ts",
+                    sourceHash: "sha256:git",
+                    details: { input: { marker: "first-start" } },
+                  },
+                  {
+                    sequence: 2,
+                    type: "action",
+                    at: "2026-05-29T00:00:01.000Z",
+                    stepId: "git-status",
+                    name: "git.status",
+                    status: "started",
+                    effect: "read",
+                    sourcePath: "actions/git.ts",
+                    sourceHash: "sha256:git",
+                    details: { input: { marker: "second-start" } },
+                  },
+                  {
+                    sequence: 3,
+                    type: "action",
+                    at: "2026-05-29T00:00:02.000Z",
+                    stepId: "git-status",
+                    name: "git.status",
+                    status: "completed",
+                    effect: "read",
+                    sourcePath: "actions/git.ts",
+                    sourceHash: "sha256:git",
+                    details: { stdout: "first-finish" },
+                  },
+                  {
+                    sequence: 4,
+                    type: "action",
+                    at: "2026-05-29T00:00:03.000Z",
+                    stepId: "git-status",
+                    name: "git.status",
+                    status: "completed",
+                    effect: "read",
+                    sourcePath: "actions/git.ts",
+                    sourceHash: "sha256:git",
+                    details: { stdout: "second-finish" },
+                  },
+                ],
+                steps: [],
+              },
+            }}
+          />
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+
+    fireEvent.click(getWorkflowHeader(view));
+
+    expect(view.getByText("Workflow events (4)")).toBeTruthy();
+    expect(view.getAllByText("git-status / git.status / started")).toHaveLength(2);
+    expect(view.getAllByText("git-status / git.status / completed")).toHaveLength(2);
+
+    const firstCompletedLabel = view.getAllByText("git-status / git.status / completed")[0];
+    if (firstCompletedLabel == null) {
+      throw new Error("Expected at least one completed action row");
+    }
+    fireEvent.click(firstCompletedLabel);
+
+    const completedRow = firstCompletedLabel.closest("details");
+    if (completedRow == null) {
+      throw new Error("Expected completed action row details");
+    }
+    expect(completedRow.textContent).toContain("first-finish");
+    expect(completedRow.textContent).not.toContain("first-start");
+    expect(completedRow.textContent).not.toContain("second-start");
+  });
+
   test("hides task workspace actions when the task workspace is unavailable", async () => {
     const navigatedTo: string[] = [];
     useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {

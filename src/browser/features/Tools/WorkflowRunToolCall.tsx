@@ -185,42 +185,126 @@ function getStructuredOutput(value: unknown): unknown {
 }
 
 type WorkflowTaskEvent = Extract<WorkflowRunEvent, { type: "task" }>;
+type WorkflowActionEvent = Extract<WorkflowRunEvent, { type: "action" }>;
 
 type WorkflowDisplayRow =
   | { kind: "event"; event: WorkflowRunEvent }
-  | { kind: "task"; firstEvent: WorkflowTaskEvent; latestEvent: WorkflowTaskEvent };
+  | { kind: "task"; firstEvent: WorkflowTaskEvent; latestEvent: WorkflowTaskEvent }
+  | { kind: "action"; firstEvent: WorkflowActionEvent; latestEvent: WorkflowActionEvent };
+
+type WorkflowTaskRow = Extract<WorkflowDisplayRow, { kind: "task" }>;
+type WorkflowActionRow = Extract<WorkflowDisplayRow, { kind: "action" }>;
+interface PendingWorkflowActionRows {
+  rows: WorkflowActionRow[];
+  ambiguous: boolean;
+}
 
 function getTaskEventKey(event: WorkflowTaskEvent): string {
   return `task:${event.stepId}:${event.taskId}`;
 }
 
+function getActionEventKey(event: WorkflowActionEvent): string {
+  return JSON.stringify([
+    "action",
+    event.stepId,
+    event.name,
+    event.effect,
+    event.sourcePath ?? "",
+    event.sourceHash ?? "",
+  ]);
+}
+
+function createWorkflowActionRow(event: WorkflowActionEvent): WorkflowActionRow {
+  return {
+    kind: "action",
+    firstEvent: event,
+    latestEvent: event,
+  };
+}
+
+function getPendingActionRows(
+  actionRows: Map<string, PendingWorkflowActionRows>,
+  key: string
+): PendingWorkflowActionRows {
+  const existingRows = actionRows.get(key);
+  if (existingRows != null) {
+    return existingRows;
+  }
+  const createdRows: PendingWorkflowActionRows = { rows: [], ambiguous: false };
+  actionRows.set(key, createdRows);
+  return createdRows;
+}
+
 function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDisplayRow[] {
   const rows: WorkflowDisplayRow[] = [];
-  const taskRows = new Map<string, Extract<WorkflowDisplayRow, { kind: "task" }>>();
+  const taskRows = new Map<string, WorkflowTaskRow>();
+  const actionRows = new Map<string, PendingWorkflowActionRows>();
 
   for (const event of events) {
     if (event.type === "status" || event.type === "result") {
       continue;
     }
-    if (event.type !== "task") {
-      rows.push({ kind: "event", event });
+    if (event.type === "task") {
+      const key = getTaskEventKey(event);
+      const existingRow = taskRows.get(key);
+      if (existingRow != null) {
+        existingRow.latestEvent = event;
+        continue;
+      }
+
+      const row: WorkflowTaskRow = {
+        kind: "task",
+        firstEvent: event,
+        latestEvent: event,
+      };
+      taskRows.set(key, row);
+      rows.push(row);
       continue;
     }
 
-    const key = getTaskEventKey(event);
-    const existingRow = taskRows.get(key);
-    if (existingRow != null) {
-      existingRow.latestEvent = event;
+    if (event.type === "action") {
+      const key = getActionEventKey(event);
+      if (event.status === "started") {
+        const pendingRows = getPendingActionRows(actionRows, key);
+        if (pendingRows.rows.length > 0) {
+          pendingRows.ambiguous = true;
+        }
+        const row = createWorkflowActionRow(event);
+        pendingRows.rows.push(row);
+        rows.push(row);
+        continue;
+      }
+
+      const pendingRows = actionRows.get(key);
+      if (pendingRows == null) {
+        rows.push(createWorkflowActionRow(event));
+        continue;
+      }
+
+      if (pendingRows.rows.length === 1 && !pendingRows.ambiguous) {
+        const row = pendingRows.rows.at(0);
+        if (row == null) {
+          throw new Error("Expected pending action row to exist");
+        }
+        row.latestEvent = event;
+        actionRows.delete(key);
+        continue;
+      }
+
+      if (pendingRows.rows.length > 0) {
+        // Ambiguous persisted streams cannot be paired without invocation IDs; keep raw rows
+        // instead of merging terminal details into the wrong action start row.
+        pendingRows.ambiguous = true;
+        pendingRows.rows.shift();
+        if (pendingRows.rows.length === 0) {
+          actionRows.delete(key);
+        }
+      }
+      rows.push(createWorkflowActionRow(event));
       continue;
     }
 
-    const row: Extract<WorkflowDisplayRow, { kind: "task" }> = {
-      kind: "task",
-      firstEvent: event,
-      latestEvent: event,
-    };
-    taskRows.set(key, row);
-    rows.push(row);
+    rows.push({ kind: "event", event });
   }
   return rows;
 }
@@ -228,6 +312,9 @@ function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDi
 function getDisplayRowKey(row: WorkflowDisplayRow): string {
   if (row.kind === "task") {
     return getTaskEventKey(row.firstEvent);
+  }
+  if (row.kind === "action") {
+    return `${getActionEventKey(row.firstEvent)}:${row.firstEvent.sequence}`;
   }
   return getEventKey(row.event);
 }
@@ -398,13 +485,32 @@ function WorkflowEventTooltip(props: {
   );
 }
 
+function getWorkflowActionRowDetail(row: WorkflowActionRow): unknown {
+  const firstDetail = getWorkflowEventDetail(row.firstEvent);
+  const latestDetail = getWorkflowEventDetail(row.latestEvent);
+  if (row.firstEvent === row.latestEvent || row.latestEvent.status === "started") {
+    return latestDetail;
+  }
+  if (firstDetail === undefined) {
+    return latestDetail;
+  }
+  if (latestDetail === undefined) {
+    return { started: firstDetail };
+  }
+  return { started: firstDetail, [row.latestEvent.status]: latestDetail };
+}
+
 function WorkflowEventRow(props: {
   event: WorkflowRunEvent;
   displayIndex: number;
   steps: readonly WorkflowStepRecord[];
+  detailOverride?: unknown;
+  tooltipEvent?: WorkflowRunEvent;
 }) {
   const event = props.event;
-  const detail = getWorkflowEventDetail(event);
+  const tooltipEvent = props.tooltipEvent ?? event;
+  const detail =
+    props.detailOverride !== undefined ? props.detailOverride : getWorkflowEventDetail(event);
   const taskReportMarkdown = getTaskReportMarkdown(event, props.steps);
   const isExpandable = detail !== undefined || taskReportMarkdown != null;
   const clickableCursorClass = isExpandable ? "cursor-pointer" : "";
@@ -416,14 +522,18 @@ function WorkflowEventRow(props: {
       {/* Keep the tooltip trigger on the sequence cell so expandable row text still advertises clickability. */}
       <TooltipIfPresent
         tooltip={
-          <WorkflowEventTooltip event={event} displayIndex={props.displayIndex} label={label} />
+          <WorkflowEventTooltip
+            event={tooltipEvent}
+            displayIndex={props.displayIndex}
+            label={label}
+          />
         }
         side="top"
         align="start"
       >
         <span
           className="text-muted counter-nums-mono w-fit cursor-help"
-          aria-label={`Raw event #${event.sequence}`}
+          aria-label={`Raw event #${tooltipEvent.sequence}`}
         >
           #{props.displayIndex}
         </span>
@@ -1295,30 +1405,45 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
             <WorkflowSection title={`Workflow events (${displayRows.length})`}>
               <div className="border-border bg-background/20 max-h-[220px] overflow-y-auto rounded border">
                 <ol className="divide-border/60 divide-y">
-                  {displayRows.map((row, index) =>
-                    row.kind === "task" ? (
-                      <WorkflowTaskRow
-                        key={getDisplayRowKey(row)}
-                        row={row}
-                        displayIndex={index + 1}
-                        steps={run?.steps ?? []}
-                        onNavigate={(taskId) => workspaceStore.navigateToWorkspace(taskId)}
-                        onOpenReport={() => {
-                          userToggledExpansionRef.current = true;
-                        }}
-                        onInspectStructuredOutput={() => {
-                          userToggledExpansionRef.current = true;
-                        }}
-                      />
-                    ) : (
+                  {displayRows.map((row, index) => {
+                    if (row.kind === "task") {
+                      return (
+                        <WorkflowTaskRow
+                          key={getDisplayRowKey(row)}
+                          row={row}
+                          displayIndex={index + 1}
+                          steps={run?.steps ?? []}
+                          onNavigate={(taskId) => workspaceStore.navigateToWorkspace(taskId)}
+                          onOpenReport={() => {
+                            userToggledExpansionRef.current = true;
+                          }}
+                          onInspectStructuredOutput={() => {
+                            userToggledExpansionRef.current = true;
+                          }}
+                        />
+                      );
+                    }
+                    if (row.kind === "action") {
+                      return (
+                        <WorkflowEventRow
+                          key={getDisplayRowKey(row)}
+                          event={row.latestEvent}
+                          tooltipEvent={row.firstEvent}
+                          detailOverride={getWorkflowActionRowDetail(row)}
+                          displayIndex={index + 1}
+                          steps={run?.steps ?? []}
+                        />
+                      );
+                    }
+                    return (
                       <WorkflowEventRow
                         key={getDisplayRowKey(row)}
                         event={row.event}
                         displayIndex={index + 1}
                         steps={run?.steps ?? []}
                       />
-                    )
-                  )}
+                    );
+                  })}
                 </ol>
               </div>
             </WorkflowSection>
