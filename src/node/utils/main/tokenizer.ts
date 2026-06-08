@@ -274,6 +274,7 @@ export async function getToolDefinitionTokens(
       file_edit_insert: 50,
       web_search: 50,
       google_search: 50,
+      url_context: 50,
     };
     return fallbackSizes[toolName] ?? 40;
   }

@@ -53,7 +53,10 @@ import { log } from "@/node/services/log";
 import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalToolResultFields";
 import { NotificationEngine } from "@/node/services/agentNotifications/NotificationEngine";
 import { TodoListReminderSource } from "@/node/services/agentNotifications/sources/TodoListReminderSource";
-import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
+import {
+  getAvailableTools,
+  supportsGoogleNativeToolsWithFunctionTools,
+} from "@/common/utils/tools/toolDefinitions";
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -594,10 +597,20 @@ export async function getToolsForModel(
         break;
       }
 
-      // Note: Gemini 3 tool support:
-      // Combining native tools with function calling is currently only
-      // supported in the Live API. Thus no `google_search` or `url_context` added here.
-      // - https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#native-tools
+      case "google": {
+        if (supportsGoogleNativeToolsWithFunctionTools(modelId)) {
+          const { google } = await import("@ai-sdk/google");
+          allTools = {
+            ...baseTools,
+            ...(mcpTools ?? {}),
+            // Google exposes native Search and URL Context as provider-executed tools for
+            // Gemini 3+. These coexist with Mux function tools in the standard streaming API.
+            google_search: google.tools.googleSearch({}) as Tool,
+            url_context: google.tools.urlContext({}) as Tool,
+          };
+        }
+        break;
+      }
     }
   } catch (error) {
     // If tools aren't available, just use base tools

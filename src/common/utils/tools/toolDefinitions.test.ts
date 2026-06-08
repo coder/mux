@@ -2,6 +2,7 @@ import { RUNTIME_MODE } from "@/common/types/runtime";
 import {
   buildTaskToolDescription,
   getAvailableTools,
+  supportsGoogleNativeToolsWithFunctionTools,
   TaskToolArgsSchema,
   TOOL_DEFINITIONS,
 } from "./toolDefinitions";
@@ -422,6 +423,28 @@ describe("TOOL_DEFINITIONS", () => {
     expect(enabledTools).toContain("workflow_read");
     expect(enabledTools).toContain("workflow_action_list");
     expect(enabledTools).toContain("workflow_run");
+  });
+
+  it("gates native Google tools to Gemini 3+ models", () => {
+    expect(getAvailableTools("google:gemini-2.5-pro")).not.toContain("google_search");
+    expect(getAvailableTools("google:gemini-2.5-pro")).not.toContain("url_context");
+
+    for (const modelString of [
+      "google:gemini-3.1-pro-preview",
+      "google:gemini-3.5-flash",
+      "google:gemini-4-pro",
+    ]) {
+      const tools = getAvailableTools(modelString);
+      expect(tools).toContain("google_search");
+      expect(tools).toContain("url_context");
+    }
+  });
+
+  it("classifies Gemini 3+ as supporting mixed native Google and function tools", () => {
+    expect(supportsGoogleNativeToolsWithFunctionTools("gemini-2.5-pro")).toBe(false);
+    expect(supportsGoogleNativeToolsWithFunctionTools("gemini-3.1-pro-preview")).toBe(true);
+    expect(supportsGoogleNativeToolsWithFunctionTools("gemini-3.5-flash")).toBe(true);
+    expect(supportsGoogleNativeToolsWithFunctionTools("gemini-4-pro")).toBe(true);
   });
 
   it("agent_skill_write schema rejects an advertise tool argument (advertise is authored in content)", () => {
