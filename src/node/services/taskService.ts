@@ -1289,17 +1289,39 @@ export class TaskService {
       (task) => task.taskStatus === "starting" && typeof task.id === "string"
     );
     if (staleStartingTasks.length > 0) {
+      const recoveries = new Map<
+        string,
+        { status: Extract<AgentTaskStatus, "queued" | "running">; acceptedPrompt: boolean }
+      >();
+      for (const task of staleStartingTasks) {
+        assert(task.id != null && task.id.length > 0, "stale starting task id is required");
+        const isStreaming = this.aiService.isStreaming(task.id);
+        recoveries.set(task.id, {
+          status: isStreaming ? "running" : "queued",
+          acceptedPrompt: !isStreaming && (await this.hasAcceptedInitialTaskPrompt(task.id)),
+        });
+      }
+
       await this.config.editConfig((config) => {
         for (const task of staleStartingTasks) {
           assert(task.id != null && task.id.length > 0, "stale starting task id is required");
+          const recovery = recoveries.get(task.id);
+          assert(recovery != null, "stale starting task recovery is required");
           const entry = findWorkspaceEntry(config, task.id);
           if (!entry) continue;
-          entry.workspace.taskStatus = this.aiService.isStreaming(task.id) ? "running" : "queued";
+          entry.workspace.taskStatus = recovery.status;
+          if (recovery.acceptedPrompt) {
+            // The initial prompt is already durable in chat history; clearing taskPrompt makes the
+            // queued recovery path resume that accepted turn instead of appending a duplicate user turn.
+            entry.workspace.taskPrompt = undefined;
+          }
         }
         return config;
       });
       log.info("[startup] Recovered stale starting agent tasks", {
         count: staleStartingTasks.length,
+        acceptedPromptCount: [...recoveries.values()].filter((recovery) => recovery.acceptedPrompt)
+          .length,
       });
     }
 
@@ -1488,6 +1510,21 @@ export class TaskService {
       bestOfRecoveryMs,
       cleanupReportedTasksMs,
     });
+  }
+
+  private async hasAcceptedInitialTaskPrompt(workspaceId: string): Promise<boolean> {
+    assert(workspaceId.length > 0, "hasAcceptedInitialTaskPrompt: workspaceId must be non-empty");
+
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      log.warn("Failed to inspect task history during stale starting recovery", {
+        workspaceId,
+        error: historyResult.error,
+      });
+      return false;
+    }
+
+    return historyResult.data.some((message) => message.role === "user");
   }
 
   private startWorkspaceInit(workspaceId: string, projectPath: string): InitLogger {

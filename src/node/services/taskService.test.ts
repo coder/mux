@@ -698,7 +698,7 @@ describe("TaskService", () => {
     expect(started?.taskStatus).toBe("running");
   }, 20_000);
 
-  test("resumes legacy queued tasks that do not persist taskPrompt", async () => {
+  test("resumes accepted queued starts instead of replaying prompts", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = await createTestProject(rootDir);
 
@@ -718,6 +718,9 @@ describe("TaskService", () => {
     const parentId = "1111111111";
     const queuedTaskId = "task-queued";
     const queuedWorkspaceName = "agent_explore_task-queued";
+    const acceptedStartingTaskId = "task-starting-accepted";
+    const acceptedStartingWorkspaceName = "agent_explore_task-starting-accepted";
+    const acceptedPrompt = "already accepted prompt";
     await saveWorkspaces(
       config,
       projectPath,
@@ -743,31 +746,61 @@ describe("TaskService", () => {
           taskModelString: defaultModel,
           taskTrunkBranch: parentName,
         },
+        {
+          path: runtime.getWorkspacePath(projectPath, acceptedStartingWorkspaceName),
+          id: acceptedStartingTaskId,
+          name: acceptedStartingWorkspaceName,
+          title: "Accepted starting task",
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+          parentWorkspaceId: parentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "starting",
+          taskPrompt: acceptedPrompt,
+          taskModelString: defaultModel,
+          taskTrunkBranch: parentName,
+        },
       ],
-      testTaskSettings(1, 3)
+      testTaskSettings(2, 3)
     );
 
+    const { workspaceService, sendMessage, resumeStream } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+    const appendAcceptedPrompt = await historyService.appendToHistory(
+      acceptedStartingTaskId,
+      createMuxMessage("accepted-starting-prompt", "user", acceptedPrompt)
+    );
+    expect(appendAcceptedPrompt.success).toBe(true);
     expect(findWorkspaceInConfig(config, queuedTaskId)?.taskPrompt).toBeUndefined();
+    expect(findWorkspaceInConfig(config, acceptedStartingTaskId)?.taskPrompt).toBe(acceptedPrompt);
 
-    const { workspaceService, resumeStream } = createWorkspaceServiceMocks();
-    const { taskService } = createTaskServiceHarness(config, { workspaceService });
     const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
       () => undefined
     );
     try {
       await taskService.initialize();
 
-      expect(resumeStream).toHaveBeenCalledWith(
-        queuedTaskId,
-        expect.objectContaining({ model: defaultModel, agentId: "explore" }),
-        expect.objectContaining({ allowQueuedAgentTask: true, agentInitiated: true })
-      );
+      for (const taskId of [queuedTaskId, acceptedStartingTaskId]) {
+        expect(resumeStream).toHaveBeenCalledWith(
+          taskId,
+          expect.objectContaining({ model: defaultModel, agentId: "explore" }),
+          expect.objectContaining({ allowQueuedAgentTask: true, agentInitiated: true })
+        );
+      }
+      const sendMessagePrompts = (
+        sendMessage as unknown as { mock: { calls: unknown[][] } }
+      ).mock.calls.map((call) => call[1]);
+      expect(sendMessagePrompts).not.toContain(acceptedPrompt);
     } finally {
       runBackgroundInitSpy.mockRestore();
     }
 
-    const started = findWorkspaceInConfig(config, queuedTaskId);
-    expect(started?.taskStatus).toBe("running");
+    const queued = findWorkspaceInConfig(config, queuedTaskId);
+    expect(queued?.taskStatus).toBe("running");
+    const acceptedStarting = findWorkspaceInConfig(config, acceptedStartingTaskId);
+    expect(acceptedStarting?.taskStatus).toBe("running");
+    expect(acceptedStarting?.taskPrompt).toBeUndefined();
   }, 20_000);
 
   test("does not count foreground-awaiting tasks towards maxParallelAgentTasks", async () => {
