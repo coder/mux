@@ -107,6 +107,31 @@ describe("WorkflowDefinitionStore", () => {
     );
   });
 
+  test("project definitions win over scratch drafts with the same name", async () => {
+    using tmp = new DisposableTempDir("workflow-definitions-project-over-scratch");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const scratchRoot = path.join(projectRoot, ".scratch");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await writeWorkflow(projectRoot, "demo", "Project demo");
+    await writeWorkflow(scratchRoot, "demo", "Scratch demo");
+
+    const store = new WorkflowDefinitionStore({
+      projectRoot,
+      scratchRoot,
+      globalRoot,
+      builtIns: [],
+    });
+
+    const definitions = await store.listDefinitions({ projectTrusted: true });
+    const definition = await store.readDefinition("demo", { projectTrusted: true });
+
+    expect(definitions.map((candidate) => [candidate.name, candidate.scope])).toEqual([
+      ["demo", "project"],
+    ]);
+    expect(definition.descriptor.scope).toBe("project");
+    expect(definition.source).toContain("Project demo");
+  });
+
   test("omits project-local workflows when the project is not trusted", async () => {
     using tmp = new DisposableTempDir("workflow-definitions");
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");

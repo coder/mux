@@ -53,6 +53,12 @@ const TAB_CONFIG_DEF = {
     defaultOrder: 35,
     paletteKeywords: ["goal", "target", "objective"],
   },
+  workflows: {
+    name: "Workflows",
+    contentClassName: "overflow-hidden p-0",
+    defaultOrder: 37,
+    paletteKeywords: ["workflow", "workflows", "automation", "run"],
+  },
   desktop: {
     name: "Desktop",
     contentClassName: "overflow-hidden p-0",

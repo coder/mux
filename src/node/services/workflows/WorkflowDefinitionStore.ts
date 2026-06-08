@@ -908,11 +908,30 @@ export class WorkflowDefinitionStore {
     const byName = new Map<WorkflowName, ScannedWorkflowDefinition>();
     const sources: ScannedWorkflowDefinition[][] = [];
 
+    if (options.projectTrusted) {
+      if (this.projectRuntime != null) {
+        assert(
+          this.projectCwd != null,
+          "WorkflowDefinitionStore.collectDefinitions: projectCwd missing"
+        );
+        sources.push(
+          await scanRuntimeDirectory(
+            this.projectRuntime,
+            this.projectRoot,
+            this.projectCwd,
+            "project"
+          )
+        );
+      } else {
+        sources.push(await scanDirectory(this.projectRoot, "project"));
+      }
+    }
     if (this.scratchRoot != null && options.projectTrusted) {
       // Scratch workflows live under the workspace checkout, so treat them like project-local
       // code for trust gating rather than exposing repo-controlled files from untrusted projects.
       // Keep plain workflow discovery read-only: only create/touch scratch ignore files once
-      // there is an actual scratch workflow candidate for Git to hide.
+      // there is an actual scratch workflow candidate for Git to hide. Project definitions still
+      // take precedence so promoting a scratch draft to a reusable workflow is visible immediately.
       if (this.projectRuntime != null) {
         assert(
           this.projectCwd != null,
@@ -959,24 +978,6 @@ export class WorkflowDefinitionStore {
           await deleteLocalGeneratedScratchGitignore(this.scratchRoot);
         }
         sources.push(scratchDefinitions);
-      }
-    }
-    if (options.projectTrusted) {
-      if (this.projectRuntime != null) {
-        assert(
-          this.projectCwd != null,
-          "WorkflowDefinitionStore.collectDefinitions: projectCwd missing"
-        );
-        sources.push(
-          await scanRuntimeDirectory(
-            this.projectRuntime,
-            this.projectRoot,
-            this.projectCwd,
-            "project"
-          )
-        );
-      } else {
-        sources.push(await scanDirectory(this.projectRoot, "project"));
       }
     }
     sources.push(await scanDirectory(this.globalRoot, "global"));

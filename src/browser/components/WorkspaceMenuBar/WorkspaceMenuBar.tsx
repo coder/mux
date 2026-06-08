@@ -44,6 +44,7 @@ import { PopoverError } from "../PopoverError/PopoverError";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
 import { WorkspaceTerminalIcon } from "../icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
 
+import { WorkflowIndicator } from "../WorkflowIndicator/WorkflowIndicator";
 import { SkillIndicator } from "../SkillIndicator/SkillIndicator";
 import { useAPI } from "@/browser/contexts/API";
 import { useAgent } from "@/browser/contexts/AgentContext";
@@ -683,6 +684,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
             </div>
           </PopoverContent>
         </Popover>
+        <WorkflowIndicator workspaceId={workspaceId} />
         <SkillIndicator
           loadedSkills={loadedSkills}
           availableSkills={availableSkills}

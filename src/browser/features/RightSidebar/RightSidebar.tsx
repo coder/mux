@@ -1110,6 +1110,21 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   }, [setCollapsed, setLayout, workspaceId]);
 
   React.useEffect(() => {
+    const handleOpenWorkflowsTab = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId: string }>).detail;
+      if (detail?.workspaceId !== workspaceId) {
+        return;
+      }
+      setCollapsed(false);
+      setLayout((prev) => selectOrAddTab(prev, "workflows"));
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.OPEN_WORKFLOWS_TAB, handleOpenWorkflowsTab);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.OPEN_WORKFLOWS_TAB, handleOpenWorkflowsTab);
+  }, [setCollapsed, setLayout, workspaceId]);
+
+  React.useEffect(() => {
     const handleOpenTouchReviewImmersive = (event: Event) => {
       const detail = (event as CustomEvent<{ workspaceId: string }>).detail;
       if (detail?.workspaceId !== workspaceId) {

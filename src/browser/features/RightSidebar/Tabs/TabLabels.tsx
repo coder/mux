@@ -15,6 +15,7 @@ import {
   Globe,
   Sparkles,
   Target,
+  Workflow,
   Terminal as TerminalIcon,
   X,
 } from "lucide-react";
@@ -32,6 +33,7 @@ import {
   useOptionalWorkspaceSidebarState,
   useWorkspaceUsage,
 } from "@/browser/stores/WorkspaceStore";
+import { useWorkflowWorkspaceSummary } from "@/browser/features/Workflows/WorkflowStore";
 import { goalActiveMode, isGoalPendingPersistence } from "@/common/types/goal";
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 
@@ -217,6 +219,41 @@ export const GoalTabLabel: React.FC<GoalTabLabelProps> = ({ workspaceId }) => {
     >
       <Target className="h-3 w-3 shrink-0" />
       Goal
+    </span>
+  );
+};
+
+interface WorkflowsTabLabelProps {
+  workspaceId: string;
+}
+
+export const WorkflowsTabLabel: React.FC<WorkflowsTabLabelProps> = ({ workspaceId }) => {
+  const summary = useWorkflowWorkspaceSummary(workspaceId);
+  const hasProblems = summary.problemCount > 0;
+  const hasActive = summary.activeCount > 0;
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1",
+        hasProblems && "text-error",
+        !hasProblems && hasActive && "text-success"
+      )}
+      aria-label={
+        hasProblems
+          ? `Workflows (${summary.problemCount} needing attention)`
+          : hasActive
+            ? `Workflows (${summary.activeCount} active)`
+            : "Workflows"
+      }
+    >
+      <Workflow className="h-3 w-3 shrink-0" />
+      Workflows
+      {(hasProblems || hasActive) && (
+        <span className="counter-nums text-[10px]">
+          {hasProblems ? summary.problemCount : summary.activeCount}
+        </span>
+      )}
     </span>
   );
 };

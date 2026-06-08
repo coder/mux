@@ -60,6 +60,7 @@ import {
   formatWorkflowSavedMessage,
   type WorkflowPromotionTarget,
 } from "./WorkflowDefinitionToolCall";
+import { useWorkflowWorkspaceSnapshot } from "@/browser/features/Workflows/WorkflowStore";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 
@@ -885,24 +886,22 @@ function selectWorkflowRunSnapshot(input: {
   runId?: string;
   baseRun?: WorkflowRunRecord;
   refreshedRun: WorkflowRunRecord | null;
+  storeRun?: WorkflowRunRecord;
 }): { runId?: string; run?: WorkflowRunRecord } {
-  const runId = input.runId ?? input.baseRun?.id ?? input.refreshedRun?.id;
+  const runId = input.runId ?? input.baseRun?.id ?? input.refreshedRun?.id ?? input.storeRun?.id;
   if (runId == null) {
     return {};
   }
-  if (input.refreshedRun?.id !== runId) {
-    return input.baseRun == null ? { runId } : { runId, run: input.baseRun };
+  const candidates = [input.baseRun, input.refreshedRun, input.storeRun].filter(
+    (candidate): candidate is WorkflowRunRecord => candidate?.id === runId
+  );
+  if (candidates.length === 0) {
+    return { runId };
   }
-  if (input.baseRun?.id !== runId) {
-    return { runId, run: input.refreshedRun };
-  }
-  return {
-    runId,
-    run:
-      compareWorkflowRunSnapshots(input.refreshedRun, input.baseRun) >= 0
-        ? input.refreshedRun
-        : input.baseRun,
-  };
+  const run = candidates.reduce((newest, candidate) =>
+    compareWorkflowRunSnapshots(newest, candidate) >= 0 ? newest : candidate
+  );
+  return { runId, run };
 }
 
 function getLatestResultEvent(run: WorkflowRunRecord | null | undefined): unknown {
@@ -955,10 +954,14 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     setWorkflowActionInFlightRunId(nextRunId);
   };
   const baseRun = successResult?.run;
+  const workflowSnapshot = useWorkflowWorkspaceSnapshot(workspaceId);
+  const snapshotRunId = successResult?.runId ?? baseRun?.id ?? refreshedRun?.id;
+  const storeRun = workflowSnapshot.runs.find((candidate) => candidate.id === snapshotRunId);
   const selectedRun = selectWorkflowRunSnapshot({
     runId: successResult?.runId,
     baseRun,
     refreshedRun,
+    storeRun,
   });
   const runId = selectedRun.runId;
   const run = selectedRun.run;
@@ -1251,7 +1254,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
       apiState?.api == null ||
       runId == null ||
       run?.workspaceId == null ||
-      (!shouldRefreshWorkflow(displayStatus) && resumingRunId !== runId)
+      (resumingRunId !== runId && (storeRun != null || !shouldRefreshWorkflow(displayStatus)))
     ) {
       return;
     }
@@ -1288,7 +1291,15 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
       ignore = true;
       window.clearInterval(interval);
     };
-  }, [apiState?.api, displayEventSequence, displayStatus, resumingRunId, run?.workspaceId, runId]);
+  }, [
+    apiState?.api,
+    displayEventSequence,
+    displayStatus,
+    resumingRunId,
+    run?.workspaceId,
+    runId,
+    storeRun,
+  ]);
 
   return (
     <ToolContainer expanded={expanded}>

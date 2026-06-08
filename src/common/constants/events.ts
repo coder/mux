@@ -124,6 +124,12 @@ export const CUSTOM_EVENTS = {
   OPEN_GOAL_TAB: "mux:openGoalTab",
 
   /**
+   * Event to open the right-sidebar Workflows tab.
+   * Detail: { workspaceId: string }
+   */
+  OPEN_WORKFLOWS_TAB: "mux:openWorkflowsTab",
+
+  /**
    * Event to show a toast when a child task pushes the parent's goal over budget.
    * Detail: { workspaceId: string, message: string }
    */
@@ -196,6 +202,9 @@ export interface CustomEventPayloads {
   [CUSTOM_EVENTS.OPEN_GOAL_TAB]: {
     workspaceId: string;
     openCompleteInput?: boolean;
+  };
+  [CUSTOM_EVENTS.OPEN_WORKFLOWS_TAB]: {
+    workspaceId: string;
   };
   [CUSTOM_EVENTS.GOAL_CHILD_BUDGET_TOAST]: {
     workspaceId: string;

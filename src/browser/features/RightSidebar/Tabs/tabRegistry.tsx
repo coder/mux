@@ -22,6 +22,7 @@ import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
 import { BrowserTab } from "@/browser/features/RightSidebar/BrowserTab";
 import { DevToolsTab } from "@/browser/features/RightSidebar/DevToolsTab";
 import { GoalTab, type GoalCreateIntent } from "@/browser/features/RightSidebar/GoalTab";
+import { WorkflowsTab } from "@/browser/features/Workflows/WorkflowsTab";
 import type { GoalSnapshot, GoalStatus } from "@/common/types/goal";
 import type { ReviewNoteData } from "@/common/types/review";
 import { BASE_TAB_IDS, TAB_CONFIG, type BaseTabType, type TabConfig } from "./tabConfig";
@@ -31,6 +32,7 @@ import {
   DesktopTabLabel,
   GoalTabLabel,
   InstructionsTabLabel,
+  WorkflowsTabLabel,
   OutputTabLabel,
   ReviewTabLabel,
   StatsTabLabel,
@@ -154,6 +156,14 @@ const TAB_RENDERERS = {
           onClear={ctx.goal.onClear}
           onCreate={ctx.goal.onCreate}
         />
+      </ErrorBoundary>
+    ),
+  },
+  workflows: {
+    Label: ({ workspaceId }) => <WorkflowsTabLabel workspaceId={workspaceId} />,
+    renderPanel: (ctx) => (
+      <ErrorBoundary workspaceInfo="Workflows tab">
+        <WorkflowsTab workspaceId={ctx.workspaceId} />
       </ErrorBoundary>
     ),
   },
