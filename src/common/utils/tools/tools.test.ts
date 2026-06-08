@@ -223,7 +223,7 @@ describe("getToolsForModel", () => {
     expect(Object.keys(tools).filter((toolName) => toolName.startsWith("desktop_"))).toEqual([]);
   });
 
-  test("adds native Google Search and URL Context only for Gemini 3+ models", async () => {
+  test("adds native Google Search and URL Context only for Gemini 3 models", async () => {
     const runtime = new LocalRuntime(process.cwd());
     const initStateManager = createInitStateManager();
 
@@ -241,6 +241,20 @@ describe("getToolsForModel", () => {
     expect(gemini25Tools.google_search).toBeUndefined();
     expect(gemini25Tools.url_context).toBeUndefined();
 
+    const gemini4Tools = await getToolsForModel(
+      "google:gemini-4-pro",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(gemini4Tools.google_search).toBeUndefined();
+    expect(gemini4Tools.url_context).toBeUndefined();
+
     const gemini35Tools = await getToolsForModel(
       "google:gemini-3.5-flash",
       {
@@ -252,6 +266,20 @@ describe("getToolsForModel", () => {
       "ws-1",
       initStateManager
     );
+    const namespacedGemini35Tools = await getToolsForModel(
+      "google:models/gemini-3.5-flash",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(namespacedGemini35Tools.google_search).toBeDefined();
+    expect(namespacedGemini35Tools.url_context).toBeDefined();
+
     expect(gemini35Tools.google_search).toBeDefined();
     expect(gemini35Tools.url_context).toBeDefined();
   });

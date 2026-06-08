@@ -2333,14 +2333,16 @@ export function getToolSchemas(): Record<string, ToolSchema> {
 }
 
 /**
- * Google's mixed built-in + function tool path is supported for Gemini 3+.
+ * Google's mixed built-in + function tool path is currently supported for Gemini 3.
  * Keep native Google tools gated here so the prompt allowlist matches the actual toolset.
  */
 export function supportsGoogleNativeToolsWithFunctionTools(modelId: string): boolean {
-  const match = /^gemini-(\d+)(?:[.-]|$)/.exec(modelId);
+  const bareModelId = modelId.split("/").pop() ?? modelId;
+  const match = /^gemini-(\d+)(?:[.-]|$)/.exec(bareModelId);
   if (!match) return false;
   const major = Number.parseInt(match[1], 10);
-  return major >= 3;
+  // The installed @ai-sdk/google mixed native/function serialization path is Gemini 3-only.
+  return major === 3;
 }
 
 /**
