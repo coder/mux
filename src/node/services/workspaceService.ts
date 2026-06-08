@@ -473,6 +473,41 @@ function isArchiveLossyUntrackedFilesConfirmation(
   );
 }
 
+function waitForAgentSessionIdle(session: AgentSession, signal?: AbortSignal): Promise<void> {
+  assert(session instanceof AgentSession, "waitForAgentSessionIdle requires an AgentSession");
+  if (signal?.aborted === true) {
+    return Promise.reject(
+      new Error("Workflow start canceled while waiting for workspace to become idle.")
+    );
+  }
+  if (signal == null) {
+    return session.waitForIdle();
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const settle = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      callback();
+    };
+    const abort = () => {
+      settle(() =>
+        reject(new Error("Workflow start canceled while waiting for workspace to become idle."))
+      );
+    };
+
+    signal.addEventListener("abort", abort, { once: true });
+    session.waitForIdle().then(
+      () => settle(resolve),
+      (error: unknown) => settle(() => reject(new Error(getErrorMessage(error))))
+    );
+  });
+}
+
 interface FileCompletionsCacheEntry {
   index: FileCompletionsIndex;
   fetchedAt: number;
@@ -2118,6 +2153,29 @@ export class WorkspaceService extends EventEmitter {
     this.attachSessionSubscriptions(trimmed, session);
 
     return session;
+  }
+
+  async waitForWorkspaceIdle(
+    workspaceId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<void> {
+    assert(typeof workspaceId === "string", "waitForWorkspaceIdle requires a workspaceId string");
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "waitForWorkspaceIdle requires a non-empty workspaceId");
+
+    for (;;) {
+      if (options?.signal?.aborted === true) {
+        throw new Error("Workflow start canceled while waiting for workspace to become idle.");
+      }
+
+      const session =
+        this.sessions.get(trimmed) ?? this.transientStartupRecoverySessions.get(trimmed);
+      if (session?.isBusy() !== true) {
+        return;
+      }
+
+      await waitForAgentSessionIdle(session, options?.signal);
+    }
   }
 
   /**
