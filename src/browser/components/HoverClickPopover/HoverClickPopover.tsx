@@ -91,7 +91,15 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
   };
 
   const handleTriggerClick = () => {
-    setIsPinned((prev) => !prev);
+    if (isPinned) {
+      setIsPinned(false);
+      setIsHovering(false);
+      setIsFocused(false);
+      return;
+    }
+
+    setIsPinned(true);
+    setIsFocused(false);
   };
 
   const handleTriggerPointerEnter = (event: React.PointerEvent<HTMLButtonElement>) => {

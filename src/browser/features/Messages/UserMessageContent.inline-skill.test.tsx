@@ -116,6 +116,42 @@ describe("UserMessageContent inline skill rendering", () => {
     expect(sourceRegion?.tabIndex).toBe(0);
   });
 
+  test("toggles the slash workflow preview when the focused badge is clicked", async () => {
+    const view = render(
+      <UserMessageContent
+        content="/deep-review-workflow Check this"
+        commandPrefix="/deep-review-workflow"
+        workflowDefinitionPreview={{
+          descriptor: {
+            name: "deep-review-workflow",
+            description: "Review deeply",
+            scope: "built-in",
+            executable: true,
+          },
+          source: "export default function workflow() {}",
+        }}
+        variant="sent"
+      />
+    );
+
+    const trigger = view.getByRole("button", {
+      name: "Show workflow definition preview for deep-review-workflow",
+    });
+
+    fireEvent.focus(trigger);
+    fireEvent.click(trigger);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("Review deeply");
+    });
+
+    fireEvent.click(trigger);
+
+    await waitFor(() => {
+      expect(document.body.textContent).not.toContain("Review deeply");
+    });
+  });
+
   test("keeps edit-mode textarea content as raw text", () => {
     function EditHarness() {
       const [editingMessage, setEditingMessage] = React.useState<EditingMessageState | null>(null);
