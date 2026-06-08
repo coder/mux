@@ -86,6 +86,10 @@ type CopilotLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 
 const OPENAI_SERVICE_TIER_UNSET = "unset";
 
+// Single source of truth for the guard shown when the IPC API client is unavailable, so the
+// message can't drift between the several provider login/submit handlers that surface it.
+const API_NOT_CONNECTED_ERROR = "Mux API not connected.";
+
 type OpenAIServiceTier = ServiceTier;
 type OpenAIServiceTierSelectValue = typeof OPENAI_SERVICE_TIER_UNSET | OpenAIServiceTier;
 
@@ -493,7 +497,7 @@ export function ProvidersSection() {
 
     if (!api) {
       setCodexOauthStatus("error");
-      setCodexOauthError("Mux API not connected.");
+      setCodexOauthError(API_NOT_CONNECTED_ERROR);
       return;
     }
 
@@ -609,7 +613,7 @@ export function ProvidersSection() {
 
     if (!api) {
       setCodexOauthStatus("error");
-      setCodexOauthError("Mux API not connected.");
+      setCodexOauthError(API_NOT_CONNECTED_ERROR);
       return;
     }
 
@@ -683,7 +687,7 @@ export function ProvidersSection() {
 
     if (!api) {
       setCodexOauthStatus("error");
-      setCodexOauthError("Mux API not connected.");
+      setCodexOauthError(API_NOT_CONNECTED_ERROR);
       return;
     }
 
@@ -801,7 +805,7 @@ export function ProvidersSection() {
       if (isDesktop) {
         if (!api) {
           setMuxGatewayLoginStatus("error");
-          setMuxGatewayLoginError("Mux API not connected.");
+          setMuxGatewayLoginError(API_NOT_CONNECTED_ERROR);
           return;
         }
 
@@ -1414,7 +1418,7 @@ export function ProvidersSection() {
     setCustomProviderSubmitAttempted(true);
 
     if (!api) {
-      setCustomProviderSubmitError("Mux API not connected.");
+      setCustomProviderSubmitError(API_NOT_CONNECTED_ERROR);
       return;
     }
 
@@ -1503,7 +1507,7 @@ export function ProvidersSection() {
       if (!api) {
         setCustomProviderRemoveErrors((prev) => ({
           ...prev,
-          [provider]: "Mux API not connected.",
+          [provider]: API_NOT_CONNECTED_ERROR,
         }));
         return;
       }
