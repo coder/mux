@@ -78,6 +78,9 @@ describe("UserMessageContent inline skill rendering", () => {
     expect(view.getByText("deep-review-workflow")).toBeTruthy();
     expect(view.getByText("Review deeply")).toBeTruthy();
     expect(view.container.textContent).toContain("export default function workflow");
+    expect(
+      view.getByRole("region", { name: "Source for workflow deep-review-workflow" }).tabIndex
+    ).toBe(0);
   });
 
   test("opens the slash workflow preview from the focusable command badge", async () => {
@@ -106,14 +109,8 @@ describe("UserMessageContent inline skill rendering", () => {
     fireEvent.focus(trigger);
 
     await waitFor(() => {
-      expect(document.body.textContent).toContain("Review deeply");
-      expect(document.body.textContent).toContain("export default function workflow");
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
     });
-
-    const sourceRegion = document.body.querySelector<HTMLElement>(
-      '[role="region"][aria-label="Source for workflow deep-review-workflow"]'
-    );
-    expect(sourceRegion?.tabIndex).toBe(0);
   });
 
   test("toggles the slash workflow preview when the focused badge is clicked", async () => {
@@ -139,16 +136,21 @@ describe("UserMessageContent inline skill rendering", () => {
     });
 
     fireEvent.focus(trigger);
-    fireEvent.click(trigger);
 
     await waitFor(() => {
-      expect(document.body.textContent).toContain("Review deeply");
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
     });
 
     fireEvent.click(trigger);
 
     await waitFor(() => {
-      expect(document.body.textContent).not.toContain("Review deeply");
+      expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    });
+
+    fireEvent.click(trigger);
+
+    await waitFor(() => {
+      expect(trigger.getAttribute("aria-expanded")).toBe("false");
     });
   });
 
