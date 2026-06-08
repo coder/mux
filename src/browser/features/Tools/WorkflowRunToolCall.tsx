@@ -235,6 +235,10 @@ function getPendingActionRows(
   return createdRows;
 }
 
+function canCoalesceWorkflowActionTerminal(event: WorkflowActionEvent): boolean {
+  return event.status === "completed" || event.status === "failed" || event.status === "reconciled";
+}
+
 function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDisplayRow[] {
   const rows: WorkflowDisplayRow[] = [];
   const taskRows = new Map<string, WorkflowTaskRow>();
@@ -272,6 +276,11 @@ function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDi
         const row = createWorkflowActionRow(event);
         pendingRows.rows.push(row);
         rows.push(row);
+        continue;
+      }
+
+      if (!canCoalesceWorkflowActionTerminal(event)) {
+        rows.push(createWorkflowActionRow(event));
         continue;
       }
 

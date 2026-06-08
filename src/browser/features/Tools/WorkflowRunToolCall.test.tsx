@@ -561,6 +561,81 @@ describe("WorkflowRunToolCall", () => {
     expect(view.container.textContent).toContain("durationMs");
   });
 
+  test("leaves cached action events separate from pending started rows", () => {
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <TooltipProvider>
+          <WorkflowRunToolCall
+            args={{ name: "action-list", args: {}, run_in_background: true }}
+            status="completed"
+            result={{
+              status: "completed",
+              runId: "wfr_action_cached_rows",
+              result: null,
+              run: {
+                id: "wfr_action_cached_rows",
+                workspaceId: "workspace-1",
+                definition: {
+                  name: "action-list",
+                  description: "Action list",
+                  scope: "built-in",
+                  executable: true,
+                },
+                definitionSource: "export default function workflow() { return null; }",
+                definitionHash: "sha256:cached-actions",
+                args: {},
+                status: "completed",
+                createdAt: "2026-05-29T00:00:00.000Z",
+                updatedAt: "2026-05-29T00:00:02.000Z",
+                events: [
+                  {
+                    sequence: 1,
+                    type: "action",
+                    at: "2026-05-29T00:00:00.000Z",
+                    stepId: "git-status",
+                    name: "git.status",
+                    status: "started",
+                    effect: "read",
+                    sourcePath: "actions/git.ts",
+                    sourceHash: "sha256:git",
+                    details: { input: { marker: "stale-start" } },
+                  },
+                  {
+                    sequence: 2,
+                    type: "action",
+                    at: "2026-05-29T00:00:01.000Z",
+                    stepId: "git-status",
+                    name: "git.status",
+                    status: "cached",
+                    effect: "read",
+                    sourcePath: "actions/git.ts",
+                    sourceHash: "sha256:git",
+                    details: { stdout: "cached-result" },
+                  },
+                ],
+                steps: [],
+              },
+            }}
+          />
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+
+    fireEvent.click(getWorkflowHeader(view));
+
+    expect(view.getByText("Workflow events (2)")).toBeTruthy();
+    expect(view.getByText("git-status / git.status / started")).toBeTruthy();
+    expect(view.getByText("git-status / git.status / cached")).toBeTruthy();
+
+    fireEvent.click(view.getByText("git-status / git.status / cached"));
+    const cachedRow = view.getByText("git-status / git.status / cached").closest("details");
+    if (cachedRow == null) {
+      throw new Error("Expected cached action row details");
+    }
+    expect(cachedRow.textContent).toContain("cached-result");
+    expect(cachedRow.textContent).not.toContain("stale-start");
+  });
+
   test("preserves raw action rows when same-key starts overlap", () => {
     const view = render(
       <ThemeProvider forcedTheme="dark">
