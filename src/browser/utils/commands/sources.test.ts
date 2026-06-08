@@ -5,6 +5,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { GlobalWindow } from "happy-dom";
 import { getModelKey } from "@/common/constants/storage";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { APIClient } from "@/browser/contexts/API";
@@ -255,6 +256,26 @@ test("buildCoreSources includes create/switch workspace actions", () => {
   expect(titles.includes("Right Sidebar: Focus Terminal")).toBe(true);
   expect(titles.includes("New Terminal Window")).toBe(true);
   expect(titles.includes("Open Terminal Window for Workspace…")).toBe(true);
+});
+
+test("right sidebar add-tool options respect enabled feature flags", async () => {
+  const withoutWorkflows = getActions();
+  const withWorkflows = getActions({
+    enabledRightSidebarFeatureFlags: new Set([EXPERIMENT_IDS.DYNAMIC_WORKFLOWS]),
+  });
+
+  const getToolOptionLabels = async (actions: ReturnType<typeof getActions>) => {
+    const addToolAction = actions.find((action) => action.title === "Right Sidebar: Add Tool…");
+    const toolField = addToolAction?.prompt?.fields.find((field) => field.name === "tool");
+    if (toolField?.type !== "select") {
+      throw new Error("Expected add-tool select field");
+    }
+    const options = await toolField.getOptions({});
+    return options.map((option) => option.label);
+  };
+
+  expect(await getToolOptionLabels(withoutWorkflows)).not.toContain("Workflows");
+  expect(await getToolOptionLabels(withWorkflows)).toContain("Workflows");
 });
 
 test("appearance commands offer auto when a manual theme is selected", () => {

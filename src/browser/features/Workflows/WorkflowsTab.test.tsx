@@ -4,6 +4,8 @@ import { installDom } from "../../../../tests/ui/dom";
 
 import type { WorkflowDefinitionDescriptor, WorkflowRunRecord } from "@/common/types/workflow";
 
+import { WORKFLOW_CHECKPOINT_RETRY_ERROR_MESSAGE } from "@/common/utils/workflowRetryEligibility";
+
 import { WorkflowsTabView } from "./WorkflowsTab";
 import {
   groupWorkflowDefinitionsByScope,
@@ -113,7 +115,7 @@ describe("WorkflowsTabView", () => {
     expect(view.getByText("Recent history")).toBeTruthy();
   });
 
-  test("offers foreground and background run actions", () => {
+  test("starts workflow definitions in the background from the sidebar", () => {
     const started: Array<{ name: string; runInBackground: boolean }> = [];
     const project = definition("project-flow", "project");
     const view = render(
@@ -129,12 +131,9 @@ describe("WorkflowsTabView", () => {
     );
 
     fireEvent.click(view.getByRole("button", { name: "Run project-flow" }));
-    fireEvent.click(view.getByRole("button", { name: "Run project-flow in background" }));
 
-    expect(started).toEqual([
-      { name: "project-flow", runInBackground: false },
-      { name: "project-flow", runInBackground: true },
-    ]);
+    expect(view.queryByRole("button", { name: "Run project-flow in background" })).toBeNull();
+    expect(started).toEqual([{ name: "project-flow", runInBackground: true }]);
   });
 
   test("offers supported current-run actions", () => {
@@ -158,6 +157,14 @@ describe("WorkflowsTabView", () => {
       id: "wfr_failed",
       status: "failed",
       definition: definition("failed-flow", "project"),
+      events: [
+        {
+          type: "error",
+          at: "2026-01-01T00:00:01.000Z",
+          sequence: 1,
+          message: WORKFLOW_CHECKPOINT_RETRY_ERROR_MESSAGE,
+        },
+      ],
     });
     const completed = run({
       id: "wfr_completed",
@@ -187,6 +194,30 @@ describe("WorkflowsTabView", () => {
       { id: "wfr_interrupted", action: "resume" },
       { id: "wfr_failed", action: "retryFromCheckpoint" },
     ]);
+  });
+
+  test("does not offer checkpoint retry for ordinary failed runs", () => {
+    const failed = run({
+      id: "wfr_failed",
+      status: "failed",
+      definition: definition("failed-flow", "project"),
+      events: [
+        {
+          type: "error",
+          at: "2026-01-01T00:00:01.000Z",
+          sequence: 1,
+          message: "Compilation failed",
+        },
+      ],
+    });
+    const view = render(
+      <WorkflowsTabView
+        snapshot={snapshot({ currentRuns: [failed] })}
+        onRunAction={() => undefined}
+      />
+    );
+
+    expect(view.queryByRole("button", { name: "Retry failed-flow" })).toBeNull();
   });
 
   test("offers promotion actions for scratch definitions", () => {

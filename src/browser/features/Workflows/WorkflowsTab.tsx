@@ -1,4 +1,4 @@
-import React, { useContext, useState } from "react";
+import React, { useContext, useRef, useState } from "react";
 import { Play, RefreshCw } from "lucide-react";
 
 import { APIContext } from "@/browser/contexts/API";
@@ -9,6 +9,8 @@ import type {
   WorkflowDefinitionScope,
   WorkflowRunRecord,
 } from "@/common/types/workflow";
+
+import { canRetryWorkflowFromCheckpoint } from "@/common/utils/workflowRetryEligibility";
 
 import {
   getWorkflowStoreInstance,
@@ -42,6 +44,7 @@ interface WorkflowsTabViewProps {
     definition: WorkflowDefinitionDescriptor,
     location: "project" | "global"
   ) => Promise<void> | void;
+  pendingDefinitionNames?: ReadonlySet<string>;
   onRefresh?: () => void;
 }
 
@@ -67,23 +70,33 @@ const SEVERITY_CLASS: Record<WorkflowStatusSeverity, string> = {
 export function WorkflowsTab(props: WorkflowsTabProps) {
   const apiState = useContext(APIContext);
   const snapshot = useWorkflowWorkspaceSnapshot(props.workspaceId);
+  const pendingDefinitionNamesRef = useRef(new Set<string>());
+  const [pendingDefinitionNames, setPendingDefinitionNames] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
   const [actionError, setActionError] = useState<string | null>(null);
 
   const handleRunDefinition = async (
     definition: WorkflowDefinitionDescriptor,
     options?: RunWorkflowOptions
   ) => {
-    if (!apiState?.api) return;
+    if (!apiState?.api || pendingDefinitionNamesRef.current.has(definition.name)) return;
+    pendingDefinitionNamesRef.current.add(definition.name);
+    setPendingDefinitionNames(new Set(pendingDefinitionNamesRef.current));
     setActionError(null);
     try {
       await apiState.api.workflows.start({
         workspaceId: props.workspaceId,
         name: definition.name,
-        runInBackground: options?.runInBackground === true,
+        // Sidebar launches should return immediately so progress appears in Current runs.
+        runInBackground: options?.runInBackground ?? true,
       });
       getWorkflowStoreInstance().invalidateWorkspace(props.workspaceId);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Failed to start workflow");
+    } finally {
+      pendingDefinitionNamesRef.current.delete(definition.name);
+      setPendingDefinitionNames(new Set(pendingDefinitionNamesRef.current));
     }
   };
 
@@ -134,6 +147,7 @@ export function WorkflowsTab(props: WorkflowsTabProps) {
         onRunDefinition={apiState?.api ? handleRunDefinition : undefined}
         onRunAction={apiState?.api ? handleRunAction : undefined}
         onPromoteScratchDefinition={apiState?.api ? handlePromoteScratchDefinition : undefined}
+        pendingDefinitionNames={pendingDefinitionNames}
       />
     </div>
   );
@@ -212,6 +226,7 @@ export function WorkflowsTabView(props: WorkflowsTabViewProps) {
                     <WorkflowDefinitionRow
                       key={`${definition.scope}:${definition.name}`}
                       definition={definition}
+                      isStarting={props.pendingDefinitionNames?.has(definition.name) === true}
                       onRun={props.onRunDefinition}
                       onPromoteScratchDefinition={props.onPromoteScratchDefinition}
                     />
@@ -251,7 +266,7 @@ function WorkflowRunCard(props: {
   onAction?: (run: WorkflowRunRecord, action: WorkflowRunAction) => Promise<void> | void;
 }) {
   const presentation = getWorkflowStatusPresentation(props.run.status);
-  const action = getWorkflowRunAction(props.run.status);
+  const action = getWorkflowRunAction(props.run);
   return (
     <article
       className="border-border bg-background rounded-lg border p-2"
@@ -290,6 +305,7 @@ function WorkflowRunCard(props: {
 
 function WorkflowDefinitionRow(props: {
   definition: WorkflowDefinitionDescriptor;
+  isStarting?: boolean;
   onRun?: (
     definition: WorkflowDefinitionDescriptor,
     options?: RunWorkflowOptions
@@ -315,31 +331,19 @@ function WorkflowDefinitionRow(props: {
         {props.definition.executable && (
           <div className="flex shrink-0 flex-col gap-1">
             {props.onRun && (
-              <>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  aria-label={`Run ${props.definition.name}`}
-                  onClick={() => {
-                    void props.onRun?.(props.definition, { runInBackground: false });
-                  }}
-                >
-                  <Play className="h-3 w-3" />
-                  Run
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  aria-label={`Run ${props.definition.name} in background`}
-                  onClick={() => {
-                    void props.onRun?.(props.definition, { runInBackground: true });
-                  }}
-                >
-                  Run background
-                </Button>
-              </>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                aria-label={`Run ${props.definition.name}`}
+                disabled={props.isStarting === true}
+                onClick={() => {
+                  void props.onRun?.(props.definition, { runInBackground: true });
+                }}
+              >
+                <Play className="h-3 w-3" />
+                {props.isStarting === true ? "Starting..." : "Run"}
+              </Button>
             )}
             {props.definition.scope === "scratch" && props.onPromoteScratchDefinition && (
               <>
@@ -375,15 +379,15 @@ function WorkflowDefinitionRow(props: {
 }
 
 function getWorkflowRunAction(
-  status: WorkflowRunRecord["status"]
+  run: WorkflowRunRecord
 ): { action: WorkflowRunAction; label: string } | null {
-  if (status === "pending" || status === "running" || status === "backgrounded") {
+  if (run.status === "pending" || run.status === "running" || run.status === "backgrounded") {
     return { action: "interrupt", label: "Interrupt" };
   }
-  if (status === "interrupted") {
+  if (run.status === "interrupted") {
     return { action: "resume", label: "Resume" };
   }
-  if (status === "failed") {
+  if (canRetryWorkflowFromCheckpoint(run)) {
     return { action: "retryFromCheckpoint", label: "Retry" };
   }
   return null;

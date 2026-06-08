@@ -671,6 +671,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // API for reading config and managing terminal sessions.
   const apiState = useAPI();
   const api = apiState.api;
+  const workflowsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const desktopExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
   const browserExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_BROWSER);
   // Child task workspaces can't run goal actions — backend rejects them
@@ -984,6 +985,19 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   }, [initialActiveTab, setLayoutRaw, isChildWorkspaceForGoal]);
 
   React.useEffect(() => {
+    if (workflowsExperimentEnabled) {
+      return;
+    }
+
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      return collectAllTabs(prev.root).includes("workflows")
+        ? removeTabEverywhere(prev, "workflows")
+        : prev;
+    });
+  }, [initialActiveTab, setLayoutRaw, workflowsExperimentEnabled]);
+
+  React.useEffect(() => {
     if (!desktopExperimentEnabled) {
       setDesktopAvailable(false);
       return;
@@ -1112,7 +1126,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   React.useEffect(() => {
     const handleOpenWorkflowsTab = (event: Event) => {
       const detail = (event as CustomEvent<{ workspaceId: string }>).detail;
-      if (detail?.workspaceId !== workspaceId) {
+      if (detail?.workspaceId !== workspaceId || !workflowsExperimentEnabled) {
         return;
       }
       setCollapsed(false);
@@ -1122,7 +1136,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     window.addEventListener(CUSTOM_EVENTS.OPEN_WORKFLOWS_TAB, handleOpenWorkflowsTab);
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.OPEN_WORKFLOWS_TAB, handleOpenWorkflowsTab);
-  }, [setCollapsed, setLayout, workspaceId]);
+  }, [setCollapsed, setLayout, workflowsExperimentEnabled, workspaceId]);
 
   React.useEffect(() => {
     const handleOpenTouchReviewImmersive = (event: Event) => {

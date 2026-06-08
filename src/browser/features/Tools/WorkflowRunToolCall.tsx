@@ -60,7 +60,10 @@ import {
   formatWorkflowSavedMessage,
   type WorkflowPromotionTarget,
 } from "./WorkflowDefinitionToolCall";
-import { useWorkflowWorkspaceSnapshot } from "@/browser/features/Workflows/WorkflowStore";
+import {
+  getWorkflowStoreInstance,
+  useWorkflowWorkspaceSnapshot,
+} from "@/browser/features/Workflows/WorkflowStore";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 
@@ -116,6 +119,7 @@ async function updateWorkflowRunFromAction(input: {
               workspaceId: input.workspaceId,
               runId: input.runId,
             });
+    getWorkflowStoreInstance().invalidateWorkspace(input.workspaceId);
     if (input.action === "resume" || input.action === "retryFromCheckpoint") {
       resumeRequestAccepted = true;
       input.setResumingRunId(input.runId);
@@ -1088,12 +1092,13 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     }
 
     assert(sourceDefinition.scope === "scratch", "Only scratch workflow runs can be saved");
+    const sourceWorkspaceId = run.workspaceId;
     setActionError(null);
     setSavingPromotionTarget(location);
     savingPromotionTargetRef.current = location;
     api.workflows
       .promoteScratch({
-        workspaceId: run.workspaceId,
+        workspaceId: sourceWorkspaceId,
         runId,
         name: sourceDefinition.name,
         description: sourceDefinition.description,
@@ -1105,6 +1110,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
           descriptor.scope === location,
           "promoteScratch returned a descriptor for a different location"
         );
+        getWorkflowStoreInstance().invalidateWorkspace(sourceWorkspaceId);
         setPromotedDefinition(descriptor);
       })
       .catch((error: unknown) => {

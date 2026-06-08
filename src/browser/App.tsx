@@ -190,6 +190,7 @@ function AppInner() {
   );
 
   const [isMultiProjectWorkspaceModalOpen, setMultiProjectWorkspaceModalOpen] = useState(false);
+  const dynamicWorkflowsEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
 
   // Left sidebar is drag-resizable (mirrors RightSidebar). Width is persisted globally;
@@ -717,6 +718,9 @@ function AppInner() {
     onSetThinkingLevel: setThinkingLevelFromPalette,
     getMinThinkingOverride,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
+    enabledRightSidebarFeatureFlags: dynamicWorkflowsEnabled
+      ? new Set([EXPERIMENT_IDS.DYNAMIC_WORKFLOWS])
+      : undefined,
     onStartMultiProjectWorkspaceCreation: openNewMultiProjectWorkspaceFromPalette,
     multiProjectWorkspacesEnabled,
     onArchiveMergedWorkspacesInProject: archiveMergedWorkspacesInProjectFromPalette,

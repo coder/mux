@@ -64,6 +64,7 @@ import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 import { isValidProvider } from "@/common/constants/providers";
 import { openInEditor } from "@/browser/utils/openInEditor";
+import { getWorkflowStoreInstance } from "@/browser/features/Workflows/WorkflowStore";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // ============================================================================
@@ -453,6 +454,7 @@ export async function processSlashCommand(
         continuationOptions: context.sendMessageOptions,
         rawCommand,
       });
+      getWorkflowStoreInstance().invalidateWorkspace(workspaceId);
       // The workflow is durable and backgrounded; do not pin the composer while polling for
       // completion, otherwise the user cannot supersede a long-running slash workflow.
       setWorkflowSendingState(false);

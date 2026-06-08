@@ -56,6 +56,7 @@ const TAB_CONFIG_DEF = {
   workflows: {
     name: "Workflows",
     contentClassName: "overflow-hidden p-0",
+    featureFlag: EXPERIMENT_IDS.DYNAMIC_WORKFLOWS,
     defaultOrder: 37,
     paletteKeywords: ["workflow", "workflows", "automation", "run"],
   },

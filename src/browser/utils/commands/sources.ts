@@ -86,6 +86,7 @@ export interface BuildSourcesParams {
   getMinThinkingOverride?: (modelString: string) => ThinkingLevel | null | undefined;
 
   onStartWorkspaceCreation: (projectPath: string) => void;
+  enabledRightSidebarFeatureFlags?: ReadonlySet<string>;
   onStartMultiProjectWorkspaceCreation: () => void;
   multiProjectWorkspacesEnabled: boolean;
   onArchiveMergedWorkspacesInProject: (projectPath: string) => Promise<void>;
@@ -323,6 +324,11 @@ function openGoalPanel(workspaceId: string, openCompleteInput = false): void {
 }
 export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandAction[]> {
   const actions: Array<() => CommandAction[]> = [];
+
+  const isRightSidebarBaseTabEnabled = (tabId: BaseTabType): boolean => {
+    const featureFlag = getTabConfig(tabId).featureFlag;
+    return featureFlag == null || p.enabledRightSidebarFeatureFlags?.has(featureFlag) === true;
+  };
 
   // NOTE: We intentionally route to the chat-based creation flow instead of
   // building a separate prompt. This keeps `/new`, keybinds, and the command
@@ -637,7 +643,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         ...getOrderedBaseTabIds()
           .filter((tabId) => {
             const config = getTabConfig(tabId);
-            return config.inDefaultLayout !== true && config.featureFlag == null;
+            return config.inDefaultLayout !== true && isRightSidebarBaseTabEnabled(tabId);
           })
           .map((tabId) => buildToggleTabCommand(wsId, tabId, section.navigation)),
         {
@@ -697,7 +703,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 // Terminal is appended manually because it lives outside the static registry.
                 getOptions: () => [
                   ...getOrderedBaseTabIds()
-                    .filter((tabId) => getTabConfig(tabId).featureFlag == null)
+                    .filter((tabId) => isRightSidebarBaseTabEnabled(tabId))
                     .map((tabId) => {
                       const config = getTabConfig(tabId);
                       return {

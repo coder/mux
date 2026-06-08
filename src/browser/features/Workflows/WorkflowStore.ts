@@ -1,4 +1,4 @@
-import { useContext, useEffect, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useSyncExternalStore } from "react";
 
 import { APIContext, type APIClient } from "@/browser/contexts/API";
 import assert from "@/common/utils/assert";
@@ -12,6 +12,12 @@ import {
 } from "./workflowStatusPresentation";
 
 export const WORKFLOW_RUN_POLL_INTERVAL_MS = 2000;
+export const WORKFLOW_WORKSPACE_REFRESH_INTERVAL_MS = 10_000;
+
+export interface WorkflowStoreOptions {
+  runPollIntervalMs?: number;
+  workspaceRefreshIntervalMs?: number;
+}
 
 export interface WorkflowWorkspaceSnapshot {
   definitions: WorkflowDefinitionDescriptor[];
@@ -52,8 +58,23 @@ export class WorkflowStore {
   private readonly listenersByWorkspace = new Map<string, Set<Listener>>();
   private readonly states = new Map<string, WorkspaceState>();
   private readonly inFlightSnapshots = new Set<string>();
+  private readonly pendingSnapshotRefreshes = new Set<string>();
   private readonly runTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly workspaceRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly runPollIntervalMs: number;
+  private readonly workspaceRefreshIntervalMs: number;
   private disposed = false;
+
+  constructor(options: WorkflowStoreOptions = {}) {
+    this.runPollIntervalMs = options.runPollIntervalMs ?? WORKFLOW_RUN_POLL_INTERVAL_MS;
+    this.workspaceRefreshIntervalMs =
+      options.workspaceRefreshIntervalMs ?? WORKFLOW_WORKSPACE_REFRESH_INTERVAL_MS;
+    assert(this.runPollIntervalMs > 0, "Workflow run poll interval must be positive");
+    assert(
+      this.workspaceRefreshIntervalMs > 0,
+      "Workflow workspace refresh interval must be positive"
+    );
+  }
 
   setClient(client: APIClient | null): void {
     this.client = client;
@@ -73,8 +94,14 @@ export class WorkflowStore {
     }
     listeners.add(listener);
 
-    if (!this.states.has(workspaceId) && !this.inFlightSnapshots.has(workspaceId)) {
+    const state = this.states.get(workspaceId);
+    if (state == null && !this.inFlightSnapshots.has(workspaceId)) {
       queueMicrotask(() => this.refreshWorkspace(workspaceId));
+    } else if (state != null) {
+      // React may unsubscribe/resubscribe external stores during ordinary commits. Keep the
+      // cached snapshot for layout stability, but restart polling for active cached runs.
+      this.syncRunPolling(workspaceId, state.runs);
+      this.scheduleWorkspaceRefresh(workspaceId);
     }
 
     return () => {
@@ -82,7 +109,9 @@ export class WorkflowStore {
       currentListeners?.delete(listener);
       if (currentListeners?.size === 0) {
         this.listenersByWorkspace.delete(workspaceId);
+        this.pendingSnapshotRefreshes.delete(workspaceId);
         this.stopWorkspaceRunPolling(workspaceId);
+        this.clearWorkspaceRefreshTimer(workspaceId);
       }
     };
   };
@@ -97,22 +126,31 @@ export class WorkflowStore {
   }
 
   invalidateWorkspace(workspaceId: string): void {
-    this.refreshWorkspace(workspaceId);
+    this.refreshWorkspace(workspaceId, { queueIfInFlight: true });
   }
 
   dispose(): void {
     this.disposed = true;
     for (const timer of this.runTimers.values()) clearTimeout(timer);
+    for (const timer of this.workspaceRefreshTimers.values()) clearTimeout(timer);
     this.runTimers.clear();
+    this.workspaceRefreshTimers.clear();
     this.listenersByWorkspace.clear();
     this.states.clear();
     this.inFlightSnapshots.clear();
+    this.pendingSnapshotRefreshes.clear();
   }
 
-  private refreshWorkspace(workspaceId: string): void {
+  private refreshWorkspace(workspaceId: string, options: { queueIfInFlight?: boolean } = {}): void {
     if (this.client == null || this.disposed || !this.listenersByWorkspace.has(workspaceId)) return;
-    if (this.inFlightSnapshots.has(workspaceId)) return;
+    if (this.inFlightSnapshots.has(workspaceId)) {
+      if (options.queueIfInFlight === true) {
+        this.pendingSnapshotRefreshes.add(workspaceId);
+      }
+      return;
+    }
 
+    this.clearWorkspaceRefreshTimer(workspaceId);
     this.inFlightSnapshots.add(workspaceId);
     this.updateWorkspaceLoading(workspaceId, true, null);
     void this.loadWorkspaceSnapshot(workspaceId);
@@ -122,25 +160,38 @@ export class WorkflowStore {
     assert(this.client != null, "WorkflowStore cannot load workflows without an API client");
     const client = this.client;
     try {
-      const [definitions, runs] = await Promise.all([
-        Promise.resolve()
-          .then(() => client.workflows.listDefinitions({ workspaceId }))
-          .catch(() => []),
-        Promise.resolve()
-          .then(() => client.workflows.listRuns({ workspaceId }))
-          .catch(() => []),
+      const [definitionsResult, runsResult] = await Promise.allSettled([
+        client.workflows.listDefinitions({ workspaceId }),
+        client.workflows.listRuns({ workspaceId }),
       ]);
       if (this.disposed) return;
-      this.setWorkspaceData(workspaceId, definitions, runs, false, null);
+
+      const current = this.states.get(workspaceId);
+      const errors: string[] = [];
+      const definitions = readSettledWorkflowValue(
+        definitionsResult,
+        current?.definitions ?? [],
+        "definitions",
+        errors
+      );
+      const runs = readSettledWorkflowValue(runsResult, current?.runs ?? [], "runs", errors);
+      this.setWorkspaceData(
+        workspaceId,
+        definitions,
+        runs,
+        false,
+        errors.length > 0 ? `Failed to load workflows: ${errors.join("; ")}` : null
+      );
     } catch (error) {
       if (this.disposed) return;
-      this.updateWorkspaceLoading(
-        workspaceId,
-        false,
-        error instanceof Error ? error.message : "Failed to load workflows"
-      );
+      this.updateWorkspaceLoading(workspaceId, false, getWorkflowErrorMessage(error));
     } finally {
       this.inFlightSnapshots.delete(workspaceId);
+      if (this.pendingSnapshotRefreshes.delete(workspaceId)) {
+        queueMicrotask(() => this.refreshWorkspace(workspaceId));
+      } else {
+        this.scheduleWorkspaceRefresh(workspaceId);
+      }
     }
   }
 
@@ -189,6 +240,7 @@ export class WorkflowStore {
     };
     this.states.set(workspaceId, { definitions, runs: orderedRuns, snapshot, isLoading, error });
     this.syncRunPolling(workspaceId, orderedRuns);
+    this.scheduleWorkspaceRefresh(workspaceId);
     this.emit(workspaceId);
   }
 
@@ -219,7 +271,7 @@ export class WorkflowStore {
     const timer = setTimeout(() => {
       this.runTimers.delete(key);
       void this.pollRun(workspaceId, runId);
-    }, WORKFLOW_RUN_POLL_INTERVAL_MS);
+    }, this.runPollIntervalMs);
     if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
       timer.unref();
     }
@@ -228,21 +280,62 @@ export class WorkflowStore {
 
   private async pollRun(workspaceId: string, runId: string): Promise<void> {
     if (this.client == null || this.disposed || !this.listenersByWorkspace.has(workspaceId)) return;
-    const run = await this.client.workflows.getRun({ workspaceId, runId });
-    if (this.disposed || !this.listenersByWorkspace.has(workspaceId) || run == null) return;
+    try {
+      const run = await this.client.workflows.getRun({ workspaceId, runId });
+      if (this.disposed || !this.listenersByWorkspace.has(workspaceId)) return;
+      if (run == null) {
+        this.scheduleRunPollIfStillActive(workspaceId, runId);
+        return;
+      }
 
-    const state = this.states.get(workspaceId);
-    const currentRuns = state?.runs ?? [];
-    const nextRuns = currentRuns.some((candidate) => candidate.id === run.id)
-      ? currentRuns.map((candidate) => (candidate.id === run.id ? run : candidate))
-      : [run, ...currentRuns];
-    this.setWorkspaceData(
-      workspaceId,
-      state?.definitions ?? [],
-      nextRuns,
-      state?.isLoading ?? false,
-      null
-    );
+      const state = this.states.get(workspaceId);
+      const currentRuns = state?.runs ?? [];
+      const nextRuns = currentRuns.some((candidate) => candidate.id === run.id)
+        ? currentRuns.map((candidate) => (candidate.id === run.id ? run : candidate))
+        : [run, ...currentRuns];
+      this.setWorkspaceData(
+        workspaceId,
+        state?.definitions ?? [],
+        nextRuns,
+        state?.isLoading ?? false,
+        null
+      );
+    } catch (error) {
+      if (this.disposed || !this.listenersByWorkspace.has(workspaceId)) return;
+      this.updateWorkspaceLoading(
+        workspaceId,
+        this.states.get(workspaceId)?.isLoading ?? false,
+        `Failed to refresh workflow run: ${getWorkflowErrorMessage(error)}`
+      );
+      this.scheduleRunPollIfStillActive(workspaceId, runId);
+    }
+  }
+
+  private scheduleRunPollIfStillActive(workspaceId: string, runId: string): void {
+    if (!this.listenersByWorkspace.has(workspaceId)) return;
+    const run = this.states.get(workspaceId)?.runs.find((candidate) => candidate.id === runId);
+    if (run == null || summarizeWorkflowRuns([run]).activeCount === 0) return;
+    this.scheduleRunPoll(workspaceId, runId);
+  }
+
+  private scheduleWorkspaceRefresh(workspaceId: string): void {
+    if (
+      this.disposed ||
+      !this.listenersByWorkspace.has(workspaceId) ||
+      this.inFlightSnapshots.has(workspaceId) ||
+      this.workspaceRefreshTimers.has(workspaceId)
+    ) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.workspaceRefreshTimers.delete(workspaceId);
+      this.refreshWorkspace(workspaceId);
+    }, this.workspaceRefreshIntervalMs);
+    if (typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
+      timer.unref();
+    }
+    this.workspaceRefreshTimers.set(workspaceId, timer);
   }
 
   private stopWorkspaceRunPolling(workspaceId: string): void {
@@ -259,11 +352,32 @@ export class WorkflowStore {
     this.runTimers.delete(key);
   }
 
+  private clearWorkspaceRefreshTimer(workspaceId: string): void {
+    const timer = this.workspaceRefreshTimers.get(workspaceId);
+    if (timer != null) clearTimeout(timer);
+    this.workspaceRefreshTimers.delete(workspaceId);
+  }
+
   private emit(workspaceId: string): void {
     const listeners = this.listenersByWorkspace.get(workspaceId);
     if (listeners == null) return;
     for (const listener of listeners) listener();
   }
+}
+
+function readSettledWorkflowValue<T>(
+  result: PromiseSettledResult<T>,
+  fallback: T,
+  label: string,
+  errors: string[]
+): T {
+  if (result.status === "fulfilled") return result.value;
+  errors.push(`${label}: ${getWorkflowErrorMessage(result.reason)}`);
+  return fallback;
+}
+
+function getWorkflowErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown workflow error";
 }
 
 function areWorkflowSummariesEqual(
@@ -307,8 +421,14 @@ export function useWorkflowWorkspaceSummary(workspaceId: string | undefined): Wo
     store.setClient(api);
   }, [api, store]);
 
+  const subscribe = useCallback(
+    (listener: Listener) =>
+      workspaceId ? store.subscribeWorkspace(workspaceId, listener) : () => undefined,
+    [store, workspaceId]
+  );
+
   return useSyncExternalStore(
-    (listener) => (workspaceId ? store.subscribeWorkspace(workspaceId, listener) : () => undefined),
+    subscribe,
     () => store.getWorkspaceSummary(workspaceId),
     () => EMPTY_SUMMARY
   );
@@ -325,8 +445,14 @@ export function useWorkflowWorkspaceSnapshot(
     store.setClient(api);
   }, [api, store]);
 
+  const subscribe = useCallback(
+    (listener: Listener) =>
+      workspaceId ? store.subscribeWorkspace(workspaceId, listener) : () => undefined,
+    [store, workspaceId]
+  );
+
   return useSyncExternalStore(
-    (listener) => (workspaceId ? store.subscribeWorkspace(workspaceId, listener) : () => undefined),
+    subscribe,
     () => store.getWorkspaceSnapshot(workspaceId),
     () => EMPTY_SNAPSHOT
   );

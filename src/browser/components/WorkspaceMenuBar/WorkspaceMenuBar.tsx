@@ -96,6 +96,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const { disableWorkspaceAgents } = useAgent();
   const { preflightArchiveWorkspace, archiveWorkspace } = useWorkspaceActions();
   const { workspaceMetadata } = useWorkspaceContext();
+  const dynamicWorkflowsEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const linkSharingEnabled = useLinkSharingEnabled();
   const openTerminalPopout = useOpenTerminal();
@@ -684,7 +685,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
             </div>
           </PopoverContent>
         </Popover>
-        <WorkflowIndicator workspaceId={workspaceId} />
+        {dynamicWorkflowsEnabled && <WorkflowIndicator workspaceId={workspaceId} />}
         <SkillIndicator
           loadedSkills={loadedSkills}
           availableSkills={availableSkills}
