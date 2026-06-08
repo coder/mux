@@ -79,6 +79,31 @@ describe("WorkflowTaskServiceAdapter", () => {
     });
   });
 
+  test("passes CLI-selected model and thinking level to workflow child task creation", async () => {
+    let createArgs: unknown;
+    const create = mock(async (args: unknown) => {
+      createArgs = args;
+      return Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const });
+    });
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "exec",
+      modelString: "openai/gpt-5.1-codex-max",
+      thinkingLevel: "high",
+    });
+
+    await adapter.runAgent({ id: "impl", prompt: "Implement" });
+
+    expect(createArgs).toMatchObject({
+      agentId: "exec",
+      modelString: "openai/gpt-5.1-codex-max",
+      thinkingLevel: "high",
+    });
+  });
+
   test("disables file-backed reports for read-only Explore workflow tasks", async () => {
     let createArgs: unknown;
     const create = mock(async (args: unknown) => {

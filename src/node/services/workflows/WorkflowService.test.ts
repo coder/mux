@@ -652,6 +652,46 @@ export default function workflow({ args, agent }) {
     expect(backgroundFlags).toEqual([true, false]);
   });
 
+  test("can keep foreground workflow waits in the foreground", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await writeWorkflow(
+      globalRoot,
+      "foreground-only",
+      "// description: Foreground-only workflow\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+    );
+    const backgroundFlags: Array<boolean | undefined> = [];
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      runStore: new WorkflowRunStore({ sessionDir: tmp.path }),
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(_spec, _lifecycle, waitOptions) {
+          backgroundFlags.push(waitOptions?.backgroundOnMessageQueued);
+          return { taskId: "task_slow", reportMarkdown: "done" };
+        },
+      },
+      generateRunId: () => "wfr_foreground_only",
+      runnerId: "runner-a",
+    });
+
+    const result = await service.startNamedWorkflow({
+      name: "foreground-only",
+      workspaceId: "workspace-1",
+      projectTrusted: false,
+      args: {},
+      backgroundOnMessageQueued: false,
+    });
+
+    expect(result).toMatchObject({
+      runId: "wfr_foreground_only",
+      status: "completed",
+      result: { reportMarkdown: "done" },
+    });
+    expect(backgroundFlags).toEqual([false]);
+  });
+
   test("resumes the same run id and reuses completed steps", async () => {
     using tmp = new DisposableTempDir("workflow-service");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });

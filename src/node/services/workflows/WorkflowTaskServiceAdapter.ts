@@ -1,3 +1,4 @@
+import type { ParsedThinkingInput } from "@/common/types/thinking";
 import assert from "@/common/utils/assert";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import type { TaskCreateResult } from "@/node/services/taskService";
@@ -37,6 +38,8 @@ interface WorkflowTaskServiceLike {
       outputSchema?: unknown;
     };
     experiments?: WorkflowTaskExperiments;
+    modelString?: string;
+    thinkingLevel?: ParsedThinkingInput;
   }): Promise<{ success: true; data: TaskCreateResult } | { success: false; error: string }>;
   waitForAgentReport(
     taskId: string,
@@ -62,6 +65,8 @@ export interface WorkflowTaskServiceAdapterOptions {
   workflowRunId: string;
   defaultAgentId: string;
   experiments?: WorkflowTaskExperiments;
+  modelString?: string;
+  thinkingLevel?: ParsedThinkingInput;
   patchToolConfig?: TaskApplyGitPatchConfiguration;
   applyPatchArtifact?: WorkflowPatchArtifactApplier;
   getProjectTrusted?: () => boolean | Promise<boolean>;
@@ -77,6 +82,8 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
   private readonly getProjectTrusted?: () => boolean | Promise<boolean>;
   private readonly patchApplyMutex = new AsyncMutex();
   private readonly experiments?: WorkflowTaskExperiments;
+  private readonly modelString?: string;
+  private readonly thinkingLevel?: ParsedThinkingInput;
 
   constructor(options: WorkflowTaskServiceAdapterOptions) {
     assert(
@@ -99,6 +106,8 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     this.applyPatchArtifact = options.applyPatchArtifact;
     this.getProjectTrusted = options.getProjectTrusted;
     this.experiments = options.experiments;
+    this.modelString = options.modelString;
+    this.thinkingLevel = options.thinkingLevel;
   }
 
   async applyPatch(
@@ -197,6 +206,8 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
       title: spec.title ?? spec.id,
       workflowTask,
       ...(experiments !== undefined ? { experiments } : {}),
+      ...(this.modelString !== undefined ? { modelString: this.modelString } : {}),
+      ...(this.thinkingLevel !== undefined ? { thinkingLevel: this.thinkingLevel } : {}),
     });
     if (!createResult.success) {
       throw new Error(createResult.error);

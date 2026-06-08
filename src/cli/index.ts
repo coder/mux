@@ -53,6 +53,19 @@ if (subcommand === "run") {
   process.argv.splice(env.firstArgIndex, 1); // Remove "run" since run.ts defines .name("mux run")
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   require("./run");
+} else if (subcommand === "workflow") {
+  if (!isCommandAvailable("workflow", env)) {
+    console.error("The 'workflow' command is only available via the CLI (bun mux workflow).");
+    console.error("It is not bundled in Electron.");
+    process.exit(1);
+  }
+  process.argv.splice(env.firstArgIndex, 1); // Remove "workflow" since workflow.ts defines .name("mux workflow")
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const workflowCli = require("./workflow") as { main: () => Promise<number> };
+  void workflowCli.main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
 } else if (subcommand === "server") {
   process.argv.splice(env.firstArgIndex, 1);
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -114,6 +127,9 @@ if (subcommand === "run") {
   // `run` is only available via bun/node CLI, not bundled in Electron
   if (isCommandAvailable("run", env)) {
     program.command("run").description("Run a one-off agent task");
+  }
+  if (isCommandAvailable("workflow", env)) {
+    program.command("workflow").description("List, inspect, and run workflow definitions");
   }
   program.command("server").description("Start the HTTP/WebSocket ORPC server");
   program.command("acp").description("ACP stdio interface for editor integration");

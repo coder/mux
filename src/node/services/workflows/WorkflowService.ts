@@ -65,6 +65,7 @@ export interface StartNamedWorkflowInput {
   args: unknown;
   onBackgroundRunCreated?: (event: WorkflowBackgroundRunCreatedEvent) => Promise<void> | void;
   abortSignal?: AbortSignal;
+  backgroundOnMessageQueued?: boolean;
 }
 
 export interface PromoteScratchDefinitionInput {
@@ -396,6 +397,9 @@ export class WorkflowService {
       const runner = this.createRunner(runId, input.projectTrusted);
       const result = await runner.run(runId, {
         abortSignal: runnerAbortController.signal,
+        ...(input.backgroundOnMessageQueued !== undefined
+          ? { backgroundOnMessageQueued: input.backgroundOnMessageQueued }
+          : {}),
         onLeaseAcquired: () => {
           unregisterRunnerAbort = this.registerActiveRunnerAbortController(
             runId,

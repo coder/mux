@@ -53,7 +53,7 @@ Use this index to find a page's:
       - Providers (`/config/providers`) → `references/docs/config/providers.mdx` — Configure API keys and settings for AI providers
     - Why Parallelize? (`/getting-started/why-parallelize`) → `references/docs/getting-started/why-parallelize.mdx` — Use cases for running multiple AI agents in parallel
     - Mux Gateway (`/getting-started/mux-gateway`) → `references/docs/getting-started/mux-gateway.mdx` — Log in to Mux Gateway to get evaluation credits
-    - CLI (`/reference/cli`) → `references/docs/reference/cli.mdx` — Run one-off agent tasks from the command line with `mux run`
+    - CLI (`/reference/cli`) → `references/docs/reference/cli.mdx` — Run one-off agent tasks and durable workflows from the command line
   - **Workspaces**
     - Workspaces (`/workspaces`) → `references/docs/workspaces/index.mdx` — Isolated development environments for parallel agent work
     - Forking Workspaces (`/workspaces/fork`) → `references/docs/workspaces/fork.mdx` — Clone workspaces with conversation history to explore alternatives
