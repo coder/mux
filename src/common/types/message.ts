@@ -201,6 +201,7 @@ export function prepareUserMessageForSend(
 export interface WorkflowDefinitionPreviewForDisplay {
   descriptor: WorkflowDefinitionDescriptor;
   source?: string;
+  definitionHash?: string;
 }
 
 export interface InlineSkillSnapshotForDisplay {

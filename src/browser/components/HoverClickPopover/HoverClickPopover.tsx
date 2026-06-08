@@ -43,6 +43,7 @@ function composeEventHandlers<E extends { defaultPrevented?: boolean }>(
 export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
   const [isPinned, setIsPinned] = React.useState(false);
   const [isHovering, setIsHovering] = React.useState(false);
+  const [isFocused, setIsFocused] = React.useState(false);
   const [isInteracting, setIsInteracting] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const contentRef = React.useRef<HTMLDivElement | null>(null);
@@ -55,7 +56,7 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
     };
   }, []);
 
-  const isOpen = isPinned || isHovering;
+  const isOpen = isPinned || isHovering || isFocused;
 
   const cancelPendingClose = () => {
     if (closeTimeoutRef.current) {
@@ -77,6 +78,7 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
       cancelPendingClose();
       setIsPinned(false);
       setIsHovering(false);
+      setIsFocused(false);
       setIsInteracting(false);
     }
     props.onOpenChange?.(open);
@@ -102,6 +104,19 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
     scheduleClose();
   };
 
+  const handleTriggerFocus = () => {
+    cancelPendingClose();
+    setIsFocused(true);
+  };
+
+  const handleTriggerBlur = (event: React.FocusEvent<HTMLButtonElement>) => {
+    const relatedTarget = event.relatedTarget;
+    if (relatedTarget instanceof Node && contentRef.current?.contains(relatedTarget)) {
+      return;
+    }
+    setIsFocused(false);
+  };
+
   const handleContentPointerEnter = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "touch") return;
     cancelPendingClose();
@@ -115,6 +130,22 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
       return;
     }
     scheduleClose();
+  };
+
+  const handleContentFocus = () => {
+    cancelPendingClose();
+    setIsFocused(true);
+  };
+
+  const handleContentBlur = (event: React.FocusEvent<HTMLDivElement>) => {
+    const relatedTarget = event.relatedTarget;
+    if (relatedTarget instanceof Node && triggerRef.current?.contains(relatedTarget)) {
+      return;
+    }
+    if (relatedTarget instanceof Node && contentRef.current?.contains(relatedTarget)) {
+      return;
+    }
+    setIsFocused(false);
   };
 
   const handleContentMouseDown = () => {
@@ -131,6 +162,8 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
     "aria-expanded": isOpen,
     "aria-haspopup": triggerProps["aria-haspopup"] ?? "dialog",
     onClick: composeEventHandlers(triggerProps.onClick, handleTriggerClick),
+    onFocus: composeEventHandlers(triggerProps.onFocus, handleTriggerFocus),
+    onBlur: composeEventHandlers(triggerProps.onBlur, handleTriggerBlur),
     onPointerEnter: composeEventHandlers(triggerProps.onPointerEnter, handleTriggerPointerEnter),
     onPointerLeave: composeEventHandlers(triggerProps.onPointerLeave, handleTriggerPointerLeave),
   });
@@ -157,6 +190,8 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
           props.contentProps?.onPointerLeave,
           handleContentPointerLeave
         )}
+        onFocus={composeEventHandlers(props.contentProps?.onFocus, handleContentFocus)}
+        onBlur={composeEventHandlers(props.contentProps?.onBlur, handleContentBlur)}
         onMouseDown={composeEventHandlers(props.contentProps?.onMouseDown, handleContentMouseDown)}
         onMouseUp={composeEventHandlers(props.contentProps?.onMouseUp, handleContentMouseUp)}
       >

@@ -15,6 +15,7 @@ import {
 } from "@/browser/components/HoverCard/HoverCard";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { HoverClickPopover } from "@/browser/components/HoverClickPopover/HoverClickPopover";
 import { AgentSkillBadge } from "./AgentSkillBadge";
 import { buildAgentSkillSnapshotMarkdown } from "./agentSkillSnapshotMarkdown";
 
@@ -47,7 +48,12 @@ export function WorkflowDefinitionPreviewCard(props: {
         <div className="text-warning text-[11px]">{descriptor.blockedReason}</div>
       )}
       {source && (
-        <pre className="border-border bg-code-bg max-h-[260px] overflow-auto rounded border p-2 text-[11px] leading-relaxed">
+        <pre
+          aria-label={`Source for workflow ${descriptor.name}`}
+          className="border-border bg-code-bg focus-visible:ring-accent max-h-[260px] overflow-auto rounded border p-2 text-[11px] leading-relaxed focus-visible:ring-1 focus-visible:outline-none"
+          role="region"
+          tabIndex={0}
+        >
           <code>{source}</code>
         </pre>
       )}
@@ -187,7 +193,13 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
     const badge = snapshotMarkdown ? (
       <HoverCard openDelay={150}>
         <HoverCardTrigger asChild>
-          <AgentSkillBadge className="cursor-help">{shouldHighlightPrefix}</AgentSkillBadge>
+          <AgentSkillBadge
+            as="button"
+            aria-label={`Show skill preview for ${shouldHighlightPrefix}`}
+            className="cursor-help"
+          >
+            {shouldHighlightPrefix}
+          </AgentSkillBadge>
         </HoverCardTrigger>
         {/* Keep skill preview above chat chrome and fully opaque while hovering. */}
         <HoverCardPortal>
@@ -201,21 +213,22 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
         </HoverCardPortal>
       </HoverCard>
     ) : workflowDefinitionPreview ? (
-      <HoverCard openDelay={150}>
-        <HoverCardTrigger asChild>
-          <AgentSkillBadge className="cursor-help">{shouldHighlightPrefix}</AgentSkillBadge>
-        </HoverCardTrigger>
+      <HoverClickPopover
+        align="start"
+        content={<WorkflowDefinitionPreviewCard preview={workflowDefinitionPreview} />}
+        contentClassName="border-border-medium bg-modal-bg z-[1600] max-h-[360px] w-[560px] max-w-[80vw] overflow-auto border-2 p-3"
+        interactiveContent
+        side="top"
+      >
         {/* Workflow previews use the run record snapshot so old invocations show what actually ran. */}
-        <HoverCardPortal>
-          <HoverCardContent
-            align="start"
-            side="top"
-            className="border-border-medium bg-modal-bg z-[1600] max-h-[360px] w-[560px] max-w-[80vw] overflow-auto border-2 p-3"
-          >
-            <WorkflowDefinitionPreviewCard preview={workflowDefinitionPreview} />
-          </HoverCardContent>
-        </HoverCardPortal>
-      </HoverCard>
+        <AgentSkillBadge
+          as="button"
+          aria-label={`Show workflow definition preview for ${workflowDefinitionPreview.descriptor.name}`}
+          className="cursor-help"
+        >
+          {shouldHighlightPrefix}
+        </AgentSkillBadge>
+      </HoverClickPopover>
     ) : (
       <AgentSkillBadge>{shouldHighlightPrefix}</AgentSkillBadge>
     );

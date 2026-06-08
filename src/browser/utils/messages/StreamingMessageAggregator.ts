@@ -63,7 +63,7 @@ import {
 } from "./displayedMessageBuilder";
 import { showBrowserNotification } from "@/browser/utils/ui/showBrowserNotification";
 import type { DynamicToolPart, DynamicToolPartPending } from "@/common/types/toolParts";
-import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
+import { WorkflowDefinitionDescriptorSchema, WorkflowRunIdSchema } from "@/common/orpc/schemas";
 import type { AgentSkillDescriptor, AgentSkillScope } from "@/common/types/agentSkill";
 import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
 import { isDynamicToolPart } from "@/common/types/toolParts";
@@ -330,20 +330,45 @@ interface AgentSkillSnapshotContent {
   body?: string;
 }
 
+const WorkflowDefinitionPreviewRunSchema = z
+  .object({
+    id: WorkflowRunIdSchema,
+    definition: WorkflowDefinitionDescriptorSchema,
+    definitionSource: z.string().min(1),
+    definitionHash: z.string().min(1).optional(),
+  })
+  .passthrough();
+
 function getWorkflowDefinitionPreviewCacheKey(
   preview: WorkflowDefinitionPreviewForDisplay
 ): string {
-  return JSON.stringify({ descriptor: preview.descriptor, source: preview.source ?? "" });
+  return JSON.stringify({
+    descriptor: preview.descriptor,
+    sourceKey: preview.definitionHash ?? preview.source ?? "",
+  });
 }
 
-function getWorkflowRunRecordFromToolOutput(output: unknown) {
+function getWorkflowDefinitionPreviewFromToolOutput(
+  output: unknown
+): { runId: string; preview: WorkflowDefinitionPreviewForDisplay } | null {
   if (output == null || typeof output !== "object") {
     return null;
   }
 
   const run = (output as Record<string, unknown>).run;
-  const parsed = WorkflowRunRecordSchema.safeParse(run);
-  return parsed.success ? parsed.data : null;
+  const parsed = WorkflowDefinitionPreviewRunSchema.safeParse(run);
+  if (!parsed.success) {
+    return null;
+  }
+
+  return {
+    runId: parsed.data.id,
+    preview: {
+      descriptor: parsed.data.definition,
+      source: parsed.data.definitionSource,
+      definitionHash: parsed.data.definitionHash,
+    },
+  };
 }
 
 function maybeCollectWorkflowDefinitionPreview(
@@ -359,15 +384,12 @@ function maybeCollectWorkflowDefinitionPreview(
       continue;
     }
 
-    const run = getWorkflowRunRecordFromToolOutput(part.output);
-    if (run == null) {
+    const preview = getWorkflowDefinitionPreviewFromToolOutput(part.output);
+    if (preview == null) {
       continue;
     }
 
-    previews.set(run.id, {
-      descriptor: run.definition,
-      source: run.definitionSource,
-    });
+    previews.set(preview.runId, preview.preview);
   }
 }
 

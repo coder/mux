@@ -2,7 +2,7 @@ import "../../../../tests/ui/dom";
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import type { DisplayedUserMessage, InlineSkillSnapshotMap } from "@/common/types/message";
@@ -80,7 +80,7 @@ describe("UserMessageContent inline skill rendering", () => {
     expect(view.container.textContent).toContain("export default function workflow");
   });
 
-  test("renders the slash workflow badge in sent user messages", () => {
+  test("opens the slash workflow preview from the focusable command badge", async () => {
     const view = render(
       <UserMessageContent
         content="/deep-review-workflow Check this"
@@ -98,8 +98,22 @@ describe("UserMessageContent inline skill rendering", () => {
       />
     );
 
-    const badgeTexts = getSkillBadges(view.container).map((badge) => badge.textContent);
-    expect(badgeTexts).toContain("/deep-review-workflow");
+    const trigger = view.getByRole("button", {
+      name: "Show workflow definition preview for deep-review-workflow",
+    });
+    expect(trigger.textContent).toBe("/deep-review-workflow");
+
+    fireEvent.focus(trigger);
+
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("Review deeply");
+      expect(document.body.textContent).toContain("export default function workflow");
+    });
+
+    const sourceRegion = document.body.querySelector<HTMLElement>(
+      '[role="region"][aria-label="Source for workflow deep-review-workflow"]'
+    );
+    expect(sourceRegion?.tabIndex).toBe(0);
   });
 
   test("keeps edit-mode textarea content as raw text", () => {
