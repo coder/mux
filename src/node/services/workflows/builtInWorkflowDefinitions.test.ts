@@ -519,6 +519,7 @@ describe("built-in deep-research workflow", () => {
         verification: [],
         confidence: "low",
         gaps: ["No verifiable claims were extracted."],
+        findings: [],
       },
     });
   });
@@ -846,6 +847,109 @@ describe("built-in deep-research workflow", () => {
     ).toEqual(["extract-source-0", "extract-source-1", "extract-source-2", "extract-source-3"]);
   });
 
+  test("keeps prototype-key source identifiers during dedupe", async () => {
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const { result } = await runDeepResearchFixture(
+      "wfr_deep_research_source_dedupe_prototype_keys",
+      { topic: "prototype key source dedupe" },
+      taskCalls,
+      async (spec) => {
+        switch (spec.id) {
+          case "scope-topic":
+            return {
+              taskId: "task_scope",
+              reportMarkdown: "Scoped.",
+              structuredOutput: {
+                refinedTopic: "prototype key source dedupe",
+                strategy: "Return prototype-like source identifiers.",
+                questions: ["Which source keys collide with object prototypes?"],
+                angles: [
+                  {
+                    label: "sources",
+                    query: "prototype key source dedupe",
+                    rationale: "Check source key trust boundaries.",
+                  },
+                ],
+              },
+            };
+          case "discover-sources-0":
+            return {
+              taskId: "task_sources",
+              reportMarkdown: "Found prototype-key sources.",
+              structuredOutput: {
+                sources: [
+                  {
+                    title: "Constructor",
+                    url: "constructor",
+                    relevance: "high",
+                    sourceType: "primary",
+                  },
+                  {
+                    title: "To string",
+                    url: "toString",
+                    relevance: "high",
+                    sourceType: "primary",
+                  },
+                  {
+                    title: "Has own property",
+                    url: "hasOwnProperty",
+                    relevance: "high",
+                    sourceType: "primary",
+                  },
+                  {
+                    title: "Proto",
+                    url: "__proto__",
+                    relevance: "high",
+                    sourceType: "primary",
+                  },
+                  {
+                    title: "Constructor tracking duplicate",
+                    url: "constructor?utm_source=duplicate#section",
+                    relevance: "high",
+                    sourceType: "primary",
+                  },
+                ],
+              },
+            };
+          default:
+            if (spec.id.startsWith("extract-source-")) {
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: spec.id,
+                structuredOutput: {
+                  source: spec.id,
+                  sourceQuality: "primary",
+                  publishDate: "",
+                  summary: "No claims needed for prototype-key dedupe coverage.",
+                  claims: [],
+                },
+              };
+            }
+            throw new Error(`Unexpected deep-research step: ${spec.id}`);
+        }
+      }
+    );
+
+    const structuredOutput = (
+      result as {
+        structuredOutput: {
+          sources: Array<{ url: string }>;
+          stats: { sourcesFetched: number; urlDupes: number };
+        };
+      }
+    ).structuredOutput;
+    expect(structuredOutput.sources.map((source) => source.url)).toEqual([
+      "constructor",
+      "toString",
+      "hasOwnProperty",
+      "__proto__",
+    ]);
+    expect(structuredOutput.stats).toMatchObject({ sourcesFetched: 4, urlDupes: 1 });
+    expect(
+      taskCalls.filter((call) => call.id.startsWith("extract-source-")).map((call) => call.id)
+    ).toEqual(["extract-source-0", "extract-source-1", "extract-source-2", "extract-source-3"]);
+  });
+
   test("quick mode applies smaller caps, one-vote verification, and bounded verifier batches", async () => {
     const taskCalls: WorkflowAgentSpec[] = [];
     let activeVerifyTasks = 0;
@@ -964,6 +1068,129 @@ describe("built-in deep-research workflow", () => {
     expect(structuredOutput.refutedClaims).toHaveLength(1);
   });
 
+  test("dedupes exact claim text before spending verification budget", async () => {
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const claimByIndex = ["Repeated central claim", "Unique central claim"];
+    const { result } = await runDeepResearchFixture(
+      "wfr_deep_research_duplicate_claim_budget",
+      { topic: "duplicate claim budget", mode: "quick" },
+      taskCalls,
+      async (spec) => {
+        if (spec.id.startsWith("verify-claim-")) {
+          const claimIndex = Number(/verify-claim-(\d+)-vote-/.exec(spec.id)?.[1] ?? "0");
+          const claim = claimByIndex[claimIndex];
+          if (claim == null) {
+            throw new Error(`Unexpected duplicate-claim verification index: ${claimIndex}`);
+          }
+          return {
+            taskId: `task_${spec.id}`,
+            reportMarkdown: spec.id,
+            structuredOutput: {
+              claim,
+              refuted: false,
+              confidence: "high",
+              evidence: "The grouped claim is supported.",
+              counterSource: "",
+            },
+          };
+        }
+        if (spec.id === "scope-topic") {
+          return {
+            taskId: "task_scope",
+            reportMarkdown: "Scoped.",
+            structuredOutput: {
+              refinedTopic: "duplicate claim budget",
+              strategy:
+                "Return duplicate claims that would otherwise fill quick-mode verification.",
+              questions: ["Do duplicate claims crowd out unique claims?"],
+              angles: [
+                {
+                  label: "duplicates",
+                  query: "duplicate claim budget",
+                  rationale: "Stress exact claim grouping.",
+                },
+              ],
+            },
+          };
+        }
+        if (spec.id === "discover-sources-0") {
+          return {
+            taskId: "task_sources",
+            reportMarkdown: "Found sources.",
+            structuredOutput: {
+              sources: Array.from({ length: 8 }, (_value, index) => ({
+                title: `Duplicate source ${index}`,
+                url: `duplicate-${index}.md`,
+                relevance: "high",
+                sourceType: "primary",
+              })),
+            },
+          };
+        }
+        if (spec.id.startsWith("extract-source-")) {
+          const sourceIndex = Number(spec.id.replace("extract-source-", ""));
+          const claims = [
+            {
+              claim: "Repeated central claim",
+              quote: `Repeated evidence ${sourceIndex}`,
+              importance: "central",
+            },
+          ];
+          if (sourceIndex === 7) {
+            claims.push({
+              claim: "Unique central claim",
+              quote: "Unique evidence",
+              importance: "central",
+            });
+          }
+          return {
+            taskId: `task_${spec.id}`,
+            reportMarkdown: spec.id,
+            structuredOutput: {
+              source: spec.id,
+              sourceQuality: "primary",
+              publishDate: "",
+              summary: "summary",
+              claims,
+            },
+          };
+        }
+        if (spec.id === "synthesize-report") {
+          return {
+            taskId: "task_final",
+            reportMarkdown: "# Duplicate claims grouped",
+            structuredOutput: { confidence: "high", gaps: [], findings: ["Grouped claims"] },
+          };
+        }
+        throw new Error(`Unexpected deep-research step: ${spec.id}`);
+      }
+    );
+
+    const structuredOutput = (
+      result as {
+        structuredOutput: {
+          claims: Array<{ claim: string; duplicateCount: number; evidence: unknown[] }>;
+          verification: unknown[];
+          stats: { claimsExtracted: number; claimsVerified: number };
+        };
+      }
+    ).structuredOutput;
+    expect(structuredOutput.claims.map((claim) => claim.claim)).toEqual([
+      "Repeated central claim",
+      "Unique central claim",
+    ]);
+    expect(structuredOutput.claims[0]).toMatchObject({
+      claim: "Repeated central claim",
+      duplicateCount: 8,
+    });
+    expect(structuredOutput.claims[0].evidence).toHaveLength(8);
+    expect(
+      taskCalls.filter((call) => call.id.startsWith("verify-claim-")).map((call) => call.id)
+    ).toEqual(["verify-claim-0-vote-0", "verify-claim-1-vote-0"]);
+    expect(structuredOutput.verification).toHaveLength(2);
+    expect(structuredOutput.stats).toMatchObject({ claimsExtracted: 2, claimsVerified: 2 });
+  });
+
   test("caps model-produced deep-research fan-out", async () => {
     if (!deepResearch) {
       throw new Error("Expected built-in deep-research workflow");
@@ -1038,7 +1265,7 @@ describe("built-in deep-research workflow", () => {
                 sourceQuality: "primary",
                 publishDate: "",
                 summary: "summary",
-                claims: [0, 1].map((claimIndex) => ({
+                claims: Array.from({ length: 8 }, (_value, claimIndex) => ({
                   claim: `Claim ${sourceIndex}-${claimIndex}`,
                   quote: "fixture",
                   importance: "central",
@@ -1056,7 +1283,7 @@ describe("built-in deep-research workflow", () => {
               taskId: `task_${spec.id}`,
               reportMarkdown: spec.id,
               structuredOutput: {
-                claim: `Claim ${Math.floor(claimIndex / 2)}-${claimIndex % 2}`,
+                claim: `Claim ${Math.floor(claimIndex / 5)}-${claimIndex % 5}`,
                 refuted: false,
                 confidence: "high",
                 evidence: "fixture support",
@@ -1091,12 +1318,23 @@ describe("built-in deep-research workflow", () => {
     expect(callIds).not.toContain("verify-claim-16-vote-0");
     const structuredOutput = (
       result as {
-        structuredOutput: { sources: unknown[]; claims: unknown[]; verification: unknown[] };
+        structuredOutput: {
+          sources: unknown[];
+          sourceExtracts: Array<{ claims: unknown[] }>;
+          claims: unknown[];
+          verification: unknown[];
+          stats: { claimsExtracted: number };
+        };
       }
     ).structuredOutput;
     expect(structuredOutput.sources).toHaveLength(15);
+    expect(structuredOutput.sourceExtracts).toHaveLength(15);
+    expect(structuredOutput.sourceExtracts.every((source) => source.claims.length === 5)).toBe(
+      true
+    );
     expect(structuredOutput.claims).toHaveLength(16);
     expect(structuredOutput.verification).toHaveLength(16);
+    expect(structuredOutput.stats.claimsExtracted).toBe(75);
   }, 10_000);
 });
 

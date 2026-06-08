@@ -95,7 +95,7 @@ export const BUILT_IN_WORKFLOW_DEFINITIONS: readonly BuiltInWorkflowDefinition[]
         })
       )
     : [];
-  const sourceExtracts = sourceExtractionResultsToExtracts(sourceExtractionResults, discoveredSources);
+  const sourceExtracts = sourceExtractionResultsToExtracts(sourceExtractionResults, discoveredSources, config);
   const allClaims = extractsToClaims(sourceExtracts);
   const rankedClaims = rankClaims(allClaims).slice(0, config.maxVerifyClaims);
 
@@ -126,6 +126,7 @@ export const BUILT_IN_WORKFLOW_DEFINITIONS: readonly BuiltInWorkflowDefinition[]
         refutedClaims: [],
         confidence: "low",
         gaps: ["No verifiable claims were extracted."],
+        findings: [],
         stats: researchStats(config, angles, sourceCandidates, sourceSelection, sourceExtracts, allClaims, [], []),
       },
     };
@@ -234,9 +235,9 @@ function normalizeResearchMode(mode) {
 
 function researchConfigForMode(mode) {
   if (mode === "quick") {
-    return { mode: "quick", maxAngles: 3, maxSources: 8, maxVerifyClaims: 8, votesPerClaim: 1, refutationsRequired: 1, verificationBatchSize: 4 };
+    return { mode: "quick", maxAngles: 3, maxSources: 8, maxClaimsPerSource: 5, maxVerifyClaims: 8, votesPerClaim: 1, refutationsRequired: 1, verificationBatchSize: 4 };
   }
-  return { mode: "smart", maxAngles: 5, maxSources: 15, maxVerifyClaims: 16, votesPerClaim: 3, refutationsRequired: 2, verificationBatchSize: 6 };
+  return { mode: "smart", maxAngles: 5, maxSources: 15, maxClaimsPerSource: 5, maxVerifyClaims: 16, votesPerClaim: 3, refutationsRequired: 2, verificationBatchSize: 6 };
 }
 
 function nonEmptyString(value) {
@@ -276,7 +277,7 @@ function discoveryResultsToSources(discoveryResults, angles) {
 
 function selectNovelSources(sources, angleCount, maxSources) {
   const ordered = interleaveSourcesByAngle(sources, angleCount);
-  const seen = {};
+  const seen = new Set();
   const selected = [];
   const duplicates = [];
   const budgetDropped = [];
@@ -286,7 +287,7 @@ function selectNovelSources(sources, angleCount, maxSources) {
       budgetDropped.push(source);
       return;
     }
-    if (seen[key]) {
+    if (seen.has(key)) {
       duplicates.push(source);
       return;
     }
@@ -294,7 +295,7 @@ function selectNovelSources(sources, angleCount, maxSources) {
       budgetDropped.push(source);
       return;
     }
-    seen[key] = true;
+    seen.add(key);
     selected.push(source);
   });
   return { sources: selected, duplicates: duplicates, budgetDropped: budgetDropped };
@@ -362,10 +363,17 @@ function trimTrailingSlashes(value) {
   return value.replace(/\/+$/, "");
 }
 
-function sourceExtractionResultsToExtracts(results, selectedSources) {
+function sourceExtractionResultsToExtracts(results, selectedSources, config) {
   return results.map(function (result, index) {
     const source = selectedSources[index] || {};
     const output = result.structuredOutput;
+    const claims = asArray(output.claims).map(function (claim) {
+      return {
+        claim: nonEmptyString(claim.claim),
+        quote: nonEmptyString(claim.quote),
+        importance: normalizeEnum(claim.importance, ["central", "supporting", "tangential"], "supporting"),
+      };
+    }).filter(function (claim) { return claim.claim && claim.quote; }).slice(0, config.maxClaimsPerSource);
     return {
       title: source.title || nonEmptyString(output.source) || "Untitled source",
       url: source.url || nonEmptyString(output.source),
@@ -375,22 +383,26 @@ function sourceExtractionResultsToExtracts(results, selectedSources) {
       sourceQuality: normalizeEnum(output.sourceQuality, ["primary", "secondary", "blog", "forum", "unreliable"], "unreliable"),
       publishDate: nonEmptyString(output.publishDate),
       summary: nonEmptyString(output.summary),
-      claims: asArray(output.claims).map(function (claim) {
-        return {
-          claim: nonEmptyString(claim.claim),
-          quote: nonEmptyString(claim.quote),
-          importance: normalizeEnum(claim.importance, ["central", "supporting", "tangential"], "supporting"),
-        };
-      }).filter(function (claim) { return claim.claim && claim.quote; }),
+      claims: claims,
     };
   });
 }
 
 function extractsToClaims(sourceExtracts) {
+  const claimsByKey = new Map();
   const claims = [];
   sourceExtracts.forEach(function (source) {
     source.claims.forEach(function (claim) {
-      claims.push({
+      const key = normalizeClaimKey(claim.claim);
+      if (!key) return;
+      const evidence = {
+        quote: claim.quote,
+        sourceUrl: source.url,
+        sourceTitle: source.title,
+        sourceQuality: source.sourceQuality,
+        publishDate: source.publishDate,
+      };
+      const candidate = {
         claim: claim.claim,
         quote: claim.quote,
         importance: claim.importance,
@@ -398,19 +410,43 @@ function extractsToClaims(sourceExtracts) {
         sourceTitle: source.title,
         sourceQuality: source.sourceQuality,
         publishDate: source.publishDate,
-      });
+        evidence: [evidence],
+        duplicateCount: 1,
+      };
+      const existing = claimsByKey.get(key);
+      if (!existing) {
+        claimsByKey.set(key, candidate);
+        claims.push(candidate);
+        return;
+      }
+      existing.evidence.push(evidence);
+      existing.duplicateCount += 1;
+      if (compareClaimsForRanking(candidate, existing) < 0) {
+        existing.quote = candidate.quote;
+        existing.importance = candidate.importance;
+        existing.sourceUrl = candidate.sourceUrl;
+        existing.sourceTitle = candidate.sourceTitle;
+        existing.sourceQuality = candidate.sourceQuality;
+        existing.publishDate = candidate.publishDate;
+      }
     });
   });
   return claims;
 }
 
+function normalizeClaimKey(value) {
+  return nonEmptyString(value).toLowerCase().split(/\s+/).join(" ");
+}
+
 function rankClaims(claims) {
+  return claims.slice().sort(compareClaimsForRanking);
+}
+
+function compareClaimsForRanking(left, right) {
   const importanceRank = { central: 0, supporting: 1, tangential: 2 };
   const qualityRank = { primary: 0, secondary: 1, blog: 2, forum: 3, unreliable: 4 };
-  return claims.slice().sort(function (left, right) {
-    return (importanceRank[left.importance] - importanceRank[right.importance]) ||
-      (qualityRank[left.sourceQuality] - qualityRank[right.sourceQuality]);
-  });
+  return (importanceRank[left.importance] - importanceRank[right.importance]) ||
+    (qualityRank[left.sourceQuality] - qualityRank[right.sourceQuality]);
 }
 
 function verificationSpecs(claims, config, agentId, readOnlyReasoningPrompt, refinedTopic) {
