@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 
 import type { WorkflowDefinitionDescriptor, WorkflowRunRecord } from "@/common/types/workflow";
@@ -100,7 +100,7 @@ describe("WorkflowIndicatorView", () => {
     expect(view.getByLabelText("2 workflows need attention")).toBeTruthy();
   });
 
-  test("opens the workflows tab from the popover action", () => {
+  test("opens the workflows tab from the popover action", async () => {
     let opened = false;
     const view = render(
       <TooltipProvider>
@@ -124,7 +124,9 @@ describe("WorkflowIndicatorView", () => {
     );
 
     fireEvent.click(view.getByLabelText("Workflows"));
-    fireEvent.click(view.getByText("Open tab"));
+    const body = within(view.container.ownerDocument.body);
+    const openTabButton = await waitFor(() => body.getByText("Open tab"));
+    fireEvent.click(openTabButton);
 
     expect(opened).toBe(true);
   });
