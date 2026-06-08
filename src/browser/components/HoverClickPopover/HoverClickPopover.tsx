@@ -21,20 +21,15 @@ interface HoverClickPopoverProps {
   onOpenChange?: (open: boolean) => void;
 }
 
-// Invisible hit-area bridge for hover popovers; covers the sideOffset gap on the trigger-facing side.
-const HOVER_BRIDGE_BASE_CLASSNAME =
-  "overflow-visible before:pointer-events-auto before:absolute before:content-['']";
-
-const HOVER_BRIDGE_SIDE_CLASSNAMES = {
-  bottom: "before:-top-2 before:right-0 before:left-0 before:h-2",
-  top: "before:-bottom-2 before:right-0 before:left-0 before:h-2",
-  left: "before:top-0 before:-right-2 before:bottom-0 before:w-2",
-  right: "before:top-0 before:bottom-0 before:-left-2 before:w-2",
-} satisfies Record<NonNullable<PopoverContentProps["side"]>, string>;
-
-function getHoverBridgeClassName(side: PopoverContentProps["side"]): string {
-  return cn(HOVER_BRIDGE_BASE_CLASSNAME, HOVER_BRIDGE_SIDE_CLASSNAMES[side ?? "bottom"]);
-}
+// Invisible hit-area bridge for hover popovers; covers the sideOffset gap on the resolved
+// trigger-facing side. Radix may collision-flip placement, so these use runtime data-side.
+const HOVER_BRIDGE_CLASSNAME = cn(
+  "overflow-visible before:pointer-events-auto before:absolute before:content-['']",
+  "data-[side=bottom]:before:-top-2 data-[side=bottom]:before:right-0 data-[side=bottom]:before:left-0 data-[side=bottom]:before:h-2",
+  "data-[side=top]:before:-bottom-2 data-[side=top]:before:right-0 data-[side=top]:before:left-0 data-[side=top]:before:h-2",
+  "data-[side=left]:before:top-0 data-[side=left]:before:-right-2 data-[side=left]:before:bottom-0 data-[side=left]:before:w-2",
+  "data-[side=right]:before:top-0 data-[side=right]:before:bottom-0 data-[side=right]:before:-left-2 data-[side=right]:before:w-2"
+);
 
 function composeEventHandlers<E extends { defaultPrevented?: boolean }>(
   userHandler: ((event: E) => void) | undefined,
@@ -189,7 +184,7 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
         align={props.align}
         sideOffset={props.sideOffset}
         className={cn(
-          getHoverBridgeClassName(props.side),
+          HOVER_BRIDGE_CLASSNAME,
           props.contentClassName,
           props.contentProps?.className
         )}
