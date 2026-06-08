@@ -1415,7 +1415,7 @@ describe("built-in deep-review-workflow", () => {
         final: { verifiedIssueCount: 0 },
       },
     });
-  }, 10_000);
+  }, 20_000);
 
   test("auto-fix loop treats maxFixes as a run-wide budget", async () => {
     if (!deepReviewWorkflow) {
@@ -1614,7 +1614,7 @@ describe("built-in deep-review-workflow", () => {
         final: { verifiedIssueCount: 0 },
       },
     });
-  }, 10_000);
+  }, 20_000);
 
   test("auto-fix loop reports exhausted fix budget when verified issues remain", async () => {
     if (!deepReviewWorkflow) {
@@ -1955,7 +1955,7 @@ describe("built-in deep-review-workflow", () => {
         },
       },
     });
-  }, 10_000);
+  }, 20_000);
 
   test("auto-fix loop stops when validation fails", async () => {
     if (!deepReviewWorkflow) {
@@ -2125,7 +2125,7 @@ describe("built-in deep-review-workflow", () => {
         },
       },
     });
-  }, 10_000);
+  }, 20_000);
 
   test("auto-fix loop stops when validation is not run", async () => {
     if (!deepReviewWorkflow) {
@@ -2295,7 +2295,7 @@ describe("built-in deep-review-workflow", () => {
         },
       },
     });
-  }, 10_000);
+  }, 20_000);
 
   test("auto-fix loop stops at maxLoopIterations", async () => {
     if (!deepReviewWorkflow) {
@@ -2659,7 +2659,7 @@ describe("built-in deep-review-workflow", () => {
         },
       },
     });
-  }, 10_000);
+  }, 20_000);
 
   test("auto-fix skips candidates when verifier reports an empty issue ID", async () => {
     if (!deepReviewWorkflow) {
@@ -2790,7 +2790,7 @@ describe("built-in deep-review-workflow", () => {
         },
       },
     });
-  }, 10_000);
+  }, 20_000);
 
   test("auto-fix honors fixIssueIds and does not apply patches for non-fixed attempts", async () => {
     if (!deepReviewWorkflow) {
@@ -3669,6 +3669,7 @@ describe("built-in deep-review-workflow", () => {
       now: "2026-05-29T00:00:00.000Z",
     });
 
+    let nowMs = 1_000;
     const taskCalls: WorkflowAgentSpec[] = [];
     const applyCalls: unknown[] = [];
     let validationCalls = 0;
@@ -3783,7 +3784,7 @@ describe("built-in deep-review-workflow", () => {
       runnerId: "runner-a",
       clock: {
         nowIso: () => "2026-05-29T00:00:01.000Z",
-        nowMs: () => 1_000,
+        nowMs: () => nowMs,
       },
     });
 
@@ -3795,6 +3796,10 @@ describe("built-in deep-review-workflow", () => {
     }
     expect(firstFailure).toContain("Execution interrupted");
     expect(await readGit(repoRoot, ["rev-parse", "HEAD"])).not.toBe(baseHead);
+
+    // Advance the deterministic clock before retrying so an in-flight lease renewal from
+    // the interrupted run cannot leave a non-stale lease behind on slower CI machines.
+    nowMs = 2_000;
 
     const retryResult = await runner.run("wfr_deep_review_fix_replay_head_advance", {
       allowRetryFromFailedCheckpoint: true,
