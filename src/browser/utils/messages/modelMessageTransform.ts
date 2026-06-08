@@ -711,7 +711,12 @@ function coalesceConsecutiveNoProgressTaskAwaitPairs(messages: ModelMessage[]): 
       }
 
       const status = (entry as { status?: unknown }).status;
-      if (status !== "queued" && status !== "running" && status !== "awaiting_report") {
+      if (
+        status !== "queued" &&
+        status !== "starting" &&
+        status !== "running" &&
+        status !== "awaiting_report"
+      ) {
         return false;
       }
 

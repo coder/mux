@@ -30,10 +30,15 @@ const WORKFLOW_AWAIT_POLL_INTERVAL_MS = 250;
 // awaiting a report. Centralised here so the timeout=0 and "timed out" error
 // branches below stay in lockstep when shared fields are added — see #3234,
 // which extended both branches symmetrically with `getAgentTaskElapsedField`.
-type AgentTaskActiveStatus = "queued" | "running" | "awaiting_report";
+type AgentTaskActiveStatus = "queued" | "starting" | "running" | "awaiting_report";
 
 function isAgentTaskActiveStatus(status: AgentTaskStatus | null): status is AgentTaskActiveStatus {
-  return status === "queued" || status === "running" || status === "awaiting_report";
+  return (
+    status === "queued" ||
+    status === "starting" ||
+    status === "running" ||
+    status === "awaiting_report"
+  );
 }
 
 function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {

@@ -107,6 +107,10 @@ export interface WorkflowTaskAdapter {
     lifecycle?: { onTaskCreated?: (taskId: string) => Promise<void> | void },
     waitOptions?: WorkflowAgentWaitOptions
   ): Promise<WorkflowAgentResult>;
+  createAgentTasks?(
+    specs: WorkflowAgentSpec[],
+    lifecycle?: { onTaskCreated?: (index: number, taskId: string) => Promise<void> | void }
+  ): Promise<Array<{ taskId: string; status: "queued" | "starting" | "running" }>>;
   waitForAgentTask?(
     taskId: string,
     spec: WorkflowAgentSpec,
@@ -1289,17 +1293,69 @@ export class WorkflowRunner {
         ...options.waitOptions,
         abortSignal: batchAbortController.signal,
       };
-      const guardedRuns = currentPending.map(async (step, pendingIndex) => {
+      const effectivePending = currentPending.map((step) => ({
+        ...step,
+        runSpec:
+          step.attempt === 1
+            ? step.spec
+            : buildRetryAgentSpec(
+                step.spec,
+                step.attempt - 1,
+                step.retryMessage ?? "previous attempt failed"
+              ),
+      }));
+      const bulkCreatableSteps = effectivePending.filter((step) => step.taskId == null);
+      if (
+        bulkCreatableSteps.length > 0 &&
+        this.taskAdapter.createAgentTasks != null &&
+        this.taskAdapter.waitForAgentTask != null
+      ) {
+        try {
+          const createdTasks = await this.taskAdapter.createAgentTasks(
+            bulkCreatableSteps.map((step) => step.runSpec),
+            {
+              onTaskCreated: async (index, taskId) => {
+                const step = bulkCreatableSteps[index];
+                assert(step != null, "WorkflowRunner.parallelAgents bulk lifecycle index mismatch");
+                assert(taskId.length > 0, "WorkflowRunner.parallelAgents bulk taskId is required");
+                options.leaseGuard.throwIfLost();
+                await this.recordStepStarted(runId, {
+                  stepId: step.spec.id,
+                  inputHash: step.inputHash,
+                  taskId,
+                  startedAt: step.startedAt,
+                });
+                await this.recordTaskStartedEventIfMissing(runId, sequence, {
+                  stepId: step.spec.id,
+                  taskId,
+                });
+              },
+            }
+          );
+          if (createdTasks.length !== bulkCreatableSteps.length) {
+            throw new Error("parallelAgents bulk task creation returned the wrong number of tasks");
+          }
+          for (const [index, createdTask] of createdTasks.entries()) {
+            assert(
+              createdTask.taskId.length > 0,
+              "WorkflowRunner.parallelAgents created taskId is required"
+            );
+            bulkCreatableSteps[index].taskId = createdTask.taskId;
+          }
+        } catch (error) {
+          if (isForegroundWaitBackgroundedError(error)) {
+            foregroundBackgrounded = true;
+            abortBatch();
+          } else if (!foregroundBackgrounded) {
+            await interruptRemainingTasks();
+          }
+          throw error;
+        }
+      }
+      const guardedRuns = effectivePending.map(async (step, pendingIndex) => {
         try {
           const rawResult = await this.runOrResumeAgentStep(runId, sequence, {
-            spec:
-              step.attempt === 1
-                ? step.spec
-                : buildRetryAgentSpec(
-                    step.spec,
-                    step.attempt - 1,
-                    step.retryMessage ?? "previous attempt failed"
-                  ),
+            spec: step.runSpec,
             inputHash: step.inputHash,
             startedAt: step.startedAt,
             taskId: step.taskId,

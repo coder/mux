@@ -127,6 +127,68 @@ describe("WorkflowTaskServiceAdapter", () => {
     });
   });
 
+  test("bulk creates workflow child tasks with workflow metadata", async () => {
+    const createMany = mock(async (_args: unknown[]) =>
+      Ok([
+        { taskId: "task_1", kind: "agent" as const, status: "starting" as const },
+        { taskId: "task_2", kind: "agent" as const, status: "queued" as const },
+      ])
+    );
+    const create = mock(async () =>
+      Ok({ taskId: "unused", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, createMany, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+      experiments: { dynamicWorkflows: true },
+    });
+
+    const created: Array<[number, string]> = [];
+    const result = await adapter.createAgentTasks(
+      [
+        { id: "first", prompt: "Do first", title: "First" },
+        { id: "second", prompt: "Do second", agentId: "exec", outputSchema: { type: "object" } },
+      ],
+      {
+        onTaskCreated: (index, taskId) => {
+          created.push([index, taskId]);
+        },
+      }
+    );
+
+    expect(result).toEqual([
+      { taskId: "task_1", status: "starting" },
+      { taskId: "task_2", status: "queued" },
+    ]);
+    expect(created).toEqual([
+      [0, "task_1"],
+      [1, "task_2"],
+    ]);
+    expect(createMany).toHaveBeenCalledWith([
+      {
+        parentWorkspaceId: "parent_1",
+        kind: "agent",
+        agentId: "explore",
+        prompt: "Do first",
+        title: "First",
+        workflowTask: { runId: "wfr_123", stepId: "first" },
+        experiments: { dynamicWorkflows: true },
+      },
+      {
+        parentWorkspaceId: "parent_1",
+        kind: "agent",
+        agentId: "exec",
+        prompt: "Do second",
+        title: "second",
+        workflowTask: { runId: "wfr_123", stepId: "second", outputSchema: { type: "object" } },
+        experiments: { dynamicWorkflows: true },
+      },
+    ]);
+  });
+
   test("passes workflow wait options into report waits", async () => {
     const abortController = new AbortController();
     const create = mock(async () =>

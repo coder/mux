@@ -512,6 +512,41 @@ describe("TaskService", () => {
     }
   }, 20_000);
 
+  test("createMany reserves admitted tasks as starting and over-capacity tasks as queued", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"], "dddddddddd");
+
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    await config.editConfig((cfg) => {
+      cfg.taskSettings = { maxParallelAgentTasks: 2, maxTaskNestingDepth: 3 };
+      return cfg;
+    });
+
+    const sendMessage = mock(() => new Promise<Result<void>>(() => undefined));
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const result = await taskService.createMany(
+      ["one", "two", "three"].map((prompt, index) => ({
+        parentWorkspaceId: parentId,
+        kind: "agent" as const,
+        agentId: "explore",
+        prompt,
+        title: `Task ${index + 1}`,
+      }))
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.map((task) => task.status)).toEqual(["starting", "starting", "queued"]);
+
+    const tasks = Array.from(config.loadConfigOrDefault().projects.values())
+      .flatMap((project) => project.workspaces)
+      .filter((workspace) => workspace.parentWorkspaceId === parentId);
+    expect(tasks.map((task) => task.taskStatus)).toEqual(["starting", "starting", "queued"]);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   test("queues tasks when maxParallelAgentTasks is reached and starts them when a slot frees", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc", "dddddddddd"], "eeeeeeeeee");

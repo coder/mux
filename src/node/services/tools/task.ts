@@ -106,14 +106,14 @@ function parseTaskAiOverrides(args: { model?: string | null; thinking?: string |
 
 interface SpawnedTaskInfo {
   taskId: string;
-  status: "queued" | "running";
+  status: "queued" | "starting" | "running";
   groupKind?: TaskGroupKind;
   label?: string;
 }
 
 interface PendingTaskInfo {
   taskId: string;
-  status: "queued" | "running" | "completed" | "interrupted";
+  status: "queued" | "starting" | "running" | "completed" | "interrupted";
   groupKind?: TaskGroupKind;
   label?: string;
 }
@@ -162,8 +162,10 @@ function emitTaskCreatedEvent(params: {
 
 function toAggregatePendingStatus(
   statuses: ReadonlyArray<PendingTaskInfo["status"]>
-): "queued" | "running" {
-  return statuses.every((status) => status === "queued") ? "queued" : "running";
+): "queued" | "starting" | "running" {
+  if (statuses.every((status) => status === "queued")) return "queued";
+  if (statuses.every((status) => status === "starting")) return "starting";
+  return "running";
 }
 
 function serializeCompletedReport(report: CompletedTaskInfo) {

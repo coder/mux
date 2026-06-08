@@ -1577,6 +1577,7 @@ export class Config {
               workflowTask: workspace.workflowTask,
               bestOf: workspace.bestOf,
               taskStatus: workspace.taskStatus,
+              taskLaunchError: workspace.taskLaunchError,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
               taskThinkingLevel: workspace.taskThinkingLevel,
@@ -1676,6 +1677,7 @@ export class Config {
             metadata.workflowTask ??= workspace.workflowTask;
             metadata.bestOf ??= workspace.bestOf;
             metadata.taskStatus ??= workspace.taskStatus;
+            metadata.taskLaunchError ??= workspace.taskLaunchError;
             metadata.reportedAt ??= workspace.reportedAt;
             metadata.taskModelString ??= workspace.taskModelString;
             metadata.taskThinkingLevel ??= workspace.taskThinkingLevel;
@@ -1746,6 +1748,7 @@ export class Config {
               workflowTask: workspace.workflowTask,
               bestOf: workspace.bestOf,
               taskStatus: workspace.taskStatus,
+              taskLaunchError: workspace.taskLaunchError,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
               taskThinkingLevel: workspace.taskThinkingLevel,
@@ -1798,6 +1801,7 @@ export class Config {
             workflowTask: workspace.workflowTask,
             bestOf: workspace.bestOf,
             taskStatus: workspace.taskStatus,
+            taskLaunchError: workspace.taskLaunchError,
             reportedAt: workspace.reportedAt,
             taskModelString: workspace.taskModelString,
             taskThinkingLevel: workspace.taskThinkingLevel,
@@ -1868,6 +1872,7 @@ export class Config {
         workflowTask: metadata.workflowTask,
         bestOf: metadata.bestOf,
         taskStatus: metadata.taskStatus,
+        taskLaunchError: metadata.taskLaunchError,
         reportedAt: metadata.reportedAt,
         taskModelString: metadata.taskModelString,
         taskThinkingLevel: metadata.taskThinkingLevel,

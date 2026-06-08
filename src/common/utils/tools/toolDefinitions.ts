@@ -247,8 +247,8 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
     "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
     "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When grouped sibling tasks are requested via n or variants, the completed result includes one report per spawned task. " +
-    "If the foreground wait times out, returns queued/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
-    "If run_in_background is true, returns immediately with queued/running task metadata; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
+    "If the foreground wait times out, returns queued/starting/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
+    "If run_in_background is true, returns immediately with queued/starting/running task metadata; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
     "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
     "Use run_in_background: true when launching multiple tasks in parallel so you can act on each as it completes via task_await (which returns on the first completion by default); a foreground grouped spawn (run_in_background: false) instead blocks until every sibling finishes and returns all reports at once. " +
     "Do not call task_await in the same parallel tool-call batch; wait for the returned task metadata first. " +
@@ -337,7 +337,7 @@ export const TaskToolArgsSchema = TaskToolAgentArgsSchema;
 const TaskToolSpawnedTaskSchema = z
   .object({
     taskId: z.string(),
-    status: z.enum(["queued", "running", "completed", "interrupted"]),
+    status: z.enum(["queued", "starting", "running", "completed", "interrupted"]),
     groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
     label: z.string().optional(),
   })
@@ -358,7 +358,7 @@ const TaskToolCompletedReportSchema = z
 
 export const TaskToolQueuedResultSchema = z
   .object({
-    status: z.enum(["queued", "running"]),
+    status: z.enum(["queued", "starting", "running"]),
     taskId: z.string().optional(),
     taskIds: z.array(z.string()).min(1).optional(),
     tasks: z.array(TaskToolSpawnedTaskSchema).min(1).optional(),
@@ -473,7 +473,7 @@ export const TaskAwaitToolArgsSchema = z
       .describe(
         "Maximum time to wait in seconds for each task. " +
           "For bash tasks, this waits for NEW output (or process exit). " +
-          "If exceeded, the result returns status=queued|running|awaiting_report (task is still active). " +
+          "If exceeded, the result returns status=queued|starting|running|awaiting_report (task is still active). " +
           "Defaults to 600 seconds (10 minutes) if not specified. " +
           "Set to 0 for a non-blocking status check."
       ),
@@ -568,7 +568,14 @@ export const TaskAwaitToolCompletedResultSchema = z
 
 export const TaskAwaitToolActiveResultSchema = z
   .object({
-    status: z.enum(["queued", "running", "backgrounded", "awaiting_report", "interrupted"]),
+    status: z.enum([
+      "queued",
+      "starting",
+      "running",
+      "backgrounded",
+      "awaiting_report",
+      "interrupted",
+    ]),
     taskId: z.string(),
     output: z.string().optional(),
     elapsed_ms: z.number().optional(),
@@ -770,6 +777,7 @@ export const TaskTerminateToolResultSchema = z
 
 const TaskListStatusSchema = z.enum([
   "queued",
+  "starting",
   "running",
   "awaiting_report",
   "interrupted",
@@ -783,7 +791,7 @@ export const TaskListToolArgsSchema = z
       .array(TaskListStatusSchema)
       .nullish()
       .describe(
-        "Task statuses to include. Defaults to active tasks: queued, running, awaiting_report."
+        "Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report."
       ),
   })
   .strict();
@@ -1568,7 +1576,7 @@ export const TOOL_DEFINITIONS = {
       "Set min_completed higher (up to the number of awaited tasks) when you genuinely need more before proceeding — e.g. best-of-N synthesis that must compare every candidate should pass min_completed equal to the batch size. " +
       "The result always includes every task complete at the moment it returns, plus current status for the rest; not-yet-completed tasks keep running and stay re-awaitable on a later call. " +
       "You always get per-task results (like Promise.allSettled), just possibly before every task has finished. " +
-      "Possible statuses: completed, queued, running, backgrounded, awaiting_report, interrupted, not_found, invalid_scope, error. " +
+      "Possible statuses: completed, queued, starting, running, backgrounded, awaiting_report, interrupted, not_found, invalid_scope, error. " +
       "Bash task outputs may be automatically filtered; when this happens, check each result's note for details and (if available) where the full output was saved.",
     schema: TaskAwaitToolArgsSchema,
   },

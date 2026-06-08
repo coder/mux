@@ -159,12 +159,15 @@ export const WorkspaceMetadataSchema = z.object({
     description: "Grouping metadata for child tasks spawned from the same parent tool call.",
   }),
   taskStatus: z
-    .enum(["queued", "running", "awaiting_report", "interrupted", "reported"])
+    .enum(["queued", "starting", "running", "awaiting_report", "interrupted", "reported"])
     .optional()
     .meta({
       description:
-        "Agent task lifecycle status for child workspaces (queued|running|awaiting_report|interrupted|reported).",
+        "Agent task lifecycle status for child workspaces (queued|starting|running|awaiting_report|interrupted|reported).",
     }),
+  taskLaunchError: z.string().optional().meta({
+    description: "Startup failure recorded before an agent task could begin streaming.",
+  }),
   reportedAt: z.string().optional().meta({
     description: "ISO 8601 timestamp for when an agent task reported completion (optional).",
   }),

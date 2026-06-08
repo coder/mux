@@ -24,7 +24,7 @@ describe("task_list tool", () => {
 
     expect(result).toEqual({ tasks: [] });
     expect(listDescendantAgentTasks).toHaveBeenCalledWith("root-workspace", {
-      statuses: ["queued", "running", "awaiting_report"],
+      statuses: ["queued", "starting", "running", "awaiting_report"],
       excludeWorkflowTasks: true,
     });
   });
