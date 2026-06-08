@@ -45,6 +45,31 @@ describe("AgentSession.waitForIdle", () => {
     }
   });
 
+  test("counts external manual follow-ups separately from queued message text", async () => {
+    const { session, cleanup } = await createAgentSessionHarness({
+      workspaceId: "wait-for-idle-external-manual-follow-up",
+    });
+
+    try {
+      expect(session.hasQueuedMessages()).toBe(false);
+      expect(session.hasPendingManualFollowUp()).toBe(false);
+
+      const controller = new AbortController();
+      const release = session.registerExternalManualFollowUp(controller.signal);
+      expect(session.hasQueuedMessages()).toBe(false);
+      expect(session.hasPendingManualFollowUp()).toBe(true);
+
+      controller.abort();
+      expect(session.hasPendingManualFollowUp()).toBe(false);
+
+      release();
+      expect(session.hasPendingManualFollowUp()).toBe(false);
+    } finally {
+      session.dispose();
+      await cleanup();
+    }
+  });
+
   test("removes repeated aborted idle waiters during one busy turn", async () => {
     const { session, cleanup } = await createAgentSessionHarness({
       workspaceId: "wait-for-idle-repeated-aborts",

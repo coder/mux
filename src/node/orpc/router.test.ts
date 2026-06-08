@@ -135,6 +135,7 @@ describe("router workflow routes", () => {
       },
       workspaceService: {
         waitForWorkspaceIdle: mock(async () => undefined),
+        prepareManualWorkflowInvocation: mock(async () => undefined),
         appendWorkflowRunInvocation: mock(async () => true),
         isWorkflowInvocationCurrent: mock(async () => false),
         getWorkflowContinuationSendOptions: mock(() => null),
@@ -419,6 +420,7 @@ describe("router workflow routes", () => {
     const context = createContext({ enabled: true });
     const workspaceService = context.workspaceService as unknown as {
       waitForWorkspaceIdle: ReturnType<typeof mock>;
+      prepareManualWorkflowInvocation: ReturnType<typeof mock>;
       appendWorkflowRunInvocation: ReturnType<typeof mock>;
     };
     let releaseIdle: (() => void) | undefined;
@@ -443,12 +445,18 @@ describe("router workflow routes", () => {
       "slash workflow idle barrier",
       () => workspaceService.waitForWorkspaceIdle.mock.calls.length === 1
     );
+    expect(workspaceService.waitForWorkspaceIdle).toHaveBeenCalledWith(
+      "workspace-1",
+      expect.objectContaining({ manualFollowUp: true })
+    );
+    expect(workspaceService.prepareManualWorkflowInvocation).not.toHaveBeenCalled();
     expect(await runStore.listRuns()).toEqual([]);
     expect(workspaceService.appendWorkflowRunInvocation).not.toHaveBeenCalled();
 
     releaseIdle?.();
     const result = await startPromise;
 
+    expect(workspaceService.prepareManualWorkflowInvocation).toHaveBeenCalledWith("workspace-1");
     expect(result).toMatchObject({ status: "running", invocationMessagePersisted: true });
     expect(workspaceService.appendWorkflowRunInvocation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -527,6 +535,7 @@ describe("router workflow routes", () => {
     const context = createContext({ enabled: true });
     const workspaceService = context.workspaceService as unknown as {
       waitForWorkspaceIdle: ReturnType<typeof mock>;
+      prepareManualWorkflowInvocation: ReturnType<typeof mock>;
     };
     const client = createRouterClient(router(), { context });
 
@@ -537,6 +546,7 @@ describe("router workflow routes", () => {
       args: { topic: "background workflow routes" },
     });
 
+    expect(workspaceService.prepareManualWorkflowInvocation).not.toHaveBeenCalled();
     expect(workspaceService.waitForWorkspaceIdle).not.toHaveBeenCalled();
     expect(result.status).toBe("running");
     expect(result.runId).toMatch(/^wfr_/);

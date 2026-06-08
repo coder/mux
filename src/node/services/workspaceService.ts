@@ -2137,24 +2137,32 @@ export class WorkspaceService extends EventEmitter {
 
   async waitForWorkspaceIdle(
     workspaceId: string,
-    options?: { signal?: AbortSignal }
+    options?: { signal?: AbortSignal; manualFollowUp?: boolean }
   ): Promise<void> {
     assert(typeof workspaceId === "string", "waitForWorkspaceIdle requires a workspaceId string");
     const trimmed = workspaceId.trim();
     assert(trimmed.length > 0, "waitForWorkspaceIdle requires a non-empty workspaceId");
 
-    for (;;) {
-      if (options?.signal?.aborted === true) {
-        throw new Error(WORKSPACE_IDLE_WAIT_CANCELED_MESSAGE);
-      }
+    let releaseManualFollowUp: (() => void) | undefined;
+    try {
+      for (;;) {
+        if (options?.signal?.aborted === true) {
+          throw new Error(WORKSPACE_IDLE_WAIT_CANCELED_MESSAGE);
+        }
 
-      const session =
-        this.sessions.get(trimmed) ?? this.transientStartupRecoverySessions.get(trimmed);
-      if (session?.isBusy() !== true) {
-        return;
-      }
+        const session =
+          this.sessions.get(trimmed) ?? this.transientStartupRecoverySessions.get(trimmed);
+        if (session?.isBusy() !== true) {
+          return;
+        }
 
-      await waitForAgentSessionIdle(session, options?.signal);
+        if (options?.manualFollowUp === true && releaseManualFollowUp == null) {
+          releaseManualFollowUp = session.registerExternalManualFollowUp(options.signal);
+        }
+        await waitForAgentSessionIdle(session, options?.signal);
+      }
+    } finally {
+      releaseManualFollowUp?.();
     }
   }
 
@@ -5930,6 +5938,35 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async prepareManualWorkflowInvocation(workspaceId: string): Promise<void> {
+    const trimmed = workspaceId.trim();
+    assert(trimmed.length > 0, "prepareManualWorkflowInvocation requires workspaceId");
+    const goalService = this.workspaceGoalService;
+    if (!goalService) {
+      return;
+    }
+
+    // Slash workflows are explicit user interventions, so they should preempt
+    // pending automatic goal continuations just like queued composer messages do.
+    goalService.clearPendingContinuationForManualUserMessage(trimmed);
+    const goal = await goalService.acknowledgeUser(trimmed);
+    if (goal?.status !== "active") {
+      return;
+    }
+
+    const result = await goalService.setGoal({
+      workspaceId: trimmed,
+      status: "paused",
+      initiator: "auto",
+    });
+    if (!result.success) {
+      log.warn("Failed to auto-pause goal for workflow slash invocation", {
+        workspaceId: trimmed,
+        error: result.error,
+      });
+    }
+  }
+
   async appendWorkflowRunInvocation(input: {
     workspaceId: string;
     rawCommand: string;
@@ -7834,7 +7871,7 @@ export class WorkspaceService extends EventEmitter {
       isInitializing: initState?.status === "running",
       isRuntimeCompatible: true,
       isBusy: session?.isBusy() === true,
-      hasQueuedMessages: session?.hasQueuedMessages() === true,
+      hasQueuedMessages: session?.hasPendingManualFollowUp() === true,
       hasPendingFollowUp: false,
     };
   }

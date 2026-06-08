@@ -351,6 +351,7 @@ export class AgentSession {
   private deferQueuedFlushUntilAfterEdit = false;
 
   private idleWaiters: Array<() => void> = [];
+  private pendingExternalManualFollowUps = 0;
   private readonly messageQueue = new MessageQueue();
   private readonly compactionHandler: CompactionHandler;
   private readonly compactionMonitor: CompactionMonitor;
@@ -4682,8 +4683,9 @@ export class AgentSession {
         }
 
         // Stream end: auto-send queued messages (for user messages typed during streaming)
+        // and suppress goal continuations for external slash workflow follow-ups waiting on idle.
         // P2: if an edit is waiting, skip the queue flush so the edit truncates first.
-        const hadQueuedMessages = this.hasQueuedMessages();
+        const hadQueuedMessages = this.hasPendingManualFollowUp();
         if (this.deferQueuedFlushUntilAfterEdit) {
           // Clear the queued message flag so the next turn's tools don't early-return.
           this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
@@ -4886,6 +4888,38 @@ export class AgentSession {
     });
   }
 
+  /**
+   * Slash workflow commands are user follow-ups even though they do not live in MessageQueue.
+   * Reserve a manual slot while they wait so goal continuations do not outrun them at stream end.
+   */
+  registerExternalManualFollowUp(signal?: AbortSignal): () => void {
+    assert(
+      signal == null || typeof signal.aborted === "boolean",
+      "registerExternalManualFollowUp signal must be an AbortSignal"
+    );
+    if (signal?.aborted === true) {
+      throw new Error("External manual follow-up canceled.");
+    }
+
+    let released = false;
+    const release = () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      signal?.removeEventListener("abort", release);
+      assert(
+        this.pendingExternalManualFollowUps > 0,
+        "pending external manual follow-up count underflowed"
+      );
+      this.pendingExternalManualFollowUps -= 1;
+    };
+
+    this.pendingExternalManualFollowUps += 1;
+    signal?.addEventListener("abort", release, { once: true });
+    return release;
+  }
+
   queueMessage(
     message: string,
     options?: SendMessageOptions & { fileParts?: FilePart[] },
@@ -4916,6 +4950,10 @@ export class AgentSession {
 
   hasQueuedMessages(): boolean {
     return !this.messageQueue.isEmpty();
+  }
+
+  hasPendingManualFollowUp(): boolean {
+    return !this.messageQueue.isEmpty() || this.pendingExternalManualFollowUps > 0;
   }
 
   /**
@@ -5116,7 +5154,7 @@ export class AgentSession {
       imageParts?: FilePart[];
     };
 
-    const hasQueuedMessages = this.hasQueuedMessages();
+    const hasQueuedMessages = this.hasPendingManualFollowUp();
     const hasActiveNonCompletingTurn = this.isBusy() && this.turnPhase !== TurnPhase.COMPLETING;
     if (
       followUp.dispatchOptions?.requireIdle === true &&
