@@ -271,11 +271,13 @@ function AvailableToolsSection(props: { tools: ParsedTool[] }) {
       {props.tools.map((tool, index) => (
         <div
           key={`${tool.name}-${index}`}
-          className="border-border-light bg-background-primary rounded border p-2"
+          className="border-border-light bg-background-primary min-w-0 rounded border p-2"
         >
-          <div className="flex items-center gap-1">
-            <Wrench className="h-3 w-3 text-violet-500" />
-            <span className="text-foreground text-[10px] font-semibold">{tool.name}</span>
+          <div className="flex min-w-0 items-center gap-1">
+            <Wrench className="h-3 w-3 shrink-0 text-violet-500" />
+            <span className="text-foreground min-w-0 text-[10px] font-semibold break-all">
+              {tool.name}
+            </span>
           </div>
 
           {tool.description != null && tool.description.length > 0 && (
@@ -302,12 +304,14 @@ function ToolPolicySection(props: { policy: ToolPolicy }) {
       {props.policy.map((filter, index) => (
         <div
           key={`${filter.regex_match}-${index}`}
-          className="border-border-light bg-background-primary flex items-center gap-2 rounded border px-2 py-1"
+          className="border-border-light bg-background-primary flex min-w-0 items-center gap-2 rounded border px-2 py-1"
         >
-          <code className="text-foreground font-monospace text-[10px]">{filter.regex_match}</code>
+          <code className="text-foreground font-monospace min-w-0 flex-1 text-[10px] break-all">
+            {filter.regex_match}
+          </code>
           <span
             className={cn(
-              "ml-auto rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase",
+              "ml-auto shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase",
               POLICY_ACTION_STYLES[filter.action]
             )}
           >

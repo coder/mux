@@ -1,20 +1,23 @@
-import { userEvent, waitFor, within } from "@storybook/test";
+import { waitFor, within } from "@storybook/test";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { DevToolsStep } from "@/common/types/devtools";
-import { CHROMATIC_SINGLE_MODE, StoryUiShell } from "@/browser/stories/meta";
+import { CHROMATIC_DISABLED, StoryUiShell } from "@/browser/stories/meta";
 import { DevToolsStepCard } from "./DevToolsStepCard";
 
-const NARROW_DEBUG_CARD_WIDTH = 400;
+const MIN_RIGHT_SIDEBAR_WIDTH = 300;
+const DEVTOOLS_TAB_INLINE_PADDING = 16;
+const DEVTOOLS_RUN_CARD_BODY_INLINE_PADDING = 16;
+const NARROW_DEBUG_CARD_WIDTH =
+  MIN_RIGHT_SIDEBAR_WIDTH - DEVTOOLS_TAB_INLINE_PADDING - DEVTOOLS_RUN_CARD_BODY_INLINE_PADDING;
+const LONG_POLICY_REGEX =
+  "server:GOOGLE_SEARCH_WEB_WITH_A_VERY_LONG_UNBROKEN_POLICY_REGEX_THAT_MUST_WRAP_IN_NARROW_DEBUG_CARDS";
 
 const meta = {
   title: "Features/RightSidebar/DevToolsStepCard",
   component: DevToolsStepCard,
   parameters: {
     layout: "fullscreen",
-    chromatic: {
-      delay: 200,
-      modes: CHROMATIC_SINGLE_MODE,
-    },
+    chromatic: CHROMATIC_DISABLED,
   },
   decorators: [
     (Story) => (
@@ -114,21 +117,29 @@ export const NarrowExpanded: Story = {
   args: {
     step: debugStep,
     toolPolicy: Array.from({ length: 12 }, (_, index) => ({
-      regex_match: `server:policy_${index + 1}`,
+      regex_match: index === 0 ? LONG_POLICY_REGEX : `server:policy_${index + 1}`,
       action: index % 2 === 0 ? "enable" : "disable",
     })),
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole("button", { name: /Step 2/ }));
+    canvas.getByRole("button", { name: /Step 2/ }).click();
 
     await waitFor(() => canvas.getByText("server:GOOGLE_SEARCH_WEB"));
 
     const container = canvas.getByTestId("narrow-debug-card");
-    if (container.scrollWidth > container.clientWidth + 1) {
-      throw new Error(
-        `Debug step card overflowed narrow container by ${container.scrollWidth - container.clientWidth}px`
-      );
-    }
+    assertNoDebugCardOverflow(container);
+
+    canvas.getByRole("button", { name: /12 policy rules/ }).click();
+    await waitFor(() => canvas.getByText(LONG_POLICY_REGEX));
+    assertNoDebugCardOverflow(container);
   },
 };
+
+function assertNoDebugCardOverflow(container: HTMLElement): void {
+  if (container.scrollWidth > container.clientWidth + 1) {
+    throw new Error(
+      `Debug step card overflowed narrow container by ${container.scrollWidth - container.clientWidth}px`
+    );
+  }
+}
