@@ -13,6 +13,7 @@ import { WorkspaceProvider } from "@/browser/contexts/WorkspaceContext";
 import { selectWorkspace } from "@/browser/stories/helpers/uiState";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { getProvidersConfigStore } from "@/browser/stores/ProvidersConfigStore";
 import { getExperimentKey, type ExperimentId } from "@/common/constants/experiments";
 import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage";
 import type { ServerAuthSession } from "@/common/orpc/types";
@@ -55,6 +56,7 @@ function getStorybookRenderKey(): string | null {
 export function SettingsSectionStory(props: SettingsSectionStoryProps) {
   const lastRenderKeyRef = useRef<string | null>(null);
   const clientRef = useRef<APIClient | null>(null);
+  const wiredProvidersClientRef = useRef<APIClient | null>(null);
 
   const renderKey = getStorybookRenderKey();
   const shouldReset = clientRef.current === null || lastRenderKeyRef.current !== renderKey;
@@ -66,6 +68,16 @@ export function SettingsSectionStory(props: SettingsSectionStoryProps) {
   }
 
   clientRef.current ??= props.setup();
+
+  // useProvidersConfig consumers (ProvidersSection, ModelsSection, ...) read
+  // the shared ProvidersConfigStore, which gets its client from AppLoader in
+  // the real app. These stories bypass AppLoader, so wire the store to the
+  // story client (once per client instance, alongside the client creation
+  // above, so the config fetch starts before the section mounts).
+  if (wiredProvidersClientRef.current !== clientRef.current) {
+    wiredProvidersClientRef.current = clientRef.current;
+    getProvidersConfigStore().setClient(clientRef.current);
+  }
 
   return (
     <APIProvider key={renderKey ?? "settings-section-story"} client={clientRef.current}>
