@@ -55,6 +55,46 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_pdf_input: true,
   },
 
+  // Claude Fable 5 / Mythos 5 - Released June 9, 2026
+  // Mythos-class model (a tier above Opus). Fable 5 (`claude-fable-5`) is the
+  // generally-available variant with safeguards; Mythos 5 (`claude-mythos-5`) is the same
+  // underlying model with some safeguards lifted, restricted to trusted-access partners.
+  // Both are priced identically: $10/M input, $50/M output. Cache pricing is inferred from
+  // Anthropic's standard ratios (cache write 1.25× input, cache read 0.1× input), matching
+  // the Opus 4.x shape. Native 1M context, 128K max output, native xhigh effort level.
+  "claude-fable-5": {
+    max_input_tokens: 1000000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.00001, // $10 per million input tokens
+    output_cost_per_token: 0.00005, // $50 per million output tokens
+    cache_creation_input_token_cost: 0.0000125, // $12.50 per million tokens (1.25× input)
+    cache_read_input_token_cost: 0.000001, // $1.00 per million tokens (0.1× input)
+    litellm_provider: "anthropic",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
+  // Same underlying model as Fable 5 (identical pricing/shape); restricted access.
+  "claude-mythos-5": {
+    max_input_tokens: 1000000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.00001, // $10 per million input tokens
+    output_cost_per_token: 0.00005, // $50 per million output tokens
+    cache_creation_input_token_cost: 0.0000125, // $12.50 per million tokens (1.25× input)
+    cache_read_input_token_cost: 0.000001, // $1.00 per million tokens (0.1× input)
+    litellm_provider: "anthropic",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // Claude Opus 4.8 - Released May 28, 2026
   // Same pricing/shape as Opus 4.7: $5/M input, $25/M output, native 1M context,
   // 128K max output, native xhigh effort level. Defaults to high effort on all

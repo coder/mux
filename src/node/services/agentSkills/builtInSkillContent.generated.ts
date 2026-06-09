@@ -2158,6 +2158,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "",
       "| Model                  | ID                            | Aliases                                                      | Default |",
       "| ---------------------- | ----------------------------- | ------------------------------------------------------------ | ------- |",
+      "| Fable 5                | anthropic:claude-fable-5      | `fable`                                                      |         |",
       "| Opus 4.8               | anthropic:claude-opus-4-8     | `opus`                                                       | ✓       |",
       "| Sonnet 4.6             | anthropic:claude-sonnet-4-6   | `sonnet`                                                     |         |",
       "| Haiku 4.5              | anthropic:claude-haiku-4-5    | `haiku`                                                      |         |",
