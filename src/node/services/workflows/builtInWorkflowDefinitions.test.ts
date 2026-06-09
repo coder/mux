@@ -11,6 +11,8 @@ import { WorkflowActionRegistry } from "./WorkflowActionRegistry";
 import { WorkflowRunStore } from "./WorkflowRunStore";
 import { WorkflowRunner, type WorkflowAgentResult, type WorkflowAgentSpec } from "./WorkflowRunner";
 
+// Keep this above tiny lock timeouts: these fixtures exercise parallel workflow callbacks
+// that legitimately contend for the run-store mutation lock under CI coverage load.
 const BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS = 100;
 
 const deepResearch = BUILT_IN_WORKFLOW_DEFINITIONS.find(
@@ -1549,7 +1551,10 @@ describe("built-in deep-review-workflow", () => {
     await runGit(repoRoot, ["branch", "-M", "main"]);
     await fs.writeFile(path.join(repoRoot, "tracked.txt"), "base\ndirty\n", "utf-8");
 
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_git_context",
       workspaceId: "workspace-1",
@@ -1674,7 +1679,10 @@ describe("built-in deep-review-workflow", () => {
     await runGit(repoRoot, ["branch", "-M", "main"]);
     await fs.writeFile(path.join(repoRoot, "unrelated.txt"), "base\nunrelated dirty\n", "utf-8");
 
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_explicit_context",
       workspaceId: "workspace-1",
@@ -1746,7 +1754,10 @@ describe("built-in deep-review-workflow", () => {
       );
     }
 
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_status_fallback",
       workspaceId: "workspace-1",
@@ -1824,7 +1835,10 @@ describe("built-in deep-review-workflow", () => {
       title: "Docs are unclear",
       confidence: "medium",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix",
       workspaceId: "workspace-1",
@@ -2041,7 +2055,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Run targeted tests.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_loop",
       workspaceId: "workspace-1",
@@ -2310,7 +2327,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Run targeted tests.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_loop_budget",
       workspaceId: "workspace-1",
@@ -2509,7 +2529,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Run targeted tests.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_loop_budget_exhausted",
       workspaceId: "workspace-1",
@@ -2694,7 +2717,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Run targeted tests.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_loop_no_progress",
       workspaceId: "workspace-1",
@@ -2850,7 +2876,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Run targeted tests.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_loop_validation_failed",
       workspaceId: "workspace-1",
@@ -3020,7 +3049,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Run targeted tests.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_loop_validation_not_run",
       workspaceId: "workspace-1",
@@ -3190,7 +3222,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Run targeted tests.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_loop_max_iterations",
       workspaceId: "workspace-1",
@@ -3373,7 +3408,10 @@ describe("built-in deep-review-workflow", () => {
       title: "Final review drops this issue",
       rationale: "The final synthesis omits this candidate.",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_final_gate",
       workspaceId: "workspace-1",
@@ -3554,7 +3592,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Add a failing persistence regression test.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_verifier_mismatch",
       workspaceId: "workspace-1",
@@ -3691,7 +3732,10 @@ describe("built-in deep-review-workflow", () => {
       title: "Selected but cannot be fixed automatically",
       suggestedFix: "Needs product clarification.",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_filter",
       workspaceId: "workspace-1",
@@ -3858,7 +3902,10 @@ describe("built-in deep-review-workflow", () => {
     await runGit(repoRoot, ["commit", "-m", "base commit"]);
     await fs.writeFile(path.join(repoRoot, "service.ts"), "export const value = 2;\n", "utf-8");
 
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_dirty",
       workspaceId: "workspace-1",
@@ -3920,7 +3967,10 @@ describe("built-in deep-review-workflow", () => {
     await runGit(repoRoot, ["commit", "-m", "base commit"]);
     await runGit(repoRoot, ["branch", "-M", "main"]);
 
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_noncurrent_head",
       workspaceId: "workspace-1",
@@ -3991,7 +4041,10 @@ describe("built-in deep-review-workflow", () => {
     await runGit(repoRoot, ["commit", "-m", "base commit"]);
     await runGit(repoRoot, ["branch", "-M", "main"]);
 
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_checkout_drift",
       workspaceId: "workspace-1",
@@ -4075,7 +4128,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Run targeted workflow tests.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_detached_head",
       workspaceId: "workspace-1",
@@ -4215,7 +4271,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Run targeted workflow tests.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_non_current_ref",
       workspaceId: "workspace-1",
@@ -4356,7 +4415,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Run targeted tests.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_head_drift",
       workspaceId: "workspace-1",
@@ -4518,7 +4580,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Run targeted tests.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_replay_head_advance",
       workspaceId: "workspace-1",
@@ -4712,7 +4777,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Add a branch-specific regression test.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_conflict",
       workspaceId: "workspace-1",
@@ -4927,7 +4995,10 @@ describe("built-in deep-review-workflow", () => {
       validation: "Add a branch-specific regression test.",
       confidence: "high",
     };
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_resolver_mismatch",
       workspaceId: "workspace-1",
@@ -5105,7 +5176,10 @@ describe("built-in deep-review-workflow", () => {
       throw new Error("Expected built-in deep-review-workflow workflow");
     }
     using tmp = new DisposableTempDir("deep-review-workflow-prose-fix-mention");
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_prose_fix_mention",
       workspaceId: "workspace-1",
@@ -5156,7 +5230,10 @@ describe("built-in deep-review-workflow", () => {
       throw new Error("Expected built-in deep-review-workflow workflow");
     }
     using tmp = new DisposableTempDir("deep-review-workflow-no-fix-flag");
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_no_fix_flag",
       workspaceId: "workspace-1",
@@ -5225,7 +5302,10 @@ describe("built-in deep-review-workflow", () => {
       throw new Error("Expected built-in deep-review-workflow workflow");
     }
     using tmp = new DisposableTempDir("deep-review-workflow-loop-without-fix");
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_loop_without_fix",
       workspaceId: "workspace-1",
@@ -5266,7 +5346,10 @@ describe("built-in deep-review-workflow", () => {
       throw new Error("Expected built-in deep-review-workflow workflow");
     }
     using tmp = new DisposableTempDir("deep-review-workflow-fix-explicit-diff");
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_fix_explicit_diff",
       workspaceId: "workspace-1",
@@ -5331,7 +5414,10 @@ describe("built-in deep-review-workflow", () => {
     await runGit(repoRoot, ["commit", "-m", "base commit"]);
     await runGit(repoRoot, ["branch", "-M", "main"]);
 
-    const runStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
     await runStore.createRun({
       id: "wfr_deep_review_invalid_ref",
       workspaceId: "workspace-1",

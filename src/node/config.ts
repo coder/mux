@@ -1382,7 +1382,7 @@ export class Config {
     }
 
     // Mark worktree workspaces with missing checkout directories as transcript-only.
-    // Queued agent tasks can briefly exist without a provisioned checkout, so keep
+    // Queued/starting agent tasks can briefly exist without a provisioned checkout, so keep
     // those workspaces interactive until the checkout is created.
     const workspacePathExists = await fs.promises
       .access(workspacePath)
@@ -1391,6 +1391,7 @@ export class Config {
     if (
       isWorktreeRuntime(metadata.runtimeConfig) &&
       metadata.taskStatus !== "queued" &&
+      metadata.taskStatus !== "starting" &&
       !workspacePathExists
     ) {
       result.transcriptOnly = true;
@@ -1577,6 +1578,7 @@ export class Config {
               workflowTask: workspace.workflowTask,
               bestOf: workspace.bestOf,
               taskStatus: workspace.taskStatus,
+              taskLaunchError: workspace.taskLaunchError,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
               taskThinkingLevel: workspace.taskThinkingLevel,
@@ -1676,6 +1678,7 @@ export class Config {
             metadata.workflowTask ??= workspace.workflowTask;
             metadata.bestOf ??= workspace.bestOf;
             metadata.taskStatus ??= workspace.taskStatus;
+            metadata.taskLaunchError ??= workspace.taskLaunchError;
             metadata.reportedAt ??= workspace.reportedAt;
             metadata.taskModelString ??= workspace.taskModelString;
             metadata.taskThinkingLevel ??= workspace.taskThinkingLevel;
@@ -1746,6 +1749,7 @@ export class Config {
               workflowTask: workspace.workflowTask,
               bestOf: workspace.bestOf,
               taskStatus: workspace.taskStatus,
+              taskLaunchError: workspace.taskLaunchError,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
               taskThinkingLevel: workspace.taskThinkingLevel,
@@ -1798,6 +1802,7 @@ export class Config {
             workflowTask: workspace.workflowTask,
             bestOf: workspace.bestOf,
             taskStatus: workspace.taskStatus,
+            taskLaunchError: workspace.taskLaunchError,
             reportedAt: workspace.reportedAt,
             taskModelString: workspace.taskModelString,
             taskThinkingLevel: workspace.taskThinkingLevel,
@@ -1868,6 +1873,7 @@ export class Config {
         workflowTask: metadata.workflowTask,
         bestOf: metadata.bestOf,
         taskStatus: metadata.taskStatus,
+        taskLaunchError: metadata.taskLaunchError,
         reportedAt: metadata.reportedAt,
         taskModelString: metadata.taskModelString,
         taskThinkingLevel: metadata.taskThinkingLevel,

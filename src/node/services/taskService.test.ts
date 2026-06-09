@@ -512,6 +512,84 @@ describe("TaskService", () => {
     }
   }, 20_000);
 
+  test("createMany reserves admitted tasks as starting and over-capacity tasks as queued", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"], "dddddddddd");
+
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    await config.editConfig((cfg) => {
+      cfg.taskSettings = { maxParallelAgentTasks: 2, maxTaskNestingDepth: 3 };
+      return cfg;
+    });
+
+    const sendMessage = mock(() => new Promise<Result<void>>(() => undefined));
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const result = await taskService.createMany(
+      ["one", "two", "three"].map((prompt, index) => ({
+        parentWorkspaceId: parentId,
+        kind: "agent" as const,
+        agentId: "explore",
+        prompt,
+        title: `Task ${index + 1}`,
+      }))
+    );
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.map((task) => task.status)).toEqual(["starting", "starting", "queued"]);
+
+    const tasks = Array.from(config.loadConfigOrDefault().projects.values())
+      .flatMap((project) => project.workspaces)
+      .filter((workspace) => workspace.parentWorkspaceId === parentId);
+    expect(tasks.map((task) => task.taskStatus)).toEqual(["starting", "starting", "queued"]);
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("createMany launch failure preserves returned task metadata and launch error", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const sendMessage = mock((): Promise<Result<void>> => Promise.resolve(Err("Forbidden")));
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const result = await taskService.createMany([
+      {
+        parentWorkspaceId: parentId,
+        kind: "agent",
+        agentId: "explore",
+        prompt: "launch should fail",
+        title: "Failing task",
+      },
+    ]);
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const taskId = result.data[0]?.taskId;
+    assert(typeof taskId === "string" && taskId.length > 0, "created task id is required");
+
+    let launchError: unknown;
+    try {
+      await taskService.waitForAgentReport(taskId, {
+        timeoutMs: 10_000,
+        requestingWorkspaceId: parentId,
+      });
+    } catch (error: unknown) {
+      launchError = error;
+    }
+    assert(launchError instanceof Error, "waitForAgentReport should reject with launch error");
+    expect(launchError.message).toContain("Forbidden");
+
+    const taskEntry = Array.from(config.loadConfigOrDefault().projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === taskId);
+    expect(taskEntry?.taskStatus).toBe("interrupted");
+    expect(taskEntry?.taskLaunchError).toBe("Forbidden");
+  });
+
   test("queues tasks when maxParallelAgentTasks is reached and starts them when a slot frees", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc", "dddddddddd"], "eeeeeeeeee");
@@ -618,6 +696,111 @@ describe("TaskService", () => {
       .flatMap((p) => p.workspaces)
       .find((w) => w.id === queued.data.taskId);
     expect(started?.taskStatus).toBe("running");
+  }, 20_000);
+
+  test("resumes accepted queued starts instead of replaying prompts", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = await createTestProject(rootDir);
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+
+    const parentId = "1111111111";
+    const queuedTaskId = "task-queued";
+    const queuedWorkspaceName = "agent_explore_task-queued";
+    const acceptedStartingTaskId = "task-starting-accepted";
+    const acceptedStartingWorkspaceName = "agent_explore_task-starting-accepted";
+    const acceptedPrompt = "already accepted prompt";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: runtime.getWorkspacePath(projectPath, parentName),
+          id: parentId,
+          name: parentName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+        {
+          path: runtime.getWorkspacePath(projectPath, queuedWorkspaceName),
+          id: queuedTaskId,
+          name: queuedWorkspaceName,
+          title: "Legacy queued task",
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+          parentWorkspaceId: parentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "queued",
+          taskModelString: defaultModel,
+          taskTrunkBranch: parentName,
+        },
+        {
+          path: runtime.getWorkspacePath(projectPath, acceptedStartingWorkspaceName),
+          id: acceptedStartingTaskId,
+          name: acceptedStartingWorkspaceName,
+          title: "Accepted starting task",
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+          parentWorkspaceId: parentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "starting",
+          taskPrompt: acceptedPrompt,
+          taskModelString: defaultModel,
+          taskTrunkBranch: parentName,
+        },
+      ],
+      testTaskSettings(2, 3)
+    );
+
+    const { workspaceService, sendMessage, resumeStream } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+    const appendAcceptedPrompt = await historyService.appendToHistory(
+      acceptedStartingTaskId,
+      createMuxMessage("accepted-starting-prompt", "user", acceptedPrompt)
+    );
+    expect(appendAcceptedPrompt.success).toBe(true);
+    expect(findWorkspaceInConfig(config, queuedTaskId)?.taskPrompt).toBeUndefined();
+    expect(findWorkspaceInConfig(config, acceptedStartingTaskId)?.taskPrompt).toBe(acceptedPrompt);
+
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+    try {
+      await taskService.initialize();
+
+      for (const taskId of [queuedTaskId, acceptedStartingTaskId]) {
+        expect(resumeStream).toHaveBeenCalledWith(
+          taskId,
+          expect.objectContaining({ model: defaultModel, agentId: "explore" }),
+          expect.objectContaining({ allowQueuedAgentTask: true, agentInitiated: true })
+        );
+      }
+      const sendMessagePrompts = (
+        sendMessage as unknown as { mock: { calls: unknown[][] } }
+      ).mock.calls.map((call) => call[1]);
+      expect(sendMessagePrompts).not.toContain(acceptedPrompt);
+    } finally {
+      runBackgroundInitSpy.mockRestore();
+    }
+
+    const queued = findWorkspaceInConfig(config, queuedTaskId);
+    expect(queued?.taskStatus).toBe("running");
+    const acceptedStarting = findWorkspaceInConfig(config, acceptedStartingTaskId);
+    expect(acceptedStarting?.taskStatus).toBe("running");
+    expect(acceptedStarting?.taskPrompt).toBeUndefined();
   }, 20_000);
 
   test("does not count foreground-awaiting tasks towards maxParallelAgentTasks", async () => {

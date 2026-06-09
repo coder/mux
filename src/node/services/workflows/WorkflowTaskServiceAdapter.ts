@@ -41,6 +41,26 @@ interface WorkflowTaskServiceLike {
     modelString?: string;
     thinkingLevel?: ParsedThinkingInput;
   }): Promise<{ success: true; data: TaskCreateResult } | { success: false; error: string }>;
+  createMany?(
+    args: Array<{
+      parentWorkspaceId: string;
+      kind: "agent";
+      agentId: string;
+      prompt: string;
+      title: string;
+      workflowTask: {
+        runId: string;
+        stepId: string;
+        outputSchema?: unknown;
+      };
+      experiments?: WorkflowTaskExperiments;
+      modelString?: string;
+      thinkingLevel?: ParsedThinkingInput;
+    }>,
+    options?: {
+      onTaskReserved?: (index: number, result: TaskCreateResult) => Promise<void> | void;
+    }
+  ): Promise<{ success: true; data: TaskCreateResult[] } | { success: false; error: string }>;
   waitForAgentReport(
     taskId: string,
     options: WorkflowAgentWaitOptions & {
@@ -178,6 +198,78 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     await this.taskService.terminateAllDescendantAgentTasks?.(this.parentWorkspaceId, {
       workflowRunId: this.workflowRunId,
     });
+  }
+
+  async createAgentTasks(
+    specs: WorkflowAgentSpec[],
+    lifecycle?: { onTaskCreated?: (index: number, taskId: string) => Promise<void> | void }
+  ): Promise<Array<{ taskId: string; status: "queued" | "starting" | "running" }>> {
+    assert(specs.length > 0, "WorkflowTaskServiceAdapter.createAgentTasks: specs are required");
+    if (this.taskService.createMany == null) {
+      const created: Array<{ taskId: string; status: "queued" | "starting" | "running" }> = [];
+      for (const [index, spec] of specs.entries()) {
+        const createResult = await this.taskService.create(this.buildCreateArgs(spec));
+        if (!createResult.success) {
+          throw new Error(createResult.error);
+        }
+        assert(createResult.data.taskId.length > 0, "createAgentTasks: taskId is required");
+        await lifecycle?.onTaskCreated?.(index, createResult.data.taskId);
+        created.push({ taskId: createResult.data.taskId, status: createResult.data.status });
+      }
+      return created;
+    }
+
+    const createResult = await this.taskService.createMany(
+      specs.map((spec) => this.buildCreateArgs(spec)),
+      {
+        onTaskReserved: async (index, result) => {
+          assert(result.taskId.length > 0, "createAgentTasks: taskId is required");
+          await lifecycle?.onTaskCreated?.(index, result.taskId);
+        },
+      }
+    );
+    if (!createResult.success) {
+      throw new Error(createResult.error);
+    }
+    if (createResult.data.length !== specs.length) {
+      throw new Error("WorkflowTaskServiceAdapter.createAgentTasks: result length mismatch");
+    }
+
+    const created: Array<{ taskId: string; status: "queued" | "starting" | "running" }> = [];
+    for (const result of createResult.data) {
+      assert(result.taskId.length > 0, "createAgentTasks: taskId is required");
+      created.push({ taskId: result.taskId, status: result.status });
+    }
+    return created;
+  }
+
+  private buildCreateArgs(
+    spec: WorkflowAgentSpec
+  ): Parameters<WorkflowTaskServiceLike["create"]>[0] {
+    assert(spec.id.length > 0, "WorkflowTaskServiceAdapter: spec.id is required");
+    assert(spec.prompt.length > 0, "WorkflowTaskServiceAdapter: spec.prompt is required");
+
+    const workflowTask: { runId: string; stepId: string; outputSchema?: unknown } = {
+      runId: this.workflowRunId,
+      stepId: spec.id,
+    };
+    if (spec.outputSchema !== undefined) {
+      workflowTask.outputSchema = spec.outputSchema;
+    }
+
+    const agentId = spec.agentId ?? this.defaultAgentId;
+    const experiments = this.getExperimentsForAgent(agentId);
+    return {
+      parentWorkspaceId: this.parentWorkspaceId,
+      kind: "agent",
+      agentId,
+      prompt: spec.prompt,
+      title: spec.title ?? spec.id,
+      workflowTask,
+      ...(experiments !== undefined ? { experiments } : {}),
+      ...(this.modelString !== undefined ? { modelString: this.modelString } : {}),
+      ...(this.thinkingLevel !== undefined ? { thinkingLevel: this.thinkingLevel } : {}),
+    };
   }
 
   async runAgent(

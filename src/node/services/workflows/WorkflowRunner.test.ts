@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -785,6 +785,7 @@ describe("WorkflowRunner", () => {
         waitedFor.push(taskId);
         waitTimeoutMs = waitOptions?.timeoutMs;
         waitAbortSignal = waitOptions?.abortSignal;
+        expect(waitAbortSignal?.aborted).toBe(false);
         return { taskId, reportMarkdown: "summary" };
       },
     });
@@ -799,7 +800,7 @@ describe("WorkflowRunner", () => {
     );
     expect(startedEvents).toHaveLength(1);
     expect(waitTimeoutMs).toBeGreaterThan(5 * 60 * 1000);
-    expect(waitAbortSignal?.aborted).toBe(false);
+    expect(waitAbortSignal).toBeDefined();
   });
 
   test("adds one started task event when resuming legacy started steps", async () => {
@@ -996,6 +997,57 @@ describe("WorkflowRunner", () => {
       ])
     );
     expect(run.steps.map((step) => step.stepId).sort()).toEqual(["source-a", "source-b"]);
+  });
+
+  test("bulk creates new parallelAgents tasks when adapter supports createAgentTasks", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-parallel-bulk");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_parallel_bulk",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ parallelAgents }) {
+        const results = parallelAgents([
+          { id: "source-a", prompt: "Read source A" },
+          { id: "source-b", prompt: "Read source B" },
+        ]);
+        return { reportMarkdown: results.map((result) => result.reportMarkdown).join(" + ") };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const createAgentTasks = mock(
+      async (
+        specs: Array<{ id: string }>,
+        lifecycle?: { onTaskCreated?: (index: number, taskId: string) => Promise<void> | void }
+      ) => {
+        for (const [index, spec] of specs.entries()) {
+          await lifecycle?.onTaskCreated?.(index, `task_${spec.id}`);
+        }
+        return specs.map((spec) => ({ taskId: `task_${spec.id}`, status: "starting" as const }));
+      }
+    );
+    const runAgent = mock(async () => {
+      throw new Error("parallelAgents should use bulk creation");
+    });
+    const waitForAgentTask = mock(async (taskId: string) => ({
+      taskId,
+      reportMarkdown: taskId.replace("task_", ""),
+    }));
+    const runner = createRunner(store, { runAgent, createAgentTasks, waitForAgentTask });
+
+    await expect(runner.run("wfr_parallel_bulk")).resolves.toEqual({
+      reportMarkdown: "source-a + source-b",
+    });
+
+    expect(createAgentTasks).toHaveBeenCalledTimes(1);
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(waitForAgentTask).toHaveBeenCalledTimes(2);
+    const run = await store.getRun("wfr_parallel_bulk");
+    expect(run.steps.map((step) => step.taskId).sort()).toEqual(["task_source-a", "task_source-b"]);
   });
 
   test("records completed parallelAgents results before slower siblings finish", async () => {

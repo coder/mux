@@ -6,7 +6,7 @@ import { TaskListToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools
 import { toBashTaskId } from "./taskId";
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
 
-const DEFAULT_STATUSES = ["queued", "running", "awaiting_report"] as const;
+const DEFAULT_STATUSES = ["queued", "starting", "running", "awaiting_report"] as const;
 
 export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({

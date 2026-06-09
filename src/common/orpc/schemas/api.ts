@@ -1657,7 +1657,7 @@ export const tasks = {
       z.object({
         taskId: z.string(),
         kind: z.literal("agent"),
-        status: z.enum(["queued", "running"]),
+        status: z.enum(["queued", "starting", "running"]),
       }),
       z.string()
     ),

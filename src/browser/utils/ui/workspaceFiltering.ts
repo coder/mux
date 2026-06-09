@@ -148,8 +148,22 @@ function hasDelegatedActivity(activity: WorkspaceDelegatedActivity): boolean {
   return activity.activeCount > 0 || activity.queuedCount > 0;
 }
 
-function isActiveDelegatedStatus(status: FrontendWorkspaceMetadata["taskStatus"]): boolean {
-  return status === "running" || status === "awaiting_report";
+export function isActiveOrStartingTaskStatus(
+  status: FrontendWorkspaceMetadata["taskStatus"]
+): boolean {
+  return status === "starting" || status === "running" || status === "awaiting_report";
+}
+
+export function isRunningOrStartingTaskStatus(
+  status: FrontendWorkspaceMetadata["taskStatus"]
+): boolean {
+  return status === "starting" || status === "running";
+}
+
+export function isBlockedPreStreamTaskStatus(
+  status: FrontendWorkspaceMetadata["taskStatus"]
+): boolean {
+  return status === "queued" || status === "starting";
 }
 
 function getIsWorkspaceLiveActive(workspaceId: string, options: DelegatedActivityOptions): boolean {
@@ -166,7 +180,7 @@ export function isWorkspaceDelegatedActivityActive(
   workspace: FrontendWorkspaceMetadata,
   options: DelegatedActivityOptions = {}
 ): boolean {
-  if (isActiveDelegatedStatus(workspace.taskStatus)) {
+  if (isActiveOrStartingTaskStatus(workspace.taskStatus)) {
     return true;
   }
   if (hasCompletedAgentReport(workspace)) {
@@ -410,7 +424,7 @@ export function computeAgentRowRenderMeta(
 
         let lastRunningSiblingIndex = -1;
         for (let index = siblings.length - 1; index >= 0; index -= 1) {
-          if (siblings[index]?.taskStatus === "running") {
+          if (isRunningOrStartingTaskStatus(siblings[index]?.taskStatus)) {
             lastRunningSiblingIndex = index;
             break;
           }

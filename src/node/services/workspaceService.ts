@@ -6172,14 +6172,17 @@ export class WorkspaceService extends EventEmitter {
         for (const [_projectPath, project] of config.projects) {
           const ws = project.workspaces.find((w) => w.id === workspaceId);
           if (!ws) continue;
-          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
-            taskQueueDebug("WorkspaceService.sendMessage blocked (queued task)", {
+          if (
+            ws.parentWorkspaceId &&
+            (ws.taskStatus === "queued" || ws.taskStatus === "starting")
+          ) {
+            taskQueueDebug("WorkspaceService.sendMessage blocked (queued/starting task)", {
               workspaceId,
               stack: new Error("sendMessage blocked").stack,
             });
             return Err({
               type: "unknown",
-              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+              raw: "This agent task is queued or starting and cannot accept generic messages yet.",
             });
           }
           break;
@@ -6457,14 +6460,17 @@ export class WorkspaceService extends EventEmitter {
         for (const [_projectPath, project] of config.projects) {
           const ws = project.workspaces.find((w) => w.id === workspaceId);
           if (!ws) continue;
-          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
-            taskQueueDebug("WorkspaceService.resumeStream blocked (queued task)", {
+          if (
+            ws.parentWorkspaceId &&
+            (ws.taskStatus === "queued" || ws.taskStatus === "starting")
+          ) {
+            taskQueueDebug("WorkspaceService.resumeStream blocked (queued/starting task)", {
               workspaceId,
               stack: new Error("resumeStream blocked").stack,
             });
             return Err({
               type: "unknown",
-              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+              raw: "This agent task is queued or starting and cannot resume through generic calls yet.",
             });
           }
           break;

@@ -275,7 +275,44 @@ function getTaskCompletionInstruction(params: {
 export interface TaskCreateResult {
   taskId: string;
   kind: TaskKind;
-  status: "queued" | "running";
+  status: "queued" | "starting" | "running";
+}
+
+type TaskLaunchStart = { kind: "sendMessage"; prompt: string } | { kind: "resumeStream" };
+
+interface TaskLaunchPlan {
+  taskId: string;
+  parentWorkspaceId: string;
+  parentMeta: WorkspaceMetadata;
+  agentId: string;
+  agentType: string;
+  start: TaskLaunchStart;
+  title: string;
+  workspaceName: string;
+  createdAt: string;
+  taskRuntimeConfig: RuntimeConfig;
+  parentRuntimeConfig: RuntimeConfig;
+  taskModelString: string;
+  canonicalModel: string;
+  effectiveThinkingLevel?: ThinkingLevel;
+  skipInitHook: boolean;
+  preferredTrunkBranch?: string;
+  workflowTask?: TaskCreateArgs["workflowTask"];
+  bestOf?: TaskCreateArgs["bestOf"];
+  experiments?: TaskCreateArgs["experiments"];
+}
+
+interface TaskCreateManyOptions {
+  onTaskReserved?: (index: number, result: TaskCreateResult) => Promise<void> | void;
+}
+
+interface MaterializedTaskLaunch {
+  workspacePath: string;
+  trunkBranch: string;
+  forkedRuntimeConfig: RuntimeConfig;
+  runtimeForTaskWorkspace: Runtime;
+  inheritedProjects: WorkspaceMetadata["projects"];
+  sourceRuntimeConfigUpdate?: RuntimeConfig;
 }
 
 export interface TerminateAgentTaskResult {
@@ -438,9 +475,9 @@ function buildBackgroundAwaitPrompt(params: {
 
   return (
     `You have active background ${targetLabels.join(" and ")}. ` +
-    "You MUST NOT end your turn while any listed sub-agent tasks are queued/running/awaiting_report or workflow runs are pending/running/backgrounded. " +
+    "You MUST NOT end your turn while any listed sub-agent tasks are queued/starting/running/awaiting_report or workflow runs are pending/running/backgrounded. " +
     `Call task_await now with task_ids: ${JSON.stringify(taskIds)} to wait for them. ` +
-    "If any are still queued/running/awaiting_report/backgrounded after that, call task_await again. " +
+    "If any are still queued/starting/running/awaiting_report/backgrounded after that, call task_await again. " +
     "Only once all listed work is terminal should you write your final response, integrating any reports or workflow results."
   );
 }
@@ -647,6 +684,16 @@ function getIsoNow(): string {
   return new Date().toISOString();
 }
 
+async function runtimePathExists(runtime: Runtime, path: string): Promise<boolean> {
+  assert(path.length > 0, "runtimePathExists: path must be non-empty");
+  try {
+    await runtime.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function readTaskBaseCommitShaByProjectPath(params: {
   workspaceId: string;
   workspaceName: string;
@@ -694,6 +741,11 @@ export class TaskService {
   // safe even when the parent stream-end already holds workspaceEventLocks for the parent itself.
   private readonly deferredBestOfLocks = new MutexMap<string>();
   private readonly mutex = new AsyncMutex();
+  private maybeStartQueuedTasksInFlight: Promise<void> | undefined;
+  private maybeStartQueuedTasksRerunRequested = false;
+  // Git worktree creation touches per-repository metadata; serialize that narrow phase per project
+  // while allowing post-fork init/send startup work for sibling tasks to overlap.
+  private readonly reservedTaskLaunchByProjectPath = new Map<string, Promise<void>>();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
   private readonly pendingStartWaitersByTaskId = new Map<string, PendingTaskStartWaiter[]>();
   // Tracks workspaces currently blocked in a foreground wait (e.g. a task tool call awaiting
@@ -1233,6 +1285,46 @@ export class TaskService {
       queuedTaskCountAtStartup,
     });
 
+    const staleStartingTasks = this.listAgentTaskWorkspaces(startupConfig).filter(
+      (task) => task.taskStatus === "starting" && typeof task.id === "string"
+    );
+    if (staleStartingTasks.length > 0) {
+      const recoveries = new Map<
+        string,
+        { status: Extract<AgentTaskStatus, "queued" | "running">; acceptedPrompt: boolean }
+      >();
+      for (const task of staleStartingTasks) {
+        assert(task.id != null && task.id.length > 0, "stale starting task id is required");
+        const isStreaming = this.aiService.isStreaming(task.id);
+        recoveries.set(task.id, {
+          status: isStreaming ? "running" : "queued",
+          acceptedPrompt: !isStreaming && (await this.hasAcceptedInitialTaskPrompt(task.id)),
+        });
+      }
+
+      await this.config.editConfig((config) => {
+        for (const task of staleStartingTasks) {
+          assert(task.id != null && task.id.length > 0, "stale starting task id is required");
+          const recovery = recoveries.get(task.id);
+          assert(recovery != null, "stale starting task recovery is required");
+          const entry = findWorkspaceEntry(config, task.id);
+          if (!entry) continue;
+          entry.workspace.taskStatus = recovery.status;
+          if (recovery.acceptedPrompt) {
+            // The initial prompt is already durable in chat history; clearing taskPrompt makes the
+            // queued recovery path resume that accepted turn instead of appending a duplicate user turn.
+            entry.workspace.taskPrompt = undefined;
+          }
+        }
+        return config;
+      });
+      log.info("[startup] Recovered stale starting agent tasks", {
+        count: staleStartingTasks.length,
+        acceptedPromptCount: [...recoveries.values()].filter((recovery) => recovery.acceptedPrompt)
+          .length,
+      });
+    }
+
     const maybeStartQueuedTasksStartedAt = Date.now();
     await this.maybeStartQueuedTasks();
     const maybeStartQueuedTasksMs = Date.now() - maybeStartQueuedTasksStartedAt;
@@ -1420,6 +1512,21 @@ export class TaskService {
     });
   }
 
+  private async hasAcceptedInitialTaskPrompt(workspaceId: string): Promise<boolean> {
+    assert(workspaceId.length > 0, "hasAcceptedInitialTaskPrompt: workspaceId must be non-empty");
+
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      log.warn("Failed to inspect task history during stale starting recovery", {
+        workspaceId,
+        error: historyResult.error,
+      });
+      return false;
+    }
+
+    return historyResult.data.some((message) => message.role === "user");
+  }
+
   private startWorkspaceInit(workspaceId: string, projectPath: string): InitLogger {
     assert(workspaceId.length > 0, "startWorkspaceInit: workspaceId must be non-empty");
     assert(projectPath.length > 0, "startWorkspaceInit: projectPath must be non-empty");
@@ -1432,6 +1539,641 @@ export class TaskService {
       logComplete: (exitCode: number) => void this.initStateManager.endInit(workspaceId, exitCode),
       enterHookPhase: () => this.initStateManager.enterHookPhase(workspaceId),
     };
+  }
+
+  async createMany(
+    argsList: TaskCreateArgs[],
+    options: TaskCreateManyOptions = {}
+  ): Promise<Result<TaskCreateResult[], string>> {
+    if (argsList.length === 0) {
+      return Ok([]);
+    }
+
+    const plans: Array<TaskLaunchPlan & { status: "queued" | "starting" }> = [];
+    const results: TaskCreateResult[] = [];
+
+    await using _lock = await this.mutex.acquire();
+
+    const cfg = this.config.loadConfigOrDefault();
+    const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
+    let reservedActiveCount = this.countActiveAgentTasks(cfg);
+
+    for (const args of argsList) {
+      const parentWorkspaceId = coerceNonEmptyString(args.parentWorkspaceId);
+      if (!parentWorkspaceId) return Err("Task.createMany: parentWorkspaceId is required");
+      if (args.kind !== "agent") return Err("Task.createMany: unsupported kind");
+
+      const basePrompt = coerceNonEmptyString(args.prompt);
+      if (!basePrompt) return Err("Task.createMany: prompt is required");
+      const prompt =
+        args.experiments?.subagentFileReports === true
+          ? appendSubagentFileReportInstructions(basePrompt, args.workflowTask)
+          : basePrompt;
+
+      const normalizedAgentId = normalizeAgentId(args.agentId ?? args.agentType, "");
+      if (!normalizedAgentId) return Err("Task.createMany: agentId is required");
+      const parsedAgentId = AgentIdSchema.safeParse(normalizedAgentId);
+      if (!parsedAgentId.success) {
+        return Err(`Task.createMany: invalid agentId (${normalizedAgentId})`);
+      }
+      const agentId = parsedAgentId.data;
+      const agentType = agentId;
+
+      let normalizedBestOf: TaskCreateArgs["bestOf"];
+      const bestOf = args.bestOf;
+      if (bestOf) {
+        const groupId = coerceNonEmptyString(bestOf.groupId);
+        if (!groupId)
+          return Err("Task.createMany: bestOf.groupId is required when bestOf is provided");
+        if (!Number.isInteger(bestOf.index) || bestOf.index < 0) {
+          return Err("Task.createMany: bestOf.index must be a non-negative integer");
+        }
+        if (!Number.isInteger(bestOf.total) || bestOf.total < 2) {
+          return Err("Task.createMany: bestOf.total must be an integer >= 2");
+        }
+        if (bestOf.index >= bestOf.total) {
+          return Err("Task.createMany: bestOf.index must be less than bestOf.total");
+        }
+        const kind = normalizeTaskGroupKind(bestOf.kind);
+        const label = normalizeTaskGroupLabel(bestOf.label);
+        if (kind === TASK_GROUP_KIND.VARIANTS && !label) {
+          return Err("Task.createMany: bestOf.label is required when bestOf.kind is variants");
+        }
+        if (kind !== TASK_GROUP_KIND.VARIANTS && label) {
+          return Err("Task.createMany: bestOf.label is only allowed when bestOf.kind is variants");
+        }
+        normalizedBestOf = {
+          groupId,
+          index: bestOf.index,
+          total: bestOf.total,
+          kind,
+          ...(label ? { label } : {}),
+        };
+      }
+
+      const parentMetaResult = await this.aiService.getWorkspaceMetadata(parentWorkspaceId);
+      if (!parentMetaResult.success) {
+        return Err(`Task.createMany: parent workspace not found (${parentMetaResult.error})`);
+      }
+      const parentMeta = parentMetaResult.data;
+
+      const taskProjectConfig = cfg.projects.get(stripTrailingSlashes(parentMeta.projectPath));
+      if (!taskProjectConfig?.trusted) {
+        return Err(
+          "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
+        );
+      }
+
+      const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
+      if (parentEntry?.workspace.taskStatus === "reported") {
+        return Err("Task.createMany: cannot spawn new tasks after agent_report");
+      }
+
+      const requestedDepth = this.getTaskDepth(cfg, parentWorkspaceId) + 1;
+      if (requestedDepth > taskSettings.maxTaskNestingDepth) {
+        return Err(
+          `Task.createMany: maxTaskNestingDepth exceeded (requestedDepth=${requestedDepth}, max=${taskSettings.maxTaskNestingDepth})`
+        );
+      }
+
+      const taskId = this.config.generateStableId();
+      const workspaceName = buildAgentWorkspaceName(agentId, taskId);
+      const nameValidation = validateWorkspaceName(workspaceName);
+      if (!nameValidation.valid) {
+        return Err(
+          `Task.createMany: generated workspace name invalid (${nameValidation.error ?? "unknown error"})`
+        );
+      }
+
+      const { taskModelString, canonicalModel, effectiveThinkingLevel } =
+        this.resolveTaskAISettings({
+          cfg,
+          parentMeta,
+          agentId,
+          modelString: args.modelString,
+          thinkingLevel: args.thinkingLevel,
+          parentRuntimeAiSettings: args.parentRuntimeAiSettings,
+        });
+
+      const parentRuntimeConfig = parentMeta.runtimeConfig;
+      const taskRuntimeConfig: RuntimeConfig = parentRuntimeConfig;
+      const runtime = createRuntimeForWorkspace({
+        runtimeConfig: taskRuntimeConfig,
+        projectPath: parentMeta.projectPath,
+        name: parentMeta.name,
+      });
+      const isInPlace = parentMeta.projectPath === parentMeta.name;
+      const parentWorkspacePath = isInPlace
+        ? parentMeta.projectPath
+        : runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name);
+
+      const getRunnableHint = async (): Promise<string> => {
+        try {
+          const allAgents = await discoverAgentDefinitions(runtime, parentWorkspacePath);
+          const runnableIds = (
+            await Promise.all(
+              allAgents.map(async (agent) => {
+                try {
+                  const frontmatter = await resolveAgentFrontmatter(
+                    runtime,
+                    parentWorkspacePath,
+                    agent.id,
+                    { skipScopesAbove: getSkipScopesAboveForKnownScope(agent.scope) }
+                  );
+                  if (frontmatter.subagent?.runnable !== true) return null;
+                  return isAgentEffectivelyDisabled({
+                    cfg,
+                    agentId: agent.id,
+                    resolvedFrontmatter: frontmatter,
+                  })
+                    ? null
+                    : agent.id;
+                } catch {
+                  return null;
+                }
+              })
+            )
+          ).filter((id): id is string => typeof id === "string");
+          return runnableIds.length > 0
+            ? `Runnable agentIds: ${runnableIds.join(", ")}`
+            : "No runnable agents available";
+        } catch {
+          return "Could not discover available agents";
+        }
+      };
+
+      let skipInitHook = false;
+      try {
+        const frontmatter = await resolveAgentFrontmatter(runtime, parentWorkspacePath, agentId);
+        if (frontmatter.subagent?.runnable !== true) {
+          const hint = await getRunnableHint();
+          return Err(
+            `Task.createMany: agentId is not runnable as a sub-agent (${agentId}). ${hint}`
+          );
+        }
+        if (isAgentEffectivelyDisabled({ cfg, agentId, resolvedFrontmatter: frontmatter })) {
+          const hint = await getRunnableHint();
+          return Err(`Task.createMany: agentId is disabled (${agentId}). ${hint}`);
+        }
+        skipInitHook = frontmatter.subagent?.skip_init_hook === true;
+      } catch {
+        const hint = await getRunnableHint();
+        return Err(`Task.createMany: unknown agentId (${agentId}). ${hint}`);
+      }
+
+      const status: "queued" | "starting" =
+        reservedActiveCount >= taskSettings.maxParallelAgentTasks ? "queued" : "starting";
+      if (status === "starting") reservedActiveCount += 1;
+
+      const createdAt = getIsoNow();
+      plans.push({
+        taskId,
+        parentWorkspaceId,
+        parentMeta,
+        agentId,
+        agentType,
+        start: { kind: "sendMessage", prompt },
+        title: args.title,
+        workspaceName,
+        createdAt,
+        taskRuntimeConfig,
+        parentRuntimeConfig,
+        taskModelString,
+        canonicalModel,
+        effectiveThinkingLevel,
+        skipInitHook,
+        workflowTask: args.workflowTask,
+        bestOf: normalizedBestOf,
+        experiments: args.experiments,
+        status,
+      });
+      results.push({ taskId, kind: "agent", status });
+    }
+
+    for (const [index, result] of results.entries()) {
+      // Workflow callers durably checkpoint returned task IDs before task records are persisted.
+      // If config persistence fails afterward, replay sees a started step whose task is not found
+      // and restarts it instead of duplicating an already-launched child after a crash.
+      await options.onTaskReserved?.(index, result);
+    }
+
+    await this.config.editConfig((config) => {
+      for (const plan of plans) {
+        const runtime = createRuntimeForWorkspace({
+          runtimeConfig: plan.taskRuntimeConfig,
+          projectPath: plan.parentMeta.projectPath,
+          name: plan.parentMeta.name,
+        });
+        const workspacePath = runtime.getWorkspacePath(
+          plan.parentMeta.projectPath,
+          plan.workspaceName
+        );
+        const trunkBranch = coerceNonEmptyString(plan.parentMeta.name);
+        if (!trunkBranch) {
+          throw new Error("Task.createMany: parent workspace name missing");
+        }
+        let projectConfig = config.projects.get(plan.parentMeta.projectPath);
+        if (!projectConfig) {
+          projectConfig = { workspaces: [] };
+          config.projects.set(plan.parentMeta.projectPath, projectConfig);
+        }
+        projectConfig.workspaces.push({
+          path: workspacePath,
+          id: plan.taskId,
+          name: plan.workspaceName,
+          title: plan.title,
+          createdAt: plan.createdAt,
+          runtimeConfig: plan.taskRuntimeConfig,
+          aiSettings:
+            plan.effectiveThinkingLevel !== undefined
+              ? { model: plan.canonicalModel, thinkingLevel: plan.effectiveThinkingLevel }
+              : undefined,
+          parentWorkspaceId: plan.parentWorkspaceId,
+          agentId: plan.agentId,
+          agentType: plan.agentType,
+          workflowTask: plan.workflowTask,
+          bestOf: plan.bestOf,
+          taskStatus: plan.status,
+          taskPrompt: plan.start.kind === "sendMessage" ? plan.start.prompt : undefined,
+          taskTrunkBranch: trunkBranch,
+          taskModelString: plan.taskModelString,
+          taskThinkingLevel: plan.effectiveThinkingLevel,
+          taskExperiments: plan.experiments,
+          projects: plan.parentMeta.projects,
+        });
+      }
+      return config;
+    });
+
+    for (const result of results) {
+      await this.emitWorkspaceMetadata(result.taskId);
+    }
+    for (const plan of plans) {
+      if (plan.status === "starting") {
+        this.scheduleReservedTaskLaunch(plan);
+      }
+    }
+    if (plans.some((plan) => plan.status === "queued")) {
+      this.scheduleMaybeStartQueuedTasks();
+    }
+
+    return Ok(results);
+  }
+
+  private async cleanupMaterializedTaskWorkspace(
+    runtime: Runtime,
+    projectPath: string,
+    workspaceName: string,
+    taskId: string
+  ): Promise<void> {
+    assert(projectPath.length > 0, "cleanupMaterializedTaskWorkspace requires projectPath");
+    assert(workspaceName.length > 0, "cleanupMaterializedTaskWorkspace requires workspaceName");
+    assert(taskId.length > 0, "cleanupMaterializedTaskWorkspace requires taskId");
+
+    try {
+      const deleteResult = await runtime.deleteWorkspace(projectPath, workspaceName, true);
+      if (!deleteResult.success) {
+        log.error("Task launch cleanup: failed to delete materialized workspace", {
+          taskId,
+          error: deleteResult.error,
+        });
+      }
+    } catch (error: unknown) {
+      log.error("Task launch cleanup: runtime.deleteWorkspace threw", {
+        taskId,
+        error: getErrorMessage(error),
+      });
+    }
+
+    try {
+      const sessionDir = this.config.getSessionDir(taskId);
+      await fsPromises.rm(sessionDir, { recursive: true, force: true });
+    } catch (error: unknown) {
+      log.error("Task launch cleanup: failed to remove session directory", {
+        taskId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  private async getExistingMaterializedTaskLaunch(
+    plan: TaskLaunchPlan,
+    sourceRuntime: Runtime,
+    workspace: WorkspaceConfigEntry
+  ): Promise<MaterializedTaskLaunch | null> {
+    const workspacePath =
+      coerceNonEmptyString(workspace.path) ??
+      sourceRuntime.getWorkspacePath(plan.parentMeta.projectPath, plan.workspaceName);
+    if (!(await runtimePathExists(sourceRuntime, workspacePath))) {
+      return null;
+    }
+
+    const forkedRuntimeConfig = workspace.runtimeConfig ?? plan.taskRuntimeConfig;
+    const runtimeForTaskWorkspace = createRuntimeForWorkspace({
+      runtimeConfig: forkedRuntimeConfig,
+      projectPath: plan.parentMeta.projectPath,
+      name: plan.workspaceName,
+      namedWorkspacePath: workspacePath,
+    });
+    const trunkBranch =
+      coerceNonEmptyString(workspace.taskTrunkBranch) ??
+      coerceNonEmptyString(plan.preferredTrunkBranch) ??
+      coerceNonEmptyString(plan.parentMeta.name) ??
+      plan.workspaceName;
+
+    return {
+      workspacePath,
+      trunkBranch,
+      forkedRuntimeConfig,
+      runtimeForTaskWorkspace,
+      inheritedProjects: workspace.projects ?? plan.parentMeta.projects,
+    };
+  }
+
+  private async runProjectForkExclusive<T>(projectPath: string, fn: () => Promise<T>): Promise<T> {
+    assert(projectPath.length > 0, "runProjectForkExclusive requires projectPath");
+
+    const previousLaunch =
+      this.reservedTaskLaunchByProjectPath.get(projectPath) ?? Promise.resolve();
+    const run = previousLaunch.catch(() => undefined).then(fn);
+    const trackedLaunch = run
+      .then(
+        () => undefined,
+        () => undefined
+      )
+      .finally(() => {
+        if (this.reservedTaskLaunchByProjectPath.get(projectPath) === trackedLaunch) {
+          this.reservedTaskLaunchByProjectPath.delete(projectPath);
+        }
+      });
+    this.reservedTaskLaunchByProjectPath.set(projectPath, trackedLaunch);
+    return await run;
+  }
+
+  private async materializeReservedTaskWorkspace(
+    plan: TaskLaunchPlan,
+    sourceRuntime: Runtime,
+    initLogger: InitLogger
+  ): Promise<MaterializedTaskLaunch | null> {
+    const entry = findWorkspaceEntry(this.config.loadConfigOrDefault(), plan.taskId);
+    if (entry?.workspace.taskStatus !== "starting") {
+      return null;
+    }
+
+    const existing = await this.getExistingMaterializedTaskLaunch(
+      plan,
+      sourceRuntime,
+      entry.workspace
+    );
+    if (existing) {
+      taskQueueDebug("TaskService.startReservedAgentTask reusing materialized workspace", {
+        taskId: plan.taskId,
+        workspacePath: existing.workspacePath,
+      });
+      return existing;
+    }
+
+    const projectPath = stripTrailingSlashes(plan.parentMeta.projectPath);
+    return await this.runProjectForkExclusive(projectPath, async () => {
+      const entryBeforeFork = findWorkspaceEntry(this.config.loadConfigOrDefault(), plan.taskId);
+      if (entryBeforeFork?.workspace.taskStatus !== "starting") {
+        return null;
+      }
+
+      const forkResult = await orchestrateFork({
+        sourceRuntime,
+        projectPath: plan.parentMeta.projectPath,
+        sourceWorkspaceName: plan.parentMeta.name,
+        newWorkspaceName: plan.workspaceName,
+        initLogger,
+        config: this.config,
+        sourceWorkspaceId: plan.parentWorkspaceId,
+        sourceRuntimeConfig: plan.parentRuntimeConfig,
+        parentMetadata: plan.parentMeta,
+        allowCreateFallback: true,
+        ...(plan.preferredTrunkBranch != null
+          ? { preferredTrunkBranch: plan.preferredTrunkBranch }
+          : {}),
+        trusted:
+          this.config
+            .loadConfigOrDefault()
+            .projects.get(stripTrailingSlashes(plan.parentMeta.projectPath))?.trusted ?? false,
+        multiProjectExperimentEnabled: this.workspaceService.isExperimentEnabled(
+          EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
+        ),
+      });
+
+      if (!forkResult.success) {
+        throw new Error(`Task fork failed: ${forkResult.error}`);
+      }
+
+      return {
+        workspacePath: forkResult.data.workspacePath,
+        trunkBranch: forkResult.data.trunkBranch,
+        forkedRuntimeConfig: forkResult.data.forkedRuntimeConfig,
+        runtimeForTaskWorkspace: forkResult.data.targetRuntime,
+        inheritedProjects: forkResult.data.projects,
+        ...(forkResult.data.sourceRuntimeConfigUpdate != null
+          ? { sourceRuntimeConfigUpdate: forkResult.data.sourceRuntimeConfigUpdate }
+          : {}),
+      };
+    });
+  }
+
+  private scheduleReservedTaskLaunch(plan: TaskLaunchPlan): void {
+    assert(plan.taskId.length > 0, "scheduleReservedTaskLaunch requires taskId");
+    void this.enqueueReservedTaskLaunch(plan).catch((error: unknown) => {
+      log.error("Failed to launch reserved task", { taskId: plan.taskId, error });
+      void this.markTaskLaunchFailed(plan.taskId, getErrorMessage(error));
+    });
+  }
+
+  private scheduleMaybeStartQueuedTasks(): void {
+    void this.maybeStartQueuedTasks().catch((error: unknown) => {
+      log.error("TaskService.maybeStartQueuedTasks failed", { error });
+    });
+  }
+
+  private async markTaskLaunchFailed(taskId: string, message: string): Promise<void> {
+    assert(taskId.length > 0, "markTaskLaunchFailed requires taskId");
+    await this.editWorkspaceEntry(
+      taskId,
+      (ws) => {
+        ws.taskStatus = "interrupted";
+        ws.taskLaunchError = message;
+      },
+      { allowMissing: true }
+    );
+    await this.emitWorkspaceMetadata(taskId);
+    this.rejectWaiters(taskId, new Error(message));
+    this.scheduleMaybeStartQueuedTasks();
+  }
+
+  private async startReservedAgentTask(plan: TaskLaunchPlan): Promise<void> {
+    assert(plan.taskId.length > 0, "startReservedAgentTask requires taskId");
+    assert(plan.parentWorkspaceId.length > 0, "startReservedAgentTask requires parentWorkspaceId");
+    if (plan.start.kind === "sendMessage") {
+      assert(plan.start.prompt.length > 0, "startReservedAgentTask requires prompt");
+    }
+
+    const entryAtStart = findWorkspaceEntry(this.config.loadConfigOrDefault(), plan.taskId);
+    if (entryAtStart?.workspace.taskStatus !== "starting") {
+      return;
+    }
+
+    const initLogger = this.startWorkspaceInit(plan.taskId, plan.parentMeta.projectPath);
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig: plan.taskRuntimeConfig,
+      projectPath: plan.parentMeta.projectPath,
+      name: plan.parentMeta.name,
+    });
+
+    let materialized: MaterializedTaskLaunch | null;
+    try {
+      materialized = await this.materializeReservedTaskWorkspace(plan, runtime, initLogger);
+    } catch (error: unknown) {
+      initLogger.logComplete(-1);
+      throw error;
+    }
+    if (!materialized) {
+      initLogger.logComplete(-1);
+      return;
+    }
+
+    const entryAfterMaterialize = findWorkspaceEntry(
+      this.config.loadConfigOrDefault(),
+      plan.taskId
+    );
+    if (!entryAfterMaterialize) {
+      initLogger.logComplete(-1);
+      await this.cleanupMaterializedTaskWorkspace(
+        materialized.runtimeForTaskWorkspace,
+        plan.parentMeta.projectPath,
+        plan.workspaceName,
+        plan.taskId
+      );
+      return;
+    }
+    if (entryAfterMaterialize.workspace.taskStatus !== "starting") {
+      initLogger.logComplete(-1);
+      return;
+    }
+
+    if (materialized.sourceRuntimeConfigUpdate) {
+      await this.config.updateWorkspaceMetadata(plan.parentWorkspaceId, {
+        runtimeConfig: materialized.sourceRuntimeConfigUpdate,
+      });
+      await this.emitWorkspaceMetadata(plan.parentWorkspaceId);
+    }
+
+    const {
+      workspacePath,
+      trunkBranch,
+      forkedRuntimeConfig,
+      runtimeForTaskWorkspace,
+      inheritedProjects,
+    } = materialized;
+
+    this.configureMultiProjectRuntimeEnvResolver(runtimeForTaskWorkspace);
+    const taskBaseCommitShaByProjectPath = await readTaskBaseCommitShaByProjectPath({
+      workspaceId: plan.taskId,
+      workspaceName: plan.workspaceName,
+      workspacePath,
+      runtimeConfig: forkedRuntimeConfig,
+      projectPath: plan.parentMeta.projectPath,
+      projectName: plan.parentMeta.projectName,
+      projects: inheritedProjects,
+      runtime: runtimeForTaskWorkspace,
+    });
+    const taskBaseCommitSha = taskBaseCommitShaByProjectPath[plan.parentMeta.projectPath];
+
+    await this.editWorkspaceEntry(
+      plan.taskId,
+      (ws) => {
+        if (ws.taskStatus !== "starting") {
+          return;
+        }
+        ws.path = workspacePath;
+        ws.runtimeConfig = forkedRuntimeConfig;
+        ws.taskTrunkBranch = trunkBranch;
+        ws.taskBaseCommitSha = taskBaseCommitSha ?? undefined;
+        ws.taskBaseCommitShaByProjectPath = taskBaseCommitShaByProjectPath;
+        ws.projects = inheritedProjects;
+      },
+      { allowMissing: true }
+    );
+    await this.emitWorkspaceMetadata(plan.taskId);
+
+    const entryBeforeSend = findWorkspaceEntry(this.config.loadConfigOrDefault(), plan.taskId);
+    if (!entryBeforeSend) {
+      initLogger.logComplete(-1);
+      await this.cleanupMaterializedTaskWorkspace(
+        runtimeForTaskWorkspace,
+        plan.parentMeta.projectPath,
+        plan.workspaceName,
+        plan.taskId
+      );
+      return;
+    }
+    if (entryBeforeSend.workspace.taskStatus !== "starting") {
+      initLogger.logComplete(-1);
+      return;
+    }
+
+    const secrets = await secretsToRecord(
+      this.config.getEffectiveSecrets(plan.parentMeta.projectPath),
+      this.opResolver
+    );
+    runBackgroundInit(
+      runtimeForTaskWorkspace,
+      {
+        projectPath: plan.parentMeta.projectPath,
+        branchName: plan.workspaceName,
+        trunkBranch,
+        workspacePath,
+        initLogger,
+        env: secrets,
+        skipInitHook: plan.skipInitHook,
+        trusted:
+          this.config
+            .loadConfigOrDefault()
+            .projects.get(stripTrailingSlashes(plan.parentMeta.projectPath))?.trusted ?? false,
+      },
+      plan.taskId
+    );
+
+    const startOptions = {
+      model: plan.taskModelString,
+      agentId: plan.agentId,
+      thinkingLevel: plan.effectiveThinkingLevel,
+      experiments: plan.experiments,
+    };
+    const sendResult =
+      plan.start.kind === "sendMessage"
+        ? await this.workspaceService.sendMessage(plan.taskId, plan.start.prompt, startOptions, {
+            allowQueuedAgentTask: true,
+            agentInitiated: true,
+          })
+        : await this.workspaceService.resumeStream(plan.taskId, startOptions, {
+            allowQueuedAgentTask: true,
+            agentInitiated: true,
+          });
+    if (!sendResult.success) {
+      const message =
+        typeof sendResult.error === "string"
+          ? sendResult.error
+          : formatSendMessageError(sendResult.error).message;
+      await this.cleanupMaterializedTaskWorkspace(
+        runtimeForTaskWorkspace,
+        plan.parentMeta.projectPath,
+        plan.workspaceName,
+        plan.taskId
+      );
+      throw new Error(message);
+    }
+
+    await this.setTaskStatus(plan.taskId, "running");
+    this.scheduleMaybeStartQueuedTasks();
   }
 
   async create(args: TaskCreateArgs): Promise<Result<TaskCreateResult, string>> {
@@ -2342,7 +3084,7 @@ export class TaskService {
       // Report monotonicity: interrupted tasks can still be streaming while stream-end
       // finalization persists agent_report. Waiters should keep waiting in that window.
       if (!this.aiService.isStreaming(taskId)) {
-        throw new Error("Task interrupted");
+        throw new Error(taskWorkspaceEntry.workspace.taskLaunchError ?? "Task interrupted");
       }
     }
 
@@ -2387,7 +3129,7 @@ export class TaskService {
           // Report monotonicity: an interrupted task may still be in stream-end teardown,
           // so keep the waiter alive while the stream is active.
           if (!this.aiService.isStreaming(taskId)) {
-            reject(new Error("Task interrupted"));
+            reject(new Error(taskWorkspaceEntry.workspace.taskLaunchError ?? "Task interrupted"));
             return;
           }
         }
@@ -2476,10 +3218,10 @@ export class TaskService {
           this.registerBackgroundableForegroundWaiter(requestingWorkspaceId, entry);
         }
 
-        // Don't start the execution timeout while the task is still queued.
-        // The timer starts once the child actually begins running (queued -> running).
+        // Don't start the execution timeout while the task is still queued/starting.
+        // The timer starts once the child actually begins running (queued/starting -> running).
         const initialStatus = taskWorkspaceEntry.workspace.taskStatus;
-        if (initialStatus === "queued") {
+        if (initialStatus === "queued" || initialStatus === "starting") {
           const startWaiterEntry: PendingTaskStartWaiter = {
             start: startReportTimeout,
             cleanup: () => {
@@ -2503,7 +3245,10 @@ export class TaskService {
           // Close the race where the task starts between the initial config read and registering the waiter.
           const cfgAfterRegister = this.config.loadConfigOrDefault();
           const afterEntry = findWorkspaceEntry(cfgAfterRegister, taskId);
-          if (afterEntry?.workspace.taskStatus !== "queued") {
+          if (
+            afterEntry?.workspace.taskStatus !== "queued" &&
+            afterEntry?.workspace.taskStatus !== "starting"
+          ) {
             cleanupStartWaiter();
             startReportTimeout();
           }
@@ -2512,7 +3257,7 @@ export class TaskService {
           // scheduler runs after the waiter is registered. This avoids deadlocks when
           // maxParallelAgentTasks is low.
           if (requestingWorkspaceId) {
-            void this.maybeStartQueuedTasks();
+            this.scheduleMaybeStartQueuedTasks();
           }
         } else {
           startReportTimeout();
@@ -2649,7 +3394,12 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const index = this.buildAgentTaskIndex(cfg);
 
-    const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
+    const activeStatuses = new Set<AgentTaskStatus>([
+      "queued",
+      "starting",
+      "running",
+      "awaiting_report",
+    ]);
     const result: string[] = [];
     const stack: Array<{ taskId: string; workflowOwned: boolean }> = [
       ...(index.childrenByParent.get(workspaceId) ?? []).map((taskId) => ({
@@ -3029,7 +3779,7 @@ export class TaskService {
       if (status === "running" && task.id && this.isForegroundAwaiting(task.id)) {
         continue;
       }
-      if (status === "running" || status === "awaiting_report") {
+      if (status === "starting" || status === "running" || status === "awaiting_report") {
         activeCount += 1;
         continue;
       }
@@ -3053,7 +3803,12 @@ export class TaskService {
 
     const index = this.buildAgentTaskIndex(config);
 
-    const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
+    const activeStatuses = new Set<AgentTaskStatus>([
+      "queued",
+      "starting",
+      "running",
+      "awaiting_report",
+    ]);
     const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
     while (stack.length > 0) {
       const next = stack.pop()!;
@@ -3114,512 +3869,236 @@ export class TaskService {
   }
 
   async maybeStartQueuedTasks(): Promise<void> {
-    await using _lock = await this.mutex.acquire();
+    const existingRun = this.maybeStartQueuedTasksInFlight;
+    if (existingRun != null) {
+      this.maybeStartQueuedTasksRerunRequested = true;
+      await existingRun;
+      return;
+    }
 
-    const configAtStart = this.config.loadConfigOrDefault();
-    const taskSettingsAtStart: TaskSettings = configAtStart.taskSettings ?? DEFAULT_TASK_SETTINGS;
+    // A foreground task waiter registers itself in waitForAgentReport's async setup. Yield once so
+    // immediate scheduler calls from the same turn see that foreground-awaiting state and avoid a
+    // nested-task deadlock at maxParallelAgentTasks=1.
+    await Promise.resolve();
+    const existingRunAfterYield = this.maybeStartQueuedTasksInFlight;
+    if (existingRunAfterYield != null) {
+      this.maybeStartQueuedTasksRerunRequested = true;
+      await existingRunAfterYield;
+      return;
+    }
 
-    const activeCount = this.countActiveAgentTasks(configAtStart);
-    const availableSlots = Math.max(0, taskSettingsAtStart.maxParallelAgentTasks - activeCount);
-    taskQueueDebug("TaskService.maybeStartQueuedTasks summary", {
-      activeCount,
-      maxParallelAgentTasks: taskSettingsAtStart.maxParallelAgentTasks,
-      availableSlots,
+    const run = (async () => {
+      do {
+        this.maybeStartQueuedTasksRerunRequested = false;
+        await this.maybeStartQueuedTasksFromReservations();
+      } while (this.maybeStartQueuedTasksRerunRequested);
+    })().finally(() => {
+      if (this.maybeStartQueuedTasksInFlight === run) {
+        this.maybeStartQueuedTasksInFlight = undefined;
+      }
     });
-    if (availableSlots === 0) return;
+    this.maybeStartQueuedTasksInFlight = run;
+    await run;
+  }
 
-    const queuedTaskIds = this.listAgentTaskWorkspaces(configAtStart)
-      .filter((t) => t.taskStatus === "queued" && typeof t.id === "string")
-      .sort((a, b) => {
-        const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
-        const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
-        return aTime - bTime;
-      })
-      .map((t) => t.id!);
+  private async maybeStartQueuedTasksFromReservations(): Promise<void> {
+    const plans: TaskLaunchPlan[] = [];
 
-    taskQueueDebug("TaskService.maybeStartQueuedTasks candidates", {
-      queuedCount: queuedTaskIds.length,
-      queuedIds: queuedTaskIds,
-    });
+    {
+      await using _lock = await this.mutex.acquire();
 
-    for (const taskId of queuedTaskIds) {
       const config = this.config.loadConfigOrDefault();
       const taskSettings: TaskSettings = config.taskSettings ?? DEFAULT_TASK_SETTINGS;
-      assert(
-        Number.isFinite(taskSettings.maxParallelAgentTasks) &&
-          taskSettings.maxParallelAgentTasks > 0,
-        "TaskService.maybeStartQueuedTasks: maxParallelAgentTasks must be a positive number"
+      const availableSlots = Math.max(
+        0,
+        taskSettings.maxParallelAgentTasks - this.countActiveAgentTasks(config)
       );
-
-      const activeCount = this.countActiveAgentTasks(config);
-      if (activeCount >= taskSettings.maxParallelAgentTasks) {
-        break;
-      }
-
-      const taskEntry = findWorkspaceEntry(config, taskId);
-      if (!taskEntry?.workspace.parentWorkspaceId) continue;
-      const task = taskEntry.workspace;
-      if (task.taskStatus !== "queued") continue;
-
-      // Defensive: tasks can begin streaming before taskStatus flips to "running".
-      if (this.aiService.isStreaming(taskId)) {
-        taskQueueDebug("TaskService.maybeStartQueuedTasks queued-but-streaming; marking running", {
-          taskId,
-        });
-        await this.setTaskStatus(taskId, "running");
-        continue;
-      }
-
-      assert(typeof task.name === "string" && task.name.trim().length > 0, "Task name missing");
-
-      const parentId = coerceNonEmptyString(task.parentWorkspaceId);
-      if (!parentId) {
-        log.error("Queued task missing parentWorkspaceId; cannot start", { taskId });
-        continue;
-      }
-
-      const parentEntry = findWorkspaceEntry(config, parentId);
-      if (!parentEntry) {
-        log.error("Queued task parent not found; cannot start", { taskId, parentId });
-        continue;
-      }
-
-      const parentWorkspaceName = coerceNonEmptyString(parentEntry.workspace.name);
-      if (!parentWorkspaceName) {
-        log.error("Queued task parent missing workspace name; cannot start", {
-          taskId,
-          parentId,
-        });
-        continue;
-      }
-
-      const taskRuntimeConfig = task.runtimeConfig ?? parentEntry.workspace.runtimeConfig;
-      if (!taskRuntimeConfig) {
-        log.error("Queued task missing runtimeConfig; cannot start", { taskId });
-        continue;
-      }
-
-      const parentRuntimeConfig = parentEntry.workspace.runtimeConfig ?? taskRuntimeConfig;
-      const workspaceName = task.name.trim();
-      const runtime = createRuntimeForWorkspace({
-        runtimeConfig: taskRuntimeConfig,
-        projectPath: taskEntry.projectPath,
-        name: workspaceName,
+      taskQueueDebug("TaskService.maybeStartQueuedTasks reservation summary", {
+        maxParallelAgentTasks: taskSettings.maxParallelAgentTasks,
+        availableSlots,
       });
-      let runtimeForTaskWorkspace = runtime;
-      let forkedRuntimeConfig = taskRuntimeConfig;
+      if (availableSlots === 0) return;
 
-      let workspacePath =
-        coerceNonEmptyString(task.path) ??
-        runtime.getWorkspacePath(taskEntry.projectPath, workspaceName);
-
-      let workspaceExists = false;
-      try {
-        await runtime.stat(workspacePath);
-        workspaceExists = true;
-      } catch {
-        workspaceExists = false;
-      }
-
-      const inMemoryInit = this.initStateManager.getInitState(taskId);
-      const persistedInit = inMemoryInit
-        ? null
-        : await this.initStateManager.readInitStatus(taskId);
-
-      // Re-check capacity after awaiting IO to avoid dequeuing work (worktree creation/init) when
-      // another task became active in the meantime.
-      const latestConfig = this.config.loadConfigOrDefault();
-      const latestTaskSettings: TaskSettings = latestConfig.taskSettings ?? DEFAULT_TASK_SETTINGS;
-      const latestActiveCount = this.countActiveAgentTasks(latestConfig);
-      if (latestActiveCount >= latestTaskSettings.maxParallelAgentTasks) {
-        taskQueueDebug("TaskService.maybeStartQueuedTasks became full mid-loop", {
-          taskId,
-          activeCount: latestActiveCount,
-          maxParallelAgentTasks: latestTaskSettings.maxParallelAgentTasks,
+      const queuedTasks = this.listAgentTaskWorkspaces(config)
+        .filter((task) => task.taskStatus === "queued" && typeof task.id === "string")
+        .sort((a, b) => {
+          const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
+          const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
+          return aTime - bTime;
         });
-        break;
-      }
 
-      // Ensure the workspace exists before starting. Queued tasks should not create worktrees/directories
-      // until they are actually dequeued.
-      let trunkBranch =
-        typeof task.taskTrunkBranch === "string" && task.taskTrunkBranch.trim().length > 0
-          ? task.taskTrunkBranch.trim()
-          : parentWorkspaceName;
-      if (trunkBranch.length === 0) {
-        trunkBranch = "main";
-      }
-
-      let shouldRunInit = !inMemoryInit && !persistedInit;
-      let initLogger: InitLogger | null = null;
-      const getInitLogger = (): InitLogger => {
-        if (initLogger) return initLogger;
-        initLogger = this.startWorkspaceInit(taskId, taskEntry.projectPath);
-        return initLogger;
-      };
-
-      taskQueueDebug("TaskService.maybeStartQueuedTasks start attempt", {
-        taskId,
-        workspaceName,
-        parentId,
-        parentWorkspaceName,
-        runtimeType: taskRuntimeConfig.type,
-        workspacePath,
-        workspaceExists,
-        trunkBranch,
-        shouldRunInit,
-        inMemoryInit: Boolean(inMemoryInit),
-        persistedInit: Boolean(persistedInit),
-      });
-
-      // Trust gate: skip dequeued tasks if the project lost trust since queuing.
-      const dequeueCfg = this.config.loadConfigOrDefault();
-      const normalizedTaskProjectPath = stripTrailingSlashes(taskEntry.projectPath);
-      const dequeueProjectConfig = dequeueCfg.projects.get(normalizedTaskProjectPath);
-      if (!dequeueProjectConfig?.trusted) {
-        log.warn("Skipping queued task for untrusted project", {
-          taskId,
-          projectPath: taskEntry.projectPath,
-        });
-        taskQueueDebug("TaskService.maybeStartQueuedTasks skipped (untrusted)", { taskId });
-        await this.setTaskStatus(taskId, "interrupted");
-        this.rejectWaiters(taskId, new Error("Task skipped: project is not trusted"));
-        continue;
-      }
-
-      // Multi-project queued tasks persist every constituent project. Re-check those secondary
-      // refs here so trust revocations terminate the task instead of retrying the same fork forever.
-      const untrustedSecondaryProject =
-        Array.isArray(task.projects) && task.projects.length > 1
-          ? task.projects.find((project) => {
-              const normalizedProjectPath = stripTrailingSlashes(project.projectPath);
-              if (normalizedProjectPath === normalizedTaskProjectPath) {
-                return false;
-              }
-              return !(dequeueCfg.projects.get(normalizedProjectPath)?.trusted ?? false);
-            })
-          : undefined;
-      if (untrustedSecondaryProject) {
-        log.warn("Skipping queued multi-project task for untrusted project", {
-          taskId,
-          projectPath: untrustedSecondaryProject.projectPath,
-          projects: task.projects,
-        });
-        taskQueueDebug("TaskService.maybeStartQueuedTasks skipped (secondary untrusted)", {
-          taskId,
-          projectPath: untrustedSecondaryProject.projectPath,
-        });
-        await this.setTaskStatus(taskId, "interrupted");
-        this.rejectWaiters(
-          taskId,
-          new Error(`Task skipped: project ${untrustedSecondaryProject.projectPath} is not trusted`)
-        );
-        continue;
-      }
-
-      // If the workspace doesn't exist yet, create it now (fork preferred, else createWorkspace).
-      if (!workspaceExists) {
-        shouldRunInit = true;
-        const initLogger = getInitLogger();
-
-        const parentMetadataResult = await this.aiService.getWorkspaceMetadata(parentId);
-        let parentMetadataForFork = parentMetadataResult.success
-          ? parentMetadataResult.data
-          : undefined;
-
-        if (!parentMetadataForFork && Array.isArray(task.projects) && task.projects.length > 1) {
-          // Queued tasks persist the parent's project refs at queue time. If the parent metadata lookup
-          // fails later (for example, parent workspace deleted while queued), synthesize enough metadata
-          // for orchestrateFork to preserve multi-project behavior instead of falling back to single-project.
-          const primaryProjectRef =
-            task.projects.find(
-              (project) =>
-                stripTrailingSlashes(project.projectPath) ===
-                stripTrailingSlashes(taskEntry.projectPath)
-            ) ?? task.projects[0];
-          const projectName =
-            coerceNonEmptyString(primaryProjectRef?.projectName) ??
-            coerceNonEmptyString(taskEntry.projectPath.split("/").filter(Boolean).at(-1)) ??
-            taskEntry.projectPath;
-
-          parentMetadataForFork = {
-            id: parentId,
-            name: parentWorkspaceName,
-            projectPath: taskEntry.projectPath,
-            projectName,
-            runtimeConfig: parentRuntimeConfig,
-            projects: task.projects,
-          } satisfies WorkspaceMetadata;
+      let reservedSlots = 0;
+      for (const task of queuedTasks) {
+        if (reservedSlots >= availableSlots) {
+          break;
         }
-
-        const forkOrchestratorResult = await orchestrateFork({
-          sourceRuntime: runtime,
-          projectPath: taskEntry.projectPath,
-          sourceWorkspaceName: parentWorkspaceName,
-          newWorkspaceName: workspaceName,
-          initLogger,
-          config: this.config,
-          sourceWorkspaceId: parentId,
-          sourceRuntimeConfig: parentRuntimeConfig,
-          parentMetadata: parentMetadataForFork,
-          allowCreateFallback: true,
-          preferredTrunkBranch: trunkBranch,
-          trusted:
-            this.config
-              .loadConfigOrDefault()
-              .projects.get(stripTrailingSlashes(taskEntry.projectPath))?.trusted ?? false,
-          multiProjectExperimentEnabled: this.workspaceService.isExperimentEnabled(
-            EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
-          ),
-        });
-
-        if (
-          forkOrchestratorResult.success &&
-          forkOrchestratorResult.data.sourceRuntimeConfigUpdate
-        ) {
-          await this.config.updateWorkspaceMetadata(parentId, {
-            runtimeConfig: forkOrchestratorResult.data.sourceRuntimeConfigUpdate,
-          });
-          // Ensure UI gets the updated runtimeConfig for the parent workspace.
-          await this.emitWorkspaceMetadata(parentId);
-        }
-
-        if (!forkOrchestratorResult.success) {
-          initLogger.logComplete(-1);
-          log.error("Task fork failed", { taskId, error: forkOrchestratorResult.error });
-          taskQueueDebug("TaskService.maybeStartQueuedTasks fork failed", {
-            taskId,
-            error: forkOrchestratorResult.error,
-          });
+        const taskId = task.id;
+        assert(taskId != null && taskId.length > 0, "queued task id is required");
+        if (this.aiService.isStreaming(taskId)) {
+          await this.setTaskStatus(taskId, "running");
+          reservedSlots += 1;
           continue;
         }
 
-        const {
-          forkedRuntimeConfig: resolvedForkedRuntimeConfig,
-          targetRuntime,
-          workspacePath: resolvedWorkspacePath,
-          trunkBranch: resolvedTrunkBranch,
-          forkedFromSource,
-          projects: inheritedProjects,
-        } = forkOrchestratorResult.data;
-
-        forkedRuntimeConfig = resolvedForkedRuntimeConfig;
-        runtimeForTaskWorkspace = targetRuntime;
-        workspacePath = resolvedWorkspacePath;
-        trunkBranch = resolvedTrunkBranch;
-        workspaceExists = true;
-
-        taskQueueDebug("TaskService.maybeStartQueuedTasks workspace created", {
-          taskId,
-          workspacePath,
-          forkSuccess: forkedFromSource,
-          trunkBranch,
-        });
-
-        // Persist any corrected path/trunkBranch for restart-safe init.
-        await this.editWorkspaceEntry(
-          taskId,
-          (ws) => {
-            ws.path = workspacePath;
-            ws.taskTrunkBranch = trunkBranch;
-            ws.runtimeConfig = forkedRuntimeConfig;
-            ws.projects = inheritedProjects;
-          },
-          { allowMissing: true }
-        );
-      }
-
-      // If init has not yet run for this workspace, start it now (best-effort, async).
-      // This is intentionally coupled to task start so queued tasks don't run init hooks
-      // Capture base commit for git-format-patch generation before the agent starts.
-      // This must reflect the *actual* workspace HEAD after creation/fork, not the parent's current HEAD
-      // (queued tasks can start much later).
-      if (
-        !coerceNonEmptyString(task.taskBaseCommitSha) ||
-        Object.keys(task.taskBaseCommitShaByProjectPath ?? {}).length === 0
-      ) {
-        const taskBaseCommitShaByProjectPath = await readTaskBaseCommitShaByProjectPath({
-          workspaceId: taskId,
-          workspaceName: task.name,
-          workspacePath,
-          runtimeConfig: forkedRuntimeConfig,
-          projectPath: taskEntry.projectPath,
-          projectName:
-            task.projects?.find((project) => project.projectPath === taskEntry.projectPath)
-              ?.projectName ??
-            taskEntry.projectPath.split("/").filter(Boolean).at(-1) ??
-            taskEntry.projectPath,
-          projects: task.projects,
-          runtime: runtimeForTaskWorkspace,
-        });
-        const taskBaseCommitSha = taskBaseCommitShaByProjectPath[taskEntry.projectPath];
-        if (taskBaseCommitSha || Object.keys(taskBaseCommitShaByProjectPath).length > 0) {
-          await this.editWorkspaceEntry(
+        const queuedPrompt = coerceNonEmptyString(task.taskPrompt);
+        const start: TaskLaunchStart = queuedPrompt
+          ? { kind: "sendMessage", prompt: queuedPrompt }
+          : { kind: "resumeStream" };
+        if (start.kind === "resumeStream") {
+          // Older queued task records stored the initial prompt only in chat history.
+          // Keep those upgrade-safe by resuming the existing pending stream instead of failing launch.
+          taskQueueDebug("TaskService.maybeStartQueuedTasks legacy resumeStream reservation", {
             taskId,
-            (ws) => {
-              ws.taskBaseCommitSha = taskBaseCommitSha;
-              ws.taskBaseCommitShaByProjectPath = taskBaseCommitShaByProjectPath;
-            },
-            { allowMissing: true }
-          );
+          });
         }
-      }
 
-      // (SSH sync, .mux/init scripts, etc.) until they actually begin execution.
-      if (shouldRunInit) {
-        const initLogger = getInitLogger();
-        taskQueueDebug("TaskService.maybeStartQueuedTasks initWorkspace starting", {
-          taskId,
-          workspacePath,
-          trunkBranch,
-        });
-        // Multi-project forks need per-project secrets for each runtime's init hook.
-        this.configureMultiProjectRuntimeEnvResolver(runtimeForTaskWorkspace);
-        const secrets = await secretsToRecord(
-          this.config.getEffectiveSecrets(taskEntry.projectPath),
-          this.opResolver
-        );
-        let skipInitHook = false;
-        const agentIdCandidates = resolvePersistedAgentIdCandidates(task);
-        if (agentIdCandidates.length > 0) {
-          const discoveryContexts: Array<{ runtime: Runtime; workspacePath: string }> = [
-            { runtime: runtimeForTaskWorkspace, workspacePath },
-          ];
-          try {
-            discoveryContexts.push(
-              createRuntimeContextForWorkspace({
-                runtimeConfig: parentEntry.workspace.runtimeConfig ?? parentRuntimeConfig,
-                projectPath: parentEntry.projectPath,
-                name: parentWorkspaceName,
-                namedWorkspacePath: coerceNonEmptyString(parentEntry.workspace.path),
-              })
-            );
-          } catch (error: unknown) {
-            log.debug("Queued task: failed to build parent agent-discovery runtime", {
-              taskId,
-              parentWorkspaceId: parentId,
-              error: getErrorMessage(error),
-            });
-          }
+        const parentWorkspaceId = coerceNonEmptyString(task.parentWorkspaceId);
+        if (!parentWorkspaceId) {
+          await this.markTaskLaunchFailed(taskId, "Queued task missing parentWorkspaceId");
+          continue;
+        }
 
-          let resolvedSkipInitHook: boolean | undefined;
-          for (const agentId of agentIdCandidates) {
-            let fallbackSkipInitHook: boolean | undefined;
-            for (const discovery of discoveryContexts) {
-              try {
-                const definition = await readAgentDefinition(
-                  discovery.runtime,
-                  discovery.workspacePath,
-                  agentId
-                );
-                const frontmatter = await resolveAgentFrontmatter(
-                  discovery.runtime,
-                  discovery.workspacePath,
-                  definition.id,
-                  {
-                    skipScopesAbove: getSkipScopesAboveForKnownScope(definition.scope),
-                  }
-                );
-                const candidateSkipInitHook = frontmatter.subagent?.skip_init_hook === true;
-                if (definition.scope === "project") {
-                  resolvedSkipInitHook = candidateSkipInitHook;
-                  break;
+        const parentEntry = findWorkspaceEntry(config, parentWorkspaceId);
+        if (!parentEntry) {
+          await this.markTaskLaunchFailed(taskId, "Queued task parent not found");
+          continue;
+        }
+        const parentWorkspaceName = coerceNonEmptyString(parentEntry.workspace.name);
+        if (!parentWorkspaceName) {
+          await this.markTaskLaunchFailed(taskId, "Queued task parent missing workspace name");
+          continue;
+        }
+
+        const taskRuntimeConfig = task.runtimeConfig ?? parentEntry.workspace.runtimeConfig;
+        const parentRuntimeConfig = parentEntry.workspace.runtimeConfig ?? taskRuntimeConfig;
+        if (!taskRuntimeConfig || !parentRuntimeConfig) {
+          await this.markTaskLaunchFailed(taskId, "Queued task missing runtimeConfig");
+          continue;
+        }
+
+        const normalizedTaskProjectPath = stripTrailingSlashes(task.projectPath);
+        const taskProjectConfig = config.projects.get(normalizedTaskProjectPath);
+        if (!taskProjectConfig?.trusted) {
+          await this.markTaskLaunchFailed(taskId, "Task skipped: project is not trusted");
+          continue;
+        }
+        const untrustedSecondaryProject =
+          Array.isArray(task.projects) && task.projects.length > 1
+            ? task.projects.find((project) => {
+                const normalizedProjectPath = stripTrailingSlashes(project.projectPath);
+                if (normalizedProjectPath === normalizedTaskProjectPath) {
+                  return false;
                 }
-                fallbackSkipInitHook ??= candidateSkipInitHook;
-              } catch (error: unknown) {
-                log.debug("Queued task: failed to read agent definition for skip_init_hook", {
-                  taskId,
-                  agentId,
-                  agentDiscoveryPath: discovery.workspacePath,
-                  error: getErrorMessage(error),
-                });
-              }
-            }
-
-            resolvedSkipInitHook ??= fallbackSkipInitHook;
-            if (resolvedSkipInitHook != null) {
-              break;
-            }
-          }
-
-          skipInitHook = resolvedSkipInitHook ?? false;
-        }
-
-        runBackgroundInit(
-          runtimeForTaskWorkspace,
-          {
-            projectPath: taskEntry.projectPath,
-            branchName: workspaceName,
-            trunkBranch,
-            workspacePath,
-            initLogger,
-            env: secrets,
-            skipInitHook,
-            trusted:
-              this.config
-                .loadConfigOrDefault()
-                .projects.get(stripTrailingSlashes(taskEntry.projectPath))?.trusted ?? false,
-          },
-          taskId
-        );
-      }
-
-      const model = task.taskModelString ?? defaultModel;
-      const queuedPrompt = coerceNonEmptyString(task.taskPrompt);
-      if (queuedPrompt) {
-        taskQueueDebug("TaskService.maybeStartQueuedTasks sendMessage starting (dequeue)", {
-          taskId,
-          model,
-          promptLength: queuedPrompt.length,
-        });
-        const sendResult = await this.workspaceService.sendMessage(
-          taskId,
-          queuedPrompt,
-          {
-            model,
-            agentId: resolveTaskAgentIdForResume(task),
-            thinkingLevel: task.taskThinkingLevel,
-            experiments: task.taskExperiments,
-          },
-          { allowQueuedAgentTask: true, agentInitiated: true }
-        );
-        if (!sendResult.success) {
-          log.error("Failed to start queued task via sendMessage", {
+                return !(config.projects.get(normalizedProjectPath)?.trusted ?? false);
+              })
+            : undefined;
+        if (untrustedSecondaryProject) {
+          await this.markTaskLaunchFailed(
             taskId,
-            error: sendResult.error,
-          });
+            `Task skipped: project ${untrustedSecondaryProject.projectPath} is not trusted`
+          );
           continue;
         }
-      } else {
-        // Backward compatibility: older queued tasks persisted their prompt in chat history.
-        taskQueueDebug("TaskService.maybeStartQueuedTasks resumeStream starting (legacy dequeue)", {
-          taskId,
-          model,
-        });
-        const resumeResult = await this.workspaceService.resumeStream(
-          taskId,
-          {
-            model,
-            agentId: resolveTaskAgentIdForResume(task),
-            thinkingLevel: task.taskThinkingLevel,
-            experiments: task.taskExperiments,
-          },
-          { allowQueuedAgentTask: true, agentInitiated: true }
-        );
 
-        if (!resumeResult.success) {
-          log.error("Failed to start queued task", { taskId, error: resumeResult.error });
-          taskQueueDebug("TaskService.maybeStartQueuedTasks resumeStream failed", {
-            taskId,
-            error: resumeResult.error,
+        const parentMetaResult = await this.aiService.getWorkspaceMetadata(parentWorkspaceId);
+        const parentMeta = parentMetaResult.success
+          ? parentMetaResult.data
+          : ({
+              id: parentWorkspaceId,
+              name: parentWorkspaceName,
+              projectPath: parentEntry.projectPath,
+              projectName:
+                parentEntry.workspace.projects?.find(
+                  (project) =>
+                    stripTrailingSlashes(project.projectPath) ===
+                    stripTrailingSlashes(parentEntry.projectPath)
+                )?.projectName ??
+                parentEntry.projectPath.split("/").filter(Boolean).at(-1) ??
+                parentEntry.projectPath,
+              runtimeConfig: parentRuntimeConfig,
+              projects: parentEntry.workspace.projects,
+            } satisfies WorkspaceMetadata);
+
+        const agentId = resolveTaskAgentIdForResume(task);
+        assert(agentId.length > 0, "queued task agentId is required");
+        let skipInitHook = false;
+        try {
+          const parentRuntime = createRuntimeForWorkspace({
+            runtimeConfig: parentRuntimeConfig,
+            projectPath: parentEntry.projectPath,
+            name: parentWorkspaceName,
           });
+          const parentWorkspacePath =
+            coerceNonEmptyString(parentEntry.workspace.path) ??
+            parentRuntime.getWorkspacePath(parentEntry.projectPath, parentWorkspaceName);
+          const frontmatter = await resolveAgentFrontmatter(
+            parentRuntime,
+            parentWorkspacePath,
+            agentId
+          );
+          skipInitHook = frontmatter.subagent?.skip_init_hook === true;
+        } catch (error: unknown) {
+          log.debug("Queued task: failed to resolve skip_init_hook during reservation", {
+            taskId,
+            agentId,
+            error: getErrorMessage(error),
+          });
+        }
+
+        const workspaceName = coerceNonEmptyString(task.name);
+        if (!workspaceName) {
+          await this.markTaskLaunchFailed(taskId, "Queued task missing workspace name");
           continue;
         }
-      }
 
-      await this.setTaskStatus(taskId, "running");
-      taskQueueDebug("TaskService.maybeStartQueuedTasks started", { taskId });
+        const canonicalModel =
+          coerceNonEmptyString(task.aiSettings?.model) ??
+          normalizeToCanonical(task.taskModelString ?? defaultModel);
+        const createdAt = task.createdAt ?? getIsoNow();
+        await this.editWorkspaceEntry(taskId, (workspace) => {
+          workspace.taskStatus = "starting";
+        });
+        reservedSlots += 1;
+
+        plans.push({
+          taskId,
+          parentWorkspaceId,
+          parentMeta,
+          agentId,
+          agentType: task.agentType ?? agentId,
+          start,
+          title: task.title ?? workspaceName,
+          workspaceName,
+          createdAt,
+          taskRuntimeConfig,
+          parentRuntimeConfig,
+          taskModelString: task.taskModelString ?? defaultModel,
+          canonicalModel,
+          effectiveThinkingLevel: task.taskThinkingLevel,
+          skipInitHook,
+          preferredTrunkBranch: task.taskTrunkBranch,
+          workflowTask: task.workflowTask,
+          bestOf: task.bestOf,
+          experiments: task.taskExperiments,
+        });
+      }
     }
+
+    await Promise.allSettled(
+      plans.map(async (plan) => {
+        try {
+          await this.enqueueReservedTaskLaunch(plan);
+        } catch (error: unknown) {
+          log.error("Failed to launch dequeued task", { taskId: plan.taskId, error });
+          await this.markTaskLaunchFailed(plan.taskId, getErrorMessage(error));
+        }
+      })
+    );
+  }
+
+  private async enqueueReservedTaskLaunch(plan: TaskLaunchPlan): Promise<void> {
+    assert(plan.taskId.length > 0, "enqueueReservedTaskLaunch requires taskId");
+    await this.startReservedAgentTask(plan);
   }
 
   private async setTaskStatus(workspaceId: string, status: AgentTaskStatus): Promise<void> {
@@ -5331,6 +5810,7 @@ export class TaskService {
     const hasRecoverableSibling = siblings.some((sibling) => {
       return (
         sibling.taskStatus === "queued" ||
+        sibling.taskStatus === "starting" ||
         sibling.taskStatus === "running" ||
         sibling.taskStatus === "awaiting_report"
       );
