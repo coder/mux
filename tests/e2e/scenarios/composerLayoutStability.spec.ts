@@ -2,13 +2,15 @@ import { electronTest as test, electronExpect as expect } from "../electronTest"
 import { MOCK_LIST_PROGRAMMING_LANGUAGES } from "../mockAiPrompts";
 
 // Real-browser gate for the chat-send "layout flash" fix. happy-dom cannot evaluate
-// native CSS scroll anchoring, calc(var(--composer-h)) clearance, or per-frame
-// layout geometry, so the architecture's core invariants are proven here:
+// native CSS scroll anchoring, sticky positioning, or per-frame layout geometry, so
+// the architecture's core invariants are proven here:
 //
-//   Pillar D — the composer floats out of flow, so growing/collapsing it (the
-//   send-time root cause) NEVER changes the transcript scrollport's clientHeight.
+//   Pillar D — the composer dock is in-flow scroll content (sticky to the
+//   scrollport bottom), so growing/collapsing it (the send-time root cause) NEVER
+//   changes the transcript scrollport's clientHeight, and the clearance for the
+//   last message is reserved by flow layout in the same pass as the height change.
 //   Pillar A — the bottom sentinel + native anchoring keep the transcript pinned to
-//   the bottom with the last message clear of the floating composer.
+//   the bottom with the last message clear of the composer dock.
 //
 // clientHeight is a stable per-frame layout property (not a transient paint), so
 // sampling it across the send is deterministic rather than flaky.
@@ -44,7 +46,8 @@ test("composer height changes never resize the transcript viewport, and the bott
   expect(baseline).toBeGreaterThan(0);
 
   // Pillar D (grow): a tall multi-line draft must enlarge the composer WITHOUT
-  // shrinking the scrollport, and the scrollport must reserve matching clearance.
+  // shrinking the scrollport, and flow layout must keep the last message clear of
+  // the taller dock (re-pinned by anchoring/ResizeObserver before paint).
   await input.fill(TALL_DRAFT);
   const grown = await page.evaluate(
     ({ win, dock }) => {
@@ -53,7 +56,6 @@ test("composer height changes never resize the transcript viewport, and the bott
       return {
         clientHeight: sp.clientHeight,
         composerHeight: Math.round(composer.getBoundingClientRect().height),
-        paddingBottom: Number.parseFloat(getComputedStyle(sp).paddingBottom),
       };
     },
     { win: MESSAGE_WINDOW, dock: COMPOSER_DOCK }
@@ -61,8 +63,26 @@ test("composer height changes never resize the transcript viewport, and the bott
   expect(grown.composerHeight).toBeGreaterThan(0);
   // The headline invariant: a taller composer does not steal scrollport height.
   expect(grown.clientHeight).toBe(baseline);
-  // The clearance padding tracks the live composer height (calc(var(--composer-h))).
-  expect(grown.paddingBottom).toBeGreaterThanOrEqual(grown.composerHeight);
+  // The in-flow dock reserves its own clearance: the transcript stays pinned with
+  // the last message above the grown dock.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        ({ win, dock }) => {
+          const sp = document.querySelector<HTMLElement>(win)!;
+          const composer = document.querySelector<HTMLElement>(dock)!;
+          const rows = sp.querySelectorAll<HTMLElement>("[data-message-id]");
+          const last = rows[rows.length - 1];
+          if (!last) return false;
+          const pinnedToBottom = sp.scrollHeight - sp.clientHeight - sp.scrollTop <= 4;
+          const lastClearsComposer =
+            last.getBoundingClientRect().bottom <= composer.getBoundingClientRect().top + 2;
+          return pinnedToBottom && lastClearsComposer;
+        },
+        { win: MESSAGE_WINDOW, dock: COMPOSER_DOCK }
+      )
+    )
+    .toBe(true);
 
   // Pillar D (collapse): clearing the draft collapses the composer; still no resize.
   await input.fill("");
@@ -110,9 +130,9 @@ test("composer height changes never resize the transcript viewport, and the bott
     expect(sample).toBe(baseline);
   }
 
-  // Pillar A: after settling, the transcript is pinned to the bottom, the sentinel is
-  // the last child, and the last message clears the floating composer — all while the
-  // viewport height is still the baseline.
+  // Pillar A: after settling, the transcript is pinned to the bottom, the dock is
+  // the last child with the sentinel directly above it, and the last message clears
+  // the composer dock — all while the viewport height is still the baseline.
   await expect
     .poll(
       () =>
@@ -125,13 +145,15 @@ test("composer height changes never resize the transcript viewport, and the bott
             const last = rows[rows.length - 1];
             if (!last) return false;
             const pinnedToBottom = sp.scrollHeight - sp.clientHeight - sp.scrollTop <= 4;
-            const sentinelIsLast = sp.lastElementChild === sentinelEl;
+            const dockIsLast = sp.lastElementChild === composer;
+            const sentinelAboveDock = sentinelEl.nextElementSibling === composer;
             const lastClearsComposer =
               last.getBoundingClientRect().bottom <= composer.getBoundingClientRect().top + 2;
             return (
               sp.clientHeight === baselineHeight &&
               pinnedToBottom &&
-              sentinelIsLast &&
+              dockIsLast &&
+              sentinelAboveDock &&
               lastClearsComposer
             );
           },

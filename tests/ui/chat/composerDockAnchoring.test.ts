@@ -21,22 +21,27 @@ function getMessageWindow(container: HTMLElement): HTMLDivElement {
   return element as HTMLDivElement;
 }
 
-// These tests encode the structural contract behind the "send flash" fix:
-//   1. The composer floats (absolute) in its own subtree, so its height changes never
-//      resize the transcript scrollport (the root cause of viewport-resize-from-below).
-//   2. A 0-height bottom sentinel is the LAST child of the scrollport and the sole
-//      `overflow-anchor: auto` element while locked, so native CSS scroll anchoring
-//      pins the bottom on append without a JS settle loop.
+// These tests encode the structural contract behind the "send flash" + "hydration
+// tear" fixes:
+//   1. The composer dock is IN-FLOW scroll content stuck (position: sticky) to the
+//      scrollport bottom, so transcript clearance is reserved by flow layout in the
+//      same layout pass as any dock height change (no measured --composer-h channel
+//      that can lag a frame and tear), while the scrollport's clientHeight never
+//      changes when the composer resizes.
+//   2. A 0-height bottom sentinel sits between the transcript content and the dock
+//      and is the sole `overflow-anchor: auto` element while locked, so native CSS
+//      scroll anchoring pins the bottom on append without a JS settle loop. The
+//      dock itself must never be an anchor candidate.
 //   3. Releasing the lock (scrolling up) restores row anchoring so the reading
 //      position is preserved.
 // happy-dom cannot exercise real native anchoring, so these assert the DOM/style
 // contract the browser relies on; the pixel behavior is covered by the e2e suite.
-describe("Floating composer + bottom anchoring", () => {
+describe("Sticky composer dock + bottom anchoring", () => {
   beforeAll(async () => {
     await preloadTestModules();
   });
 
-  test("floats the composer, reserves clearance, and keeps the sentinel as the sole bottom anchor", async () => {
+  test("keeps the dock in-flow below the sentinel and the sentinel as the sole bottom anchor", async () => {
     const app = await createAppHarness({ branchPrefix: "floating-composer-anchor" });
 
     try {
@@ -45,20 +50,23 @@ describe("Floating composer + bottom anchoring", () => {
 
       const messageWindow = getMessageWindow(app.view.container);
 
-      // (1) The composer lives in a separate, floating subtree — not a flex sibling
-      // nested in (or wrapping) the scrollport. (The scrollport's clearance padding
-      // uses calc(var(--composer-h)), which happy-dom drops; the pixel clearance is
-      // asserted in the e2e suite where a real layout engine evaluates it.)
+      // (1) The composer dock is in-flow scroll content: the last child of the
+      // scrollport, stuck to its bottom, and opted out of scroll anchoring so the
+      // browser can never anchor to the sticky dock.
       const dock = app.view.container.querySelector('[data-testid="chat-composer-dock"]');
       if (!dock) throw new Error("Composer dock not found");
-      expect(messageWindow.contains(dock)).toBe(false);
-      expect(dock.contains(messageWindow)).toBe(false);
-      expect(dock.classList.contains("absolute")).toBe(true);
+      expect(messageWindow.contains(dock)).toBe(true);
+      expect(dock.parentElement).toBe(messageWindow);
+      expect(messageWindow.lastElementChild).toBe(dock);
+      expect(dock.classList.contains("sticky")).toBe(true);
+      expect((dock as HTMLElement).style.overflowAnchor).toBe("none");
 
-      // (2) The sentinel is the last child of the scrollport and is the anchor.
+      // (2) The sentinel sits immediately above the dock: appends grow content
+      // ABOVE it (native anchoring pins the bottom) while dock growth happens
+      // BELOW it (covered by the scrollport-children ResizeObserver).
       const sentinel = messageWindow.querySelector('[data-testid="transcript-bottom-sentinel"]');
       if (!sentinel) throw new Error("Bottom sentinel not found");
-      expect(messageWindow.lastElementChild).toBe(sentinel);
+      expect(sentinel.nextElementSibling).toBe(dock);
       expect((sentinel as HTMLElement).style.overflowAnchor).toBe("auto");
 
       // (2) While locked (at the bottom after a send) the transcript content opts OUT

@@ -35,6 +35,7 @@ function createWheelEvent(
 }
 
 let resizeObserverCallback: ResizeObserverCallback | null = null;
+const observedTargets: Element[] = [];
 
 // Capture the hook's ResizeObserver so the safety-net pin can be driven directly.
 // Bottom-stick no longer uses a requestAnimationFrame settle loop: native CSS
@@ -46,10 +47,11 @@ class ResizeObserverMock {
   }
 
   observe(target: Element): void {
-    void target;
+    observedTargets.push(target);
   }
   disconnect(): void {
     resizeObserverCallback = null;
+    observedTargets.length = 0;
   }
 }
 
@@ -65,6 +67,7 @@ describe("useAutoScroll", () => {
   beforeEach(() => {
     cleanupDom = installDom();
     resizeObserverCallback = null;
+    observedTargets.length = 0;
     window.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
   });
 
@@ -100,27 +103,36 @@ describe("useAutoScroll", () => {
     expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
   });
 
-  test("the safety-net pin is a no-op when auto-scroll is off", () => {
+  test("the safety net observes the scrollport and each of its children", () => {
+    // The in-flow composer dock sits BELOW the bottom sentinel, so native
+    // anchoring cannot compensate when the dock grows (decorations mounting,
+    // textarea growth). Observing every direct child of the scrollport is what
+    // re-pins that growth before paint while locked.
     const { result } = renderHook(() => useAutoScroll());
     const element = document.createElement("div");
-    const metrics = attachScrollMetrics(element, {
+    const transcriptContent = document.createElement("div");
+    const sentinel = document.createElement("div");
+    const composerDock = document.createElement("div");
+    element.append(transcriptContent, sentinel, composerDock);
+    attachScrollMetrics(element, {
       scrollHeight: 1000,
       clientHeight: 400,
-      initialScrollTop: 200,
     });
 
+    // Toggle autoScroll after attaching the ref so the observer effect re-runs
+    // (the effect bails when contentRef is null on mount).
     act(() => {
       (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
       result.current.disableAutoScroll();
     });
-
-    metrics.setScrollHeight(1500);
     act(() => {
-      result.current.reanchorBottom();
+      result.current.jumpToBottom();
     });
 
-    expect(metrics.scrollTop).toBe(200);
-    expect(result.current.autoScroll).toBe(false);
+    expect(observedTargets).toContain(element);
+    expect(observedTargets).toContain(transcriptContent);
+    expect(observedTargets).toContain(sentinel);
+    expect(observedTargets).toContain(composerDock);
   });
 
   test("each layout growth re-pins to the bottom while locked", () => {
@@ -157,9 +169,17 @@ describe("useAutoScroll", () => {
     try {
       let now = 1_000_000;
       dateNowSpy.mockImplementation(() => now);
+      // Toggle autoScroll after attaching the ref so the safety-net observer
+      // attaches (the effect bails when contentRef is null on mount).
       act(() => {
         (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+        result.current.disableAutoScroll();
       });
+      act(() => {
+        result.current.jumpToBottom();
+      });
+      const stalePin = resizeObserverCallback;
+      expect(stalePin).not.toBeNull();
 
       metrics.setScrollTop(600);
       act(() => {
@@ -169,10 +189,10 @@ describe("useAutoScroll", () => {
       });
       expect(result.current.autoScroll).toBe(false);
 
-      // The layout-driven safety-net pin must stay released-aware: re-anchoring
-      // is a no-op while unlocked, so the user keeps their position.
+      // The layout-driven safety-net pin must stay released-aware: a re-pin
+      // firing after release is a no-op, so the user keeps their position.
       act(() => {
-        result.current.reanchorBottom();
+        stalePin?.([], {} as ResizeObserver);
       });
       expect(metrics.scrollTop).toBe(600);
     } finally {
@@ -199,9 +219,17 @@ describe("useAutoScroll", () => {
       let now = 1_000_000;
       dateNowSpy.mockImplementation(() => now);
 
+      // Toggle autoScroll after attaching the ref so the safety-net observer
+      // attaches (the effect bails when contentRef is null on mount).
       act(() => {
         (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+        result.current.disableAutoScroll();
       });
+      act(() => {
+        result.current.jumpToBottom();
+      });
+      const stalePin = resizeObserverCallback;
+      expect(stalePin).not.toBeNull();
       expect(metrics.scrollTop).toBe(metrics.maxScrollTop);
 
       // Single small wheel notch: scrollTop drops 5 px, well within the 8 px
@@ -216,7 +244,7 @@ describe("useAutoScroll", () => {
 
       // A subsequent layout re-pin must not snap the user back to the bottom.
       act(() => {
-        result.current.reanchorBottom();
+        stalePin?.([], {} as ResizeObserver);
       });
       expect(metrics.scrollTop).toBe(595);
     } finally {
@@ -242,9 +270,17 @@ describe("useAutoScroll", () => {
       let now = 1_000_000;
       dateNowSpy.mockImplementation(() => now);
 
+      // Toggle autoScroll after attaching the ref so the safety-net observer
+      // attaches (the effect bails when contentRef is null on mount).
       act(() => {
         (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+        result.current.disableAutoScroll();
       });
+      act(() => {
+        result.current.jumpToBottom();
+      });
+      const stalePin = resizeObserverCallback;
+      expect(stalePin).not.toBeNull();
 
       // First tick: 3 px up. Releases the lock.
       metrics.setScrollTop(metrics.maxScrollTop - 3);
@@ -266,7 +302,7 @@ describe("useAutoScroll", () => {
       expect(result.current.autoScroll).toBe(false);
 
       act(() => {
-        result.current.reanchorBottom();
+        stalePin?.([], {} as ResizeObserver);
       });
       expect(metrics.scrollTop).toBe(594);
     } finally {
@@ -771,15 +807,25 @@ describe("useAutoScroll", () => {
       initialScrollTop: 100,
     });
 
+    // Toggle autoScroll after attaching the ref so the safety-net observer
+    // attaches (the effect bails when contentRef is null on mount).
     act(() => {
       (result.current.contentRef as MutableRefObject<HTMLDivElement | null>).current = element;
+      result.current.disableAutoScroll();
+    });
+    act(() => {
       result.current.jumpToBottom();
+    });
+    const stalePin = resizeObserverCallback;
+    expect(stalePin).not.toBeNull();
+
+    act(() => {
       result.current.disableAutoScroll();
     });
 
     metrics.setScrollHeight(1500);
     act(() => {
-      result.current.reanchorBottom();
+      stalePin?.([], {} as ResizeObserver);
     });
 
     expect(metrics.scrollTop).toBe(500);
