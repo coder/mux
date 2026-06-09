@@ -1688,7 +1688,10 @@ describe("WorkflowRunner", () => {
       // compiler must strip those export modifiers before script evaluation.
       definitionSource: [
         `export const GREETING = "named";`,
-        `export function exclaim(value) { return value + "!"; }`,
+        `export class Exclaimer {`,
+        `  render(value) { return value + "!"; }`,
+        `}`,
+        `export function exclaim(value) { return new Exclaimer().render(value); }`,
         `export async function emphasize(value) { return value.toUpperCase(); }`,
         `export default async function workflow() {`,
         `  return { reportMarkdown: await emphasize(exclaim(GREETING)) };`,

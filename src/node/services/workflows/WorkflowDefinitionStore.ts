@@ -16,6 +16,7 @@ import {
   BUILT_IN_WORKFLOW_DEFINITIONS,
   type BuiltInWorkflowDefinition,
 } from "./builtInWorkflowDefinitions";
+import { parseWorkflowDescription, WORKFLOW_DESCRIPTION_PREFIX } from "./workflowDescription";
 
 export interface WorkflowDefinitionStoreOptions {
   projectRoot: string;
@@ -57,26 +58,11 @@ interface ScannedWorkflowDefinition {
   source: string;
 }
 
-const DESCRIPTION_PREFIX = "// description:";
 const WORKFLOW_SCRATCH_GIT_EXCLUDE_COMMENT = "# mux: local scratch workflow drafts";
 const WORKFLOW_SCRATCH_GITIGNORE_FALLBACK_COMMENT =
   "# mux: hide scratch workflow drafts when repo rules unignore workflows";
 const LOCAL_GIT_COMMAND_TIMEOUT_MS = 5_000;
 const RUNTIME_GIT_COMMAND_TIMEOUT_SECONDS = 5;
-
-function parseWorkflowDescription(source: string): string | null {
-  const firstMeaningfulLine = source
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-
-  if (!firstMeaningfulLine?.startsWith(DESCRIPTION_PREFIX)) {
-    return null;
-  }
-
-  const description = firstMeaningfulLine.slice(DESCRIPTION_PREFIX.length).trim();
-  return description.length > 0 ? description : null;
-}
 
 function descriptorForFile(args: {
   name: WorkflowName;
@@ -793,12 +779,12 @@ function withDescriptionHeader(source: string, description: string): string {
   const firstMeaningfulIndex = lines.findIndex((line) => line.trim().length > 0);
   if (
     firstMeaningfulIndex >= 0 &&
-    lines[firstMeaningfulIndex]?.trim().startsWith(DESCRIPTION_PREFIX)
+    lines[firstMeaningfulIndex]?.trim().startsWith(WORKFLOW_DESCRIPTION_PREFIX)
   ) {
-    lines.splice(firstMeaningfulIndex, 1, `${DESCRIPTION_PREFIX} ${description}`);
+    lines.splice(firstMeaningfulIndex, 1, `${WORKFLOW_DESCRIPTION_PREFIX} ${description}`);
     return lines.join("\n");
   }
-  return `${DESCRIPTION_PREFIX} ${description}\n${source}`;
+  return `${WORKFLOW_DESCRIPTION_PREFIX} ${description}\n${source}`;
 }
 
 export class WorkflowDefinitionStore {

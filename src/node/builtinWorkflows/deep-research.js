@@ -58,6 +58,11 @@ export const CLAIM_IMPORTANCE_LEVELS = ["central", "supporting", "tangential"];
 
 const RELEVANCE_LEVELS = ["high", "medium", "low"];
 const CONFIDENCE_LEVELS = ["high", "medium", "low"];
+// The final-synthesis schema has always used low-first ordering while the
+// verification schema is high-first. Keep both historical orders so the
+// readability refactor does not change the provider-visible schema bytes (or
+// the synthesize-report step's replay identity) for fresh runs.
+const REPORT_CONFIDENCE_LEVELS = ["low", "medium", "high"];
 
 // === Structured output schemas ===
 
@@ -150,7 +155,7 @@ const FINAL_SYNTHESIS_SCHEMA = {
   required: ["confidence", "gaps", "findings"],
   additionalProperties: false,
   properties: {
-    confidence: { type: "string", enum: CONFIDENCE_LEVELS },
+    confidence: { type: "string", enum: REPORT_CONFIDENCE_LEVELS },
     gaps: { type: "array", items: { type: "string" } },
     findings: { type: "array", items: { type: "string" } },
   },
@@ -404,8 +409,8 @@ export function interleaveSourcesByAngle(sources, angleCount) {
   const maxBucketLength = buckets.reduce((max, bucket) => Math.max(max, bucket.length), 0);
   const ordered = [];
   for (let offset = 0; offset < maxBucketLength; offset++) {
-    for (let index = 0; index < buckets.length; index++) {
-      if (buckets[index][offset]) ordered.push(buckets[index][offset]);
+    for (const bucket of buckets) {
+      if (bucket[offset]) ordered.push(bucket[offset]);
     }
   }
   return ordered;

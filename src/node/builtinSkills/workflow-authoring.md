@@ -45,6 +45,11 @@ export default function workflow({ args, phase, log, agent, action, parallelAgen
 }
 ```
 
+Top-level named export declarations (`export const|let|var|function|async function|class`) are
+also allowed; `export {...}` lists are not. The export keywords are stripped lexically before
+sandbox evaluation, so never start a line inside a template literal with `export ` — it would be
+silently rewritten.
+
 Reusable project workflows live in `.mux/workflows/<name>.js`; global workflows live in `~/.mux/workflows/<name>.js`. Project and scratch workflows require Project Trust.
 
 ## Running workflows

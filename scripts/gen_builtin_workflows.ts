@@ -19,6 +19,11 @@ import * as fs from "fs";
 import * as path from "path";
 import * as prettier from "prettier";
 import { WorkflowNameSchema } from "../src/common/orpc/schemas/workflow";
+// Shared with the runtime workflow scanner so the `// description:` convention
+// cannot drift between codegen and WorkflowDefinitionStore. workflowDescription
+// is dependency-free, so importing it here cannot recurse into the generated
+// module this script produces.
+import { parseWorkflowDescription } from "../src/node/services/workflows/workflowDescription";
 
 const ARGS = new Set(process.argv.slice(2));
 const MODE = ARGS.has("check") ? "check" : "write";
@@ -34,12 +39,33 @@ const OUTPUT_PATH = path.join(
   "builtInWorkflowContent.generated.ts"
 );
 
-// Matches the scratch-workflow convention: the first line declares the
-// description shown by workflow_list.
-const DESCRIPTION_HEADER_PATTERN = /^\/\/ description:\s*(\S.*)$/;
+// Keep in sync with compileWorkflowSource in src/node/services/workflows/WorkflowRunner.ts.
+// The runtime strip is a lexical transform, so a template-literal line that
+// happens to start with `export const ...` would be silently corrupted before
+// reaching the model. assertNoTemplateLiteralExportLines guards built-ins
+// against that at generation time.
+const NAMED_EXPORT_STRIP_PATTERN =
+  /^export\s+(?=(?:async\s+)?function\s|class\s|const\s|let\s|var\s)/gmu;
 
 function normalizeNewlines(input: string): string {
   return input.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function assertNoTemplateLiteralExportLines(filename: string, source: string): void {
+  const strippableLines = source.match(NAMED_EXPORT_STRIP_PATTERN)?.length ?? 0;
+  // Bun's transpiler is a real parser, so template-literal contents never count
+  // as exports. Every regex-strippable line declares at least one named export,
+  // so more strippable lines than parsed named exports means at least one match
+  // sits inside a template literal (or other non-declaration position).
+  const parsedNamedExports = new Bun.Transpiler({ loader: "js" })
+    .scan(source)
+    .exports.filter((name) => name !== "default").length;
+  assert(
+    strippableLines <= parsedNamedExports,
+    `Built-in workflow ${filename} has ${strippableLines} flush-left 'export <declaration>' lines ` +
+      `but only ${parsedNamedExports} parsed named exports. A template literal likely contains a ` +
+      `flush-left 'export ' line, which compileWorkflowSource would silently corrupt. Indent it.`
+  );
 }
 
 interface BuiltInWorkflowEntry {
@@ -60,10 +86,9 @@ function readWorkflowEntry(filename: string): BuiltInWorkflowEntry {
     fs.readFileSync(path.join(BUILTIN_WORKFLOWS_DIR, filename), "utf-8")
   );
 
-  const firstLine = source.split("\n", 1)[0] ?? "";
-  const descriptionMatch = DESCRIPTION_HEADER_PATTERN.exec(firstLine);
+  const description = parseWorkflowDescription(source);
   assert(
-    descriptionMatch?.[1],
+    description,
     `Built-in workflow ${filename} must start with a '// description: ...' header line`
   );
 
@@ -73,8 +98,9 @@ function readWorkflowEntry(filename: string): BuiltInWorkflowEntry {
     /^export default (?:async )?function/m.test(source),
     `Built-in workflow ${filename} must export a default function`
   );
+  assertNoTemplateLiteralExportLines(filename, source);
 
-  return { name, description: descriptionMatch[1], source };
+  return { name, description, source };
 }
 
 function generate(): string {

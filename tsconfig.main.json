@@ -22,5 +22,5 @@
     "src/node/**/*",
     "src/common/**/*"
   ],
-  "exclude": ["src/browser/**/*", "src/cli/debug/**/*"]
+  "exclude": ["src/browser/**/*", "src/cli/debug/**/*", "src/node/builtinWorkflows/**/*"]
 }

@@ -2171,9 +2171,11 @@ function compileWorkflowSource(source: string): string {
   // tests; only the declaration forms below are supported (no `export {...}`
   // lists). Like the default-export rewrite, this is a lexical transform: a
   // template-literal line inside the workflow that starts with `export ` would
-  // also be rewritten.
+  // also be rewritten. scripts/gen_builtin_workflows.ts guards built-in
+  // sources against that corruption at generation time; scratch/project
+  // authors must keep flush-left `export ` lines out of template literals.
   const withoutNamedExports = source.replace(
-    /^export\s+(?=(?:async\s+)?function\s|const\s|let\s|var\s)/gmu,
+    /^export\s+(?=(?:async\s+)?function\s|class\s|const\s|let\s|var\s)/gmu,
     ""
   );
   const compiled = withoutNamedExports.replace(
