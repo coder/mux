@@ -627,6 +627,11 @@ export async function getToolsForModel(
         config.workflowService && config.experiments?.dynamicWorkflows
       ),
       enableAdvisor: Boolean(config.advisorRuntime),
+      // The Review pane belongs to the user-facing parent workspace. config
+      // .enableAgentReport is the canonical "is sub-agent" signal (set true iff
+      // the workspace has a parentWorkspaceId), so withhold the review_pane_*
+      // tools from sub-agents to keep the toolset in sync with the system prompt.
+      enableReviewPane: !config.enableAgentReport,
       // Mux global tools are always created; tool policy (agent frontmatter)
       // controls which agents can actually use them.
       enableMuxGlobalAgentsTools: true,

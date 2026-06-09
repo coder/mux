@@ -90,6 +90,41 @@ describe("getToolsForModel", () => {
     expect(toolsWithReport.agent_report).toBeDefined();
   });
 
+  test("withholds review_pane_* tools from sub-agents (enableAgentReport=true)", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    // Top-level workspace (not a sub-agent): Review pane tools available.
+    const topLevelTools = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        enableAgentReport: false,
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(topLevelTools.review_pane_update).toBeDefined();
+    expect(topLevelTools.review_pane_get).toBeDefined();
+
+    // Sub-agent (child task workspace): can't pin code to the parent Review pane.
+    const subAgentTools = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        enableAgentReport: true,
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(subAgentTools.review_pane_update).toBeUndefined();
+    expect(subAgentTools.review_pane_get).toBeUndefined();
+  });
+
   test("only includes workflow tools when dynamic workflows service and experiment are enabled", async () => {
     const runtime = new LocalRuntime(process.cwd());
     const initStateManager = createInitStateManager();

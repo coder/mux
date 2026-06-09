@@ -2365,6 +2365,13 @@ export function getAvailableTools(
     enableAnalyticsQuery?: boolean;
     enableAdvisor?: boolean;
     enableDynamicWorkflows?: boolean;
+    /**
+     * Whether the Review pane tools (review_pane_update/review_pane_get) are
+     * available. The Review pane belongs to the user-facing parent workspace,
+     * so sub-agents (child task workspaces) pass false to keep them from
+     * pinning code to a pane the user never sees. Defaults to true.
+     */
+    enableReviewPane?: boolean;
     /** @deprecated Mux global tools are always included. */
     enableMuxGlobalAgentsTools?: boolean;
   }
@@ -2374,6 +2381,7 @@ export function getAvailableTools(
   const enableAnalyticsQuery = options?.enableAnalyticsQuery ?? true;
   const enableAdvisor = options?.enableAdvisor ?? false;
   const enableDynamicWorkflows = options?.enableDynamicWorkflows ?? false;
+  const enableReviewPane = options?.enableReviewPane ?? true;
 
   // Base tools available for all models
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
@@ -2419,8 +2427,7 @@ export function getAvailableTools(
     "complete_goal",
     "todo_write",
     "todo_read",
-    "review_pane_update",
-    "review_pane_get",
+    ...(enableReviewPane ? ["review_pane_update", "review_pane_get"] : []),
     "notify",
     ...(enableAnalyticsQuery ? ["analytics_query"] : []),
     "web_fetch",

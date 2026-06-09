@@ -411,6 +411,22 @@ describe("TOOL_DEFINITIONS", () => {
     expect(tools).toContain("skills_catalog_read");
   });
 
+  it("only includes Review pane tools when enableReviewPane is not disabled", () => {
+    const defaultTools = getAvailableTools("openai:gpt-4o");
+    expect(defaultTools).toContain("review_pane_update");
+    expect(defaultTools).toContain("review_pane_get");
+
+    const enabledTools = getAvailableTools("openai:gpt-4o", { enableReviewPane: true });
+    expect(enabledTools).toContain("review_pane_update");
+    expect(enabledTools).toContain("review_pane_get");
+
+    // Sub-agents pass enableReviewPane: false so they can't pin code to the
+    // user-facing parent Review pane.
+    const subAgentTools = getAvailableTools("openai:gpt-4o", { enableReviewPane: false });
+    expect(subAgentTools).not.toContain("review_pane_update");
+    expect(subAgentTools).not.toContain("review_pane_get");
+  });
+
   it("only includes workflow tools when dynamic workflows are enabled", () => {
     const disabledTools = getAvailableTools("openai:gpt-4o", { enableDynamicWorkflows: false });
     expect(disabledTools).not.toContain("workflow_list");

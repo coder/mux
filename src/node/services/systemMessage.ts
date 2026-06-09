@@ -246,6 +246,7 @@ export function extractToolInstructions(
   modelString: string,
   options?: {
     enableAgentReport?: boolean;
+    enableReviewPane?: boolean;
     enableMuxGlobalAgentsTools?: boolean;
     agentInstructions?: string;
   }
