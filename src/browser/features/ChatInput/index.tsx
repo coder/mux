@@ -31,6 +31,7 @@ import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { ThinkingSliderComponent } from "@/browser/components/ThinkingSlider/ThinkingSlider";
+import { ServiceTierPicker } from "@/browser/components/ServiceTierPicker/ServiceTierPicker";
 import {
   getAllowedRuntimeModesForUi,
   isParsedRuntimeAllowedByPolicy,
@@ -38,8 +39,10 @@ import {
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
+import { useServiceTier } from "@/browser/hooks/useServiceTier";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
+import { withServiceTierOverride } from "@/common/utils/ai/serviceTier";
 import {
   useAdditionalSystemContextHydrated,
   useAdditionalSystemContextSnapshot,
@@ -713,10 +716,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   }, [variant, startTutorial]);
 
   // Get current send message options from shared hook (must be at component top level)
-  // For creation variant, use project-scoped key; for workspace, use workspace ID
-  const sendMessageOptions = useSendMessageOptions(
-    variant === "workspace" ? props.workspaceId : getProjectScopeId(creationParentProjectPath)
-  );
+  // For creation variant, use project-scoped key; for workspace, use workspace ID.
+  // Shared so the service-tier override and send options resolve the same scope.
+  const sendOptionsScopeId =
+    variant === "workspace" ? props.workspaceId : getProjectScopeId(creationParentProjectPath);
+  const sendMessageOptions = useSendMessageOptions(sendOptionsScopeId);
+  // The persisted per-chat service tier is also read here so a /<model> one-shot can
+  // re-merge it against the effective (overridden) model. useSendMessageOptions bakes the
+  // tier against the saved model, which may differ from a one-shot model override.
+  const [serviceTierOverride] = useServiceTier(sendOptionsScopeId);
   const additionalSystemContext = useAdditionalSystemContextSnapshot(
     variant === "workspace" ? props.workspaceId : ""
   );
@@ -2665,6 +2673,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ...sendMessageOptions,
           ...compactionOptions,
           ...(modelOverride ? { model: modelOverride } : {}),
+          // Re-merge the per-chat service tier against the one-shot model so Fast/Slow
+          // composes with /<model>[+thinking]: useSendMessageOptions baked the tier against
+          // the saved model, which may not match (or support) the one-shot model override.
+          ...(modelOverride
+            ? {
+                providerOptions: withServiceTierOverride(
+                  sendMessageOptions.providerOptions ?? {},
+                  serviceTierOverride,
+                  modelOverride
+                ),
+              }
+            : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
           ...(goalInterventionPolicy ? { goalInterventionPolicy } : {}),
@@ -3212,6 +3232,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 >
                   <ThinkingSliderComponent modelString={baseModel} />
                 </div>
+
+                {/* Service-tier (Fast/Slow) speed override. Renders its own root only for
+                    models that support service tiers (OpenAI/GPT today); otherwise it returns
+                    null and occupies no layout space (no stray flex gap). */}
+                <ServiceTierPicker modelString={baseModel} scopeId={sendOptionsScopeId} />
               </div>
 
               <div

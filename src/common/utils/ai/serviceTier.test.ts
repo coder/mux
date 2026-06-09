@@ -1,0 +1,107 @@
+import { describe, it, expect } from "bun:test";
+import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import {
+  getServiceTierSpeed,
+  getServiceTierSpeedLabel,
+  SERVICE_TIER_FAST,
+  SERVICE_TIER_SLOW,
+  supportsServiceTier,
+  withServiceTierOverride,
+} from "./serviceTier";
+
+const OPENAI_MODEL = "openai:gpt-5.5";
+const ANTHROPIC_MODEL = "anthropic:claude-haiku-4-5";
+
+describe("serviceTier helpers", () => {
+  describe("getServiceTierSpeed", () => {
+    it("collapses concrete tiers into UI speed buckets", () => {
+      expect(getServiceTierSpeed("priority")).toBe("fast");
+      expect(getServiceTierSpeed("flex")).toBe("slow");
+    });
+
+    it("treats auto/default/absent as the neutral default", () => {
+      expect(getServiceTierSpeed("auto")).toBe("default");
+      expect(getServiceTierSpeed("default")).toBe("default");
+      expect(getServiceTierSpeed(null)).toBe("default");
+      expect(getServiceTierSpeed(undefined)).toBe("default");
+    });
+  });
+
+  describe("getServiceTierSpeedLabel", () => {
+    it("renders provider-agnostic labels", () => {
+      expect(getServiceTierSpeedLabel("fast")).toBe("Fast");
+      expect(getServiceTierSpeedLabel("slow")).toBe("Slow");
+      expect(getServiceTierSpeedLabel("default")).toBe("Auto");
+    });
+  });
+
+  describe("supportsServiceTier", () => {
+    it("is supported for direct OpenAI models", () => {
+      expect(supportsServiceTier(OPENAI_MODEL)).toBe(true);
+      expect(supportsServiceTier(ANTHROPIC_MODEL)).toBe(false);
+      expect(supportsServiceTier("google:gemini-3.1-pro-preview")).toBe(false);
+    });
+
+    it("is NOT supported for non-passthrough gateway-routed OpenAI models", () => {
+      // openrouter:openai/gpt-5 canonicalizes to "openai", but openrouter is a
+      // non-passthrough gateway, so the backend drops serviceTier — a silent no-op.
+      expect(supportsServiceTier("openrouter:openai/gpt-5")).toBe(false);
+      // github-copilot is another non-passthrough gateway (canonical github-copilot).
+      expect(supportsServiceTier("github-copilot:gpt-5.5")).toBe(false);
+    });
+
+    it("is supported for passthrough gateway-routed OpenAI models", () => {
+      // mux-gateway is a passthrough gateway: it forwards openai provider options.
+      expect(supportsServiceTier("mux-gateway:openai/gpt-4o")).toBe(true);
+    });
+  });
+
+  describe("withServiceTierOverride", () => {
+    it("attaches the tier under openai for supported models", () => {
+      const result = withServiceTierOverride({}, SERVICE_TIER_FAST, OPENAI_MODEL);
+      expect(result.openai?.serviceTier).toBe("priority");
+    });
+
+    it("preserves other openai provider options", () => {
+      const result = withServiceTierOverride(
+        { openai: { wireFormat: "responses" } },
+        SERVICE_TIER_SLOW,
+        OPENAI_MODEL
+      );
+      expect(result.openai?.serviceTier).toBe("flex");
+      expect(result.openai?.wireFormat).toBe("responses");
+    });
+
+    it("returns options unchanged when there is no override", () => {
+      const input = { anthropic: { use1MContext: true } };
+      expect(withServiceTierOverride(input, null, OPENAI_MODEL)).toBe(input);
+      expect(withServiceTierOverride(input, undefined, OPENAI_MODEL)).toBe(input);
+    });
+
+    it("never attaches a tier for unsupported models", () => {
+      const input = {};
+      const result = withServiceTierOverride(input, SERVICE_TIER_FAST, ANTHROPIC_MODEL);
+      expect(result).toBe(input);
+      expect(result.openai).toBeUndefined();
+    });
+
+    it("strips a stale tier when re-merged against an unsupported model", () => {
+      // Simulates a /<model> one-shot switching from an OpenAI saved model (tier baked in)
+      // to a non-OpenAI model: the tier must not ride along on the Anthropic request.
+      const input: MuxProviderOptions = {
+        openai: { wireFormat: "responses", serviceTier: "priority" },
+      };
+      const result = withServiceTierOverride(input, SERVICE_TIER_FAST, ANTHROPIC_MODEL);
+      expect(result.openai?.serviceTier).toBeUndefined();
+      expect(result.openai?.wireFormat).toBe("responses");
+      // Input is left untouched.
+      expect(input.openai?.serviceTier).toBe("priority");
+    });
+
+    it("does not mutate the input options", () => {
+      const input: MuxProviderOptions = { openai: { wireFormat: "responses" } };
+      withServiceTierOverride(input, SERVICE_TIER_FAST, OPENAI_MODEL);
+      expect(input.openai?.serviceTier).toBeUndefined();
+    });
+  });
+});

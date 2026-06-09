@@ -179,6 +179,15 @@ export function getThinkingLevelKey(scopeId: string): string {
 }
 
 /**
+ * Get the localStorage key for the chat-specific service-tier override per scope
+ * (workspace/project). `null` means no override (use the provider/global default).
+ * Format: "serviceTier:{scopeId}"
+ */
+export function getServiceTierKey(scopeId: string): string {
+  return `serviceTier:${scopeId}`;
+}
+
+/**
  * Get the localStorage key for per-agent workspace AI overrides cache.
  * Format: "workspaceAiSettingsByAgent:{workspaceId}"
  */
@@ -748,6 +757,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getAgentIdKey,
   getPinnedAgentIdKey,
   getThinkingLevelKey,
+  getServiceTierKey,
   getReviewStateKey,
   getHunkFirstSeenKey,
   getReviewExpandStateKey,

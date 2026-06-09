@@ -10,6 +10,7 @@ import type {
 import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import { buildRuntimeConfig, RUNTIME_MODE } from "@/common/types/runtime";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { ServiceTier } from "@/common/config/schemas/providersConfig";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -22,6 +23,7 @@ import {
   getNotifyOnResponseAutoEnableKey,
   getNotifyOnResponseKey,
   getThinkingLevelKey,
+  getServiceTierKey,
   getWorkspaceAISettingsByAgentKey,
   getPendingScopeId,
   getDraftScopeId,
@@ -111,6 +113,16 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
   );
   if (projectThinkingLevel !== null) {
     updatePersistedState(getThinkingLevelKey(workspaceId), projectThinkingLevel);
+  }
+
+  // Carry the chat-specific service-tier (Fast/Slow) override chosen during creation
+  // into the new workspace so the first and subsequent messages stay consistent.
+  const projectServiceTier = readPersistedState<ServiceTier | null>(
+    getServiceTierKey(projectScopeId),
+    null
+  );
+  if (projectServiceTier !== null) {
+    updatePersistedState(getServiceTierKey(workspaceId), projectServiceTier);
   }
 
   if (projectModel) {

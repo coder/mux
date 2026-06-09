@@ -15,6 +15,7 @@ import {
   getPendingScopeId,
   getPendingWorkspaceSendErrorKey,
   getProjectScopeId,
+  getServiceTierKey,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
@@ -709,6 +710,8 @@ describe("useCreationWorkspace", () => {
     persistedPreferences[getAgentIdKey(getProjectScopeId(TEST_PROJECT_PATH))] = "plan";
     // Set model preference for the project scope (read by getSendOptionsFromStorage)
     persistedPreferences[getModelKey(getProjectScopeId(TEST_PROJECT_PATH))] = "gpt-4";
+    // Chat-specific service-tier override chosen during creation must follow the workspace.
+    persistedPreferences[getServiceTierKey(getProjectScopeId(TEST_PROJECT_PATH))] = "priority";
 
     draftSettingsState = createDraftSettingsHarness({
       selectedRuntime: { mode: "ssh", host: "example.com" },
@@ -769,6 +772,11 @@ describe("useCreationWorkspace", () => {
     // Thinking is workspace-scoped, but this test doesn't set a project-scoped thinking preference.
     expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
+    // The creation-time service-tier override is carried into the new workspace scope.
+    expect(updatePersistedStateCalls).toContainEqual([
+      getServiceTierKey(TEST_WORKSPACE_ID),
+      "priority",
+    ]);
   });
 
   test("handleSend creates workspace and applies initial goal command without sending chat text", async () => {

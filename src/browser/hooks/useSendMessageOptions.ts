@@ -9,6 +9,8 @@ import {
 import { DEFAULT_MODEL_KEY, getModelKey } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import { useProviderOptions } from "./useProviderOptions";
+import { useServiceTier } from "./useServiceTier";
+import { withServiceTierOverride } from "@/common/utils/ai/serviceTier";
 import { useExperimentOverrideValue } from "./useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
@@ -74,11 +76,21 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     metadataSettings.model ?? defaultModel
   );
 
+  // Per-chat service-tier override (Fast/Slow). It rides along in providerOptions so the
+  // backend applies it per request without persisting to workspace metadata. Only attached
+  // for models that honor service tiers (OpenAI today).
+  const [serviceTierOverride] = useServiceTier(workspaceId);
+  const effectiveProviderOptions = withServiceTierOverride(
+    providerOptions,
+    serviceTierOverride,
+    baseModel
+  );
+
   const options = buildSendMessageOptions({
     agentId,
     thinkingLevel,
     model: baseModel,
-    providerOptions,
+    providerOptions: effectiveProviderOptions,
     experiments: {
       programmaticToolCalling,
       programmaticToolCallingExclusive,

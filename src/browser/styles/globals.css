@@ -88,6 +88,12 @@
     --color-thinking-mode-light: hsl(271 76% 65%);
     --color-thinking-border: hsl(271 76% 53%);
 
+    /* Service tier (Fast/Slow speed override).
+       Fast = energetic orange (low latency); Slow = calm blue (lower cost).
+       Defined once at the theme root and inherited by all themes. */
+    --color-service-tier-fast: hsl(28 96% 54%);
+    --color-service-tier-slow: hsl(206 90% 56%);
+
     /* Runtime icon colors (matches Tailwind blue-500/purple-500) */
     --color-runtime-ssh: #3b82f6;
     --color-runtime-ssh-text: #60a5fa; /* blue-400 */
