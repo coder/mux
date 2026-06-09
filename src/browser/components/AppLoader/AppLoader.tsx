@@ -11,6 +11,7 @@ import { useGitStatusStoreRaw } from "../../stores/GitStatusStore";
 import { useRuntimeStatusStoreRaw } from "../../stores/RuntimeStatusStore";
 import { useBackgroundBashStoreRaw } from "../../stores/BackgroundBashStore";
 import { getPRStatusStoreInstance } from "../../stores/PRStatusStore";
+import { getProvidersConfigStore } from "../../stores/ProvidersConfigStore";
 import { ProjectProvider, useProjectContext } from "../../contexts/ProjectContext";
 import { PolicyProvider, usePolicy } from "@/browser/contexts/PolicyContext";
 import { PolicyBlockedScreen } from "@/browser/components/PolicyBlockedScreen/PolicyBlockedScreen";
@@ -182,6 +183,7 @@ function AppLoaderInner() {
     runtimeStatusStore.setClient(api ?? null);
     backgroundBashStore.setClient(api ?? null);
     getPRStatusStoreInstance().setClient(api ?? null);
+    getProvidersConfigStore().setClient(api ?? null);
 
     if (!workspaceContext.loading) {
       workspaceStoreInstance.syncWorkspaces(workspaceContext.workspaceMetadata);

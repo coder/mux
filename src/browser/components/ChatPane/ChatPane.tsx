@@ -23,6 +23,7 @@ import { StreamingBarrier } from "@/browser/features/Messages/ChatBarrier/Stream
 import { RetryBarrier } from "@/browser/features/Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "../PinnedTodoList/PinnedTodoList";
 import { ChatInputDecorationStackLane, TranscriptTailStackLane } from "./LayoutStackLane";
+import { computeChatViewReveal, useChatViewDataReady } from "./useChatViewDataReady";
 import { TranscriptHydrationSkeleton } from "./TranscriptHydrationSkeleton";
 import {
   createChatInputDecorationStackItem,
@@ -337,6 +338,11 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   const use1M = has1MContext(pendingModel);
 
   const { config: providersConfig } = useProvidersConfig();
+
+  // First-paint readiness barrier: all decoration data sources known (or the
+  // resilience deadline passed). Gates the reveal so decorations can't pop in
+  // after the transcript is visible.
+  const chatViewDataReady = useChatViewDataReady(workspaceId);
 
   const { threshold: autoCompactionThreshold } = useAutoCompactionSettings(
     workspaceId,
@@ -972,9 +978,16 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   const shouldShowStreamingBarrier = isStreamStarting || canInterrupt;
   // Keep rendering cached transcript rows during incremental catch-up so workspace switches
   // feel stable, but active stream-start/interrupt states should keep their barrier visible
-  // instead of flashing full-height transcript placeholders.
-  const showTranscriptHydrationPlaceholder =
-    isHydratingTranscript && deferredMessages.length === 0 && !shouldShowStreamingBarrier;
+  // instead of flashing full-height transcript placeholders. The skeleton additionally holds
+  // until decoration data sources are known so the transcript and all composer decorations
+  // reveal in ONE commit — see useChatViewDataReady for the contract.
+  const { showHydrationPlaceholder: showTranscriptHydrationPlaceholder, revealDecorations } =
+    computeChatViewReveal({
+      isHydratingTranscript,
+      chatViewDataReady,
+      hasRenderableMessages: deferredMessages.length > 0,
+      shouldShowStreamingBarrier,
+    });
   const showEmptyTranscriptPlaceholder =
     deferredMessages.length === 0 &&
     !showTranscriptHydrationPlaceholder &&
@@ -1234,7 +1247,10 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
             onContextMenu={transcriptContextMenu.onContextMenu}
             tabIndex={0}
             data-testid="message-window"
-            data-loaded={!loading && !isHydratingTranscript}
+            // Settled marker for perf tests and story play helpers: includes
+            // decoration data readiness so waiting on it observes the chat
+            // view's final (post-reveal) layout.
+            data-loaded={!loading && !isHydratingTranscript && chatViewDataReady}
             // Browser scroll anchoring stays ENABLED on the scrollport; the
             // overflow-anchor policy lives on the inner content (opt rows out while
             // locked so the bottom sentinel is the sole anchor). No bottom padding:
@@ -1520,6 +1536,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                     workspaceId={workspaceId}
                     projectName={projectName}
                     workspaceName={workspaceName}
+                    revealDecorations={revealDecorations}
                     isStreamStarting={isStreamStarting}
                     isTranscriptCaughtUp={isTranscriptCaughtUp}
                     runtimeConfig={runtimeConfig}
@@ -1581,6 +1598,12 @@ interface ChatInputPaneProps {
   workspaceId: string;
   projectName: string;
   workspaceName: string;
+  /**
+   * False until the chat view's one-commit reveal (transcript + decorations
+   * together). The decoration lane stays empty before that so a decoration
+   * can never mount after paint and shift the transcript.
+   */
+  revealDecorations: boolean;
   runtimeConfig?: RuntimeConfig;
   isPreStreamAgentTask: boolean;
   preStreamAgentTaskStatus: "queued" | "starting";
@@ -1712,11 +1735,14 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   // The decoration lane lives inside the in-flow sticky composer dock, so a
   // decoration mounting/unmounting reflows the transcript clearance in the same
   // layout pass; the bottom stays pinned via native anchoring plus the
-  // scrollport-children ResizeObserver in useAutoScroll.
+  // scrollport-children ResizeObserver in useAutoScroll. Until the one-commit
+  // reveal the lane renders empty: readiness is monotonic per mounted
+  // workspace, so this only ever delays the initial mount — it never unmounts
+  // visible decorations.
 
   return (
     <>
-      <ChatInputDecorationStackLane items={decorationEntries} />
+      <ChatInputDecorationStackLane items={props.revealDecorations ? decorationEntries : []} />
       <ChatInput
         key={props.workspaceId}
         variant="workspace"
