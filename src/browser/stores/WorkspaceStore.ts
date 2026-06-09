@@ -663,6 +663,16 @@ export class WorkspaceStore {
   // Workspaces whose persisted session usage fetch has settled (success or
   // failure). Distinguishes "usage unknown" from "no usage" for the same
   // first-paint barrier (CompactionWarning derives from usage).
+  //
+  // Deliberately LATCHED per session: revisiting a workspace re-fetches usage
+  // (setActiveWorkspaceId), but the barrier keeps revealing with last-known
+  // usage rather than waiting for the refresh. Resetting this per refresh
+  // would flip useChatViewDataReady false on every workspace switch and
+  // unmount/remount the whole composer decoration lane (a guaranteed flash)
+  // to guard against a rare one (usage changed while inactive AND crossed the
+  // compaction threshold — a genuine live state change, allowed to move UI
+  // like any other live event). The barrier's contract is "never paint
+  // unknown as absent", not "freeze data that legitimately updates".
   private sessionUsageKnown = new Set<string>();
 
   private activeGoalCount = 0;
