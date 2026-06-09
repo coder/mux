@@ -1,4 +1,8 @@
-import { highlightDiffChunk, isWithinDiffHighlightSyncBudget } from "./highlightDiffChunk";
+import {
+  highlightDiffChunk,
+  highlightDiffChunks,
+  isWithinDiffHighlightSyncBudget,
+} from "./highlightDiffChunk";
 import type { DiffChunk } from "./diffChunking";
 
 /**
@@ -196,6 +200,70 @@ describe("highlightDiffChunk", () => {
       // Should not have the line wrapper in extracted content
       expect(result.lines[0].html).not.toMatch(/^<span class="line">/);
       expect(result.usedFallback).toBe(false);
+    });
+
+    it("should preserve chunk metadata when highlighting multiple chunks together", async () => {
+      const chunks: DiffChunk[] = [
+        {
+          type: "context",
+          lines: ["export function value() {"],
+          startIndex: 0,
+          oldLineNumbers: [1],
+          newLineNumbers: [1],
+        },
+        {
+          type: "remove",
+          lines: ['  return "pending";'],
+          startIndex: 1,
+          oldLineNumbers: [2],
+          newLineNumbers: [null],
+        },
+        {
+          type: "add",
+          lines: ['  return "ready";', "}"],
+          startIndex: 2,
+          oldLineNumbers: [null, 3],
+          newLineNumbers: [2, 3],
+        },
+      ];
+
+      const result = await highlightDiffChunks(chunks, "typescript");
+
+      expect(result.map((chunk) => chunk.type)).toEqual(["context", "remove", "add"]);
+      expect(result.every((chunk) => chunk.usedFallback === false)).toBe(true);
+      expect(result[0].lines[0].oldLineNumber).toBe(1);
+      expect(result[1].lines[0].newLineNumber).toBeNull();
+      expect(result[2].lines[0].originalIndex).toBe(2);
+      expect(result[2].lines[1].html).toContain("}");
+      expect(
+        result.flatMap((chunk) => chunk.lines).every((line) => line.html.includes("<span"))
+      ).toBe(true);
+    });
+
+    it("should not let removed syntax state bleed into added chunks", async () => {
+      const removedChunk: DiffChunk = {
+        type: "remove",
+        lines: ["/* removed version starts a comment"],
+        startIndex: 0,
+        oldLineNumbers: [1],
+        newLineNumbers: [null],
+      };
+      const addedChunk: DiffChunk = {
+        type: "add",
+        lines: ["const added = 1;"],
+        startIndex: 1,
+        oldLineNumbers: [null],
+        newLineNumbers: [1],
+      };
+
+      const highlightedTogether = await highlightDiffChunks(
+        [removedChunk, addedChunk],
+        "typescript"
+      );
+      const highlightedAddedAlone = await highlightDiffChunk(addedChunk, "typescript");
+
+      expect(highlightedTogether[1].lines[0].html).toBe(highlightedAddedAlone.lines[0].html);
+      expect(highlightedTogether[1].lines[0].html).toContain("const");
     });
 
     it("should handle incomplete syntax (unclosed string)", async () => {

@@ -535,6 +535,14 @@ export function getReviewStateKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for selected review hunk per workspace.
+ * Format: "review-selected-hunk:{workspaceId}"
+ */
+export function getReviewSelectedHunkKey(workspaceId: string): string {
+  return `review-selected-hunk:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for hunk first-seen timestamps per workspace
  * Tracks when each hunk content address was first observed (for LIFO sorting)
  * Format: "hunkFirstSeen:{workspaceId}"
@@ -748,6 +756,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getAgentIdKey,
   getPinnedAgentIdKey,
   getThinkingLevelKey,
+  getReviewSelectedHunkKey,
   getReviewStateKey,
   getHunkFirstSeenKey,
   getReviewExpandStateKey,

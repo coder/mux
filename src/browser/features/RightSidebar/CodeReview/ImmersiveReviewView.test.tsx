@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import { useEffect, useState, type ComponentProps } from "react";
 
@@ -114,36 +114,6 @@ function renderImmersiveReview(
   );
 }
 
-function installManualAnimationFrame() {
-  let nextFrameId = 1;
-  const callbacks = new Map<number, FrameRequestCallback>();
-
-  const requestAnimationFrameMock = mock((callback: FrameRequestCallback) => {
-    const frameId = nextFrameId;
-    nextFrameId += 1;
-    callbacks.set(frameId, callback);
-    return frameId;
-  }) as unknown as typeof globalThis.requestAnimationFrame;
-  const cancelAnimationFrameMock = mock((frameId: number) => {
-    callbacks.delete(frameId);
-  }) as unknown as typeof globalThis.cancelAnimationFrame;
-
-  globalThis.requestAnimationFrame = requestAnimationFrameMock;
-  globalThis.cancelAnimationFrame = cancelAnimationFrameMock;
-  globalThis.window.requestAnimationFrame = requestAnimationFrameMock;
-  globalThis.window.cancelAnimationFrame = cancelAnimationFrameMock;
-
-  return {
-    flush() {
-      const pendingCallbacks = Array.from(callbacks.values());
-      callbacks.clear();
-      for (const callback of pendingCallbacks) {
-        callback(performance.now());
-      }
-    },
-  };
-}
-
 describe("ImmersiveReviewView", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
@@ -195,102 +165,6 @@ describe("ImmersiveReviewView", () => {
     globalThis.navigator = originalNavigator;
     globalThis.requestAnimationFrame = originalRequestAnimationFrame;
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
-  });
-
-  test("renders the hunk overlay while full-file context is still pending", async () => {
-    type ExecuteBashValue = Awaited<ReturnType<MockApiClient["workspace"]["executeBash"]>>;
-    let resolveRead: ((value: ExecuteBashValue) => void) | undefined;
-    const pendingRead = new Promise<ExecuteBashValue>((resolve) => {
-      resolveRead = resolve;
-    });
-    mockApi.workspace.executeBash = mock(() => pendingRead);
-
-    const view = renderImmersiveReview();
-
-    expect(view.container.textContent ?? "").toContain("new line");
-    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalledTimes(1));
-
-    if (!resolveRead) {
-      throw new Error("Read promise resolver was not captured");
-    }
-    resolveRead({
-      success: true,
-      data: {
-        success: true,
-        output: "0",
-        exitCode: 0,
-      },
-    });
-  });
-
-  test("keeps hydrated full-file context behind the reveal gate until positioned", async () => {
-    type ExecuteBashValue = Awaited<ReturnType<MockApiClient["workspace"]["executeBash"]>>;
-    let resolveRead: ((value: ExecuteBashValue) => void) | undefined;
-    const pendingRead = new Promise<ExecuteBashValue>((resolve) => {
-      resolveRead = resolve;
-    });
-    mockApi.workspace.executeBash = mock(() => pendingRead);
-    const animationFrame = installManualAnimationFrame();
-
-    const hunk = createHunk({
-      newStart: 3,
-      oldStart: 3,
-      header: "@@ -3 +3 @@",
-      content: "-old selected line\n+new selected line",
-    });
-
-    const view = renderImmersiveReview({
-      fileTree: createFileTree(hunk.filePath),
-      hunks: [hunk],
-      allHunks: [hunk],
-      selectedHunkId: hunk.id,
-      isTouchImmersive: false,
-    });
-
-    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalledTimes(1));
-    expect(view.getByTestId("immersive-diff-reveal-overlay").textContent ?? "").toContain(
-      "Loading file"
-    );
-    expect(view.getByTestId("immersive-diff-reveal-stage").className).toContain("invisible");
-
-    act(() => animationFrame.flush());
-    await waitFor(() => expect(view.queryByTestId("immersive-diff-reveal-overlay")).toBeNull());
-    expect(view.getByTestId("immersive-diff-reveal-stage").className).not.toContain("invisible");
-
-    const resolveLoadedContent = resolveRead;
-    if (!resolveLoadedContent) {
-      throw new Error("Read promise resolver was not captured");
-    }
-
-    act(() => {
-      resolveLoadedContent({
-        success: true,
-        data: {
-          success: true,
-          output: encodeFileReadOutput(
-            ["context before selected 1", "context before selected 2", "new selected line"].join(
-              "\n"
-            )
-          ),
-          exitCode: 0,
-        },
-      });
-    });
-
-    await waitFor(() =>
-      expect(view.getByTestId("immersive-diff-reveal-overlay").textContent ?? "").toContain(
-        "Preparing diff"
-      )
-    );
-    expect(view.container.textContent ?? "").toContain("context before selected 1");
-    expect(view.getByTestId("immersive-diff-reveal-stage").className).toContain("invisible");
-    expect(view.getByTestId("immersive-minimap-reveal-stage").className).toContain("h-full");
-    expect(view.getByTestId("immersive-minimap-reveal-stage").className).toContain("invisible");
-
-    act(() => animationFrame.flush());
-    await waitFor(() => expect(view.queryByTestId("immersive-diff-reveal-overlay")).toBeNull());
-    expect(view.getByTestId("immersive-diff-reveal-stage").className).not.toContain("invisible");
-    expect(view.getByTestId("immersive-minimap-reveal-stage").className).not.toContain("invisible");
   });
 
   test("only preserves context cursors while overlay content is unchanged", () => {
@@ -439,6 +313,197 @@ describe("ImmersiveReviewView", () => {
     view.rerender(renderView(regularHunk.id, [regularHunk]));
     expect(view.getByTestId("immersive-assisted-banner-slot")).toBeTruthy();
     expect(view.queryByTestId("immersive-assisted-banner")).toBeNull();
+  });
+
+  test("normalizes CRLF hunk rows in compact overlays", () => {
+    const crlfHunk = createHunk({
+      id: "hunk-crlf",
+      oldStart: 5000,
+      newStart: 5000,
+      header: "@@ -5000 +5000 @@",
+      content: "-old crlf\r\n+new crlf\r\n context crlf\r",
+    });
+
+    const view = renderImmersiveReview({
+      fileTree: createFileTree(crlfHunk.filePath),
+      hunks: [crlfHunk],
+      allHunks: [crlfHunk],
+      selectedHunkId: crlfHunk.id,
+    });
+
+    expect(view.container.textContent ?? "").toContain("new crlf");
+    expect(view.container.textContent ?? "").not.toContain("\r");
+  });
+
+  test("defers the compact diff renderer while full-file context is pending", async () => {
+    type ExecuteBashResult = Awaited<ReturnType<MockApiClient["workspace"]["executeBash"]>>;
+    let resolveRead: (result: ExecuteBashResult) => void = () => {
+      throw new Error("executeBash was not called");
+    };
+    mockApi.workspace.executeBash = mock(
+      () =>
+        new Promise<ExecuteBashResult>((resolve) => {
+          resolveRead = resolve;
+        })
+    );
+
+    const view = renderImmersiveReview();
+
+    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalledTimes(1));
+    expect(view.getByTestId("immersive-diff-reveal-skeleton")).toBeTruthy();
+    // Full-file hydration is the expected end state for this hunk, so do not spend
+    // a hidden render/highlight pass on the compact hunk rows that would be thrown away.
+    expect(view.container.textContent ?? "").not.toContain("new line");
+
+    resolveRead({
+      success: true as const,
+      data: {
+        success: true,
+        output: encodeFileReadOutput("new line\ncontext after selected hunk\n"),
+        exitCode: 0,
+      },
+    });
+
+    await waitFor(() =>
+      expect(view.container.textContent ?? "").toContain("context after selected hunk")
+    );
+  });
+
+  test("keeps same-file hunk-set changes instant without re-reading or re-covering", async () => {
+    // Two in-budget hunks in one file. After the file hydrates, marking a hunk read while
+    // read hunks are hidden removes it from the visible set and rebuilds the overlay. That
+    // rebuild must stay an in-memory, instant operation: no second file read (the body is
+    // cached per file path) and no loading cover (the file is already on screen).
+    const hunkA = createHunk({
+      id: "hunk-a",
+      newStart: 5,
+      newLines: 1,
+      header: "@@ -5 +5 @@",
+      content: "-old a\n+new a",
+    });
+    const hunkB = createHunk({
+      id: "hunk-b",
+      newStart: 10,
+      newLines: 1,
+      header: "@@ -10 +10 @@",
+      content: "-old b\n+new b",
+    });
+
+    const fileBody = `${Array.from({ length: 20 }, (_, index) => `file line ${index + 1}`).join(
+      "\n"
+    )}\n`;
+    let readCount = 0;
+    mockApi.workspace.executeBash = mock(() => {
+      readCount += 1;
+      return Promise.resolve({
+        success: true as const,
+        data: { success: true, output: encodeFileReadOutput(fileBody), exitCode: 0 },
+      });
+    });
+
+    const renderView = (hunks: DiffHunk[], selectedHunkId: string) => (
+      <ThemeProvider forcedTheme="dark">
+        <ImmersiveReviewView
+          workspaceId="workspace-1"
+          fileTree={createFileTree(hunkA.filePath)}
+          hunks={hunks}
+          allHunks={[hunkA, hunkB]}
+          isRead={() => false}
+          onToggleRead={mock(() => undefined)}
+          onMarkFileAsRead={mock(() => undefined)}
+          selectedHunkId={selectedHunkId}
+          onSelectHunk={mock(() => undefined)}
+          onExit={mock(() => undefined)}
+          isTouchImmersive={true}
+          reviewsByFilePath={new Map()}
+          firstSeenMap={{}}
+        />
+      </ThemeProvider>
+    );
+
+    const view = render(renderView([hunkA, hunkB], hunkA.id));
+
+    // Full-file context hydrates and the loading cover clears (file is on screen).
+    await waitFor(() => expect(view.container.textContent ?? "").toContain("file line 12"));
+    await waitFor(() => expect(view.queryByTestId("immersive-diff-reveal-overlay")).toBeNull());
+    const readsAfterHydration = readCount;
+    expect(readsAfterHydration).toBeGreaterThanOrEqual(1);
+
+    // Mark hunk A read (hidden): the visible hunk set shrinks to [hunkB] in the same file.
+    view.rerender(renderView([hunkB], hunkB.id));
+
+    // Give any (incorrect) re-read / re-cover a chance to appear before asserting it did not.
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(readCount).toBe(readsAfterHydration);
+    expect(view.queryByTestId("immersive-diff-reveal-overlay")).toBeNull();
+    expect(view.queryByTestId("immersive-diff-reveal-skeleton")).toBeNull();
+    expect(view.container.textContent ?? "").toContain("file line 12");
+  });
+
+  test("re-reads the full-file body when the file's diff content changes", async () => {
+    const baseHunk = createHunk({
+      id: "hunk-a",
+      newStart: 5,
+      newLines: 1,
+      header: "@@ -5 +5 @@",
+      content: "-old a\n+new a v1",
+    });
+    // Same id (hash of path + line ranges) but different content, as if a tool edited the
+    // file in place and the diff was re-fetched. Content -- not the id -- must invalidate
+    // the cached full-file body so reviewers never see stale surrounding lines.
+    const editedHunk = createHunk({
+      id: "hunk-a",
+      newStart: 5,
+      newLines: 1,
+      header: "@@ -5 +5 @@",
+      content: "-old a\n+new a v2",
+    });
+
+    const fileBody = `${Array.from({ length: 20 }, (_, index) => `file line ${index + 1}`).join(
+      "\n"
+    )}\n`;
+    let readCount = 0;
+    mockApi.workspace.executeBash = mock(() => {
+      readCount += 1;
+      return Promise.resolve({
+        success: true as const,
+        data: { success: true, output: encodeFileReadOutput(fileBody), exitCode: 0 },
+      });
+    });
+
+    const renderView = (hunk: DiffHunk) => (
+      <ThemeProvider forcedTheme="dark">
+        <ImmersiveReviewView
+          workspaceId="workspace-1"
+          fileTree={createFileTree(baseHunk.filePath)}
+          hunks={[hunk]}
+          allHunks={[hunk]}
+          isRead={() => false}
+          onToggleRead={mock(() => undefined)}
+          onMarkFileAsRead={mock(() => undefined)}
+          selectedHunkId={hunk.id}
+          onSelectHunk={mock(() => undefined)}
+          onExit={mock(() => undefined)}
+          isTouchImmersive={true}
+          reviewsByFilePath={new Map()}
+          firstSeenMap={{}}
+        />
+      </ThemeProvider>
+    );
+
+    const view = render(renderView(baseHunk));
+    // Full-file context hydrates: a context-only line from the file body is visible.
+    await waitFor(() => expect(view.container.textContent ?? "").toContain("file line 12"));
+    const readsAfterFirstHydration = readCount;
+
+    // The diff content changed in place. The cached body must be invalidated, and the stale
+    // full-file context must NOT remain on screen while the new body re-reads -- settled
+    // state is tracked by content version, so the overlay drops to the compact hunk (which
+    // does not include the file-body context line) until the fresh body loads.
+    view.rerender(renderView(editedHunk));
+    expect(view.container.textContent ?? "").not.toContain("file line 12");
+    await waitFor(() => expect(readCount).toBeGreaterThan(readsAfterFirstHydration));
+    await waitFor(() => expect(view.container.textContent ?? "").toContain("file line 12"));
   });
 
   test("loads full-file context for an in-budget selected hunk even when another hunk is far away", async () => {
@@ -602,6 +667,136 @@ describe("ImmersiveReviewView", () => {
 
     expect(view.queryByTestId("immersive-review-complete")).toBeNull();
     expect(view.getByText("No hunks for this file")).toBeTruthy();
+  });
+
+  test("marking an unread hunk as read advances to the next hunk even when read hunks stay visible", async () => {
+    const firstHunk = createHunk({
+      id: "hunk-first",
+      filePath: "src/example.ts",
+      newStart: 1,
+      newLines: 1,
+      oldStart: 1,
+      oldLines: 1,
+      header: "@@ -1 +1 @@",
+      content: "-old first\n+new first",
+    });
+    const secondHunk = createHunk({
+      id: "hunk-second",
+      filePath: "src/example.ts",
+      newStart: 3,
+      newLines: 1,
+      oldStart: 3,
+      oldLines: 1,
+      header: "@@ -3 +3 @@",
+      content: "-old second\n+new second",
+    });
+    const onToggleRead = mock(() => undefined);
+
+    const view = renderImmersiveReview({
+      fileTree: createFileTree(firstHunk.filePath),
+      hunks: [firstHunk, secondHunk],
+      allHunks: [firstHunk, secondHunk],
+      selectedHunkId: firstHunk.id,
+      onToggleRead,
+      isTouchImmersive: false,
+    });
+
+    expect(
+      view.getByTestId("immersive-review-view").getAttribute("data-selected-hunk-position")
+    ).toBe("1");
+
+    const markReadButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Mark hunk as read"]'
+    );
+    expect(markReadButton).toBeTruthy();
+    fireEvent.click(markReadButton!);
+
+    await waitFor(() =>
+      expect(
+        view.getByTestId("immersive-review-view").getAttribute("data-selected-hunk-position")
+      ).toBe("2")
+    );
+    expect(onToggleRead).toHaveBeenCalledWith(firstHunk.id);
+  });
+
+  test("marking a locally navigated hunk as read ignores the parent selection echo", async () => {
+    const firstHunk = createHunk({
+      id: "hunk-first",
+      filePath: "src/example.ts",
+      newStart: 1,
+      oldStart: 1,
+      header: "@@ -1 +1 @@",
+      content: "-old first\n+new first",
+    });
+    const secondHunk = createHunk({
+      id: "hunk-second",
+      filePath: "src/example.ts",
+      newStart: 3,
+      oldStart: 3,
+      header: "@@ -3 +3 @@",
+      content: "-old second\n+new second",
+    });
+    const thirdHunk = createHunk({
+      id: "hunk-third",
+      filePath: "src/example.ts",
+      newStart: 5,
+      oldStart: 5,
+      header: "@@ -5 +5 @@",
+      content: "-old third\n+new third",
+    });
+    const onToggleRead = mock(() => undefined);
+
+    function ParentEchoHarness() {
+      const [parentSelectedHunkId, setParentSelectedHunkId] = useState<string | null>(firstHunk.id);
+
+      return (
+        <ThemeProvider forcedTheme="dark">
+          <ImmersiveReviewView
+            workspaceId="workspace-1"
+            fileTree={createFileTree(firstHunk.filePath)}
+            hunks={[firstHunk, secondHunk, thirdHunk]}
+            allHunks={[firstHunk, secondHunk, thirdHunk]}
+            isRead={() => false}
+            onToggleRead={onToggleRead}
+            onMarkFileAsRead={mock(() => undefined)}
+            selectedHunkId={parentSelectedHunkId}
+            onSelectHunk={setParentSelectedHunkId}
+            onExit={mock(() => undefined)}
+            isTouchImmersive={false}
+            reviewsByFilePath={new Map()}
+            firstSeenMap={{}}
+          />
+        </ThemeProvider>
+      );
+    }
+
+    const view = render(<ParentEchoHarness />);
+
+    const findMarkReadButton = () =>
+      view.container.querySelector<HTMLButtonElement>('button[aria-label="Mark hunk as read"]');
+
+    const firstMarkReadButton = findMarkReadButton();
+    expect(firstMarkReadButton).toBeTruthy();
+    fireEvent.click(firstMarkReadButton!);
+    await waitFor(() =>
+      expect(
+        view.getByTestId("immersive-review-view").getAttribute("data-selected-hunk-position")
+      ).toBe("2")
+    );
+
+    const secondMarkReadButton = findMarkReadButton();
+    expect(secondMarkReadButton).toBeTruthy();
+    fireEvent.click(secondMarkReadButton!);
+
+    // The parent commits the just-read second hunk after the click. Keep the
+    // immersive-local work queue on the third hunk instead of replaying that echo.
+    await waitFor(() =>
+      expect(
+        view.getByTestId("immersive-review-view").getAttribute("data-selected-hunk-position")
+      ).toBe("3")
+    );
+    expect(onToggleRead).toHaveBeenCalledWith(firstHunk.id);
+    expect(onToggleRead).toHaveBeenCalledWith(secondHunk.id);
   });
 
   test("clicking a sidebar review selects its hunk even when hidden by the active filter", () => {

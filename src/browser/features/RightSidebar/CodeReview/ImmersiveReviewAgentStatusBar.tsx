@@ -55,28 +55,27 @@ export const ImmersiveReviewAgentStatusBar: React.FC<ImmersiveReviewAgentStatusB
   // `todos` keeps a stable reference from the aggregator (same basis as
   // PinnedTodoList reading only `.todos`).
   const workspaceStore = useWorkspaceStoreRaw();
+  const hasRegisteredWorkspace = () =>
+    // Some unit tests mock only the store selectors they exercise; keep the
+    // immersive status bar crash-safe in those partial-store environments too.
+    typeof workspaceStore.hasRegisteredWorkspace === "function" &&
+    workspaceStore.hasRegisteredWorkspace(workspaceId);
   const subscribe = (callback: () => void) =>
-    workspaceStore.hasRegisteredWorkspace(workspaceId)
-      ? workspaceStore.subscribeKey(workspaceId, callback)
-      : () => undefined;
+    hasRegisteredWorkspace() ? workspaceStore.subscribeKey(workspaceId, callback) : () => undefined;
   const todos = useSyncExternalStore(subscribe, () =>
-    workspaceStore.hasRegisteredWorkspace(workspaceId)
-      ? workspaceStore.getWorkspaceState(workspaceId).todos
-      : EMPTY_TODOS
+    hasRegisteredWorkspace() ? workspaceStore.getWorkspaceState(workspaceId).todos : EMPTY_TODOS
   );
   const canInterrupt = useSyncExternalStore(subscribe, () =>
-    workspaceStore.hasRegisteredWorkspace(workspaceId)
-      ? workspaceStore.getWorkspaceState(workspaceId).canInterrupt
-      : false
+    hasRegisteredWorkspace() ? workspaceStore.getWorkspaceState(workspaceId).canInterrupt : false
   );
   // Sidebar derives `isStarting` directly from `isStreamStarting`.
   const isStarting = useSyncExternalStore(subscribe, () =>
-    workspaceStore.hasRegisteredWorkspace(workspaceId)
+    hasRegisteredWorkspace()
       ? workspaceStore.getWorkspaceState(workspaceId).isStreamStarting
       : false
   );
   const awaitingUserQuestion = useSyncExternalStore(subscribe, () =>
-    workspaceStore.hasRegisteredWorkspace(workspaceId)
+    hasRegisteredWorkspace()
       ? workspaceStore.getWorkspaceState(workspaceId).awaitingUserQuestion
       : false
   );
