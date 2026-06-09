@@ -5,6 +5,7 @@ import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+import { isErrnoWithCode } from "@/node/utils/fs";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
@@ -125,7 +126,7 @@ export class SessionUsageService {
       const data = await fs.readFile(this.getFilePath(workspaceId), "utf-8");
       return JSON.parse(data) as SessionUsageFile;
     } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      if (isErrnoWithCode(error, "ENOENT")) {
         return this.createEmptyUsageFile();
       }
       throw error;
@@ -346,7 +347,7 @@ export class SessionUsageService {
         return JSON.parse(data) as SessionUsageFile;
       } catch (error) {
         // File missing or corrupted - try to rebuild from messages
-        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        if (isErrnoWithCode(error, "ENOENT")) {
           const messages = await this.collectFullHistory(workspaceId);
           if (messages.length > 0) {
             await this.rebuildFromMessagesInternal(workspaceId, messages);
@@ -517,7 +518,7 @@ export class SessionUsageService {
       try {
         await fs.unlink(this.getFilePath(workspaceId));
       } catch (error) {
-        if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
+        if (!isErrnoWithCode(error, "ENOENT")) {
           throw error;
         }
       }
