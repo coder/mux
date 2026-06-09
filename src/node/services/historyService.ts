@@ -10,7 +10,7 @@ import {
   type MuxMetadata,
 } from "@/common/types/message";
 import type { Config } from "@/node/config";
-import { ensurePrivateDir } from "@/node/utils/fs";
+import { ensurePrivateDir, isErrnoWithCode } from "@/node/utils/fs";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 import { log } from "./log";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
@@ -410,7 +410,7 @@ export class HistoryService {
 
       return messages;
     } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      if (isErrnoWithCode(error, "ENOENT")) {
         return []; // No history yet
       }
       throw error; // Re-throw non-ENOENT errors
@@ -438,7 +438,7 @@ export class HistoryService {
       const stat = await fs.stat(filePath);
       fileSize = stat.size;
     } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      if (isErrnoWithCode(error, "ENOENT")) {
         return; // No history
       }
       throw error;
@@ -532,7 +532,7 @@ export class HistoryService {
       const stat = await fs.stat(filePath);
       fileSize = stat.size;
     } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      if (isErrnoWithCode(error, "ENOENT")) {
         return; // No history
       }
       throw error;
@@ -862,7 +862,7 @@ export class HistoryService {
       const message = JSON.parse(data) as MuxMessage;
       return normalizeLegacyMuxMetadata(message);
     } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      if (isErrnoWithCode(error, "ENOENT")) {
         return null;
       }
 
@@ -910,7 +910,7 @@ export class HistoryService {
         await fs.unlink(partialPath);
         return Ok(undefined);
       } catch (error) {
-        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        if (isErrnoWithCode(error, "ENOENT")) {
           return Ok(undefined);
         }
         const errorMessage = getErrorMessage(error);
@@ -939,7 +939,7 @@ export class HistoryService {
         await fs.unlink(partialPath);
         return Ok(true);
       } catch (error) {
-        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        if (isErrnoWithCode(error, "ENOENT")) {
           return Ok(false);
         }
         const errorMessage = getErrorMessage(error);
@@ -1414,9 +1414,7 @@ export class HistoryService {
             await fs.unlink(historyPath);
           } catch (error) {
             // Ignore ENOENT - file already deleted
-            if (
-              !(error && typeof error === "object" && "code" in error && error.code === "ENOENT")
-            ) {
+            if (!isErrnoWithCode(error, "ENOENT")) {
               throw error;
             }
           }
@@ -1465,9 +1463,7 @@ export class HistoryService {
             await fs.unlink(historyPath);
           } catch (error) {
             // Ignore ENOENT
-            if (
-              !(error && typeof error === "object" && "code" in error && error.code === "ENOENT")
-            ) {
+            if (!isErrnoWithCode(error, "ENOENT")) {
               throw error;
             }
           }
