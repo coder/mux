@@ -1068,19 +1068,23 @@ export class WorkspaceStore {
     client.workspace
       .getSessionUsage({ workspaceId })
       .then((data) => {
-        // Any settled fetch makes the usage "known" (including known-empty) —
-        // the chat view's first-paint barrier distinguishes that from
-        // not-yet-loaded so usage-derived banners can't pop in after reveal.
-        this.markSessionUsageKnown(workspaceId);
-        if (!data) {
-          return;
-        }
-        // Stale-response guard: a newer refresh was issued while this one was in-flight.
+        // Stale-response guard: a newer refresh was issued while this one was
+        // in-flight. The newer request owns the "known" flip too — flipping it
+        // here would let the chat view reveal before the latest usage landed,
+        // re-opening the post-reveal pop-in this barrier exists to prevent.
         if ((this.sessionUsageRequestVersion.get(workspaceId) ?? 0) !== requestVersion) {
           return;
         }
         // Workspace may have been removed while the fetch was in-flight.
         if (!this.isWorkspaceRegistered(workspaceId)) {
+          return;
+        }
+        // The latest settled fetch makes the usage "known" (including a null
+        // response = known-empty) — the chat view's first-paint barrier
+        // distinguishes that from not-yet-loaded so usage-derived banners
+        // can't pop in after reveal.
+        this.markSessionUsageKnown(workspaceId);
+        if (!data) {
           return;
         }
 
@@ -1097,8 +1101,12 @@ export class WorkspaceStore {
       })
       .catch((error) => {
         console.warn(`Failed to fetch session usage for ${workspaceId}:`, error);
-        // Self-heal: a failed fetch must not hold the first-paint barrier.
-        this.markSessionUsageKnown(workspaceId);
+        // Self-heal: a failed LATEST fetch must not hold the first-paint
+        // barrier. Stale failures defer to the newer in-flight request, same
+        // as the success path above.
+        if ((this.sessionUsageRequestVersion.get(workspaceId) ?? 0) === requestVersion) {
+          this.markSessionUsageKnown(workspaceId);
+        }
       });
   }
 
