@@ -365,6 +365,26 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns all 6 levels for Mythos-class Fable 5 / Mythos 5", () => {
+    // Fable / Mythos sit above Opus and support the native xhigh effort level.
+    expect(getThinkingPolicyForModel("anthropic:claude-fable-5")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(getThinkingPolicyForModel("anthropic:claude-mythos-5")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+  });
+
   test("returns 5 levels including xhigh for Sonnet 4.6", () => {
     expect(getThinkingPolicyForModel("anthropic:claude-sonnet-4-6")).toEqual([
       "off",
