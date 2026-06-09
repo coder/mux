@@ -65,6 +65,14 @@ import { streamToString, shescape } from "./streamUtils";
 /** Staging namespace for synced branch refs. Branches land here instead of
  *  refs/heads/* so they don't collide with branches checked out in worktrees. */
 const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
+/**
+ * The shared SSH base repo is a bare common git dir, not a checkout. Keeping
+ * HEAD on trunk makes checkout-aware tools like Graphite think trunk is checked
+ * out at `.mux-base.git`, so point it at an internal unborn ref instead.
+ */
+const BASE_REPO_SENTINEL_HEAD_REF = "refs/mux-internal/base-head";
+const BASE_REPO_SHARED_CONFIG_KEYS_TO_UNSET = ["core.bare", "core.worktree"] as const;
+type BaseRepoSharedConfigKey = (typeof BASE_REPO_SHARED_CONFIG_KEYS_TO_UNSET)[number];
 
 /** Small backoff for concurrent writers healing the same shared base repo config. */
 const BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS = [50, 100, 200];
@@ -1190,20 +1198,35 @@ export class SSHRuntime extends RemoteRuntime {
     const parentDirArg = expandTildeForSSH(path.posix.dirname(baseRepoPath));
 
     // STARTUP-PERF: This used to be 3-5 sequential SSH round-trips
-    // (test -d, mkdir, git init, unset core.bare, unset 3× promisor keys).
+    // (test -d, mkdir, git init, normalize base config, unset 3× promisor keys).
     // Each round-trip costs ~80-100ms even over a multiplexed control channel,
     // so on a cold SSH workspace this single batched command shaves ~500ms off
     // the critical path of `mux run --runtime ssh <host>`.
     //
-    // The script is split into two well-defined sections, each producing a
-    // status sentinel that the caller parses:
-    //
-    //   STATUS_CREATED=<existed|created>   — repo presence/creation outcome
-    //   STATUS_CORE_BARE=<unset|absent|locked|error>  — normalization result
+    // The script emits status sentinels that the caller parses for repo
+    // creation, shared config-key normalization, and base HEAD normalization.
     //
     // Promisor keys are idempotently neutered as a best-effort epilogue (no
     // sentinel needed; failures fall through harmlessly because subsequent
     // pushes can re-run the cleanup if a deadlock recurs).
+    const baseRepoSentinelHeadArg = shescape.quote(BASE_REPO_SENTINEL_HEAD_REF);
+    const configUnsetCmds = BASE_REPO_SHARED_CONFIG_KEYS_TO_UNSET.map((key) => {
+      const statusName = key.replace(".", "_").toUpperCase();
+      const errorPath = `/tmp/.mux-${key.replace(".", "-")}-$$.err`;
+      return [
+        `git --git-dir=${baseRepoPathArg} config --local --unset-all ${shescape.quote(key)} 2>${errorPath}`,
+        "rc=$?",
+        'if [ "$rc" -eq 0 ]; then',
+        `  echo STATUS_${statusName}=unset`,
+        'elif [ "$rc" -eq 5 ]; then',
+        `  echo STATUS_${statusName}=absent`,
+        "else",
+        `  echo STATUS_${statusName}=error`,
+        `  cat ${errorPath} >&2 2>/dev/null || true`,
+        "fi",
+        `rm -f ${errorPath} 2>/dev/null || true`,
+      ].join("\n");
+    }).join("\n");
     const promisorUnsetCmds = BASE_REPO_PROMISOR_CONFIG_KEYS.map(
       (key) => `git -C ${baseRepoPathArg} config --unset-all ${key} 2>/dev/null || true`
     ).join("\n");
@@ -1224,29 +1247,28 @@ export class SSHRuntime extends RemoteRuntime {
       "  fi",
       "  echo STATUS_CREATED=created",
       "fi",
-      // 2. Normalize core.bare in the *local* config — see
-      //    normalizeBaseRepoSharedConfig() for full context.
-      //    Exit codes: 0 = removed, 5 = key absent.  Anything else needs the
-      //    retry/inspect dance, which the caller handles by re-running the
-      //    slow-path helper.
-      `git -C ${baseRepoPathArg} config --local --unset-all core.bare 2>/tmp/.mux-corebare.err`,
-      "rc=$?",
-      'if [ "$rc" -eq 0 ]; then',
-      "  echo STATUS_CORE_BARE=unset",
-      'elif [ "$rc" -eq 5 ]; then',
-      "  echo STATUS_CORE_BARE=absent",
+      // 2. Normalize shared config keys in the *local* config — see
+      //    normalizeBaseRepoSharedConfigKeys() for full context. Exit codes:
+      //    0 = removed, 5 = key absent. Anything else needs the retry/inspect
+      //    dance, which the caller handles by re-running the slow-path helper.
+      configUnsetCmds,
+      // 3. Keep the base repo's own HEAD off trunk so checkout-aware tooling
+      //    doesn't mistake `.mux-base.git` for the user's trunk worktree.
+      `current_head=$(git --git-dir=${baseRepoPathArg} symbolic-ref HEAD 2>/dev/null || true)`,
+      `if [ "$current_head" = ${baseRepoSentinelHeadArg} ]; then`,
+      "  echo STATUS_BASE_HEAD=already",
+      `elif git --git-dir=${baseRepoPathArg} symbolic-ref HEAD ${baseRepoSentinelHeadArg} 2>/tmp/.mux-base-head-$$.err; then`,
+      "  echo STATUS_BASE_HEAD=set",
       "else",
-      // Surface the stderr to the caller so the slow-path retry can decide
-      // whether this is a lock conflict (transient) or a real error.
-      "  echo STATUS_CORE_BARE=error",
-      "  cat /tmp/.mux-corebare.err >&2 2>/dev/null || true",
+      "  echo STATUS_BASE_HEAD=error",
+      "  cat /tmp/.mux-base-head-$$.err >&2 2>/dev/null || true",
       "fi",
-      "rm -f /tmp/.mux-corebare.err 2>/dev/null || true",
-      // 3. Idempotently strip partial-clone / promisor keys (always best-effort).
+      "rm -f /tmp/.mux-base-head-$$.err 2>/dev/null || true",
+      // 4. Idempotently strip partial-clone / promisor keys (always best-effort).
       //    See stripBaseRepoPromisorConfig() docstring for the upstream Git
       //    sideband-deadlock bug this guards against.
       promisorUnsetCmds,
-      // 4. Force receive-pack to use index-pack (with `--fix-thin`) instead of
+      // 5. Force receive-pack to use index-pack (with `--fix-thin`) instead of
       //    `unpack-objects` for incoming pushes, regardless of object count.
       //    This avoids the "unresolved deltas left after unpacking" /
       //    "unpacker error" failure mode where small thin pushes (below the
@@ -1272,42 +1294,82 @@ export class SSHRuntime extends RemoteRuntime {
     }
 
     const created = result.stdout.includes("STATUS_CREATED=created");
-    const coreBareStatus = /STATUS_CORE_BARE=(\w+)/.exec(result.stdout)?.[1];
+    const configStatuses = new Map(
+      BASE_REPO_SHARED_CONFIG_KEYS_TO_UNSET.map((key) => [
+        key,
+        new RegExp(`STATUS_${key.replace(".", "_").toUpperCase()}=(\\w+)`).exec(result.stdout)?.[1],
+      ])
+    );
+    const baseHeadStatus = /STATUS_BASE_HEAD=(\w+)/.exec(result.stdout)?.[1];
 
     if (created) {
       initLogger.logStep("Created shared base repository");
     }
 
-    if (coreBareStatus === "unset") {
+    let loggedConfigNormalization = false;
+    if ([...configStatuses.values()].some((status) => status === "unset")) {
       initLogger.logStep("Normalized shared base repository config for worktrees");
-    } else if (coreBareStatus === "error") {
+      loggedConfigNormalization = true;
+    }
+
+    const configErrorKeys = BASE_REPO_SHARED_CONFIG_KEYS_TO_UNSET.filter(
+      (key) => configStatuses.get(key) === "error"
+    );
+    if (configErrorKeys.length > 0) {
       // Fall back to the slow-path retry helper, which handles lock conflicts
-      // by re-trying with backoff and inspecting whether the key is still set.
-      const normalized = await this.normalizeBaseRepoSharedConfig(baseRepoPathArg, abortSignal);
-      if (normalized) {
+      // by re-trying with backoff and inspecting whether each key is still set.
+      const normalized = await this.normalizeBaseRepoSharedConfigKeys(
+        baseRepoPathArg,
+        configErrorKeys,
+        abortSignal
+      );
+      if (normalized && !loggedConfigNormalization) {
         initLogger.logStep("Normalized shared base repository config for worktrees");
       }
     }
-    // STATUS_CORE_BARE=absent: nothing to do.
+
+    if (baseHeadStatus === "set") {
+      initLogger.logStep("Pointed shared base repository HEAD at internal sentinel");
+    } else if (baseHeadStatus === "error") {
+      throw new Error(
+        `Failed to normalize base repo HEAD: ${result.stderr.trim() || result.stdout.trim()}`
+      );
+    }
 
     return { baseRepoPathArg, freshlyCreated: created };
   }
 
   /**
-   * Keep the shared SSH base repo bare by layout instead of by sharing `core.bare`
-   * through the repo's common config. Linked worktrees consult that local config too,
-   * so leaving `core.bare=true` there leaks bare-repo metadata into normal workspace
-   * checkouts even though Git can infer the host repo is bare from its directory
-   * layout alone.
+   * Keep the shared SSH base repo bare by layout instead of by sharing checkout
+   * config through the repo's common config. Linked worktrees consult that local
+   * config too, so leaving keys like `core.bare` or `core.worktree` there leaks
+   * base-repo metadata into normal workspace checkouts.
    */
-  private async normalizeBaseRepoSharedConfig(
+  private async normalizeBaseRepoSharedConfigKeys(
     baseRepoPathArg: string,
+    keys: readonly BaseRepoSharedConfigKey[],
     abortSignal?: AbortSignal
   ): Promise<boolean> {
+    let normalized = false;
+    for (const key of keys) {
+      normalized =
+        (await this.normalizeBaseRepoSharedConfigKey(baseRepoPathArg, key, abortSignal)) ||
+        normalized;
+    }
+    return normalized;
+  }
+
+  private async normalizeBaseRepoSharedConfigKey(
+    baseRepoPathArg: string,
+    key: BaseRepoSharedConfigKey,
+    abortSignal?: AbortSignal
+  ): Promise<boolean> {
+    const keyArg = shescape.quote(key);
+
     for (let attempt = 0; attempt <= BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS.length; attempt++) {
       const unsetResult = await execBuffered(
         this,
-        `git -C ${baseRepoPathArg} config --local --unset-all core.bare`,
+        `git --git-dir=${baseRepoPathArg} config --local --unset-all ${keyArg}`,
         {
           cwd: "/tmp",
           timeout: 10,
@@ -1325,12 +1387,12 @@ export class SSHRuntime extends RemoteRuntime {
 
       const errorDetail = unsetResult.stderr || unsetResult.stdout;
       if (!isGitConfigLockConflict(errorDetail)) {
-        throw new Error(`Failed to normalize base repo config: ${errorDetail}`);
+        throw new Error(`Failed to normalize base repo config ${key}: ${errorDetail}`);
       }
 
       const inspectResult = await execBuffered(
         this,
-        `git -C ${baseRepoPathArg} config --local --get core.bare`,
+        `git --git-dir=${baseRepoPathArg} config --local --get ${keyArg}`,
         {
           cwd: "/tmp",
           timeout: 10,
@@ -1344,12 +1406,12 @@ export class SSHRuntime extends RemoteRuntime {
 
       if (inspectResult.exitCode !== 0) {
         throw new Error(
-          `Failed to inspect base repo config after lock conflict: ${inspectResult.stderr || inspectResult.stdout}`
+          `Failed to inspect base repo config ${key} after lock conflict: ${inspectResult.stderr || inspectResult.stdout}`
         );
       }
 
       if (attempt === BASE_REPO_CONFIG_LOCK_RETRY_DELAYS_MS.length) {
-        throw new Error(`Failed to normalize base repo config: ${errorDetail}`);
+        throw new Error(`Failed to normalize base repo config ${key}: ${errorDetail}`);
       }
 
       // Another initWorkspace may be healing the same shared base repo; if the
@@ -2511,6 +2573,7 @@ export class SSHRuntime extends RemoteRuntime {
     }
     const snapshotDigest = crypto.createHash("sha256").update(headsOutput).digest("hex");
     const baseRepoPathArg = expandTildeForSSH(layout.baseRepoPath);
+    const baseRepoSentinelHeadArg = shescape.quote(BASE_REPO_SENTINEL_HEAD_REF);
     const currentSnapshotPathArg = expandTildeForSSH(layout.currentSnapshotPath);
     const workspacePathArg = expandTildeForSSH(workspacePath);
     const workspaceParentArg = expandTildeForSSH(
@@ -2555,6 +2618,14 @@ export class SSHRuntime extends RemoteRuntime {
     //      when `fetchedOrigin` is false. The fetch runs on the SSH host, so
     //      its latency is upstream→datacenter (typically fast, and the same
     //      cost the slow path pays separately).
+    const warmBaseRepoNormalizationPreamble = [
+      ...BASE_REPO_SHARED_CONFIG_KEYS_TO_UNSET.map(
+        (key) =>
+          `git --git-dir=${baseRepoPathArg} config --local --unset-all ${shescape.quote(key)} 2>/dev/null || true`
+      ),
+      `git --git-dir=${baseRepoPathArg} symbolic-ref HEAD ${baseRepoSentinelHeadArg} 2>/dev/null || true`,
+    ];
+
     const originPreamble = originUrlArg
       ? [
           `git -C ${baseRepoPathArg} remote set-url origin ${originUrlArg} 2>/dev/null || git -C ${baseRepoPathArg} remote add origin ${originUrlArg} >/dev/null 2>&1 || true`,
@@ -2574,6 +2645,8 @@ export class SSHRuntime extends RemoteRuntime {
       `read -r s < ${currentSnapshotPathArg} || true`,
       `[ "$s" = ${digestArg} ] || { echo WARM_MISS:snapshot-digest-drift; exit 0; }`,
       `test -e ${workspacePathArg} && { echo WARM_MISS:workspace-exists; exit 0; }`,
+      // Best-effort base-repo hygiene before the warm path reuses the shared gitdir.
+      ...warmBaseRepoNormalizationPreamble,
       // Optional origin fetch (preserves slow-path origin-freshness).
       ...originPreamble,
       // Choose the worktree base ref. Prefer freshly-fetched
@@ -2591,8 +2664,10 @@ export class SSHRuntime extends RemoteRuntime {
       // fall through to the repairing slow path instead of becoming an opaque
       // `worktree-add-failed` miss. The path was proven absent above, so removing
       // a partial checkout here cannot wipe a pre-existing workspace.
+      // Detached add keeps `.mux-base.git/HEAD` on the internal sentinel; the
+      // branch is attached inside the new worktree immediately afterward.
       `mkdir -p ${workspaceParentArg}`,
-      `wt_output=$(${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${branchArg} "$r" 2>&1 >/dev/null)`,
+      `wt_output=$(${nhp}git -C ${baseRepoPathArg} worktree add --detach ${workspacePathArg} "$r" 2>&1 >/dev/null && ${nhp}git -C ${workspacePathArg} checkout -B ${branchArg} 2>&1 >/dev/null)`,
       "wt_status=$?",
       'if [ "$wt_status" -ne 0 ]; then',
       '  case "$wt_output" in',
@@ -2747,15 +2822,29 @@ export class SSHRuntime extends RemoteRuntime {
         abortSignal
       );
 
-      // git worktree add creates the directory and checks out the branch in one step.
-      // -B creates the branch or resets it to the start point if it already exists
-      // (e.g. orphaned from a previously deleted workspace). Git still prevents
-      // checking out a branch that's active in another worktree.
+      // Keep the base repo's HEAD on the internal sentinel: add a detached
+      // worktree from the chosen start point, then attach/reset the workspace
+      // branch inside the new worktree. `checkout -B` creates the branch or
+      // resets it to the start point if it already exists (e.g. orphaned from a
+      // previously deleted workspace). Git still prevents checking out a branch
+      // that's active in another worktree.
       initLogger.logStep(`Creating worktree for branch: ${branchName}`);
       const runWorktreeAdd = (baseRef: string) =>
         execBuffered(
           this,
-          `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(baseRef)}`,
+          [
+            `${nhp}git -C ${baseRepoPathArg} worktree add --detach ${workspacePathArg} ${shescape.quote(baseRef)}`,
+            "worktree_add_status=$?",
+            'if [ "$worktree_add_status" -ne 0 ]; then exit "$worktree_add_status"; fi',
+            `${nhp}git -C ${workspacePathArg} checkout -B ${shescape.quote(branchName)}`,
+            "checkout_status=$?",
+            'if [ "$checkout_status" -ne 0 ]; then',
+            !workspacePathExistedBeforeCheckout
+              ? `  git -C ${baseRepoPathArg} worktree remove --force ${workspacePathArg} >/dev/null 2>&1 || rm -rf ${workspacePathArg}`
+              : "  true",
+            '  exit "$checkout_status"',
+            "fi",
+          ].join("\n"),
           {
             cwd: "/tmp",
             timeout: 300,
@@ -3416,13 +3505,24 @@ export class SSHRuntime extends RemoteRuntime {
 
       if (hasBaseRepo.exitCode === 0) {
         initLogger.logStep("Creating worktree for forked workspace...");
-        // Use -b (not -B) so we fail instead of silently resetting an existing
-        // branch that another worktree might reference. initWorkspace uses -B
-        // because it owns the branch lifecycle; fork is creating a new name.
+        // Use checkout -b (not -B) after the detached add so we fail instead
+        // of silently resetting an existing branch that another worktree might
+        // reference. initWorkspace uses -B because it owns the branch lifecycle;
+        // fork is creating a new name.
         // Stage the worktree under `stagingPath`; `git worktree move` will
         // rename it (and update the bare repo's gitdir back-reference) into
         // `newWorkspacePath` once everything else has succeeded.
-        const worktreeCmd = `${nhp}git -C ${baseRepoPathArg} worktree add ${stagingPathArg} -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
+        const worktreeCmd = [
+          `${nhp}git -C ${baseRepoPathArg} worktree add --detach ${stagingPathArg} ${shescape.quote(sourceBranch)}`,
+          "worktree_add_status=$?",
+          'if [ "$worktree_add_status" -ne 0 ]; then exit "$worktree_add_status"; fi',
+          `${nhp}git -C ${stagingPathArg} checkout -b ${shescape.quote(newWorkspaceName)}`,
+          "checkout_status=$?",
+          'if [ "$checkout_status" -ne 0 ]; then',
+          `  git -C ${baseRepoPathArg} worktree remove --force ${stagingPathArg} >/dev/null 2>&1 || rm -rf ${stagingPathArg}`,
+          '  exit "$checkout_status"',
+          "fi",
+        ].join("\n");
         const worktreeResult = await execBuffered(this, worktreeCmd, {
           cwd: "/tmp",
           timeout: 60,
