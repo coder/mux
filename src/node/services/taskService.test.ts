@@ -5794,6 +5794,80 @@ describe("TaskService", () => {
     expect(await taskService.filterDescendantAgentTaskIds("other-parent", [childId])).toEqual([]);
   });
 
+  test("descendant scope checks consult persisted failure artifacts after cleanup", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const failedChildId = "child-failed";
+    const workflowChildId = "child-workflow-failed";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [projectWorkspace(projectPath, "parent", parentId)],
+      testTaskSettings(1, 3)
+    );
+
+    const { taskService } = createTaskServiceHarness(config);
+
+    // Both children failed terminally (e.g. model_refusal) and were cleaned up:
+    // no config entry, no report artifact — only the failure artifact remains.
+    await upsertSubagentFailureArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: failedChildId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      errorType: "model_refusal",
+      errorMessage: "Model refused (finishReason: refusal): anthropic:claude-fable-5",
+    });
+    await upsertSubagentFailureArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: workflowChildId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      workflowOwnedAncestorWorkspaceIds: [parentId],
+      errorType: "model_refusal",
+      errorMessage: "Model refused (finishReason: refusal): anthropic:claude-fable-5",
+    });
+
+    // task_await's scope gate must keep the failed child in scope so
+    // waitForAgentReport can surface the persisted typed failure instead of
+    // the await degrading to invalid_scope/not_found.
+    expect(await taskService.filterDescendantAgentTaskIds(parentId, [failedChildId])).toEqual([
+      failedChildId,
+    ]);
+    expect(await taskService.isDescendantAgentTask(parentId, failedChildId)).toBe(true);
+    expect(await taskService.filterDescendantAgentTaskIds("other-parent", [failedChildId])).toEqual(
+      []
+    );
+    expect(await taskService.isDescendantAgentTask("other-parent", failedChildId)).toBe(false);
+
+    // End-to-end through the same call task_await makes after the scope gate.
+    let awaitError: unknown;
+    try {
+      await taskService.waitForAgentReport(failedChildId, {
+        timeoutMs: 10,
+        requestingWorkspaceId: parentId,
+      });
+    } catch (error: unknown) {
+      awaitError = error;
+    }
+    assert(awaitError instanceof Error, "waitForAgentReport should reject with the typed failure");
+    expect(awaitError.message).toContain("Model refused (finishReason: refusal)");
+
+    // A workflow-owned failed child stays excluded from direct task_await,
+    // matching live behavior (its failure is consumed through the workflow run).
+    expect(await taskService.isWorkflowOwnedDescendantAgentTask(parentId, failedChildId)).toBe(
+      false
+    );
+    expect(await taskService.isWorkflowOwnedDescendantAgentTask(parentId, workflowChildId)).toBe(
+      true
+    );
+  });
+
   test("waitForAgentReport falls back to persisted report after cache is cleared", async () => {
     const config = await createTestConfig(rootDir);
 

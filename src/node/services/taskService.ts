@@ -93,6 +93,7 @@ import {
 } from "@/node/services/subagentReportArtifacts";
 import {
   readSubagentFailureArtifact,
+  readSubagentFailureArtifactsFile,
   upsertSubagentFailureArtifact,
 } from "@/node/services/subagentFailureArtifacts";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
@@ -3600,12 +3601,21 @@ export class TaskService {
       return result;
     }
 
+    // Terminal failures persist in a separate artifacts file (a failure must
+    // never masquerade as a completed report), so scope checks must consult
+    // BOTH: a background-failed child that was cleaned up or lost to a restart
+    // must stay in scope for task_await so waitForAgentReport can surface the
+    // persisted typed failure instead of degrading to invalid_scope/not_found.
     const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
-    const persisted = await readSubagentReportArtifactsFile(sessionDir);
+    const [reports, failures] = await Promise.all([
+      readSubagentReportArtifactsFile(sessionDir),
+      readSubagentFailureArtifactsFile(sessionDir),
+    ]);
     for (const taskId of maybePersisted) {
-      const entry = persisted.artifactsByChildTaskId[taskId];
-      if (!entry) continue;
-      if (hasAncestorWorkspaceId(entry, ancestorWorkspaceId)) {
+      if (
+        hasAncestorWorkspaceId(reports.artifactsByChildTaskId[taskId], ancestorWorkspaceId) ||
+        hasAncestorWorkspaceId(failures.failuresByChildTaskId[taskId], ancestorWorkspaceId)
+      ) {
         result.push(taskId);
       }
     }
@@ -3694,7 +3704,18 @@ export class TaskService {
     const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
     const persisted = await readSubagentReportArtifactsFile(sessionDir);
     const entry = persisted.artifactsByChildTaskId[taskId];
-    return hasWorkflowOwnedAncestorWorkspaceId(entry, ancestorWorkspaceId);
+    if (entry != null) {
+      return hasWorkflowOwnedAncestorWorkspaceId(entry, ancestorWorkspaceId);
+    }
+
+    // A workflow-owned child that failed terminally leaves only a failure
+    // artifact. It must stay excluded from direct task_await after cleanup,
+    // matching live behavior: its failure is consumed through the workflow run.
+    const failures = await readSubagentFailureArtifactsFile(sessionDir);
+    return hasWorkflowOwnedAncestorWorkspaceId(
+      failures.failuresByChildTaskId[taskId],
+      ancestorWorkspaceId
+    );
   }
 
   private getWorkflowOwnedDescendantAgentTaskUsingIndex(
@@ -3730,17 +3751,23 @@ export class TaskService {
       return true;
     }
 
-    // The task workspace may have been removed after it reported (cleanup/restart). Preserve scope
-    // checks by consulting persisted report artifacts in the ancestor session dir.
+    // The task workspace may have been removed after it settled (cleanup/restart). Preserve scope
+    // checks by consulting persisted report AND failure artifacts in the ancestor session dir —
+    // a terminally-failed child must stay awaitable so its typed failure can be surfaced.
     const cached = this.completedReportsByTaskId.get(taskId);
     if (hasAncestorWorkspaceId(cached, ancestorWorkspaceId)) {
       return true;
     }
 
     const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
-    const persisted = await readSubagentReportArtifactsFile(sessionDir);
-    const entry = persisted.artifactsByChildTaskId[taskId];
-    return hasAncestorWorkspaceId(entry, ancestorWorkspaceId);
+    const [reports, failures] = await Promise.all([
+      readSubagentReportArtifactsFile(sessionDir),
+      readSubagentFailureArtifactsFile(sessionDir),
+    ]);
+    return (
+      hasAncestorWorkspaceId(reports.artifactsByChildTaskId[taskId], ancestorWorkspaceId) ||
+      hasAncestorWorkspaceId(failures.failuresByChildTaskId[taskId], ancestorWorkspaceId)
+    );
   }
 
   private isDescendantAgentTaskUsingParentById(
