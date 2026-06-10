@@ -157,6 +157,7 @@ describe("WorkflowRunStore", () => {
       stepId: "source-a",
       inputHash: "hash:source-a",
       taskId: "task_source-a",
+      title: "Extract claims from source 1",
       result: { reportMarkdown: "source-a" },
       startedAt: "2026-05-29T00:00:01.000Z",
       completedAt: "2026-05-29T00:00:02.000Z",
@@ -175,6 +176,7 @@ describe("WorkflowRunStore", () => {
       stepId: "source-a",
       taskId: "task_source-a",
       status: "completed",
+      title: "Extract claims from source 1",
     });
   });
 

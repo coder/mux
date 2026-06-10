@@ -1190,6 +1190,7 @@ export class WorkflowRunner {
         await this.recordTaskCompletedEventIfMissing(runId, sequence, {
           stepId: spec.id,
           taskId: existingStep.taskId,
+          title: spec.title,
         });
       }
       return existingStep.result;
@@ -1250,6 +1251,7 @@ export class WorkflowRunner {
           await this.recordTaskCompletedEventIfMissing(runId, sequence, {
             stepId: step.spec.id,
             taskId: existingStep.taskId,
+            title: step.spec.title,
           });
         }
         results[index] = existingStep.result;
@@ -1328,6 +1330,7 @@ export class WorkflowRunner {
                 await this.recordTaskStartedEventIfMissing(runId, sequence, {
                   stepId: step.spec.id,
                   taskId,
+                  title: step.spec.title,
                 });
               },
             }
@@ -1509,6 +1512,7 @@ export class WorkflowRunner {
       await this.recordTaskStartedEventIfMissing(runId, sequence, {
         stepId: step.spec.id,
         taskId: step.taskId,
+        title: step.spec.title,
       });
       try {
         return await this.taskAdapter.waitForAgentTask(step.taskId, step.spec, step.waitOptions);
@@ -1518,6 +1522,7 @@ export class WorkflowRunner {
           await this.recordTaskTerminalEventIfMissing(runId, sequence, {
             stepId: step.spec.id,
             taskId: step.taskId,
+            title: step.spec.title,
             status: getTaskTerminalStatusForError(error, step.waitOptions?.abortSignal),
           });
         }
@@ -1546,6 +1551,7 @@ export class WorkflowRunner {
             await this.recordTaskStartedEventIfMissing(runId, sequence, {
               stepId: step.spec.id,
               taskId,
+              title: step.spec.title,
             });
           },
         },
@@ -1557,6 +1563,7 @@ export class WorkflowRunner {
         await this.recordTaskTerminalEventIfMissing(runId, sequence, {
           stepId: step.spec.id,
           taskId: recordedTaskId,
+          title: step.spec.title,
           status: getTaskTerminalStatusForError(error, step.waitOptions?.abortSignal),
         });
       }
@@ -1573,6 +1580,7 @@ export class WorkflowRunner {
       await this.recordTaskStartedEventIfMissing(runId, sequence, {
         stepId: step.spec.id,
         taskId: rawResult.taskId,
+        title: step.spec.title,
       });
     }
     return rawResult;
@@ -1581,7 +1589,7 @@ export class WorkflowRunner {
   private async recordTaskStartedEventIfMissing(
     runId: string,
     sequence: WorkflowEventSequence,
-    task: { stepId: string; taskId: string }
+    task: { stepId: string; taskId: string; title?: string }
   ): Promise<void> {
     await this.recordTaskEventIfMissing(runId, sequence, { ...task, status: "started" });
   }
@@ -1589,7 +1597,7 @@ export class WorkflowRunner {
   private async recordTaskCompletedEventIfMissing(
     runId: string,
     sequence: WorkflowEventSequence,
-    task: { stepId: string; taskId: string }
+    task: { stepId: string; taskId: string; title?: string }
   ): Promise<void> {
     await this.recordTaskEventIfMissing(runId, sequence, { ...task, status: "completed" });
   }
@@ -1597,7 +1605,7 @@ export class WorkflowRunner {
   private async recordTaskTerminalEventIfMissing(
     runId: string,
     sequence: WorkflowEventSequence,
-    task: { stepId: string; taskId: string; status: "failed" | "interrupted" }
+    task: { stepId: string; taskId: string; title?: string; status: "failed" | "interrupted" }
   ): Promise<void> {
     await this.recordTaskEventIfMissing(runId, sequence, task);
   }
@@ -1605,7 +1613,7 @@ export class WorkflowRunner {
   private async recordTaskEventIfMissing(
     runId: string,
     sequence: WorkflowEventSequence,
-    task: { stepId: string; taskId: string; status: string }
+    task: { stepId: string; taskId: string; title?: string; status: string }
   ): Promise<void> {
     assert(runId.length > 0, "WorkflowRunner.recordTaskEventIfMissing: runId is required");
     assert(task.stepId.length > 0, "WorkflowRunner: task event stepId is required");
@@ -1621,6 +1629,7 @@ export class WorkflowRunner {
         taskId: task.taskId,
         status: task.status,
         at: this.clock.nowIso(),
+        title: task.title,
       },
       { expectedLeaseOwnerId: this.runnerId }
     );
@@ -1698,6 +1707,7 @@ export class WorkflowRunner {
         stepId: step.spec.id,
         inputHash: step.inputHash,
         taskId,
+        title: step.spec.title,
         result,
         startedAt: step.startedAt,
         completedAt,
@@ -1732,6 +1742,7 @@ export class WorkflowRunner {
         stepId: step.spec.id,
         inputHash: step.inputHash,
         taskId,
+        title: step.spec.title,
         error: message,
         startedAt: step.startedAt,
         completedAt: failedAt,

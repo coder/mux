@@ -172,6 +172,60 @@ describe("WorkflowRunner", () => {
     ]);
   });
 
+  test("task events carry the agent spec title and omit it when the spec has none", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-task-event-title");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_titled",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+        agent({ id: "verify-claim-0-vote-2", title: "Verify claim 1 vote 3", prompt: "Verify" });
+        agent({ id: "untitled-step", prompt: "No title" });
+        return { reportMarkdown: "done" };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    let nextTaskNumber = 1;
+    const runner = createRunner(store, {
+      async runAgent() {
+        const taskId = `task_${nextTaskNumber}`;
+        nextTaskNumber += 1;
+        return { taskId, reportMarkdown: "ok" };
+      },
+    });
+
+    await runner.run("wfr_titled");
+    const taskEvents = (await store.getRun("wfr_titled")).events.filter(
+      (event) => event.type === "task"
+    );
+
+    expect(taskEvents).toEqual([
+      expect.objectContaining({
+        stepId: "verify-claim-0-vote-2",
+        title: "Verify claim 1 vote 3",
+        status: "started",
+      }),
+      expect.objectContaining({
+        stepId: "verify-claim-0-vote-2",
+        title: "Verify claim 1 vote 3",
+        status: "completed",
+      }),
+      expect.objectContaining({ stepId: "untitled-step", status: "started" }),
+      expect.objectContaining({ stepId: "untitled-step", status: "completed" }),
+    ]);
+    // Untitled specs must omit the field rather than defaulting it to something else.
+    const untitledEvents = taskEvents.filter((event) => event.stepId === "untitled-step");
+    expect(untitledEvents).toHaveLength(2);
+    for (const event of untitledEvents) {
+      expect(event.title).toBeUndefined();
+    }
+  });
+
   test("returns child task IDs to workflow code", async () => {
     using tmp = new DisposableTempDir("workflow-runner-task-id");
     const store = new WorkflowRunStore({

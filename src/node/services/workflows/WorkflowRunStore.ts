@@ -248,6 +248,7 @@ export class WorkflowRunStore {
       stepId: string;
       inputHash: string;
       taskId?: string;
+      title?: string;
       result: StructuredTaskOutput;
       startedAt: string;
       completedAt: string;
@@ -289,6 +290,7 @@ export class WorkflowRunStore {
               stepId: input.stepId,
               taskId: input.taskId,
               status: "completed",
+              title: input.title,
             },
             options
           );
@@ -309,6 +311,7 @@ export class WorkflowRunStore {
       stepId: string;
       inputHash: string;
       taskId?: string;
+      title?: string;
       error: string;
       startedAt: string;
       completedAt: string;
@@ -365,6 +368,7 @@ export class WorkflowRunStore {
               stepId: input.stepId,
               taskId: input.taskId,
               status: "failed",
+              title: input.title,
             },
             options
           );
@@ -381,7 +385,7 @@ export class WorkflowRunStore {
 
   async appendTaskEventIfMissing(
     runId: string,
-    task: { stepId: string; taskId: string; status: string; at: string },
+    task: { stepId: string; taskId: string; status: string; at: string; title?: string },
     options: AppendWorkflowRunEventOptions = {}
   ): Promise<void> {
     assert(task.stepId.length > 0, "WorkflowRunStore.appendTaskEventIfMissing: stepId is required");
@@ -409,6 +413,7 @@ export class WorkflowRunStore {
             stepId: task.stepId,
             taskId: task.taskId,
             status: task.status,
+            title: task.title,
           },
           options
         );
