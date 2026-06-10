@@ -260,6 +260,7 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   todo_write: List,
   web_fetch: Globe,
   web_search: Globe,
+  "server:GOOGLE_SEARCH_WEB": Globe,
   notify: Bell,
   review_pane_update: Sparkles,
   review_pane_get: ScanEye,

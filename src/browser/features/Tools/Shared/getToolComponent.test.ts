@@ -7,6 +7,7 @@ import { CompleteGoalToolCall } from "../CompleteGoalToolCall";
 import { DesktopActionToolCall } from "../DesktopActionToolCall";
 import { DesktopScreenshotToolCall } from "../DesktopScreenshotToolCall";
 import { GenericToolCall } from "../GenericToolCall";
+import { GoogleSearchToolCall } from "../GoogleSearchToolCall";
 import { WorkflowRunToolCall } from "../WorkflowRunToolCall";
 import { WorkflowListToolCall, WorkflowReadToolCall } from "../WorkflowDefinitionToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
@@ -68,6 +69,19 @@ describe("getToolComponent", () => {
 
   test("falls back to GenericToolCall when args validation fails", () => {
     const component = getToolComponent("agent_report", { reportMarkdown: "" });
+    expect(component).toBe(GenericToolCall);
+  });
+
+  test("returns GoogleSearchToolCall for server:GOOGLE_SEARCH_WEB", () => {
+    expect(getToolComponent("server:GOOGLE_SEARCH_WEB", { queries: ["gemini 3 pricing"] })).toBe(
+      GoogleSearchToolCall
+    );
+    // Streaming/pending args (not yet parsed) must not bounce to the generic renderer.
+    expect(getToolComponent("server:GOOGLE_SEARCH_WEB", {})).toBe(GoogleSearchToolCall);
+  });
+
+  test("server:GOOGLE_SEARCH_WEB falls back to GenericToolCall when args don't conform", () => {
+    const component = getToolComponent("server:GOOGLE_SEARCH_WEB", { queries: "not-an-array" });
     expect(component).toBe(GenericToolCall);
   });
 });

@@ -84,6 +84,23 @@ export function getStatusDisplay(status: ToolStatus): React.ReactNode {
 }
 
 /**
+ * Unwrap JSON container from streamManager's stripEncryptedContent.
+ * Results arrive as { type: "json", value: [...] } or direct array/object.
+ */
+export function unwrapResult(result: unknown): unknown {
+  if (
+    result !== null &&
+    typeof result === "object" &&
+    "type" in result &&
+    (result as { type: string }).type === "json" &&
+    "value" in result
+  ) {
+    return (result as { value: unknown }).value;
+  }
+  return result;
+}
+
+/**
  * Type guard for ToolErrorResult shape: { success: false, error: string }.
  * Use this when you need type narrowing to access error.
  */

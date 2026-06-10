@@ -21,6 +21,7 @@ import { AgentSkillReadFileToolCall } from "../AgentSkillReadFileToolCall";
 import { FileReadToolCall } from "../FileReadToolCall";
 import { WebFetchToolCall } from "../WebFetchToolCall";
 import { WebSearchToolCall } from "../WebSearchToolCall";
+import { GoogleSearchToolCall } from "../GoogleSearchToolCall";
 import { AskUserQuestionToolCall } from "../AskUserQuestionToolCall";
 import { ProposePlanToolCall } from "../ProposePlanToolCall";
 import { TodoToolCall } from "../TodoToolCall";
@@ -198,6 +199,12 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   // Provider-defined tool (Anthropic/OpenAI) - no TOOL_DEFINITIONS entry
   // Anthropic: args.query, OpenAI: args={}, query in result.action.query
   web_search: { component: WebSearchToolCall, schema: z.object({ query: z.string().optional() }) },
+  // Google native search grounding (Gemini 3+), provider-executed — name comes from the wire.
+  // queries stays optional so streaming/pending args don't bounce to GenericToolCall.
+  "server:GOOGLE_SEARCH_WEB": {
+    component: GoogleSearchToolCall,
+    schema: z.object({ queries: z.array(z.string()).optional() }),
+  },
 };
 
 /**
