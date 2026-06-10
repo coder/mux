@@ -131,6 +131,10 @@ export const WorkspaceConfigSchema = z.object({
   taskLaunchError: z.string().optional().meta({
     description: "Startup failure recorded before an agent task could begin streaming.",
   }),
+  taskRecoveryAttempts: z.number().int().nonnegative().optional().meta({
+    description:
+      "Completion-tool recovery prompts sent to this agent task since it last completed successfully. Persisted (not in-memory) so crash/restart recovery loops stay bounded; cleared on a successful report, on plan-to-exec handoff, and on user-initiated resume.",
+  }),
   reportedAt: z.string().optional().meta({
     description: "ISO 8601 timestamp for when an agent task reported completion (optional).",
   }),
@@ -139,6 +143,10 @@ export const WorkspaceConfigSchema = z.object({
   }),
   taskThinkingLevel: ThinkingLevelSchema.optional().meta({
     description: "Thinking level used for this agent task (used for restart-safe resumptions).",
+  }),
+  taskOnRefusal: z.enum(["fail", "fallback"]).optional().meta({
+    description:
+      "Model-refusal policy for this agent task: 'fail' opts out of configured model-fallback chains so refusals settle terminally (e.g. workflow verifier steps). Default behavior is 'fallback'.",
   }),
   taskPrompt: z.string().optional().meta({
     description:

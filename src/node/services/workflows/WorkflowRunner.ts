@@ -45,6 +45,13 @@ export interface WorkflowAgentSpec {
   title?: string;
   agentId?: string;
   outputSchema?: unknown;
+  /**
+   * Model-refusal policy for this step's child task. "fail" opts out of
+   * configured model-fallback chains so a refusal fails the step terminally
+   * (verifier steps demand honest failure, not a silent model swap).
+   * Defaults to "fallback" (chains apply when configured).
+   */
+  onRefusal?: "fail" | "fallback";
 }
 
 export interface WorkflowAgentWaitOptions {
@@ -2147,6 +2154,13 @@ function parseWorkflowAgentSpec(rawSpec: unknown): WorkflowAgentSpec {
   }
   if (spec.outputSchema !== undefined) {
     parsed.outputSchema = spec.outputSchema;
+  }
+  if (spec.onRefusal !== undefined) {
+    assert(
+      spec.onRefusal === "fail" || spec.onRefusal === "fallback",
+      'agent onRefusal must be "fail" or "fallback"'
+    );
+    parsed.onRefusal = spec.onRefusal;
   }
   return parsed;
 }

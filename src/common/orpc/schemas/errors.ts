@@ -42,6 +42,7 @@ export const StreamErrorTypeSchema = z.enum([
   "empty_output", // Provider ended the stream without any assistant-visible output
   "stream_truncated", // Provider stream closed before its terminal finish event
   "max_output_tokens", // Provider truncated the response at max_tokens (finishReason: "length")
+  "model_refusal", // Provider declined to answer (refusal/content-filter); retrying the same request will refuse again
   "unknown", // Catch-all
 ]);
 

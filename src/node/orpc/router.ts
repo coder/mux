@@ -56,6 +56,7 @@ import {
 import { normalizeUserPreferences } from "@/common/config/schemas/userPreferences";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isValidModelFormat, normalizeSelectedModel } from "@/common/utils/ai/models";
+import { sanitizeModelFallbacks } from "@/common/utils/ai/modelFallbacks";
 import {
   DEFAULT_TASK_SETTINGS,
   deriveLegacySubagentAiDefaultsFromAgentDefaults,
@@ -927,6 +928,7 @@ export const router = (authToken?: string) => {
             routePriority: config.routePriority,
             routeOverrides: config.routeOverrides,
             minThinkingLevelByModel: config.minThinkingLevelByModel,
+            modelFallbacks: config.modelFallbacks,
             defaultModel: config.defaultModel,
             advisorModelString: config.advisorModelString ?? null,
             advisorThinkingLevel: config.advisorThinkingLevel ?? null,
@@ -1087,6 +1089,19 @@ export const router = (authToken?: string) => {
           await context.config.editConfig((config) => ({
             ...config,
             minThinkingLevelByModel: input.minThinkingLevelByModel,
+          }));
+        }),
+      updateModelFallbacks: t
+        .input(schemas.config.updateModelFallbacks.input)
+        .output(schemas.config.updateModelFallbacks.output)
+        .handler(async ({ context, input }) => {
+          // Full-map replacement. Strict-on-write sanitization: canonical keys,
+          // self-fallbacks/duplicates dropped, chain length capped, empty
+          // chains removed.
+          const sanitized = sanitizeModelFallbacks(input.modelFallbacks);
+          await context.config.editConfig((config) => ({
+            ...config,
+            modelFallbacks: Object.keys(sanitized).length > 0 ? sanitized : undefined,
           }));
         }),
       updateModelPreferences: t

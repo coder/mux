@@ -52,6 +52,7 @@ import {
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import {
   createCompactionSummaryMessageId,
+  createTaskFailureMessageId,
   createTaskReportMessageId,
 } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeToCanonical } from "@/common/utils/ai/models";
@@ -91,9 +92,15 @@ import {
   readSubagentReportArtifactsFile,
   upsertSubagentReportArtifact,
 } from "@/node/services/subagentReportArtifacts";
+import {
+  readSubagentFailureArtifact,
+  readSubagentFailureArtifactsFile,
+  upsertSubagentFailureArtifact,
+} from "@/node/services/subagentFailureArtifacts";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isNonRetryableStreamError } from "@/common/utils/messages/retryEligibility";
+import type { StreamErrorType } from "@/common/types/errors";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
@@ -143,6 +150,12 @@ export interface TaskCreateArgs {
    */
   thinkingLevel?: ParsedThinkingInput;
   parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
+  /**
+   * Model-refusal policy persisted on the child workspace. "fail" opts the task
+   * out of configured model-fallback chains so a refusal settles terminally
+   * (workflow verifier steps demand honest failure). Defaults to "fallback".
+   */
+  onRefusal?: "fail" | "fallback";
   /** Shared grouping metadata when one tool call spawns multiple sibling tasks. */
   bestOf?: {
     groupId: string;
@@ -246,6 +259,33 @@ function formatSubagentReportUserMessage(params: {
   return lines.join("\n");
 }
 
+// Failure twin of formatSubagentReportUserMessage: terminal child failures are
+// delivered into the parent context as an explicit failure block (never as a
+// report) so a later wake-up — by ANY sibling's settlement — cannot present the
+// fanout as fully successful.
+function formatSubagentFailureUserMessage(params: {
+  childWorkspaceId: string;
+  agentType: string;
+  errorType: string;
+  errorMessage: string;
+}): string {
+  assert(params.childWorkspaceId.length > 0, "subagent failure message requires child id");
+  assert(params.agentType.length > 0, "subagent failure message requires agent type");
+  assert(params.errorMessage.length > 0, "subagent failure message requires error message");
+
+  return [
+    "<mux_subagent_failure>",
+    `<task_id>${params.childWorkspaceId}</task_id>`,
+    `<agent_type>${params.agentType}</agent_type>`,
+    `<error_type>${params.errorType}</error_type>`,
+    "<error_message>",
+    params.errorMessage,
+    "</error_message>",
+    "This sub-agent task failed terminally and will not produce a report. Do not re-await it.",
+    "</mux_subagent_failure>",
+  ].join("\n");
+}
+
 // Completed background reports are already persisted into the parent context; asking the parent
 // to call task_await burns an extra model/tool turn before it can synthesize the final answer.
 const COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
@@ -253,6 +293,15 @@ const COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
   "are already injected into this workspace context as task tool results or synthetic user report " +
   "messages. Write the final response now, integrating those results. If a required report appears " +
   "missing, explain the missing context instead of waiting for another handoff.";
+
+// Failure twin of COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT: the failure details
+// were already appended to the parent context as synthetic mux_subagent_failure
+// messages, so the wake-up prompt itself stays generic.
+const FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
+  "Background sub-agent task(s) failed terminally and will not produce reports. The failure " +
+  "details are already injected into this workspace context as synthetic user messages. Do not " +
+  "re-await those tasks. Integrate the failures into your work now: adjust your approach (e.g. a " +
+  "different model, agent, or task design) or surface the failures in your response.";
 
 function getTaskCompletionInstruction(params: {
   completionToolName: "agent_report" | "propose_plan";
@@ -300,6 +349,7 @@ interface TaskLaunchPlan {
   workflowTask?: TaskCreateArgs["workflowTask"];
   bestOf?: TaskCreateArgs["bestOf"];
   experiments?: TaskCreateArgs["experiments"];
+  onRefusal?: TaskCreateArgs["onRefusal"];
 }
 
 interface TaskCreateManyOptions {
@@ -371,6 +421,33 @@ function resolveTaskAgentIdForResume(workspace: {
 }
 
 const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
+
+/**
+ * Maximum completion-tool recovery prompts for a child task (since it last
+ * completed successfully) before the task is interrupted instead of prompted
+ * again. Unlike the in-memory
+ * parent auto-resume counter above, this budget is persisted on the workspace
+ * config entry (taskRecoveryAttempts) so crash/restart recovery loops stay
+ * bounded across app restarts. Covers terminal-but-unclassified outcomes such
+ * as repeated empty_output errors, repeated length-truncated turns, and models
+ * that never call their completion tool.
+ */
+const MAX_TASK_RECOVERY_ATTEMPTS = 5;
+
+/**
+ * Provider-terminal stream errors that settle a child task even while it is
+ * still `running` (before it owes its completion tool). Subset of
+ * NON_RETRYABLE_STREAM_ERRORS: errors with in-session recovery
+ * (context_exceeded) or user intent (aborted) must not terminally settle a
+ * running task.
+ */
+const RUNNING_TASK_TERMINAL_STREAM_ERRORS: ReadonlySet<StreamErrorType> = new Set([
+  "model_refusal",
+  "authentication",
+  "quota",
+  "model_not_found",
+  "runtime_not_ready",
+]);
 
 interface AgentTaskIndex {
   byId: Map<string, AgentTaskWorkspaceEntry>;
@@ -1745,6 +1822,7 @@ export class TaskService {
         workflowTask: args.workflowTask,
         bestOf: normalizedBestOf,
         experiments: args.experiments,
+        onRefusal: args.onRefusal,
         status,
       });
       results.push({ taskId, kind: "agent", status });
@@ -1798,6 +1876,7 @@ export class TaskService {
           taskTrunkBranch: trunkBranch,
           taskModelString: plan.taskModelString,
           taskThinkingLevel: plan.effectiveThinkingLevel,
+          taskOnRefusal: plan.onRefusal,
           taskExperiments: plan.experiments,
           projects: plan.parentMeta.projects,
         });
@@ -2446,6 +2525,7 @@ export class TaskService {
           taskTrunkBranch: trunkBranch,
           taskModelString,
           taskThinkingLevel: effectiveThinkingLevel,
+          taskOnRefusal: args.onRefusal,
           taskExperiments: args.experiments,
           projects: parentMeta.projects,
         });
@@ -2565,6 +2645,7 @@ export class TaskService {
         taskBaseCommitShaByProjectPath,
         taskModelString,
         taskThinkingLevel: effectiveThinkingLevel,
+        taskOnRefusal: args.onRefusal,
         taskExperiments: args.experiments,
         projects: inheritedProjects,
       });
@@ -3060,6 +3141,18 @@ export class TaskService {
       };
     };
 
+    // Persisted terminal failures (e.g. model_refusal) are checked AFTER reports —
+    // report monotonicity — and surface as rejections, never as reportMarkdown.
+    const tryReadPersistedFailureError = async (): Promise<Error | null> => {
+      if (!requestingWorkspaceId) {
+        return null;
+      }
+
+      const sessionDir = this.config.getSessionDir(requestingWorkspaceId);
+      const failure = await readSubagentFailureArtifact(sessionDir, taskId);
+      return failure ? new Error(failure.errorMessage) : null;
+    };
+
     // Fast-path: if the task is already gone (cleanup) or already reported (restart), return the
     // persisted artifact from the requesting workspace session dir.
     const cfg = this.config.loadConfigOrDefault();
@@ -3070,6 +3163,11 @@ export class TaskService {
       const persisted = await tryReadPersistedReport();
       if (persisted) {
         return persisted;
+      }
+
+      const persistedFailure = await tryReadPersistedFailureError();
+      if (persistedFailure) {
+        throw persistedFailure;
       }
 
       throw new Error("Task not found");
@@ -3104,7 +3202,8 @@ export class TaskService {
             return;
           }
 
-          reject(new Error("Task not found"));
+          const persistedFailure = await tryReadPersistedFailureError();
+          reject(persistedFailure ?? new Error("Task not found"));
           return;
         }
 
@@ -3115,7 +3214,8 @@ export class TaskService {
             return;
           }
 
-          reject(new Error("Task not found"));
+          const persistedFailure = await tryReadPersistedFailureError();
+          reject(persistedFailure ?? new Error("Task not found"));
           return;
         }
 
@@ -3144,8 +3244,14 @@ export class TaskService {
         const startReportTimeout = () => {
           if (timeout) return;
           timeout = setTimeout(() => {
-            entry.cleanup();
-            reject(new Error("Timed out waiting for agent_report"));
+            // Prefer a persisted terminal failure over a generic timeout so late
+            // awaits surface the typed failure (e.g. model_refusal) even when the
+            // live rejection was missed (restart/cleanup windows).
+            void (async () => {
+              const persistedFailure = await tryReadPersistedFailureError().catch(() => null);
+              entry.cleanup();
+              reject(persistedFailure ?? new Error("Timed out waiting for agent_report"));
+            })();
           }, timeoutMs);
         };
 
@@ -3532,12 +3638,21 @@ export class TaskService {
       return result;
     }
 
+    // Terminal failures persist in a separate artifacts file (a failure must
+    // never masquerade as a completed report), so scope checks must consult
+    // BOTH: a background-failed child that was cleaned up or lost to a restart
+    // must stay in scope for task_await so waitForAgentReport can surface the
+    // persisted typed failure instead of degrading to invalid_scope/not_found.
     const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
-    const persisted = await readSubagentReportArtifactsFile(sessionDir);
+    const [reports, failures] = await Promise.all([
+      readSubagentReportArtifactsFile(sessionDir),
+      readSubagentFailureArtifactsFile(sessionDir),
+    ]);
     for (const taskId of maybePersisted) {
-      const entry = persisted.artifactsByChildTaskId[taskId];
-      if (!entry) continue;
-      if (hasAncestorWorkspaceId(entry, ancestorWorkspaceId)) {
+      if (
+        hasAncestorWorkspaceId(reports.artifactsByChildTaskId[taskId], ancestorWorkspaceId) ||
+        hasAncestorWorkspaceId(failures.failuresByChildTaskId[taskId], ancestorWorkspaceId)
+      ) {
         result.push(taskId);
       }
     }
@@ -3626,7 +3741,18 @@ export class TaskService {
     const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
     const persisted = await readSubagentReportArtifactsFile(sessionDir);
     const entry = persisted.artifactsByChildTaskId[taskId];
-    return hasWorkflowOwnedAncestorWorkspaceId(entry, ancestorWorkspaceId);
+    if (entry != null) {
+      return hasWorkflowOwnedAncestorWorkspaceId(entry, ancestorWorkspaceId);
+    }
+
+    // A workflow-owned child that failed terminally leaves only a failure
+    // artifact. It must stay excluded from direct task_await after cleanup,
+    // matching live behavior: its failure is consumed through the workflow run.
+    const failures = await readSubagentFailureArtifactsFile(sessionDir);
+    return hasWorkflowOwnedAncestorWorkspaceId(
+      failures.failuresByChildTaskId[taskId],
+      ancestorWorkspaceId
+    );
   }
 
   private getWorkflowOwnedDescendantAgentTaskUsingIndex(
@@ -3662,17 +3788,23 @@ export class TaskService {
       return true;
     }
 
-    // The task workspace may have been removed after it reported (cleanup/restart). Preserve scope
-    // checks by consulting persisted report artifacts in the ancestor session dir.
+    // The task workspace may have been removed after it settled (cleanup/restart). Preserve scope
+    // checks by consulting persisted report AND failure artifacts in the ancestor session dir —
+    // a terminally-failed child must stay awaitable so its typed failure can be surfaced.
     const cached = this.completedReportsByTaskId.get(taskId);
     if (hasAncestorWorkspaceId(cached, ancestorWorkspaceId)) {
       return true;
     }
 
     const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
-    const persisted = await readSubagentReportArtifactsFile(sessionDir);
-    const entry = persisted.artifactsByChildTaskId[taskId];
-    return hasAncestorWorkspaceId(entry, ancestorWorkspaceId);
+    const [reports, failures] = await Promise.all([
+      readSubagentReportArtifactsFile(sessionDir),
+      readSubagentFailureArtifactsFile(sessionDir),
+    ]);
+    return (
+      hasAncestorWorkspaceId(reports.artifactsByChildTaskId[taskId], ancestorWorkspaceId) ||
+      hasAncestorWorkspaceId(failures.failuresByChildTaskId[taskId], ancestorWorkspaceId)
+    );
   }
 
   private isDescendantAgentTaskUsingParentById(
@@ -4177,6 +4309,9 @@ export class TaskService {
         // prompt in config. If send/resume fails, restoreInterruptedTaskAfterResumeFailure
         // must be able to retain that original prompt for inspection/retry.
         ws.taskStatus = "running";
+        // A user-initiated resume is a fresh chance: clear the recovery budget so a
+        // breaker-tripped task doesn't instantly re-fail on its first recovery prompt.
+        delete ws.taskRecoveryAttempts;
         transitionedToRunning = true;
       },
       { allowMissing: true }
@@ -4288,6 +4423,42 @@ export class TaskService {
 
     const isPlanLike = await this.isPlanLikeTaskWorkspace(entry);
     const completionToolName = isPlanLike ? "propose_plan" : "agent_report";
+
+    // Persisted circuit breaker: a task that keeps consuming recovery prompts
+    // without ever completing is stuck (repeated empty output, repeated
+    // length-truncated turns, or a model that never calls its completion
+    // tool). Interrupt it with a descriptive error instead of prompting
+    // forever. The counter lives on the workspace entry so restart loops stay
+    // bounded too; finalizeAgentTaskReport clears it on success.
+    const recoveryAttempts = entry.workspace.taskRecoveryAttempts ?? 0;
+    if (recoveryAttempts >= MAX_TASK_RECOVERY_ATTEMPTS) {
+      const lastError = options?.error
+        ? ` Last error (${options.error.errorType ?? "unknown"}): ${options.error.error}`
+        : "";
+      log.error("Task exceeded its recovery attempt budget; interrupting task", {
+        workspaceId,
+        taskName: entry.workspace.name,
+        recoveryAttempts,
+        limit: MAX_TASK_RECOVERY_ATTEMPTS,
+        reason: options?.reason,
+      });
+      await this.failAgentTaskTerminally(workspaceId, entry, {
+        errorType: "task_recovery_limit",
+        errorMessage: `Task interrupted after ${MAX_TASK_RECOVERY_ATTEMPTS} recovery attempts without a successful ${completionToolName}.${lastError} The task model may be unable to complete this request; try a different model or a simpler prompt.`,
+      });
+      return false;
+    }
+    // Consume budget before sending so a crash mid-send still counts the attempt.
+    // Read the fresh value inside the mutator (not the entry-time snapshot above)
+    // so concurrent edits cannot lose an increment.
+    await this.editWorkspaceEntry(
+      workspaceId,
+      (ws) => {
+        ws.taskRecoveryAttempts = (ws.taskRecoveryAttempts ?? 0) + 1;
+      },
+      { allowMissing: true }
+    );
+
     const model = entry.workspace.taskModelString ?? defaultModel;
     const agentId = resolveTaskAgentIdForResume(entry.workspace);
     const startedAt = Date.now();
@@ -4665,7 +4836,10 @@ export class TaskService {
       return;
     }
 
-    if (entry.workspace.taskStatus !== "awaiting_report") {
+    const status = entry.workspace.taskStatus;
+    // Stream errors only need settlement handling while the task is mid-run
+    // (running) or waiting on its completion tool (awaiting_report).
+    if (status !== "running" && status !== "awaiting_report") {
       return;
     }
 
@@ -4673,17 +4847,38 @@ export class TaskService {
       return;
     }
 
-    if (event.errorType && isNonRetryableStreamError({ type: event.errorType })) {
-      log.error(
-        "Task awaiting required completion tool hit a non-retryable stream error; interrupting task",
-        {
-          workspaceId,
-          errorType: event.errorType,
-          error: event.error,
-        }
-      );
-      await this.setTaskStatus(workspaceId, "interrupted");
-      await this.settleInterruptedTaskAtStreamEnd(workspaceId, entry, null);
+    const isNonRetryable =
+      event.errorType != null && isNonRetryableStreamError({ type: event.errorType });
+
+    // Terminal provider outcomes (e.g. model_refusal) settle the task even during its
+    // first `running` turn — previously only awaiting_report settled, leaving the
+    // parent's waitForAgentReport to block until timeout. Deliberately an allow-list
+    // rather than "all non-retryable":
+    // - `aborted` is a steerable user pause, not a terminal failure.
+    // - `context_exceeded` has in-session recovery (compaction retry, post-compaction
+    //   retry, exec-subagent hard restart in AgentSession.handleStreamError) listening
+    //   on the same error event; settling here would race that recovery and interrupt
+    //   a child that was about to continue.
+    const settlesRunningTask =
+      event.errorType != null && RUNNING_TASK_TERMINAL_STREAM_ERRORS.has(event.errorType);
+
+    if (isNonRetryable && (status === "awaiting_report" || settlesRunningTask)) {
+      log.error("Task hit a non-retryable stream error; interrupting task", {
+        workspaceId,
+        taskStatus: status,
+        errorType: event.errorType,
+        error: event.error,
+      });
+      await this.failAgentTaskTerminally(workspaceId, entry, {
+        errorType: event.errorType ?? "unknown",
+        errorMessage: event.error,
+      });
+      return;
+    }
+
+    if (status !== "awaiting_report") {
+      // Retryable errors during `running` are handled by the agent session's
+      // retry loop; TaskService only intervenes once the task owes its report.
       return;
     }
 
@@ -4703,6 +4898,212 @@ export class TaskService {
   }
 
   /**
+   * Terminal settlement for a child task whose stream failed with a
+   * non-retryable error: mark interrupted with a descriptive launch error,
+   * persist a durable failure artifact in every ancestor session dir (so
+   * background children, restarts, and post-cleanup task_awaits observe the
+   * typed failure), then reject pending waiters with the failure message.
+   */
+  private async failAgentTaskTerminally(
+    workspaceId: string,
+    entry: { projectPath: string; workspace: WorkspaceConfigEntry },
+    failure: { errorType: string; errorMessage: string }
+  ): Promise<void> {
+    assert(workspaceId.length > 0, "failAgentTaskTerminally: workspaceId must be non-empty");
+    assert(
+      failure.errorMessage.length > 0,
+      "failAgentTaskTerminally: errorMessage must be non-empty"
+    );
+
+    await this.editWorkspaceEntry(
+      workspaceId,
+      (ws) => {
+        ws.taskStatus = "interrupted";
+        ws.taskLaunchError = failure.errorMessage;
+      },
+      { allowMissing: true }
+    );
+    await this.emitWorkspaceMetadata(workspaceId);
+
+    const parentWorkspaceId = entry.workspace.parentWorkspaceId;
+    if (parentWorkspaceId) {
+      const cfg = this.config.loadConfigOrDefault();
+      const index = this.buildAgentTaskIndex(cfg);
+      const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(
+        index.parentById,
+        workspaceId
+      );
+      const workflowOwnedAncestorWorkspaceIds = ancestorWorkspaceIds.filter(
+        (ancestorWorkspaceId) =>
+          this.getWorkflowOwnedDescendantAgentTaskUsingIndex(
+            index,
+            ancestorWorkspaceId,
+            workspaceId
+          ) === true
+      );
+
+      const persistedAtMs = Date.now();
+      for (const ancestorWorkspaceId of ancestorWorkspaceIds) {
+        try {
+          await upsertSubagentFailureArtifact({
+            workspaceId: ancestorWorkspaceId,
+            workspaceSessionDir: this.config.getSessionDir(ancestorWorkspaceId),
+            childTaskId: workspaceId,
+            parentWorkspaceId,
+            ancestorWorkspaceIds,
+            workflowOwnedAncestorWorkspaceIds,
+            errorType: failure.errorType,
+            errorMessage: failure.errorMessage,
+            model: entry.workspace.taskModelString,
+            nowMs: persistedAtMs,
+          });
+        } catch (error: unknown) {
+          log.error("Failed to persist subagent failure artifact", {
+            workspaceId: ancestorWorkspaceId,
+            childTaskId: workspaceId,
+            error,
+          });
+        }
+      }
+    }
+
+    // Captured before settlement: rejectWaiters consumes the pending waiters
+    // that prove a parent turn is actively listening for this task.
+    const hadForegroundWaiters = (this.pendingWaitersByTaskId.get(workspaceId)?.length ?? 0) > 0;
+
+    await this.settleInterruptedTaskAtStreamEnd(workspaceId, entry, null, {
+      rejectionError: new Error(failure.errorMessage),
+    });
+
+    // Free this task's concurrency slot for queued siblings.
+    this.scheduleMaybeStartQueuedTasks();
+
+    await this.maybeResumeParentAfterTerminalChildFailure(
+      workspaceId,
+      entry,
+      failure,
+      hadForegroundWaiters
+    );
+  }
+
+  /**
+   * Background-spawned children may have no pending waiter to reject, and the
+   * parent stream typically already returned early because the child was still
+   * active. The report path delivers into the parent context and wakes idle
+   * parents (deliverReportToParent + post-report auto-resume), so terminal
+   * failures must too — otherwise an idle parent stays at taskStatus "running"
+   * until a timeout or manual task_await, or worse: a later sibling's report
+   * wakes it with COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT and the fanout
+   * looks fully successful. Two mirrored halves:
+   *
+   * 1. Always append a synthetic mux_subagent_failure message to the parent
+   *    history (the durable context delivery — survives any wake-up ordering).
+   * 2. Auto-resume the parent only when this was the last active child and the
+   *    parent is idle (same gates as the post-report auto-resume).
+   */
+  private async maybeResumeParentAfterTerminalChildFailure(
+    childWorkspaceId: string,
+    childEntry: { projectPath: string; workspace: WorkspaceConfigEntry },
+    failure: { errorType: string; errorMessage: string },
+    hadForegroundWaiters: boolean
+  ): Promise<void> {
+    const parentWorkspaceId = childEntry.workspace.parentWorkspaceId;
+    if (!parentWorkspaceId) {
+      return;
+    }
+    // An active waiter (foreground task tool call or task_await) already
+    // surfaced the rejection to the parent's in-flight turn.
+    if (hadForegroundWaiters) {
+      return;
+    }
+    // Workflow-owned children propagate failures through the WorkflowRunner
+    // step result; do not also deliver a generic failure handoff.
+    if (childEntry.workspace.workflowTask != null) {
+      return;
+    }
+
+    const cfg = this.config.loadConfigOrDefault();
+    const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
+    if (!parentEntry) {
+      return;
+    }
+
+    // Durable context delivery, mirroring deliverReportToParent's synthetic
+    // append: the failure must be visible to the parent's next turn regardless
+    // of whether THIS settlement wakes it or a later sibling report/failure
+    // (whose handoff prompt won't restate this child's details) does.
+    const failureMessage = createMuxMessage(
+      createTaskFailureMessageId(),
+      "user",
+      formatSubagentFailureUserMessage({
+        childWorkspaceId,
+        agentType: coerceNonEmptyString(childEntry.workspace.agentType) ?? "agent",
+        errorType: failure.errorType,
+        errorMessage: failure.errorMessage,
+      }),
+      { timestamp: Date.now(), synthetic: true }
+    );
+    const appendResult = await this.historyService.appendToHistory(
+      parentWorkspaceId,
+      failureMessage
+    );
+    if (!appendResult.success) {
+      log.error("Failed to append synthetic subagent failure to parent history", {
+        parentWorkspaceId,
+        childWorkspaceId,
+        error: appendResult.error,
+      });
+    }
+
+    const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, parentWorkspaceId);
+    if (!hasActiveDescendants) {
+      this.consecutiveAutoResumes.delete(parentWorkspaceId);
+    }
+    if (this.interruptedParentWorkspaceIds.has(parentWorkspaceId)) {
+      log.debug("Skipping terminal-failure parent auto-resume after hard interrupt", {
+        parentWorkspaceId,
+        childWorkspaceId,
+      });
+      return;
+    }
+    if (hasActiveDescendants) {
+      // Remaining active children wake the parent when the last one settles
+      // (report delivery or another terminal failure); the failure message
+      // appended above keeps this child's outcome in that turn's context.
+      return;
+    }
+    if (this.aiService.isStreaming(parentWorkspaceId)) {
+      // A streaming parent picks the appended failure message up on its next
+      // turn (or sooner via a task_await rejection / persisted artifact).
+      return;
+    }
+
+    const resumeOptions = await this.resolveParentAutoResumeOptions(
+      parentWorkspaceId,
+      parentEntry,
+      childEntry.workspace.taskModelString ?? defaultModel
+    );
+    const sendResult = await this.workspaceService.sendMessage(
+      parentWorkspaceId,
+      FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT,
+      {
+        model: resumeOptions.model,
+        agentId: resumeOptions.agentId,
+        thinkingLevel: resumeOptions.thinkingLevel,
+      },
+      // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
+      { skipAutoResumeReset: true, synthetic: true, agentInitiated: true }
+    );
+    if (!sendResult.success) {
+      log.error("Failed to auto-resume parent after terminal child failure", {
+        parentWorkspaceId,
+        childWorkspaceId,
+        error: sendResult.error,
+      });
+    }
+  }
+
+  /**
    * Stream-end settlement for interrupted tasks. Guarantees every pending waiter
    * is settled exactly once: resolved if an agent_report exists, rejected otherwise.
    * No waiter should depend on timeout to discover terminal interruption.
@@ -4710,14 +5111,15 @@ export class TaskService {
   private async settleInterruptedTaskAtStreamEnd(
     workspaceId: string,
     entry: { projectPath: string; workspace: WorkspaceConfigEntry },
-    reportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown } | null
+    reportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown } | null,
+    options?: { rejectionError?: Error }
   ): Promise<void> {
     if (reportArgs) {
       await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
       return;
     }
 
-    this.rejectWaiters(workspaceId, new Error("Task interrupted"));
+    this.rejectWaiters(workspaceId, options?.rejectionError ?? new Error("Task interrupted"));
 
     const parentWorkspaceId = entry.workspace.parentWorkspaceId;
     const bestOf = entry.workspace.bestOf;
@@ -4841,6 +5243,10 @@ export class TaskService {
         workspace.aiSettings = { model: canonicalModel, thinkingLevel: effectiveThinkingLevel };
         workspace.taskModelString = taskModelString;
         workspace.taskThinkingLevel = effectiveThinkingLevel;
+        // A successful propose_plan is a successful completion-tool outcome: the
+        // exec phase starts with a fresh recovery budget rather than inheriting
+        // whatever the plan phase consumed.
+        delete workspace.taskRecoveryAttempts;
       });
 
       await this.setTaskStatus(args.workspaceId, "running");
@@ -5277,6 +5683,8 @@ export class TaskService {
       (ws) => {
         ws.taskStatus = "reported";
         ws.reportedAt = getIsoNow();
+        // Successful completion resets the persisted recovery circuit breaker.
+        delete ws.taskRecoveryAttempts;
       },
       { allowMissing: true }
     );

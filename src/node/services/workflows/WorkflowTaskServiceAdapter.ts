@@ -269,6 +269,10 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
       ...(experiments !== undefined ? { experiments } : {}),
       ...(this.modelString !== undefined ? { modelString: this.modelString } : {}),
       ...(this.thinkingLevel !== undefined ? { thinkingLevel: this.thinkingLevel } : {}),
+      // Refusal policy must survive both the single-step and parallel
+      // (createAgentTasks) paths: a verifier step marked onRefusal: "fail"
+      // must fail honestly instead of silently continuing on a fallback model.
+      ...(spec.onRefusal !== undefined ? { onRefusal: spec.onRefusal } : {}),
     };
   }
 
@@ -280,27 +284,7 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     assert(spec.id.length > 0, "WorkflowTaskServiceAdapter.runAgent: spec.id is required");
     assert(spec.prompt.length > 0, "WorkflowTaskServiceAdapter.runAgent: spec.prompt is required");
 
-    const workflowTask: { runId: string; stepId: string; outputSchema?: unknown } = {
-      runId: this.workflowRunId,
-      stepId: spec.id,
-    };
-    if (spec.outputSchema !== undefined) {
-      workflowTask.outputSchema = spec.outputSchema;
-    }
-
-    const agentId = spec.agentId ?? this.defaultAgentId;
-    const experiments = this.getExperimentsForAgent(agentId);
-    const createResult = await this.taskService.create({
-      parentWorkspaceId: this.parentWorkspaceId,
-      kind: "agent",
-      agentId,
-      prompt: spec.prompt,
-      title: spec.title ?? spec.id,
-      workflowTask,
-      ...(experiments !== undefined ? { experiments } : {}),
-      ...(this.modelString !== undefined ? { modelString: this.modelString } : {}),
-      ...(this.thinkingLevel !== undefined ? { thinkingLevel: this.thinkingLevel } : {}),
-    });
+    const createResult = await this.taskService.create(this.buildCreateArgs(spec));
     if (!createResult.success) {
       throw new Error(createResult.error);
     }

@@ -52,6 +52,30 @@ describe("WorkflowTaskServiceAdapter", () => {
     });
   });
 
+  test("propagates terminal task failures (model refusal) instead of hanging", async () => {
+    const refusalMessage =
+      "The model refused to respond (finishReason: content-filter): anthropic:claude-fable-5.";
+    const create = mock(async (_args: unknown) =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    // TaskService rejects the report wait when the child settles terminally
+    // (e.g. model_refusal). The adapter must surface that rejection so the
+    // workflow step fails fast with the refusal text.
+    const waitForAgentReport = mock(async () => {
+      throw new Error(refusalMessage);
+    });
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+    });
+
+    await expect(adapter.runAgent({ id: "verify", prompt: "Verify claims" })).rejects.toThrow(
+      refusalMessage
+    );
+  });
+
   test("inherits experiments for task creation", async () => {
     let createArgs: unknown;
     const create = mock(async (args: unknown) => {
@@ -79,6 +103,37 @@ describe("WorkflowTaskServiceAdapter", () => {
       prompt: "Extract claims",
       experiments: { dynamicWorkflows: true, subagentFileReports: true },
     });
+  });
+
+  test("passes onRefusal through to task creation so refusal policy persists on the child", async () => {
+    let createArgs: unknown;
+    const create = mock(async (args: unknown) => {
+      createArgs = args;
+      return Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const });
+    });
+    let createManyArgs: unknown;
+    const createMany = mock(async (args: unknown) => {
+      createManyArgs = args;
+      return Ok([{ taskId: "task_2", kind: "agent" as const, status: "starting" as const }]);
+    });
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, createMany, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+    });
+
+    await adapter.runAgent({ id: "verify", prompt: "Verify claims", onRefusal: "fail" });
+    expect(createArgs).toMatchObject({ onRefusal: "fail" });
+
+    // The parallel path must preserve the refusal policy too: a verifier step
+    // marked onRefusal: "fail" must fail honestly instead of silently
+    // continuing on a configured fallback model.
+    await adapter.createAgentTasks([
+      { id: "verify-parallel", prompt: "Verify claims in parallel", onRefusal: "fail" },
+    ]);
+    expect(createManyArgs).toMatchObject([{ onRefusal: "fail" }]);
   });
 
   test("passes CLI-selected model and thinking level to workflow child task creation", async () => {

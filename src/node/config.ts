@@ -23,8 +23,10 @@ import type {
   AppConfigMigrations,
   AppConfigOnDisk,
   BaseProviderConfig as ProviderConfig,
+  ModelFallbacks,
   ProvidersConfig as CanonicalProvidersConfig,
 } from "@/common/config/schemas";
+import { sanitizeModelFallbacks } from "@/common/utils/ai/modelFallbacks";
 import {
   DEFAULT_TASK_SETTINGS,
   deriveLegacySubagentAiDefaultsFromAgentDefaults,
@@ -253,6 +255,38 @@ function normalizeMinThinkingLevelByModel(
   }
 
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function normalizeModelFallbacks(value: unknown): ModelFallbacks | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+
+  // Lenient-on-read: sanitizeModelFallbacks canonicalizes keys, drops
+  // self-fallbacks/duplicates/empty chains, and caps chain length, so malformed
+  // entries self-heal instead of breaking config load or sends.
+  const sanitizedEntries: ModelFallbacks = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      continue;
+    }
+    const candidate = entry as { enabled?: unknown; triggers?: unknown; models?: unknown };
+    if (!Array.isArray(candidate.models)) {
+      continue;
+    }
+    sanitizedEntries[key] = {
+      ...(typeof candidate.enabled === "boolean" ? { enabled: candidate.enabled } : {}),
+      ...(Array.isArray(candidate.triggers)
+        ? {
+            triggers: candidate.triggers.filter((t): t is "model_refusal" => t === "model_refusal"),
+          }
+        : {}),
+      models: candidate.models.filter((m): m is string => typeof m === "string"),
+    };
+  }
+
+  const sanitized = sanitizeModelFallbacks(sanitizedEntries);
+  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
 }
 
 function areStringArraysEqual(a: string[], b: string[]): boolean {
@@ -785,6 +819,7 @@ export class Config {
         const minThinkingLevelByModel = normalizeMinThinkingLevelByModel(
           parsed.minThinkingLevelByModel
         );
+        const modelFallbacks = normalizeModelFallbacks(parsed.modelFallbacks);
 
         const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
         const advisorModelString = parseOptionalNonEmptyString(parsed.advisorModelString);
@@ -923,6 +958,7 @@ export class Config {
           routePriority,
           routeOverrides,
           minThinkingLevelByModel,
+          modelFallbacks,
           defaultModel,
           advisorModelString,
           advisorThinkingLevel,
@@ -1071,6 +1107,11 @@ export class Config {
       );
       if (minThinkingLevelByModel !== undefined) {
         data.minThinkingLevelByModel = minThinkingLevelByModel;
+      }
+
+      const modelFallbacks = normalizeModelFallbacks(config.modelFallbacks);
+      if (modelFallbacks !== undefined) {
+        data.modelFallbacks = modelFallbacks;
       }
 
       const apiServerBindHost = parseOptionalNonEmptyString(config.apiServerBindHost);

@@ -237,6 +237,40 @@ describe("Config", () => {
     });
   });
 
+  describe("modelFallbacks normalization", () => {
+    it("self-heals malformed modelFallbacks on load instead of breaking sends", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          modelFallbacks: {
+            // Gateway-prefixed key + non-string chain entries + unknown trigger.
+            "openrouter:anthropic/claude-opus-4-6": {
+              models: [42, null, "openai:gpt-5.5", { nested: true }],
+              triggers: ["future_trigger", 7],
+            },
+            // models is not an array: entry dropped entirely.
+            "openai:gpt-5.5": { models: "openai:gpt-5.5-codex" },
+            // Chain empties after dropping the self-fallback: entry dropped.
+            "google:gemini-3-pro": { models: ["google:gemini-3-pro"] },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.modelFallbacks).toEqual({
+        "anthropic:claude-opus-4-6": {
+          models: ["openai:gpt-5.5"],
+          // Unknown triggers are dropped rather than coerced into refusal
+          // triggers. The surviving empty list intentionally disables the
+          // chain (it no longer fires on model_refusal).
+          triggers: [],
+        },
+      });
+    });
+  });
+
   describe("update channel preference", () => {
     it("defaults to stable when no channel is configured", () => {
       expect(config.getUpdateChannel()).toBe("stable");

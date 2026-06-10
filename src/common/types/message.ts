@@ -530,6 +530,16 @@ export interface MuxMetadata {
   providerMetadata?: Record<string, unknown>;
   // Per-tool invocation usage snapshots recorded during this assistant turn.
   toolModelUsages?: PersistedToolModelUsage[];
+  /**
+   * Present when a configured model-fallback chain was applied after a
+   * zero-output refusal. `model` records the effective (answering) model; this
+   * records the originally requested model and the models that refused, in
+   * order. Refused-attempt token usage is attributed via toolModelUsages.
+   */
+  modelFallback?: {
+    requestedModel: string;
+    refusedModels: string[];
+  };
   // Last step's provider metadata (for context window cache display)
   contextProviderMetadata?: Record<string, unknown>;
   systemMessageTokens?: number; // Token count for system message sent with this request (calculated by AIService)
