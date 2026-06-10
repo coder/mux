@@ -31,12 +31,20 @@ export class ProvidersConfigStore {
   // (and to invalidate in-flight fetches when an optimistic update lands).
   private fetchVersion = 0;
   private subscriptionController: AbortController | null = null;
+  // Live onConfigChanged iterator. Kept on the instance (not just in the
+  // subscription closure) so setClient can force-close it: some oRPC
+  // iterators don't eagerly close on abort alone, and leaving the old one
+  // open across client swaps/reconnects leaks backend EventEmitter listeners
+  // and keeps stale refresh loops alive.
+  private subscriptionIterator: AsyncIterator<unknown> | null = null;
 
   setClient(client: APIClient | null): void {
     this.client = client;
 
     this.subscriptionController?.abort();
     this.subscriptionController = null;
+    void this.subscriptionIterator?.return?.();
+    this.subscriptionIterator = null;
     // Invalidate in-flight fetches from the previous client.
     this.fetchVersion++;
 
@@ -138,20 +146,22 @@ export class ProvidersConfigStore {
     const { signal } = controller;
     this.subscriptionController = controller;
 
-    // Some oRPC iterators don't eagerly close on abort alone.
-    // Ensure we `return()` them so backend subscriptions clean up EventEmitter listeners.
     let iterator: AsyncIterator<unknown> | null = null;
 
     void (async () => {
       try {
         const subscribedIterator = await client.providers.onConfigChanged(undefined, { signal });
 
-        if (signal.aborted) {
+        // If the client was swapped while subscribe() was in flight,
+        // force-close immediately so the backend drops its listener.
+        if (signal.aborted || this.subscriptionController !== controller) {
           void subscribedIterator.return?.();
           return;
         }
 
         iterator = subscribedIterator;
+        // Publish so setClient can return() it (see subscriptionIterator).
+        this.subscriptionIterator = subscribedIterator;
 
         for await (const _ of subscribedIterator) {
           if (signal.aborted) break;
@@ -161,6 +171,9 @@ export class ProvidersConfigStore {
         // Subscription cancelled via abort signal - expected on cleanup.
       } finally {
         void iterator?.return?.();
+        if (this.subscriptionIterator === iterator) {
+          this.subscriptionIterator = null;
+        }
       }
     })();
   }
