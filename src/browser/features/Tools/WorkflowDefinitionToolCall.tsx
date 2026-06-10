@@ -217,7 +217,7 @@ function isWorkflowReadSuccessResult(
   return value != null && !isToolErrorResult(value);
 }
 
-function WorkflowLoadingState() {
+export function WorkflowLoadingState() {
   return (
     <div className="text-muted text-[11px] italic">
       Waiting for workflow result

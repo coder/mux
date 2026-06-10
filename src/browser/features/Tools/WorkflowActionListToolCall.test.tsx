@@ -1,0 +1,115 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { GlobalWindow } from "happy-dom";
+import { cleanup, fireEvent, render } from "@testing-library/react";
+
+import type React from "react";
+
+import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
+import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { WorkflowActionListToolCall } from "./WorkflowActionListToolCall";
+
+function renderWithTooltip(ui: React.ReactElement) {
+  return render(
+    <ThemeProvider forcedTheme="dark">
+      <TooltipProvider>{ui}</TooltipProvider>
+    </ThemeProvider>
+  );
+}
+
+describe("WorkflowActionListToolCall", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+  let originalLocalStorage: typeof globalThis.localStorage;
+
+  beforeEach(() => {
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+    originalLocalStorage = globalThis.localStorage;
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+    globalThis.localStorage = globalThis.window.localStorage;
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.localStorage = originalLocalStorage;
+  });
+
+  test("renders action rows with effect and blocked badges", () => {
+    const view = renderWithTooltip(
+      <WorkflowActionListToolCall
+        args={{}}
+        status="completed"
+        result={{
+          actions: [
+            {
+              name: "git.changedFiles",
+              scope: "built-in",
+              sourcePath: "/__mux_builtin_workflow_actions__/git/changedFiles.js",
+              executable: true,
+              hasReconcile: false,
+              metadata: {
+                version: 1,
+                description: "Return changed file lists.",
+                effect: "read",
+              },
+            },
+            {
+              name: "audit.scan",
+              scope: "project",
+              sourcePath: "/repo/.mux/workflows/actions/audit/scan.js",
+              executable: false,
+              blockedReason: "Project is not trusted",
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(view.getByText("2 actions")).toBeTruthy();
+    expect(view.getByText("git.changedFiles")).toBeTruthy();
+    expect(view.getByText("read")).toBeTruthy();
+    expect(view.getByText("blocked")).toBeTruthy();
+    // Blocked actions surface their reason in the row description slot.
+    expect(view.getByText("Project is not trusted")).toBeTruthy();
+  });
+
+  test("expanding a row reveals source path and schemas", () => {
+    const view = renderWithTooltip(
+      <WorkflowActionListToolCall
+        args={{}}
+        status="completed"
+        result={{
+          actions: [
+            {
+              name: "git.changedFiles",
+              scope: "built-in",
+              sourcePath: "/__mux_builtin_workflow_actions__/git/changedFiles.js",
+              executable: true,
+              hasReconcile: true,
+              metadata: {
+                version: 1,
+                description: "Return changed file lists.",
+                effect: "read",
+                inputSchema: { type: "object" },
+                timeoutMs: 60_000,
+              },
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(view.queryByText("Input schema")).toBeNull();
+
+    fireEvent.click(view.getByRole("button", { expanded: false }));
+
+    expect(view.getByText("/__mux_builtin_workflow_actions__/git/changedFiles.js")).toBeTruthy();
+    expect(view.getByText("Input schema")).toBeTruthy();
+    expect(view.queryByText("Output schema")).toBeNull();
+    expect(view.getByText("reconcile")).toBeTruthy();
+    expect(view.getByText("timeout 1m")).toBeTruthy();
+  });
+});

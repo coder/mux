@@ -4,6 +4,7 @@ import {
   WorkflowListToolCall,
   WorkflowReadToolCall,
 } from "@/browser/features/Tools/WorkflowDefinitionToolCall";
+import { WorkflowActionListToolCall } from "@/browser/features/Tools/WorkflowActionListToolCall";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 
 const source = `export default function workflow({ args, agent, phase, log }) {
@@ -47,6 +48,70 @@ export const WorkflowRead: Story = {
           executable: true,
         },
         source,
+      }}
+    />
+  ),
+};
+
+export const WorkflowActionList: Story = {
+  render: () => (
+    <WorkflowActionListToolCall
+      args={{}}
+      status="completed"
+      result={{
+        actions: [
+          {
+            name: "git.changedFiles",
+            scope: "built-in",
+            sourcePath: "/__mux_builtin_workflow_actions__/git/changedFiles.js",
+            executable: true,
+            hasReconcile: false,
+            metadata: {
+              version: 1,
+              description:
+                "Return changed file lists for branch, staged, unstaged, and untracked files.",
+              effect: "read",
+              inputSchema: { type: "object", properties: { base: { type: "string" } } },
+              outputSchema: {
+                type: "object",
+                properties: { files: { type: "array", items: { type: "string" } } },
+              },
+              timeoutMs: 60_000,
+            },
+          },
+          {
+            name: "git.commit",
+            scope: "built-in",
+            sourcePath: "/__mux_builtin_workflow_actions__/git/commit.js",
+            executable: true,
+            hasReconcile: true,
+            metadata: {
+              version: 2,
+              description: "Create a git commit from staged changes.",
+              effect: "workspace",
+            },
+          },
+          {
+            name: "slack.notify",
+            scope: "global",
+            sourcePath: "~/.mux/workflows/actions/slack/notify.js",
+            executable: true,
+            hasReconcile: false,
+            metadata: {
+              version: "2026-01-01",
+              description: "Post a message to a Slack channel via webhook.",
+              effect: "external",
+              permissions: { network: ["hooks.slack.com"] },
+            },
+          },
+          {
+            name: "audit.scan",
+            scope: "project",
+            sourcePath: "/repo/.mux/workflows/actions/audit/scan.js",
+            executable: false,
+            blockedReason: "Trust this project before running project-local actions.",
+          },
+        ],
       }}
     />
   ),
