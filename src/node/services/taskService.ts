@@ -98,6 +98,7 @@ import {
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isNonRetryableStreamError } from "@/common/utils/messages/retryEligibility";
+import type { StreamErrorType } from "@/common/types/errors";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
@@ -384,8 +385,9 @@ function resolveTaskAgentIdForResume(workspace: {
 const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
 
 /**
- * Maximum consecutive completion-tool recovery prompts for a child task before
- * the task is interrupted instead of prompted again. Unlike the in-memory
+ * Maximum completion-tool recovery prompts for a child task (since it last
+ * completed successfully) before the task is interrupted instead of prompted
+ * again. Unlike the in-memory
  * parent auto-resume counter above, this budget is persisted on the workspace
  * config entry (taskRecoveryAttempts) so crash/restart recovery loops stay
  * bounded across app restarts. Covers terminal-but-unclassified outcomes such
@@ -393,6 +395,21 @@ const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
  * that never call their completion tool.
  */
 const MAX_TASK_RECOVERY_ATTEMPTS = 5;
+
+/**
+ * Provider-terminal stream errors that settle a child task even while it is
+ * still `running` (before it owes its completion tool). Subset of
+ * NON_RETRYABLE_STREAM_ERRORS: errors with in-session recovery
+ * (context_exceeded) or user intent (aborted) must not terminally settle a
+ * running task.
+ */
+const RUNNING_TASK_TERMINAL_STREAM_ERRORS: ReadonlySet<StreamErrorType> = new Set([
+  "model_refusal",
+  "authentication",
+  "quota",
+  "model_not_found",
+  "runtime_not_ready",
+]);
 
 interface AgentTaskIndex {
   byId: Map<string, AgentTaskWorkspaceEntry>;
@@ -4228,6 +4245,9 @@ export class TaskService {
         // prompt in config. If send/resume fails, restoreInterruptedTaskAfterResumeFailure
         // must be able to retain that original prompt for inspection/retry.
         ws.taskStatus = "running";
+        // A user-initiated resume is a fresh chance: clear the recovery budget so a
+        // breaker-tripped task doesn't instantly re-fail on its first recovery prompt.
+        delete ws.taskRecoveryAttempts;
         transitionedToRunning = true;
       },
       { allowMissing: true }
@@ -4360,15 +4380,17 @@ export class TaskService {
       });
       await this.failAgentTaskTerminally(workspaceId, entry, {
         errorType: "task_recovery_limit",
-        errorMessage: `Task interrupted after ${MAX_TASK_RECOVERY_ATTEMPTS} consecutive recovery attempts without a successful ${completionToolName}.${lastError} The task model may be unable to complete this request; try a different model or a simpler prompt.`,
+        errorMessage: `Task interrupted after ${MAX_TASK_RECOVERY_ATTEMPTS} recovery attempts without a successful ${completionToolName}.${lastError} The task model may be unable to complete this request; try a different model or a simpler prompt.`,
       });
       return false;
     }
     // Consume budget before sending so a crash mid-send still counts the attempt.
+    // Read the fresh value inside the mutator (not the entry-time snapshot above)
+    // so concurrent edits cannot lose an increment.
     await this.editWorkspaceEntry(
       workspaceId,
       (ws) => {
-        ws.taskRecoveryAttempts = recoveryAttempts + 1;
+        ws.taskRecoveryAttempts = (ws.taskRecoveryAttempts ?? 0) + 1;
       },
       { allowMissing: true }
     );
@@ -4766,9 +4788,15 @@ export class TaskService {
 
     // Terminal provider outcomes (e.g. model_refusal) settle the task even during its
     // first `running` turn — previously only awaiting_report settled, leaving the
-    // parent's waitForAgentReport to block until timeout. `aborted` is excluded for
-    // running tasks: a user interrupt is a steerable pause, not a terminal failure.
-    const settlesRunningTask = isNonRetryable && event.errorType !== "aborted";
+    // parent's waitForAgentReport to block until timeout. Deliberately an allow-list
+    // rather than "all non-retryable":
+    // - `aborted` is a steerable user pause, not a terminal failure.
+    // - `context_exceeded` has in-session recovery (compaction retry, post-compaction
+    //   retry, exec-subagent hard restart in AgentSession.handleStreamError) listening
+    //   on the same error event; settling here would race that recovery and interrupt
+    //   a child that was about to continue.
+    const settlesRunningTask =
+      event.errorType != null && RUNNING_TASK_TERMINAL_STREAM_ERRORS.has(event.errorType);
 
     if (isNonRetryable && (status === "awaiting_report" || settlesRunningTask)) {
       log.error("Task hit a non-retryable stream error; interrupting task", {
@@ -5023,6 +5051,10 @@ export class TaskService {
         workspace.aiSettings = { model: canonicalModel, thinkingLevel: effectiveThinkingLevel };
         workspace.taskModelString = taskModelString;
         workspace.taskThinkingLevel = effectiveThinkingLevel;
+        // A successful propose_plan is a successful completion-tool outcome: the
+        // exec phase starts with a fresh recovery budget rather than inheriting
+        // whatever the plan phase consumed.
+        delete workspace.taskRecoveryAttempts;
       });
 
       await this.setTaskStatus(args.workspaceId, "running");

@@ -34,9 +34,11 @@ export function ModelFallbacksEditor() {
 
   const entries = Object.entries(modelFallbacks).sort(([a], [b]) => a.localeCompare(b));
   const configuredSources = new Set(entries.map(([source]) => source));
-  const sourceCandidates = models.filter(
-    (model) => !configuredSources.has(normalizeToCanonical(model))
-  );
+  // Settings can list aliases that canonicalize to the same model (e.g. a
+  // gateway-prefixed copy of a built-in). Dedupe via canonical form so
+  // SelectItem values stay unique; chains store canonical strings anyway.
+  const modelCandidates = Array.from(new Set(models.map((model) => normalizeToCanonical(model))));
+  const sourceCandidates = modelCandidates.filter((model) => !configuredSources.has(model));
 
   const chainFor = (source: string): string[] => modelFallbacks[source]?.models ?? [];
 
@@ -51,10 +53,9 @@ export function ModelFallbacksEditor() {
   };
 
   const renderChainRow = (source: string, chain: string[]) => {
-    const addCandidates = models.filter((model) => {
-      const canonical = normalizeToCanonical(model);
-      return canonical !== source && !chain.includes(canonical);
-    });
+    const addCandidates = modelCandidates.filter(
+      (model) => model !== source && !chain.includes(model)
+    );
 
     return (
       <div key={source} className="border-border-medium space-y-2 rounded-md border px-3 py-2.5">
@@ -144,7 +145,7 @@ export function ModelFallbacksEditor() {
             </SelectTrigger>
             <SelectContent>
               {addCandidates.map((model) => (
-                <SelectItem key={model} value={normalizeToCanonical(model)}>
+                <SelectItem key={model} value={model}>
                   {model}
                 </SelectItem>
               ))}
@@ -182,7 +183,7 @@ export function ModelFallbacksEditor() {
             </SelectTrigger>
             <SelectContent>
               {sourceCandidates.map((model) => (
-                <SelectItem key={model} value={normalizeToCanonical(model)}>
+                <SelectItem key={model} value={model}>
                   {model}
                 </SelectItem>
               ))}

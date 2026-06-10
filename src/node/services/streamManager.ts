@@ -184,6 +184,15 @@ export interface PreparedModelFallback {
   modelString: string;
   /** Messages re-prepared for the fallback model's provider. */
   messages: ModelMessage[];
+  /** System prompt rebuilt for the fallback model (model-keyed instruction sections). */
+  system: string;
+  /**
+   * Tools rebuilt for the fallback model. Required (even if undefined for a
+   * tool-less stream) so callers cannot silently reuse the source model's
+   * provider-specific tools (e.g. Anthropic web tools, unsanitized MCP schemas
+   * that OpenAI rejects).
+   */
+  tools: Record<string, Tool> | undefined;
   providerOptions?: Record<string, unknown>;
   headers?: Record<string, string | undefined>;
   callSettingsOverrides?: ResolvedCallSettingsOverrides;
@@ -470,17 +479,19 @@ interface WorkspaceStreamInfo {
   // attempt's totalUsage only.
   didRetryAfterEmptyOutput?: boolean;
   // Refusal-fallback chain state. `original` keeps the pre-wrap request inputs
-  // (system/tools/maxOutputTokens as passed by AIService) so the request can be
-  // rebuilt for a different model — buildStreamRequestConfig re-applies
+  // (as passed by AIService) that prepare() does not rebuild, so the request can
+  // be rebuilt for a different model — buildStreamRequestConfig re-applies
   // provider-specific wrapping (e.g. Anthropic cached system message / tool
   // cache_control), which must not be applied twice or leak across providers.
+  // System and tools are rebuilt per fallback model by prepare() because both
+  // are model-keyed (provider web tools, MCP sanitization, model sections).
   modelFallback?: {
     options: ModelFallbackOptions;
     /** Canonical model originally requested for this turn (the chain source). */
     requestedModel: string;
     /** Canonical models that refused with zero output, in order. */
     refusedModels: string[];
-    original: { system: string; tools?: Record<string, Tool>; maxOutputTokens?: number };
+    original: { maxOutputTokens?: number };
   };
   // Provider streams must prove semantic completion with a terminal SDK finish part.
   // A clean EOF can be a proxy/provider drop and must not finalize partial assistant text.
@@ -1505,9 +1516,9 @@ export class StreamManager extends EventEmitter {
               options: modelFallback,
               requestedModel: normalizeToCanonical(modelString),
               refusedModels: [],
-              // Pre-wrap inputs (NOT request.messages/tools/system, which already
-              // carry provider-specific wrapping for the original model).
-              original: { system, tools, maxOutputTokens },
+              // Pre-wrap inputs (NOT request.maxOutputTokens, which may already
+              // carry call-settings overrides for the original model).
+              original: { maxOutputTokens },
             },
           }
         : {}),
@@ -1933,7 +1944,22 @@ export class StreamManager extends EventEmitter {
     }
 
     const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
-    const prepared = await fallbackState.options.prepare(nextModelString);
+    // A throw out of prepare() must not escape to the generic stream-error path:
+    // it would be categorized as a retryable api/unknown error and re-enter the
+    // unbounded auto-retry loop this feature exists to prevent. Aborts rethrow so
+    // a user interrupt during prepare stays an abort instead of a refusal.
+    let prepared: Result<PreparedModelFallback, string>;
+    try {
+      prepared = await fallbackState.options.prepare(nextModelString);
+    } catch (error) {
+      if (streamInfo.abortController.signal.aborted) {
+        throw error;
+      }
+      return {
+        kind: "terminal",
+        terminalNote: `Configured fallback model ${nextModelString} could not be started: ${getErrorMessage(error)}`,
+      };
+    }
     if (!prepared.success) {
       return {
         kind: "terminal",
@@ -1948,8 +1974,8 @@ export class StreamManager extends EventEmitter {
       prepared.data.model,
       prepared.data.modelString,
       prepared.data.messages,
-      fallbackState.original.system,
-      fallbackState.original.tools,
+      prepared.data.system,
+      prepared.data.tools,
       prepared.data.providerOptions,
       fallbackState.original.maxOutputTokens,
       prepared.data.callSettingsOverrides,
@@ -1968,6 +1994,10 @@ export class StreamManager extends EventEmitter {
         streamInfo.stepTracker
       );
     } catch (error) {
+      // The prepared fallback model never becomes streamInfo.request.model, so
+      // the stream-exit finally would miss it (e.g. OpenAI WS transports hold
+      // open sockets until cleanup runs).
+      runLanguageModelCleanup(prepared.data.model);
       return {
         kind: "terminal",
         terminalNote: `Configured fallback model ${nextModelString} could not be started: ${getErrorMessage(error)}`,
@@ -2004,6 +2034,10 @@ export class StreamManager extends EventEmitter {
         refusedModels: [...fallbackState.refusedModels],
       },
     };
+    // Release the refused model's transport resources now: the stream-exit
+    // finally only cleans the final request's model, so without this the
+    // refused model (e.g. an OpenAI WS transport socket) would leak per hop.
+    runLanguageModelCleanup(streamInfo.request.model);
     streamInfo.request = nextRequest;
     streamInfo.streamResult = nextStreamResult;
     await this.tokenTracker.setModel(streamInfo.model, streamInfo.metadataModel);

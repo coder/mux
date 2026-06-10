@@ -133,7 +133,7 @@ export const WorkspaceConfigSchema = z.object({
   }),
   taskRecoveryAttempts: z.number().int().nonnegative().optional().meta({
     description:
-      "Consecutive completion-tool recovery prompts sent to this agent task without a successful report. Persisted (not in-memory) so crash/restart recovery loops stay bounded; cleared when the task reports.",
+      "Completion-tool recovery prompts sent to this agent task since it last completed successfully. Persisted (not in-memory) so crash/restart recovery loops stay bounded; cleared on a successful report, on plan-to-exec handoff, and on user-initiated resume.",
   }),
   reportedAt: z.string().optional().meta({
     description: "ISO 8601 timestamp for when an agent task reported completion (optional).",

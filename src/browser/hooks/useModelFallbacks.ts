@@ -94,7 +94,9 @@ export function useModelFallbacks(): ModelFallbacksState {
       if (models.length === 0) {
         delete next[key];
       } else {
-        next[key] = { models };
+        // Preserve hand-edited fields (enabled/triggers) the editor doesn't
+        // surface yet; only the chain itself is being replaced.
+        next[key] = { ...next[key], models };
       }
       // Mirror the backend's strict-on-write sanitization locally so the UI
       // immediately reflects what will actually persist.
