@@ -92,10 +92,11 @@ class EmptyStreamOutputError extends Error {
  * non-retryable "model_refusal" stream error type.
  */
 class ModelRefusalError extends Error {
-  constructor(model: string, finishReason: string) {
+  constructor(model: string, finishReason: string, fallbackNote?: string) {
     super(
       `The model refused to respond (finishReason: ${finishReason}): ${model}. ` +
-        "Retrying the same request is unlikely to help; try rephrasing or a different model."
+        "Retrying the same request is unlikely to help; try rephrasing or a different model." +
+        (fallbackNote ? ` ${fallbackNote}` : "")
     );
     this.name = "ModelRefusalError";
   }
@@ -169,6 +170,39 @@ interface StreamRequestConfig {
   /** Optional hook for callers that need the live prepared step transcript. */
   onStepMessages?: (messages: ModelMessage[]) => void;
   toolPolicy?: ToolPolicy;
+}
+
+/**
+ * Per-model request pieces for a refusal-fallback swap, rebuilt by AIService so
+ * provider-specific message preparation, provider options, and headers match a
+ * first-class send of the fallback model (reusing the source model's request
+ * verbatim would leak provider-specific options/messages across providers).
+ */
+export interface PreparedModelFallback {
+  model: LanguageModel;
+  /** Canonical model string of the fallback attempt (drives metadata + tokenizer). */
+  modelString: string;
+  /** Messages re-prepared for the fallback model's provider. */
+  messages: ModelMessage[];
+  providerOptions?: Record<string, unknown>;
+  headers?: Record<string, string | undefined>;
+  callSettingsOverrides?: ResolvedCallSettingsOverrides;
+  anthropicCacheTtl?: AnthropicCacheTtl;
+  thinkingLevel?: string;
+  /** Route attribution corrections (routedThroughGateway, routeProvider, costsIncluded). */
+  initialMetadataPatch?: Partial<MuxMetadata>;
+}
+
+export interface ModelFallbackOptions {
+  /** Ordered refusal-fallback chain (canonical model strings); one attempt each. */
+  chain: string[];
+  /**
+   * Rebuilds the full request for a fallback model. An Err result fails the
+   * turn terminally as model_refusal (never a retryable error): silently
+   * skipping an unstartable fallback would effectively create fallback on
+   * auth/config errors, which is explicitly out of scope.
+   */
+  prepare: (nextModelString: string) => Promise<Result<PreparedModelFallback, string>>;
 }
 
 function isKnownProviderName(provider: string): provider is keyof typeof PROVIDER_DEFINITIONS {
@@ -435,6 +469,19 @@ interface WorkspaceStreamInfo {
   // stream-end prefers cumulative usage across attempts instead of the final
   // attempt's totalUsage only.
   didRetryAfterEmptyOutput?: boolean;
+  // Refusal-fallback chain state. `original` keeps the pre-wrap request inputs
+  // (system/tools/maxOutputTokens as passed by AIService) so the request can be
+  // rebuilt for a different model — buildStreamRequestConfig re-applies
+  // provider-specific wrapping (e.g. Anthropic cached system message / tool
+  // cache_control), which must not be applied twice or leak across providers.
+  modelFallback?: {
+    options: ModelFallbackOptions;
+    /** Canonical model originally requested for this turn (the chain source). */
+    requestedModel: string;
+    /** Canonical models that refused with zero output, in order. */
+    refusedModels: string[];
+    original: { system: string; tools?: Record<string, Tool>; maxOutputTokens?: number };
+  };
   // Provider streams must prove semantic completion with a terminal SDK finish part.
   // A clean EOF can be a proxy/provider drop and must not finalize partial assistant text.
   receivedTerminalEvent: boolean;
@@ -1399,7 +1446,8 @@ export class StreamManager extends EventEmitter {
     headers?: Record<string, string | undefined>,
     anthropicCacheTtlOverride?: AnthropicCacheTtl,
     onChunk?: StreamTextOnChunk,
-    onStepMessages?: (messages: ModelMessage[]) => void
+    onStepMessages?: (messages: ModelMessage[]) => void,
+    modelFallback?: ModelFallbackOptions
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
@@ -1451,6 +1499,18 @@ export class StreamManager extends EventEmitter {
       toolModelUsages: [],
       didRetryPreviousResponseIdAtStep: false,
       didRetryAfterEmptyOutput: false,
+      ...(modelFallback && modelFallback.chain.length > 0
+        ? {
+            modelFallback: {
+              options: modelFallback,
+              requestedModel: normalizeToCanonical(modelString),
+              refusedModels: [],
+              // Pre-wrap inputs (NOT request.messages/tools/system, which already
+              // carry provider-specific wrapping for the original model).
+              original: { system, tools, maxOutputTokens },
+            },
+          }
+        : {}),
       stepTracker,
       receivedTerminalEvent: false,
       currentStepStartIndex: 0,
@@ -1762,7 +1822,8 @@ export class StreamManager extends EventEmitter {
   private async handleModelRefusalCompletion(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
-    refusalFinishReason: string
+    refusalFinishReason: string,
+    fallbackNote?: string
   ): Promise<void> {
     const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
     const streamMeta = await this.getStreamMetadata(streamInfo);
@@ -1773,13 +1834,181 @@ export class StreamManager extends EventEmitter {
       finishReason: streamInfo.terminalFinishReason,
       rawFinishReason: streamInfo.terminalRawFinishReason,
       durationMs: streamMeta.duration,
+      fallbackNote,
     });
 
     await this.handleStreamFailure(
       workspaceId,
       streamInfo,
-      new ModelRefusalError(streamInfo.model, refusalFinishReason)
+      new ModelRefusalError(streamInfo.model, refusalFinishReason, fallbackNote)
     );
+  }
+
+  /**
+   * Attribute a refused attempt's token usage to the refusing model before the
+   * fallback swap wipes per-attempt counters. The toolModelUsages entry is the
+   * durable record (session-usage rebuilds scan it per-model); the live
+   * recordSessionUsage call keeps in-memory session totals consistent with it.
+   */
+  private async recordRefusedAttemptUsage(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    refusedModel: string
+  ): Promise<void> {
+    const usage = streamInfo.cumulativeUsage;
+    const hasUsage =
+      (usage.inputTokens ?? 0) > 0 ||
+      (usage.outputTokens ?? 0) > 0 ||
+      (usage.totalTokens ?? 0) > 0 ||
+      (usage.cachedInputTokens ?? 0) > 0 ||
+      (usage.reasoningTokens ?? 0) > 0;
+    if (!hasUsage) {
+      return;
+    }
+
+    const usageSnapshot = { ...usage };
+    const providerMetadata = markProviderMetadataCostsIncluded(
+      streamInfo.cumulativeProviderMetadata
+        ? { ...streamInfo.cumulativeProviderMetadata }
+        : undefined,
+      streamInfo.initialMetadata?.costsIncluded
+    );
+
+    streamInfo.toolModelUsages.push({
+      toolName: "model_fallback_refusal",
+      timestamp: Date.now(),
+      model: refusedModel,
+      metadataModel: streamInfo.metadataModel,
+      usage: usageSnapshot,
+      ...(providerMetadata ? { providerMetadata } : {}),
+    });
+
+    await this.recordSessionUsage(
+      workspaceId,
+      refusedModel,
+      usageSnapshot,
+      providerMetadata,
+      "Failed to record refused-attempt session usage (fallback unaffected)",
+      "warn",
+      streamInfo
+    );
+  }
+
+  /**
+   * Attempt a refusal-fallback model swap in place of a terminal model_refusal.
+   *
+   * This runs entirely inside the active stream loop, BEFORE any error event or
+   * partial error state is committed, so TaskService/waiters never observe an
+   * intermediate refusal while the chain is being attempted (no settlement
+   * race) and no stale failed placeholder is persisted mid-chain.
+   *
+   * Returns { kind: "swapped" } when the loop should `continue` on the new
+   * streamResult, or { kind: "terminal", terminalNote? } when the refusal must
+   * fail the turn (no chain, chain exhausted, interrupted, or an unstartable
+   * fallback model — which intentionally fails instead of skipping ahead).
+   */
+  private async tryModelFallbackAfterRefusal(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    refusalFinishReason: string
+  ): Promise<{ kind: "swapped" } | { kind: "terminal"; terminalNote?: string }> {
+    const fallbackState = streamInfo.modelFallback;
+    if (!fallbackState) {
+      return { kind: "terminal" };
+    }
+
+    if (streamInfo.abortController.signal.aborted || streamInfo.softInterrupt.pending) {
+      return { kind: "terminal" };
+    }
+
+    const refusedModel = normalizeToCanonical(streamInfo.model);
+    fallbackState.refusedModels.push(refusedModel);
+
+    const nextModelString = fallbackState.options.chain[fallbackState.refusedModels.length - 1];
+    if (nextModelString === undefined) {
+      return {
+        kind: "terminal",
+        terminalNote: `Model fallback chain exhausted; refused models: ${fallbackState.refusedModels.join(", ")}.`,
+      };
+    }
+
+    const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
+    const prepared = await fallbackState.options.prepare(nextModelString);
+    if (!prepared.success) {
+      return {
+        kind: "terminal",
+        terminalNote: `Configured fallback model ${nextModelString} could not be started: ${prepared.error}`,
+      };
+    }
+
+    // Build the swapped request/stream into locals first so a failure here
+    // leaves streamInfo unmodified (the terminal error then names the model
+    // that actually refused, not a half-applied fallback).
+    const nextRequest = this.buildStreamRequestConfig(
+      prepared.data.model,
+      prepared.data.modelString,
+      prepared.data.messages,
+      fallbackState.original.system,
+      fallbackState.original.tools,
+      prepared.data.providerOptions,
+      fallbackState.original.maxOutputTokens,
+      prepared.data.callSettingsOverrides,
+      streamInfo.request.toolPolicy,
+      streamInfo.request.hasQueuedMessage,
+      prepared.data.headers,
+      prepared.data.anthropicCacheTtl,
+      streamInfo.request.onChunk,
+      streamInfo.request.onStepMessages
+    );
+    let nextStreamResult: WorkspaceStreamInfo["streamResult"];
+    try {
+      nextStreamResult = this.createStreamResult(
+        nextRequest,
+        streamInfo.abortController,
+        streamInfo.stepTracker
+      );
+    } catch (error) {
+      return {
+        kind: "terminal",
+        terminalNote: `Configured fallback model ${nextModelString} could not be started: ${getErrorMessage(error)}`,
+      };
+    }
+
+    workspaceLog.warn("Model refused with no output; retrying on configured fallback model", {
+      messageId: streamInfo.messageId,
+      refusedModel,
+      nextModel: prepared.data.modelString,
+      refusalFinishReason,
+      chain: fallbackState.options.chain,
+    });
+
+    // Attribute the refused attempt's usage to the refusing model BEFORE the
+    // reset wipes cumulative counters (cross-model usage must not be priced
+    // under the fallback model).
+    await this.recordRefusedAttemptUsage(workspaceId, streamInfo, refusedModel);
+    await this.resetStreamStateForRetry(workspaceId, streamInfo, { workspaceLog });
+    streamInfo.currentStepStartIndex = 0;
+
+    streamInfo.model = prepared.data.modelString;
+    streamInfo.metadataModel = this.resolveMetadataModel(prepared.data.modelString);
+    if (prepared.data.thinkingLevel !== undefined) {
+      streamInfo.thinkingLevel = prepared.data.thinkingLevel;
+    }
+    // Final stream-end metadata spreads initialMetadata, so route attribution
+    // corrections and the fallback record propagate automatically.
+    streamInfo.initialMetadata = {
+      ...streamInfo.initialMetadata,
+      ...prepared.data.initialMetadataPatch,
+      modelFallback: {
+        requestedModel: fallbackState.requestedModel,
+        refusedModels: [...fallbackState.refusedModels],
+      },
+    };
+    streamInfo.request = nextRequest;
+    streamInfo.streamResult = nextStreamResult;
+    await this.tokenTracker.setModel(streamInfo.model, streamInfo.metadataModel);
+
+    return { kind: "swapped" };
   }
 
   private async handleTruncatedStreamCompletion(
@@ -2299,10 +2528,23 @@ export class StreamManager extends EventEmitter {
                   ) ?? null)
                 : null;
               if (refusalFinishReason !== null) {
-                await this.handleModelRefusalCompletion(
+                // A configured fallback chain may swap models in place of the
+                // terminal failure. The swap happens before any error event is
+                // emitted, so task settlement can never race a pending fallback.
+                const fallback = await this.tryModelFallbackAfterRefusal(
                   workspaceId,
                   streamInfo,
                   refusalFinishReason
+                );
+                if (fallback.kind === "swapped") {
+                  continue;
+                }
+
+                await this.handleModelRefusalCompletion(
+                  workspaceId,
+                  streamInfo,
+                  refusalFinishReason,
+                  fallback.terminalNote
                 );
                 break;
               }
@@ -3080,7 +3322,8 @@ export class StreamManager extends EventEmitter {
     callSettingsOverrides?: ResolvedCallSettingsOverrides,
     onChunk?: StreamTextOnChunk,
     onStepMessages?: (messages: ModelMessage[]) => void,
-    providedRuntimeTempDir?: string
+    providedRuntimeTempDir?: string,
+    modelFallback?: ModelFallbackOptions
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -3162,7 +3405,8 @@ export class StreamManager extends EventEmitter {
           headers,
           anthropicCacheTtlOverride,
           onChunk,
-          onStepMessages
+          onStepMessages,
+          modelFallback
         );
 
         // Guard against a narrow race:

@@ -102,6 +102,7 @@ import {
 import { PolicyGetResponseSchema } from "./policy";
 import {
   AgentAiDefaultsSchema,
+  ModelFallbacksSchema,
   SubagentAiDefaultsSchema,
   UpdateChannelSchema,
 } from "../../config/schemas/appConfigOnDisk";
@@ -2077,6 +2078,7 @@ export const config = {
       routePriority: z.array(z.string()).optional(),
       routeOverrides: z.record(z.string(), z.string()).optional(),
       minThinkingLevelByModel: z.record(z.string(), ThinkingLevelSchema).optional(),
+      modelFallbacks: ModelFallbacksSchema.optional(),
       defaultModel: z.string().optional(),
       advisorModelString: AdvisorModelStringSchema,
       advisorThinkingLevel: AdvisorThinkingLevelSchema,
@@ -2151,6 +2153,15 @@ export const config = {
     input: z.object({
       defaultModel: z.string().optional(),
       hiddenModels: z.array(z.string()).optional(),
+    }),
+    output: z.void(),
+  },
+  updateModelFallbacks: {
+    input: z.object({
+      // Full-map replacement keyed by canonical source model. The backend
+      // sanitizes (canonical keys, drop self/dupes, cap chain length, drop
+      // empty chains) before persisting.
+      modelFallbacks: ModelFallbacksSchema,
     }),
     output: z.void(),
   },

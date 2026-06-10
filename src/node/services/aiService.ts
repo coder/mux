@@ -23,7 +23,7 @@ import type { GoalRecordV1 } from "@/common/types/goal";
 import type { ModelMessage, MuxMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
-import { StreamManager, type StreamTextOnChunk } from "./streamManager";
+import { StreamManager, type ModelFallbackOptions, type StreamTextOnChunk } from "./streamManager";
 import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel, type AdvisorStepCaptureRef } from "@/common/utils/tools/tools";
@@ -58,7 +58,8 @@ import type { PostCompactionAttachment } from "@/common/types/attachment";
 
 import type { HistoryService } from "./historyService";
 import { delegatedToolCallManager } from "./delegatedToolCallManager";
-import { createErrorEvent } from "./utils/sendMessageError";
+import { createErrorEvent, formatSendMessageError } from "./utils/sendMessageError";
+import { resolveModelFallbackChain } from "@/common/utils/ai/modelFallbacks";
 import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
@@ -2185,6 +2186,145 @@ export class AIService extends EventEmitter {
         };
       }
 
+      // --- Refusal fallback chain ---
+      // Resolved from app config by canonical source model. Task children can opt
+      // out via taskOnRefusal: "fail" (e.g. workflow verifier steps that demand an
+      // honest terminal failure instead of a silent model swap).
+      const modelFallbackChain = (() => {
+        const appConfig = this.config.loadConfigOrDefault();
+        const chain = resolveModelFallbackChain(appConfig.modelFallbacks, canonicalModelString);
+        if (chain.length === 0) {
+          return chain;
+        }
+        for (const project of appConfig.projects.values()) {
+          const workspace = project.workspaces.find((ws) => ws.id === workspaceId);
+          if (workspace) {
+            return workspace.taskOnRefusal === "fail" ? [] : chain;
+          }
+        }
+        return chain;
+      })();
+
+      // Lazily rebuilds the per-model slice of this pipeline (model creation,
+      // provider-specific message prep, provider options, headers, parameter
+      // overrides) when StreamManager swaps to a fallback model after a
+      // zero-output refusal. Reusing the original request verbatim would leak
+      // provider-specific options/messages across providers.
+      const modelFallback: ModelFallbackOptions | undefined =
+        modelFallbackChain.length > 0
+          ? {
+              chain: modelFallbackChain,
+              prepare: async (nextModelString) => {
+                const nextModelResult = await this.providerModelFactory.resolveAndCreateModel(
+                  nextModelString,
+                  effectiveThinkingLevel,
+                  effectiveMuxProviderOptions,
+                  { agentInitiated, workspaceId }
+                );
+                if (!nextModelResult.success) {
+                  return Err(formatSendMessageError(nextModelResult.error).message);
+                }
+                const next = nextModelResult.data;
+
+                const { providerRequestMessages: nextProviderRequestMessages } =
+                  prepareProviderRequestMessages(
+                    messages,
+                    next.canonicalProviderName,
+                    effectiveThinkingLevel
+                  );
+                const nextFinalMessages = await prepareMessagesForProvider({
+                  messagesWithSentinel: addInterruptedSentinel(nextProviderRequestMessages),
+                  effectiveAgentId,
+                  toolNamesForSentinel,
+                  planContentForTransition,
+                  planFilePath,
+                  changedFileAttachments,
+                  postCompactionAttachments,
+                  runtime,
+                  workspacePath,
+                  abortSignal: combinedAbortSignal,
+                  providerForMessages: next.canonicalProviderName,
+                  effectiveThinkingLevel,
+                  modelString: next.canonicalModelString,
+                  anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
+                  workspaceId,
+                });
+
+                const nextProviderOptions = buildProviderOptions(
+                  next.canonicalModelString,
+                  effectiveThinkingLevel,
+                  nextProviderRequestMessages,
+                  (id) => this.streamManager.isResponseIdLost(id),
+                  effectiveMuxProviderOptions,
+                  workspaceId,
+                  truncationMode,
+                  this.providerService.getConfig(),
+                  next.routeProvider,
+                  promptCacheScope
+                );
+
+                let nextHeaders = buildRequestHeaders(
+                  next.canonicalModelString,
+                  effectiveMuxProviderOptions,
+                  workspaceId,
+                  this.providerService.getConfig(),
+                  next.routeProvider,
+                  effectiveThinkingLevel
+                );
+                if (pendingRunMetadataId != null) {
+                  // Keep DevTools run correlation on fallback requests too.
+                  nextHeaders = {
+                    ...nextHeaders,
+                    [DEVTOOLS_RUN_METADATA_ID_HEADER]: pendingRunMetadataId,
+                  };
+                }
+
+                const nextOverrides = resolveModelParameterOverrides(
+                  this.config.loadProvidersConfig(),
+                  next.canonicalProviderName,
+                  next.canonicalModelString,
+                  next.effectiveModelString
+                );
+                const nextNamespaceKey = resolveProviderOptionsNamespaceKey(
+                  next.canonicalProviderName,
+                  next.routeProvider
+                );
+                const nextMuxNamespace = (nextProviderOptions as Record<string, unknown>)?.[
+                  nextNamespaceKey
+                ];
+                const nextMergedProviderOptions = nextOverrides.providerExtras
+                  ? {
+                      ...nextProviderOptions,
+                      [nextNamespaceKey]: isPlainObject(nextMuxNamespace)
+                        ? mergeProviderExtrasUnderMux(
+                            nextOverrides.providerExtras,
+                            nextMuxNamespace
+                          )
+                        : nextOverrides.providerExtras,
+                    }
+                  : nextProviderOptions;
+
+                return Ok({
+                  model: next.model,
+                  modelString: next.canonicalModelString,
+                  messages: nextFinalMessages,
+                  providerOptions: nextMergedProviderOptions,
+                  headers: nextHeaders,
+                  callSettingsOverrides: nextOverrides.standard,
+                  anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+                  thinkingLevel: effectiveThinkingLevel,
+                  initialMetadataPatch: {
+                    routedThroughGateway: next.routedThroughGateway,
+                    ...(next.routeProvider != null ? { routeProvider: next.routeProvider } : {}),
+                    // Explicit undefined clears a stale costsIncluded when falling
+                    // back from a subscription-routed model to an API model.
+                    costsIncluded: modelCostsIncluded(next.model) ? true : undefined,
+                  },
+                });
+              },
+            }
+          : undefined;
+
       emitStartupBreadcrumb("starting_stream");
       const startStreamStartedAt = Date.now();
       const streamResult = await this.streamManager.startStream(
@@ -2229,7 +2369,8 @@ export class AIService extends EventEmitter {
               advisorStepCaptureRef.frozenSnapshotsByToolCallId.clear();
             }
           : undefined,
-        runtimeTempDir
+        runtimeTempDir,
+        modelFallback
       );
       recordStartupPhaseTiming("startStreamMs", startStreamStartedAt);
 

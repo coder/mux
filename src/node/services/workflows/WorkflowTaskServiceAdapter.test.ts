@@ -105,6 +105,25 @@ describe("WorkflowTaskServiceAdapter", () => {
     });
   });
 
+  test("passes onRefusal through to task creation so refusal policy persists on the child", async () => {
+    let createArgs: unknown;
+    const create = mock(async (args: unknown) => {
+      createArgs = args;
+      return Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const });
+    });
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+    });
+
+    await adapter.runAgent({ id: "verify", prompt: "Verify claims", onRefusal: "fail" });
+
+    expect(createArgs).toMatchObject({ onRefusal: "fail" });
+  });
+
   test("passes CLI-selected model and thinking level to workflow child task creation", async () => {
     let createArgs: unknown;
     const create = mock(async (args: unknown) => {

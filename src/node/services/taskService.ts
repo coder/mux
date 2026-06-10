@@ -147,6 +147,12 @@ export interface TaskCreateArgs {
    */
   thinkingLevel?: ParsedThinkingInput;
   parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
+  /**
+   * Model-refusal policy persisted on the child workspace. "fail" opts the task
+   * out of configured model-fallback chains so a refusal settles terminally
+   * (workflow verifier steps demand honest failure). Defaults to "fallback".
+   */
+  onRefusal?: "fail" | "fallback";
   /** Shared grouping metadata when one tool call spawns multiple sibling tasks. */
   bestOf?: {
     groupId: string;
@@ -304,6 +310,7 @@ interface TaskLaunchPlan {
   workflowTask?: TaskCreateArgs["workflowTask"];
   bestOf?: TaskCreateArgs["bestOf"];
   experiments?: TaskCreateArgs["experiments"];
+  onRefusal?: TaskCreateArgs["onRefusal"];
 }
 
 interface TaskCreateManyOptions {
@@ -1749,6 +1756,7 @@ export class TaskService {
         workflowTask: args.workflowTask,
         bestOf: normalizedBestOf,
         experiments: args.experiments,
+        onRefusal: args.onRefusal,
         status,
       });
       results.push({ taskId, kind: "agent", status });
@@ -1802,6 +1810,7 @@ export class TaskService {
           taskTrunkBranch: trunkBranch,
           taskModelString: plan.taskModelString,
           taskThinkingLevel: plan.effectiveThinkingLevel,
+          taskOnRefusal: plan.onRefusal,
           taskExperiments: plan.experiments,
           projects: plan.parentMeta.projects,
         });
@@ -2450,6 +2459,7 @@ export class TaskService {
           taskTrunkBranch: trunkBranch,
           taskModelString,
           taskThinkingLevel: effectiveThinkingLevel,
+          taskOnRefusal: args.onRefusal,
           taskExperiments: args.experiments,
           projects: parentMeta.projects,
         });
@@ -2569,6 +2579,7 @@ export class TaskService {
         taskBaseCommitShaByProjectPath,
         taskModelString,
         taskThinkingLevel: effectiveThinkingLevel,
+        taskOnRefusal: args.onRefusal,
         taskExperiments: args.experiments,
         projects: inheritedProjects,
       });

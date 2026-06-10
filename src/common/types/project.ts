@@ -8,6 +8,7 @@ import type { WorktreeArchiveBehavior } from "@/common/config/worktreeArchiveBeh
 import type {
   AppConfigMigrations,
   FeatureFlagOverride,
+  ModelFallbacks,
   UpdateChannel,
 } from "@/common/config/schemas/appConfigOnDisk";
 import type { UserPreferences } from "@/common/config/schemas/userPreferences";
@@ -108,6 +109,12 @@ export interface ProjectsConfig {
    * built-in default (medium for reasoning-capable models).
    */
   minThinkingLevelByModel?: Record<string, ThinkingLevel>;
+
+  /**
+   * Per-model refusal-fallback chains (keyed by canonical source model). When a
+   * model refuses with zero output, the turn retries on the next chain model.
+   */
+  modelFallbacks?: ModelFallbacks;
 
   /**
    * Default model used for new workspaces (shared via ~/.mux/config.json).

@@ -300,6 +300,7 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
       ...(experiments !== undefined ? { experiments } : {}),
       ...(this.modelString !== undefined ? { modelString: this.modelString } : {}),
       ...(this.thinkingLevel !== undefined ? { thinkingLevel: this.thinkingLevel } : {}),
+      ...(spec.onRefusal !== undefined ? { onRefusal: spec.onRefusal } : {}),
     });
     if (!createResult.success) {
       throw new Error(createResult.error);

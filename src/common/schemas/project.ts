@@ -140,6 +140,10 @@ export const WorkspaceConfigSchema = z.object({
   taskThinkingLevel: ThinkingLevelSchema.optional().meta({
     description: "Thinking level used for this agent task (used for restart-safe resumptions).",
   }),
+  taskOnRefusal: z.enum(["fail", "fallback"]).optional().meta({
+    description:
+      "Model-refusal policy for this agent task: 'fail' opts out of configured model-fallback chains so refusals settle terminally (e.g. workflow verifier steps). Default behavior is 'fallback'.",
+  }),
   taskPrompt: z.string().optional().meta({
     description:
       "Initial prompt for a queued agent task (persisted only until the task actually starts).",
