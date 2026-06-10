@@ -12,7 +12,12 @@ import {
   ToolIcon,
   ErrorBox,
 } from "./Shared/ToolPrimitives";
-import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
+import {
+  useToolExpansion,
+  getStatusDisplay,
+  unwrapResult,
+  type ToolStatus,
+} from "./Shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { formatBytes } from "@/common/utils/formatBytes";
 
@@ -57,23 +62,6 @@ function getDomain(url: string): string {
   } catch {
     return url;
   }
-}
-
-/**
- * Unwrap JSON container from streamManager's stripEncryptedContent.
- * Results arrive as { type: "json", value: [...] } or direct object.
- */
-function unwrapResult(result: unknown): unknown {
-  if (
-    result !== null &&
-    typeof result === "object" &&
-    "type" in result &&
-    (result as { type: string }).type === "json" &&
-    "value" in result
-  ) {
-    return (result as { value: unknown }).value;
-  }
-  return result;
 }
 
 /**

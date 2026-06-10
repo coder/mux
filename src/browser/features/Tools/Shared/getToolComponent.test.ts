@@ -84,4 +84,12 @@ describe("getToolComponent", () => {
     const component = getToolComponent("server:GOOGLE_SEARCH_WEB", { queries: "not-an-array" });
     expect(component).toBe(GenericToolCall);
   });
+
+  test("Object.prototype member names fall back to GenericToolCall instead of throwing", () => {
+    // toolName flows verbatim from persisted transcripts; inherited members of the
+    // registry object must not be treated as entries (self-healing invariant).
+    expect(getToolComponent("constructor", {})).toBe(GenericToolCall);
+    expect(getToolComponent("__proto__", {})).toBe(GenericToolCall);
+    expect(getToolComponent("toString", {})).toBe(GenericToolCall);
+  });
 });

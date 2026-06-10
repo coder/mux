@@ -576,7 +576,9 @@ function getOperationalBundleCategory(
   if (message.toolName === "bash") {
     return "shell";
   }
-  if (message.toolName === "web_search") {
+  // server:GOOGLE_SEARCH_WEB is Google's native search grounding (Gemini 3+); one call can
+  // carry several queries, but it is still one search operation for bundle copy purposes.
+  if (message.toolName === "web_search" || message.toolName === "server:GOOGLE_SEARCH_WEB") {
     return "search";
   }
   if (message.toolName === "web_fetch") {

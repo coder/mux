@@ -7,7 +7,9 @@ const COLOCATED_STORY_DIRS = ["src/browser/components", "src/browser/features"];
 const MAX_SNAPSHOT_ENABLED_FILES = 70;
 // Keep a buffer under Chromatic's 300 snapshot limit. This reflects the current
 // retained snapshot set while still blocking accidental growth.
-const MAX_ESTIMATED_SNAPSHOTS = 258;
+// 259 = 258 prior set + 1 Gallery composite for GoogleSearchToolCall (new themed
+// component; variants folded into one snapshot to minimize budget impact).
+const MAX_ESTIMATED_SNAPSHOTS = 259;
 const STORY_EXPORT_PATTERN = /^export const \w+/gm;
 const SMOKE_MODE_PATTERN = /modes:\s*CHROMATIC_SMOKE_MODES/g;
 const INLINE_MODE_OBJECT_PATTERN = /modes:\s*{/g;

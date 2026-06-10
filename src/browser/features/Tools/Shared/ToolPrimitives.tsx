@@ -271,7 +271,12 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
 };
 
 export const ToolIcon: React.FC<ToolIconProps> = ({ toolName, emoji, emojiSpin, className }) => {
-  const Icon = TOOL_NAME_TO_ICON[toolName] ?? Sparkles;
+  // Object.hasOwn: toolName comes from persisted transcripts; a bare index lookup returns
+  // inherited Object members for names like "constructor", which would render garbage
+  // instead of falling back to Sparkles.
+  const Icon = Object.hasOwn(TOOL_NAME_TO_ICON, toolName)
+    ? (TOOL_NAME_TO_ICON[toolName] ?? Sparkles)
+    : Sparkles;
 
   return (
     <Tooltip>

@@ -10,13 +10,16 @@ import {
   DetailLabel,
   LoadingDots,
   ToolIcon,
+  ErrorBox,
 } from "./Shared/ToolPrimitives";
 import {
   useToolExpansion,
   getStatusDisplay,
   unwrapResult,
+  isToolErrorResult,
   type ToolStatus,
 } from "./Shared/toolUtils";
+import { JsonHighlight } from "./Shared/HighlightedCode";
 
 /**
  * Renderer for Google's native search grounding tool (Gemini 3+), which the provider
@@ -51,17 +54,27 @@ function parseSearchSuggestions(html: string): SuggestionChip[] {
   try {
     const doc = new DOMParser().parseFromString(html, "text/html");
     const chips: SuggestionChip[] = [];
+    // Dedupe by href: chips render with key={chip.href}, and a payload repeating a
+    // suggestion (duplicate model queries, tampered transcript) must not produce
+    // duplicate React keys.
+    const seenHrefs = new Set<string>();
     for (const anchor of Array.from(doc.querySelectorAll("a.chip"))) {
       const href = anchor.getAttribute("href");
       const label = anchor.textContent?.trim();
-      if (!href || !label) continue;
+      if (!href || !label || seenHrefs.has(href)) continue;
       try {
         const url = new URL(href);
         if (
           url.protocol === "https:" &&
           url.hostname === "www.google.com" &&
-          url.pathname === "/search"
+          url.pathname === "/search" &&
+          // Reject userinfo/port-bearing URLs: still google.com, but a tampered
+          // transcript could smuggle credentials or a dead port into the link.
+          url.username === "" &&
+          url.password === "" &&
+          url.port === ""
         ) {
+          seenHrefs.add(href);
           chips.push({ label, href });
         }
       } catch {
@@ -123,6 +136,14 @@ export const GoogleSearchToolCall: React.FC<GoogleSearchToolCallProps> = ({
   const queries = args.queries ?? [];
   const suggestionsHtml = extractSuggestionsHtml(result);
   const chips = suggestionsHtml ? parseSearchSuggestions(suggestionsHtml) : [];
+  // streamManager synthesizes { success: false, error } for tool errors; surface it so a
+  // failed call isn't a bare "failed" badge with empty details (regression-guard vs the
+  // GenericToolCall fallback, which always dumped the result JSON). Unwrap first: results
+  // can arrive inside the { type: "json", value } persistence container.
+  const unwrappedResult = unwrapResult(result);
+  const failureError =
+    status === "failed" && isToolErrorResult(unwrappedResult) ? unwrappedResult.error : undefined;
+  const showRawFailureResult = status === "failed" && failureError === undefined && result != null;
 
   return (
     <ToolContainer expanded={expanded} className="@container">
@@ -148,7 +169,9 @@ export const GoogleSearchToolCall: React.FC<GoogleSearchToolCallProps> = ({
               <DetailLabel>Queries</DetailLabel>
               <div className="bg-code-bg rounded px-2 py-1.5 text-[11px] leading-[1.4]">
                 {queries.map((query, i) => (
-                  <div key={i} className="font-monospace text-text truncate">
+                  // break-words (not truncate): the expanded view is the only place a long
+                  // query can be read in full — the collapsed header already truncates.
+                  <div key={i} className="font-monospace text-text break-words">
                     {query}
                   </div>
                 ))}
@@ -166,12 +189,28 @@ export const GoogleSearchToolCall: React.FC<GoogleSearchToolCallProps> = ({
                     href={chip.href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="border-border-medium text-text hover:border-border-darker hover:bg-code-bg inline-flex min-w-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] no-underline transition-colors"
+                    className="border-border-medium text-text hover:border-border-darker hover:bg-code-bg focus-visible:border-accent focus-visible:ring-accent/50 inline-flex min-w-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] no-underline transition-colors focus-visible:ring-1"
                   >
                     <GoogleLogo />
                     <span className="truncate">{chip.label}</span>
                   </a>
                 ))}
+              </div>
+            </DetailSection>
+          )}
+
+          {failureError !== undefined && (
+            <DetailSection>
+              <DetailLabel>Error</DetailLabel>
+              <ErrorBox>{failureError}</ErrorBox>
+            </DetailSection>
+          )}
+
+          {showRawFailureResult && (
+            <DetailSection>
+              <DetailLabel>Result</DetailLabel>
+              <div className="bg-code-bg max-h-[300px] overflow-y-auto rounded px-3 py-2 text-[12px]">
+                <JsonHighlight value={result} />
               </div>
             </DetailSection>
           )}

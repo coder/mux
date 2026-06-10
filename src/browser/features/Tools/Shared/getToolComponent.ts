@@ -212,7 +212,11 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
  * Validates args against Zod schemas; returns GenericToolCall if validation fails or tool unknown.
  */
 export function getToolComponent(toolName: string, args: unknown): AnyToolComponent {
-  const entry = TOOL_REGISTRY[toolName];
+  // Object.hasOwn: toolName flows verbatim from persisted transcripts (attacker-controlled).
+  // A bare index lookup returns truthy inherited members for names like "constructor",
+  // which would then throw on .schema and brick the workspace view instead of degrading
+  // to the generic renderer (self-healing invariant).
+  const entry = Object.hasOwn(TOOL_REGISTRY, toolName) ? TOOL_REGISTRY[toolName] : undefined;
   if (!entry?.schema.safeParse(args).success) {
     return GenericToolCall;
   }

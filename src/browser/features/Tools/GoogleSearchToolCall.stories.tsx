@@ -18,61 +18,64 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-function ToolStoryShell(props: { children: ReactNode }) {
+function GallerySection(props: { label: string; children: ReactNode }) {
   return (
-    <div className="bg-background p-6">
-      <div className="w-full max-w-2xl">{props.children}</div>
-    </div>
+    <section className="flex flex-col gap-2">
+      <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+        {props.label}
+      </div>
+      {props.children}
+    </section>
   );
 }
 
-/** Completed grounding call: queries + parsed suggestion chips, expanded via play. */
-export const Completed: Story = {
-  args: {
-    args: { queries: SAMPLE_GOOGLE_SEARCH_QUERIES },
-    result: { search_suggestions: SAMPLE_SEARCH_SUGGESTIONS_HTML },
-    status: "completed",
-  },
-  render: (args) => (
-    <ToolStoryShell>
-      <GoogleSearchToolCall {...args} />
-    </ToolStoryShell>
+// Gallery composite: folds completed-expanded, executing, failed, and single-query
+// collapsed variants into a single snapshot to keep the Chromatic budget low
+// (same pattern as AttachFileToolCall's Gallery).
+export const Gallery: Story = {
+  render: () => (
+    <div className="bg-background p-6">
+      <div className="flex w-full max-w-2xl flex-col gap-6">
+        <GallerySection label="Completed with suggestions (expanded via play)">
+          <GoogleSearchToolCall
+            args={{ queries: SAMPLE_GOOGLE_SEARCH_QUERIES }}
+            result={{ search_suggestions: SAMPLE_SEARCH_SUGGESTIONS_HTML }}
+            status="completed"
+          />
+        </GallerySection>
+        <GallerySection label="Executing (expanded via play)">
+          <GoogleSearchToolCall
+            args={{ queries: SAMPLE_GOOGLE_SEARCH_QUERIES.slice(0, 2) }}
+            status="executing"
+          />
+        </GallerySection>
+        <GallerySection label="Failed (expanded via play)">
+          <GoogleSearchToolCall
+            args={{ queries: [SAMPLE_GOOGLE_SEARCH_QUERIES[0] ?? ""] }}
+            result={{ success: false, error: "Search quota exceeded" }}
+            status="failed"
+          />
+        </GallerySection>
+        <GallerySection label="Single query, collapsed">
+          <GoogleSearchToolCall
+            args={{ queries: [SAMPLE_GOOGLE_SEARCH_QUERIES[0] ?? ""] }}
+            result={{ search_suggestions: SAMPLE_SEARCH_SUGGESTIONS_HTML }}
+            status="completed"
+          />
+        </GallerySection>
+      </div>
+    </div>
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    canvas.getByText("Google Search").click();
+    // Expand the first three instances (completed, executing, failed); keep the
+    // last one collapsed to also snapshot the collapsed header state.
+    const headers = canvas.getAllByText("Google Search");
+    headers[0]?.click();
+    headers[1]?.click();
+    headers[2]?.click();
     await waitFor(() => canvas.getByText("Suggested searches"));
-  },
-};
-
-/** Provider is still executing the search: no result yet, loading details. */
-export const Executing: Story = {
-  args: {
-    args: { queries: SAMPLE_GOOGLE_SEARCH_QUERIES.slice(0, 2) },
-    status: "executing",
-  },
-  render: (args) => (
-    <ToolStoryShell>
-      <GoogleSearchToolCall {...args} />
-    </ToolStoryShell>
-  ),
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    canvas.getByText("Google Search").click();
     await waitFor(() => canvas.getByText("Searching"));
+    await waitFor(() => canvas.getByText("Search quota exceeded"));
   },
-};
-
-/** Collapsed single-query row (no "+N more" badge). */
-export const SingleQueryCollapsed: Story = {
-  args: {
-    args: { queries: [SAMPLE_GOOGLE_SEARCH_QUERIES[0] ?? ""] },
-    result: { search_suggestions: SAMPLE_SEARCH_SUGGESTIONS_HTML },
-    status: "completed",
-  },
-  render: (args) => (
-    <ToolStoryShell>
-      <GoogleSearchToolCall {...args} />
-    </ToolStoryShell>
-  ),
 };
