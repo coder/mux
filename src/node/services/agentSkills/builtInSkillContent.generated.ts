@@ -6838,7 +6838,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "",
       "Optional fields:",
       "",
-      "- `title`: UI title.",
+      '- `title`: UI title; used as the spawned child workspace title and the run-card task row label, falling back to `id` when omitted. Prefer human numbering (e.g. 1-based "Verify claim 1") over raw 0-based step ids.',
       "- `agentId`: sub-agent type/id; defaults to the workflow adapter default (usually `explore`).",
       "- `outputSchema`: JSON Schema subset used to validate `structuredOutput`.",
       "",

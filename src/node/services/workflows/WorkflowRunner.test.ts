@@ -192,9 +192,13 @@ describe("WorkflowRunner", () => {
     });
     let nextTaskNumber = 1;
     const runner = createRunner(store, {
-      async runAgent() {
+      async runAgent(_spec, lifecycle) {
         const taskId = `task_${nextTaskNumber}`;
         nextTaskNumber += 1;
+        // Report the taskId via the lifecycle callback like the production adapter
+        // does, so the started-event title is pinned on the lifecycle path rather
+        // than the post-hoc fallback.
+        await lifecycle?.onTaskCreated?.(taskId);
         return { taskId, reportMarkdown: "ok" };
       },
     });
@@ -1065,8 +1069,8 @@ describe("WorkflowRunner", () => {
       definition,
       definitionSource: `export default function workflow({ parallelAgents }) {
         const results = parallelAgents([
-          { id: "source-a", prompt: "Read source A" },
-          { id: "source-b", prompt: "Read source B" },
+          { id: "source-a", title: "Read source 1", prompt: "Read source A" },
+          { id: "source-b", title: "Read source 2", prompt: "Read source B" },
         ]);
         return { reportMarkdown: results.map((result) => result.reportMarkdown).join(" + ") };
       }`,
@@ -1102,6 +1106,25 @@ describe("WorkflowRunner", () => {
     expect(waitForAgentTask).toHaveBeenCalledTimes(2);
     const run = await store.getRun("wfr_parallel_bulk");
     expect(run.steps.map((step) => step.taskId).sort()).toEqual(["task_source-a", "task_source-b"]);
+    // The bulk onTaskCreated path is how production parallel fan-outs record started
+    // events; pin that it forwards spec titles (started events are recorded there).
+    const taskEvents = run.events.filter((event) => event.type === "task");
+    expect(taskEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ stepId: "source-a", title: "Read source 1", status: "started" }),
+        expect.objectContaining({ stepId: "source-b", title: "Read source 2", status: "started" }),
+        expect.objectContaining({
+          stepId: "source-a",
+          title: "Read source 1",
+          status: "completed",
+        }),
+        expect.objectContaining({
+          stepId: "source-b",
+          title: "Read source 2",
+          status: "completed",
+        }),
+      ])
+    );
   });
 
   test("records completed parallelAgents results before slower siblings finish", async () => {
