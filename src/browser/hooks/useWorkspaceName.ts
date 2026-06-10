@@ -6,7 +6,6 @@ import { getWorkspaceNameStateKey } from "@/common/constants/storage";
 import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { NameGenerationError } from "@/common/types/errors";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
-import { getErrorMessage } from "@/common/utils/errors";
 
 /** Discriminated error type for workspace name operations */
 export type WorkspaceNameUIError =
@@ -25,6 +24,19 @@ function buildNameGenCandidates(userModel: string | undefined): string[] {
     candidates.push(userModel);
   }
   return candidates;
+}
+
+function buildFallbackWorkspaceIdentity(message: string): WorkspaceIdentity {
+  const normalized = message
+    .trim()
+    .replace(/^\/+/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48)
+    .replace(/-+$/g, "");
+  const name = normalized && !validateWorkspaceName(normalized).error ? normalized : "workspace";
+  return { name, title: name };
 }
 
 export interface UseWorkspaceNameOptions {
@@ -244,17 +256,28 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
           return identity;
         }
 
-        setError({ kind: "generation", error: result.error });
-        safeResolve(null);
-        return null;
-      } catch (err) {
+        const fallbackIdentity = buildFallbackWorkspaceIdentity(forMessage);
+        setStored((prev) => ({
+          ...prev,
+          generatedIdentity: fallbackIdentity,
+          lastGeneratedFor: forMessage,
+        }));
+        setError(null);
+        safeResolve(fallbackIdentity);
+        return fallbackIdentity;
+      } catch {
         if (requestId !== requestIdRef.current) {
           return null;
         }
-        const errorMsg = getErrorMessage(err);
-        setError({ kind: "transport", message: errorMsg });
-        safeResolve(null);
-        return null;
+        const fallbackIdentity = buildFallbackWorkspaceIdentity(forMessage);
+        setStored((prev) => ({
+          ...prev,
+          generatedIdentity: fallbackIdentity,
+          lastGeneratedFor: forMessage,
+        }));
+        setError(null);
+        safeResolve(fallbackIdentity);
+        return fallbackIdentity;
       } finally {
         if (requestId === requestIdRef.current) {
           setIsGenerating(false);

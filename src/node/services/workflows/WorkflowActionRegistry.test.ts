@@ -112,6 +112,12 @@ describe("WorkflowActionRegistry", () => {
     expect(byName.get("git.diff")?.scope).toBe("built-in");
     expect(byName.get("git.diffStat")?.scope).toBe("built-in");
     expect(byName.get("git.changedFiles")?.scope).toBe("built-in");
+    expect(byName.get("security.loadState")?.scope).toBe("built-in");
+    expect(byName.get("security.hashFiles")?.scope).toBe("built-in");
+    expect(byName.get("security.matchFindings")?.scope).toBe("built-in");
+    expect(byName.get("security.writeThreatModel")?.scope).toBe("built-in");
+    expect(byName.get("security.writeEvidenceBundle")?.scope).toBe("built-in");
+    expect(byName.get("security.writeState")?.scope).toBe("built-in");
   });
 
   test("uses project actions before global actions when trusted", async () => {

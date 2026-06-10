@@ -944,6 +944,53 @@ describe("useCreationWorkspace", () => {
     ).toBe("/deep-research mux workflows");
   });
 
+  test("handleSend uses a deterministic workspace name when AI name generation fails", async () => {
+    const nameGenerationMock = mock(
+      (_args: NameGenerationArgs): Promise<NameGenerationResult> =>
+        Promise.resolve({
+          success: false,
+          error: { type: "permission_denied", provider: "anthropic", raw: "Forbidden" },
+        } as NameGenerationResult)
+    );
+    const createMock = mock(
+      (_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> =>
+        Promise.resolve({
+          success: true,
+          metadata: TEST_METADATA,
+        } as WorkspaceCreateResult)
+    );
+    const sendMessageMock = mock(
+      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
+        Promise.resolve({ success: true, data: {} } as WorkspaceSendMessageResult)
+    );
+    const { workspaceApi, nameGenerationApi } = setupWindow({
+      create: createMock,
+      sendMessage: sendMessageMock,
+      nameGeneration: nameGenerationMock,
+    });
+    const onWorkspaceCreated = mock((metadata: FrontendWorkspaceMetadata) => metadata);
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated,
+      message: "/security-scan",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual([FALLBACK_BRANCH]));
+    await waitFor(() => expect(nameGenerationApi.generate.mock.calls.length).toBe(1));
+
+    let handleSendResult: CreationSendResult | undefined;
+    await act(async () => {
+      handleSendResult = await getHook().handleSend("/security-scan");
+    });
+
+    expect(handleSendResult).toEqual({ success: true });
+    expect(workspaceApi.create.mock.calls.length).toBe(1);
+    const createRequest = workspaceApi.create.mock.calls[0]?.[0];
+    expect(createRequest?.branchName).toBe("security-scan");
+    expect(createRequest?.title).toBe("security-scan");
+    expect(workspaceApi.sendMessage.mock.calls.length).toBe(1);
+  });
+
   test("handleSend shows trust dialog for untrusted projects", async () => {
     mockProjectConfigMap = new Map([[TEST_PROJECT_PATH, { workspaces: [], trusted: false }]]);
     const nameGenerationMock = mock(

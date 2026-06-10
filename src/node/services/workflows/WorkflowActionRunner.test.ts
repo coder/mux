@@ -24,6 +24,21 @@ function createAction(sourcePath: string, source: string): ResolvedWorkflowActio
   };
 }
 
+function expectObjectRecord(value: unknown): Record<string, unknown> {
+  expect(value).not.toBeNull();
+  expect(typeof value).toBe("object");
+  return value as Record<string, unknown>;
+}
+
+async function runGit(cwd: string, args: string[]): Promise<void> {
+  await execFileAsync("git", args, { cwd });
+}
+
+async function readGit(cwd: string, args: string[]): Promise<string> {
+  const result = await execFileAsync("git", args, { cwd });
+  return result.stdout.trimEnd();
+}
+
 async function expectRejects(promise: Promise<unknown>, pattern: RegExp) {
   try {
     await promise;
@@ -488,6 +503,538 @@ export default value;
 
     expect(result.output).toEqual({ timedOut: true });
     await expectRejects(fs.access(markerPath), /no such file|ENOENT/i);
+  });
+
+  test("built-in security actions write scanner state only under .mux/security", async () => {
+    using tmp = new DisposableTempDir("workflow-action-security-state");
+    const repoRoot = path.join(tmp.path, "repo");
+    await fs.mkdir(repoRoot, { recursive: true });
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const runner = new WorkflowActionRunner();
+    const threatModelAction = await registry.resolveAction("security.writeThreatModel", {
+      projectTrusted: false,
+    });
+    const writeStateAction = await registry.resolveAction("security.writeState", {
+      projectTrusted: false,
+    });
+
+    await runner.execute(threatModelAction, {
+      input: {
+        markdown: "# Security Threat Model\n\nGenerated model.",
+        index: { sections: [{ id: "entrypoints", files: ["src/main.ts"] }] },
+        generatedAt: "2026-06-10T00:00:00.000Z",
+      },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-threat"),
+    });
+    await runner.execute(writeStateAction, {
+      input: {
+        runDirId: "run-test",
+        cache: { findings: {}, coverage: {} },
+        reportMarkdown: "# Security Scan\n\nNo findings.",
+        structuredOutput: { findingCount: 0 },
+      },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-state"),
+    });
+
+    expect(
+      await fs.readFile(path.join(repoRoot, ".mux/security/threat-model.md"), "utf-8")
+    ).toContain("Generated model.");
+    expect(
+      await fs.readFile(path.join(repoRoot, ".mux/security/threat-model.index.json"), "utf-8")
+    ).toContain("entrypoints");
+    expect(await fs.readFile(path.join(repoRoot, ".mux/security/cache.json"), "utf-8")).toContain(
+      "mux-security-scan/v1"
+    );
+    expect(
+      await fs.readFile(path.join(repoRoot, ".mux/security/runs/run-test/report.md"), "utf-8")
+    ).toContain("No findings.");
+    await expectRejects(
+      fs.access(path.join(repoRoot, ".mux/threat-model.md")),
+      /no such file|ENOENT/i
+    );
+    await expectRejects(
+      fs.access(path.join(repoRoot, ".mux/security-cache.json")),
+      /no such file|ENOENT/i
+    );
+  });
+
+  test("built-in security actions reject unsafe paths and recover from malformed state", async () => {
+    using tmp = new DisposableTempDir("workflow-action-security-safety");
+    const repoRoot = path.join(tmp.path, "repo");
+    await fs.mkdir(path.join(repoRoot, ".mux/security"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, ".mux/security/cache.json"), "{not json", "utf-8");
+    await fs.writeFile(path.join(repoRoot, "safe.txt"), "safe", "utf-8");
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const runner = new WorkflowActionRunner();
+    const loadStateAction = await registry.resolveAction("security.loadState", {
+      projectTrusted: false,
+    });
+    const hashFilesAction = await registry.resolveAction("security.hashFiles", {
+      projectTrusted: false,
+    });
+    const writeStateAction = await registry.resolveAction("security.writeState", {
+      projectTrusted: false,
+    });
+    const writeEvidenceAction = await registry.resolveAction("security.writeEvidenceBundle", {
+      projectTrusted: false,
+    });
+
+    const loaded = await runner.execute(loadStateAction, {
+      input: null,
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-load"),
+    });
+    expect(loaded.output).toMatchObject({ securityRoot: ".mux/security" });
+    expect(JSON.stringify(loaded.output)).toContain("cache.json");
+
+    await expectRejects(
+      runner.execute(hashFilesAction, {
+        input: { files: ["../escape.txt"] },
+        cwd: repoRoot,
+        timeoutMs: 10_000,
+        artifactDir: path.join(tmp.path, "artifacts-hash"),
+      }),
+      /traverse|relative path/
+    );
+    await expectRejects(
+      runner.execute(writeStateAction, {
+        input: { runDirId: "../escape", cache: {} },
+        cwd: repoRoot,
+        timeoutMs: 10_000,
+        artifactDir: path.join(tmp.path, "artifacts-write"),
+      }),
+      /letters, numbers|traverse|relative/
+    );
+    await expectRejects(
+      runner.execute(writeEvidenceAction, {
+        input: {
+          findingId: "mux-sec-safe",
+          evidence: {},
+          pocScripts: { "../escape.sh": "echo unsafe" },
+        },
+        cwd: repoRoot,
+        timeoutMs: 10_000,
+        artifactDir: path.join(tmp.path, "artifacts-evidence-unsafe"),
+      }),
+      /traverse|relative path/
+    );
+  });
+
+  test("built-in security writes remain git-ignored and reject reserved artifact identities", async () => {
+    using tmp = new DisposableTempDir("workflow-action-security-gitignore");
+    const repoRoot = path.join(tmp.path, "repo");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "tracked.txt"), "tracked\n", "utf-8");
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await runGit(repoRoot, ["add", "tracked.txt"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const runner = new WorkflowActionRunner();
+    const threatModelAction = await registry.resolveAction("security.writeThreatModel", {
+      projectTrusted: false,
+    });
+    const evidenceAction = await registry.resolveAction("security.writeEvidenceBundle", {
+      projectTrusted: false,
+    });
+    const writeStateAction = await registry.resolveAction("security.writeState", {
+      projectTrusted: false,
+    });
+
+    await runner.execute(threatModelAction, {
+      input: { markdown: "# Generated", index: { sections: [] }, generatedAt: "test" },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-threat-ignored"),
+    });
+    await runner.execute(evidenceAction, {
+      input: { findingId: "mux-sec-safe", evidence: { verdict: "verified" }, transcript: "ok" },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-evidence-ignored"),
+    });
+    const firstStateWrite = await runner.execute(writeStateAction, {
+      input: { cache: { findings: {}, coverage: {} }, reportMarkdown: "# Report" },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-state-ignored"),
+    });
+    const secondStateWrite = await runner.execute(writeStateAction, {
+      input: { cache: { findings: {}, coverage: {} }, reportMarkdown: "# Report" },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-state-ignored-repeat"),
+    });
+    expect(expectObjectRecord(firstStateWrite.output).runDir).toBe(
+      expectObjectRecord(secondStateWrite.output).runDir
+    );
+
+    expect(await fs.readFile(path.join(repoRoot, ".mux/security/.gitignore"), "utf-8")).toBe("*\n");
+    expect(await readGit(repoRoot, ["status", "--porcelain", "--untracked-files=all"])).toBe("");
+
+    await expectRejects(
+      runner.execute(evidenceAction, {
+        input: { findingId: "..", evidence: {} },
+        cwd: repoRoot,
+        timeoutMs: 10_000,
+        artifactDir: path.join(tmp.path, "artifacts-evidence-dot-id"),
+      }),
+      /letters or numbers|reserved/
+    );
+    await expectRejects(
+      runner.execute(writeStateAction, {
+        input: { runDirId: "latest", cache: {} },
+        cwd: repoRoot,
+        timeoutMs: 10_000,
+        artifactDir: path.join(tmp.path, "artifacts-state-latest"),
+      }),
+      /reserved id latest/
+    );
+    await expectRejects(
+      runner.execute(evidenceAction, {
+        input: {
+          findingId: "mux-sec-safe",
+          evidence: {},
+          pocScripts: { "evidence.json": "echo overwrite" },
+        },
+        cwd: repoRoot,
+        timeoutMs: 10_000,
+        artifactDir: path.join(tmp.path, "artifacts-evidence-reserved"),
+      }),
+      /reserved evidence file/
+    );
+    await fs.writeFile(
+      path.join(tmp.path, "outside-threat-model.md"),
+      "<!-- mux-security-generated:start -->\noutside\n<!-- mux-security-generated:end -->\n",
+      "utf-8"
+    );
+    await fs.rm(path.join(repoRoot, ".mux/security/threat-model.md"));
+    await fs.symlink(
+      path.join(tmp.path, "outside-threat-model.md"),
+      path.join(repoRoot, ".mux/security/threat-model.md")
+    );
+    await expectRejects(
+      runner.execute(threatModelAction, {
+        input: { markdown: "# Regenerated", index: { sections: [] }, generatedAt: "test" },
+        cwd: repoRoot,
+        timeoutMs: 10_000,
+        artifactDir: path.join(tmp.path, "artifacts-threat-symlink"),
+      }),
+      /escapes \.mux\/security/
+    );
+  });
+
+  test("built-in security hashes include formatting-stable JS/TS semantic fingerprints", async () => {
+    using tmp = new DisposableTempDir("workflow-action-security-semantic-hash");
+    const repoRoot = path.join(tmp.path, "repo");
+    await fs.mkdir(path.join(repoRoot, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoRoot, "src", "compact.ts"),
+      "export function allow(user: User) { return user.admin && user.active; }\n",
+      "utf-8"
+    );
+    await fs.writeFile(
+      path.join(repoRoot, "src", "formatted.ts"),
+      "export function allow(user: User) {\n  // formatting-only drift\n  return user.admin && user.active;\n}\n",
+      "utf-8"
+    );
+    await fs.mkdir(path.join(repoRoot, "..config"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoRoot, "..config", "auth.ts"),
+      "export const auth = true;\n",
+      "utf-8"
+    );
+    await fs.writeFile(
+      path.join(tmp.path, "outside-secret.ts"),
+      "export const secret = true;\n",
+      "utf-8"
+    );
+    await fs.symlink(
+      path.join(tmp.path, "outside-secret.ts"),
+      path.join(repoRoot, "secret-link.ts")
+    );
+    await fs.writeFile(path.join(repoRoot, "root.ts"), "export const root = true;\n", "utf-8");
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const runner = new WorkflowActionRunner();
+    const hashAction = await registry.resolveAction("security.hashFiles", {
+      projectTrusted: false,
+    });
+
+    const result = await runner.execute(hashAction, {
+      input: {
+        files: [
+          "src/compact.ts",
+          "src/formatted.ts",
+          "..config/auth.ts",
+          "root.ts",
+          "missing/none.ts",
+        ],
+      },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-semantic-hash"),
+    });
+
+    const output = expectObjectRecord(result.output);
+    const files = output.files;
+    expect(Array.isArray(files)).toBe(true);
+    if (!Array.isArray(files)) throw new Error("expected hashFiles files output");
+    const compact = expectObjectRecord(files[0]);
+    const formatted = expectObjectRecord(files[1]);
+    const dotPrefixed = expectObjectRecord(files[2]);
+    const root = expectObjectRecord(files[3]);
+    const missing = expectObjectRecord(files[4]);
+    expect(compact.sha256).not.toBe(formatted.sha256);
+    expect(compact.semanticSha256).toMatch(/^sha256:/);
+    expect(compact.semanticSha256).toBe(formatted.semanticSha256);
+    expect(compact.semanticSections).toEqual(formatted.semanticSections);
+    expect(dotPrefixed).toMatchObject({ path: "..config/auth.ts", missing: false });
+    expect(root).toMatchObject({ path: "root.ts", missing: false });
+    expect(root.semanticSha256).toMatch(/^sha256:/);
+    expect(missing).toMatchObject({ path: "missing/none.ts", sha256: null, missing: true });
+    expect(Array.isArray(compact.semanticSections)).toBe(true);
+    await expectRejects(
+      runner.execute(hashAction, {
+        input: { files: ["secret-link.ts"] },
+        cwd: repoRoot,
+        timeoutMs: 10_000,
+        artifactDir: path.join(tmp.path, "artifacts-semantic-hash-symlink"),
+      }),
+      /escapes the workspace/
+    );
+  });
+
+  test("built-in security matching uses strong fingerprints without merging by rule alone", async () => {
+    using tmp = new DisposableTempDir("workflow-action-security-match");
+    const repoRoot = path.join(tmp.path, "repo");
+    await fs.mkdir(repoRoot, { recursive: true });
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const runner = new WorkflowActionRunner();
+    const matchAction = await registry.resolveAction("security.matchFindings", {
+      projectTrusted: false,
+    });
+
+    const result = await runner.execute(matchAction, {
+      input: {
+        cache: {
+          findings: {
+            "mux-sec-existing": {
+              ruleId: "typescript/xss/unsafe-html",
+              fingerprints: {
+                primary: "sha256:old-primary",
+                semanticAst: "sha256:same-ast",
+              },
+              status: "verified",
+              aliases: ["sha256:older-primary"],
+            },
+            "mux-sec-unresolved": {
+              ruleId: "typescript/xss/unsafe-html",
+              status: "unverified",
+              fingerprints: {
+                primary: "sha256:unresolved-primary",
+              },
+            },
+            "mux-sec-fixed": {
+              ruleId: "typescript/xss/unsafe-html",
+              status: "fixed",
+              proof: { state: "verified" },
+              fingerprints: {
+                primary: "sha256:fixed-primary",
+              },
+            },
+            "mux-sec-suppressed-cache": {
+              ruleId: "typescript/xss/unsafe-html",
+              status: "accepted_risk",
+              fingerprints: {
+                primary: "sha256:suppressed-cache-primary",
+              },
+              proof: { state: "unverified" },
+            },
+            "mux-sec-other": {
+              ruleId: "typescript/xss/unsafe-html",
+              fingerprints: {
+                primary: "sha256:other-primary",
+                semanticAst: "sha256:other-ast",
+              },
+            },
+          },
+        },
+        candidates: [
+          {
+            id: "candidate-moved",
+            ruleId: "typescript/xss/unsafe-html",
+            fingerprints: {
+              primary: "sha256:new-primary",
+              semanticAst: "sha256:same-ast",
+            },
+          },
+          {
+            id: "candidate-new",
+            ruleId: "typescript/xss/unsafe-html",
+            fingerprints: {
+              primary: "sha256:fresh-primary",
+              semanticAst: "sha256:fresh-ast",
+            },
+          },
+          {
+            id: "candidate-unresolved",
+            ruleId: "typescript/xss/unsafe-html",
+            fingerprints: {
+              primary: "sha256:unresolved-primary",
+            },
+          },
+          {
+            id: "candidate-fixed-regressed",
+            ruleId: "typescript/xss/unsafe-html",
+            fingerprints: {
+              primary: "sha256:fixed-primary",
+            },
+          },
+          {
+            id: "candidate-suppressed-cache",
+            ruleId: "typescript/xss/unsafe-html",
+            fingerprints: {
+              primary: "sha256:suppressed-cache-primary",
+            },
+          },
+          {
+            id: "candidate-suppressed",
+            ruleId: "typescript/xss/unsafe-html",
+            fingerprints: {
+              primary: "sha256:suppressed-primary",
+              semanticAst: "sha256:suppressed-ast",
+            },
+          },
+        ],
+        overrides: {
+          overrides: {
+            "candidate-suppressed": { status: "accepted_risk", reason: "reviewed by owner" },
+          },
+        },
+      },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-match"),
+    });
+
+    expect(result.output).toMatchObject({
+      decisions: [
+        {
+          candidateId: "candidate-moved",
+          match: "strong",
+          findingId: "mux-sec-existing",
+        },
+        {
+          candidateId: "candidate-new",
+          match: "new",
+          findingId: "candidate-new",
+        },
+        {
+          candidateId: "candidate-unresolved",
+          match: "exact",
+          findingId: "mux-sec-unresolved",
+        },
+        {
+          candidateId: "candidate-fixed-regressed",
+          match: "exact",
+          findingId: "mux-sec-fixed",
+        },
+        {
+          candidateId: "candidate-suppressed-cache",
+          match: "exact",
+          findingId: "mux-sec-suppressed-cache",
+        },
+        {
+          candidateId: "candidate-suppressed",
+          match: "new",
+          findingId: "candidate-suppressed",
+          override: { status: "accepted_risk", reason: "reviewed by owner", expiresAt: null },
+        },
+      ],
+      verify: ["candidate-new", "mux-sec-unresolved", "mux-sec-fixed"],
+      aliasUpdates: [
+        {
+          findingId: "mux-sec-existing",
+          addAlias: "sha256:new-primary",
+        },
+      ],
+    });
+  });
+
+  test("built-in security evidence action writes proof bundles with digests", async () => {
+    using tmp = new DisposableTempDir("workflow-action-security-evidence");
+    const repoRoot = path.join(tmp.path, "repo");
+    await fs.mkdir(repoRoot, { recursive: true });
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const runner = new WorkflowActionRunner();
+    const evidenceAction = await registry.resolveAction("security.writeEvidenceBundle", {
+      projectTrusted: false,
+    });
+
+    const result = await runner.execute(evidenceAction, {
+      input: {
+        findingId: "mux-sec-test",
+        evidence: { verdict: "verified", assertions: ["blocked unauthorized access"] },
+        transcript: "verified transcript",
+        baseline: { vulnerable: true },
+        postState: { vulnerable: false },
+        pocScripts: {
+          "vul-run.sh": "#!/bin/sh\necho vulnerable\n",
+          "fix-run.sh": "#!/bin/sh\necho fixed\n",
+        },
+      },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-evidence"),
+    });
+
+    expect(result.output).toMatchObject({
+      findingId: "mux-sec-test",
+      evidencePath: ".mux/security/evidence/mux-sec-test/evidence.json",
+    });
+    const evidenceJson = await fs.readFile(
+      path.join(repoRoot, ".mux/security/evidence/mux-sec-test/evidence.json"),
+      "utf-8"
+    );
+    expect(evidenceJson).toContain("blocked unauthorized access");
+    expect(evidenceJson).toContain("sha256:");
+    expect(
+      await fs.readFile(
+        path.join(repoRoot, ".mux/security/evidence/mux-sec-test/transcript.txt"),
+        "utf-8"
+      )
+    ).toBe("verified transcript");
+    expect(
+      await fs.readFile(
+        path.join(repoRoot, ".mux/security/evidence/mux-sec-test/vul-run.sh"),
+        "utf-8"
+      )
+    ).toContain("vulnerable");
   });
 
   test("kills actions that exceed their timeout", async () => {
