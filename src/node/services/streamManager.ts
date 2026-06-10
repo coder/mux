@@ -1935,6 +1935,12 @@ export class StreamManager extends EventEmitter {
     const refusedModel = normalizeToCanonical(streamInfo.model);
     fallbackState.refusedModels.push(refusedModel);
 
+    // Attribute this refused attempt's usage to the refusing model for EVERY
+    // chain outcome (swap, exhaustion, unstartable fallback) before any state
+    // reset. Chains that end in a terminal failure must not drop the final
+    // hop's tokens from session usage / cost accounting.
+    await this.recordRefusedAttemptUsage(workspaceId, streamInfo, refusedModel);
+
     const nextModelString = fallbackState.options.chain[fallbackState.refusedModels.length - 1];
     if (nextModelString === undefined) {
       return {
@@ -2012,10 +2018,9 @@ export class StreamManager extends EventEmitter {
       chain: fallbackState.options.chain,
     });
 
-    // Attribute the refused attempt's usage to the refusing model BEFORE the
-    // reset wipes cumulative counters (cross-model usage must not be priced
-    // under the fallback model).
-    await this.recordRefusedAttemptUsage(workspaceId, streamInfo, refusedModel);
+    // The refused attempt's usage was recorded above, BEFORE the reset wipes
+    // cumulative counters (cross-model usage must not be priced under the
+    // fallback model).
     await this.resetStreamStateForRetry(workspaceId, streamInfo, { workspaceLog });
     streamInfo.currentStepStartIndex = 0;
 
@@ -2939,6 +2944,12 @@ export class StreamManager extends EventEmitter {
         partial: true,
         error: payload.error,
         errorType: payload.errorType,
+        // Keep tool-side / refused-fallback usage rows durable on the error
+        // partial: a fallback chain that ends in a terminal refusal must not
+        // drop the refused attempts' tokens from persisted metadata.
+        ...(streamInfo.toolModelUsages.length > 0
+          ? { toolModelUsages: streamInfo.toolModelUsages.map(clonePersistedToolModelUsage) }
+          : {}),
       },
       parts: streamInfo.parts,
     };

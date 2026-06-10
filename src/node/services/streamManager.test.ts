@@ -2217,6 +2217,10 @@ describe("StreamManager - empty stream completions", () => {
       createStreamResultForTests(
         (async function* () {
           await Promise.resolve();
+          yield {
+            type: "finish-step",
+            usage: { inputTokens: 10, outputTokens: 0, totalTokens: 10 },
+          };
           yield { type: "finish", finishReason: "content-filter", rawFinishReason: "refusal" };
         })(),
         { inputTokens: 10, outputTokens: 0, totalTokens: 10 }
@@ -2241,6 +2245,10 @@ describe("StreamManager - empty stream completions", () => {
       streamResult: createStreamResultForTests(
         (async function* () {
           await Promise.resolve();
+          yield {
+            type: "finish-step",
+            usage: { inputTokens: 30000, outputTokens: 0, totalTokens: 30000 },
+          };
           yield { type: "finish", finishReason: "content-filter", rawFinishReason: "refusal" };
         })(),
         { inputTokens: 30000, outputTokens: 0, totalTokens: 30000 }
@@ -2273,6 +2281,23 @@ describe("StreamManager - empty stream completions", () => {
     expect(errorEvents[0]?.error).toContain(
       `Model fallback chain exhausted; refused models: ${KNOWN_MODELS.SONNET.id}, ${fallbackModel}.`
     );
+
+    // Even though the turn failed terminally, every refused hop's usage —
+    // including the FINAL refusing model's — is attributed and persisted, so
+    // chains ending in failure don't underreport costs.
+    const partial = await historyService.readPartial(workspaceId);
+    expect(partial?.metadata?.errorType).toBe("model_refusal");
+    expect(partial?.metadata?.toolModelUsages).toHaveLength(2);
+    expect(partial?.metadata?.toolModelUsages?.[0]).toMatchObject({
+      toolName: "model_fallback_refusal",
+      model: KNOWN_MODELS.SONNET.id,
+      usage: { inputTokens: 30000 },
+    });
+    expect(partial?.metadata?.toolModelUsages?.[1]).toMatchObject({
+      toolName: "model_fallback_refusal",
+      model: fallbackModel,
+      usage: { inputTokens: 10 },
+    });
   });
 
   test("unstartable fallback model fails terminally as model_refusal instead of skipping ahead", async () => {
