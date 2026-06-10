@@ -23,6 +23,10 @@ const deepReviewWorkflow = BUILT_IN_WORKFLOW_DEFINITIONS.find(
   (definition) => definition.name === "deep-review-workflow"
 );
 
+const securityScan = BUILT_IN_WORKFLOW_DEFINITIONS.find(
+  (definition) => definition.name === "security-scan"
+);
+
 const execFileAsync = promisify(execFile);
 
 async function runGit(cwd: string, args: string[]): Promise<void> {
@@ -32,6 +36,12 @@ async function runGit(cwd: string, args: string[]): Promise<void> {
 async function readGit(cwd: string, args: string[]): Promise<string> {
   const result = await execFileAsync("git", args, { cwd });
   return result.stdout.trimEnd();
+}
+
+function expectObjectRecord(value: unknown): Record<string, unknown> {
+  expect(value).not.toBeNull();
+  expect(typeof value).toBe("object");
+  return value as Record<string, unknown>;
 }
 
 async function runDeepResearchFixture(
@@ -147,6 +157,899 @@ function createNoIssueDeepReviewTaskAdapter(taskCalls: WorkflowAgentSpec[]) {
     },
   };
 }
+
+describe("built-in security-scan workflow", () => {
+  test("coordinates scope, threat modeling, discovery, verification, and .mux/security persistence", async () => {
+    if (!securityScan) {
+      throw new Error("Expected built-in security-scan workflow");
+    }
+    using tmp = new DisposableTempDir("security-scan-workflow");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(path.join(repoRoot, "src"), { recursive: true });
+    await fs.writeFile(path.join(repoRoot, "src", "main.ts"), "export const value = 1;\n", "utf-8");
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await runGit(repoRoot, ["add", "src/main.ts"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
+    await runStore.createRun({
+      id: "wfr_security_scan",
+      workspaceId: "workspace-1",
+      definition: {
+        name: securityScan.name,
+        description: securityScan.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: securityScan.source,
+      args: { input: "current repository", maxFindings: 2 },
+      defaultActionCwd: repoRoot,
+      now: "2026-06-10T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-security-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped security surface.",
+                structuredOutput: {
+                  summary: "TypeScript entrypoint with no external exposure.",
+                  assets: ["source code"],
+                  entrypoints: ["src/main.ts"],
+                  trustBoundaries: [],
+                  lanes: ["entrypoints"],
+                  files: ["src/main.ts"],
+                },
+              };
+            case "grill-security-scope":
+              return {
+                taskId: "task_grill",
+                reportMarkdown: "No missed boundaries.",
+                structuredOutput: { gaps: [], followUps: [] },
+              };
+            case "discover-entrypoints":
+              return {
+                taskId: "task_entrypoints",
+                reportMarkdown: "No findings.",
+                structuredOutput: { findings: [] },
+              };
+            case "triage-security-findings":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "No candidates.",
+                structuredOutput: { findings: [] },
+              };
+            case "synthesize-security-scan":
+              return {
+                taskId: "task_final",
+                reportMarkdown: "# Security Scan\n\nNo findings.",
+                structuredOutput: {
+                  findingCount: 0,
+                  verifiedFindingIds: [],
+                  risk: "low",
+                  validationPlan: [],
+                  skippedCacheHits: 0,
+                },
+              };
+            default:
+              throw new Error(`Unexpected security-scan step: ${spec.id}`);
+          }
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-06-10T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_security_scan");
+    const run = await runStore.getRun("wfr_security_scan");
+
+    expect(taskCalls.map((call) => call.id)).toEqual([
+      "scope-security-surface",
+      "discover-entrypoints",
+      "grill-security-scope",
+      "triage-security-findings",
+      "synthesize-security-scan",
+    ]);
+    expect(run.events.filter((event) => event.type === "phase").map((event) => event.name)).toEqual(
+      [
+        "preflight",
+        "scope",
+        "threat-model",
+        "lane-discovery",
+        "grill",
+        "triage-dedupe",
+        "verification",
+        "final-synthesis",
+        "persist-report",
+      ]
+    );
+    expect(
+      run.events.some(
+        (event) =>
+          event.type === "action" &&
+          event.name === "security.loadState" &&
+          event.status === "completed"
+      )
+    ).toBe(true);
+    expect(
+      run.events.some(
+        (event) =>
+          event.type === "action" &&
+          event.name === "security.writeState" &&
+          event.status === "completed"
+      )
+    ).toBe(true);
+    expect(
+      await fs.readFile(path.join(repoRoot, ".mux/security/threat-model.md"), "utf-8")
+    ).toContain("TypeScript entrypoint");
+    expect(await fs.readFile(path.join(repoRoot, ".mux/security/cache.json"), "utf-8")).toContain(
+      "mux-security-scan/v1"
+    );
+    let legacyThreatModelExists = true;
+    try {
+      await fs.access(path.join(repoRoot, ".mux/threat-model.md"));
+    } catch {
+      legacyThreatModelExists = false;
+    }
+    let legacyCacheExists = true;
+    try {
+      await fs.access(path.join(repoRoot, ".mux/security-cache.json"));
+    } catch {
+      legacyCacheExists = false;
+    }
+    expect(legacyThreatModelExists).toBe(false);
+    expect(legacyCacheExists).toBe(false);
+    expect(result.reportMarkdown).toContain("No findings.");
+    expect(result.structuredOutput).toMatchObject({ findingCount: 0, risk: "low" });
+  }, 10_000);
+
+  test("persists verification evidence bundles for triaged findings", async () => {
+    if (!securityScan) {
+      throw new Error("Expected built-in security-scan workflow");
+    }
+    using tmp = new DisposableTempDir("security-scan-workflow-evidence");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(path.join(repoRoot, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoRoot, "src", "preview.tsx"),
+      "export const unsafe = '<img>';\n",
+      "utf-8"
+    );
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await runGit(repoRoot, ["add", "src/preview.tsx"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+
+    const finding = {
+      id: "mux-sec-xss",
+      ruleId: "typescript/xss/unsafe-html",
+      title: "Unsafe HTML preview",
+      severity: "high",
+      cwe: ["CWE-79"],
+      locations: ["src/preview.tsx"],
+      evidence: "Untrusted HTML reaches preview rendering.",
+      proofHypothesis: "A crafted image tag executes in preview.",
+      fingerprints: { primary: "sha256:test-finding" },
+    };
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
+    await runStore.createRun({
+      id: "wfr_security_scan_evidence",
+      workspaceId: "workspace-1",
+      definition: {
+        name: securityScan.name,
+        description: securityScan.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: securityScan.source,
+      args: { input: "current repository", maxFindings: 1 },
+      defaultActionCwd: repoRoot,
+      now: "2026-06-10T00:00:00.000Z",
+    });
+
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          switch (spec.id) {
+            case "scope-security-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped preview surface.",
+                structuredOutput: {
+                  summary: "Preview renders HTML.",
+                  assets: ["browser DOM"],
+                  entrypoints: ["src/preview.tsx"],
+                  trustBoundaries: ["renderer input to DOM"],
+                  lanes: ["data-flow"],
+                  files: ["src/preview.tsx"],
+                },
+              };
+            case "discover-data-flow":
+              return {
+                taskId: "task_data_flow",
+                reportMarkdown: "Found unsafe preview.",
+                structuredOutput: { findings: [finding] },
+              };
+            case "grill-security-scope":
+              return {
+                taskId: "task_grill",
+                reportMarkdown: "No missed boundaries.",
+                structuredOutput: { gaps: [], followUps: [] },
+              };
+            case "triage-security-findings":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "One finding remains.",
+                structuredOutput: { findings: [finding] },
+              };
+            case "verify-security-finding-0":
+              return {
+                taskId: "task_verify",
+                reportMarkdown: "Verified with static evidence.",
+                structuredOutput: {
+                  findingId: "mux-sec-xss",
+                  verdict: "verified",
+                  confidence: "high",
+                  evidence: "The unsafe preview sink is reachable.",
+                  rationale: "The source and sink are in the same rendering path.",
+                },
+              };
+            case "synthesize-security-scan":
+              expect(spec.prompt).toContain("Evidence bundles");
+              expect(spec.prompt).toContain(".mux/security/evidence/mux-sec-xss/evidence.json");
+              return {
+                taskId: "task_final",
+                reportMarkdown: "# Security Scan\n\nVerified unsafe HTML preview.",
+                structuredOutput: {
+                  findingCount: 1,
+                  verifiedFindingIds: ["mux-sec-xss"],
+                  risk: "high",
+                  validationPlan: ["Review preview sanitization"],
+                  skippedCacheHits: 0,
+                },
+              };
+            default:
+              throw new Error(`Unexpected security-scan evidence step: ${spec.id}`);
+          }
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-06-10T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_security_scan_evidence");
+    const run = await runStore.getRun("wfr_security_scan_evidence");
+
+    expect(
+      run.events.some(
+        (event) =>
+          event.type === "action" &&
+          event.name === "security.writeEvidenceBundle" &&
+          event.status === "completed"
+      )
+    ).toBe(true);
+    const evidenceJson = await fs.readFile(
+      path.join(repoRoot, ".mux/security/evidence/mux-sec-xss/evidence.json"),
+      "utf-8"
+    );
+    expect(evidenceJson).toContain("The unsafe preview sink is reachable.");
+    const cacheJson = await fs.readFile(path.join(repoRoot, ".mux/security/cache.json"), "utf-8");
+    expect(cacheJson).toContain("mux-sec-xss");
+    expect(cacheJson).toContain(".mux/security/evidence/mux-sec-xss/evidence.json");
+    expect(result.structuredOutput).toMatchObject({ findingCount: 1, risk: "high" });
+  }, 10_000);
+
+  test("normalizes unsafe finding ids before evidence persistence", async () => {
+    if (!securityScan) {
+      throw new Error("Expected built-in security-scan workflow");
+    }
+    using tmp = new DisposableTempDir("security-scan-workflow-normalized-id");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(path.join(repoRoot, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoRoot, "src", "preview.tsx"),
+      "export const unsafe = '<img>';\n",
+      "utf-8"
+    );
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await runGit(repoRoot, ["add", "src/preview.tsx"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+
+    const unsafeFinding = {
+      id: "SEC-001: Unsafe HTML preview",
+      ruleId: "typescript/xss/unsafe-html",
+      title: "Unsafe HTML preview",
+      severity: "high",
+      cwe: ["CWE-79"],
+      locations: ["src/preview.tsx"],
+      evidence: "Untrusted HTML reaches preview rendering.",
+      proofHypothesis: "A crafted image tag executes in preview.",
+      fingerprints: { primary: "sha256:unsafe-id" },
+    };
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
+    await runStore.createRun({
+      id: "wfr_security_scan_normalized_id",
+      workspaceId: "workspace-1",
+      definition: {
+        name: securityScan.name,
+        description: securityScan.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: securityScan.source,
+      args: { input: "current repository", maxFindings: 1 },
+      defaultActionCwd: repoRoot,
+      now: "2026-06-10T00:00:00.000Z",
+    });
+
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          switch (spec.id) {
+            case "scope-security-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped preview surface.",
+                structuredOutput: {
+                  summary: "Preview renders HTML.",
+                  assets: ["browser DOM"],
+                  entrypoints: ["src/preview.tsx"],
+                  trustBoundaries: ["renderer input to DOM"],
+                  lanes: ["data-flow"],
+                  files: ["src/preview.tsx"],
+                },
+              };
+            case "discover-data-flow":
+              return {
+                taskId: "task_data_flow",
+                reportMarkdown: "Found unsafe preview.",
+                structuredOutput: { findings: [unsafeFinding] },
+              };
+            case "grill-security-scope":
+              return {
+                taskId: "task_grill",
+                reportMarkdown: "No missed boundaries.",
+                structuredOutput: { gaps: [], followUps: [] },
+              };
+            case "triage-security-findings":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "One finding remains.",
+                structuredOutput: { findings: [unsafeFinding] },
+              };
+            case "verify-security-finding-0":
+              expect(spec.prompt).toContain("sec-001-unsafe-html-preview");
+              return {
+                taskId: "task_verify",
+                reportMarkdown: "Verified with static evidence.",
+                structuredOutput: {
+                  findingId: "sec-001-unsafe-html-preview",
+                  verdict: "verified",
+                  confidence: "high",
+                  evidence: "The unsafe preview sink is reachable.",
+                  rationale: "The source and sink are in the same rendering path.",
+                },
+              };
+            case "synthesize-security-scan":
+              return {
+                taskId: "task_final",
+                reportMarkdown: "# Security Scan\n\nVerified unsafe HTML preview.",
+                structuredOutput: {
+                  findingCount: 1,
+                  verifiedFindingIds: ["sec-001-unsafe-html-preview"],
+                  risk: "high",
+                  validationPlan: [],
+                  skippedCacheHits: 0,
+                },
+              };
+            default:
+              throw new Error(`Unexpected security-scan normalized-id step: ${spec.id}`);
+          }
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-06-10T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await runner.run("wfr_security_scan_normalized_id");
+
+    await fs.access(
+      path.join(repoRoot, ".mux/security/evidence/sec-001-unsafe-html-preview/evidence.json")
+    );
+    const cacheJson: unknown = JSON.parse(
+      await fs.readFile(path.join(repoRoot, ".mux/security/cache.json"), "utf-8")
+    );
+    const findings = expectObjectRecord(expectObjectRecord(cacheJson).findings);
+    expect(Object.keys(findings)).toContain("sec-001-unsafe-html-preview");
+  }, 10_000);
+
+  test("reuses cached exact matches and preserves unscanned findings", async () => {
+    if (!securityScan) {
+      throw new Error("Expected built-in security-scan workflow");
+    }
+    using tmp = new DisposableTempDir("security-scan-workflow-cache-reuse");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(path.join(repoRoot, ".mux/security"), { recursive: true });
+    await fs.mkdir(path.join(repoRoot, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoRoot, "src", "preview.tsx"),
+      "export const unsafe = '<img>';\n",
+      "utf-8"
+    );
+    await fs.writeFile(
+      path.join(repoRoot, ".mux/security/cache.json"),
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          findings: {
+            "mux-sec-xss": {
+              status: "verified",
+              ruleId: "typescript/xss/unsafe-html",
+              severity: "high",
+              fingerprints: { primary: "sha256:cached-primary" },
+              proof: {
+                state: "verified",
+                evidenceDigest: "sha256:cached-evidence",
+                evidencePath: ".mux/security/evidence/mux-sec-xss/evidence.json",
+              },
+              history: [{ event: "seeded" }],
+            },
+            "Old Finding!": {
+              status: "unverified",
+              ruleId: "typescript/xss/unsafe-html",
+              severity: "medium",
+              fingerprints: { primary: "sha256:raw-unresolved" },
+              proof: { state: "unverified" },
+              history: [],
+            },
+            "Suppressed Finding!": {
+              status: "accepted_risk",
+              ruleId: "typescript/xss/unsafe-html",
+              severity: "low",
+              fingerprints: { primary: "sha256:raw-suppressed" },
+              proof: { state: "unverified" },
+              history: [],
+            },
+            "mux-sec-unscanned": {
+              status: "accepted_risk",
+              ruleId: "manual/legacy",
+              severity: "low",
+              fingerprints: { primary: "sha256:unscanned" },
+              history: [],
+            },
+          },
+          coverage: {},
+        },
+        null,
+        2
+      ) + "\n",
+      "utf-8"
+    );
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await runGit(repoRoot, ["add", "src/preview.tsx"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+
+    const finding = {
+      id: "mux-sec-xss",
+      ruleId: "typescript/xss/unsafe-html",
+      title: "Unsafe HTML preview",
+      severity: "high",
+      cwe: ["CWE-79"],
+      locations: ["src/preview.tsx"],
+      evidence: "Untrusted HTML reaches preview rendering.",
+      proofHypothesis: "A crafted image tag executes in preview.",
+      fingerprints: { primary: "sha256:cached-primary" },
+    };
+    const unresolvedFinding = {
+      id: "candidate raw unresolved",
+      ruleId: "typescript/xss/unsafe-html",
+      title: "Raw cached finding still unresolved",
+      severity: "medium",
+      cwe: ["CWE-79"],
+      locations: ["src/preview.tsx"],
+      evidence: "Previous evidence was inconclusive.",
+      proofHypothesis: "Fresh verification should run despite cache match.",
+      fingerprints: { primary: "sha256:raw-unresolved" },
+    };
+    const suppressedFinding = {
+      id: "candidate raw suppressed",
+      ruleId: "typescript/xss/unsafe-html",
+      title: "Raw cached finding is suppressed",
+      severity: "low",
+      cwe: ["CWE-79"],
+      locations: ["src/preview.tsx"],
+      evidence: "Owner accepted this risk.",
+      proofHypothesis: "Should remain suppressed without re-verification.",
+      fingerprints: { primary: "sha256:raw-suppressed" },
+    };
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
+    await runStore.createRun({
+      id: "wfr_security_scan_cache_reuse",
+      workspaceId: "workspace-1",
+      definition: {
+        name: securityScan.name,
+        description: securityScan.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: securityScan.source,
+      args: { input: "current repository", maxFindings: 3 },
+      defaultActionCwd: repoRoot,
+      now: "2026-06-10T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-security-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped preview surface.",
+                structuredOutput: {
+                  summary: "Preview renders HTML.",
+                  assets: ["browser DOM"],
+                  entrypoints: ["src/preview.tsx"],
+                  trustBoundaries: ["renderer input to DOM"],
+                  lanes: ["data-flow"],
+                  files: ["src/preview.tsx"],
+                },
+              };
+            case "discover-data-flow":
+              return {
+                taskId: "task_data_flow",
+                reportMarkdown: "Found unsafe preview.",
+                structuredOutput: { findings: [finding, unresolvedFinding, suppressedFinding] },
+              };
+            case "grill-security-scope":
+              return {
+                taskId: "task_grill",
+                reportMarkdown: "No missed boundaries.",
+                structuredOutput: { gaps: [], followUps: [] },
+              };
+            case "triage-security-findings":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "One finding remains.",
+                structuredOutput: { findings: [finding, unresolvedFinding, suppressedFinding] },
+              };
+            case "verify-security-finding-1":
+              expect(spec.prompt).toContain("old-finding");
+              return {
+                taskId: "task_verify_unresolved",
+                reportMarkdown: "Fresh verification succeeded.",
+                structuredOutput: {
+                  findingId: "old-finding",
+                  verdict: "verified",
+                  confidence: "high",
+                  evidence: "The cached unresolved issue was freshly verified.",
+                  rationale: "Unresolved cache hits must not be skipped.",
+                },
+              };
+            case "synthesize-security-scan":
+              expect(spec.prompt).toContain("Verification skipped by cache");
+              return {
+                taskId: "task_final",
+                reportMarkdown: "# Security Scan\n\nReused cached finding.",
+                structuredOutput: {
+                  findingCount: 3,
+                  verifiedFindingIds: ["mux-sec-xss", "old-finding"],
+                  risk: "high",
+                  validationPlan: [],
+                  skippedCacheHits: 1,
+                },
+              };
+            default:
+              throw new Error(`Unexpected security-scan cache-reuse step: ${spec.id}`);
+          }
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-06-10T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await runner.run("wfr_security_scan_cache_reuse");
+
+    expect(
+      taskCalls
+        .filter((call) => call.id.startsWith("verify-security-finding-"))
+        .map((call) => call.id)
+    ).toEqual(["verify-security-finding-1"]);
+    const cacheJson: unknown = JSON.parse(
+      await fs.readFile(path.join(repoRoot, ".mux/security/cache.json"), "utf-8")
+    );
+    const findings = expectObjectRecord(expectObjectRecord(cacheJson).findings);
+    expect(expectObjectRecord(findings["mux-sec-xss"]).status).toBe("verified");
+    expect(expectObjectRecord(findings["old-finding"]).status).toBe("verified");
+    expect(expectObjectRecord(findings["suppressed-finding"]).status).toBe("accepted_risk");
+    expect(expectObjectRecord(findings["mux-sec-unscanned"]).status).toBe("accepted_risk");
+  }, 10_000);
+
+  test("auto-fix only applies verified security findings and persists fixed status after validation", async () => {
+    if (!securityScan) {
+      throw new Error("Expected built-in security-scan workflow");
+    }
+    using tmp = new DisposableTempDir("security-scan-workflow-fix");
+    const repoRoot = path.join(tmp.path, "repo");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    await fs.mkdir(path.join(repoRoot, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(repoRoot, "src", "preview.tsx"),
+      "export const unsafe = '<img>';\n",
+      "utf-8"
+    );
+    await runGit(repoRoot, ["init"]);
+    await runGit(repoRoot, ["config", "user.email", "mux@example.com"]);
+    await runGit(repoRoot, ["config", "user.name", "Mux"]);
+    await runGit(repoRoot, ["add", "src/preview.tsx"]);
+    await runGit(repoRoot, ["commit", "-m", "base commit"]);
+    await runGit(repoRoot, ["branch", "-M", "main"]);
+
+    const baseHead = await readGit(repoRoot, ["rev-parse", "HEAD"]);
+
+    const verifiedFinding = {
+      id: "mux-sec-xss",
+      ruleId: "typescript/xss/unsafe-html",
+      title: "Unsafe HTML preview",
+      severity: "high",
+      cwe: ["CWE-79"],
+      locations: ["src/preview.tsx"],
+      evidence: "Untrusted HTML reaches preview rendering.",
+      proofHypothesis: "A crafted image tag executes in preview.",
+      fingerprints: { primary: "sha256:test-finding" },
+    };
+    const unverifiedFinding = {
+      id: "mux-sec-guess",
+      ruleId: "typescript/xss/speculative",
+      title: "Speculative preview issue",
+      severity: "medium",
+      cwe: ["CWE-79"],
+      locations: ["src/preview.tsx"],
+      evidence: "Possible but unproven path.",
+      proofHypothesis: "Maybe another sink is reachable.",
+      fingerprints: { primary: "sha256:speculative" },
+    };
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
+    await runStore.createRun({
+      id: "wfr_security_scan_fix",
+      workspaceId: "workspace-1",
+      definition: {
+        name: securityScan.name,
+        description: securityScan.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: securityScan.source,
+      args: { input: "current repository --fix --max-fixes 1", maxFindings: 2 },
+      defaultActionCwd: repoRoot,
+      now: "2026-06-10T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const applyPatchCalls: unknown[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-security-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped preview surface.",
+                structuredOutput: {
+                  summary: "Preview renders HTML.",
+                  assets: ["browser DOM"],
+                  entrypoints: ["src/preview.tsx"],
+                  trustBoundaries: ["renderer input to DOM"],
+                  lanes: ["data-flow"],
+                  files: ["src/preview.tsx"],
+                },
+              };
+            case "discover-data-flow":
+              return {
+                taskId: "task_data_flow",
+                reportMarkdown: "Found preview issues.",
+                structuredOutput: { findings: [verifiedFinding, unverifiedFinding] },
+              };
+            case "grill-security-scope":
+              return {
+                taskId: "task_grill",
+                reportMarkdown: "No missed boundaries.",
+                structuredOutput: { gaps: [], followUps: [] },
+              };
+            case "triage-security-findings":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "Two findings remain.",
+                structuredOutput: { findings: [verifiedFinding, unverifiedFinding] },
+              };
+            case "verify-security-finding-0":
+              return {
+                taskId: "task_verify_xss",
+                reportMarkdown: "Verified with static evidence.",
+                structuredOutput: {
+                  findingId: "mux-sec-xss",
+                  verdict: "verified",
+                  confidence: "high",
+                  evidence: "The unsafe preview sink is reachable.",
+                  rationale: "The source and sink are in the same rendering path.",
+                },
+              };
+            case "verify-security-finding-1":
+              return {
+                taskId: "task_verify_guess",
+                reportMarkdown: "Could not verify.",
+                structuredOutput: {
+                  findingId: "mux-sec-guess",
+                  verdict: "unverified",
+                  confidence: "low",
+                  evidence: "No reachable sink was demonstrated.",
+                  rationale: "The suspected path was not found.",
+                },
+              };
+            case "synthesize-security-scan":
+              return {
+                taskId: "task_final",
+                reportMarkdown: "# Security Scan\n\nVerified unsafe HTML preview.",
+                structuredOutput: {
+                  findingCount: 2,
+                  verifiedFindingIds: ["mux-sec-xss"],
+                  risk: "high",
+                  validationPlan: ["Run preview sanitization regression test"],
+                  skippedCacheHits: 0,
+                },
+              };
+            case "fix-security-finding-0":
+              expect(spec.prompt).toContain("mux-sec-xss");
+              expect(spec.prompt).not.toContain("mux-sec-guess");
+              return {
+                taskId: "task_fix_xss",
+                reportMarkdown: "Sanitized preview HTML.",
+                structuredOutput: {
+                  findingId: "mux-sec-xss",
+                  status: "fixed",
+                  summary: "Added HTML sanitization.",
+                  validation: ["bun test preview"],
+                  commitCreated: true,
+                },
+              };
+            case "validate-security-fixes":
+              return {
+                taskId: "task_validate_fix",
+                reportMarkdown: "Validation passed.",
+                structuredOutput: {
+                  status: "passed",
+                  commands: ["bun test preview"],
+                  summary: "Regression test passed and exploit no longer reproduces.",
+                  failures: [],
+                },
+              };
+            default:
+              throw new Error(`Unexpected security-scan fix step: ${spec.id}`);
+          }
+        },
+        async applyPatch(spec) {
+          applyPatchCalls.push(spec);
+          return {
+            success: true,
+            status: "applied",
+            taskId: "task_fix_xss",
+            headCommitSha: "abc123",
+          };
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      projectTrusted: true,
+      defaultActionCwd: repoRoot,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-06-10T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_security_scan_fix");
+    const fixCalls = taskCalls.filter((call) => call.id.startsWith("fix-security-finding-"));
+    expect(fixCalls.map((call) => call.id)).toEqual(["fix-security-finding-0"]);
+    expect(applyPatchCalls).toHaveLength(1);
+    expect(expectObjectRecord(applyPatchCalls[0]).expectedHeadSha).toBe(baseHead);
+    expect(await readGit(repoRoot, ["status", "--porcelain", "--untracked-files=all"])).toBe("");
+    expect(result.reportMarkdown).toContain("Auto-fix results");
+    const structuredOutput = expectObjectRecord(result.structuredOutput);
+    expect(expectObjectRecord(structuredOutput.fix).integratedFindingIds).toEqual(["mux-sec-xss"]);
+    expect(structuredOutput.fix).toMatchObject({
+      requested: true,
+      selectedFindings: [{ findingId: "mux-sec-xss" }],
+      validation: { status: "passed" },
+    });
+    const parsedCache: unknown = JSON.parse(
+      await fs.readFile(path.join(repoRoot, ".mux/security/cache.json"), "utf-8")
+    );
+    const cache = expectObjectRecord(parsedCache);
+    const findings = expectObjectRecord(cache.findings);
+    expect(expectObjectRecord(findings["mux-sec-xss"]).latestLocations).toEqual([
+      "src/preview.tsx",
+    ]);
+    expect(expectObjectRecord(findings["mux-sec-xss"]).status).toBe("fixed");
+    expect(expectObjectRecord(findings["mux-sec-guess"]).status).toBe("unverified");
+  }, 10_000);
+});
 
 describe("built-in deep-research workflow", () => {
   test("coordinates staged research, verification, and final structured synthesis", async () => {
