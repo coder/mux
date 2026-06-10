@@ -52,6 +52,7 @@ import {
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import {
   createCompactionSummaryMessageId,
+  createTaskFailureMessageId,
   createTaskReportMessageId,
 } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeToCanonical } from "@/common/utils/ai/models";
@@ -258,6 +259,33 @@ function formatSubagentReportUserMessage(params: {
   return lines.join("\n");
 }
 
+// Failure twin of formatSubagentReportUserMessage: terminal child failures are
+// delivered into the parent context as an explicit failure block (never as a
+// report) so a later wake-up — by ANY sibling's settlement — cannot present the
+// fanout as fully successful.
+function formatSubagentFailureUserMessage(params: {
+  childWorkspaceId: string;
+  agentType: string;
+  errorType: string;
+  errorMessage: string;
+}): string {
+  assert(params.childWorkspaceId.length > 0, "subagent failure message requires child id");
+  assert(params.agentType.length > 0, "subagent failure message requires agent type");
+  assert(params.errorMessage.length > 0, "subagent failure message requires error message");
+
+  return [
+    "<mux_subagent_failure>",
+    `<task_id>${params.childWorkspaceId}</task_id>`,
+    `<agent_type>${params.agentType}</agent_type>`,
+    `<error_type>${params.errorType}</error_type>`,
+    "<error_message>",
+    params.errorMessage,
+    "</error_message>",
+    "This sub-agent task failed terminally and will not produce a report. Do not re-await it.",
+    "</mux_subagent_failure>",
+  ].join("\n");
+}
+
 // Completed background reports are already persisted into the parent context; asking the parent
 // to call task_await burns an extra model/tool turn before it can synthesize the final answer.
 const COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
@@ -266,25 +294,14 @@ const COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
   "messages. Write the final response now, integrating those results. If a required report appears " +
   "missing, explain the missing context instead of waiting for another handoff.";
 
-// Terminal child failures have no report to inject into the parent context, so the
-// failure details ride in the handoff prompt itself: an idle parent must learn the
-// outcome in this single wake-up turn instead of discovering it only via task_await.
-function buildFailedBackgroundSubagentHandoffPrompt(params: {
-  childWorkspaceId: string;
-  agentType: string;
-  errorType: string;
-  errorMessage: string;
-}): string {
-  assert(params.childWorkspaceId.length > 0, "subagent failure handoff requires child id");
-  assert(params.errorMessage.length > 0, "subagent failure handoff requires error message");
-
-  return [
-    `Background sub-agent task ${params.childWorkspaceId} (${params.agentType}) failed terminally and will not produce a report.`,
-    `- errorType: ${params.errorType}`,
-    `- error: ${params.errorMessage}`,
-    "Do not re-await this task. Integrate the failure into your work now: adjust your approach (e.g. a different model, agent, or task design) or surface the failure in your response.",
-  ].join("\n");
-}
+// Failure twin of COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT: the failure details
+// were already appended to the parent context as synthetic mux_subagent_failure
+// messages, so the wake-up prompt itself stays generic.
+const FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
+  "Background sub-agent task(s) failed terminally and will not produce reports. The failure " +
+  "details are already injected into this workspace context as synthetic user messages. Do not " +
+  "re-await those tasks. Integrate the failures into your work now: adjust your approach (e.g. a " +
+  "different model, agent, or task design) or surface the failures in your response.";
 
 function getTaskCompletionInstruction(params: {
   completionToolName: "agent_report" | "propose_plan";
@@ -4972,10 +4989,17 @@ export class TaskService {
   /**
    * Background-spawned children may have no pending waiter to reject, and the
    * parent stream typically already returned early because the child was still
-   * active. The report path wakes such parents (deliverReportToParent +
-   * post-report auto-resume), so terminal failures must too — otherwise an idle
-   * parent stays at taskStatus "running" until a timeout or manual task_await.
-   * Mirrors the post-report auto-resume in finalizeAgentTaskReport.
+   * active. The report path delivers into the parent context and wakes idle
+   * parents (deliverReportToParent + post-report auto-resume), so terminal
+   * failures must too — otherwise an idle parent stays at taskStatus "running"
+   * until a timeout or manual task_await, or worse: a later sibling's report
+   * wakes it with COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT and the fanout
+   * looks fully successful. Two mirrored halves:
+   *
+   * 1. Always append a synthetic mux_subagent_failure message to the parent
+   *    history (the durable context delivery — survives any wake-up ordering).
+   * 2. Auto-resume the parent only when this was the last active child and the
+   *    parent is idle (same gates as the post-report auto-resume).
    */
   private async maybeResumeParentAfterTerminalChildFailure(
     childWorkspaceId: string,
@@ -4993,7 +5017,7 @@ export class TaskService {
       return;
     }
     // Workflow-owned children propagate failures through the WorkflowRunner
-    // step result; do not also nudge the parent with a generic handoff.
+    // step result; do not also deliver a generic failure handoff.
     if (childEntry.workspace.workflowTask != null) {
       return;
     }
@@ -5002,6 +5026,33 @@ export class TaskService {
     const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
     if (!parentEntry) {
       return;
+    }
+
+    // Durable context delivery, mirroring deliverReportToParent's synthetic
+    // append: the failure must be visible to the parent's next turn regardless
+    // of whether THIS settlement wakes it or a later sibling report/failure
+    // (whose handoff prompt won't restate this child's details) does.
+    const failureMessage = createMuxMessage(
+      createTaskFailureMessageId(),
+      "user",
+      formatSubagentFailureUserMessage({
+        childWorkspaceId,
+        agentType: coerceNonEmptyString(childEntry.workspace.agentType) ?? "agent",
+        errorType: failure.errorType,
+        errorMessage: failure.errorMessage,
+      }),
+      { timestamp: Date.now(), synthetic: true }
+    );
+    const appendResult = await this.historyService.appendToHistory(
+      parentWorkspaceId,
+      failureMessage
+    );
+    if (!appendResult.success) {
+      log.error("Failed to append synthetic subagent failure to parent history", {
+        parentWorkspaceId,
+        childWorkspaceId,
+        error: appendResult.error,
+      });
     }
 
     const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, parentWorkspaceId);
@@ -5017,12 +5068,13 @@ export class TaskService {
     }
     if (hasActiveDescendants) {
       // Remaining active children wake the parent when the last one settles
-      // (report delivery or another terminal failure).
+      // (report delivery or another terminal failure); the failure message
+      // appended above keeps this child's outcome in that turn's context.
       return;
     }
     if (this.aiService.isStreaming(parentWorkspaceId)) {
-      // A streaming parent discovers the failure on its next task_await
-      // (waiter rejection or persisted failure artifact / taskLaunchError).
+      // A streaming parent picks the appended failure message up on its next
+      // turn (or sooner via a task_await rejection / persisted artifact).
       return;
     }
 
@@ -5033,12 +5085,7 @@ export class TaskService {
     );
     const sendResult = await this.workspaceService.sendMessage(
       parentWorkspaceId,
-      buildFailedBackgroundSubagentHandoffPrompt({
-        childWorkspaceId,
-        agentType: coerceNonEmptyString(childEntry.workspace.agentType) ?? "agent",
-        errorType: failure.errorType,
-        errorMessage: failure.errorMessage,
-      }),
+      FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT,
       {
         model: resumeOptions.model,
         agentId: resumeOptions.agentId,

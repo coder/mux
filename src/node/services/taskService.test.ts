@@ -9890,7 +9890,7 @@ describe("TaskService", () => {
     );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
-    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const { taskService, historyService } = createTaskServiceHarness(config, { workspaceService });
 
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
@@ -9926,7 +9926,13 @@ describe("TaskService", () => {
       expect.objectContaining({ synthetic: true, agentInitiated: true })
     );
     expect(sendMessage.mock.calls[1]?.[0]).toBe(parentId);
-    expect(String(sendMessage.mock.calls[1]?.[1])).toContain("Authentication failed");
+    // The failure details travel via the durable synthetic history message,
+    // not the generic wake-up prompt.
+    const serializedParentHistory = JSON.stringify(
+      await collectFullHistory(historyService, parentId)
+    );
+    expect(serializedParentHistory).toContain("<mux_subagent_failure>");
+    expect(serializedParentHistory).toContain("Authentication failed");
 
     const postCfg = config.loadConfigOrDefault();
     const childWorkspace = Array.from(postCfg.projects.values())
@@ -10051,7 +10057,7 @@ describe("TaskService", () => {
     // failure handoff waking the idle parent (no foreground waiter existed).
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
-    expect(String(sendMessage.mock.calls[0]?.[1])).toContain(refusalMessage);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("failed terminally");
 
     const postCfg = config.loadConfigOrDefault();
     const childWorkspace = Array.from(postCfg.projects.values())
@@ -10237,7 +10243,7 @@ describe("TaskService", () => {
     );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
-    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const { taskService, historyService } = createTaskServiceHarness(config, { workspaceService });
 
     const internal = taskService as unknown as {
       handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
@@ -10246,8 +10252,18 @@ describe("TaskService", () => {
     const refusalMessage =
       "The model refused to respond (finishReason: content-filter): anthropic:claude-fable-5.";
 
+    const readParentFailureMessages = async () => {
+      const history = await collectFullHistory(historyService, parentId);
+      return history
+        .filter((message) => message.role === "user")
+        .map((message) => JSON.stringify(message))
+        .filter((serialized) => serialized.includes("<mux_subagent_failure>"));
+    };
+
     // First background child refuses while a sibling is still active: the
-    // parent is NOT woken yet (the last settlement owns the wake-up).
+    // parent is NOT woken yet (the last settlement owns the wake-up), but the
+    // failure details are already delivered durably into the parent context so
+    // a later sibling REPORT cannot present the fanout as fully successful.
     await internal.handleTaskStreamError({
       type: "error",
       workspaceId: childAId,
@@ -10256,10 +10272,15 @@ describe("TaskService", () => {
       errorType: "model_refusal",
     });
     expect(sendMessage).not.toHaveBeenCalled();
+    const messagesAfterFirstFailure = await readParentFailureMessages();
+    expect(messagesAfterFirstFailure).toHaveLength(1);
+    expect(messagesAfterFirstFailure[0]).toContain(childAId);
+    expect(messagesAfterFirstFailure[0]).toContain("model_refusal");
+    expect(messagesAfterFirstFailure[0]).toContain(refusalMessage);
 
-    // Last background child refuses with no foreground waiter: the idle parent
-    // gets exactly one synthetic handoff carrying the failure details, so it
-    // does not sit at taskStatus "running" until a timeout or manual await.
+    // Last background child refuses with no foreground waiter: its failure is
+    // appended too, and the idle parent gets exactly one synthetic wake-up so
+    // it does not sit at taskStatus "running" until a timeout or manual await.
     await internal.handleTaskStreamError({
       type: "error",
       workspaceId: childBId,
@@ -10268,12 +10289,13 @@ describe("TaskService", () => {
       errorType: "model_refusal",
     });
 
+    const messagesAfterSecondFailure = await readParentFailureMessages();
+    expect(messagesAfterSecondFailure).toHaveLength(2);
+    expect(messagesAfterSecondFailure[1]).toContain(childBId);
+
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
-    const handoffPrompt = String(sendMessage.mock.calls[0]?.[1]);
-    expect(handoffPrompt).toContain(childBId);
-    expect(handoffPrompt).toContain("model_refusal");
-    expect(handoffPrompt).toContain(refusalMessage);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("failed terminally");
     expect(sendMessage.mock.calls[0]?.[3]).toMatchObject({
       synthetic: true,
       agentInitiated: true,
@@ -10308,7 +10330,7 @@ describe("TaskService", () => {
     );
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
-    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const { taskService, historyService } = createTaskServiceHarness(config, { workspaceService });
 
     const internal = taskService as unknown as {
       handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
@@ -10322,7 +10344,13 @@ describe("TaskService", () => {
       errorType: "model_refusal",
     });
 
+    // Neither a wake-up send nor a synthetic failure message: the workflow
+    // journal owns failure delivery for workflow-owned children.
     expect(sendMessage).not.toHaveBeenCalled();
+    const serializedParentHistory = JSON.stringify(
+      await collectFullHistory(historyService, parentId)
+    );
+    expect(serializedParentHistory).not.toContain("<mux_subagent_failure>");
 
     const childWorkspace = Array.from(config.loadConfigOrDefault().projects.values())
       .flatMap((project) => project.workspaces)
