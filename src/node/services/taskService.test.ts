@@ -9913,7 +9913,9 @@ describe("TaskService", () => {
       errorType: "authentication",
     });
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
+    // One recovery prompt to the child (stream-end), then — after the terminal
+    // settlement — one failure handoff waking the idle parent (no waiter).
+    expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(sendMessage).toHaveBeenNthCalledWith(
       1,
       childId,
@@ -9923,6 +9925,8 @@ describe("TaskService", () => {
       }),
       expect.objectContaining({ synthetic: true, agentInitiated: true })
     );
+    expect(sendMessage.mock.calls[1]?.[0]).toBe(parentId);
+    expect(String(sendMessage.mock.calls[1]?.[1])).toContain("Authentication failed");
 
     const postCfg = config.loadConfigOrDefault();
     const childWorkspace = Array.from(postCfg.projects.values())
@@ -10043,7 +10047,11 @@ describe("TaskService", () => {
       errorType: "model_refusal",
     });
 
-    expect(sendMessage).not.toHaveBeenCalled();
+    // No agent_report recovery prompt goes to the child. The only send is the
+    // failure handoff waking the idle parent (no foreground waiter existed).
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain(refusalMessage);
 
     const postCfg = config.loadConfigOrDefault();
     const childWorkspace = Array.from(postCfg.projects.values())
@@ -10197,6 +10205,131 @@ describe("TaskService", () => {
     expect((postCleanupError as Error).message).toBe(refusalMessage);
   });
 
+  test("terminal background-child failure wakes the idle parent once the last child settles", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childAId = "child-222";
+    const childBId = "child-333";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child-a", childAId, {
+          name: "agent_explore_child_a",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "anthropic:claude-fable-5",
+        }),
+        projectWorkspace(projectPath, "child-b", childBId, {
+          name: "agent_explore_child_b",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "anthropic:claude-fable-5",
+        }),
+      ],
+      testTaskSettings(2, 3)
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const internal = taskService as unknown as {
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+    };
+
+    const refusalMessage =
+      "The model refused to respond (finishReason: content-filter): anthropic:claude-fable-5.";
+
+    // First background child refuses while a sibling is still active: the
+    // parent is NOT woken yet (the last settlement owns the wake-up).
+    await internal.handleTaskStreamError({
+      type: "error",
+      workspaceId: childAId,
+      messageId: "assistant-error-refusal-a",
+      error: refusalMessage,
+      errorType: "model_refusal",
+    });
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // Last background child refuses with no foreground waiter: the idle parent
+    // gets exactly one synthetic handoff carrying the failure details, so it
+    // does not sit at taskStatus "running" until a timeout or manual await.
+    await internal.handleTaskStreamError({
+      type: "error",
+      workspaceId: childBId,
+      messageId: "assistant-error-refusal-b",
+      error: refusalMessage,
+      errorType: "model_refusal",
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
+    const handoffPrompt = String(sendMessage.mock.calls[0]?.[1]);
+    expect(handoffPrompt).toContain(childBId);
+    expect(handoffPrompt).toContain("model_refusal");
+    expect(handoffPrompt).toContain(refusalMessage);
+    expect(sendMessage.mock.calls[0]?.[3]).toMatchObject({
+      synthetic: true,
+      agentInitiated: true,
+      skipAutoResumeReset: true,
+    });
+  });
+
+  test("terminal workflow-owned child failure does not nudge the parent with a generic handoff", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "anthropic:claude-fable-5",
+          // Workflow-owned: failures propagate through the WorkflowRunner step
+          // result, mirroring the report path's auto-resume skip.
+          workflowTask: { runId: "wfr_refusal", stepId: "verify" },
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const internal = taskService as unknown as {
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+    };
+
+    await internal.handleTaskStreamError({
+      type: "error",
+      workspaceId: childId,
+      messageId: "assistant-error-refusal",
+      error: "The model refused to respond (finishReason: refusal): anthropic:claude-fable-5.",
+      errorType: "model_refusal",
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const childWorkspace = Array.from(config.loadConfigOrDefault().projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+    expect(childWorkspace?.taskStatus).toBe("interrupted");
+  });
+
   test("recovery circuit breaker interrupts the task once the persisted attempt budget is exhausted", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -10239,8 +10372,10 @@ describe("TaskService", () => {
       errorType: "empty_output",
     });
 
-    // Breaker tripped: no further recovery prompt; the task settles terminally.
-    expect(sendMessage).not.toHaveBeenCalled();
+    // Breaker tripped: no further recovery prompt to the child; the task
+    // settles terminally and the only send wakes the idle parent.
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
 
     const postCfg = config.loadConfigOrDefault();
     const childWorkspace = Array.from(postCfg.projects.values())

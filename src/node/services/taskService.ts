@@ -266,6 +266,26 @@ const COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
   "messages. Write the final response now, integrating those results. If a required report appears " +
   "missing, explain the missing context instead of waiting for another handoff.";
 
+// Terminal child failures have no report to inject into the parent context, so the
+// failure details ride in the handoff prompt itself: an idle parent must learn the
+// outcome in this single wake-up turn instead of discovering it only via task_await.
+function buildFailedBackgroundSubagentHandoffPrompt(params: {
+  childWorkspaceId: string;
+  agentType: string;
+  errorType: string;
+  errorMessage: string;
+}): string {
+  assert(params.childWorkspaceId.length > 0, "subagent failure handoff requires child id");
+  assert(params.errorMessage.length > 0, "subagent failure handoff requires error message");
+
+  return [
+    `Background sub-agent task ${params.childWorkspaceId} (${params.agentType}) failed terminally and will not produce a report.`,
+    `- errorType: ${params.errorType}`,
+    `- error: ${params.errorMessage}`,
+    "Do not re-await this task. Integrate the failure into your work now: adjust your approach (e.g. a different model, agent, or task design) or surface the failure in your response.",
+  ].join("\n");
+}
+
 function getTaskCompletionInstruction(params: {
   completionToolName: "agent_report" | "propose_plan";
   subagentFileReports: boolean;
@@ -4930,12 +4950,110 @@ export class TaskService {
       }
     }
 
+    // Captured before settlement: rejectWaiters consumes the pending waiters
+    // that prove a parent turn is actively listening for this task.
+    const hadForegroundWaiters = (this.pendingWaitersByTaskId.get(workspaceId)?.length ?? 0) > 0;
+
     await this.settleInterruptedTaskAtStreamEnd(workspaceId, entry, null, {
       rejectionError: new Error(failure.errorMessage),
     });
 
     // Free this task's concurrency slot for queued siblings.
     this.scheduleMaybeStartQueuedTasks();
+
+    await this.maybeResumeParentAfterTerminalChildFailure(
+      workspaceId,
+      entry,
+      failure,
+      hadForegroundWaiters
+    );
+  }
+
+  /**
+   * Background-spawned children may have no pending waiter to reject, and the
+   * parent stream typically already returned early because the child was still
+   * active. The report path wakes such parents (deliverReportToParent +
+   * post-report auto-resume), so terminal failures must too — otherwise an idle
+   * parent stays at taskStatus "running" until a timeout or manual task_await.
+   * Mirrors the post-report auto-resume in finalizeAgentTaskReport.
+   */
+  private async maybeResumeParentAfterTerminalChildFailure(
+    childWorkspaceId: string,
+    childEntry: { projectPath: string; workspace: WorkspaceConfigEntry },
+    failure: { errorType: string; errorMessage: string },
+    hadForegroundWaiters: boolean
+  ): Promise<void> {
+    const parentWorkspaceId = childEntry.workspace.parentWorkspaceId;
+    if (!parentWorkspaceId) {
+      return;
+    }
+    // An active waiter (foreground task tool call or task_await) already
+    // surfaced the rejection to the parent's in-flight turn.
+    if (hadForegroundWaiters) {
+      return;
+    }
+    // Workflow-owned children propagate failures through the WorkflowRunner
+    // step result; do not also nudge the parent with a generic handoff.
+    if (childEntry.workspace.workflowTask != null) {
+      return;
+    }
+
+    const cfg = this.config.loadConfigOrDefault();
+    const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
+    if (!parentEntry) {
+      return;
+    }
+
+    const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, parentWorkspaceId);
+    if (!hasActiveDescendants) {
+      this.consecutiveAutoResumes.delete(parentWorkspaceId);
+    }
+    if (this.interruptedParentWorkspaceIds.has(parentWorkspaceId)) {
+      log.debug("Skipping terminal-failure parent auto-resume after hard interrupt", {
+        parentWorkspaceId,
+        childWorkspaceId,
+      });
+      return;
+    }
+    if (hasActiveDescendants) {
+      // Remaining active children wake the parent when the last one settles
+      // (report delivery or another terminal failure).
+      return;
+    }
+    if (this.aiService.isStreaming(parentWorkspaceId)) {
+      // A streaming parent discovers the failure on its next task_await
+      // (waiter rejection or persisted failure artifact / taskLaunchError).
+      return;
+    }
+
+    const resumeOptions = await this.resolveParentAutoResumeOptions(
+      parentWorkspaceId,
+      parentEntry,
+      childEntry.workspace.taskModelString ?? defaultModel
+    );
+    const sendResult = await this.workspaceService.sendMessage(
+      parentWorkspaceId,
+      buildFailedBackgroundSubagentHandoffPrompt({
+        childWorkspaceId,
+        agentType: coerceNonEmptyString(childEntry.workspace.agentType) ?? "agent",
+        errorType: failure.errorType,
+        errorMessage: failure.errorMessage,
+      }),
+      {
+        model: resumeOptions.model,
+        agentId: resumeOptions.agentId,
+        thinkingLevel: resumeOptions.thinkingLevel,
+      },
+      // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
+      { skipAutoResumeReset: true, synthetic: true, agentInitiated: true }
+    );
+    if (!sendResult.success) {
+      log.error("Failed to auto-resume parent after terminal child failure", {
+        parentWorkspaceId,
+        childWorkspaceId,
+        error: sendResult.error,
+      });
+    }
   }
 
   /**
