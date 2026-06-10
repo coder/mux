@@ -248,12 +248,22 @@ export class WorkflowRunStore {
       stepId: string;
       inputHash: string;
       taskId?: string;
+      // Agent-spec title for the task event row; distinct from result.title,
+      // which is the sub-agent's self-reported report title.
+      title?: string;
       result: StructuredTaskOutput;
       startedAt: string;
       completedAt: string;
     },
     options: AppendWorkflowRunEventOptions = {}
   ): Promise<void> {
+    // Fail fast on empty titles: the event schema enforces min(1), and letting it
+    // surface as a ZodError mid-write would abort step persistence with a less
+    // actionable error.
+    assert(
+      input.title == null || input.title.length > 0,
+      "WorkflowRunStore.recordStepCompletedAndAppendTaskEvent: title must be non-empty when provided"
+    );
     await this.withWorkflowMutationLock(runId, async () => {
       await this.withExpectedLeaseOwner(runId, options.expectedLeaseOwnerId, async () => {
         const record = WorkflowStepRecordSchema.parse({
@@ -289,6 +299,7 @@ export class WorkflowRunStore {
               stepId: input.stepId,
               taskId: input.taskId,
               status: "completed",
+              title: input.title,
             },
             options
           );
@@ -309,6 +320,8 @@ export class WorkflowRunStore {
       stepId: string;
       inputHash: string;
       taskId?: string;
+      // Agent-spec title for the task event row (see recordStepCompletedAndAppendTaskEvent).
+      title?: string;
       error: string;
       startedAt: string;
       completedAt: string;
@@ -317,6 +330,10 @@ export class WorkflowRunStore {
     },
     options: AppendWorkflowRunEventOptions = {}
   ): Promise<void> {
+    assert(
+      input.title == null || input.title.length > 0,
+      "WorkflowRunStore.recordStepFailedAndAppendTaskEvent: title must be non-empty when provided"
+    );
     await this.withWorkflowMutationLock(runId, async () => {
       await this.withExpectedLeaseOwner(runId, options.expectedLeaseOwnerId, async () => {
         const record = WorkflowStepRecordSchema.parse({
@@ -365,6 +382,7 @@ export class WorkflowRunStore {
               stepId: input.stepId,
               taskId: input.taskId,
               status: "failed",
+              title: input.title,
             },
             options
           );
@@ -381,12 +399,17 @@ export class WorkflowRunStore {
 
   async appendTaskEventIfMissing(
     runId: string,
-    task: { stepId: string; taskId: string; status: string; at: string },
+    // title is the agent-spec title for the task event row (see recordStepCompletedAndAppendTaskEvent).
+    task: { stepId: string; taskId: string; status: string; at: string; title?: string },
     options: AppendWorkflowRunEventOptions = {}
   ): Promise<void> {
     assert(task.stepId.length > 0, "WorkflowRunStore.appendTaskEventIfMissing: stepId is required");
     assert(task.taskId.length > 0, "WorkflowRunStore.appendTaskEventIfMissing: taskId is required");
     assert(task.status.length > 0, "WorkflowRunStore.appendTaskEventIfMissing: status is required");
+    assert(
+      task.title == null || task.title.length > 0,
+      "WorkflowRunStore.appendTaskEventIfMissing: title must be non-empty when provided"
+    );
     await this.withWorkflowMutationLock(runId, async () => {
       await this.withExpectedLeaseOwner(runId, options.expectedLeaseOwnerId, async () => {
         const run = await this.getRunUnlocked(runId);
@@ -409,6 +432,7 @@ export class WorkflowRunStore {
             stepId: task.stepId,
             taskId: task.taskId,
             status: task.status,
+            title: task.title,
           },
           options
         );

@@ -233,6 +233,8 @@ const taskActionsRun: WorkflowRunRecord = {
       stepId: "summarize-source-15",
       taskId: "7b1a07d84d",
       status: "completed",
+      // Human title is 1-based while the step id is 0-based; rows show the title.
+      title: "Summarize source 16",
     },
     {
       sequence: 4,
@@ -254,7 +256,7 @@ const taskActionsRun: WorkflowRunRecord = {
       result: {
         reportMarkdown: "## Summary report\n\nCompleted task report body.",
         structuredOutput: {
-          summary: "Source 15 is ready for downstream extraction.",
+          summary: "Source 16 is ready for downstream extraction.",
           confidence: "high",
           citations: 3,
         },

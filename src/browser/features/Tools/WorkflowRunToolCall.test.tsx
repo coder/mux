@@ -475,6 +475,71 @@ describe("WorkflowRunToolCall", () => {
     });
   });
 
+  test("labels task rows with the sub-agent title and falls back to stepId without one", () => {
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <TooltipProvider>
+          <WorkflowRunToolCall
+            args={{ name: "deep-research", args: {}, run_in_background: true }}
+            status="executing"
+            result={{
+              status: "running",
+              runId: "wfr_task_titles",
+              result: null,
+              run: {
+                id: "wfr_task_titles",
+                workspaceId: "workspace-1",
+                definition: {
+                  name: "deep-research",
+                  description: "Deep research",
+                  scope: "built-in",
+                  executable: true,
+                },
+                definitionSource: "export default function workflow() { return null; }",
+                definitionHash: "sha256:test",
+                args: {},
+                status: "running",
+                createdAt: "2026-05-29T00:00:00.000Z",
+                updatedAt: "2026-05-29T00:00:01.000Z",
+                events: [
+                  {
+                    sequence: 1,
+                    type: "status",
+                    at: "2026-05-29T00:00:00.000Z",
+                    status: "running",
+                  },
+                  {
+                    sequence: 2,
+                    type: "task",
+                    at: "2026-05-29T00:00:00.000Z",
+                    stepId: "verify-claim-0-vote-2",
+                    taskId: "task_verify",
+                    status: "started",
+                    title: "Verify claim 1 vote 3",
+                  },
+                  // Legacy persisted event without a title keeps the stepId label.
+                  {
+                    sequence: 3,
+                    type: "task",
+                    at: "2026-05-29T00:00:01.000Z",
+                    stepId: "extract-source-0",
+                    taskId: "task_extract",
+                    status: "started",
+                  },
+                ],
+                steps: [],
+              },
+            }}
+          />
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+
+    expect(view.getByText("Verify claim 1 vote 3 / task_verify / started")).toBeTruthy();
+    expect(view.container.textContent).not.toContain("verify-claim-0-vote-2");
+    expect(view.getByText("extract-source-0 / task_extract / started")).toBeTruthy();
+  });
+
   test("coalesces action start and completion events into one row with combined details", () => {
     const view = render(
       <ThemeProvider forcedTheme="dark">

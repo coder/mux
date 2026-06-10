@@ -338,7 +338,9 @@ function getWorkflowEventLabel(event: WorkflowRunEvent): string {
     case "log":
       return event.message;
     case "task":
-      return `${event.stepId} / ${event.taskId} / ${event.status}`;
+      // Prefer the human-readable sub-agent title (matches the spawned
+      // workspace title); fall back to stepId for legacy events without one.
+      return `${event.title ?? event.stepId} / ${event.taskId} / ${event.status}`;
     case "patch":
       return `${event.stepId} / ${event.sourceTaskId} / ${event.status}`;
     case "action":

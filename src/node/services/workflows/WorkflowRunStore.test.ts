@@ -157,6 +157,7 @@ describe("WorkflowRunStore", () => {
       stepId: "source-a",
       inputHash: "hash:source-a",
       taskId: "task_source-a",
+      title: "Extract claims from source 1",
       result: { reportMarkdown: "source-a" },
       startedAt: "2026-05-29T00:00:01.000Z",
       completedAt: "2026-05-29T00:00:02.000Z",
@@ -175,6 +176,7 @@ describe("WorkflowRunStore", () => {
       stepId: "source-a",
       taskId: "task_source-a",
       status: "completed",
+      title: "Extract claims from source 1",
     });
   });
 
@@ -186,6 +188,7 @@ describe("WorkflowRunStore", () => {
       stepId: "source-b",
       inputHash: "hash:source-b",
       taskId: "task_source-b_bad",
+      title: "Extract claims from source 2",
       error: "structured output failed schema validation",
       startedAt: "2026-05-29T00:00:01.000Z",
       completedAt: "2026-05-29T00:00:02.000Z",
@@ -212,6 +215,7 @@ describe("WorkflowRunStore", () => {
       stepId: "source-b",
       taskId: "task_source-b_bad",
       status: "failed",
+      title: "Extract claims from source 2",
     });
   });
 

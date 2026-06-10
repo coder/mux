@@ -126,6 +126,9 @@ export const WorkflowRunEventSchema = z.discriminatedUnion("type", [
     stepId: z.string().min(1),
     taskId: z.string().min(1),
     status: z.string().min(1),
+    // Human-readable sub-agent title (matches the spawned workspace title).
+    // Optional so legacy persisted events without it still parse.
+    title: z.string().min(1).optional(),
   }),
   z.object({
     sequence: z.number().int().positive(),
