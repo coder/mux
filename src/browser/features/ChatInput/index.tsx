@@ -211,6 +211,9 @@ function replaceSuggestions(prev: SlashSuggestion[], next: SlashSuggestion[]): S
   return prev.length === 0 && next.length === 0 ? prev : next;
 }
 
+export const CREATION_CHAT_INPUT_SECTION_FRAME_CLASS =
+  "bg-surface-primary border-border-light min-h-56 w-full max-w-3xl rounded-lg border px-6 py-5 shadow-lg";
+
 const PDF_MEDIA_TYPE = "application/pdf";
 
 function getBaseMediaType(mediaType: string): string {
@@ -2964,11 +2967,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         className={cn(
           "relative flex flex-col gap-1",
           variant === "creation"
-            ? "bg-surface-primary w-full max-w-3xl rounded-lg border border-border-light px-6 py-5 shadow-lg"
+            ? CREATION_CHAT_INPUT_SECTION_FRAME_CLASS
             : `bg-surface-primary border-border-light px-4 
               pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))] 
               mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]`
         )}
+        data-chat-input-variant={variant}
         data-component="ChatInputSection"
         data-autofocus-state="done"
       >

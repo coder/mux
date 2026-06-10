@@ -1,5 +1,8 @@
 import { Bot, X } from "lucide-react";
 
+const AGENTS_INIT_BANNER_FRAME_CLASS =
+  "bg-bg-dark border-border-medium flex min-h-[4.5rem] items-center gap-3 rounded-lg border px-4 py-3";
+
 interface AgentsInitBannerProps {
   onRunInit: () => void | Promise<void>;
   onDismiss: () => void;
@@ -11,10 +14,7 @@ interface AgentsInitBannerProps {
  */
 export function AgentsInitBanner(props: AgentsInitBannerProps) {
   return (
-    <div
-      className="bg-bg-dark border-border-medium flex items-center gap-3 rounded-lg border px-4 py-3"
-      data-testid="agents-init-banner"
-    >
+    <div className={AGENTS_INIT_BANNER_FRAME_CLASS} data-testid="agents-init-banner">
       <Bot className="text-muted-foreground h-5 w-5 shrink-0" />
       <div className="flex flex-1 flex-col gap-0.5">
         <span className="text-foreground text-sm font-medium">
@@ -46,6 +46,20 @@ export function AgentsInitBanner(props: AgentsInitBannerProps) {
           <X className="h-4 w-4" />
         </button>
       </div>
+    </div>
+  );
+}
+
+export function AgentsInitBannerPlaceholder() {
+  return (
+    <div
+      // Render the real banner invisibly so future copy or wrapping changes reserve
+      // the exact same responsive height while provider config hydrates.
+      aria-hidden="true"
+      className="invisible"
+      data-testid="agents-init-banner-placeholder"
+    >
+      <AgentsInitBanner onRunInit={() => undefined} onDismiss={() => undefined} />
     </div>
   );
 }

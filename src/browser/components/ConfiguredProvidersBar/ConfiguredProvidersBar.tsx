@@ -1,11 +1,27 @@
 import { Check, Settings } from "lucide-react";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { Skeleton } from "../Skeleton/Skeleton";
 import { formatProviderDisplayName } from "@/common/utils/providers/customProviders";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
 import { hasProviderIcon, ProviderIcon } from "../ProviderIcon/ProviderIcon";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
+
+const CONFIGURED_PROVIDERS_BAR_FRAME_CLASS = "flex h-9 items-center justify-center gap-2 text-sm";
+
+export function ConfiguredProvidersBarSkeleton() {
+  return (
+    <div
+      // User-reported hydration flash: keep this loading slot height tied to
+      // ConfiguredProvidersBar so ProjectPage cannot jump when provider config resolves.
+      className={CONFIGURED_PROVIDERS_BAR_FRAME_CLASS}
+      data-component="ConfiguredProvidersBarSkeleton"
+    >
+      <Skeleton className="h-6 w-32" />
+    </div>
+  );
+}
 
 interface ConfiguredProvidersBarProps {
   providersConfig: ProvidersConfigMap;
@@ -35,7 +51,10 @@ export function ConfiguredProvidersBar(props: ConfiguredProvidersBarProps) {
     .join(", ");
 
   return (
-    <div className="text-muted-foreground flex items-center justify-center gap-2 py-1.5 text-sm">
+    <div
+      className={`text-muted-foreground ${CONFIGURED_PROVIDERS_BAR_FRAME_CLASS}`}
+      data-component="ConfiguredProvidersBar"
+    >
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="border-border/50 hover:border-border inline-flex items-center gap-1.5 rounded border px-2 py-1 text-sm transition-colors">

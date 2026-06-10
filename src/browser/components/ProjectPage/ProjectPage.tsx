@@ -4,18 +4,28 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { cn } from "@/common/lib/utils";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
-import { ChatInput } from "@/browser/features/ChatInput/index";
+import {
+  ChatInput,
+  CREATION_CHAT_INPUT_SECTION_FRAME_CLASS,
+} from "@/browser/features/ChatInput/index";
 import type { ChatInputAPI, WorkspaceCreatedOptions } from "@/browser/features/ChatInput/types";
 import { ProjectMCPOverview } from "../ProjectMCPOverview/ProjectMCPOverview";
 import { ArchivedWorkspaces } from "../ArchivedWorkspaces/ArchivedWorkspaces";
 import { useAPI } from "@/browser/contexts/API";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { GitInitBanner } from "../GitInitBanner/GitInitBanner";
-import { ConfiguredProvidersBar } from "../ConfiguredProvidersBar/ConfiguredProvidersBar";
+import {
+  ConfiguredProvidersBar,
+  ConfiguredProvidersBarSkeleton,
+} from "../ConfiguredProvidersBar/ConfiguredProvidersBar";
 import { ConfigureProvidersPrompt } from "../ConfigureProvidersPrompt/ConfigureProvidersPrompt";
+import { Skeleton } from "../Skeleton/Skeleton";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import { AgentsInitBanner } from "../AgentsInitBanner/AgentsInitBanner";
+import {
+  AgentsInitBanner,
+  AgentsInitBannerPlaceholder,
+} from "../AgentsInitBanner/AgentsInitBanner";
 import {
   usePersistedState,
   updatePersistedState,
@@ -25,13 +35,13 @@ import {
   getAgentIdKey,
   getAgentsInitNudgeKey,
   getArchivedWorkspacesKey,
+  HAS_CONFIGURED_PROVIDER_CACHE_KEY,
   getDraftScopeId,
   getInputKey,
   getPendingScopeId,
   getProjectScopeId,
 } from "@/common/constants/storage";
 import { Button } from "@/browser/components/Button/Button";
-import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 
 interface ProjectPageProps {
@@ -65,6 +75,40 @@ function hasConfiguredProvider(config: ProvidersConfigMap | null): boolean {
   return Object.values(config).some((provider) => provider?.isConfigured);
 }
 
+const PROJECT_CREATION_PROVIDER_GATE_CLASS = "flex min-h-[30rem] flex-col justify-end gap-4";
+
+function CreationChatInputSkeleton() {
+  return (
+    <div
+      // Mirrors the creation ChatInput frame while provider availability is still unknown.
+      // Showing an actual composer before we know providers exist causes a no-provider
+      // hydration swap to look like a layout flash.
+      aria-hidden="true"
+      className={CREATION_CHAT_INPUT_SECTION_FRAME_CLASS}
+      data-component="ChatInputSectionSkeleton"
+    >
+      <div className="flex flex-col gap-4">
+        <Skeleton className="h-7 w-56" />
+        <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+          <div className="flex min-w-40 flex-1 flex-col gap-1.5">
+            <Skeleton className="h-3.5 w-28" />
+            <Skeleton className="h-7 w-full" />
+          </div>
+          <div className="flex min-w-40 flex-1 flex-col gap-1.5">
+            <Skeleton className="h-3.5 w-24" />
+            <Skeleton className="h-7 w-full" />
+          </div>
+        </div>
+        <Skeleton className="h-28 w-full" />
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-7 w-40" />
+          <Skeleton className="h-8 w-8 rounded-full" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Project page shown when a project is selected but no workspace is active.
  * Combines workspace creation with archived workspaces view.
@@ -90,9 +134,19 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     false,
     { listener: true }
   );
+  const [cachedHasProviders] = useState<boolean | null>(() =>
+    readPersistedState<boolean | null>(HAS_CONFIGURED_PROVIDER_CACHE_KEY, null)
+  );
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
   const hasProviders = hasConfiguredProvider(providersConfig);
-  const shouldShowAgentsInitBanner = !providersLoading && hasProviders && showAgentsInitNudge;
+  const effectiveHasProviders = providersLoading ? cachedHasProviders : hasProviders;
+  const isProviderAvailabilityUnknown = effectiveHasProviders === null;
+  const shouldShowProviderPrompt = effectiveHasProviders === false;
+  const shouldRenderCreationChat = effectiveHasProviders === true;
+  const shouldReserveAgentsInitBanner =
+    showAgentsInitNudge && (providersLoading || shouldRenderCreationChat);
+  const shouldShowAgentsInitBanner =
+    !providersLoading && shouldRenderCreationChat && showAgentsInitNudge;
 
   // Git repository state for the banner
   const [branchesLoaded, setBranchesLoaded] = useState(false);
@@ -296,44 +350,56 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                 {isNonGitRepo && (
                   <GitInitBanner projectPath={projectPath} onSuccess={handleGitInitSuccess} />
                 )}
-                {/* Show configure prompt when no providers, otherwise show ChatInput */}
-                {!providersLoading && !hasProviders ? (
-                  <ConfigureProvidersPrompt />
-                ) : (
-                  <>
-                    {shouldShowAgentsInitBanner && (
-                      <AgentsInitBanner
-                        onRunInit={handleRunAgentsInit}
-                        onDismiss={handleDismissAgentsInit}
-                      />
-                    )}
-                    {/* Configured providers bar - compact icon carousel */}
-                    {providersLoading ? (
-                      // Skeleton placeholder matching ConfiguredProvidersBar height
-                      <div className="flex items-center justify-center gap-2 py-1.5">
-                        <Skeleton className="h-7 w-32" />
-                      </div>
-                    ) : (
-                      hasProviders &&
-                      providersConfig && (
-                        <ConfiguredProvidersBar providersConfig={providersConfig} />
-                      )
-                    )}
-                    {/* ChatInput for workspace creation. */}
-                    <ChatInput
-                      // Key by project + draft so project navigation and draft switches both remount
-                      // creation-local state (including any in-flight creation overlays).
-                      key={`${projectPath}:${pendingDraftId ?? "__pending__"}`}
-                      variant="creation"
-                      projectPath={projectPath}
-                      projectName={projectName}
-                      pendingSubProjectPath={pendingSubProjectPath}
-                      pendingDraftId={pendingDraftId}
-                      onReady={handleChatReady}
-                      onWorkspaceCreated={onWorkspaceCreated}
-                    />
-                  </>
-                )}
+                <div
+                  // Keep the provider-dependent creation branch in a stable frame. The
+                  // budget covers the agents nudge + provider bar + initial composer;
+                  // shorter states bottom-align inside it instead of recentering the page.
+                  className={PROJECT_CREATION_PROVIDER_GATE_CLASS}
+                  data-component="ProjectCreationProviderGate"
+                >
+                  {/* Show configure prompt when no providers, otherwise show ChatInput. */}
+                  {shouldShowProviderPrompt ? (
+                    <ConfigureProvidersPrompt />
+                  ) : (
+                    <>
+                      {shouldReserveAgentsInitBanner &&
+                        (shouldShowAgentsInitBanner ? (
+                          <AgentsInitBanner
+                            onRunInit={handleRunAgentsInit}
+                            onDismiss={handleDismissAgentsInit}
+                          />
+                        ) : (
+                          <AgentsInitBannerPlaceholder />
+                        ))}
+                      {/* Configured providers bar - compact icon carousel */}
+                      {providersLoading ? (
+                        <ConfiguredProvidersBarSkeleton />
+                      ) : (
+                        hasProviders &&
+                        providersConfig && (
+                          <ConfiguredProvidersBar providersConfig={providersConfig} />
+                        )
+                      )}
+                      {/* ChatInput for workspace creation. */}
+                      {isProviderAvailabilityUnknown ? (
+                        <CreationChatInputSkeleton />
+                      ) : shouldRenderCreationChat ? (
+                        <ChatInput
+                          // Key by project + draft so project navigation and draft switches both remount
+                          // creation-local state (including any in-flight creation overlays).
+                          key={`${projectPath}:${pendingDraftId ?? "__pending__"}`}
+                          variant="creation"
+                          projectPath={projectPath}
+                          projectName={projectName}
+                          pendingSubProjectPath={pendingSubProjectPath}
+                          pendingDraftId={pendingDraftId}
+                          onReady={handleChatReady}
+                          onWorkspaceCreated={onWorkspaceCreated}
+                        />
+                      ) : null}
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
