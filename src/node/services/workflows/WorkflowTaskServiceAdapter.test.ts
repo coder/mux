@@ -52,6 +52,30 @@ describe("WorkflowTaskServiceAdapter", () => {
     });
   });
 
+  test("propagates terminal task failures (model refusal) instead of hanging", async () => {
+    const refusalMessage =
+      "The model refused to respond (finishReason: content-filter): anthropic:claude-fable-5.";
+    const create = mock(async (_args: unknown) =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    // TaskService rejects the report wait when the child settles terminally
+    // (e.g. model_refusal). The adapter must surface that rejection so the
+    // workflow step fails fast with the refusal text.
+    const waitForAgentReport = mock(async () => {
+      throw new Error(refusalMessage);
+    });
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+    });
+
+    await expect(adapter.runAgent({ id: "verify", prompt: "Verify claims" })).rejects.toThrow(
+      refusalMessage
+    );
+  });
+
   test("inherits experiments for task creation", async () => {
     let createArgs: unknown;
     const create = mock(async (args: unknown) => {

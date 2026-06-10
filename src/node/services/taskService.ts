@@ -91,6 +91,10 @@ import {
   readSubagentReportArtifactsFile,
   upsertSubagentReportArtifact,
 } from "@/node/services/subagentReportArtifacts";
+import {
+  readSubagentFailureArtifact,
+  upsertSubagentFailureArtifact,
+} from "@/node/services/subagentFailureArtifacts";
 import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isNonRetryableStreamError } from "@/common/utils/messages/retryEligibility";
@@ -3060,6 +3064,18 @@ export class TaskService {
       };
     };
 
+    // Persisted terminal failures (e.g. model_refusal) are checked AFTER reports —
+    // report monotonicity — and surface as rejections, never as reportMarkdown.
+    const tryReadPersistedFailureError = async (): Promise<Error | null> => {
+      if (!requestingWorkspaceId) {
+        return null;
+      }
+
+      const sessionDir = this.config.getSessionDir(requestingWorkspaceId);
+      const failure = await readSubagentFailureArtifact(sessionDir, taskId);
+      return failure ? new Error(failure.errorMessage) : null;
+    };
+
     // Fast-path: if the task is already gone (cleanup) or already reported (restart), return the
     // persisted artifact from the requesting workspace session dir.
     const cfg = this.config.loadConfigOrDefault();
@@ -3070,6 +3086,11 @@ export class TaskService {
       const persisted = await tryReadPersistedReport();
       if (persisted) {
         return persisted;
+      }
+
+      const persistedFailure = await tryReadPersistedFailureError();
+      if (persistedFailure) {
+        throw persistedFailure;
       }
 
       throw new Error("Task not found");
@@ -3104,7 +3125,8 @@ export class TaskService {
             return;
           }
 
-          reject(new Error("Task not found"));
+          const persistedFailure = await tryReadPersistedFailureError();
+          reject(persistedFailure ?? new Error("Task not found"));
           return;
         }
 
@@ -3115,7 +3137,8 @@ export class TaskService {
             return;
           }
 
-          reject(new Error("Task not found"));
+          const persistedFailure = await tryReadPersistedFailureError();
+          reject(persistedFailure ?? new Error("Task not found"));
           return;
         }
 
@@ -3144,8 +3167,14 @@ export class TaskService {
         const startReportTimeout = () => {
           if (timeout) return;
           timeout = setTimeout(() => {
-            entry.cleanup();
-            reject(new Error("Timed out waiting for agent_report"));
+            // Prefer a persisted terminal failure over a generic timeout so late
+            // awaits surface the typed failure (e.g. model_refusal) even when the
+            // live rejection was missed (restart/cleanup windows).
+            void (async () => {
+              const persistedFailure = await tryReadPersistedFailureError().catch(() => null);
+              entry.cleanup();
+              reject(persistedFailure ?? new Error("Timed out waiting for agent_report"));
+            })();
           }, timeoutMs);
         };
 
@@ -4665,7 +4694,10 @@ export class TaskService {
       return;
     }
 
-    if (entry.workspace.taskStatus !== "awaiting_report") {
+    const status = entry.workspace.taskStatus;
+    // Stream errors only need settlement handling while the task is mid-run
+    // (running) or waiting on its completion tool (awaiting_report).
+    if (status !== "running" && status !== "awaiting_report") {
       return;
     }
 
@@ -4673,17 +4705,32 @@ export class TaskService {
       return;
     }
 
-    if (event.errorType && isNonRetryableStreamError({ type: event.errorType })) {
-      log.error(
-        "Task awaiting required completion tool hit a non-retryable stream error; interrupting task",
-        {
-          workspaceId,
-          errorType: event.errorType,
-          error: event.error,
-        }
-      );
-      await this.setTaskStatus(workspaceId, "interrupted");
-      await this.settleInterruptedTaskAtStreamEnd(workspaceId, entry, null);
+    const isNonRetryable =
+      event.errorType != null && isNonRetryableStreamError({ type: event.errorType });
+
+    // Terminal provider outcomes (e.g. model_refusal) settle the task even during its
+    // first `running` turn — previously only awaiting_report settled, leaving the
+    // parent's waitForAgentReport to block until timeout. `aborted` is excluded for
+    // running tasks: a user interrupt is a steerable pause, not a terminal failure.
+    const settlesRunningTask = isNonRetryable && event.errorType !== "aborted";
+
+    if (isNonRetryable && (status === "awaiting_report" || settlesRunningTask)) {
+      log.error("Task hit a non-retryable stream error; interrupting task", {
+        workspaceId,
+        taskStatus: status,
+        errorType: event.errorType,
+        error: event.error,
+      });
+      await this.failAgentTaskTerminally(workspaceId, entry, {
+        errorType: event.errorType ?? "unknown",
+        errorMessage: event.error,
+      });
+      return;
+    }
+
+    if (status !== "awaiting_report") {
+      // Retryable errors during `running` are handled by the agent session's
+      // retry loop; TaskService only intervenes once the task owes its report.
       return;
     }
 
@@ -4703,6 +4750,84 @@ export class TaskService {
   }
 
   /**
+   * Terminal settlement for a child task whose stream failed with a
+   * non-retryable error: mark interrupted with a descriptive launch error,
+   * persist a durable failure artifact in every ancestor session dir (so
+   * background children, restarts, and post-cleanup task_awaits observe the
+   * typed failure), then reject pending waiters with the failure message.
+   */
+  private async failAgentTaskTerminally(
+    workspaceId: string,
+    entry: { projectPath: string; workspace: WorkspaceConfigEntry },
+    failure: { errorType: string; errorMessage: string }
+  ): Promise<void> {
+    assert(workspaceId.length > 0, "failAgentTaskTerminally: workspaceId must be non-empty");
+    assert(
+      failure.errorMessage.length > 0,
+      "failAgentTaskTerminally: errorMessage must be non-empty"
+    );
+
+    await this.editWorkspaceEntry(
+      workspaceId,
+      (ws) => {
+        ws.taskStatus = "interrupted";
+        ws.taskLaunchError = failure.errorMessage;
+      },
+      { allowMissing: true }
+    );
+    await this.emitWorkspaceMetadata(workspaceId);
+
+    const parentWorkspaceId = entry.workspace.parentWorkspaceId;
+    if (parentWorkspaceId) {
+      const cfg = this.config.loadConfigOrDefault();
+      const index = this.buildAgentTaskIndex(cfg);
+      const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(
+        index.parentById,
+        workspaceId
+      );
+      const workflowOwnedAncestorWorkspaceIds = ancestorWorkspaceIds.filter(
+        (ancestorWorkspaceId) =>
+          this.getWorkflowOwnedDescendantAgentTaskUsingIndex(
+            index,
+            ancestorWorkspaceId,
+            workspaceId
+          ) === true
+      );
+
+      const persistedAtMs = Date.now();
+      for (const ancestorWorkspaceId of ancestorWorkspaceIds) {
+        try {
+          await upsertSubagentFailureArtifact({
+            workspaceId: ancestorWorkspaceId,
+            workspaceSessionDir: this.config.getSessionDir(ancestorWorkspaceId),
+            childTaskId: workspaceId,
+            parentWorkspaceId,
+            ancestorWorkspaceIds,
+            workflowOwnedAncestorWorkspaceIds,
+            errorType: failure.errorType,
+            errorMessage: failure.errorMessage,
+            model: entry.workspace.taskModelString,
+            nowMs: persistedAtMs,
+          });
+        } catch (error: unknown) {
+          log.error("Failed to persist subagent failure artifact", {
+            workspaceId: ancestorWorkspaceId,
+            childTaskId: workspaceId,
+            error,
+          });
+        }
+      }
+    }
+
+    await this.settleInterruptedTaskAtStreamEnd(workspaceId, entry, null, {
+      rejectionError: new Error(failure.errorMessage),
+    });
+
+    // Free this task's concurrency slot for queued siblings.
+    this.scheduleMaybeStartQueuedTasks();
+  }
+
+  /**
    * Stream-end settlement for interrupted tasks. Guarantees every pending waiter
    * is settled exactly once: resolved if an agent_report exists, rejected otherwise.
    * No waiter should depend on timeout to discover terminal interruption.
@@ -4710,14 +4835,15 @@ export class TaskService {
   private async settleInterruptedTaskAtStreamEnd(
     workspaceId: string,
     entry: { projectPath: string; workspace: WorkspaceConfigEntry },
-    reportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown } | null
+    reportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown } | null,
+    options?: { rejectionError?: Error }
   ): Promise<void> {
     if (reportArgs) {
       await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
       return;
     }
 
-    this.rejectWaiters(workspaceId, new Error("Task interrupted"));
+    this.rejectWaiters(workspaceId, options?.rejectionError ?? new Error("Task interrupted"));
 
     const parentWorkspaceId = entry.workspace.parentWorkspaceId;
     const bestOf = entry.workspace.bestOf;

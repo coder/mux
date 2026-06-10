@@ -85,6 +85,33 @@ class EmptyStreamOutputError extends Error {
   }
 }
 
+/**
+ * Terminal provider refusal: the model declined to answer and produced no
+ * assistant-visible output. Unlike EmptyStreamOutputError (a transport drop),
+ * retrying the same request will refuse again, so this maps to the
+ * non-retryable "model_refusal" stream error type.
+ */
+class ModelRefusalError extends Error {
+  constructor(model: string, finishReason: string) {
+    super(
+      `The model refused to respond (finishReason: ${finishReason}): ${model}. ` +
+        "Retrying the same request is unlikely to help; try rephrasing or a different model."
+    );
+    this.name = "ModelRefusalError";
+  }
+}
+
+/**
+ * Finish reasons that signal the provider deliberately declined to answer.
+ * - "content-filter": the AI SDK's unified finish reason for refusals
+ *   (Anthropic maps stop_reason "refusal" to it; OpenAI maps content filters).
+ * - "refusal": Anthropic's raw stop_reason, matched defensively in case a
+ *   provider adapter passes the raw value through.
+ */
+function isRefusalFinishReason(reason: string | undefined): reason is string {
+  return reason === "content-filter" || reason === "refusal";
+}
+
 class StreamTruncatedError extends Error {
   readonly providerDisplayName: string;
 
@@ -412,6 +439,9 @@ interface WorkspaceStreamInfo {
   // A clean EOF can be a proxy/provider drop and must not finalize partial assistant text.
   receivedTerminalEvent: boolean;
   terminalFinishReason?: string;
+  // Provider-raw finish reason (e.g. Anthropic's "refusal") kept alongside the
+  // unified one so refusal classification can match either representation.
+  terminalRawFinishReason?: string;
   // Index into parts where the current step started (used to ensure safe retries)
   currentStepStartIndex: number;
   historySequence: number;
@@ -1729,6 +1759,29 @@ export class StreamManager extends EventEmitter {
     await this.handleStreamFailure(workspaceId, streamInfo, new EmptyStreamOutputError());
   }
 
+  private async handleModelRefusalCompletion(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    refusalFinishReason: string
+  ): Promise<void> {
+    const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
+    const streamMeta = await this.getStreamMetadata(streamInfo);
+
+    workspaceLog.error("Stream ended with a terminal refusal and no assistant-visible output", {
+      messageId: streamInfo.messageId,
+      model: streamInfo.model,
+      finishReason: streamInfo.terminalFinishReason,
+      rawFinishReason: streamInfo.terminalRawFinishReason,
+      durationMs: streamMeta.duration,
+    });
+
+    await this.handleStreamFailure(
+      workspaceId,
+      streamInfo,
+      new ModelRefusalError(streamInfo.model, refusalFinishReason)
+    );
+  }
+
   private async handleTruncatedStreamCompletion(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo
@@ -2170,6 +2223,9 @@ export class StreamManager extends EventEmitter {
                 if (typeof finishPart.finishReason === "string") {
                   streamInfo.terminalFinishReason = finishPart.finishReason;
                 }
+                if (typeof finishPart.rawFinishReason === "string") {
+                  streamInfo.terminalRawFinishReason = finishPart.rawFinishReason;
+                }
                 break;
               }
 
@@ -2232,6 +2288,25 @@ export class StreamManager extends EventEmitter {
           // Check if stream completed successfully
           if (!streamInfo.abortController.signal.aborted) {
             if (streamInfo.parts.length === 0) {
+              // Terminal refusal check must precede the empty-output recovery path:
+              // a refusal with zero output is a deliberate provider outcome, not a
+              // transport drop, so in-stream retries and auto-retry would loop on
+              // the same refusal forever. Refusal WITH partial output keeps the
+              // normal stream-end path below (finishReason lands in metadata).
+              const refusalFinishReason = streamInfo.receivedTerminalEvent
+                ? ([streamInfo.terminalFinishReason, streamInfo.terminalRawFinishReason].find(
+                    isRefusalFinishReason
+                  ) ?? null)
+                : null;
+              if (refusalFinishReason !== null) {
+                await this.handleModelRefusalCompletion(
+                  workspaceId,
+                  streamInfo,
+                  refusalFinishReason
+                );
+                break;
+              }
+
               const retriedEmptyStream = await this.retryEmptyStreamBeforeFailure(
                 workspaceId,
                 streamInfo,
@@ -2459,6 +2534,15 @@ export class StreamManager extends EventEmitter {
       };
     }
 
+    if (error instanceof ModelRefusalError) {
+      return {
+        messageId: streamInfo.messageId,
+        error: error.message,
+        errorType: "model_refusal",
+        acpPromptId: streamInfo.initialMetadata?.acpPromptId,
+      };
+    }
+
     if (error instanceof StreamTruncatedError) {
       return {
         messageId: streamInfo.messageId,
@@ -2655,6 +2739,7 @@ export class StreamManager extends EventEmitter {
     }
     streamInfo.receivedTerminalEvent = false;
     streamInfo.terminalFinishReason = undefined;
+    streamInfo.terminalRawFinishReason = undefined;
     streamInfo.lastPartialWriteTime = 0;
 
     if (!preserveUsage) {

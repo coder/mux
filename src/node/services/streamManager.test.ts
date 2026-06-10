@@ -1780,6 +1780,133 @@ describe("StreamManager - empty stream completions", () => {
     expect(errorEvents).toHaveLength(0);
     expect(streamEndEvents).toHaveLength(1);
   });
+
+  test("classifies zero-output refusal finish as terminal model_refusal without empty-stream retry", async () => {
+    // The AI SDK's Anthropic adapter maps stop_reason "refusal" to the unified
+    // finish reason "content-filter" with rawFinishReason "refusal" (pinned
+    // against @ai-sdk/anthropic 3.0.75). A refusal with zero output is a
+    // deliberate terminal outcome: it must NOT take the empty-output recovery
+    // path (in-stream retry + retryable empty_output), which previously looped
+    // auto-retries on the same refusal forever.
+    const streamManager = new StreamManager(historyService);
+    const errorEvents: Array<{ messageId: string; error: string; errorType?: string }> = [];
+    const streamEndEvents: unknown[] = [];
+
+    streamManager.on("error", (data) => {
+      errorEvents.push(data as { messageId: string; error: string; errorType?: string });
+    });
+    streamManager.on("stream-end", (data) => {
+      streamEndEvents.push(data);
+    });
+
+    Reflect.set(streamManager, "tokenTracker", {
+      setModel: () => Promise.resolve(undefined),
+      countTokens: () => Promise.resolve(0),
+    });
+
+    const workspaceId = "refusal-workspace";
+    const messageId = "refusal-message";
+    const historySequence = 1;
+
+    await appendPartialAssistantForTests(workspaceId, messageId, historySequence);
+    const processStreamWithCleanup = getProcessStreamWithCleanupForTests(streamManager);
+
+    // Guard that no empty-stream recovery attempt re-creates the stream.
+    const createStreamResult = mock(() =>
+      createStreamResultForTests(
+        (async function* () {
+          // Would refuse again; must never be called.
+        })()
+      )
+    );
+    expect(Reflect.set(streamManager, "createStreamResult", createStreamResult)).toBe(true);
+
+    const startTime = Date.now() - 250;
+    const streamInfo = createStreamInfoForTests({
+      streamResult: createStreamResultForTests(
+        (async function* () {
+          await Promise.resolve();
+          yield { type: "finish", finishReason: "content-filter", rawFinishReason: "refusal" };
+        })(),
+        { inputTokens: 30000, outputTokens: 0, totalTokens: 30000 }
+      ),
+      messageId,
+      startTime,
+      lastPartTimestamp: startTime,
+      model: KNOWN_MODELS.SONNET.id,
+      metadataModel: KNOWN_MODELS.SONNET.id,
+      historySequence,
+      initialMetadata: { agentId: "plan" },
+      runtime,
+    });
+
+    await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
+
+    expect(createStreamResult).not.toHaveBeenCalled();
+    expect(streamEndEvents).toHaveLength(0);
+    expect(errorEvents).toHaveLength(1);
+    expect(errorEvents[0]).toMatchObject({
+      messageId,
+      errorType: "model_refusal",
+    });
+    expect(errorEvents[0]?.error).toContain("refused to respond");
+
+    const partial = await historyService.readPartial(workspaceId);
+    expect(partial?.metadata?.errorType).toBe("model_refusal");
+  });
+
+  test("refusal finish after partial output keeps the normal stream-end path", async () => {
+    // Scope guard: only the zero-output refusal case is reclassified as a
+    // terminal error. Refusal with partial assistant text completes normally
+    // (the finish reason lands in message metadata).
+    const streamManager = new StreamManager(historyService);
+    const errorEvents: Array<{ messageId: string; error: string; errorType?: string }> = [];
+    const streamEndEvents: Array<{ metadata?: { finishReason?: string } }> = [];
+
+    streamManager.on("error", (data) => {
+      errorEvents.push(data as { messageId: string; error: string; errorType?: string });
+    });
+    streamManager.on("stream-end", (data) => {
+      streamEndEvents.push(data as { metadata?: { finishReason?: string } });
+    });
+
+    Reflect.set(streamManager, "tokenTracker", {
+      setModel: () => Promise.resolve(undefined),
+      countTokens: () => Promise.resolve(0),
+    });
+
+    const workspaceId = "refusal-partial-workspace";
+    const messageId = "refusal-partial-message";
+    const historySequence = 1;
+
+    await appendPartialAssistantForTests(workspaceId, messageId, historySequence);
+    const processStreamWithCleanup = getProcessStreamWithCleanupForTests(streamManager);
+    const startTime = Date.now() - 250;
+    const streamInfo = createStreamInfoForTests({
+      streamResult: createStreamResultForTests(
+        (async function* () {
+          await Promise.resolve();
+          yield { type: "text-delta", text: "partial answer before refusing" };
+          yield { type: "finish", finishReason: "content-filter", rawFinishReason: "refusal" };
+        })(),
+        { inputTokens: 3, outputTokens: 2, totalTokens: 5 }
+      ),
+      messageId,
+      startTime,
+      lastPartTimestamp: startTime,
+      model: KNOWN_MODELS.SONNET.id,
+      metadataModel: KNOWN_MODELS.SONNET.id,
+      historySequence,
+      initialMetadata: { agentId: "plan" },
+      runtime,
+    });
+
+    await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
+
+    expect(errorEvents).toHaveLength(0);
+    expect(streamEndEvents).toHaveLength(1);
+    expect(streamEndEvents[0]?.metadata?.finishReason).toBe("content-filter");
+  });
 });
 
 describe("StreamManager - TTFT metadata persistence", () => {
