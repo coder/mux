@@ -153,6 +153,9 @@ export default function workflow() { return { reportMarkdown: "should not run" }
     );
   });
 
+  // Explicit timeout: this end-to-end test boots seven separate CLI subprocesses
+  // (list/show/run variants) plus git setup; the default 5s budget is marginal
+  // even locally and routinely overruns on loaded CI runners.
   test("CLI lists and runs a trusted project workflow with JSON args", async () => {
     using tmp = new DisposableTempDir("workflow-cli-e2e");
     const repo = path.join(tmp.path, "repo");
@@ -264,5 +267,5 @@ export default function workflow() { throw new Error("boom"); }
         .nothrow()
         .quiet();
     expect(failedRun.exitCode).toBe(1);
-  });
+  }, 30_000);
 });
