@@ -111,17 +111,29 @@ describe("WorkflowTaskServiceAdapter", () => {
       createArgs = args;
       return Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const });
     });
+    let createManyArgs: unknown;
+    const createMany = mock(async (args: unknown) => {
+      createManyArgs = args;
+      return Ok([{ taskId: "task_2", kind: "agent" as const, status: "starting" as const }]);
+    });
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
     const adapter = new WorkflowTaskServiceAdapter({
-      taskService: { create, waitForAgentReport },
+      taskService: { create, createMany, waitForAgentReport },
       parentWorkspaceId: "parent_1",
       workflowRunId: "wfr_123",
       defaultAgentId: "explore",
     });
 
     await adapter.runAgent({ id: "verify", prompt: "Verify claims", onRefusal: "fail" });
-
     expect(createArgs).toMatchObject({ onRefusal: "fail" });
+
+    // The parallel path must preserve the refusal policy too: a verifier step
+    // marked onRefusal: "fail" must fail honestly instead of silently
+    // continuing on a configured fallback model.
+    await adapter.createAgentTasks([
+      { id: "verify-parallel", prompt: "Verify claims in parallel", onRefusal: "fail" },
+    ]);
+    expect(createManyArgs).toMatchObject([{ onRefusal: "fail" }]);
   });
 
   test("passes CLI-selected model and thinking level to workflow child task creation", async () => {
