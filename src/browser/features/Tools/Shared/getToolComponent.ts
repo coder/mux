@@ -43,6 +43,7 @@ import { TaskApplyGitPatchToolCall } from "../TaskApplyGitPatchToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
 import { WorkflowRunToolCall } from "../WorkflowRunToolCall";
 import { WorkflowListToolCall, WorkflowReadToolCall } from "../WorkflowDefinitionToolCall";
+import { WorkflowActionListToolCall } from "../WorkflowActionListToolCall";
 import { CompleteGoalToolCall } from "../CompleteGoalToolCall";
 
 /**
@@ -177,6 +178,10 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   workflow_run: {
     component: WorkflowRunToolCall,
     schema: TOOL_DEFINITIONS.workflow_run.schema,
+  },
+  workflow_action_list: {
+    component: WorkflowActionListToolCall,
+    schema: TOOL_DEFINITIONS.workflow_action_list.schema,
   },
   agent_report: {
     component: AgentReportToolCall,
