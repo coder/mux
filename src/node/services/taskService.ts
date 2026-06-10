@@ -383,6 +383,17 @@ function resolveTaskAgentIdForResume(workspace: {
 
 const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
 
+/**
+ * Maximum consecutive completion-tool recovery prompts for a child task before
+ * the task is interrupted instead of prompted again. Unlike the in-memory
+ * parent auto-resume counter above, this budget is persisted on the workspace
+ * config entry (taskRecoveryAttempts) so crash/restart recovery loops stay
+ * bounded across app restarts. Covers terminal-but-unclassified outcomes such
+ * as repeated empty_output errors, repeated length-truncated turns, and models
+ * that never call their completion tool.
+ */
+const MAX_TASK_RECOVERY_ATTEMPTS = 5;
+
 interface AgentTaskIndex {
   byId: Map<string, AgentTaskWorkspaceEntry>;
   childrenByParent: Map<string, string[]>;
@@ -4328,6 +4339,40 @@ export class TaskService {
 
     const isPlanLike = await this.isPlanLikeTaskWorkspace(entry);
     const completionToolName = isPlanLike ? "propose_plan" : "agent_report";
+
+    // Persisted circuit breaker: a task that keeps consuming recovery prompts
+    // without ever completing is stuck (repeated empty output, repeated
+    // length-truncated turns, or a model that never calls its completion
+    // tool). Interrupt it with a descriptive error instead of prompting
+    // forever. The counter lives on the workspace entry so restart loops stay
+    // bounded too; finalizeAgentTaskReport clears it on success.
+    const recoveryAttempts = entry.workspace.taskRecoveryAttempts ?? 0;
+    if (recoveryAttempts >= MAX_TASK_RECOVERY_ATTEMPTS) {
+      const lastError = options?.error
+        ? ` Last error (${options.error.errorType ?? "unknown"}): ${options.error.error}`
+        : "";
+      log.error("Task exceeded its recovery attempt budget; interrupting task", {
+        workspaceId,
+        taskName: entry.workspace.name,
+        recoveryAttempts,
+        limit: MAX_TASK_RECOVERY_ATTEMPTS,
+        reason: options?.reason,
+      });
+      await this.failAgentTaskTerminally(workspaceId, entry, {
+        errorType: "task_recovery_limit",
+        errorMessage: `Task interrupted after ${MAX_TASK_RECOVERY_ATTEMPTS} consecutive recovery attempts without a successful ${completionToolName}.${lastError} The task model may be unable to complete this request; try a different model or a simpler prompt.`,
+      });
+      return false;
+    }
+    // Consume budget before sending so a crash mid-send still counts the attempt.
+    await this.editWorkspaceEntry(
+      workspaceId,
+      (ws) => {
+        ws.taskRecoveryAttempts = recoveryAttempts + 1;
+      },
+      { allowMissing: true }
+    );
+
     const model = entry.workspace.taskModelString ?? defaultModel;
     const agentId = resolveTaskAgentIdForResume(entry.workspace);
     const startedAt = Date.now();
@@ -5414,6 +5459,8 @@ export class TaskService {
       (ws) => {
         ws.taskStatus = "reported";
         ws.reportedAt = getIsoNow();
+        // Successful completion resets the persisted recovery circuit breaker.
+        delete ws.taskRecoveryAttempts;
       },
       { allowMissing: true }
     );

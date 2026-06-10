@@ -131,6 +131,10 @@ export const WorkspaceConfigSchema = z.object({
   taskLaunchError: z.string().optional().meta({
     description: "Startup failure recorded before an agent task could begin streaming.",
   }),
+  taskRecoveryAttempts: z.number().int().nonnegative().optional().meta({
+    description:
+      "Consecutive completion-tool recovery prompts sent to this agent task without a successful report. Persisted (not in-memory) so crash/restart recovery loops stay bounded; cleared when the task reports.",
+  }),
   reportedAt: z.string().optional().meta({
     description: "ISO 8601 timestamp for when an agent task reported completion (optional).",
   }),

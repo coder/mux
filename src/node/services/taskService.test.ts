@@ -9991,6 +9991,188 @@ describe("TaskService", () => {
     expect((postCleanupError as Error).message).toBe(refusalMessage);
   });
 
+  test("recovery circuit breaker interrupts the task once the persisted attempt budget is exhausted", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "awaiting_report",
+          taskModelString: "openai:gpt-5.5-pro",
+          // Budget already consumed by prior recovery prompts (persisted, so
+          // restarts cannot launder the count back to zero).
+          taskRecoveryAttempts: 5,
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const internal = taskService as unknown as {
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+    };
+
+    // A retryable error that would normally trigger yet another recovery prompt.
+    await internal.handleTaskStreamError({
+      type: "error",
+      workspaceId: childId,
+      messageId: "assistant-error-empty",
+      error: "The model ended the stream before producing any assistant-visible output.",
+      errorType: "empty_output",
+    });
+
+    // Breaker tripped: no further recovery prompt; the task settles terminally.
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const postCfg = config.loadConfigOrDefault();
+    const childWorkspace = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+    expect(childWorkspace?.taskStatus).toBe("interrupted");
+    expect(childWorkspace?.taskLaunchError).toContain("consecutive recovery attempts");
+    expect(childWorkspace?.taskLaunchError).toContain("empty_output");
+
+    // The terminal failure is durable: artifact carries the discriminated errorType.
+    const failure = await readSubagentFailureArtifact(config.getSessionDir(parentId), childId);
+    expect(failure?.errorType).toBe("task_recovery_limit");
+
+    // Waiters observe the same descriptive failure instead of timing out.
+    const awaitError = await taskService
+      .waitForAgentReport(childId, { timeoutMs: 5_000, requestingWorkspaceId: parentId })
+      .then(
+        () => null,
+        (error: unknown) => error
+      );
+    expect(awaitError).toBeInstanceOf(Error);
+    expect((awaitError as Error).message).toBe(childWorkspace?.taskLaunchError ?? "");
+  });
+
+  test("recovery prompts increment a persisted counter that survives service restarts", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.5-pro",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    // Stream ends without a report: first recovery prompt consumes budget.
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child",
+      metadata: { model: "openai:gpt-5.5-pro" },
+      parts: [],
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    const readAttempts = () =>
+      Array.from(config.loadConfigOrDefault().projects.values())
+        .flatMap((project) => project.workspaces)
+        .find((workspace) => workspace.id === childId)?.taskRecoveryAttempts;
+    expect(readAttempts()).toBe(1);
+
+    // Restart simulation: a fresh service instance keeps counting from disk
+    // instead of starting over at zero.
+    const restartedMocks = createWorkspaceServiceMocks();
+    const { taskService: restartedTaskService } = createTaskServiceHarness(config, {
+      workspaceService: restartedMocks.workspaceService,
+    });
+    const restartedInternal = restartedTaskService as unknown as {
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+    };
+    await restartedInternal.handleTaskStreamError({
+      type: "error",
+      workspaceId: childId,
+      messageId: "assistant-error-empty",
+      error: "The model ended the stream before producing any assistant-visible output.",
+      errorType: "empty_output",
+    });
+    expect(restartedMocks.sendMessage).toHaveBeenCalledTimes(1);
+    expect(readAttempts()).toBe(2);
+  });
+
+  test("a successful agent_report resets the persisted recovery counter", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "awaiting_report",
+          taskModelString: "openai:gpt-5.5-pro",
+          taskRecoveryAttempts: 3,
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
+
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-report",
+      metadata: { model: "openai:gpt-5.5-pro" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "All done", title: "Result" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    const postCfg = config.loadConfigOrDefault();
+    const childWorkspace = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+    expect(childWorkspace?.taskStatus).toBe("reported");
+    expect(childWorkspace?.taskRecoveryAttempts).toBeUndefined();
+  });
+
   test("handoff kickoff sendMessage failure keeps task status as running for restart recovery", async () => {
     const sendMessageFailure = mock(
       (): Promise<Result<void>> => Promise.resolve(Err("kickoff failed"))

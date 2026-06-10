@@ -1955,13 +1955,15 @@ describe("StreamManager - empty stream completions", () => {
     );
     expect(Reflect.set(streamManager, "createStreamResult", createStreamResult)).toBe(true);
 
-    const prepare = mock(async (nextModelString: string) =>
-      Ok({
-        model: createTestLanguageModel("fallback-model"),
-        modelString: nextModelString,
-        messages: [],
-        thinkingLevel: "off",
-      })
+    const prepare = mock((nextModelString: string) =>
+      Promise.resolve(
+        Ok({
+          model: createTestLanguageModel("fallback-model"),
+          modelString: nextModelString,
+          messages: [],
+          thinkingLevel: "off",
+        })
+      )
     );
 
     const startTime = Date.now() - 250;
@@ -2054,12 +2056,14 @@ describe("StreamManager - empty stream completions", () => {
     );
     expect(Reflect.set(streamManager, "createStreamResult", createStreamResult)).toBe(true);
 
-    const prepare = mock(async (nextModelString: string) =>
-      Ok({
-        model: createTestLanguageModel("fallback-model"),
-        modelString: nextModelString,
-        messages: [],
-      })
+    const prepare = mock((nextModelString: string) =>
+      Promise.resolve(
+        Ok({
+          model: createTestLanguageModel("fallback-model"),
+          modelString: nextModelString,
+          messages: [],
+        })
+      )
     );
 
     const startTime = Date.now() - 250;
@@ -2133,8 +2137,10 @@ describe("StreamManager - empty stream completions", () => {
 
     // Silently skipping to the next chain entry would effectively create
     // fallback-on-auth/config errors, which is out of scope by design.
-    const prepare = mock(async (_nextModelString: string) =>
-      Err("API key not configured for OpenAI. Please add your API key in settings.")
+    const prepare = mock((_nextModelString: string) =>
+      Promise.resolve(
+        Err("API key not configured for OpenAI. Please add your API key in settings.")
+      )
     );
 
     const startTime = Date.now() - 250;
