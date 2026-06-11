@@ -200,6 +200,20 @@ async function enqueueProjectSync(
   }
 }
 
+function isOnlyExpectedBaseRepoSentinelHeadFsckError(detail: string): boolean {
+  const lines = detail
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return (
+    lines.length > 0 &&
+    lines.every(
+      (line) => line.includes("badHeadTarget") && line.includes(BASE_REPO_SENTINEL_HEAD_REF)
+    )
+  );
+}
+
 function isGitConfigLockConflict(message: string): boolean {
   return /could not lock config file/i.test(message);
 }
@@ -854,9 +868,18 @@ export class SSHRuntime extends RemoteRuntime {
       return { healthy: true };
     }
 
+    const detail = [result.stderr, result.stdout].join("\n").trim() || `exit ${result.exitCode}`;
+    // Git versions that validate HEAD as a branch can report our intentional
+    // internal sentinel as badHeadTarget. The object-connectivity question here
+    // is scoped to explicit bundle refs, so that expected HEAD-only complaint
+    // should not trigger missing-object repair failure.
+    if (isOnlyExpectedBaseRepoSentinelHeadFsckError(detail)) {
+      return { healthy: true };
+    }
+
     return {
       healthy: false,
-      detail: (result.stderr || result.stdout).trim() || `exit ${result.exitCode}`,
+      detail,
     };
   }
 
@@ -879,9 +902,17 @@ export class SSHRuntime extends RemoteRuntime {
       return { healthy: true };
     }
 
+    const detail = [result.stderr, result.stdout].join("\n").trim() || `exit ${result.exitCode}`;
+    // Same sentinel-HEAD exception as bundle connectivity: callers pass an
+    // explicit revision, so a HEAD-only fsck complaint is not evidence that the
+    // requested revision is missing objects.
+    if (isOnlyExpectedBaseRepoSentinelHeadFsckError(detail)) {
+      return { healthy: true };
+    }
+
     return {
       healthy: false,
-      detail: (result.stderr || result.stdout).trim() || `exit ${result.exitCode}`,
+      detail,
     };
   }
 
