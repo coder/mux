@@ -95,6 +95,25 @@ async function workspaceGoalFileExists(config: Config, workspaceId: string): Pro
   }
 }
 
+async function waitForWorkspaceTaskStatus(
+  config: Config,
+  workspaceId: string,
+  expectedStatus: WorkspaceConfigEntry["taskStatus"],
+  timeoutMs = 20_000
+): Promise<void> {
+  const start = Date.now();
+  while (findWorkspaceInConfig(config, workspaceId)?.taskStatus !== expectedStatus) {
+    if (Date.now() - start > timeoutMs) {
+      const actualStatus = findWorkspaceInConfig(config, workspaceId)?.taskStatus;
+      throw new Error(
+        `Timed out waiting for workspace task status (workspaceId=${workspaceId}, expected=${String(expectedStatus)}, actual=${String(actualStatus)})`
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 async function waitForWorkspaceRemoval(
   config: Config,
   workspaceId: string,
@@ -892,6 +911,11 @@ describe("TaskService", () => {
     } finally {
       runBackgroundInitSpy.mockRestore();
     }
+
+    await Promise.all([
+      waitForWorkspaceTaskStatus(config, queuedTaskId, "running"),
+      waitForWorkspaceTaskStatus(config, acceptedStartingTaskId, "running"),
+    ]);
 
     const queued = findWorkspaceInConfig(config, queuedTaskId);
     expect(queued?.taskStatus).toBe("running");
