@@ -10,6 +10,7 @@ import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getWorkflowCheckpointRetryEligibility } from "@/common/utils/workflowRetryEligibility";
 import type { IJSRuntimeFactory } from "@/node/services/ptc/runtime";
+import { WORKFLOW_RUN_TASK_ID_PREFIX } from "@/node/services/tools/taskId";
 import type { WorkflowActionRegistry } from "./WorkflowActionRegistry";
 import { WorkflowActionRunner } from "./WorkflowActionRunner";
 import type {
@@ -839,5 +840,5 @@ function generateWorkflowRunnerOwnerId(baseRunnerId: string, runId: string): str
 }
 
 function generateWorkflowRunId(): string {
-  return `wfr_${crypto.randomBytes(8).toString("hex")}`;
+  return `${WORKFLOW_RUN_TASK_ID_PREFIX}${crypto.randomBytes(8).toString("hex")}`;
 }

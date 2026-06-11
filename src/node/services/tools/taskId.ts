@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 
 const BASH_TASK_ID_PREFIX = "bash:";
-// Keep in sync with generateWorkflowRunId() in WorkflowService.
-const WORKFLOW_RUN_TASK_ID_PREFIX = "wfr_";
+// Canonical workflow-run task ID prefix. WorkflowService.generateWorkflowRunId() builds run IDs
+// from this exact constant, so there is a single source of truth instead of duplicated literals.
+export const WORKFLOW_RUN_TASK_ID_PREFIX = "wfr_";
 
 /**
  * Workflow run IDs are accepted by the task tools (task_await/task_list/task_terminate)
