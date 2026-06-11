@@ -543,7 +543,7 @@ export interface MuxMetadata {
   toolModelUsages?: PersistedToolModelUsage[];
   /**
    * Present when a configured model-fallback chain was applied after a
-   * zero-output refusal. `model` records the effective (answering) model; this
+   * provider refusal. `model` records the effective (answering) model; this
    * records the originally requested model and the models that refused, in
    * order. Refused-attempt token usage is attributed via toolModelUsages.
    */

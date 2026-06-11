@@ -17,6 +17,7 @@ import {
   CONTEXT_BOUNDARY_KINDS,
   getContextBoundaryKind,
 } from "@/common/utils/messages/compactionBoundary";
+import { isPlainObject } from "@/common/utils/isPlainObject";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   isSideQuestionAnswerMessage,
@@ -508,6 +509,39 @@ function appendToolRows(
   });
 }
 
+function isRefusalFinishReason(reason: string | undefined): boolean {
+  return reason === "content-filter" || reason === "refusal";
+}
+
+function getNestedString(value: unknown, path: string[]): string | undefined {
+  let current = value;
+  for (const segment of path) {
+    if (!isPlainObject(current)) {
+      return undefined;
+    }
+    current = current[segment];
+  }
+
+  return typeof current === "string" ? current : undefined;
+}
+
+function getProviderRefusalExplanation(message: MuxMessage): string | undefined {
+  return getNestedString(message.metadata?.providerMetadata, [
+    "anthropic",
+    "stopDetails",
+    "explanation",
+  ]);
+}
+
+function buildRefusalFinishMessage(message: MuxMessage): string {
+  const finishReason = message.metadata?.finishReason ?? "content-filter";
+  const explanation = getProviderRefusalExplanation(message);
+  const base =
+    `The provider refused to continue this response (finishReason: ${finishReason}). ` +
+    "Mux stopped the turn instead of treating it as complete.";
+  return explanation ? `${base}\n\n${explanation}` : base;
+}
+
 function appendStreamErrorRows(
   displayedMessages: DisplayedMessage[],
   options: {
@@ -554,6 +588,13 @@ function appendStreamErrorRows(
         "Lower the thinking level (or split the turn into smaller steps) to give it more headroom.",
       "max_output_tokens"
     );
+  }
+
+  // Legacy/self-healing path: older backends finalized partial refusals as a
+  // clean stream-end with finishReason=content-filter. Surface that explicitly
+  // so a refused turn never looks like the assistant simply stopped.
+  if (!options.hasActiveStream && isRefusalFinishReason(options.message.metadata?.finishReason)) {
+    pushStreamErrorRow("refusal", buildRefusalFinishMessage(options.message), "model_refusal");
   }
 }
 

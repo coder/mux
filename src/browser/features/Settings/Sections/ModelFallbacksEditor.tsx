@@ -20,8 +20,8 @@ const SELECT_TRIGGER_CLASS =
 /**
  * Per-model refusal-fallback chain editor (Settings → Models).
  *
- * When a model refuses to respond with zero output (model_refusal), the turn
- * transparently retries on the next model in its chain instead of failing
+ * When a model refuses to respond (model_refusal), the turn transparently
+ * retries or continues on the next model in its chain instead of failing
  * terminally. Chains are refusal-only by design: quota/auth/network errors
  * never trigger fallback.
  */

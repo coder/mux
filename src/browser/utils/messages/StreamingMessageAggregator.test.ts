@@ -3174,6 +3174,63 @@ describe("StreamingMessageAggregator", () => {
       expect(errorRows[0]?.type === "stream-error" && errorRows[0].errorType).toBe("network");
     });
   });
+
+  describe("refusal finish reasons", () => {
+    test("synthesizes a visible refusal row for legacy content-filter completions", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.addMessage({
+        id: "asst-refused",
+        role: "assistant",
+        parts: [{ type: "text" as const, text: "I checked the security report." }],
+        metadata: {
+          historySequence: 1,
+          timestamp: 1,
+          model: "anthropic:claude-fable-5",
+          finishReason: "content-filter",
+          providerMetadata: {
+            anthropic: {
+              stopDetails: {
+                explanation: "This request triggered restrictions on cyber content.",
+              },
+            },
+          },
+        },
+      });
+
+      const displayed = aggregator.getDisplayedMessages();
+      const errorRow = displayed.find((message) => message.type === "stream-error");
+      expect(errorRow).toBeDefined();
+      if (errorRow?.type === "stream-error") {
+        expect(errorRow.errorType).toBe("model_refusal");
+        expect(errorRow.error).toContain("finishReason: content-filter");
+        expect(errorRow.error).toContain("triggered restrictions");
+      }
+    });
+
+    test("does not render a red refusal row for successful fallback completions", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.addMessage({
+        id: "asst-fallback-success",
+        role: "assistant",
+        parts: [{ type: "text" as const, text: "Fallback finished the response." }],
+        metadata: {
+          historySequence: 1,
+          timestamp: 1,
+          model: "openai:gpt-5.5",
+          finishReason: "stop",
+          modelFallback: {
+            requestedModel: "anthropic:claude-fable-5",
+            refusedModels: ["anthropic:claude-fable-5"],
+          },
+        },
+      });
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed.find((message) => message.type === "stream-error")).toBeUndefined();
+    });
+  });
 });
 
 /**

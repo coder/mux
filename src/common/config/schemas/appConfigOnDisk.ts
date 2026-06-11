@@ -125,7 +125,7 @@ export const AppConfigOnDiskSchema = z
     minThinkingLevelByModel: z.record(z.string(), ThinkingLevelSchema).optional(),
     /**
      * Per-model refusal-fallback chains (keyed by canonical source model). When a
-     * model refuses with zero output, the turn retries on the next chain model
+     * model refuses, the turn retries or continues on the next chain model
      * instead of failing terminally. See resolveModelFallbackChain for the
      * runtime sanitization rules (drop self, de-dupe, cap length).
      */

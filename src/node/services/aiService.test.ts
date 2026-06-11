@@ -53,7 +53,7 @@ import type {
 } from "@/common/types/stream";
 import { log } from "./log";
 import type { SessionUsageService } from "./sessionUsageService";
-import type { StreamManager } from "./streamManager";
+import type { ModelFallbackOptions, StreamManager } from "./streamManager";
 import { ExperimentsService } from "./experimentsService";
 import type { DevToolsService } from "./devToolsService";
 import { TelemetryService } from "@/node/services/telemetryService";
@@ -1164,6 +1164,9 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       allTools?: Record<string, Tool>;
       postPolicyTools?: Record<string, Tool>;
       sessionUsageService?: SessionUsageService;
+      effectiveModelString?: string;
+      canonicalProviderName?: ProviderName;
+      canonicalModelId?: string;
     }
   ): StreamMessageHarness {
     const { config, historyService, initStateManager, service } = createBasicAIService(
@@ -1188,6 +1191,9 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       startStreamCalls,
       routeProvider: options?.routeProvider,
       allTools: options?.allTools,
+      effectiveModelString: options?.effectiveModelString,
+      canonicalProviderName: options?.canonicalProviderName,
+      canonicalModelId: options?.canonicalModelId,
       onPlanPayloadMessageIds: (messageIds) => planPayloadMessageIds.push(messageIds),
       onBuildStreamSystemContext: (contextArgs) => {
         if (!contextArgs.muxScope) {
@@ -1225,6 +1231,8 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   const START_STREAM_ON_CHUNK_INDEX = 21;
   const START_STREAM_ON_STEP_MESSAGES_INDEX = 22;
   const START_STREAM_RUNTIME_TEMP_DIR_INDEX = 23;
+
+  const START_STREAM_MODEL_FALLBACK_INDEX = 24;
 
   interface AdvisorRuntimeForTests {
     createModel: (modelString: string) => Promise<LanguageModel>;
@@ -1327,6 +1335,76 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
   afterEach(() => {
     mock.restore();
+  });
+
+  it("prepares fallback continuation from partial assistant output with one sentinel", async () => {
+    using muxHome = new DisposableTempDir("ai-service-fallback-continuation");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-fallback-continuation";
+    const fallbackModel = KNOWN_MODELS.GPT.id;
+    await writeMainConfig(muxHome.path, {
+      modelFallbacks: {
+        [KNOWN_MODELS.SONNET.id]: { models: [fallbackModel] },
+      },
+    });
+
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, {
+      effectiveModelString: KNOWN_MODELS.SONNET.id,
+      canonicalProviderName: "anthropic",
+      canonicalModelId: "claude-sonnet-4-5",
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      workspaceId,
+      modelString: KNOWN_MODELS.SONNET.id,
+      thinkingLevel: "off",
+    });
+    expect(result.success).toBe(true);
+    expect(harness.startStreamCalls).toHaveLength(1);
+
+    const modelFallback = harness.startStreamCalls[0]?.[START_STREAM_MODEL_FALLBACK_INDEX] as
+      | ModelFallbackOptions
+      | undefined;
+    expect(modelFallback).toBeDefined();
+    if (!modelFallback) {
+      throw new Error("Expected modelFallback options on startStream");
+    }
+
+    const continuationAssistant: MuxMessage = {
+      id: "assistant-partial",
+      role: "assistant",
+      metadata: { partial: true, historySequence: 2 },
+      parts: [
+        { type: "text", text: "I checked the report." },
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-1",
+          toolName: "bash",
+          state: "output-available",
+          input: { script: "printf ok" },
+          output: { success: true, output: "ok" },
+        },
+      ],
+    };
+
+    const prepared = await modelFallback.prepare(fallbackModel, {
+      continuation: { assistantMessage: continuationAssistant },
+    });
+    expect(prepared.success).toBe(true);
+
+    expect(harness.preparedPayloadMessageIds).toHaveLength(2);
+    expect(harness.preparedPayloadMessageIds[1]).toEqual([
+      "latest-user",
+      "assistant-partial",
+      "interrupted-assistant-partial",
+    ]);
+    expect(
+      harness.preparedPayloadMessageIds[1]?.filter((id) => id === "interrupted-assistant-partial")
+    ).toHaveLength(1);
   });
 
   it("emits startup breadcrumbs as runtime-status events before stream start", async () => {

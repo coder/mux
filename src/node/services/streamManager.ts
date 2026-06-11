@@ -202,6 +202,15 @@ export interface PreparedModelFallback {
   initialMetadataPatch?: Partial<MuxMetadata>;
 }
 
+export interface ModelFallbackPrepareOptions {
+  /**
+   * In-memory partial assistant turn to include when continuing after a
+   * mid-turn refusal. This must be cloned from the stream state before prepare()
+   * receives it so provider-message preparation cannot mutate live UI parts.
+   */
+  continuation?: { assistantMessage: MuxMessage };
+}
+
 export interface ModelFallbackOptions {
   /** Ordered refusal-fallback chain (canonical model strings); one attempt each. */
   chain: string[];
@@ -211,7 +220,10 @@ export interface ModelFallbackOptions {
    * skipping an unstartable fallback would effectively create fallback on
    * auth/config errors, which is explicitly out of scope.
    */
-  prepare: (nextModelString: string) => Promise<Result<PreparedModelFallback, string>>;
+  prepare: (
+    nextModelString: string,
+    options?: ModelFallbackPrepareOptions
+  ) => Promise<Result<PreparedModelFallback, string>>;
 }
 
 function isKnownProviderName(provider: string): provider is keyof typeof PROVIDER_DEFINITIONS {
@@ -440,6 +452,10 @@ function clonePersistedToolModelUsage(event: PersistedToolModelUsage): Persisted
   };
 }
 
+function hasIncompleteToolCallPart(parts: CompletedMessagePart[]): boolean {
+  return parts.some((part) => part.type === "dynamic-tool" && part.state !== "output-available");
+}
+
 // Comprehensive stream info
 interface WorkspaceStreamInfo {
   state: StreamState;
@@ -489,7 +505,7 @@ interface WorkspaceStreamInfo {
     options: ModelFallbackOptions;
     /** Canonical model originally requested for this turn (the chain source). */
     requestedModel: string;
-    /** Canonical models that refused with zero output, in order. */
+    /** Canonical models that refused during this turn, in order. */
     refusedModels: string[];
     original: { maxOutputTokens?: number };
   };
@@ -1839,12 +1855,13 @@ export class StreamManager extends EventEmitter {
     const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
     const streamMeta = await this.getStreamMetadata(streamInfo);
 
-    workspaceLog.error("Stream ended with a terminal refusal and no assistant-visible output", {
+    workspaceLog.error("Stream ended with a terminal refusal", {
       messageId: streamInfo.messageId,
       model: streamInfo.model,
       finishReason: streamInfo.terminalFinishReason,
       rawFinishReason: streamInfo.terminalRawFinishReason,
       durationMs: streamMeta.duration,
+      partsCount: streamInfo.parts.length,
       fallbackNote,
     });
 
@@ -1905,6 +1922,34 @@ export class StreamManager extends EventEmitter {
     );
   }
 
+  private buildPartialRefusalContinuationMessage(
+    streamInfo: WorkspaceStreamInfo,
+    refusalFinishReason: string
+  ): Result<MuxMessage, string> {
+    try {
+      const parts = structuredClone(streamInfo.parts) as MuxMessage["parts"];
+      return Ok({
+        id: streamInfo.messageId,
+        role: "assistant",
+        metadata: {
+          historySequence: streamInfo.historySequence,
+          timestamp: streamInfo.startTime,
+          ...streamInfo.initialMetadata,
+          model: normalizeToCanonical(streamInfo.model),
+          metadataModel: streamInfo.metadataModel,
+          ...(streamInfo.thinkingLevel && {
+            thinkingLevel: streamInfo.thinkingLevel as ThinkingLevel,
+          }),
+          partial: true,
+          finishReason: refusalFinishReason,
+        },
+        parts,
+      });
+    } catch (error) {
+      return Err(`could not clone partial assistant output: ${getErrorMessage(error)}`);
+    }
+  }
+
   /**
    * Attempt a refusal-fallback model swap in place of a terminal model_refusal.
    *
@@ -1921,7 +1966,8 @@ export class StreamManager extends EventEmitter {
   private async tryModelFallbackAfterRefusal(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
-    refusalFinishReason: string
+    refusalFinishReason: string,
+    options?: { preserveParts?: boolean }
   ): Promise<{ kind: "swapped" } | { kind: "terminal"; terminalNote?: string }> {
     const fallbackState = streamInfo.modelFallback;
     if (!fallbackState) {
@@ -1932,6 +1978,7 @@ export class StreamManager extends EventEmitter {
       return { kind: "terminal" };
     }
 
+    const preserveParts = options?.preserveParts === true;
     const refusedModel = normalizeToCanonical(streamInfo.model);
     fallbackState.refusedModels.push(refusedModel);
 
@@ -1949,6 +1996,24 @@ export class StreamManager extends EventEmitter {
       };
     }
 
+    if (preserveParts && hasIncompleteToolCallPart(streamInfo.parts)) {
+      return {
+        kind: "terminal",
+        terminalNote:
+          "Model fallback was skipped because the refused partial response had an incomplete tool call.",
+      };
+    }
+
+    const continuation = preserveParts
+      ? this.buildPartialRefusalContinuationMessage(streamInfo, refusalFinishReason)
+      : undefined;
+    if (continuation != null && !continuation.success) {
+      return {
+        kind: "terminal",
+        terminalNote: `Model fallback was skipped because ${continuation.error}.`,
+      };
+    }
+
     const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
     // A throw out of prepare() must not escape to the generic stream-error path:
     // it would be categorized as a retryable api/unknown error and re-enter the
@@ -1956,7 +2021,12 @@ export class StreamManager extends EventEmitter {
     // a user interrupt during prepare stays an abort instead of a refusal.
     let prepared: Result<PreparedModelFallback, string>;
     try {
-      prepared = await fallbackState.options.prepare(nextModelString);
+      prepared = await fallbackState.options.prepare(
+        nextModelString,
+        continuation?.success === true
+          ? { continuation: { assistantMessage: continuation.data } }
+          : undefined
+      );
     } catch (error) {
       if (streamInfo.abortController.signal.aborted) {
         throw error;
@@ -2010,19 +2080,29 @@ export class StreamManager extends EventEmitter {
       };
     }
 
-    workspaceLog.warn("Model refused with no output; retrying on configured fallback model", {
-      messageId: streamInfo.messageId,
-      refusedModel,
-      nextModel: prepared.data.modelString,
-      refusalFinishReason,
-      chain: fallbackState.options.chain,
-    });
+    workspaceLog.warn(
+      preserveParts
+        ? "Model refused after partial output; continuing on configured fallback model"
+        : "Model refused with no output; retrying on configured fallback model",
+      {
+        messageId: streamInfo.messageId,
+        refusedModel,
+        nextModel: prepared.data.modelString,
+        refusalFinishReason,
+        chain: fallbackState.options.chain,
+        preservedPartCount: preserveParts ? streamInfo.parts.length : 0,
+      }
+    );
 
     // The refused attempt's usage was recorded above, BEFORE the reset wipes
     // cumulative counters (cross-model usage must not be priced under the
     // fallback model).
-    await this.resetStreamStateForRetry(workspaceId, streamInfo, { workspaceLog });
-    streamInfo.currentStepStartIndex = 0;
+    await this.resetStreamStateForRetry(workspaceId, streamInfo, {
+      preserveParts,
+      workspaceLog,
+    });
+    streamInfo.currentStepStartIndex = streamInfo.parts.length;
+    streamInfo.stepTracker.latestMessages = undefined;
 
     streamInfo.model = prepared.data.modelString;
     streamInfo.metadataModel = this.resolveMetadataModel(prepared.data.modelString);
@@ -2555,39 +2635,40 @@ export class StreamManager extends EventEmitter {
 
           // Check if stream completed successfully
           if (!streamInfo.abortController.signal.aborted) {
-            if (streamInfo.parts.length === 0) {
-              // Terminal refusal check must precede the empty-output recovery path:
-              // a refusal with zero output is a deliberate provider outcome, not a
-              // transport drop, so in-stream retries and auto-retry would loop on
-              // the same refusal forever. Refusal WITH partial output keeps the
-              // normal stream-end path below (finishReason lands in metadata).
-              const refusalFinishReason = streamInfo.receivedTerminalEvent
-                ? ([streamInfo.terminalFinishReason, streamInfo.terminalRawFinishReason].find(
-                    isRefusalFinishReason
-                  ) ?? null)
-                : null;
-              if (refusalFinishReason !== null) {
-                // A configured fallback chain may swap models in place of the
-                // terminal failure. The swap happens before any error event is
-                // emitted, so task settlement can never race a pending fallback.
-                const fallback = await this.tryModelFallbackAfterRefusal(
-                  workspaceId,
-                  streamInfo,
-                  refusalFinishReason
-                );
-                if (fallback.kind === "swapped") {
-                  continue;
-                }
-
-                await this.handleModelRefusalCompletion(
-                  workspaceId,
-                  streamInfo,
-                  refusalFinishReason,
-                  fallback.terminalNote
-                );
-                break;
+            // Terminal refusal check must precede both the empty-output recovery
+            // path and normal stream-end finalization. A refusal is a deliberate
+            // provider outcome, not a transport drop; with partial output, a
+            // configured fallback must continue from the partial transcript rather
+            // than replay the original turn and re-run tools.
+            const refusalFinishReason = streamInfo.receivedTerminalEvent
+              ? ([streamInfo.terminalFinishReason, streamInfo.terminalRawFinishReason].find(
+                  isRefusalFinishReason
+                ) ?? null)
+              : null;
+            if (refusalFinishReason !== null) {
+              // A configured fallback chain may swap models in place of the
+              // terminal failure. The swap happens before any error event is
+              // emitted, so task settlement can never race a pending fallback.
+              const fallback = await this.tryModelFallbackAfterRefusal(
+                workspaceId,
+                streamInfo,
+                refusalFinishReason,
+                { preserveParts: streamInfo.parts.length > 0 }
+              );
+              if (fallback.kind === "swapped") {
+                continue;
               }
 
+              await this.handleModelRefusalCompletion(
+                workspaceId,
+                streamInfo,
+                refusalFinishReason,
+                fallback.terminalNote
+              );
+              break;
+            }
+
+            if (streamInfo.parts.length === 0) {
               const retriedEmptyStream = await this.retryEmptyStreamBeforeFailure(
                 workspaceId,
                 streamInfo,

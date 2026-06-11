@@ -181,6 +181,17 @@ export function prepareProviderRequestMessages(
   };
 }
 
+function replaceOrAppendMessageById(messages: MuxMessage[], replacement: MuxMessage): MuxMessage[] {
+  const index = messages.findIndex((message) => message.id === replacement.id);
+  if (index === -1) {
+    return [...messages, replacement];
+  }
+
+  const next = [...messages];
+  next[index] = replacement;
+  return next;
+}
+
 // ---------------------------------------------------------------------------
 // streamMessage options
 // ---------------------------------------------------------------------------
@@ -2216,13 +2227,20 @@ export class AIService extends EventEmitter {
       // Lazily rebuilds the per-model slice of this pipeline (model creation,
       // provider-specific message prep, provider options, headers, parameter
       // overrides) when StreamManager swaps to a fallback model after a
-      // zero-output refusal. Reusing the original request verbatim would leak
+      // refusal. Reusing the original request verbatim would leak
       // provider-specific options/messages across providers.
       const modelFallback: ModelFallbackOptions | undefined =
         modelFallbackChain.length > 0
           ? {
               chain: modelFallbackChain,
-              prepare: async (nextModelString) => {
+              prepare: async (nextModelString, prepareOptions) => {
+                const fallbackSourceMessages = prepareOptions?.continuation
+                  ? replaceOrAppendMessageById(
+                      messages,
+                      prepareOptions.continuation.assistantMessage
+                    )
+                  : messages;
+
                 // Re-clamp thinking for the fallback model: the source model's
                 // clamped level may violate the next model's policy/floor (the
                 // providerOptions builders require a policy-valid level, e.g. an
@@ -2298,7 +2316,7 @@ export class AIService extends EventEmitter {
 
                   const { providerRequestMessages: nextProviderRequestMessages } =
                     prepareProviderRequestMessages(
-                      messages,
+                      fallbackSourceMessages,
                       next.canonicalProviderName,
                       nextThinkingLevel
                     );
