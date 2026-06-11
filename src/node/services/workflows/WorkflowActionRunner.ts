@@ -567,35 +567,18 @@ function maskStaticJavaScriptSource(source: string): string {
       // Mask regex literal bodies: characters like "//", "(", or "[" inside a regex
       // (e.g. /https:\/\// or /\/\*[\s\S]*?\*\//) must not be misread as comments or
       // counted toward bracket depth, which would unbalance the masked source.
-      output += " ";
-      index += 1;
-      let inCharacterClass = false;
-      while (index < source.length) {
-        const regexCurrent = source[index];
-        assert(regexCurrent != null, "maskStaticJavaScriptSource: regex character is required");
-        if (regexCurrent === "\n") {
-          // Regex literals cannot span lines; bail so a misclassified division
-          // (e.g. after a masked string) damages at most one line.
-          break;
+      // Regex literals cannot span lines, so a candidate without a closing "/" on the
+      // same line must be division whose left operand the heuristic did not recognize
+      // (e.g. `count++ / total` or `{ valueOf() {...} } / 2`); leave it unmasked
+      // instead of swallowing the rest of the line and hiding real exports.
+      const closingIndex = findRegExpLiteralEnd(source, index);
+      if (closingIndex !== -1) {
+        while (index <= closingIndex) {
+          output += " ";
+          index += 1;
         }
-        output += " ";
-        index += 1;
-        if (regexCurrent === "\\") {
-          if (index < source.length && source[index] !== "\n") {
-            output += " ";
-            index += 1;
-          }
-          continue;
-        }
-        if (regexCurrent === "[") {
-          inCharacterClass = true;
-        } else if (regexCurrent === "]") {
-          inCharacterClass = false;
-        } else if (regexCurrent === "/" && !inCharacterClass) {
-          break;
-        }
+        continue;
       }
-      continue;
     }
     if (current === '"' || current === "'" || current === "`") {
       const quote = current;
@@ -628,6 +611,39 @@ function maskStaticJavaScriptSource(source: string): string {
   }
   assert(output.length === source.length, "maskStaticJavaScriptSource must preserve indexes");
   return output;
+}
+
+/**
+ * Returns the index of the "/" closing the regex literal opened at openIndex, or -1
+ * when the literal does not close before the end of the line/source (in which case
+ * the opening "/" cannot be a regex literal). Honors "\" escapes and [...] character
+ * classes, inside which "/" does not terminate the literal.
+ */
+function findRegExpLiteralEnd(source: string, openIndex: number): number {
+  assert(source[openIndex] === "/", "findRegExpLiteralEnd: openIndex must point at '/'");
+  let index = openIndex + 1;
+  let inCharacterClass = false;
+  while (index < source.length) {
+    const character = source[index];
+    assert(character != null, "findRegExpLiteralEnd: character is required");
+    if (character === "\n") {
+      return -1;
+    }
+    if (character === "\\") {
+      // Skip the escaped character unless it is a newline (which still ends the line).
+      index += source[index + 1] === "\n" ? 1 : 2;
+      continue;
+    }
+    if (character === "[") {
+      inCharacterClass = true;
+    } else if (character === "]") {
+      inCharacterClass = false;
+    } else if (character === "/" && !inCharacterClass) {
+      return index;
+    }
+    index += 1;
+  }
+  return -1;
 }
 
 // Keywords after which "/" begins a regex literal rather than division (e.g. `return /x/`).
@@ -682,6 +698,11 @@ function isRegExpLiteralStart(maskedPrefix: string): boolean {
       start -= 1;
     }
     return REGEX_PRECEDING_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
+  }
+  if (character === "+" || character === "-") {
+    // Postfix increment/decrement ends a value, so `count++ / total` is division.
+    // Require exactly two: `a+++/x/` lexes as `a++ + /x/`, a regex context.
+    return !(maskedPrefix[index - 1] === character && maskedPrefix[index - 2] !== character);
   }
   // Values end with ")", "]", or a kept quote delimiter of a masked literal;
   // a "/" after any of these is division, not a regex literal.

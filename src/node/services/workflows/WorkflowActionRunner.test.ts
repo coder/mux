@@ -398,6 +398,8 @@ describe("WorkflowActionRunner", () => {
     const sources = [
       `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = "10" / 2; module.exports.execute = async () => ({ n });`,
       `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = \`10\` / 2; module.exports.execute = async () => ({ n });`,
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; let count = 4; const n = count++ / 2; module.exports.execute = async () => ({ n });`,
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = { valueOf() { return 10; } } / 2; module.exports.execute = async () => ({ n });`,
     ];
     const runner = new WorkflowActionRunner();
     for (const [index, source] of sources.entries()) {
