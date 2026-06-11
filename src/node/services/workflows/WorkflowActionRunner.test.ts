@@ -361,6 +361,97 @@ describe("WorkflowActionRunner", () => {
     expect(description.hasReconcile).toBe(false);
   });
 
+  test("detects exports in sources containing regex literals", async () => {
+    using tmp = new DisposableTempDir("workflow-action-regex-mask");
+    const sourcePath = path.join(tmp.path, "regex.js");
+    // Regression: "//" inside regex literals (URL matchers, comment strippers) was
+    // misread as a line comment, swallowing the rest of the line. That unbalanced the
+    // masked source and hid the execute export ("must export an execute function").
+    const source = `
+      module.exports.metadata = { version: 1, description: "Regex", effect: "read" };
+      function stripBlockComments(text) {
+        return String(text).replace(/\\/\\*[\\s\\S]*?\\*\\//g, "");
+      }
+      function isHttpUrl(text) {
+        return /^https?:\\/\\//.test(text);
+      }
+      const half = 10 / 2;
+      module.exports.execute = async function (input) {
+        return { url: isHttpUrl(String(input)), ratio: stripBlockComments(String(input)).length / half };
+      };
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    const description = await runner.describe(createAction(sourcePath, source));
+
+    expect(description.metadata.description).toBe("Regex");
+    expect(description.hasReconcile).toBe(false);
+  });
+
+  test("treats division after masked literals as division, even on one line", async () => {
+    using tmp = new DisposableTempDir("workflow-action-division-mask");
+    // Regression (Codex review): masking strings to spaces erased the value token
+    // before "/", so division after a string/template literal was misread as a regex
+    // start. With a single "/" in a one-line (minified) source, everything after it —
+    // including the execute export — was masked away, blocking a valid action.
+    const sources = [
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = "10" / 2; module.exports.execute = async () => ({ n });`,
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = \`10\` / 2; module.exports.execute = async () => ({ n });`,
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; let count = 4; const n = count++ / 2; module.exports.execute = async () => ({ n });`,
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = { valueOf() { return 10; } } / 2; module.exports.execute = async () => ({ n });`,
+      // Object-literal division followed by a real regex on the same line: the later
+      // "/" must not be mistaken for the closing delimiter of a regex starting at the
+      // division slash (which would mask the execute export between them).
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = { valueOf() { return 10; } } / 2; module.exports.execute = async () => /x/.test("x");`,
+      // Counter-case: "}" closing a block (not an object literal) still starts a regex;
+      // the "(" inside the character class must stay masked or it corrupts paren depth.
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; if (globalThis.x) {} /^[(]/.test("a"); module.exports.execute = async () => ({ ok: true });`,
+      // Object literals introduced by ternary/logical operators are values too.
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = globalThis.cond ? { valueOf() { return 10; } } / 2 : 0; module.exports.execute = async () => /x/.test("x");`,
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = globalThis.flag || { valueOf() { return 10; } } / 2; module.exports.execute = async () => /x/.test("x");`,
+      // Counter-case: ")" closing a control-statement header is statement position, so
+      // a regex (not division) follows; its "(" must stay masked.
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; if (globalThis.x) /^[(]/.test("a"); module.exports.execute = async () => ({ ok: true });`,
+      // A masked regex literal is itself a value: dividing it keeps the next "/" as
+      // division instead of pairing with a later regex and masking across.
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = /x/ / 2; module.exports.execute = async () => /y/.test("y");`,
+      // Counter-case: a regex literal as the right operand of division still gets
+      // masked (its "(" and "[" must not corrupt depth counting).
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const a = 4; const q = a / /([(])/.source.length; module.exports.execute = async () => ({ q });`,
+    ];
+    const runner = new WorkflowActionRunner();
+    for (const [index, source] of sources.entries()) {
+      const sourcePath = path.join(tmp.path, `division-${index}.js`);
+      await fs.writeFile(sourcePath, source, "utf-8");
+
+      const description = await runner.describe(createAction(sourcePath, source));
+
+      expect(description.metadata.description).toBe("Division");
+    }
+  });
+
+  test("describes every built-in workflow action", async () => {
+    // Built-in sources must always pass static describe validation; a failure here
+    // surfaces in the UI as a "blocked" action (e.g. security.hashFiles, whose regex
+    // literals previously broke the static export detection).
+    using tmp = new DisposableTempDir("workflow-action-built-in-describe");
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const runner = new WorkflowActionRunner();
+
+    const actions = await registry.listActions({ projectTrusted: false });
+
+    expect(actions.length).toBeGreaterThan(0);
+    for (const action of actions) {
+      const resolved = await registry.resolveAction(action.name, { projectTrusted: false });
+      const description = await runner.describe(resolved);
+      expect(description.metadata.description).toBeTruthy();
+    }
+  });
+
   test("does not rewrite export syntax inside action strings", async () => {
     using tmp = new DisposableTempDir("workflow-action-export-template");
     const sourcePath = path.join(tmp.path, "template.js");

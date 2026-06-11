@@ -563,15 +563,44 @@ function maskStaticJavaScriptSource(source: string): string {
       }
       continue;
     }
+    if (current === "/" && isRegExpLiteralStart(output)) {
+      // Mask regex literal bodies: characters like "//", "(", or "[" inside a regex
+      // (e.g. /https:\/\// or /\/\*[\s\S]*?\*\//) must not be misread as comments or
+      // counted toward bracket depth, which would unbalance the masked source.
+      // Regex literals cannot span lines, so a candidate without a closing "/" on the
+      // same line must be division whose left operand the heuristic did not recognize
+      // (e.g. `count++ / total` or `{ valueOf() {...} } / 2`); leave it unmasked
+      // instead of swallowing the rest of the line and hiding real exports.
+      const closingIndex = findRegExpLiteralEnd(source, index);
+      if (closingIndex !== -1) {
+        // Keep the "/" delimiters (mask only the body) so isRegExpLiteralStart still
+        // sees the literal as a value and `/x/ / 2` stays division.
+        output += "/";
+        index += 1;
+        while (index < closingIndex) {
+          output += " ";
+          index += 1;
+        }
+        output += "/";
+        index += 1;
+        continue;
+      }
+    }
     if (current === '"' || current === "'" || current === "`") {
       const quote = current;
-      output += " ";
+      // Keep the quote delimiters (mask only the contents) so isRegExpLiteralStart
+      // still sees a value token after the literal and `"10" / 2` stays division.
+      output += quote;
       index += 1;
       while (index < source.length) {
         const stringCurrent = source[index];
         assert(stringCurrent != null, "maskStaticJavaScriptSource: string character is required");
-        output += stringCurrent === "\n" ? "\n" : " ";
         index += 1;
+        if (stringCurrent === quote) {
+          output += quote;
+          break;
+        }
+        output += stringCurrent === "\n" ? "\n" : " ";
         if (stringCurrent === "\\") {
           if (index < source.length) {
             const escaped = source[index];
@@ -579,10 +608,6 @@ function maskStaticJavaScriptSource(source: string): string {
             output += escaped === "\n" ? "\n" : " ";
             index += 1;
           }
-          continue;
-        }
-        if (stringCurrent === quote) {
-          break;
         }
       }
       continue;
@@ -592,6 +617,270 @@ function maskStaticJavaScriptSource(source: string): string {
   }
   assert(output.length === source.length, "maskStaticJavaScriptSource must preserve indexes");
   return output;
+}
+
+/**
+ * Returns the index of the "/" closing the regex literal opened at openIndex, or -1
+ * when the literal does not close before the end of the line/source (in which case
+ * the opening "/" cannot be a regex literal). Honors "\" escapes and [...] character
+ * classes, inside which "/" does not terminate the literal.
+ */
+function findRegExpLiteralEnd(source: string, openIndex: number): number {
+  assert(source[openIndex] === "/", "findRegExpLiteralEnd: openIndex must point at '/'");
+  let index = openIndex + 1;
+  let inCharacterClass = false;
+  while (index < source.length) {
+    const character = source[index];
+    assert(character != null, "findRegExpLiteralEnd: character is required");
+    if (character === "\n") {
+      return -1;
+    }
+    if (character === "\\") {
+      // Skip the escaped character unless it is a newline (which still ends the line).
+      index += source[index + 1] === "\n" ? 1 : 2;
+      continue;
+    }
+    if (character === "[") {
+      inCharacterClass = true;
+    } else if (character === "]") {
+      inCharacterClass = false;
+    } else if (character === "/" && !inCharacterClass) {
+      return index;
+    }
+    index += 1;
+  }
+  return -1;
+}
+
+// Keywords after which "/" begins a regex literal rather than division (e.g. `return /x/`).
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  "return",
+  "throw",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "case",
+  "do",
+  "else",
+  "yield",
+  "await",
+]);
+
+const IDENTIFIER_CHARACTER = /[A-Za-z0-9_$]/;
+
+/**
+ * Heuristic lexer rule for "/" disambiguation: division follows a value (identifier,
+ * number, "]", a kept string/regex delimiter, postfix ++/--, an object-literal "}",
+ * or a call/grouping ")"); a regex literal follows an operator, punctuation, start of
+ * file, a keyword like `return`, a block "}", or a control-header ")". Receives the
+ * already masked prefix so comment/string/regex contents never influence the decision.
+ */
+function isRegExpLiteralStart(maskedPrefix: string): boolean {
+  let index = maskedPrefix.length - 1;
+  while (index >= 0) {
+    const character = maskedPrefix[index];
+    if (character === " " || character === "\n" || character === "\t" || character === "\r") {
+      index -= 1;
+      continue;
+    }
+    break;
+  }
+  if (index < 0) {
+    return true;
+  }
+  const character = maskedPrefix[index];
+  assert(character != null, "isRegExpLiteralStart: character is required");
+  if (IDENTIFIER_CHARACTER.test(character)) {
+    let start = index;
+    while (start >= 0) {
+      const wordCharacter = maskedPrefix[start];
+      assert(wordCharacter != null, "isRegExpLiteralStart: word character is required");
+      if (!IDENTIFIER_CHARACTER.test(wordCharacter)) {
+        break;
+      }
+      start -= 1;
+    }
+    return REGEX_PRECEDING_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
+  }
+  if (character === "+" || character === "-") {
+    // Postfix increment/decrement ends a value, so `count++ / total` is division.
+    // Require exactly two: `a+++/x/` lexes as `a++ + /x/`, a regex context.
+    return !(maskedPrefix[index - 1] === character && maskedPrefix[index - 2] !== character);
+  }
+  if (character === "}") {
+    // "}" is ambiguous: an object literal end is a value (division follows), while a
+    // block end is statement position (regex follows). Classify by what introduced
+    // the matching "{".
+    return !isObjectLiteralEnd(maskedPrefix, index);
+  }
+  if (character === ")") {
+    // ")" is ambiguous too: a control-statement header (`if (x) /re/.test(s)`) is
+    // followed by statement position, while a call/grouping result is a value.
+    return isControlHeaderEnd(maskedPrefix, index);
+  }
+  if (character === "/") {
+    // A kept "/" is either the closing delimiter of a masked regex literal or a
+    // division operator. Skipping the space-masked body backwards lands on the
+    // opening "/" only in the regex case: the literal is a value, so division
+    // follows (`/x/ / 2`). A division operator is preceded by its value operand
+    // instead, so the current slash opens a regex (`a / /re/.source`).
+    let before = index - 1;
+    while (before >= 0 && (maskedPrefix[before] === " " || maskedPrefix[before] === "\n")) {
+      before -= 1;
+    }
+    return !(before >= 0 && maskedPrefix[before] === "/");
+  }
+  // Values end with "]" or a kept quote delimiter of a masked literal;
+  // a "/" after any of these is division, not a regex literal.
+  return character !== "]" && character !== '"' && character !== "'" && character !== "`";
+}
+
+// Keywords whose parenthesized header is followed by statement position, so a "/"
+// after the closing ")" starts a regex (e.g. `if (x) /re/.test(s)`).
+const PAREN_STATEMENT_KEYWORDS = new Set(["if", "while", "for", "switch", "with"]);
+
+/**
+ * Determines whether the ")" at closeParenIndex ends a control-statement header by
+ * finding the matching "(" in the masked prefix and checking whether a control
+ * keyword precedes it.
+ */
+function isControlHeaderEnd(maskedPrefix: string, closeParenIndex: number): boolean {
+  assert(maskedPrefix[closeParenIndex] === ")", "isControlHeaderEnd: index must point at ')'");
+  let depth = 0;
+  let openParenIndex = -1;
+  for (let index = closeParenIndex; index >= 0; index -= 1) {
+    const character = maskedPrefix[index];
+    if (character === ")") {
+      depth += 1;
+    } else if (character === "(") {
+      depth -= 1;
+      if (depth === 0) {
+        openParenIndex = index;
+        break;
+      }
+    }
+  }
+  if (openParenIndex <= 0) {
+    return false;
+  }
+  let index = openParenIndex - 1;
+  while (index >= 0) {
+    const character = maskedPrefix[index];
+    if (character === " " || character === "\n" || character === "\t" || character === "\r") {
+      index -= 1;
+      continue;
+    }
+    break;
+  }
+  if (index < 0) {
+    return false;
+  }
+  const character = maskedPrefix[index];
+  assert(character != null, "isControlHeaderEnd: character is required");
+  if (!IDENTIFIER_CHARACTER.test(character)) {
+    return false;
+  }
+  let start = index;
+  while (start >= 0) {
+    const wordCharacter = maskedPrefix[start];
+    assert(wordCharacter != null, "isControlHeaderEnd: word character is required");
+    if (!IDENTIFIER_CHARACTER.test(wordCharacter)) {
+      break;
+    }
+    start -= 1;
+  }
+  return PAREN_STATEMENT_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
+}
+
+// Keywords that expect an expression next, so a following "{" opens an object literal
+// (e.g. `return {}`). Unlike REGEX_PRECEDING_KEYWORDS this excludes do/else, which
+// introduce blocks.
+const OBJECT_PRECEDING_KEYWORDS = new Set([
+  "return",
+  "throw",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "case",
+  "yield",
+  "await",
+]);
+
+/**
+ * Determines whether the "}" at closeBraceIndex ends an object literal (a value) or a
+ * block (statement position) by finding the matching "{" in the masked prefix and
+ * inspecting the token before it. Block contexts are enumerated (")", ";", "{", "}",
+ * "=>", block keywords like `do`/`else`, file start); any other preceding operator or
+ * punctuation ("=", "(", "[", ",", ":", "?", "||", arithmetic, ...) leaves the "{" in
+ * expression position, so it opens an object literal.
+ */
+function isObjectLiteralEnd(maskedPrefix: string, closeBraceIndex: number): boolean {
+  assert(maskedPrefix[closeBraceIndex] === "}", "isObjectLiteralEnd: index must point at '}'");
+  let depth = 0;
+  let openBraceIndex = -1;
+  for (let index = closeBraceIndex; index >= 0; index -= 1) {
+    const character = maskedPrefix[index];
+    if (character === "}") {
+      depth += 1;
+    } else if (character === "{") {
+      depth -= 1;
+      if (depth === 0) {
+        openBraceIndex = index;
+        break;
+      }
+    }
+  }
+  if (openBraceIndex <= 0) {
+    // Unmatched or file-initial "{": statement-position block.
+    return false;
+  }
+  let index = openBraceIndex - 1;
+  while (index >= 0) {
+    const character = maskedPrefix[index];
+    if (character === " " || character === "\n" || character === "\t" || character === "\r") {
+      index -= 1;
+      continue;
+    }
+    break;
+  }
+  if (index < 0) {
+    return false;
+  }
+  const character = maskedPrefix[index];
+  assert(character != null, "isObjectLiteralEnd: character is required");
+  if (IDENTIFIER_CHARACTER.test(character)) {
+    let start = index;
+    while (start >= 0) {
+      const wordCharacter = maskedPrefix[start];
+      assert(wordCharacter != null, "isObjectLiteralEnd: word character is required");
+      if (!IDENTIFIER_CHARACTER.test(wordCharacter)) {
+        break;
+      }
+      start -= 1;
+    }
+    // Expression keywords (return, typeof, ...) take object literals; any other
+    // identifier (do/else/try/finally, class names, function headers) opens a block.
+    return OBJECT_PRECEDING_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
+  }
+  if (character === ")" || character === ";" || character === "{" || character === "}") {
+    // Control headers (`if (...) {`), statement boundaries, and adjacent blocks.
+    return false;
+  }
+  if (character === ">" && maskedPrefix[index - 1] === "=") {
+    // "=>" introduces an arrow function block body.
+    return false;
+  }
+  // Any other punctuation ("=", "(", "[", ",", ":", "?", "&", "|", arithmetic, ...)
+  // keeps the "{" in expression position: object literal.
+  return true;
 }
 
 function isTopLevelStaticMatch(maskedSource: string, matchIndex: number): boolean {
