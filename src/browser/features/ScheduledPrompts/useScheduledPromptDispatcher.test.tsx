@@ -233,8 +233,12 @@ describe("useScheduledPromptDispatcher", () => {
     );
     writePrompts([prompt]);
 
+    let resolveSend: ((value: SendMessageSuccess) => void) | undefined;
     const sendMessage = mock(
-      (_input: SendMessageInput) => new Promise<SendMessageSuccess>(() => {})
+      (_input: SendMessageInput) =>
+        new Promise<SendMessageSuccess>((resolve) => {
+          resolveSend = resolve;
+        })
     );
     const firstApi = {
       workspace: {
@@ -256,6 +260,11 @@ describe("useScheduledPromptDispatcher", () => {
 
     await waitForDispatcherTick();
     expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSend?.({ success: true, data: {} });
+      await Promise.resolve();
+    });
   });
 
   test("stores formatted structured send errors", async () => {
