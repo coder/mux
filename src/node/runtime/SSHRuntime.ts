@@ -66,11 +66,12 @@ import { streamToString, shescape } from "./streamUtils";
  *  refs/heads/* so they don't collide with branches checked out in worktrees. */
 const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 /**
- * The shared SSH base repo is a bare common git dir, not a checkout. Keeping
- * HEAD on trunk makes checkout-aware tools like Graphite think trunk is checked
- * out at `.mux-base.git`, so point it at an internal unborn ref instead.
+ * The shared SSH base repo is a bare common git dir, not a checkout. Keep its
+ * HEAD branch-shaped but unborn until a real base commit is available, then
+ * detach HEAD at that commit. In both states, `git worktree list --porcelain`
+ * does not report a user branch checked out at `.mux-base.git`.
  */
-const BASE_REPO_SENTINEL_HEAD_REF = "refs/mux-internal/base-head";
+const BASE_REPO_UNBORN_HEAD_REF = "refs/heads/__mux_internal_base_head";
 const BASE_REPO_SHARED_CONFIG_KEYS_TO_UNSET = ["core.bare", "core.worktree"] as const;
 type BaseRepoSharedConfigKey = (typeof BASE_REPO_SHARED_CONFIG_KEYS_TO_UNSET)[number];
 
@@ -200,22 +201,21 @@ async function enqueueProjectSync(
   }
 }
 
-function isOnlyExpectedBaseRepoSentinelHeadFsckError(detail: string): boolean {
-  const lines = detail
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  return (
-    lines.length > 0 &&
-    lines.every(
-      (line) => line.includes("badHeadTarget") && line.includes(BASE_REPO_SENTINEL_HEAD_REF)
-    )
-  );
-}
-
 function isGitConfigLockConflict(message: string): boolean {
   return /could not lock config file/i.test(message);
+}
+
+function buildBestEffortDetachBaseRepoHeadCommand(
+  baseRepoPathArg: string,
+  revisionShell: string
+): string {
+  return [
+    // Resolve only the ref value here, not `<rev>^{commit}`: missing-object
+    // repair still belongs to the following worktree checkout, which produces
+    // richer errors and already has a retry path.
+    `head_oid=$(git -C ${baseRepoPathArg} rev-parse --verify ${revisionShell} 2>/dev/null || true)`,
+    `if [ -n "$head_oid" ]; then git --git-dir=${baseRepoPathArg} update-ref --no-deref HEAD "$head_oid" 2>/dev/null || true; fi`,
+  ].join("\n");
 }
 
 function logSSHBackoffWait(initLogger: InitLogger, waitMs: number): void {
@@ -869,14 +869,6 @@ export class SSHRuntime extends RemoteRuntime {
     }
 
     const detail = [result.stderr, result.stdout].join("\n").trim() || `exit ${result.exitCode}`;
-    // Git versions that validate HEAD as a branch can report our intentional
-    // internal sentinel as badHeadTarget. The object-connectivity question here
-    // is scoped to explicit bundle refs, so that expected HEAD-only complaint
-    // should not trigger missing-object repair failure.
-    if (isOnlyExpectedBaseRepoSentinelHeadFsckError(detail)) {
-      return { healthy: true };
-    }
-
     return {
       healthy: false,
       detail,
@@ -903,13 +895,6 @@ export class SSHRuntime extends RemoteRuntime {
     }
 
     const detail = [result.stderr, result.stdout].join("\n").trim() || `exit ${result.exitCode}`;
-    // Same sentinel-HEAD exception as bundle connectivity: callers pass an
-    // explicit revision, so a HEAD-only fsck complaint is not evidence that the
-    // requested revision is missing objects.
-    if (isOnlyExpectedBaseRepoSentinelHeadFsckError(detail)) {
-      return { healthy: true };
-    }
-
     return {
       healthy: false,
       detail,
@@ -1240,7 +1225,7 @@ export class SSHRuntime extends RemoteRuntime {
     // Promisor keys are idempotently neutered as a best-effort epilogue (no
     // sentinel needed; failures fall through harmlessly because subsequent
     // pushes can re-run the cleanup if a deadlock recurs).
-    const baseRepoSentinelHeadArg = shescape.quote(BASE_REPO_SENTINEL_HEAD_REF);
+    const baseRepoUnbornHeadArg = shescape.quote(BASE_REPO_UNBORN_HEAD_REF);
     const configUnsetCmds = BASE_REPO_SHARED_CONFIG_KEYS_TO_UNSET.map((key) => {
       const statusName = key.replace(".", "_").toUpperCase();
       const errorPath = `/tmp/.mux-${key.replace(".", "-")}-$$.err`;
@@ -1283,12 +1268,14 @@ export class SSHRuntime extends RemoteRuntime {
       //    0 = removed, 5 = key absent. Anything else needs the retry/inspect
       //    dance, which the caller handles by re-running the slow-path helper.
       configUnsetCmds,
-      // 3. Keep the base repo's own HEAD off trunk so checkout-aware tooling
-      //    doesn't mistake `.mux-base.git` for the user's trunk worktree.
+      // 3. Keep the base repo's own HEAD off user branches so checkout-aware
+      //    tooling doesn't mistake `.mux-base.git` for a real worktree. This
+      //    symbolic ref is intentionally unborn; materialization detaches HEAD
+      //    at the chosen base commit once one is known.
       `current_head=$(git --git-dir=${baseRepoPathArg} symbolic-ref HEAD 2>/dev/null || true)`,
-      `if [ "$current_head" = ${baseRepoSentinelHeadArg} ]; then`,
+      `if [ "$current_head" = ${baseRepoUnbornHeadArg} ]; then`,
       "  echo STATUS_BASE_HEAD=already",
-      `elif git --git-dir=${baseRepoPathArg} symbolic-ref HEAD ${baseRepoSentinelHeadArg} 2>/tmp/.mux-base-head-$$.err; then`,
+      `elif git --git-dir=${baseRepoPathArg} symbolic-ref HEAD ${baseRepoUnbornHeadArg} 2>/tmp/.mux-base-head-$$.err; then`,
       "  echo STATUS_BASE_HEAD=set",
       "else",
       "  echo STATUS_BASE_HEAD=error",
@@ -1360,7 +1347,7 @@ export class SSHRuntime extends RemoteRuntime {
     }
 
     if (baseHeadStatus === "set") {
-      initLogger.logStep("Pointed shared base repository HEAD at internal sentinel");
+      initLogger.logStep("Neutralized shared base repository HEAD for worktrees");
     } else if (baseHeadStatus === "error") {
       throw new Error(
         `Failed to normalize base repo HEAD: ${result.stderr.trim() || result.stdout.trim()}`
@@ -2604,7 +2591,7 @@ export class SSHRuntime extends RemoteRuntime {
     }
     const snapshotDigest = crypto.createHash("sha256").update(headsOutput).digest("hex");
     const baseRepoPathArg = expandTildeForSSH(layout.baseRepoPath);
-    const baseRepoSentinelHeadArg = shescape.quote(BASE_REPO_SENTINEL_HEAD_REF);
+    const baseRepoUnbornHeadArg = shescape.quote(BASE_REPO_UNBORN_HEAD_REF);
     const currentSnapshotPathArg = expandTildeForSSH(layout.currentSnapshotPath);
     const workspacePathArg = expandTildeForSSH(workspacePath);
     const workspaceParentArg = expandTildeForSSH(
@@ -2654,7 +2641,7 @@ export class SSHRuntime extends RemoteRuntime {
         (key) =>
           `git --git-dir=${baseRepoPathArg} config --local --unset-all ${shescape.quote(key)} 2>/dev/null || true`
       ),
-      `git --git-dir=${baseRepoPathArg} symbolic-ref HEAD ${baseRepoSentinelHeadArg} 2>/dev/null || true`,
+      `git --git-dir=${baseRepoPathArg} symbolic-ref HEAD ${baseRepoUnbornHeadArg} 2>/dev/null || true`,
     ];
 
     const originPreamble = originUrlArg
@@ -2695,10 +2682,12 @@ export class SSHRuntime extends RemoteRuntime {
       // fall through to the repairing slow path instead of becoming an opaque
       // `worktree-add-failed` miss. The path was proven absent above, so removing
       // a partial checkout here cannot wipe a pre-existing workspace.
-      // Detached add keeps `.mux-base.git/HEAD` on the internal sentinel; the
-      // branch is attached inside the new worktree immediately afterward.
+      // Detach the base repo's own HEAD from user branches when the chosen ref
+      // has an object; if the cache is missing that object, worktree add below
+      // surfaces the existing repairable checkout error.
+      buildBestEffortDetachBaseRepoHeadCommand(baseRepoPathArg, '"$r"'),
       `mkdir -p ${workspaceParentArg}`,
-      `wt_output=$(${nhp}git -C ${baseRepoPathArg} worktree add --detach ${workspacePathArg} "$r" 2>&1 >/dev/null && ${nhp}git -C ${workspacePathArg} checkout -B ${branchArg} 2>&1 >/dev/null)`,
+      `wt_output=$(${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${branchArg} "$r" 2>&1 >/dev/null)`,
       "wt_status=$?",
       'if [ "$wt_status" -ne 0 ]; then',
       '  case "$wt_output" in',
@@ -2853,28 +2842,18 @@ export class SSHRuntime extends RemoteRuntime {
         abortSignal
       );
 
-      // Keep the base repo's HEAD on the internal sentinel: add a detached
-      // worktree from the chosen start point, then attach/reset the workspace
-      // branch inside the new worktree. `checkout -B` creates the branch or
-      // resets it to the start point if it already exists (e.g. orphaned from a
-      // previously deleted workspace). Git still prevents checking out a branch
-      // that's active in another worktree.
+      // `ensureBaseRepo()` keeps the bare repo HEAD on an unborn internal
+      // branch so Git porcelain stays happy even when there is no commit yet.
+      // Once we know the start point, detach HEAD at that commit when possible
+      // and let `worktree add -B` own branch creation/reset. Git still prevents
+      // resetting a branch that's active in another worktree.
       initLogger.logStep(`Creating worktree for branch: ${branchName}`);
       const runWorktreeAdd = (baseRef: string) =>
         execBuffered(
           this,
           [
-            `${nhp}git -C ${baseRepoPathArg} worktree add --detach ${workspacePathArg} ${shescape.quote(baseRef)}`,
-            "worktree_add_status=$?",
-            'if [ "$worktree_add_status" -ne 0 ]; then exit "$worktree_add_status"; fi',
-            `${nhp}git -C ${workspacePathArg} checkout -B ${shescape.quote(branchName)}`,
-            "checkout_status=$?",
-            'if [ "$checkout_status" -ne 0 ]; then',
-            !workspacePathExistedBeforeCheckout
-              ? `  git -C ${baseRepoPathArg} worktree remove --force ${workspacePathArg} >/dev/null 2>&1 || rm -rf ${workspacePathArg}`
-              : "  true",
-            '  exit "$checkout_status"',
-            "fi",
+            buildBestEffortDetachBaseRepoHeadCommand(baseRepoPathArg, shescape.quote(baseRef)),
+            `${nhp}git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(baseRef)}`,
           ].join("\n"),
           {
             cwd: "/tmp",
@@ -3371,15 +3350,11 @@ export class SSHRuntime extends RemoteRuntime {
         // Skip protected trunk branch names to avoid accidental deletion.
         const PROTECTED_BRANCHES = ["main", "master", "trunk", "develop", "default"];
         if (branchToDelete && !PROTECTED_BRANCHES.includes(branchToDelete)) {
-          const branchRefArg = shescape.quote(`refs/heads/${branchToDelete}`);
           await execBuffered(
             this,
             [
-              `branch_ref=${branchRefArg}`,
-              `branch_oid=$(git --git-dir=${baseRepoPathArg} rev-parse --verify --quiet "$branch_ref" 2>/dev/null || true)`,
-              '[ -n "$branch_oid" ] || exit 0',
-              `if git -C ${baseRepoPathArg} worktree list --porcelain | grep -Fqx "branch $branch_ref"; then exit 0; fi`,
-              `${nhp}git --git-dir=${baseRepoPathArg} update-ref -d "$branch_ref" "$branch_oid" 2>/dev/null || true`,
+              `git --git-dir=${baseRepoPathArg} symbolic-ref HEAD ${shescape.quote(BASE_REPO_UNBORN_HEAD_REF)} 2>/dev/null || true`,
+              `${nhp}git -C ${baseRepoPathArg} branch -D ${shescape.quote(branchToDelete)} 2>/dev/null || true`,
             ].join("\n"),
             { cwd: "/tmp", timeout: 10 }
           ).catch(() => undefined);
@@ -3543,23 +3518,15 @@ export class SSHRuntime extends RemoteRuntime {
 
       if (hasBaseRepo.exitCode === 0) {
         initLogger.logStep("Creating worktree for forked workspace...");
-        // Use checkout -b (not -B) after the detached add so we fail instead
-        // of silently resetting an existing branch that another worktree might
-        // reference. initWorkspace uses -B because it owns the branch lifecycle;
-        // fork is creating a new name.
         // Stage the worktree under `stagingPath`; `git worktree move` will
         // rename it (and update the bare repo's gitdir back-reference) into
-        // `newWorkspacePath` once everything else has succeeded.
+        // `newWorkspacePath` once everything else has succeeded. The base repo
+        // HEAD is neutralized first so `worktree add -b` keeps Git's normal
+        // active-branch and existing-branch guards.
         const worktreeCmd = [
-          `${nhp}git -C ${baseRepoPathArg} worktree add --detach ${stagingPathArg} ${shescape.quote(sourceBranch)}`,
-          "worktree_add_status=$?",
-          'if [ "$worktree_add_status" -ne 0 ]; then exit "$worktree_add_status"; fi',
-          `${nhp}git -C ${stagingPathArg} checkout -b ${shescape.quote(newWorkspaceName)}`,
-          "checkout_status=$?",
-          'if [ "$checkout_status" -ne 0 ]; then',
-          `  git -C ${baseRepoPathArg} worktree remove --force ${stagingPathArg} >/dev/null 2>&1 || rm -rf ${stagingPathArg}`,
-          '  exit "$checkout_status"',
-          "fi",
+          `git --git-dir=${baseRepoPathArg} symbolic-ref HEAD ${shescape.quote(BASE_REPO_UNBORN_HEAD_REF)} 2>/dev/null || true`,
+          buildBestEffortDetachBaseRepoHeadCommand(baseRepoPathArg, shescape.quote(sourceBranch)),
+          `${nhp}git -C ${baseRepoPathArg} worktree add -b ${shescape.quote(newWorkspaceName)} ${stagingPathArg} ${shescape.quote(sourceBranch)}`,
         ].join("\n");
         const worktreeResult = await execBuffered(this, worktreeCmd, {
           cwd: "/tmp",

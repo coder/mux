@@ -1381,10 +1381,7 @@ describeIntegration("Runtime integration tests", () => {
         );
         expect(beforeCheck.stdout.trim()).toBe("worktree");
 
-        await execSSH(
-          runtime,
-          `git --git-dir="${baseRepoPath}" symbolic-ref HEAD refs/mux-internal/base-head`
-        );
+        await execSSH(runtime, `git --git-dir="${baseRepoPath}" symbolic-ref HEAD refs/heads/main`);
 
         // Delete the workspace.
         const deleteResult = await runtime.deleteWorkspace(
@@ -2034,14 +2031,14 @@ describeIntegration("Runtime integration tests", () => {
       }
     }, 120000);
 
-    test("initWorkspace points base-repo HEAD at internal sentinel ref", async () => {
+    test("initWorkspace keeps base-repo HEAD detached from user branches", async () => {
       const runtime = createSSHRuntime();
 
-      const projectName = `sync-sentinel-head-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const projectName = `sync-neutral-head-${Date.now()}-${Math.random().toString(36).substring(7)}`;
       const tmpDir = await import("os").then((os) => os.tmpdir());
       const localProjectPath = `${tmpDir}/${projectName}`;
       const layout = buildRemoteProjectLayout(srcBaseDir, localProjectPath);
-      const branchName = "sentinel-head";
+      const branchName = "neutral-head";
       const workspacePath = getRemoteWorkspacePath(layout, branchName);
       const baseRepoPath = layout.baseRepoPath;
 
@@ -2072,11 +2069,18 @@ describeIntegration("Runtime integration tests", () => {
           throw new Error(`initWorkspace failed: ${initResult.error}`);
         }
 
-        const baseHeadCheck = await execSSH(
+        const baseHeadSymbolicCheck = await execSSH(
           runtime,
-          `git --git-dir="${baseRepoPath}" symbolic-ref HEAD`
+          `git --git-dir="${baseRepoPath}" symbolic-ref -q HEAD`
         );
-        expect(baseHeadCheck.stdout.trim()).toBe("refs/mux-internal/base-head");
+        expect(baseHeadSymbolicCheck.exitCode).toBe(1);
+
+        const baseHeadCommit = await execSSH(
+          runtime,
+          `git --git-dir="${baseRepoPath}" rev-parse --verify HEAD`
+        );
+        const workspaceCommit = await execSSH(runtime, `git -C "${workspacePath}" rev-parse HEAD`);
+        expect(baseHeadCommit.stdout.trim()).toBe(workspaceCommit.stdout.trim());
 
         const baseRepoBareCheck = await execSSH(
           runtime,
@@ -2179,11 +2183,21 @@ describeIntegration("Runtime integration tests", () => {
         );
         expect(baseRepoCoreWorktreeCheck.exitCode).toBe(1);
 
-        const baseHeadCheck = await execSSH(
+        const baseHeadSymbolicCheck = await execSSH(
           runtime,
-          `git --git-dir="${baseRepoPath}" symbolic-ref HEAD`
+          `git --git-dir="${baseRepoPath}" symbolic-ref -q HEAD`
         );
-        expect(baseHeadCheck.stdout.trim()).toBe("refs/mux-internal/base-head");
+        expect(baseHeadSymbolicCheck.exitCode).toBe(1);
+
+        const baseHeadCommit = await execSSH(
+          runtime,
+          `git --git-dir="${baseRepoPath}" rev-parse --verify HEAD`
+        );
+        const secondWorkspaceCommit = await execSSH(
+          runtime,
+          `git -C "${secondWorkspacePath}" rev-parse HEAD`
+        );
+        expect(baseHeadCommit.stdout.trim()).toBe(secondWorkspaceCommit.stdout.trim());
       } finally {
         execSync(`rm -rf "${localProjectPath}"`);
         await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
