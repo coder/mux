@@ -150,6 +150,60 @@ describe("attachmentRenderer", () => {
     expect(content).toContain("task_await");
   });
 
+  it("caps oversized report titles so they cannot crowd out the re-fetch handle", () => {
+    const longTitle = "T".repeat(500);
+    const attachment: CompletedReportsIndexAttachment = {
+      type: "completed_reports_index",
+      reports: [
+        {
+          id: "wfr_research",
+          kind: "workflow",
+          title: longTitle,
+          completedAtMs: Date.parse("2026-06-01T12:00:00.000Z"),
+        },
+      ],
+    };
+
+    const content = renderAttachmentToContent(attachment);
+
+    expect(content).toContain("wfr_research");
+    expect(content).not.toContain(longTitle);
+    expect(content).toContain("…");
+  });
+
+  it("packs as many report handles as fit and notes omitted ones instead of dropping all", () => {
+    const reportsAttachment: CompletedReportsIndexAttachment = {
+      type: "completed_reports_index",
+      reports: [
+        {
+          id: "wfr_newest",
+          kind: "workflow",
+          completedAtMs: Date.parse("2026-06-01T13:00:00.000Z"),
+        },
+        {
+          // Long IDs make the dropped entries far larger than the truncation note,
+          // so the budget outcome is stable regardless of exact header/footer sizes.
+          id: `task-middle-${"m".repeat(300)}`,
+          kind: "task",
+          completedAtMs: Date.parse("2026-06-01T12:00:00.000Z"),
+        },
+        {
+          id: `task-oldest-${"o".repeat(300)}`,
+          kind: "task",
+          completedAtMs: Date.parse("2026-06-01T11:00:00.000Z"),
+        },
+      ],
+    };
+
+    // Budget fits the header/footer plus the first (newest) entry line only.
+    const content = renderAttachmentsToContentWithBudget([reportsAttachment], { maxChars: 600 });
+
+    expect(content.length).toBeLessThanOrEqual(600);
+    expect(content).toContain("wfr_newest");
+    expect(content).not.toContain("task-oldest");
+    expect(content).toMatch(/omitted 2 completed report handles/);
+  });
+
   it("prioritizes completed report handles ahead of bulky file diffs under budget pressure", () => {
     const editedFilesAttachment: EditedFilesReferenceAttachment = {
       type: "edited_files_reference",

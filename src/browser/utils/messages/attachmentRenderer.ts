@@ -49,22 +49,78 @@ function renderLoadedSkillsSnapshot(attachment: LoadedSkillsSnapshotAttachment):
 }
 
 /**
+ * Titles are model-provided and unbounded; cap them per entry so an oversized title
+ * can never crowd the re-fetch handles (the IDs are the valuable part) out of budget.
+ */
+const MAX_REPORT_INDEX_TITLE_CHARS = 80;
+
+const COMPLETED_REPORTS_HEADER =
+  "Completed sub-agent/workflow reports from before the last compaction (full content is no longer in context but persists on disk):\n";
+const COMPLETED_REPORTS_FOOTER =
+  '\n\nRe-fetch any full report (reportMarkdown + structuredOutput) with task_await(task_ids: ["<id>"], timeout_secs: 0) instead of re-running the work.';
+
+function formatCompletedReportEntryLine(
+  report: CompletedReportsIndexAttachment["reports"][number]
+): string {
+  let title = "";
+  if (report.title) {
+    const capped =
+      report.title.length > MAX_REPORT_INDEX_TITLE_CHARS
+        ? `${report.title.slice(0, MAX_REPORT_INDEX_TITLE_CHARS - 1)}…`
+        : report.title;
+    title = ` "${capped}"`;
+  }
+  const tokens =
+    report.reportTokenEstimate != null ? `, ~${report.reportTokenEstimate} tokens` : "";
+  return `- ${report.id} [${report.kind}]${title} — completed ${new Date(report.completedAtMs).toISOString()}${tokens}`;
+}
+
+/**
  * Render the completed-reports index. Lists re-fetchable handles only (no report
  * content): the full reports persist on disk and survive compaction, so the model
  * can recover them via task_await instead of re-running expensive work.
  */
 function renderCompletedReportsIndex(attachment: CompletedReportsIndexAttachment): string {
-  const lines = attachment.reports.map((report) => {
-    const title = report.title ? ` "${report.title}"` : "";
-    const tokens =
-      report.reportTokenEstimate != null ? `, ~${report.reportTokenEstimate} tokens` : "";
-    return `- ${report.id} [${report.kind}]${title} — completed ${new Date(report.completedAtMs).toISOString()}${tokens}`;
-  });
+  const lines = attachment.reports.map(formatCompletedReportEntryLine);
+  return `${COMPLETED_REPORTS_HEADER}${lines.join("\n")}${COMPLETED_REPORTS_FOOTER}`;
+}
 
-  return `Completed sub-agent/workflow reports from before the last compaction (full content is no longer in context but persists on disk):
-${lines.join("\n")}
+/**
+ * Budget-aware variant: packs as many handles as fit (entries are newest-first, so
+ * the oldest drop first) instead of omitting the whole block — losing every re-fetch
+ * handle would defeat the recovery path this attachment exists for.
+ */
+function renderCompletedReportsIndexWithBudget(
+  attachment: CompletedReportsIndexAttachment,
+  maxChars: number
+): { content: string | null; omittedReports: number } {
+  const fixedLength = COMPLETED_REPORTS_HEADER.length + COMPLETED_REPORTS_FOOTER.length;
+  if (maxChars <= fixedLength) {
+    return { content: null, omittedReports: attachment.reports.length };
+  }
 
-Re-fetch any full report (reportMarkdown + structuredOutput) with task_await(task_ids: ["<id>"], timeout_secs: 0) instead of re-running the work.`;
+  const lines: string[] = [];
+  let used = fixedLength;
+
+  for (const report of attachment.reports) {
+    const line = formatCompletedReportEntryLine(report);
+    const separator = lines.length > 0 ? "\n" : "";
+    const nextLen = used + separator.length + line.length;
+    if (nextLen > maxChars) {
+      break;
+    }
+    lines.push(line);
+    used = nextLen;
+  }
+
+  if (lines.length === 0) {
+    return { content: null, omittedReports: attachment.reports.length };
+  }
+
+  return {
+    content: `${COMPLETED_REPORTS_HEADER}${lines.join("\n")}${COMPLETED_REPORTS_FOOTER}`,
+    omittedReports: attachment.reports.length - lines.length,
+  };
 }
 
 /**
@@ -292,6 +348,7 @@ export function renderAttachmentsToContentWithBudget(
   let currentLength = 0;
   let omittedLoadedSkills = 0;
   let omittedFileDiffs = 0;
+  let omittedReportHandles = 0;
 
   const addBlock = (block: string): boolean => {
     const separatorLen = blocks.length > 0 ? "\n".length : 0;
@@ -332,9 +389,13 @@ export function renderAttachmentsToContentWithBudget(
     }
 
     if (attachment.type === "completed_reports_index") {
-      // Entries are capped one-liners, so all-or-nothing fits the budget in practice.
-      const content = renderCompletedReportsIndex(attachment);
-      if (content.length <= remainingForContent) {
+      const { content, omittedReports } = renderCompletedReportsIndexWithBudget(
+        attachment,
+        remainingForContent
+      );
+      omittedReportHandles += omittedReports;
+
+      if (content) {
         addBlock(wrapSystemUpdate(content));
       }
       continue;
@@ -376,6 +437,12 @@ export function renderAttachmentsToContentWithBudget(
   if (omittedFileDiffs > 0) {
     const plural = omittedFileDiffs === 1 ? "" : "s";
     const note = `(post-compaction context truncated; omitted ${omittedFileDiffs} file diff${plural})`;
+    addBlock(wrapSystemUpdate(note));
+  }
+
+  if (omittedReportHandles > 0) {
+    const plural = omittedReportHandles === 1 ? "" : "s";
+    const note = `(post-compaction context truncated; omitted ${omittedReportHandles} completed report handle${plural})`;
     addBlock(wrapSystemUpdate(note));
   }
 
