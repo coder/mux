@@ -11,6 +11,8 @@ import {
   TaskApplyGitPatchToolArgsSchema,
   TaskApplyGitPatchToolResultSchema,
   TOOL_DEFINITIONS,
+  type SubagentGitPatchArtifact,
+  type SubagentGitProjectPatchArtifact,
 } from "@/common/utils/tools/toolDefinitions";
 import { shellQuote } from "@/common/utils/shell";
 import { execBuffered } from "@/node/utils/runtime/helpers";
@@ -286,7 +288,7 @@ async function findGitPatchArtifactInWorkspaceOrAncestors(params: {
   workspaceSessionDir: string;
   childTaskId: string;
 }): Promise<{
-  artifact: NonNullable<Awaited<ReturnType<typeof readSubagentGitPatchArtifact>>>;
+  artifact: SubagentGitPatchArtifact;
   artifactWorkspaceId: string;
   artifactSessionDir: string;
   note?: string;
@@ -401,9 +403,9 @@ const PENDING_PATCH_GENERATION_WAIT_MS = 120_000;
 const PENDING_PATCH_GENERATION_POLL_INTERVAL_MS = 500;
 
 function listRelevantProjectArtifacts(
-  artifact: NonNullable<Awaited<ReturnType<typeof readSubagentGitPatchArtifact>>>,
+  artifact: SubagentGitPatchArtifact,
   requestedProjectPath: string | null | undefined
-): NonNullable<Awaited<ReturnType<typeof readSubagentGitPatchArtifact>>>["projectArtifacts"] {
+): SubagentGitPatchArtifact["projectArtifacts"] {
   return requestedProjectPath != null
     ? artifact.projectArtifacts.filter((projectArtifact) =>
         matchesProjectArtifactProjectPath(projectArtifact, requestedProjectPath)
@@ -438,7 +440,7 @@ async function sleepResolvingOnAbort(delayMs: number, abortSignal?: AbortSignal)
  * caller aborts. Returns the freshest artifact observed.
  */
 async function waitForPendingPatchGeneration(params: {
-  artifact: NonNullable<Awaited<ReturnType<typeof readSubagentGitPatchArtifact>>>;
+  artifact: SubagentGitPatchArtifact;
   artifactSessionDir: string;
   childTaskId: string;
   requestedProjectPath: string | null | undefined;
@@ -446,7 +448,7 @@ async function waitForPendingPatchGeneration(params: {
   pollIntervalMs: number;
   abortSignal?: AbortSignal;
   onPoll?: () => void;
-}): Promise<NonNullable<Awaited<ReturnType<typeof readSubagentGitPatchArtifact>>>> {
+}): Promise<SubagentGitPatchArtifact> {
   assert(params.waitMs >= 0, "waitForPendingPatchGeneration: waitMs must be non-negative");
   assert(
     params.pollIntervalMs > 0,
@@ -517,9 +519,7 @@ function toLegacyFields(projectResults: TaskApplyGitPatchProjectResult[]): {
 }
 
 function summarizeNonReadyProjectArtifact(params: {
-  projectArtifact: NonNullable<
-    Awaited<ReturnType<typeof readSubagentGitPatchArtifact>>
-  >["projectArtifacts"][number];
+  projectArtifact: SubagentGitProjectPatchArtifact;
 }): TaskApplyGitPatchProjectResult {
   const noteByStatus: Record<string, string | undefined> = {
     pending: "Patch generation is still in progress for this project.",
@@ -592,9 +592,7 @@ function resolveCurrentWorkspaceRepoTargets(params: {
 async function resolvePatchPath(params: {
   taskId: string;
   artifactSessionDir: string;
-  projectArtifact: NonNullable<
-    Awaited<ReturnType<typeof readSubagentGitPatchArtifact>>
-  >["projectArtifacts"][number];
+  projectArtifact: SubagentGitProjectPatchArtifact;
   artifactLookupNote?: string;
 }): Promise<{ patchPath: string; note?: string } | { error: string; note?: string }> {
   const expectedPatchPath = getSubagentGitPatchMboxPath(
@@ -715,9 +713,7 @@ async function applyProjectPatch(params: {
   runtimeTempDir: string;
   trusted: boolean;
   repoCwd: string;
-  projectArtifact: NonNullable<
-    Awaited<ReturnType<typeof readSubagentGitPatchArtifact>>
-  >["projectArtifacts"][number];
+  projectArtifact: SubagentGitProjectPatchArtifact;
   artifactWorkspaceId: string;
   artifactSessionDir: string;
   artifactLookupNote?: string;
