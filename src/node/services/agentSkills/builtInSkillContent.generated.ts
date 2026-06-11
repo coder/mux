@@ -337,6 +337,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "- For incrementing numeric UI (costs, timers, token counts, percentages), use semantic numeric typography utilities (`counter-nums` / `counter-nums-mono`) to prevent width jitter.",
       "- Choose `counter-nums-mono` only when monospace is an intentional visual style (e.g., terminal/telemetry), not merely as a workaround.",
       "- Use `min-w-[Nch]` only when reserving layout width is intentional and separate from tabular numeral stability.",
+      "- **Always verify UI at mobile widths.** When adding or changing UI, check how it renders in a narrow/mobile viewport (~375px), not just desktop. Tool cards size via `@container` queries, so test the narrow container layout (Storybook `mobile1` viewport or a resized window). Watch for: badges/labels stretching to fill grid cells, `auto` grid columns inflated by `whitespace-nowrap` text (starves sibling columns and pushes content off-screen), and right-edge overflow. Truncating text belongs in `minmax(0,1fr)` cells. Add a pinned-viewport story per the Storybook responsive/Chromatic validation rule below when a breakpoint matters.",
       "",
       "## Security: Renderer HTML & XSS",
       "",
