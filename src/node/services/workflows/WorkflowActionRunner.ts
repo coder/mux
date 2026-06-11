@@ -573,10 +573,16 @@ function maskStaticJavaScriptSource(source: string): string {
       // instead of swallowing the rest of the line and hiding real exports.
       const closingIndex = findRegExpLiteralEnd(source, index);
       if (closingIndex !== -1) {
-        while (index <= closingIndex) {
+        // Keep the "/" delimiters (mask only the body) so isRegExpLiteralStart still
+        // sees the literal as a value and `/x/ / 2` stays division.
+        output += "/";
+        index += 1;
+        while (index < closingIndex) {
           output += " ";
           index += 1;
         }
+        output += "/";
+        index += 1;
         continue;
       }
     }
@@ -667,10 +673,11 @@ const REGEX_PRECEDING_KEYWORDS = new Set([
 const IDENTIFIER_CHARACTER = /[A-Za-z0-9_$]/;
 
 /**
- * Heuristic lexer rule for "/" disambiguation: division follows a value
- * (identifier, number, ")", or "]"); a regex literal follows an operator,
- * punctuation, start of file, or a keyword like `return`. Receives the already
- * masked prefix so comment/string contents never influence the decision.
+ * Heuristic lexer rule for "/" disambiguation: division follows a value (identifier,
+ * number, "]", a kept string/regex delimiter, postfix ++/--, an object-literal "}",
+ * or a call/grouping ")"); a regex literal follows an operator, punctuation, start of
+ * file, a keyword like `return`, a block "}", or a control-header ")". Receives the
+ * already masked prefix so comment/string/regex contents never influence the decision.
  */
 function isRegExpLiteralStart(maskedPrefix: string): boolean {
   let index = maskedPrefix.length - 1;
@@ -714,6 +721,18 @@ function isRegExpLiteralStart(maskedPrefix: string): boolean {
     // ")" is ambiguous too: a control-statement header (`if (x) /re/.test(s)`) is
     // followed by statement position, while a call/grouping result is a value.
     return isControlHeaderEnd(maskedPrefix, index);
+  }
+  if (character === "/") {
+    // A kept "/" is either the closing delimiter of a masked regex literal or a
+    // division operator. Skipping the space-masked body backwards lands on the
+    // opening "/" only in the regex case: the literal is a value, so division
+    // follows (`/x/ / 2`). A division operator is preceded by its value operand
+    // instead, so the current slash opens a regex (`a / /re/.source`).
+    let before = index - 1;
+    while (before >= 0 && (maskedPrefix[before] === " " || maskedPrefix[before] === "\n")) {
+      before -= 1;
+    }
+    return !(before >= 0 && maskedPrefix[before] === "/");
   }
   // Values end with "]" or a kept quote delimiter of a masked literal;
   // a "/" after any of these is division, not a regex literal.

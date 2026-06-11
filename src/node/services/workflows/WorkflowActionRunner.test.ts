@@ -413,6 +413,12 @@ describe("WorkflowActionRunner", () => {
       // Counter-case: ")" closing a control-statement header is statement position, so
       // a regex (not division) follows; its "(" must stay masked.
       `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; if (globalThis.x) /^[(]/.test("a"); module.exports.execute = async () => ({ ok: true });`,
+      // A masked regex literal is itself a value: dividing it keeps the next "/" as
+      // division instead of pairing with a later regex and masking across.
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = /x/ / 2; module.exports.execute = async () => /y/.test("y");`,
+      // Counter-case: a regex literal as the right operand of division still gets
+      // masked (its "(" and "[" must not corrupt depth counting).
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const a = 4; const q = a / /([(])/.source.length; module.exports.execute = async () => ({ q });`,
     ];
     const runner = new WorkflowActionRunner();
     for (const [index, source] of sources.entries()) {
