@@ -1878,6 +1878,62 @@ describe("StreamManager - empty stream completions", () => {
     expect(committed?.metadata?.usage).toMatchObject({ inputTokens: 30000, outputTokens: 0 });
   });
 
+  test("zero-output refusal finishReason survives commit when usage is unavailable", async () => {
+    const streamManager = new StreamManager(historyService);
+    streamManager.on("error", () => undefined);
+
+    Reflect.set(streamManager, "tokenTracker", {
+      setModel: () => Promise.resolve(undefined),
+      countTokens: () => Promise.resolve(0),
+    });
+
+    const workspaceId = "refusal-no-usage-workspace";
+    const messageId = "refusal-no-usage-message";
+    const historySequence = 1;
+
+    await appendPartialAssistantForTests(workspaceId, messageId, historySequence);
+    const processStreamWithCleanup = getProcessStreamWithCleanupForTests(streamManager);
+    const startTime = Date.now() - 250;
+    const streamInfo = createStreamInfoForTests({
+      streamResult: createStreamResultForTests(
+        (async function* () {
+          await Promise.resolve();
+          yield { type: "finish", finishReason: "content-filter", rawFinishReason: "refusal" };
+        })(),
+        { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+      ),
+      messageId,
+      startTime,
+      lastPartTimestamp: startTime,
+      model: KNOWN_MODELS.SONNET.id,
+      metadataModel: KNOWN_MODELS.SONNET.id,
+      historySequence,
+      initialMetadata: { agentId: "plan" },
+      runtime,
+    });
+
+    await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
+
+    const partial = await historyService.readPartial(workspaceId);
+    expect(partial?.metadata?.errorType).toBe("model_refusal");
+    expect(partial?.metadata?.finishReason).toBe("content-filter");
+    expect(partial?.metadata?.usage).toBeUndefined();
+
+    const commitResult = await historyService.commitPartial(workspaceId);
+    expect(commitResult.success).toBe(true);
+    const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) {
+      throw new Error(historyResult.error);
+    }
+    const committed = historyResult.data.find((message) => message.id === messageId);
+    expect(committed?.parts).toEqual([]);
+    expect(committed?.metadata?.finishReason).toBe("content-filter");
+    expect(committed?.metadata?.usage).toBeUndefined();
+    expect(committed?.metadata?.error).toBeUndefined();
+    expect(committed?.metadata?.errorType).toBeUndefined();
+  });
+
   test("refusal finish after partial output fails visibly when no fallback is configured", async () => {
     const recordUsage = mock((_workspaceId: string, _model: string, _usage: unknown) =>
       Promise.resolve(undefined)

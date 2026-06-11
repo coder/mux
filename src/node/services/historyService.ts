@@ -1003,12 +1003,11 @@ export class HistoryService {
       });
 
       // Refusal errors can be durable even with zero assistant-visible parts:
-      // usage and finishReason keep cost rebuilds accurate and let the UI show
-      // a refusal row after error/errorType are stripped on commit.
+      // finishReason lets the UI show a refusal row after error/errorType are
+      // stripped on commit, and usage/toolModelUsages may be absent if the
+      // provider omitted usage or metadata reads timed out.
       const hasDurableRefusalMetadata =
-        hadErrorMetadata &&
-        isRefusalFinishReason(partial.metadata?.finishReason) &&
-        (partial.metadata?.usage != null || (partial.metadata?.toolModelUsages?.length ?? 0) > 0);
+        hadErrorMetadata && isRefusalFinishReason(partial.metadata?.finishReason);
 
       const existingMessage = existingMessages.find(
         (message) => message.metadata?.historySequence === partialSeq
