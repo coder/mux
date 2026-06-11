@@ -389,6 +389,27 @@ describe("WorkflowActionRunner", () => {
     expect(description.hasReconcile).toBe(false);
   });
 
+  test("treats division after masked literals as division, even on one line", async () => {
+    using tmp = new DisposableTempDir("workflow-action-division-mask");
+    // Regression (Codex review): masking strings to spaces erased the value token
+    // before "/", so division after a string/template literal was misread as a regex
+    // start. With a single "/" in a one-line (minified) source, everything after it —
+    // including the execute export — was masked away, blocking a valid action.
+    const sources = [
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = "10" / 2; module.exports.execute = async () => ({ n });`,
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = \`10\` / 2; module.exports.execute = async () => ({ n });`,
+    ];
+    const runner = new WorkflowActionRunner();
+    for (const [index, source] of sources.entries()) {
+      const sourcePath = path.join(tmp.path, `division-${index}.js`);
+      await fs.writeFile(sourcePath, source, "utf-8");
+
+      const description = await runner.describe(createAction(sourcePath, source));
+
+      expect(description.metadata.description).toBe("Division");
+    }
+  });
+
   test("describes every built-in workflow action", async () => {
     // Built-in sources must always pass static describe validation; a failure here
     // surfaces in the UI as a "blocked" action (e.g. security.hashFiles, whose regex

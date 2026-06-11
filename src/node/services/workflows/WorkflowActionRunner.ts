@@ -599,13 +599,19 @@ function maskStaticJavaScriptSource(source: string): string {
     }
     if (current === '"' || current === "'" || current === "`") {
       const quote = current;
-      output += " ";
+      // Keep the quote delimiters (mask only the contents) so isRegExpLiteralStart
+      // still sees a value token after the literal and `"10" / 2` stays division.
+      output += quote;
       index += 1;
       while (index < source.length) {
         const stringCurrent = source[index];
         assert(stringCurrent != null, "maskStaticJavaScriptSource: string character is required");
-        output += stringCurrent === "\n" ? "\n" : " ";
         index += 1;
+        if (stringCurrent === quote) {
+          output += quote;
+          break;
+        }
+        output += stringCurrent === "\n" ? "\n" : " ";
         if (stringCurrent === "\\") {
           if (index < source.length) {
             const escaped = source[index];
@@ -613,10 +619,6 @@ function maskStaticJavaScriptSource(source: string): string {
             output += escaped === "\n" ? "\n" : " ";
             index += 1;
           }
-          continue;
-        }
-        if (stringCurrent === quote) {
-          break;
         }
       }
       continue;
@@ -681,7 +683,15 @@ function isRegExpLiteralStart(maskedPrefix: string): boolean {
     }
     return REGEX_PRECEDING_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
   }
-  return character !== ")" && character !== "]";
+  // Values end with ")", "]", or a kept quote delimiter of a masked literal;
+  // a "/" after any of these is division, not a regex literal.
+  return (
+    character !== ")" &&
+    character !== "]" &&
+    character !== '"' &&
+    character !== "'" &&
+    character !== "`"
+  );
 }
 
 function isTopLevelStaticMatch(maskedSource: string, matchIndex: number): boolean {
