@@ -3373,7 +3373,7 @@ export class SSHRuntime extends RemoteRuntime {
         if (branchToDelete && !PROTECTED_BRANCHES.includes(branchToDelete)) {
           await execBuffered(
             this,
-            `${nhp}git -C ${baseRepoPathArg} branch -D ${shescape.quote(branchToDelete)} 2>/dev/null || true`,
+            `${nhp}git --git-dir=${baseRepoPathArg} update-ref -d ${shescape.quote(`refs/heads/${branchToDelete}`)} 2>/dev/null || true`,
             { cwd: "/tmp", timeout: 10 }
           ).catch(() => undefined);
         }

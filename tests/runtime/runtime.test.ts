@@ -1381,6 +1381,11 @@ describeIntegration("Runtime integration tests", () => {
         );
         expect(beforeCheck.stdout.trim()).toBe("worktree");
 
+        await execSSH(
+          runtime,
+          `git --git-dir="${baseRepoPath}" symbolic-ref HEAD refs/mux-internal/base-head`
+        );
+
         // Delete the workspace.
         const deleteResult = await runtime.deleteWorkspace(
           projectPath,
@@ -1400,6 +1405,12 @@ describeIntegration("Runtime integration tests", () => {
         // Verify worktree metadata is cleaned up in the base repo.
         const worktreeList = await execSSH(runtime, `git -C "${baseRepoPath}" worktree list`);
         expect(worktreeList.stdout).not.toContain(workspaceName);
+
+        const deletedBranchRef = await execSSH(
+          runtime,
+          `git --git-dir="${baseRepoPath}" show-ref --verify --quiet refs/heads/${workspaceName}`
+        );
+        expect(deletedBranchRef.exitCode).toBe(1);
       } finally {
         await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
       }
