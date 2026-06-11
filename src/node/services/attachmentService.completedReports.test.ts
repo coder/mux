@@ -1,3 +1,6 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
 import { describe, expect, test } from "bun:test";
 
 import { MAX_POST_COMPACTION_REPORT_INDEX_ENTRIES } from "@/common/constants/attachments";
@@ -175,6 +178,40 @@ describe("AttachmentService.generateCompletedReportsAttachment", () => {
     });
 
     expect(attachment).toBeNull();
+  });
+
+  test("skips persisted index entries with malformed ids or timestamps", async () => {
+    using tmp = new DisposableTempDir("completed-reports");
+    const cutoffMs = Date.parse("2026-06-02T00:00:00.000Z");
+
+    await writeTaskReport(tmp.path, { childTaskId: "task-valid", updatedAtMs: cutoffMs - 60_000 });
+    // Corrupt the persisted index the way a partial/legacy write could: entries whose
+    // updatedAtMs is missing or non-numeric, or whose id is missing.
+    const indexPath = path.join(tmp.path, "subagent-reports.json");
+    const file = JSON.parse(await fs.readFile(indexPath, "utf-8")) as {
+      artifactsByChildTaskId: Record<string, unknown>;
+    };
+    const valid = file.artifactsByChildTaskId["task-valid"] as Record<string, unknown>;
+    file.artifactsByChildTaskId["task-no-timestamp"] = {
+      ...valid,
+      childTaskId: "task-no-timestamp",
+      updatedAtMs: undefined,
+    };
+    file.artifactsByChildTaskId["task-nan-timestamp"] = {
+      ...valid,
+      childTaskId: "task-nan-timestamp",
+      updatedAtMs: "not-a-number",
+    };
+    file.artifactsByChildTaskId["task-no-id"] = { ...valid, childTaskId: undefined };
+    await fs.writeFile(indexPath, JSON.stringify(file, null, 2));
+
+    const attachment = await AttachmentService.generateCompletedReportsAttachment({
+      workspaceId: WORKSPACE_ID,
+      sessionDir: tmp.path,
+      completedBeforeMs: cutoffMs,
+    });
+
+    expect(attachment?.reports.map((report) => report.id)).toEqual(["task-valid"]);
   });
 
   test("caps entries at the configured maximum, keeping the newest", async () => {

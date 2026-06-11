@@ -144,6 +144,17 @@ export class AttachmentService {
 
     const reportsFile = await readSubagentReportArtifactsFile(params.sessionDir);
     for (const entry of Object.values(reportsFile.artifactsByChildTaskId)) {
+      // Self-healing: the persisted index is cast without per-entry validation, and a
+      // malformed timestamp would slip past the cutoff comparison (NaN/undefined compare
+      // false) only to throw later in the renderer (`new Date(...).toISOString()`),
+      // blocking post-compaction injection. Skip corrupt rows instead.
+      if (
+        typeof entry.childTaskId !== "string" ||
+        entry.childTaskId.length === 0 ||
+        !Number.isFinite(entry.updatedAtMs)
+      ) {
+        continue;
+      }
       // Direct children only: grandchild reports are synthesized into the child's report.
       if (entry.parentWorkspaceId !== params.workspaceId) {
         continue;
