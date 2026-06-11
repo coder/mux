@@ -144,10 +144,13 @@ export class AttachmentService {
 
     const reportsFile = await readSubagentReportArtifactsFile(params.sessionDir);
     for (const entry of Object.values(reportsFile.artifactsByChildTaskId)) {
-      // Self-healing: the persisted index is cast without per-entry validation, and a
-      // malformed timestamp would slip past the cutoff comparison (NaN/undefined compare
-      // false) only to throw later in the renderer (`new Date(...).toISOString()`),
-      // blocking post-compaction injection. Skip corrupt rows instead.
+      // Self-healing: the persisted index is cast without per-entry validation, so rows
+      // may be null/non-objects or carry wrong-typed fields. A throw here (or a NaN
+      // timestamp surviving into the renderer's `toISOString()`) would drop ALL
+      // post-compaction attachments, so validate every field we read and skip bad rows.
+      if (entry == null || typeof entry !== "object") {
+        continue;
+      }
       if (
         typeof entry.childTaskId !== "string" ||
         entry.childTaskId.length === 0 ||
@@ -160,7 +163,11 @@ export class AttachmentService {
         continue;
       }
       // Workflow-owned sub-agent reports are consumed through their workflow run's report.
-      if (entry.workflowOwnedAncestorWorkspaceIds?.includes(params.workspaceId)) {
+      // Non-array (corrupt) values degrade to "not workflow-owned" rather than throwing.
+      if (
+        Array.isArray(entry.workflowOwnedAncestorWorkspaceIds) &&
+        entry.workflowOwnedAncestorWorkspaceIds.includes(params.workspaceId)
+      ) {
         continue;
       }
       // Reports completed after the cutoff still have their tool results in visible context.
@@ -170,9 +177,9 @@ export class AttachmentService {
       entries.push({
         id: entry.childTaskId,
         kind: "task",
-        ...(entry.title !== undefined ? { title: entry.title } : {}),
+        ...(typeof entry.title === "string" ? { title: entry.title } : {}),
         completedAtMs: entry.updatedAtMs,
-        ...(entry.reportTokenEstimate !== undefined
+        ...(Number.isFinite(entry.reportTokenEstimate)
           ? { reportTokenEstimate: entry.reportTokenEstimate }
           : {}),
       });

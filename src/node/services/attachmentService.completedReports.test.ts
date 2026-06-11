@@ -203,6 +203,15 @@ describe("AttachmentService.generateCompletedReportsAttachment", () => {
       updatedAtMs: "not-a-number",
     };
     file.artifactsByChildTaskId["task-no-id"] = { ...valid, childTaskId: undefined };
+    file.artifactsByChildTaskId["task-null-row"] = null;
+    file.artifactsByChildTaskId["task-string-row"] = "corrupt";
+    // Corrupt ownership marker must degrade to "not workflow-owned", not throw.
+    file.artifactsByChildTaskId["task-corrupt-owned"] = {
+      ...valid,
+      childTaskId: "task-corrupt-owned",
+      updatedAtMs: cutoffMs - 30_000,
+      workflowOwnedAncestorWorkspaceIds: "not-an-array",
+    };
     await fs.writeFile(indexPath, JSON.stringify(file, null, 2));
 
     const attachment = await AttachmentService.generateCompletedReportsAttachment({
@@ -211,7 +220,10 @@ describe("AttachmentService.generateCompletedReportsAttachment", () => {
       completedBeforeMs: cutoffMs,
     });
 
-    expect(attachment?.reports.map((report) => report.id)).toEqual(["task-valid"]);
+    expect(attachment?.reports.map((report) => report.id)).toEqual([
+      "task-corrupt-owned",
+      "task-valid",
+    ]);
   });
 
   test("caps entries at the configured maximum, keeping the newest", async () => {
