@@ -500,6 +500,17 @@ export interface PersistedToolModelUsage {
   providerMetadata?: Record<string, unknown>;
 }
 
+/**
+ * Record of a model-fallback chain application. `requestedModel` is the model
+ * originally asked for; `refusedModels` lists every model that refused, in
+ * chain order (the requested model is always the first entry). The effective
+ * (answering) model is recorded separately as the message's `model`.
+ */
+export interface ModelFallbackRecord {
+  requestedModel: string;
+  refusedModels: string[];
+}
+
 // Our custom metadata type
 export interface MuxMetadata {
   historySequence?: number; // Assigned by backend for global message ordering (required when writing to history)
@@ -536,10 +547,7 @@ export interface MuxMetadata {
    * records the originally requested model and the models that refused, in
    * order. Refused-attempt token usage is attributed via toolModelUsages.
    */
-  modelFallback?: {
-    requestedModel: string;
-    refusedModels: string[];
-  };
+  modelFallback?: ModelFallbackRecord;
   // Last step's provider metadata (for context window cache display)
   contextProviderMetadata?: Record<string, unknown>;
   systemMessageTokens?: number; // Token count for system message sent with this request (calculated by AIService)
@@ -743,6 +751,8 @@ export type DisplayedMessage =
       model?: string;
       routedThroughGateway?: boolean;
       routeProvider?: string;
+      /** Present when a fallback model answered after the requested model refused. */
+      modelFallback?: ModelFallbackRecord;
       agentId?: string; // Agent id active when this message was sent (assistant messages only)
       /** @deprecated Legacy base mode derived from agent definition. */
       mode?: AgentMode;

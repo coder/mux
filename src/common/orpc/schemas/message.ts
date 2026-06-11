@@ -96,6 +96,14 @@ const CompactionEpochSchema = z.optional(
   )
 );
 
+// Fallback record persisted when a configured model-fallback chain answered
+// after refusal(s). Must survive the IPC boundary so the transcript can show
+// which model was originally requested.
+export const ModelFallbackRecordSchema = z.object({
+  requestedModel: z.string(),
+  refusedModels: z.array(z.string()),
+});
+
 // MuxMessage (simplified)
 export const MuxMessageSchema = z.object({
   id: z.string(),
@@ -118,6 +126,7 @@ export const MuxMessageSchema = z.object({
       thinkingLevel: ThinkingLevelSchema.optional(),
       routedThroughGateway: z.boolean().optional(),
       routeProvider: z.string().optional(), // Preserve replayed/non-stream route attribution.
+      modelFallback: ModelFallbackRecordSchema.optional(),
       usage: z.any().optional(),
       contextUsage: z.any().optional(),
       providerMetadata: z.record(z.string(), z.unknown()).optional(),
