@@ -306,7 +306,7 @@ function stubCommonStreamMessageDependencies(args: {
   spyOn(streamContextBuilder, "buildStreamSystemContext").mockImplementation((contextArgs) => {
     args.onBuildStreamSystemContext?.(contextArgs);
     return Promise.resolve({
-      agentSystemPrompt: "test-agent-prompt",
+      agentSystemPromptSections: ["test-agent-prompt"],
       systemMessage: "test-system-message",
       systemMessageTokens: 1,
       agentDefinitions: undefined,

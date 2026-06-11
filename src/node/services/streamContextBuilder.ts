@@ -252,8 +252,13 @@ export interface BuildStreamSystemContextOptions {
 
 /** Result of system context assembly. */
 export interface StreamSystemContextResult {
-  /** Resolved agent body (with inheritance + subagent append). */
-  agentSystemPrompt: string;
+  /**
+   * Resolved agent prompt as independently-authored sections (agent body with
+   * inheritance, optional subagent append_prompt, optional advisor guidance).
+   * Kept per-section so scoped Model:/Mode:/Tool: extraction never lets a
+   * trailing scoped heading in one section swallow the next section's text.
+   */
+  agentSystemPromptSections: string[];
   /** Full system message string. */
   systemMessage: string;
   /** Token count of the system message. */
@@ -507,15 +512,14 @@ export async function buildStreamSystemContext(
     }
   }
 
-  const agentPromptSections = [resolvedBody];
+  const agentSystemPromptSections = [resolvedBody];
   if (isSubagentWorkspace && subagentAppendPrompt) {
-    agentPromptSections.push(subagentAppendPrompt);
+    agentSystemPromptSections.push(subagentAppendPrompt);
   }
   if (advisorToolAvailable) {
     // Keep prompt guidance in lockstep with actual tool availability for the agent.
-    agentPromptSections.push(buildAdvisorGuidanceSection());
+    agentSystemPromptSections.push(buildAdvisorGuidanceSection());
   }
-  const agentSystemPrompt = agentPromptSections.join("\n\n");
 
   // Discover available agent definitions for sub-agent context (only for top-level workspaces).
   //
@@ -573,7 +577,7 @@ export async function buildStreamSystemContext(
     // Mode = active agent id; drives "Mode: <mode>" sections in Mux-dedicated
     // instruction sources. Use agentDefinition.id (may have fallen back to
     // exec) so the mode section matches the prompt actually in effect.
-    { agentSystemPrompt, mode: agentDefinition.id }
+    { agentSystemPromptSections, mode: agentDefinition.id }
   );
 
   // Count system message tokens for cost tracking
@@ -582,7 +586,7 @@ export async function buildStreamSystemContext(
   const systemMessageTokens = await tokenizer.countTokens(systemMessage);
 
   return {
-    agentSystemPrompt,
+    agentSystemPromptSections,
     systemMessage,
     systemMessageTokens,
     agentDefinitions,

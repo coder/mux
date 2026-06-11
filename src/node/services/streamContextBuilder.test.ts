@@ -314,7 +314,9 @@ describe("buildStreamSystemContext", () => {
       mcpServers: {},
     });
 
-    expect(result.agentSystemPrompt).toContain("Parent-only reviewer prompt body.");
+    expect(result.agentSystemPromptSections.join("\n\n")).toContain(
+      "Parent-only reviewer prompt body."
+    );
   });
 
   test("includes the direct parent plan path ahead of caller instructions", async () => {

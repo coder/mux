@@ -21,17 +21,23 @@ describe("extractToolInstructions", () => {
   const modelString = "anthropic:claude-sonnet-4-20250514";
 
   test("extracts tool section from agentInstructions first", () => {
-    const globalInstructions = `## Tool: bash
+    const globalContents = [
+      `## Tool: bash
 From global: Use rg for searching.
-`;
-    const contextInstructions = `## Tool: bash
+`,
+    ];
+    const contextContents = [
+      `## Tool: bash
 From context: Use fd for finding.
-`;
-    const agentInstructions = `## Tool: bash
+`,
+    ];
+    const agentInstructions = [
+      `## Tool: bash
 From agent: Use ripgrep alias.
-`;
+`,
+    ];
 
-    const result = extractToolInstructions(globalInstructions, contextInstructions, modelString, {
+    const result = extractToolInstructions(globalContents, contextContents, modelString, {
       agentInstructions,
     });
 
@@ -45,17 +51,23 @@ From agent: Use ripgrep alias.
   });
 
   test("falls back to context when agentInstructions has no matching tool section", () => {
-    const globalInstructions = `## Tool: bash
+    const globalContents = [
+      `## Tool: bash
 From global: Use rg for searching.
-`;
-    const contextInstructions = `## Tool: bash
+`,
+    ];
+    const contextContents = [
+      `## Tool: bash
 From context: Use fd for finding.
-`;
-    const agentInstructions = `## Tool: file_read
+`,
+    ];
+    const agentInstructions = [
+      `## Tool: file_read
 From agent: Read files carefully.
-`;
+`,
+    ];
 
-    const result = extractToolInstructions(globalInstructions, contextInstructions, modelString, {
+    const result = extractToolInstructions(globalContents, contextContents, modelString, {
       agentInstructions,
     });
 
@@ -65,17 +77,21 @@ From agent: Read files carefully.
   });
 
   test("keeps every matching context tool section before falling back to global", () => {
-    const globalInstructions = `## Tool: bash
+    const globalContents = [
+      `## Tool: bash
 From global: Use rg for searching.
-`;
-    const contextInstructions = `## Tool: bash
+`,
+    ];
+    const contextContents = [
+      `## Tool: bash
 From primary repo: Prefer git status --short.
-
-## Tool: bash
+`,
+      `## Tool: bash
 From secondary repo: Prefer rg --files before find.
-`;
+`,
+    ];
 
-    const result = extractToolInstructions(globalInstructions, contextInstructions, modelString);
+    const result = extractToolInstructions(globalContents, contextContents, modelString);
 
     expect(result.bash).toBe(
       [
@@ -87,13 +103,15 @@ From secondary repo: Prefer rg --files before find.
   });
 
   test("falls back to global when neither agentInstructions nor context has tool section", () => {
-    const globalInstructions = `## Tool: bash
+    const globalContents = [
+      `## Tool: bash
 From global: Use rg for searching.
-`;
-    const contextInstructions = `General context instructions.`;
-    const agentInstructions = `General agent instructions.`;
+`,
+    ];
+    const contextContents = [`General context instructions.`];
+    const agentInstructions = [`General agent instructions.`];
 
-    const result = extractToolInstructions(globalInstructions, contextInstructions, modelString, {
+    const result = extractToolInstructions(globalContents, contextContents, modelString, {
       agentInstructions,
     });
 
@@ -101,11 +119,30 @@ From global: Use rg for searching.
   });
 
   test("returns empty object when no tool sections found", () => {
-    const result = extractToolInstructions("No tool sections here.", "Nor here.", modelString, {
-      agentInstructions: "Or here.",
+    const result = extractToolInstructions(["No tool sections here."], ["Nor here."], modelString, {
+      agentInstructions: ["Or here."],
     });
 
     expect(result.bash).toBeUndefined();
+  });
+
+  test("a trailing Tool: section does not swallow the next file's unscoped content", () => {
+    // Per-file extraction: file A ends with a Tool: section, file B starts
+    // with plain text. Concatenating before extraction would pull file B's
+    // unscoped content into the bash tool description.
+    const contextContents = [
+      `General guidance A.
+
+## Tool: bash
+Use rg for searching.
+`,
+      `Unscoped guidance B.
+`,
+    ];
+
+    const result = extractToolInstructions([], contextContents, modelString);
+
+    expect(result.bash).toBe("Use rg for searching.");
   });
 });
 
@@ -586,7 +623,7 @@ Be extra concise when using Sonnet.
         undefined,
         "anthropic:claude-3.5-sonnet",
         undefined,
-        { agentSystemPrompt }
+        { agentSystemPromptSections: [agentSystemPrompt] }
       );
 
       // Agent instructions should have scoped sections stripped
@@ -627,7 +664,7 @@ From agent: Be terse.
         undefined,
         "anthropic:claude-3.5-sonnet",
         undefined,
-        { agentSystemPrompt }
+        { agentSystemPromptSections: [agentSystemPrompt] }
       );
 
       expect(systemMessage).toContain("From agent: Be terse.");
@@ -665,7 +702,7 @@ From agent: Opus instructions.
         undefined,
         "anthropic:claude-3.5-sonnet",
         undefined,
-        { agentSystemPrompt }
+        { agentSystemPromptSections: [agentSystemPrompt] }
       );
 
       // Falls back to AGENTS.md since agent has no sonnet section

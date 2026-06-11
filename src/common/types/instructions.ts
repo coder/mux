@@ -42,14 +42,19 @@ export function flattenInstructionFiles(sources: InstructionSources): Instructio
 }
 
 /**
- * Concatenate a sequence of instruction sets the way they would be joined
- * inside `<custom-instructions>`. Returns "" when no sets contribute content.
+ * Collect every instruction file's content from a sequence of instruction
+ * sets, in prompt order. Used for scoped `Tool:` extraction, which is honored
+ * in shared and Mux-dedicated files alike.
+ *
+ * Returned per-file (not concatenated) for the same reason as
+ * `collectMuxOnlyInstructionContents`: a scoped section at the end of one file
+ * must not swallow the next file's unscoped content.
  */
-export function joinInstructionSets(sets: ReadonlyArray<InstructionSet | null>): string {
+export function collectInstructionContents(sets: ReadonlyArray<InstructionSet | null>): string[] {
   return sets
-    .map((set) => set?.combinedContent ?? "")
-    .filter((s) => s.length > 0)
-    .join("\n\n");
+    .flatMap((set) => set?.files ?? [])
+    .map((file) => file.content)
+    .filter((content) => content.length > 0);
 }
 
 /**
