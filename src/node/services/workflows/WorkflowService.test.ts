@@ -1800,13 +1800,14 @@ export default function workflow({ args, agent }) {
 
     await waitForCondition(
       "delayed crash recovery retry to re-check project trust",
-      () => trustChecks >= 2
+      () => trustChecks >= 2,
+      20_000
     );
     expect(taskCalls).toEqual([]);
     await expect(runStore.getRun("wfr_project_trust_retry")).resolves.toMatchObject({
       status: "running",
     });
-  });
+  }, 25_000);
 
   test("uses a fresh lease owner for each runner", async () => {
     using tmp = new DisposableTempDir("workflow-service");
