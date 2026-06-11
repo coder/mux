@@ -38,7 +38,9 @@ async function waitForWorkflowStatus(
   runId: string,
   status: string
 ): Promise<void> {
-  const deadline = Date.now() + 1_000;
+  // Match waitForCondition's 5s budget: loaded CI runners have hit >1s for the
+  // post-agent append/lease-renewal phase (see flaky "fresh persisted lease" failures).
+  const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     const run = await runStore.getRun(runId);
     if (run.status === status) {
@@ -55,7 +57,7 @@ async function waitForWorkflowRunFileStatus(
   status: string
 ): Promise<void> {
   const runFile = path.join(sessionDir, "workflows", runId, "run.json");
-  const deadline = Date.now() + 1_000;
+  const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     try {
       const run = JSON.parse(await fs.readFile(runFile, "utf-8")) as { status?: unknown };

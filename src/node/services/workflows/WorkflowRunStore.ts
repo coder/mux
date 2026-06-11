@@ -951,7 +951,10 @@ async function acquireWorkflowMutationLock(
     if (await acquireLeaseMutationLock(lockDir, Date.now(), staleLeaseMs)) {
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    // Jittered backoff: a fixed sleep can phase-lock with the periodic lease renewal (whose
+    // interval is also a small constant when staleLeaseMs is short, e.g. in tests), so every
+    // retry lands while a renewal holds the lock and waiters starve for hundreds of ms.
+    await new Promise((resolve) => setTimeout(resolve, 2 + Math.random() * 6));
   }
   throw new Error(`Timed out acquiring workflow mutation lock: ${lockDir}`);
 }
