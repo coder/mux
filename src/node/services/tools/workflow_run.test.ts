@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/require-await */
 import { describe, expect, mock, test } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
+import { COMPLETED_REPORT_REFETCH_NOTE } from "@/common/utils/tools/toolDefinitions";
 import { createWorkflowRunTool } from "./workflow_run";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
@@ -98,6 +99,7 @@ describe("workflow_run tool", () => {
         status: "completed",
         events: expect.arrayContaining([expect.objectContaining({ type: "phase", name: "scope" })]),
       }),
+      note: COMPLETED_REPORT_REFETCH_NOTE,
     });
   });
 

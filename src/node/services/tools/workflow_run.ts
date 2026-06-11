@@ -5,6 +5,7 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { log } from "@/node/services/log";
 import { recordAgentWorkflowRunReference } from "@/node/services/agentWorkflowRunReferences";
 import {
+  COMPLETED_REPORT_REFETCH_NOTE,
   WorkflowRunToolResultSchema,
   TOOL_DEFINITIONS,
 } from "@/common/utils/tools/toolDefinitions";
@@ -92,6 +93,7 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
           runId: result.runId,
           result: result.result,
           ...(run != null ? { run } : {}),
+          ...(result.status === "completed" ? { note: COMPLETED_REPORT_REFETCH_NOTE } : {}),
         },
         "workflow_run"
       );

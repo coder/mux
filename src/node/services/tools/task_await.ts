@@ -3,7 +3,11 @@ import { tool } from "ai";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { readSubagentGitPatchArtifact } from "@/node/services/subagentGitPatchArtifacts";
 import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
-import { TaskAwaitToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import {
+  COMPLETED_REPORT_REFETCH_NOTE,
+  TaskAwaitToolResultSchema,
+  TOOL_DEFINITIONS,
+} from "@/common/utils/tools/toolDefinitions";
 import type { WorkflowRunRecord, WorkflowRunStatus } from "@/common/types/workflow";
 
 import { fromBashTaskId, toBashTaskId } from "./taskId";
@@ -146,6 +150,7 @@ function buildWorkflowAwaitResult(run: WorkflowRunRecord) {
           ? { structuredOutput: result.structuredOutput }
           : {}),
         title: run.definition.name,
+        note: COMPLETED_REPORT_REFETCH_NOTE,
       };
     }
     case "failed":
@@ -512,6 +517,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               title: report.title,
               ...getAgentTaskElapsedField(taskId),
               ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
+              note: COMPLETED_REPORT_REFETCH_NOTE,
             };
           } catch (error: unknown) {
             const message = getErrorMessage(error);
@@ -539,6 +545,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             title: report.title,
             ...getAgentTaskElapsedField(taskId),
             ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
+            note: COMPLETED_REPORT_REFETCH_NOTE,
           };
         } catch (error: unknown) {
           if (error instanceof ForegroundWaitBackgroundedError) {

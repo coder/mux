@@ -4,6 +4,7 @@ import type {
   TodoListAttachment,
   LoadedSkillsSnapshotAttachment,
   EditedFilesReferenceAttachment,
+  CompletedReportsIndexAttachment,
 } from "@/common/types/attachment";
 import {
   AGENT_SKILL_BODY_TRUNCATION_NOTE,
@@ -48,6 +49,25 @@ function renderLoadedSkillsSnapshot(attachment: LoadedSkillsSnapshotAttachment):
 }
 
 /**
+ * Render the completed-reports index. Lists re-fetchable handles only (no report
+ * content): the full reports persist on disk and survive compaction, so the model
+ * can recover them via task_await instead of re-running expensive work.
+ */
+function renderCompletedReportsIndex(attachment: CompletedReportsIndexAttachment): string {
+  const lines = attachment.reports.map((report) => {
+    const title = report.title ? ` "${report.title}"` : "";
+    const tokens =
+      report.reportTokenEstimate != null ? `, ~${report.reportTokenEstimate} tokens` : "";
+    return `- ${report.id} [${report.kind}]${title} — completed ${new Date(report.completedAtMs).toISOString()}${tokens}`;
+  });
+
+  return `Completed sub-agent/workflow reports from before the last compaction (full content is no longer in context but persists on disk):
+${lines.join("\n")}
+
+Re-fetch any full report (reportMarkdown + structuredOutput) with task_await(task_ids: ["<id>"], timeout_secs: 0) instead of re-running the work.`;
+}
+
+/**
  * Render an edited files reference attachment to content string.
  */
 function renderEditedFilesReference(attachment: EditedFilesReferenceAttachment): string {
@@ -79,6 +99,8 @@ export function renderAttachmentToContent(attachment: PostCompactionAttachment):
       return renderLoadedSkillsSnapshot(attachment);
     case "edited_files_reference":
       return renderEditedFilesReference(attachment);
+    case "completed_reports_index":
+      return renderCompletedReportsIndex(attachment);
   }
 }
 
@@ -239,8 +261,11 @@ function sortAttachmentsForInjection(
   const priority: Record<PostCompactionAttachment["type"], number> = {
     plan_file_reference: 0,
     todo_list: 1,
-    loaded_skills_snapshot: 2,
-    edited_files_reference: 3,
+    // Small, high-value handles go before the bulky skill/diff blocks so budget
+    // truncation cannot drop them.
+    completed_reports_index: 2,
+    loaded_skills_snapshot: 3,
+    edited_files_reference: 4,
   };
 
   return attachments
@@ -300,6 +325,15 @@ export function renderAttachmentsToContentWithBudget(
 
     if (attachment.type === "todo_list") {
       const content = renderTodoListAttachment(attachment);
+      if (content.length <= remainingForContent) {
+        addBlock(wrapSystemUpdate(content));
+      }
+      continue;
+    }
+
+    if (attachment.type === "completed_reports_index") {
+      // Entries are capped one-liners, so all-or-nothing fits the budget in practice.
+      const content = renderCompletedReportsIndex(attachment);
       if (content.length <= remainingForContent) {
         addBlock(wrapSystemUpdate(content));
       }

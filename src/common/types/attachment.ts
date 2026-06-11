@@ -44,11 +44,33 @@ export interface LoadedSkillsSnapshotAttachment {
   skills: LoadedSkillSnapshot[];
 }
 
+export interface CompletedReportEntry {
+  /** task_await-compatible ID: sub-agent taskId or workflow runId (wfr_...). */
+  id: string;
+  kind: "task" | "workflow";
+  /** Sub-agent task title or workflow definition name. */
+  title?: string;
+  completedAtMs: number;
+  /** Estimated token count of the persisted report markdown (~4 chars/token). */
+  reportTokenEstimate?: number;
+}
+
+/**
+ * Index of completed sub-agent/workflow reports whose full content was summarized
+ * away by compaction. Reports persist on disk and can be re-fetched by ID via
+ * task_await, so the index only carries handles — never report content.
+ */
+export interface CompletedReportsIndexAttachment {
+  type: "completed_reports_index";
+  reports: CompletedReportEntry[];
+}
+
 export type PostCompactionAttachment =
   | PlanFileReferenceAttachment
   | TodoListAttachment
   | LoadedSkillsSnapshotAttachment
-  | EditedFilesReferenceAttachment;
+  | EditedFilesReferenceAttachment
+  | CompletedReportsIndexAttachment;
 
 /**
  * Exclusion state for post-compaction context items.

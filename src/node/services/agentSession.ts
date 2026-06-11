@@ -5336,6 +5336,8 @@ export class AgentSession {
       return this.buildAttachmentsFromContext({
         diffs: pendingState.diffs,
         loadedSkills: pendingState.loadedSkills,
+        // Compaction just completed, so every already-completed report predates the boundary.
+        reportsCompletedBeforeMs: Date.now(),
       });
     }
 
@@ -5368,7 +5370,17 @@ export class AgentSession {
       ...extractLoadedSkillSnapshotsFromMessages(historyResult.data),
     ]);
 
-    return this.buildAttachmentsFromContext({ diffs: fileDiffs, loadedSkills });
+    // Reports completed before the latest boundary had their tool results summarized away;
+    // anything newer is still visible in the active epoch and would be redundant.
+    const boundaryTimestampMs = historyResult.data.find(
+      (message) => message.metadata?.compactionBoundary === true
+    )?.metadata?.timestamp;
+
+    return this.buildAttachmentsFromContext({
+      diffs: fileDiffs,
+      loadedSkills,
+      reportsCompletedBeforeMs: boundaryTimestampMs ?? Date.now(),
+    });
   }
 
   /**
@@ -5379,9 +5391,18 @@ export class AgentSession {
   private async buildAttachmentsFromContext(context: {
     diffs: FileEditDiff[];
     loadedSkills: LoadedSkillSnapshot[];
+    /** Cutoff for the completed-reports index: reports completed before this were summarized away. */
+    reportsCompletedBeforeMs: number;
   }): Promise<PostCompactionAttachment[]> {
     const excludedItems = await this.loadExcludedItems();
     const todoAttachment = await this.loadTodoListAttachment(excludedItems);
+
+    // Host-side disk read (session dir), independent of workspace metadata/runtime.
+    const completedReportsAttachment = await AttachmentService.generateCompletedReportsAttachment({
+      workspaceId: this.workspaceId,
+      sessionDir: this.config.getSessionDir(this.workspaceId),
+      completedBeforeMs: context.reportsCompletedBeforeMs,
+    });
 
     const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
     if (!metadataResult.success) {
@@ -5390,6 +5411,10 @@ export class AgentSession {
 
       if (todoAttachment) {
         attachments.push(todoAttachment);
+      }
+
+      if (completedReportsAttachment) {
+        attachments.push(completedReportsAttachment);
       }
 
       const loadedSkillsAttachment = AttachmentService.generateLoadedSkillsAttachment(
@@ -5424,6 +5449,11 @@ export class AgentSession {
       const planIndex = attachments.findIndex((att) => att.type === "plan_file_reference");
       const insertIndex = planIndex === -1 ? 0 : planIndex + 1;
       attachments.splice(insertIndex, 0, todoAttachment);
+    }
+
+    if (completedReportsAttachment) {
+      // Final injection order is decided by the renderer's priority sort.
+      attachments.push(completedReportsAttachment);
     }
 
     return attachments;

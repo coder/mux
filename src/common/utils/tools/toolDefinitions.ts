@@ -552,6 +552,13 @@ const TaskAwaitToolArtifactsSchema = z
   })
   .strict();
 
+/**
+ * Appended to completed task/workflow results so the model knows the report is durable
+ * and can be re-fetched by ID after context compaction instead of re-running the work.
+ */
+export const COMPLETED_REPORT_REFETCH_NOTE =
+  'Report persisted on disk; re-fetch anytime (even after context compaction) with task_await(task_ids: ["<id>"], timeout_secs: 0).';
+
 export const TaskAwaitToolCompletedResultSchema = z
   .object({
     status: z.literal("completed"),
@@ -873,6 +880,7 @@ export const WorkflowRunToolResultSchema = z
     runId: z.string().min(1),
     result: z.unknown(),
     run: WorkflowRunRecordSchema.optional(),
+    note: z.string().optional(),
   })
   .strict();
 
@@ -1569,6 +1577,7 @@ export const TOOL_DEFINITIONS = {
       "Always wait for the task/bash/workflow_run tool result first, then call task_await in a subsequent step. " +
       "When omitting task_ids to await active tasks/workflows, ensure at least one background task or workflow was already spawned in a prior step. Omitted task_ids exclude workflow-owned sub-agents and their background bash tasks because those results are consumed through workflow runs. " +
       "\n\nAgent tasks and workflow runs return reports when completed. " +
+      "Completed reports are persisted on disk and survive context compaction: calling task_await on an already-completed task/workflow run ID (timeout_secs: 0 for non-blocking) re-fetches the full report instead of re-running the work. " +
       "Bash tasks return incremental output while running and a final reportMarkdown when they exit. " +
       "For bash tasks, you may optionally pass filter/filter_exclude to include/exclude output lines by regex. " +
       "WARNING: when using filter, non-matching lines are permanently discarded. " +

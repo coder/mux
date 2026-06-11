@@ -8,6 +8,7 @@ import type {
   PlanFileReferenceAttachment,
   LoadedSkillsSnapshotAttachment,
   EditedFilesReferenceAttachment,
+  CompletedReportsIndexAttachment,
 } from "@/common/types/attachment";
 
 describe("attachmentRenderer", () => {
@@ -125,6 +126,54 @@ describe("attachmentRenderer", () => {
     expect(content).toContain('<agent-skill name="react-effects" scope="project">');
     expect(content).not.toContain("File: src/a.ts");
     expect(content).toContain("omitted 1 file diff");
+  });
+
+  it("renders completed report handles with task_await re-fetch IDs but no report content", () => {
+    const attachment: CompletedReportsIndexAttachment = {
+      type: "completed_reports_index",
+      reports: [
+        {
+          id: "wfr_research",
+          kind: "workflow",
+          title: "deep-research",
+          completedAtMs: Date.parse("2026-06-01T12:00:00.000Z"),
+          reportTokenEstimate: 1200,
+        },
+        { id: "task-explore", kind: "task", completedAtMs: Date.parse("2026-06-01T13:00:00.000Z") },
+      ],
+    };
+
+    const content = renderAttachmentToContent(attachment);
+
+    expect(content).toContain("wfr_research");
+    expect(content).toContain("task-explore");
+    expect(content).toContain("task_await");
+  });
+
+  it("prioritizes completed report handles ahead of bulky file diffs under budget pressure", () => {
+    const editedFilesAttachment: EditedFilesReferenceAttachment = {
+      type: "edited_files_reference",
+      files: [{ path: "src/a.ts", diff: "a".repeat(2_000), truncated: false }],
+    };
+    const reportsAttachment: CompletedReportsIndexAttachment = {
+      type: "completed_reports_index",
+      reports: [
+        {
+          id: "wfr_research",
+          kind: "workflow",
+          completedAtMs: Date.parse("2026-06-01T12:00:00.000Z"),
+        },
+      ],
+    };
+
+    const content = renderAttachmentsToContentWithBudget(
+      [editedFilesAttachment, reportsAttachment],
+      { maxChars: 500 }
+    );
+
+    expect(content.length).toBeLessThanOrEqual(500);
+    expect(content).toContain("wfr_research");
+    expect(content).not.toContain("File: src/a.ts");
   });
 
   it("emits an omitted-file-diffs note when edited file diffs do not fit", () => {

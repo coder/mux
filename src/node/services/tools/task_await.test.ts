@@ -4,6 +4,7 @@ import { describe, it, expect, mock, spyOn } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
+import { COMPLETED_REPORT_REFETCH_NOTE } from "@/common/utils/tools/toolDefinitions";
 import type { WorkflowRunRecord, WorkflowRunStatus } from "@/common/types/workflow";
 import { createTaskAwaitTool } from "./task_await";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
@@ -104,6 +105,7 @@ describe("task_await tool", () => {
           reportMarkdown: "ok",
           title: undefined,
           artifacts: { gitFormatPatch },
+          note: COMPLETED_REPORT_REFETCH_NOTE,
         },
       ],
     });
@@ -191,8 +193,20 @@ describe("task_await tool", () => {
 
     expect(result).toEqual({
       results: [
-        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
-        { status: "completed", taskId: "t2", reportMarkdown: "report:t2", title: "title:t2" },
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "report:t1",
+          title: "title:t1",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
+        {
+          status: "completed",
+          taskId: "t2",
+          reportMarkdown: "report:t2",
+          title: "title:t2",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
       ],
     });
     expect(waitForAgentReport).toHaveBeenCalledWith(
@@ -237,6 +251,7 @@ describe("task_await tool", () => {
           reportMarkdown: "ok",
           title: undefined,
           elapsed_ms: 2500,
+          note: COMPLETED_REPORT_REFETCH_NOTE,
         },
       ],
     });
@@ -307,7 +322,15 @@ describe("task_await tool", () => {
     );
 
     expect(result).toEqual({
-      results: [{ status: "completed", taskId: "t1", reportMarkdown: "ok", title: undefined }],
+      results: [
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "ok",
+          title: undefined,
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
+      ],
     });
     expect(waitForAgentReport).toHaveBeenCalledTimes(1);
     expect(listBackgroundProcesses).toHaveBeenCalledTimes(0);
@@ -421,7 +444,15 @@ describe("task_await tool", () => {
     );
 
     expect(result).toEqual({
-      results: [{ status: "completed", taskId: "t1", reportMarkdown: "ok", title: undefined }],
+      results: [
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "ok",
+          title: undefined,
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
+      ],
     });
     expect(isDescendantAgentTask).toHaveBeenCalledTimes(0);
     expect(waitForAgentReport).toHaveBeenCalledTimes(1);
@@ -555,6 +586,7 @@ describe("task_await tool", () => {
         error?: string;
         reportMarkdown?: string;
         title?: string;
+        note?: string;
       }>;
     };
 
@@ -564,6 +596,7 @@ describe("task_await tool", () => {
       taskId: "real-child",
       reportMarkdown: "ok",
       title: undefined,
+      note: COMPLETED_REPORT_REFETCH_NOTE,
     });
     expect(result.results[1]).toMatchObject({
       status: "error",
@@ -671,6 +704,7 @@ describe("task_await tool", () => {
           title: "demo",
           elapsed_ms: 5000,
           run: completedRun,
+          note: COMPLETED_REPORT_REFETCH_NOTE,
         },
       ],
     });
@@ -797,6 +831,7 @@ describe("task_await tool", () => {
           title: "demo",
           elapsed_ms: 5000,
           run: completedRun,
+          note: COMPLETED_REPORT_REFETCH_NOTE,
         },
       ],
     });
@@ -825,7 +860,15 @@ describe("task_await tool", () => {
       excludeWorkflowTasks: true,
     });
     expect(result).toEqual({
-      results: [{ status: "completed", taskId: "t1", reportMarkdown: "ok", title: undefined }],
+      results: [
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "ok",
+          title: undefined,
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
+      ],
     });
   });
 
@@ -952,6 +995,7 @@ describe("task_await tool", () => {
           taskId: "t1",
           reportMarkdown: "ok",
           title: "cached-title",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
         },
       ],
     });
@@ -1001,7 +1045,13 @@ describe("task_await tool", () => {
 
     expect(result).toEqual({
       results: [
-        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "report:t1",
+          title: "title:t1",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
         { status: "running", taskId: "t2" },
       ],
     });
@@ -1040,8 +1090,20 @@ describe("task_await tool", () => {
 
     expect(result).toEqual({
       results: [
-        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
-        { status: "completed", taskId: "t2", reportMarkdown: "report:t2", title: "title:t2" },
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "report:t1",
+          title: "title:t1",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
+        {
+          status: "completed",
+          taskId: "t2",
+          reportMarkdown: "report:t2",
+          title: "title:t2",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
       ],
     });
   });
@@ -1076,8 +1138,20 @@ describe("task_await tool", () => {
 
     expect(result).toEqual({
       results: [
-        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
-        { status: "completed", taskId: "t2", reportMarkdown: "report:t2", title: "title:t2" },
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "report:t1",
+          title: "title:t1",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
+        {
+          status: "completed",
+          taskId: "t2",
+          reportMarkdown: "report:t2",
+          title: "title:t2",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
         { status: "running", taskId: "t3" },
       ],
     });
@@ -1105,8 +1179,20 @@ describe("task_await tool", () => {
 
     expect(result).toEqual({
       results: [
-        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
-        { status: "completed", taskId: "t2", reportMarkdown: "report:t2", title: "title:t2" },
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "report:t1",
+          title: "title:t1",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
+        {
+          status: "completed",
+          taskId: "t2",
+          reportMarkdown: "report:t2",
+          title: "title:t2",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
       ],
     });
   });
@@ -1139,7 +1225,13 @@ describe("task_await tool", () => {
 
     expect(result).toEqual({
       results: [
-        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "report:t1",
+          title: "title:t1",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
         { status: "error", taskId: "t2", error: "Boom" },
       ],
     });
@@ -1179,7 +1271,13 @@ describe("task_await tool", () => {
     );
     expect(firstResult).toEqual({
       results: [
-        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "report:t1",
+          title: "title:t1",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
         { status: "running", taskId: "t2" },
       ],
     });
@@ -1190,7 +1288,13 @@ describe("task_await tool", () => {
     );
     expect(secondResult).toEqual({
       results: [
-        { status: "completed", taskId: "t2", reportMarkdown: "report:t2", title: "title:t2" },
+        {
+          status: "completed",
+          taskId: "t2",
+          reportMarkdown: "report:t2",
+          title: "title:t2",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
       ],
     });
   });
@@ -1257,7 +1361,13 @@ describe("task_await tool", () => {
 
     expect(result).toEqual({
       results: [
-        { status: "completed", taskId: "t1", reportMarkdown: "report:t1", title: "title:t1" },
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "report:t1",
+          title: "title:t1",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
         { status: "error", taskId: "bash:p1", error: "proc boom" },
       ],
     });

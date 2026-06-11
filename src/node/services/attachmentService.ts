@@ -4,13 +4,25 @@ import type {
   LoadedSkillsSnapshotAttachment,
   LoadedSkillSnapshot,
   EditedFilesReferenceAttachment,
+  CompletedReportEntry,
+  CompletedReportsIndexAttachment,
 } from "@/common/types/attachment";
+import type { WorkflowRunEvent } from "@/common/types/workflow";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import type { FileEditDiff } from "@/common/utils/messages/extractEditedFiles";
+import assert from "@/common/utils/assert";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
-import { MAX_POST_COMPACTION_PLAN_CHARS } from "@/common/constants/attachments";
+import {
+  MAX_POST_COMPACTION_PLAN_CHARS,
+  MAX_POST_COMPACTION_REPORT_INDEX_ENTRIES,
+} from "@/common/constants/attachments";
+import {
+  CHARS_PER_TOKEN_ESTIMATE,
+  readSubagentReportArtifactsFile,
+} from "@/node/services/subagentReportArtifacts";
+import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 
 const TRUNCATED_PLAN_NOTE = "\n\n...(truncated)\n";
 
@@ -106,6 +118,93 @@ export class AttachmentService {
     return {
       type: "edited_files_reference",
       files,
+    };
+  }
+
+  /**
+   * Generate an index of completed sub-agent/workflow reports whose tool results were
+   * summarized away by compaction (completed before `completedBeforeMs`). Reports are
+   * already durably persisted in the session dir; this surfaces only re-fetchable
+   * handles (IDs), never report content, so the model can recover lost results via
+   * task_await instead of re-running expensive work.
+   */
+  static async generateCompletedReportsAttachment(params: {
+    workspaceId: string;
+    sessionDir: string;
+    completedBeforeMs: number;
+  }): Promise<CompletedReportsIndexAttachment | null> {
+    assert(params.workspaceId.length > 0, "generateCompletedReportsAttachment: workspaceId");
+    assert(params.sessionDir.length > 0, "generateCompletedReportsAttachment: sessionDir");
+    assert(
+      Number.isFinite(params.completedBeforeMs) && params.completedBeforeMs > 0,
+      "generateCompletedReportsAttachment: completedBeforeMs must be a positive timestamp"
+    );
+
+    const entries: CompletedReportEntry[] = [];
+
+    const reportsFile = await readSubagentReportArtifactsFile(params.sessionDir);
+    for (const entry of Object.values(reportsFile.artifactsByChildTaskId)) {
+      // Direct children only: grandchild reports are synthesized into the child's report.
+      if (entry.parentWorkspaceId !== params.workspaceId) {
+        continue;
+      }
+      // Workflow-owned sub-agent reports are consumed through their workflow run's report.
+      if (entry.workflowOwnedAncestorWorkspaceIds?.includes(params.workspaceId)) {
+        continue;
+      }
+      // Reports completed after the cutoff still have their tool results in visible context.
+      if (entry.updatedAtMs > params.completedBeforeMs) {
+        continue;
+      }
+      entries.push({
+        id: entry.childTaskId,
+        kind: "task",
+        ...(entry.title !== undefined ? { title: entry.title } : {}),
+        completedAtMs: entry.updatedAtMs,
+        ...(entry.reportTokenEstimate !== undefined
+          ? { reportTokenEstimate: entry.reportTokenEstimate }
+          : {}),
+      });
+    }
+
+    // listRuns is defensive (skips unreadable runs) and reads atomic snapshots, so a
+    // second read-only store instance against the same session dir is safe.
+    const runStore = new WorkflowRunStore({ sessionDir: params.sessionDir });
+    const runs = await runStore.listRuns();
+    for (const run of runs) {
+      if (run.workspaceId !== params.workspaceId || run.status !== "completed") {
+        continue;
+      }
+      const resultEvent = run.events.findLast(
+        (event): event is Extract<WorkflowRunEvent, { type: "result" }> => event.type === "result"
+      );
+      const completedAtMs = Date.parse(resultEvent?.at ?? run.updatedAt);
+      if (Number.isNaN(completedAtMs) || completedAtMs > params.completedBeforeMs) {
+        continue;
+      }
+      entries.push({
+        id: run.id,
+        kind: "workflow",
+        title: run.definition.name,
+        completedAtMs,
+        ...(resultEvent !== undefined
+          ? {
+              reportTokenEstimate: Math.ceil(
+                resultEvent.result.reportMarkdown.length / CHARS_PER_TOKEN_ESTIMATE
+              ),
+            }
+          : {}),
+      });
+    }
+
+    if (entries.length === 0) {
+      return null;
+    }
+
+    entries.sort((a, b) => b.completedAtMs - a.completedAtMs);
+    return {
+      type: "completed_reports_index",
+      reports: entries.slice(0, MAX_POST_COMPACTION_REPORT_INDEX_ENTRIES),
     };
   }
 
