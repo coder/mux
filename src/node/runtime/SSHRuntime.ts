@@ -3371,9 +3371,16 @@ export class SSHRuntime extends RemoteRuntime {
         // Skip protected trunk branch names to avoid accidental deletion.
         const PROTECTED_BRANCHES = ["main", "master", "trunk", "develop", "default"];
         if (branchToDelete && !PROTECTED_BRANCHES.includes(branchToDelete)) {
+          const branchRefArg = shescape.quote(`refs/heads/${branchToDelete}`);
           await execBuffered(
             this,
-            `${nhp}git --git-dir=${baseRepoPathArg} update-ref -d ${shescape.quote(`refs/heads/${branchToDelete}`)} 2>/dev/null || true`,
+            [
+              `branch_ref=${branchRefArg}`,
+              `branch_oid=$(git --git-dir=${baseRepoPathArg} rev-parse --verify --quiet "$branch_ref" 2>/dev/null || true)`,
+              '[ -n "$branch_oid" ] || exit 0',
+              `if git -C ${baseRepoPathArg} worktree list --porcelain | grep -Fqx "branch $branch_ref"; then exit 0; fi`,
+              `${nhp}git --git-dir=${baseRepoPathArg} update-ref -d "$branch_ref" "$branch_oid" 2>/dev/null || true`,
+            ].join("\n"),
             { cwd: "/tmp", timeout: 10 }
           ).catch(() => undefined);
         }
