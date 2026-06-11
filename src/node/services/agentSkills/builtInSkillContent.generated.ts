@@ -4608,6 +4608,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "- [Install](/install) - Download and installation instructions",
       "- [Why Parallelize?](/getting-started/why-parallelize) - Why parallelize?",
       "- [Keyboard Shortcuts](/config/keybinds) - Complete keyboard reference",
+      "- [Discord](https://cdr.co/mux-discord) - Community support/help",
       "- [AGENTS](/AGENTS) - Developer guide for AI assistants",
       "",
       "## License",
