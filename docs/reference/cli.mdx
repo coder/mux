@@ -193,7 +193,27 @@ Only one argument mode can be used per run:
 | `--args-file args.json`         | Exact JSON value read from a file         |
 | `--args-stdin`                  | Exact JSON value read from stdin          |
 
-Project-local workflows are executable only after the project is trusted. If a matching `.mux/workflows/<name>.js` exists in an untrusted project, `mux workflow run` fails before executing repo-controlled workflow code.
+Project-local workflows are executable only after the project is trusted. If a matching `.mux/workflows/<name>.js` exists in an untrusted project, `mux workflow run` fails before executing repo-controlled workflow code, and `mux workflow list`/`show` print a warning on stderr when project workflows are skipped for missing trust. Linked git worktrees inherit trust from the main repository path, so workflows in mux workspace checkouts of a trusted project are discovered. Grant trust headlessly with [`mux trust`](#mux-trust).
+
+## `mux trust`
+
+Trust gates all repo-controlled automation: project workflows, hooks, and `.mux` configuration. The desktop app records trust via Settings → Security; `mux trust` writes the same entry in `~/.mux/config.json` headlessly — no desktop app or server required, registering the project if it was never added to mux. A running desktop instance picks the change up automatically.
+
+```bash
+# Trust the project containing the current directory (git toplevel)
+mux trust
+
+# Trust an explicit directory
+mux trust --dir /path/to/repo
+
+# Revoke trust
+mux trust --revoke
+
+# Machine-readable output
+mux trust --json
+```
+
+Run from a linked git worktree (for example a mux workspace checkout), trust is recorded for the main repository path rather than the ephemeral worktree path. Review a repository before trusting it: trusted projects can execute repo-controlled code.
 
 ## `mux server`
 

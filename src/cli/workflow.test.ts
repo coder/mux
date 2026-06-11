@@ -3,11 +3,7 @@ import * as path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 import { DisposableTempDir } from "@/node/services/tempDir";
-import {
-  parseWorkflowArgs,
-  resolveWorkflowProjectDir,
-  workflowExperimentEnabled,
-} from "./workflow";
+import { parseWorkflowArgs, workflowExperimentEnabled } from "./workflow";
 
 const BUN_EXECUTABLE = process.execPath;
 const WORKFLOW_ENTRY = path.join(import.meta.dir, "workflow.ts");
@@ -70,17 +66,6 @@ describe("mux workflow CLI helpers", () => {
       count: 2,
       label: "review",
     });
-  });
-
-  test("normalizes implicit cwd to git root but preserves explicit --dir", async () => {
-    using tmp = new DisposableTempDir("workflow-cli-dir");
-    const repo = path.join(tmp.path, "repo");
-    const nested = path.join(repo, "packages", "app");
-    await fs.mkdir(nested, { recursive: true });
-    await Bun.$`git init`.cwd(repo).quiet();
-
-    expect(await resolveWorkflowProjectDir({ cwd: nested })).toBe(repo);
-    expect(await resolveWorkflowProjectDir({ cwd: tmp.path, explicitDir: nested })).toBe(nested);
   });
 
   test("CLI commands reject when dynamic-workflows is not enabled", async () => {
@@ -152,6 +137,70 @@ export default function workflow() { return { reportMarkdown: "should not run" }
       "mux workflow currently supports only local runtime"
     );
   });
+
+  test("CLI list warns on stderr when untrusted project workflows are skipped", async () => {
+    using tmp = new DisposableTempDir("workflow-cli-skip-warning");
+    const repo = path.join(tmp.path, "repo");
+    const muxRoot = path.join(tmp.path, "mux-root");
+    await fs.mkdir(path.join(repo, ".mux", "workflows"), { recursive: true });
+    await fs.mkdir(muxRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(repo, ".mux", "workflows", "echo-review.js"),
+      `// description: Echo review input
+export default function workflow() { return { reportMarkdown: "untrusted" }; }
+`,
+      "utf-8"
+    );
+
+    const result =
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo} -e dynamic-workflows`
+        .env({ ...process.env, MUX_ROOT: muxRoot })
+        .quiet();
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).not.toContain("echo-review");
+    const stderr = result.stderr.toString();
+    expect(stderr).toContain("skipped project workflows");
+    expect(stderr).toContain("not trusted");
+  }, 15_000);
+
+  test("CLI resolves trust through linked git worktrees of a trusted project", async () => {
+    using tmp = new DisposableTempDir("workflow-cli-worktree");
+    // realpath: git reports physical paths (macOS /var -> /private/var), and the
+    // worktree trust fallback compares them against config keys by exact path.
+    const base = await fs.realpath(tmp.path);
+    const repo = path.join(base, "repo");
+    const muxRoot = path.join(base, "mux-root");
+    const worktree = path.join(base, "worktree");
+    await fs.mkdir(path.join(repo, ".mux", "workflows"), { recursive: true });
+    await fs.mkdir(muxRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(repo, ".mux", "workflows", "echo-review.js"),
+      `// description: Echo review input
+export default function workflow() { return { reportMarkdown: "from worktree" }; }
+`,
+      "utf-8"
+    );
+    await Bun.$`git init`.cwd(repo).quiet();
+    await Bun.$`git config user.email dogfood@example.com`.cwd(repo).quiet();
+    await Bun.$`git config user.name Dogfood`.cwd(repo).quiet();
+    await Bun.$`git add .`.cwd(repo).quiet();
+    await Bun.$`git commit -m init`.cwd(repo).quiet();
+    await Bun.$`git worktree add ${worktree} -b feature`.cwd(repo).quiet();
+
+    // Trust only the main repository path; the worktree checkout itself has no
+    // trust entry, matching how mux config keys trust for workspace worktrees.
+    await trustProject(muxRoot, repo);
+
+    const result =
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${worktree} -e dynamic-workflows`
+        .env({ ...process.env, MUX_ROOT: muxRoot })
+        .quiet();
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("echo-review\tproject\tEcho review input");
+    expect(result.stderr.toString()).not.toContain("skipped project workflows");
+  }, 15_000);
 
   // Explicit timeout: this end-to-end test boots seven separate CLI subprocesses
   // (list/show/run variants) plus git setup; the default 5s budget is marginal

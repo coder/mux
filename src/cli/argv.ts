@@ -116,7 +116,7 @@ export function isCommandAvailable(
   command: string,
   env: CliEnvironment = detectCliEnvironment()
 ): boolean {
-  if (command === "run" || command === "workflow") {
+  if (command === "run" || command === "workflow" || command === "trust") {
     // Headless CLI commands are only available in bun/node, not bundled in Electron.
     return !env.isElectron;
   }

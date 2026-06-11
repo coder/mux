@@ -33,6 +33,7 @@ import {
   isCommandAvailable,
   isElectronLaunchArg,
 } from "./argv";
+import { exitAfterStdoutFlush } from "./processExit";
 
 const env = detectCliEnvironment();
 const subcommand = getSubcommand(process.argv, env);
@@ -61,13 +62,26 @@ if (subcommand === "run") {
   }
   process.argv.splice(env.firstArgIndex, 1); // Remove "workflow" since workflow.ts defines .name("mux workflow")
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const workflowCli = require("./workflow") as {
-    main: () => Promise<number>;
-    exitAfterStdoutFlush: (exitCode: number) => void;
-  };
+  const workflowCli = require("./workflow") as { main: () => Promise<number> };
   void workflowCli
     .main()
-    .then(workflowCli.exitAfterStdoutFlush)
+    .then(exitAfterStdoutFlush)
+    .catch((error: unknown) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    });
+} else if (subcommand === "trust") {
+  if (!isCommandAvailable("trust", env)) {
+    console.error("The 'trust' command is only available via the CLI (bun mux trust).");
+    console.error("It is not bundled in Electron.");
+    process.exit(1);
+  }
+  process.argv.splice(env.firstArgIndex, 1); // Remove "trust" since trust.ts defines .name("mux trust")
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const trustCli = require("./trust") as { main: () => Promise<number> };
+  void trustCli
+    .main()
+    .then(exitAfterStdoutFlush)
     .catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exit(1);
@@ -136,6 +150,9 @@ if (subcommand === "run") {
   }
   if (isCommandAvailable("workflow", env)) {
     program.command("workflow").description("List, inspect, and run workflow definitions");
+  }
+  if (isCommandAvailable("trust", env)) {
+    program.command("trust").description("Trust a project so repo-controlled automation can run");
   }
   program.command("server").description("Start the HTTP/WebSocket ORPC server");
   program.command("acp").description("ACP stdio interface for editor integration");

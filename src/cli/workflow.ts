@@ -3,10 +3,8 @@
  * `mux workflow` - Headless CLI runner for durable workflow definitions.
  */
 
-import { execFile } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { promisify } from "node:util";
 
 import { Command } from "commander";
 
@@ -38,8 +36,9 @@ import { WorkflowService } from "@/node/services/workflows/WorkflowService";
 import { WorkflowTaskServiceAdapter } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
 import { hasAnyConfiguredProvider, buildProvidersFromEnv } from "@/node/utils/providerRequirements";
 import { getParseOptions } from "./argv";
+import { exitAfterStdoutFlush } from "./processExit";
+import { resolveProjectDir, resolveProjectTrusted } from "./trust";
 
-const execFileAsync = promisify(execFile);
 const DYNAMIC_WORKFLOWS_EXPERIMENT = EXPERIMENT_IDS.DYNAMIC_WORKFLOWS;
 const VALID_EXPERIMENT_IDS = new Set<string>(Object.values(EXPERIMENT_IDS));
 const THINKING_LABELS_LIST = [...new Set(Object.values(THINKING_DISPLAY_LABELS))].join(", ");
@@ -51,11 +50,6 @@ export interface ParseWorkflowArgsInput {
   argsFile?: string;
   argsStdin?: boolean;
   stdinText?: string;
-}
-
-export interface ResolveWorkflowProjectDirInput {
-  cwd: string;
-  explicitDir?: string;
 }
 
 interface WorkflowCLIOptions {
@@ -133,21 +127,6 @@ export async function parseWorkflowArgs(input: ParseWorkflowArgsInput): Promise<
   return inputText.length > 0 ? { input: inputText } : {};
 }
 
-export async function resolveWorkflowProjectDir(
-  input: ResolveWorkflowProjectDirInput
-): Promise<string> {
-  if (input.explicitDir != null) {
-    const explicitDir = path.resolve(input.cwd, input.explicitDir);
-    await ensureDirectory(explicitDir);
-    return explicitDir;
-  }
-
-  const cwd = path.resolve(input.cwd);
-  await ensureDirectory(cwd);
-  const gitRoot = await findGitRoot(cwd);
-  return gitRoot ?? cwd;
-}
-
 function parseJsonArgs(text: string, label: string): unknown {
   try {
     return JSON.parse(text) as unknown;
@@ -178,23 +157,6 @@ function parseScalar(value: string): unknown {
     return Number(value);
   }
   return value;
-}
-
-async function findGitRoot(cwd: string): Promise<string | null> {
-  try {
-    const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"], { cwd });
-    const gitRoot = stdout.trim();
-    return gitRoot.length > 0 ? gitRoot : null;
-  } catch {
-    return null;
-  }
-}
-
-async function ensureDirectory(dirPath: string): Promise<void> {
-  const stats = await fs.stat(dirPath);
-  if (!stats.isDirectory()) {
-    throw new Error(`"${dirPath}" is not a directory`);
-  }
 }
 
 async function gatherStdin(): Promise<string> {
@@ -278,8 +240,38 @@ function buildExperimentsObject(experimentIds: readonly string[]) {
   };
 }
 
-function getProjectTrusted(realConfig: Config, projectDir: string): boolean {
-  return realConfig.loadConfigOrDefault().projects.get(projectDir)?.trusted ?? false;
+/**
+ * Discovery silently omits project workflows from untrusted projects, which reads
+ * like a discovery bug to users who just authored a workflow. Surface the trust
+ * gate on stderr (so --json stdout stays machine-parseable) whenever skipped
+ * project-local workflow candidates exist.
+ */
+async function warnIfUntrustedProjectWorkflowsSkipped(
+  projectDir: string,
+  projectTrusted: boolean
+): Promise<void> {
+  if (projectTrusted) {
+    return;
+  }
+  const workflowsDir = path.join(projectDir, ".mux", "workflows");
+  const hasCandidates =
+    (await dirHasWorkflowFiles(workflowsDir)) ||
+    (await dirHasWorkflowFiles(path.join(workflowsDir, ".scratch")));
+  if (!hasCandidates) {
+    return;
+  }
+  process.stderr.write(
+    `Warning: skipped project workflows in ${workflowsDir} because this project is not trusted. Review the repository, then run \`mux trust\` (or trust the project in Settings → Security) to include repo-controlled workflows.\n`
+  );
+}
+
+async function dirHasWorkflowFiles(dir: string): Promise<boolean> {
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    return entries.some((entry) => entry.isFile() && entry.name.endsWith(".js"));
+  } catch {
+    return false;
+  }
 }
 
 function createDefinitionStore(input: {
@@ -362,7 +354,7 @@ async function createWorkflowContext(options: {
     const workspaceId = generateWorkspaceId();
     assert(workspaceId.length > 0, "mux workflow generated an empty workspace id");
     const runtimeConfig = parseRuntimeConfig(options.opts.runtime);
-    const projectTrusted = getProjectTrusted(realConfig, options.projectDir);
+    const projectTrusted = await resolveProjectTrusted(realConfig, options.projectDir);
 
     services = createCoreServices({
       config,
@@ -463,13 +455,14 @@ function createWorkflowService(input: {
 }
 
 async function runList(options: WorkflowCLIOptions): Promise<number> {
-  const projectDir = await resolveWorkflowProjectDir({
+  const projectDir = await resolveProjectDir({
     cwd: process.cwd(),
     explicitDir: options.dir,
   });
   const realConfig = new Config();
   enforceWorkflowExperiment(realConfig, options.experiment);
-  const projectTrusted = getProjectTrusted(realConfig, projectDir);
+  const projectTrusted = await resolveProjectTrusted(realConfig, projectDir);
+  await warnIfUntrustedProjectWorkflowsSkipped(projectDir, projectTrusted);
   const store = createDefinitionStore({ realConfig, projectDir });
   const definitions = await store.listDefinitions({ projectTrusted });
   if (options.json) {
@@ -486,13 +479,14 @@ async function runShow(
   name: string,
   options: WorkflowCLIOptions & { source?: boolean }
 ): Promise<number> {
-  const projectDir = await resolveWorkflowProjectDir({
+  const projectDir = await resolveProjectDir({
     cwd: process.cwd(),
     explicitDir: options.dir,
   });
   const realConfig = new Config();
   enforceWorkflowExperiment(realConfig, options.experiment);
-  const projectTrusted = getProjectTrusted(realConfig, projectDir);
+  const projectTrusted = await resolveProjectTrusted(realConfig, projectDir);
+  await warnIfUntrustedProjectWorkflowsSkipped(projectDir, projectTrusted);
   const store = createDefinitionStore({ realConfig, projectDir });
   const definition = await store.readDefinition(name, { projectTrusted });
   if (options.json) {
@@ -518,7 +512,7 @@ async function runWorkflow(
   positionalInput: string[],
   options: WorkflowCLIOptions
 ): Promise<number> {
-  const projectDir = await resolveWorkflowProjectDir({
+  const projectDir = await resolveProjectDir({
     cwd: process.cwd(),
     explicitDir: options.dir,
   });
@@ -530,7 +524,7 @@ async function runWorkflow(
     name,
     store,
     projectDir,
-    projectTrusted: getProjectTrusted(realConfig, projectDir),
+    projectTrusted: await resolveProjectTrusted(realConfig, projectDir),
   });
 
   const args = await parseWorkflowArgs({
@@ -604,7 +598,7 @@ async function assertProjectWorkflowTrusted(input: {
     const stat = await fs.stat(workflowPath);
     if (stat.isFile()) {
       throw new Error(
-        `Project trust is required to execute project-local workflow: ${input.name}. Trust the project in Settings → Security before running repo-controlled workflow code.`
+        `Project trust is required to execute project-local workflow: ${input.name}. Review the repository, then run \`mux trust\` (or trust the project in Settings → Security) before running repo-controlled workflow code.`
       );
     }
   } catch (error) {
@@ -675,20 +669,6 @@ function configureLogging(options: Pick<WorkflowCLIOptions, "logLevel" | "verbos
     throw new Error(`Invalid log level "${options.logLevel}". Expected: error, warn, info, debug`);
   }
   log.setLevel(level as LogLevel);
-}
-
-export function exitAfterStdoutFlush(exitCode: number): void {
-  if (process.stdout.writableNeedDrain) {
-    const exit = () => process.exit(exitCode);
-    process.stdout.once("drain", exit);
-    // process.exit() can drop buffered stdout, but broken pipes or stuck
-    // backpressure should not keep a completed headless workflow alive.
-    process.stdout.once("error", exit);
-    process.stdout.once("close", exit);
-    setTimeout(exit, 1000).unref();
-    return;
-  }
-  process.exit(exitCode);
 }
 
 export async function main(): Promise<number> {
