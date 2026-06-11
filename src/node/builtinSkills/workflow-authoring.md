@@ -117,7 +117,7 @@ Returns:
 
 `taskId` is a host-issued patch artifact handle for workflow-owned child tasks. Pass the whole agent result as `applyPatch({ source: result })` instead of inventing task IDs.
 
-Agent steps can fail terminally instead of returning a report. In particular, a model can refuse to answer (`model_refusal`): the child task is interrupted immediately and `agent(...)` throws with a descriptive message (e.g. `The model refused to respond (finishReason: content-filter): ...`) rather than retrying the same refusing request in a loop. Wrap agent steps in `try/catch` when the workflow should continue past a failed step — for example by recording an "abstain" outcome for verifier quorums (a refusal is not a verdict):
+Agent steps can fail terminally instead of returning a report. In particular, a model can refuse to answer (`model_refusal`): the child task is interrupted immediately and `agent(...)` throws with a descriptive message (e.g. `The model refused to continue (finishReason: content-filter): ...`) rather than retrying the same refusing request in a loop. Wrap agent steps in `try/catch` when the workflow should continue past a failed step — for example by recording an "abstain" outcome for verifier quorums (a refusal is not a verdict):
 
 ```js
 let verdict;
@@ -125,7 +125,7 @@ try {
   const result = agent({ id: "verify", prompt, agentId: "explore" });
   verdict = result.structuredOutput;
 } catch (error) {
-  if (String(error).includes("refused to respond")) {
+  if (String(error).includes("refused to continue")) {
     // Treat the verifier as abstaining instead of failing the whole run.
     verdict = { outcome: "abstain", reason: String(error) };
   } else {

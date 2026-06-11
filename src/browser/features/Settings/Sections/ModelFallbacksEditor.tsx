@@ -160,9 +160,9 @@ export function ModelFallbacksEditor() {
     <div className="space-y-3">
       <div className="text-muted text-xs font-medium tracking-wide uppercase">Model Fallbacks</div>
       <p className="text-muted text-xs">
-        When a model refuses to respond (no output), retry the turn on the next model in its
-        fallback chain. Applies only to refusals — never to quota, auth, or network errors. Up to{" "}
-        {MODEL_FALLBACK_CHAIN_LIMIT} fallback models per chain.
+        When a model refuses to respond, retry the turn — or continue from partial output — on the
+        next model in its fallback chain. Applies only to refusals — never to quota, auth, or
+        network errors. Up to {MODEL_FALLBACK_CHAIN_LIMIT} fallback models per chain.
       </p>
 
       {entries.map(([source, entry]) => renderChainRow(source, entry.models))}

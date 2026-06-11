@@ -54,7 +54,7 @@ describe("WorkflowTaskServiceAdapter", () => {
 
   test("propagates terminal task failures (model refusal) instead of hanging", async () => {
     const refusalMessage =
-      "The model refused to respond (finishReason: content-filter): anthropic:claude-fable-5.";
+      "The model refused to continue (finishReason: content-filter): anthropic:claude-fable-5.";
     const create = mock(async (_args: unknown) =>
       Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
     );

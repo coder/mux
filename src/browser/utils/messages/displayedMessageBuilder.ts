@@ -18,6 +18,7 @@ import {
   getContextBoundaryKind,
 } from "@/common/utils/messages/compactionBoundary";
 import { isPlainObject } from "@/common/utils/isPlainObject";
+import { isRefusalFinishReason } from "@/common/utils/messages/refusalFinishReason";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   isSideQuestionAnswerMessage,
@@ -509,10 +510,6 @@ function appendToolRows(
   });
 }
 
-function isRefusalFinishReason(reason: string | undefined): boolean {
-  return reason === "content-filter" || reason === "refusal";
-}
-
 function getNestedString(value: unknown, path: string[]): string | undefined {
   let current = value;
   for (const segment of path) {
@@ -525,6 +522,8 @@ function getNestedString(value: unknown, path: string[]): string | undefined {
   return typeof current === "string" ? current : undefined;
 }
 
+// @ai-sdk/anthropic >=3.0.82 maps refusal stop details to this providerMetadata
+// shape; older persisted turns simply omit it and fall back to the generic row.
 function getProviderRefusalExplanation(message: MuxMessage): string | undefined {
   return getNestedString(message.metadata?.providerMetadata, [
     "anthropic",
@@ -538,7 +537,7 @@ function buildRefusalFinishMessage(message: MuxMessage): string {
   const explanation = getProviderRefusalExplanation(message);
   const base =
     `The provider refused to continue this response (finishReason: ${finishReason}). ` +
-    "Mux stopped the turn instead of treating it as complete.";
+    "This legacy turn may end abruptly because the older backend treated the refusal as complete.";
   return explanation ? `${base}\n\n${explanation}` : base;
 }
 

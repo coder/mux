@@ -37,6 +37,7 @@ import type { CodexOauthService } from "@/node/services/codexOauthService";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 
+import { addInterruptedSentinel } from "@/browser/utils/messages/modelMessageTransform";
 import { buildWorkflowRunCardMessage } from "@/common/utils/workflowRunMessages";
 import type { LanguageModel, Tool } from "ai";
 import { createMuxMessage } from "@/common/types/message";
@@ -1405,6 +1406,51 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(
       harness.preparedPayloadMessageIds[1]?.filter((id) => id === "interrupted-assistant-partial")
     ).toHaveLength(1);
+  });
+
+  it("drops reasoning-only continuations before adding interrupted sentinels for non-Anthropic fallbacks", () => {
+    const continuationAssistant: MuxMessage = {
+      id: "assistant-reasoning-only",
+      role: "assistant",
+      metadata: { partial: true, historySequence: 2 },
+      parts: [{ type: "reasoning", text: "internal scratchpad" }],
+    };
+
+    const { providerRequestMessages } = prepareProviderRequestMessages(
+      [createMuxMessage("latest-user", "user", "fix the issue"), continuationAssistant],
+      "openai",
+      "off"
+    );
+    const messagesWithSentinel = addInterruptedSentinel(providerRequestMessages);
+
+    expect(messagesWithSentinel.map((message) => message.id)).toEqual(["latest-user"]);
+  });
+
+  it("keeps reasoning-only continuations and sentinels for Anthropic thinking fallbacks", () => {
+    const continuationAssistant: MuxMessage = {
+      id: "assistant-reasoning-only",
+      role: "assistant",
+      metadata: { partial: true, historySequence: 2 },
+      parts: [
+        {
+          type: "reasoning",
+          text: "signed thinking",
+        },
+      ],
+    };
+
+    const { providerRequestMessages } = prepareProviderRequestMessages(
+      [createMuxMessage("latest-user", "user", "fix the issue"), continuationAssistant],
+      "anthropic",
+      "medium"
+    );
+    const messagesWithSentinel = addInterruptedSentinel(providerRequestMessages);
+
+    expect(messagesWithSentinel.map((message) => message.id)).toEqual([
+      "latest-user",
+      "assistant-reasoning-only",
+      "interrupted-assistant-reasoning-only",
+    ]);
   });
 
   it("emits startup breadcrumbs as runtime-status events before stream start", async () => {

@@ -9972,7 +9972,7 @@ describe("TaskService", () => {
     };
 
     const refusalMessage =
-      "The model refused to respond (finishReason: content-filter): anthropic:claude-fable-5.";
+      "The model refused to continue (finishReason: content-filter): anthropic:claude-fable-5.";
 
     // Waiter registered before the failure must reject promptly with the refusal
     // text — not block until the 10-minute report timeout.
@@ -10043,7 +10043,7 @@ describe("TaskService", () => {
     };
 
     const refusalMessage =
-      "The model refused to respond (finishReason: content-filter): anthropic:claude-fable-5.";
+      "The model refused to continue (finishReason: content-filter): anthropic:claude-fable-5.";
 
     await internal.handleTaskStreamError({
       type: "error",
@@ -10167,7 +10167,7 @@ describe("TaskService", () => {
     };
 
     const refusalMessage =
-      "The model refused to respond (finishReason: content-filter): anthropic:claude-fable-5.";
+      "The model refused to continue (finishReason: content-filter): anthropic:claude-fable-5.";
 
     // No foreground waiter exists (background child) when the refusal lands.
     await internal.handleTaskStreamError({
@@ -10250,7 +10250,7 @@ describe("TaskService", () => {
     };
 
     const refusalMessage =
-      "The model refused to respond (finishReason: content-filter): anthropic:claude-fable-5.";
+      "The model refused to continue (finishReason: content-filter): anthropic:claude-fable-5.";
 
     const readParentFailureMessages = async () => {
       const history = await collectFullHistory(historyService, parentId);
@@ -10340,7 +10340,7 @@ describe("TaskService", () => {
       type: "error",
       workspaceId: childId,
       messageId: "assistant-error-refusal",
-      error: "The model refused to respond (finishReason: refusal): anthropic:claude-fable-5.",
+      error: "The model refused to continue (finishReason: refusal): anthropic:claude-fable-5.",
       errorType: "model_refusal",
     });
 
