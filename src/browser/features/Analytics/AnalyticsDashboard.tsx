@@ -30,6 +30,7 @@ import { SummaryCards } from "./SummaryCards";
 import { TimingChart } from "./TimingChart";
 import { TokensByModelChart } from "./TokensByModelChart";
 import { formatProjectDisplayName } from "./analyticsUtils";
+import { buildTimeFilterPredicate } from "./sqlTimeFilter";
 
 interface AnalyticsDashboardProps {
   leftSidebarCollapsed: boolean;
@@ -105,6 +106,10 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
   const timingMetric = normalizeTimingMetric(rawTimingMetric);
 
   const dateRange = computeDateRange(timeRange);
+  // SQL predicate substituted for the time-filter placeholder in saved panels
+  // and the SQL explorer, so user-authored queries can opt into the header's
+  // date-range selection.
+  const timeFilterSql = buildTimeFilterPredicate(dateRange.from, dateRange.to);
 
   const summary = useAnalyticsSummary(projectPath, {
     from: dateRange.from,
@@ -321,13 +326,14 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
                 <SavedQueryPanel
                   key={query.id}
                   query={query}
+                  timeFilterSql={timeFilterSql}
                   onDelete={removeSavedQuery}
                   onUpdate={updateSavedQuery}
                 />
               ))}
             </div>
           )}
-          <SqlExplorer onSaveQuery={saveQuery} />
+          <SqlExplorer onSaveQuery={saveQuery} timeFilterSql={timeFilterSql} />
         </div>
       </div>
     </div>

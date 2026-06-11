@@ -10,6 +10,7 @@ import { ResultTable } from "../Tools/analyticsQuery/ResultTable";
 import { inferAxes, inferChartType } from "../Tools/analyticsQuery/chartHeuristics";
 import type { ChartType } from "../Tools/analyticsQuery/types";
 import { ChartTypePicker } from "./ChartTypePicker";
+import { substituteTimeFilter, TIME_FILTER_PLACEHOLDER } from "./sqlTimeFilter";
 
 export const SAMPLE_QUERIES = [
   {
@@ -31,6 +32,9 @@ export const SAMPLE_QUERIES = [
 ];
 
 interface SqlExplorerProps {
+  /** Predicate for the dashboard's date-range selection, substituted for the
+   *  time-filter placeholder before the SQL is executed. */
+  timeFilterSql: string;
   onSaveQuery?: (input: {
     label: string;
     sql: string;
@@ -68,9 +72,11 @@ export function SqlExplorer(props: SqlExplorerProps) {
     }
 
     const thisExecutionId = ++executionIdRef.current;
-    await executeQuery(normalizedSql);
+    await executeQuery(substituteTimeFilter(normalizedSql, props.timeFilterSql));
 
     if (thisExecutionId === executionIdRef.current) {
+      // Keep the raw SQL (with placeholder) so "Save as Panel" stores a query
+      // that keeps tracking the dashboard's date-range selection.
       setLastExecutedSql(normalizedSql);
     }
   };
@@ -179,6 +185,11 @@ export function SqlExplorer(props: SqlExplorerProps) {
               Run Query
             </Button>
           </div>
+        </div>
+
+        <div className="text-muted text-[10px]">
+          Use <code className="text-foreground">{TIME_FILTER_PLACEHOLDER}</code> in a WHERE clause
+          to filter by the selected date range (7D/30D/90D/All).
         </div>
 
         {error && (

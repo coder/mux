@@ -71,6 +71,7 @@ function createSavedQuery(overrides: Partial<SavedQuery> = {}): SavedQuery {
 function renderPanel(
   overrides: Partial<{
     query: SavedQuery;
+    timeFilterSql: string;
     onDelete: (id: string) => Promise<void> | void;
     onUpdate: (input: {
       id: string;
@@ -84,13 +85,27 @@ function renderPanel(
   const onDelete = overrides.onDelete ?? mock(() => Promise.resolve());
   const onUpdate = overrides.onUpdate ?? mock(() => Promise.resolve(null));
 
-  const view = render(
+  const buildElement = (timeFilterSql: string) => (
     <TooltipProvider>
-      <SavedQueryPanel query={query} onDelete={onDelete} onUpdate={onUpdate} />
+      <SavedQueryPanel
+        query={query}
+        timeFilterSql={timeFilterSql}
+        onDelete={onDelete}
+        onUpdate={onUpdate}
+      />
     </TooltipProvider>
   );
 
-  return { ...view, query, onDelete, onUpdate };
+  const view = render(buildElement(overrides.timeFilterSql ?? "TRUE"));
+
+  return {
+    ...view,
+    query,
+    onDelete,
+    onUpdate,
+    rerenderWithTimeFilter: (nextTimeFilterSql: string) =>
+      view.rerender(buildElement(nextTimeFilterSql)),
+  };
 }
 
 describe("SavedQueryPanel", () => {
@@ -113,6 +128,36 @@ describe("SavedQueryPanel", () => {
     mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
+  });
+
+  test("substitutes the dashboard time filter into the saved SQL and re-runs when it changes", async () => {
+    const query = createSavedQuery({
+      sql: "SELECT model FROM events WHERE {{time_filter}} GROUP BY model",
+    });
+    const view = renderPanel({ query, timeFilterSql: "(date >= DATE '2026-06-05')" });
+
+    await waitFor(() =>
+      expect(executeQueryMock).toHaveBeenCalledWith(
+        "SELECT model FROM events WHERE (date >= DATE '2026-06-05') GROUP BY model"
+      )
+    );
+
+    view.rerenderWithTimeFilter("TRUE");
+    await waitFor(() =>
+      expect(executeQueryMock).toHaveBeenCalledWith(
+        "SELECT model FROM events WHERE TRUE GROUP BY model"
+      )
+    );
+  });
+
+  test("does not re-run placeholder-free SQL when the time filter changes", async () => {
+    const view = renderPanel({ timeFilterSql: "TRUE" });
+
+    await waitFor(() => expect(executeQueryMock).toHaveBeenCalledTimes(1));
+    expect(executeQueryMock).toHaveBeenCalledWith(view.query.sql);
+
+    view.rerenderWithTimeFilter("(date >= DATE '2026-06-05')");
+    expect(executeQueryMock).toHaveBeenCalledTimes(1);
   });
 
   test("renders a panel-level SQL button and opens the dialog with the saved SQL", () => {
