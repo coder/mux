@@ -6,6 +6,21 @@ export const WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE = "workflow-trigger-display"
 export const WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE = "workflow-run-card-display";
 export const WORKFLOW_RESULT_METADATA_TYPE = "workflow-result";
 
+/**
+ * Tools whose output-available parts carry the run record/runId of a workflow run the agent
+ * owns. Card-projection guards, provenance scans, supersession checks, and preview seeding all
+ * answer this same membership question across browser and node layers — route them through
+ * this single predicate so a future run-emitting tool is a one-line change.
+ */
+export const WORKFLOW_RUN_EMITTING_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "workflow_run",
+  "workflow_resume",
+]);
+
+export function isWorkflowRunEmittingToolName(toolName: string): boolean {
+  return WORKFLOW_RUN_EMITTING_TOOL_NAMES.has(toolName);
+}
+
 export const WORKFLOW_RESULT_XML_TAG = "mux_workflow_result";
 
 function getWorkflowResultValue(result: unknown, run: WorkflowRunRecord | null): unknown {

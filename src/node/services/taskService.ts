@@ -75,7 +75,10 @@ import type { ParsedThinkingInput, ThinkingLevel } from "@/common/types/thinking
 import type { ErrorEvent, StreamEndEvent } from "@/common/types/stream";
 import type { WorkflowRunStatus } from "@/common/types/workflow";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
-import { isWorkflowDisplayOnlyMessage } from "@/common/utils/workflowRunMessages";
+import {
+  isWorkflowDisplayOnlyMessage,
+  isWorkflowRunEmittingToolName,
+} from "@/common/utils/workflowRunMessages";
 import {
   AgentReportInlineToolArgsSchema,
   AgentReportSubmittedReportSchema,
@@ -106,6 +109,7 @@ import { isWorkspaceArchived } from "@/common/utils/archive";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
+import { isWorkflowRunTaskId } from "@/node/services/tools/taskId";
 
 export type TaskKind = "agent";
 
@@ -397,8 +401,6 @@ function isWorkspaceBusyIdleOnlySend(error: unknown): boolean {
   );
 }
 
-const WORKFLOW_RUN_ID_PREFIX = "wfr_";
-
 const ACTIVE_BACKGROUND_WORKFLOW_RUN_STATUSES = new Set<WorkflowRunStatus>([
   "pending",
   "running",
@@ -559,9 +561,7 @@ function buildBackgroundAwaitPrompt(params: {
   );
 }
 
-function isWorkflowRunId(value: unknown): value is string {
-  return typeof value === "string" && value.startsWith(WORKFLOW_RUN_ID_PREFIX);
-}
+const isWorkflowRunId = isWorkflowRunTaskId;
 
 function collectWorkflowRunIdsFromToolOutput(output: unknown): string[] {
   if (output == null || typeof output !== "object") {
@@ -612,7 +612,9 @@ function collectAgentReferencedWorkflowRunIdsFromParts(
     if (!isDynamicToolPart(part) || part.state !== "output-available") {
       continue;
     }
-    if (part.toolName !== "workflow_run") {
+    // workflow_resume re-establishes agent provenance the same way workflow_run does: both
+    // outputs carry the runId of a run the agent explicitly owns.
+    if (!isWorkflowRunEmittingToolName(part.toolName)) {
       continue;
     }
     for (const runId of collectWorkflowRunIdsFromToolOutput(part.output)) {

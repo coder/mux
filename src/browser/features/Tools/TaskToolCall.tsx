@@ -107,10 +107,15 @@ const TaskStatusBadge: React.FC<{
       case "queued":
         return "bg-muted/20 text-muted";
       case "terminated":
+      case "interrupted":
+        // Workflow runs surface "interrupted" (resumable) through task_terminate results and
+        // task_list rows; style it like "terminated" rather than the muted default.
         return "bg-interrupted/20 text-interrupted";
       case "not_found":
       case "invalid_scope":
       case "error":
+      case "failed":
+        // Workflow-run terminal failure status (task_list rows).
         return "bg-danger/20 text-danger";
       default:
         return "bg-muted/20 text-muted";
@@ -1321,6 +1326,15 @@ export const TaskTerminateToolCall: React.FC<TaskTerminateToolCallProps> = ({
   const results = result?.results ?? [];
 
   const terminatedCount = results.filter((r) => r.status === "terminated").length;
+  // Workflow runs report "interrupted" (resumable) instead of "terminated"; both are
+  // successful outcomes of this tool and must be reflected in the header summary.
+  const interruptedCount = results.filter((r) => r.status === "interrupted").length;
+  const summaryParts = [
+    ...(terminatedCount > 0 ? [`${terminatedCount} terminated`] : []),
+    ...(interruptedCount > 0 ? [`${interruptedCount} interrupted`] : []),
+  ];
+  const summary =
+    summaryParts.length > 0 ? summaryParts.join(", ") : `${taskIds.length} to terminate`;
 
   return (
     <ToolContainer expanded={expanded}>
@@ -1328,9 +1342,7 @@ export const TaskTerminateToolCall: React.FC<TaskTerminateToolCallProps> = ({
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <TaskIcon toolName="task_terminate" />
         <ToolName>task_terminate</ToolName>
-        <span className="text-interrupted text-[10px]">
-          {terminatedCount > 0 ? `${terminatedCount} terminated` : `${taskIds.length} to terminate`}
-        </span>
+        <span className="text-interrupted text-[10px]">{summary}</span>
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
       </ToolHeader>
 
@@ -1350,6 +1362,9 @@ export const TaskTerminateToolCall: React.FC<TaskTerminateToolCallProps> = ({
                         Also terminated:{" "}
                         {r.terminatedTaskIds.filter((id) => id !== r.taskId).join(", ")}
                       </div>
+                    )}
+                    {"note" in r && r.note && (
+                      <div className="text-muted mt-1 text-[11px]">{r.note}</div>
                     )}
                     {"error" in r && r.error && (
                       <div className="text-danger mt-1 text-[11px]">{r.error}</div>

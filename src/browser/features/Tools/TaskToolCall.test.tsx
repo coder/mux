@@ -119,3 +119,51 @@ describe("TaskAwaitToolCall", () => {
     expect(view.queryByText("???")).toBeNull();
   });
 });
+
+const taskTerminateArgs = { task_ids: ["wfr_x"] };
+const TaskTerminateToolCall = getToolComponent("task_terminate", taskTerminateArgs);
+
+describe("TaskTerminateToolCall", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+
+  beforeEach(() => {
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+  });
+
+  afterEach(() => {
+    workspaceContextMock = null;
+    cleanup();
+    mock.restore();
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+  });
+
+  test("summarizes interrupted workflow runs and reveals the note when expanded", () => {
+    const note = "Workflow run interrupted durably; resume it with workflow_resume.";
+    const view = render(
+      <TooltipProvider>
+        <TaskTerminateToolCall
+          args={taskTerminateArgs}
+          status="completed"
+          result={{ results: [{ status: "interrupted", taskId: "wfr_x", note }] }}
+        />
+      </TooltipProvider>
+    );
+
+    // Interrupted workflow runs are a successful outcome, not a still-pending termination.
+    expect(view.getByText("1 interrupted")).toBeDefined();
+    expect(view.queryByText("1 to terminate")).toBeNull();
+    expect(view.queryByText(note)).toBeNull();
+
+    fireEvent.click(view.getByText("task_terminate"));
+
+    expect(view.getByText(note)).toBeDefined();
+    const badge = view.getByText("interrupted");
+    expect(badge.className).toContain("text-interrupted");
+  });
+});

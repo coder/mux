@@ -433,12 +433,14 @@ describe("TOOL_DEFINITIONS", () => {
     expect(disabledTools).not.toContain("workflow_read");
     expect(disabledTools).not.toContain("workflow_action_list");
     expect(disabledTools).not.toContain("workflow_run");
+    expect(disabledTools).not.toContain("workflow_resume");
 
     const enabledTools = getAvailableTools("openai:gpt-4o", { enableDynamicWorkflows: true });
     expect(enabledTools).toContain("workflow_list");
     expect(enabledTools).toContain("workflow_read");
     expect(enabledTools).toContain("workflow_action_list");
     expect(enabledTools).toContain("workflow_run");
+    expect(enabledTools).toContain("workflow_resume");
   });
 
   it("gates native Google tools to Gemini 3 models", () => {

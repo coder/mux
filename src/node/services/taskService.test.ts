@@ -95,6 +95,25 @@ async function workspaceGoalFileExists(config: Config, workspaceId: string): Pro
   }
 }
 
+async function waitForWorkspaceTaskStatus(
+  config: Config,
+  workspaceId: string,
+  expectedStatus: WorkspaceConfigEntry["taskStatus"],
+  timeoutMs = 20_000
+): Promise<void> {
+  const start = Date.now();
+  while (findWorkspaceInConfig(config, workspaceId)?.taskStatus !== expectedStatus) {
+    if (Date.now() - start > timeoutMs) {
+      const actualStatus = findWorkspaceInConfig(config, workspaceId)?.taskStatus;
+      throw new Error(
+        `Timed out waiting for workspace task status (workspaceId=${workspaceId}, expected=${String(expectedStatus)}, actual=${String(actualStatus)})`
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 async function waitForWorkspaceRemoval(
   config: Config,
   workspaceId: string,
@@ -892,6 +911,11 @@ describe("TaskService", () => {
     } finally {
       runBackgroundInitSpy.mockRestore();
     }
+
+    await Promise.all([
+      waitForWorkspaceTaskStatus(config, queuedTaskId, "running"),
+      waitForWorkspaceTaskStatus(config, acceptedStartingTaskId, "running"),
+    ]);
 
     const queued = findWorkspaceInConfig(config, queuedTaskId);
     expect(queued?.taskStatus).toBe("running");
@@ -3161,6 +3185,89 @@ describe("TaskService", () => {
     });
 
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("workflow_resume parts emitted after supersession re-establish provenance", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const workflowRunId = "wfr_resumed_after_supersession";
+    const assistantMessageId = "assistant-after-supersession";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [projectWorkspace(projectPath, "root", rootWorkspaceId)],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootWorkspaceId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: rootWorkspaceId,
+      definition: {
+        name: "background-research",
+        description: "Background research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    expect(
+      (
+        await historyService.appendToHistory(
+          rootWorkspaceId,
+          createMuxMessage("manual-user", "user", "Ignore the old workflow", { timestamp: 1_000 })
+        )
+      ).success
+    ).toBe(true);
+    expect(
+      (
+        await historyService.appendToHistory(
+          rootWorkspaceId,
+          createMuxMessage(assistantMessageId, "assistant", "", { timestamp: 2_000 })
+        )
+      ).success
+    ).toBe(true);
+
+    // The stream ends after the superseding user turn, so its workflow_resume output re-attaches
+    // the agent to the run and the auto-resume nudge must be delivered.
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: assistantMessageId,
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "workflow-resume-1",
+          toolName: "workflow_resume",
+          state: "output-available",
+          input: { run_id: workflowRunId, mode: "resume", run_in_background: true },
+          output: { status: "running", runId: workflowRunId, result: null },
+        },
+      ],
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      rootWorkspaceId,
+      expect.stringContaining(workflowRunId),
+      expect.anything(),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
   });
 
   test("does not trust persisted workflow refs after timestamp-less manual user turns", async () => {

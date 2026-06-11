@@ -34,6 +34,7 @@ import type {
   WorkflowListToolResultSchema,
   WorkflowReadToolResultSchema,
   WorkflowRunToolResultSchema,
+  WorkflowResumeToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
 
 // Bash Tool Types, derived from schema (avoid drift)
@@ -293,6 +294,13 @@ export type WorkflowRunToolArgs = z.infer<typeof TOOL_DEFINITIONS.workflow_run.s
 export type WorkflowRunToolSuccessResult = z.infer<typeof WorkflowRunToolResultSchema>;
 
 export type WorkflowRunToolResult = WorkflowRunToolSuccessResult | ToolErrorResult;
+
+// Workflow Resume Tool Types
+export type WorkflowResumeToolArgs = z.infer<typeof TOOL_DEFINITIONS.workflow_resume.schema>;
+
+export type WorkflowResumeToolSuccessResult = z.infer<typeof WorkflowResumeToolResultSchema>;
+
+export type WorkflowResumeToolResult = WorkflowResumeToolSuccessResult | ToolErrorResult;
 
 // Agent Report Tool Types
 export type AgentReportToolArgs = z.infer<typeof TOOL_DEFINITIONS.agent_report.schema>;

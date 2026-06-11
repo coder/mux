@@ -82,7 +82,10 @@ import {
   isSideQuestionAnswerMessage as isSideQuestionAnswerMuxMessage,
   isSideQuestionUserMessage as isSideQuestionUserMuxMessage,
 } from "@/common/utils/messages/sideQuestion";
-import { isWorkflowResultMessage } from "@/common/utils/workflowRunMessages";
+import {
+  isWorkflowResultMessage,
+  isWorkflowRunEmittingToolName,
+} from "@/common/utils/workflowRunMessages";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
@@ -378,7 +381,9 @@ function maybeCollectWorkflowDefinitionPreview(
   for (const part of message.parts) {
     if (
       !isDynamicToolPart(part) ||
-      part.toolName !== "workflow_run" ||
+      // workflow_resume outputs embed the same run record shape, so they can seed
+      // definition previews for synthetic continuation messages too.
+      !isWorkflowRunEmittingToolName(part.toolName) ||
       part.state !== "output-available"
     ) {
       continue;

@@ -56,6 +56,15 @@ Reusable project workflows live in `.mux/workflows/<name>.js`; global workflows 
 
 Default to foreground workflow runs. When a foreground `workflow_run` returns `status: "completed"`, the final result is available directly, avoiding an unnecessary `task_await` call just to discover completion. Set `run_in_background: true` only when another workflow/task or unrelated work can proceed in parallel. If any `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` with `task_await` before using the result.
 
+## Interrupting and resuming runs
+
+Runs are durable, so stopping one is non-destructive:
+
+- `task_terminate` with a `wfr_...` run ID interrupts the run; the event journal is preserved.
+- `workflow_resume` continues an `interrupted` (or crash-orphaned `running`/`backgrounded`) run from its last durable event — completed steps are replayed from the journal, never re-executed. Resuming a `completed` run just returns its existing result.
+- For `failed` runs, `workflow_resume` with `mode: "retry_from_checkpoint"` re-executes work after the last checkpoint; it is rejected when unfinished patch steps make that unsafe — start a fresh `workflow_run` instead.
+- After an app restart, rediscover resumable runs with `task_list` (statuses `interrupted`/`failed`).
+
 ## Available workflow globals
 
 A workflow default export receives one object:

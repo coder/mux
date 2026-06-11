@@ -1,18 +1,79 @@
 import { tool } from "ai";
 
+import { getErrorMessage } from "@/common/utils/errors";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
+import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
 import {
   TaskTerminateToolResultSchema,
   TOOL_DEFINITIONS,
 } from "@/common/utils/tools/toolDefinitions";
 
-import { fromBashTaskId } from "./taskId";
+import { fromBashTaskId, isWorkflowRunTaskId } from "./taskId";
 import {
   dedupeStrings,
   parseToolResult,
   requireTaskService,
   requireWorkspaceId,
 } from "./toolUtils";
+
+const WORKFLOW_INTERRUPTED_NOTE =
+  "Workflow run interrupted. Durable state is preserved; resume it later with workflow_resume.";
+
+/**
+ * Workflow runs are interrupted (resumable) rather than terminated: the durable event log is
+ * preserved, which is why this reports a distinct "interrupted" status instead of "terminated"
+ * (whose contract says in-progress work is discarded).
+ */
+async function interruptWorkflowRun(
+  config: ToolConfiguration,
+  workspaceId: string,
+  taskId: string
+) {
+  const workflowService = config.workflowService;
+  if (workflowService?.getRun == null || workflowService.interruptRun == null) {
+    return {
+      status: "error" as const,
+      taskId,
+      error: "Workflow service not available for workflow run interrupts",
+    };
+  }
+
+  // getRun is workspace-scoped: runs owned by other workspaces are reported as not found.
+  const rawRun = await workflowService.getRun({ workspaceId, runId: taskId });
+  if (rawRun == null) {
+    return { status: "not_found" as const, taskId };
+  }
+  // safeParse keeps batch entries isolated: one unreadable record must not collapse the
+  // whole Promise.all into a single opaque tool error (self-healing doctrine).
+  const parsedRun = WorkflowRunRecordSchema.safeParse(rawRun);
+  if (!parsedRun.success) {
+    return {
+      status: "error" as const,
+      taskId,
+      error: "Workflow run record is unreadable and cannot be interrupted.",
+    };
+  }
+  const run = parsedRun.data;
+
+  if (run.status === "interrupted") {
+    // Idempotent: re-interrupting an interrupted run is a no-op success.
+    return { status: "interrupted" as const, taskId, note: WORKFLOW_INTERRUPTED_NOTE };
+  }
+  if (run.status === "completed" || run.status === "failed") {
+    return {
+      status: "error" as const,
+      taskId,
+      error: `Workflow run is already ${run.status} and cannot be interrupted.`,
+    };
+  }
+
+  try {
+    await workflowService.interruptRun({ workspaceId, runId: taskId });
+  } catch (error: unknown) {
+    return { status: "error" as const, taskId, error: getErrorMessage(error) };
+  }
+  return { status: "interrupted" as const, taskId, note: WORKFLOW_INTERRUPTED_NOTE };
+}
 
 export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
@@ -26,6 +87,10 @@ export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) 
 
       const results = await Promise.all(
         uniqueTaskIds.map(async (taskId) => {
+          if (isWorkflowRunTaskId(taskId)) {
+            return await interruptWorkflowRun(config, workspaceId, taskId);
+          }
+
           const maybeProcessId = fromBashTaskId(taskId);
           if (taskId.startsWith("bash:") && !maybeProcessId) {
             return { status: "error" as const, taskId, error: "Invalid bash taskId." };

@@ -8,9 +8,10 @@ import {
   TaskAwaitToolResultSchema,
   TOOL_DEFINITIONS,
 } from "@/common/utils/tools/toolDefinitions";
+import { canRetryWorkflowFromCheckpoint } from "@/common/utils/workflowRetryEligibility";
 import type { WorkflowRunRecord, WorkflowRunStatus } from "@/common/types/workflow";
 
-import { fromBashTaskId, toBashTaskId } from "./taskId";
+import { fromBashTaskId, isWorkflowRunTaskId, toBashTaskId } from "./taskId";
 import { formatBashOutputReport } from "./bashTaskReport";
 import {
   dedupeStrings,
@@ -88,10 +89,6 @@ function buildTaskAwaitSequencingError(taskId: string, suggestedTaskIds: string[
   };
 }
 
-function isWorkflowRunId(taskId: string): boolean {
-  return taskId.startsWith("wfr_");
-}
-
 function isWorkflowRunAwaitableStatus(status: WorkflowRunStatus): boolean {
   return status === "pending" || status === "running" || status === "backgrounded";
 }
@@ -126,10 +123,14 @@ function getWorkflowRunReport(run: WorkflowRunRecord): {
 }
 
 function getWorkflowRunError(run: WorkflowRunRecord): string {
-  return (
+  const message =
     run.events.findLast((event) => event.type === "error")?.message ??
-    `Workflow ${run.definition.name} failed.`
-  );
+    `Workflow ${run.definition.name} failed.`;
+  // Surface the recovery affordance exactly where the agent sees the failure.
+  if (canRetryWorkflowFromCheckpoint(run)) {
+    return `${message} The run can be retried from its last durable checkpoint with workflow_resume (mode 'retry_from_checkpoint').`;
+  }
+  return message;
 }
 
 function buildWorkflowAwaitResult(run: WorkflowRunRecord) {
@@ -163,7 +164,7 @@ function buildWorkflowAwaitResult(run: WorkflowRunRecord) {
       return {
         status: "interrupted" as const,
         ...base,
-        note: `Workflow ${run.definition.name} was interrupted.`,
+        note: `Workflow ${run.definition.name} was interrupted. Durable state is preserved; resume it with workflow_resume.`,
       };
     case "pending":
       return {
@@ -286,7 +287,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         : await listInScopeAwaitableTaskIds();
 
       const agentTaskIds = uniqueTaskIds.filter(
-        (taskId) => !taskId.startsWith("bash:") && !isWorkflowRunId(taskId)
+        (taskId) => !taskId.startsWith("bash:") && !isWorkflowRunTaskId(taskId)
       );
       const bulkFilter = (
         taskService as unknown as {
@@ -465,7 +466,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           };
         }
 
-        if (isWorkflowRunId(taskId)) {
+        if (isWorkflowRunTaskId(taskId)) {
           return await awaitWorkflowRun(taskId, taskSignal);
         }
 

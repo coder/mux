@@ -346,6 +346,96 @@ describe("WorkspaceService workflow invocation events", () => {
     }
   });
 
+  test("counts workflow_resume output as the current invocation after manual supersession", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "workflow-currentness-resume";
+    const runId = "wfr_currentness_resume";
+    const projectPath = path.join(config.rootDir, "project");
+    try {
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: "workflow-currentness-resume",
+        projectName: "project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        aiService: createMockAIService({
+          stopStream: mock(() => Promise.resolve(Ok(undefined))),
+        }),
+        extensionMetadata: new ExtensionMetadataService(
+          path.join(config.rootDir, "extensionMetadata.json")
+        ),
+        initStateManager: {
+          ...mockInitStateManager,
+          off: mock(() => undefined as unknown as InitStateManager),
+        } as unknown as InitStateManager,
+      });
+
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("assistant-workflow-run", "assistant", "", { timestamp: 1_000 }, [
+          {
+            type: "dynamic-tool",
+            toolCallId: "workflow-call-1",
+            toolName: "workflow_run",
+            state: "output-available",
+            input: { name: "demo", args: {}, run_in_background: true },
+            output: { status: "running", runId, result: null },
+          },
+        ])
+      );
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("manual-user", "user", "Never mind, answer something else", {
+          timestamp: 1_100,
+        })
+      );
+
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(false);
+
+      // An unrelated tool output mentioning the run does not re-establish the invocation.
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("assistant-unrelated-tool", "assistant", "", { timestamp: 1_200 }, [
+          {
+            type: "dynamic-tool",
+            toolCallId: "task-list-1",
+            toolName: "task_list",
+            state: "output-available",
+            input: {},
+            output: { status: "running", runId, result: null },
+          },
+        ])
+      );
+
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(false);
+
+      // workflow_resume re-attaches the agent to the run, so the invocation counts as current
+      // again and the terminal continuation would be delivered.
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("assistant-workflow-resume", "assistant", "", { timestamp: 1_300 }, [
+          {
+            type: "dynamic-tool",
+            toolCallId: "workflow-resume-1",
+            toolName: "workflow_resume",
+            state: "output-available",
+            input: { run_id: runId, mode: "resume", run_in_background: true },
+            output: { status: "running", runId, result: null },
+          },
+        ])
+      );
+
+      expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(true);
+      workspaceService.disposeSession(workspaceId);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("keeps workflow invocations current across mid-stream auto-compaction requests", async () => {
     const { config, historyService, cleanup } = await createTestHistoryService();
     const workspaceId = "workflow-currentness-midstream-compact";

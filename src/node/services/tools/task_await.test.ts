@@ -11,6 +11,7 @@ import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { getSubagentGitPatchArtifactsFilePath } from "@/node/services/subagentGitPatchArtifacts";
 import { ForegroundWaitBackgroundedError, type TaskService } from "@/node/services/taskService";
+import { WORKFLOW_CHECKPOINT_RETRY_ERROR_MESSAGE } from "@/common/utils/workflowRetryEligibility";
 
 const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
@@ -714,6 +715,120 @@ describe("task_await tool", () => {
     });
   });
 
+  it("returns retry_from_checkpoint guidance for checkpoint-retryable failed workflow runs", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-workflow-retryable-failed");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const failedRun = createWorkflowRun("failed", [
+      {
+        sequence: 1,
+        type: "status",
+        at: "2026-01-01T00:00:01.000Z",
+        status: "running",
+      },
+      {
+        sequence: 2,
+        type: "error",
+        at: "2026-01-01T00:00:04.000Z",
+        message: WORKFLOW_CHECKPOINT_RETRY_ERROR_MESSAGE,
+      },
+      {
+        sequence: 3,
+        type: "status",
+        at: "2026-01-01T00:00:05.000Z",
+        status: "failed",
+      },
+    ]);
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      waitForAgentReport: mock(() => {
+        throw new Error("workflow run IDs should not be treated as agent tasks");
+      }),
+    } as unknown as TaskService;
+    const workflowService = {
+      getRun: mock(() => Promise.resolve(failedRun)),
+    };
+    const tool = createTaskAwaitTool({
+      ...baseConfig,
+      taskService,
+      workflowService: workflowService as unknown as TestWorkflowService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_demo"] }, mockToolCallOptions)
+    );
+
+    const workflowResult = result as { results: Array<{ error?: string }> };
+    expect(workflowResult.results).toHaveLength(1);
+    expect(workflowResult.results[0]).toMatchObject({
+      status: "error",
+      taskId: "wfr_demo",
+      elapsed_ms: 5000,
+      run: failedRun,
+    });
+    expect(workflowResult.results[0]?.error).toContain(WORKFLOW_CHECKPOINT_RETRY_ERROR_MESSAGE);
+    expect(workflowResult.results[0]?.error).toContain("workflow_resume");
+    expect(workflowResult.results[0]?.error).toContain("retry_from_checkpoint");
+  });
+
+  it("does not show checkpoint retry guidance for ordinary failed workflow runs", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-workflow-ordinary-failed");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const failedRun = createWorkflowRun("failed", [
+      {
+        sequence: 1,
+        type: "status",
+        at: "2026-01-01T00:00:01.000Z",
+        status: "running",
+      },
+      {
+        sequence: 2,
+        type: "error",
+        at: "2026-01-01T00:00:04.000Z",
+        message: "boom",
+      },
+      {
+        sequence: 3,
+        type: "status",
+        at: "2026-01-01T00:00:05.000Z",
+        status: "failed",
+      },
+    ]);
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      waitForAgentReport: mock(() => {
+        throw new Error("workflow run IDs should not be treated as agent tasks");
+      }),
+    } as unknown as TaskService;
+    const workflowService = {
+      getRun: mock(() => Promise.resolve(failedRun)),
+    };
+    const tool = createTaskAwaitTool({
+      ...baseConfig,
+      taskService,
+      workflowService: workflowService as unknown as TestWorkflowService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_demo"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        {
+          status: "error",
+          taskId: "wfr_demo",
+          error: "boom",
+          elapsed_ms: 5000,
+          run: failedRun,
+        },
+      ],
+    });
+  });
+
   it("discovers active workflow runs when task_ids is omitted", async () => {
     using tempDir = new TestTempDir("test-task-await-tool-workflow-discovery");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
@@ -836,6 +951,56 @@ describe("task_await tool", () => {
       ],
     });
     expect(workflowService.getRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns interrupted status with workflow_resume guidance for interrupted workflow runs", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-workflow-interrupted");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const interruptedRun = createWorkflowRun("interrupted", [
+      {
+        sequence: 1,
+        type: "status",
+        at: "2026-01-01T00:00:01.000Z",
+        status: "running",
+      },
+      {
+        sequence: 2,
+        type: "status",
+        at: "2026-01-01T00:00:05.000Z",
+        status: "interrupted",
+      },
+    ]);
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      waitForAgentReport: mock(() => {
+        throw new Error("workflow run IDs should not be treated as agent tasks");
+      }),
+    } as unknown as TaskService;
+    const workflowService = {
+      getRun: mock(() => Promise.resolve(interruptedRun)),
+    };
+    const tool = createTaskAwaitTool({
+      ...baseConfig,
+      taskService,
+      workflowService: workflowService as unknown as TestWorkflowService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_demo"] }, mockToolCallOptions)
+    );
+
+    // Interrupted is terminal for awaiting (durable state is kept), so the await resolves
+    // immediately instead of polling, and the note points the agent at workflow_resume.
+    const interruptedResult = result as { results: Array<{ note?: string }> };
+    expect(interruptedResult.results).toHaveLength(1);
+    expect(interruptedResult.results[0]).toMatchObject({
+      status: "interrupted",
+      taskId: "wfr_demo",
+      run: interruptedRun,
+    });
+    expect(interruptedResult.results[0]?.note).toContain("workflow_resume");
   });
 
   it("defaults to waiting on all active descendant tasks when task_ids is omitted", async () => {

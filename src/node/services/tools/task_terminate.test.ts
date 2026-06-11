@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment -- expect.stringContaining returns `any` in bun:test types */
 import { describe, it, expect, mock } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
@@ -81,6 +82,184 @@ describe("task_terminate tool", () => {
           status: "terminated",
           taskId: "parent-task",
           terminatedTaskIds: ["child-task", "parent-task"],
+        },
+      ],
+    });
+  });
+
+  const buildWorkflowRun = (status: string) => ({
+    id: "wfr_run_1",
+    workspaceId: "root-workspace",
+    definition: {
+      name: "deep-research",
+      description: "Deep research",
+      scope: "built-in" as const,
+      executable: true,
+    },
+    definitionSource: "export default function workflow() { return null; }",
+    definitionHash: "sha256:test",
+    args: {},
+    status,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:01.000Z",
+    events: [],
+    steps: [],
+  });
+
+  it("interrupts a workflow run and reports it as resumable", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-workflow");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const getRun = mock(() => Promise.resolve(buildWorkflowRun("running")));
+    const interruptRun = mock(() => Promise.resolve(buildWorkflowRun("interrupted")));
+    const taskService = {
+      terminateDescendantAgentTask: mock(() => {
+        throw new Error("workflow IDs must not reach agent task termination");
+      }),
+    } as unknown as TaskService;
+
+    const tool = createTaskTerminateTool({
+      ...baseConfig,
+      taskService,
+      workflowService: {
+        listDefinitions: mock(() => Promise.resolve([])),
+        readDefinition: mock(() => Promise.reject(new Error("unused"))),
+        startNamedWorkflow: mock(() => Promise.reject(new Error("unused"))),
+        getRun,
+        interruptRun,
+      },
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_run_1"] }, mockToolCallOptions)
+    );
+
+    expect(getRun).toHaveBeenCalledWith({ workspaceId: "root-workspace", runId: "wfr_run_1" });
+    expect(interruptRun).toHaveBeenCalledWith({
+      workspaceId: "root-workspace",
+      runId: "wfr_run_1",
+    });
+    expect(result).toEqual({
+      results: [
+        {
+          status: "interrupted",
+          taskId: "wfr_run_1",
+          note: expect.stringContaining("workflow_resume"),
+        },
+      ],
+    });
+  });
+
+  it("treats interrupting an already-interrupted workflow run as idempotent success", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-workflow-idempotent");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const interruptRun = mock(() => Promise.reject(new Error("must not re-interrupt")));
+    const tool = createTaskTerminateTool({
+      ...baseConfig,
+      taskService: {} as unknown as TaskService,
+      workflowService: {
+        listDefinitions: mock(() => Promise.resolve([])),
+        readDefinition: mock(() => Promise.reject(new Error("unused"))),
+        startNamedWorkflow: mock(() => Promise.reject(new Error("unused"))),
+        getRun: mock(() => Promise.resolve(buildWorkflowRun("interrupted"))),
+        interruptRun,
+      },
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_run_1"] }, mockToolCallOptions)
+    );
+
+    expect(interruptRun).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      results: [
+        {
+          status: "interrupted",
+          taskId: "wfr_run_1",
+          note: expect.stringContaining("workflow_resume"),
+        },
+      ],
+    });
+  });
+
+  it("rejects interrupting terminal workflow runs", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-workflow-terminal");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const interruptRun = mock(() => Promise.reject(new Error("must not interrupt terminal runs")));
+    const tool = createTaskTerminateTool({
+      ...baseConfig,
+      taskService: {} as unknown as TaskService,
+      workflowService: {
+        listDefinitions: mock(() => Promise.resolve([])),
+        readDefinition: mock(() => Promise.reject(new Error("unused"))),
+        startNamedWorkflow: mock(() => Promise.reject(new Error("unused"))),
+        getRun: mock(() => Promise.resolve(buildWorkflowRun("completed"))),
+        interruptRun,
+      },
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_run_1"] }, mockToolCallOptions)
+    );
+
+    expect(interruptRun).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      results: [
+        {
+          status: "error",
+          taskId: "wfr_run_1",
+          error: expect.stringContaining("already completed"),
+        },
+      ],
+    });
+  });
+
+  it("reports workflow runs outside this workspace as not found", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-workflow-not-found");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const tool = createTaskTerminateTool({
+      ...baseConfig,
+      taskService: {} as unknown as TaskService,
+      workflowService: {
+        listDefinitions: mock(() => Promise.resolve([])),
+        readDefinition: mock(() => Promise.reject(new Error("unused"))),
+        startNamedWorkflow: mock(() => Promise.reject(new Error("unused"))),
+        getRun: mock(() => Promise.resolve(null)),
+        interruptRun: mock(() => Promise.reject(new Error("unused"))),
+      },
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_other_workspace"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [{ status: "not_found", taskId: "wfr_other_workspace" }],
+    });
+  });
+
+  it("errors when workflow interrupts are requested without workflow support", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-workflow-no-service");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const tool = createTaskTerminateTool({
+      ...baseConfig,
+      taskService: {} as unknown as TaskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_run_1"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        {
+          status: "error",
+          taskId: "wfr_run_1",
+          error: expect.stringContaining("Workflow service not available"),
         },
       ],
     });
