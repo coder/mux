@@ -2637,11 +2637,17 @@ export class SSHRuntime extends RemoteRuntime {
     //      its latency is upstream→datacenter (typically fast, and the same
     //      cost the slow path pays separately).
     const warmBaseRepoNormalizationPreamble = [
-      ...BASE_REPO_SHARED_CONFIG_KEYS_TO_UNSET.map(
-        (key) =>
-          `git --git-dir=${baseRepoPathArg} config --local --unset-all ${shescape.quote(key)} 2>/dev/null || true`
+      ...BASE_REPO_SHARED_CONFIG_KEYS_TO_UNSET.map((key) =>
+        [
+          `git --git-dir=${baseRepoPathArg} config --local --unset-all ${shescape.quote(key)} 2>/dev/null`,
+          "cleanup_status=$?",
+          'if [ "$cleanup_status" -ne 0 ] && [ "$cleanup_status" -ne 5 ]; then echo WARM_MISS:base-config-normalization-failed; exit 0; fi',
+        ].join("\n")
       ),
-      `git --git-dir=${baseRepoPathArg} symbolic-ref HEAD ${baseRepoUnbornHeadArg} 2>/dev/null || true`,
+      // If the lightweight warm-path hygiene cannot run, fall back to the slow
+      // path where ensureBaseRepo() has retry/error handling instead of risking
+      // materializing a worktree from still-poisoned shared config.
+      `git --git-dir=${baseRepoPathArg} symbolic-ref HEAD ${baseRepoUnbornHeadArg} 2>/dev/null || { echo WARM_MISS:base-head-normalization-failed; exit 0; }`,
     ];
 
     const originPreamble = originUrlArg
