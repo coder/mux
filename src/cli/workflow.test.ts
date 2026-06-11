@@ -3,7 +3,7 @@ import * as path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 import { DisposableTempDir } from "@/node/services/tempDir";
-import { parseWorkflowArgs, workflowExperimentEnabled } from "./workflow";
+import { parseWorkflowArgs } from "./workflow";
 
 const BUN_EXECUTABLE = process.execPath;
 const WORKFLOW_ENTRY = path.join(import.meta.dir, "workflow.ts");
@@ -25,13 +25,6 @@ async function trustProject(muxRoot: string, repo: string): Promise<void> {
 }
 
 describe("mux workflow CLI helpers", () => {
-  test("requires dynamic-workflows experiment unless persisted override is on", () => {
-    expect(workflowExperimentEnabled([], "default")).toBe(false);
-    expect(workflowExperimentEnabled(["dynamic-workflows"], "default")).toBe(true);
-    expect(workflowExperimentEnabled([], "on")).toBe(true);
-    expect(workflowExperimentEnabled(["dynamic-workflows"], "off")).toBe(true);
-  });
-
   test("maps positional workflow input to an args object", async () => {
     const args = await parseWorkflowArgs({ positionalInput: ["review", "staged", "changes"] });
 
@@ -68,22 +61,22 @@ describe("mux workflow CLI helpers", () => {
     });
   });
 
-  test("CLI commands reject when dynamic-workflows is not enabled", async () => {
+  // Invoking the subcommand implies the dynamic-workflows experiment; no -e flag
+  // or persisted override is needed. Routed through index.ts to cover the `wf` alias.
+  test("CLI commands work without the dynamic-workflows experiment", async () => {
     using tmp = new DisposableTempDir("workflow-cli-experiment");
     const repo = path.join(tmp.path, "repo");
     const muxRoot = path.join(tmp.path, "mux-root");
     await fs.mkdir(repo, { recursive: true });
     await fs.mkdir(muxRoot, { recursive: true });
 
-    const result = await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo}`
+    const result = await Bun.$`${BUN_EXECUTABLE} ${INDEX_ENTRY} wf list --dir ${repo}`
       .env({ ...process.env, MUX_ROOT: muxRoot })
       .nothrow()
       .quiet();
 
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr.toString()).toContain(
-      "mux workflow requires the dynamic-workflows experiment"
-    );
+    expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
   });
 
   test("CLI run reports an actionable trust error for untrusted project workflows", async () => {
@@ -100,11 +93,10 @@ export default function workflow() { return { reportMarkdown: "untrusted" }; }
       "utf-8"
     );
 
-    const result =
-      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run echo-review --dir ${repo} -e dynamic-workflows`
-        .env({ ...process.env, MUX_ROOT: muxRoot })
-        .nothrow()
-        .quiet();
+    const result = await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run echo-review --dir ${repo}`
+      .env({ ...process.env, MUX_ROOT: muxRoot })
+      .nothrow()
+      .quiet();
 
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toString()).toContain(
@@ -127,7 +119,7 @@ export default function workflow() { return { reportMarkdown: "should not run" }
     );
 
     const result =
-      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run echo-review --dir ${repo} --runtime worktree -e dynamic-workflows`
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run echo-review --dir ${repo} --runtime worktree`
         .env({ ...process.env, MUX_ROOT: muxRoot })
         .nothrow()
         .quiet();
@@ -237,18 +229,17 @@ export default function workflow() { throw new Error("boom"); }
     await trustProject(muxRoot, repo);
 
     const routedListOutput =
-      await Bun.$`${BUN_EXECUTABLE} ${INDEX_ENTRY} workflow list --dir ${repo} -e dynamic-workflows`
+      await Bun.$`${BUN_EXECUTABLE} ${INDEX_ENTRY} workflow list --dir ${repo}`
         .env({ ...process.env, MUX_ROOT: muxRoot })
         .text();
     expect(routedListOutput).toContain("echo-review\tproject\tEcho review input");
 
-    const listOutput =
-      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo} -e dynamic-workflows`
-        .env({ ...process.env, MUX_ROOT: muxRoot })
-        .text();
+    const listOutput = await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo}`
+      .env({ ...process.env, MUX_ROOT: muxRoot })
+      .text();
     expect(listOutput).toContain("echo-review\tproject\tEcho review input");
     const showOutput =
-      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} show echo-review --dir ${repo} --source -e dynamic-workflows`
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} show echo-review --dir ${repo} --source`
         .env({ ...process.env, MUX_ROOT: muxRoot })
         .text();
     expect(showOutput).toContain("scope: project");
@@ -256,7 +247,7 @@ export default function workflow() { throw new Error("boom"); }
     expect(showOutput).toContain("export default function workflow");
 
     const runOutput =
-      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run echo-review --dir ${repo} --args-json ${'{"base":"main"}'} --json -e dynamic-workflows`
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run echo-review --dir ${repo} --args-json ${'{"base":"main"}'} --json`
         .env({ ...process.env, MUX_ROOT: muxRoot })
         .text();
     const lines = runOutput.trim().split("\n");
@@ -269,7 +260,7 @@ export default function workflow() { throw new Error("boom"); }
     });
 
     const quietOutput =
-      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run echo-review --dir ${repo} "hello" --quiet -e dynamic-workflows`
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run echo-review --dir ${repo} "hello" --quiet`
         .env({ ...process.env, MUX_ROOT: muxRoot })
         .text();
     expect(quietOutput).toBe('Echo: {"input":"hello"}\n');
@@ -284,8 +275,6 @@ export default function workflow() { throw new Error("boom"); }
         repo,
         "--args-stdin",
         "--json",
-        "-e",
-        "dynamic-workflows",
       ],
       {
         env: { ...process.env, MUX_ROOT: muxRoot },
@@ -310,11 +299,10 @@ export default function workflow() { throw new Error("boom"); }
       result: { reportMarkdown: 'Echo: {"fromStdin":true}' },
     });
 
-    const failedRun =
-      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run explode --dir ${repo} -e dynamic-workflows`
-        .env({ ...process.env, MUX_ROOT: muxRoot })
-        .nothrow()
-        .quiet();
+    const failedRun = await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run explode --dir ${repo}`
+      .env({ ...process.env, MUX_ROOT: muxRoot })
+      .nothrow()
+      .quiet();
     expect(failedRun.exitCode).toBe(1);
   }, 30_000);
 });
