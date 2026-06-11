@@ -6,7 +6,10 @@ import { execSync } from "node:child_process";
 
 import type { ToolExecutionOptions } from "ai";
 
-import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
+import {
+  applyTaskGitPatchArtifact,
+  createTaskApplyGitPatchTool,
+} from "@/node/services/tools/task_apply_git_patch";
 import {
   getSubagentGitPatchArtifactsFilePath,
   getSubagentGitPatchMboxPath,
@@ -87,7 +90,7 @@ async function writePatchArtifact(params: {
         projectPath: string;
         projectName: string;
         storageKey: string;
-        status: "skipped" | "failed";
+        status: "pending" | "skipped" | "failed";
         error?: string;
         commitCount?: number;
       }
@@ -949,6 +952,129 @@ describe("task_apply_git_patch tool", () => {
     expect(result.projectResults).toHaveLength(1);
     expect(result.appliedCommits?.map((commit) => commit.subject)).toEqual(["child change"]);
     expect(typeof result.headCommitSha).toBe("string");
+  }, 20_000);
+
+  it("waits for pending patch generation to become ready before applying", async () => {
+    const childRepo = path.join(rootDir, "child");
+    const targetRepo = path.join(rootDir, "target");
+    const sessionDir = path.join(rootDir, "session");
+    for (const repo of [childRepo, targetRepo, sessionDir]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+    }
+    initGitRepo(childRepo);
+    initGitRepo(targetRepo);
+
+    await commitFile(childRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "README.md", "hello", "base");
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+    await commitFile(childRepo, "README.md", "hello\nworld", "child change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const childTaskId = "child-task-1";
+    const workspaceId = getTestDeps().workspaceId;
+    // The task has reported but background `git format-patch` has not finished.
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId,
+      childTaskId,
+      projectArtifacts: [
+        {
+          projectPath: targetRepo,
+          projectName: "target",
+          storageKey: "target",
+          status: "pending",
+        },
+      ],
+    });
+
+    // Flip the artifact to ready while the apply call is polling.
+    const markReady = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await writePatchArtifact({
+        sessionDir,
+        workspaceId,
+        childTaskId,
+        projectArtifacts: [
+          await buildReadyProjectArtifact({
+            sessionDir,
+            childTaskId,
+            storageKey: "target",
+            projectPath: targetRepo,
+            projectName: "target",
+            childRepo,
+            baseSha,
+            headSha,
+          }),
+        ],
+      });
+    })();
+
+    const result = await applyTaskGitPatchArtifact(
+      {
+        ...getTestDeps(),
+        cwd: targetRepo,
+        runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+        runtimeTempDir: "/tmp",
+        workspaceSessionDir: sessionDir,
+      },
+      { task_id: childTaskId, three_way: true },
+      { pendingGenerationWaitMs: 10_000, pendingGenerationPollIntervalMs: 25 }
+    );
+    await markReady;
+
+    expect(result.success).toBe(true);
+    expect(result.projectResults?.map((projectResult) => projectResult.status)).toEqual([
+      "applied",
+    ]);
+  }, 20_000);
+
+  it("reports still-pending generation as a retryable non-conflict failure after the wait times out", async () => {
+    const targetRepo = path.join(rootDir, "target");
+    const sessionDir = path.join(rootDir, "session");
+    for (const repo of [targetRepo, sessionDir]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+    }
+    initGitRepo(targetRepo);
+    await commitFile(targetRepo, "README.md", "hello", "base");
+
+    const childTaskId = "child-task-1";
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId: getTestDeps().workspaceId,
+      childTaskId,
+      projectArtifacts: [
+        {
+          projectPath: targetRepo,
+          projectName: "target",
+          storageKey: "target",
+          status: "pending",
+        },
+      ],
+    });
+
+    const result = await applyTaskGitPatchArtifact(
+      {
+        ...getTestDeps(),
+        cwd: targetRepo,
+        runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+        runtimeTempDir: "/tmp",
+        workspaceSessionDir: sessionDir,
+      },
+      { task_id: childTaskId, dry_run: true, three_way: true },
+      { pendingGenerationWaitMs: 50, pendingGenerationPollIntervalMs: 10 }
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure result");
+    }
+    // The timing gap must not be reported as an apply conflict (workflows
+    // would otherwise spawn conflict-resolution agents for it).
+    expect(result.error).toContain("not an apply conflict");
+    expect(result.conflictPaths).toBeUndefined();
+    expect(result.projectResults?.map((projectResult) => projectResult.status)).toEqual([
+      "skipped",
+    ]);
   }, 20_000);
 
   it("replays patch artifacts from an ancestor session dir without mutating metadata", async () => {
