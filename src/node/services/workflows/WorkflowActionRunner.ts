@@ -563,6 +563,40 @@ function maskStaticJavaScriptSource(source: string): string {
       }
       continue;
     }
+    if (current === "/" && isRegExpLiteralStart(output)) {
+      // Mask regex literal bodies: characters like "//", "(", or "[" inside a regex
+      // (e.g. /https:\/\// or /\/\*[\s\S]*?\*\//) must not be misread as comments or
+      // counted toward bracket depth, which would unbalance the masked source.
+      output += " ";
+      index += 1;
+      let inCharacterClass = false;
+      while (index < source.length) {
+        const regexCurrent = source[index];
+        assert(regexCurrent != null, "maskStaticJavaScriptSource: regex character is required");
+        if (regexCurrent === "\n") {
+          // Regex literals cannot span lines; bail so a misclassified division
+          // (e.g. after a masked string) damages at most one line.
+          break;
+        }
+        output += " ";
+        index += 1;
+        if (regexCurrent === "\\") {
+          if (index < source.length && source[index] !== "\n") {
+            output += " ";
+            index += 1;
+          }
+          continue;
+        }
+        if (regexCurrent === "[") {
+          inCharacterClass = true;
+        } else if (regexCurrent === "]") {
+          inCharacterClass = false;
+        } else if (regexCurrent === "/" && !inCharacterClass) {
+          break;
+        }
+      }
+      continue;
+    }
     if (current === '"' || current === "'" || current === "`") {
       const quote = current;
       output += " ";
@@ -592,6 +626,62 @@ function maskStaticJavaScriptSource(source: string): string {
   }
   assert(output.length === source.length, "maskStaticJavaScriptSource must preserve indexes");
   return output;
+}
+
+// Keywords after which "/" begins a regex literal rather than division (e.g. `return /x/`).
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  "return",
+  "throw",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "case",
+  "do",
+  "else",
+  "yield",
+  "await",
+]);
+
+const IDENTIFIER_CHARACTER = /[A-Za-z0-9_$]/;
+
+/**
+ * Heuristic lexer rule for "/" disambiguation: division follows a value
+ * (identifier, number, ")", or "]"); a regex literal follows an operator,
+ * punctuation, start of file, or a keyword like `return`. Receives the already
+ * masked prefix so comment/string contents never influence the decision.
+ */
+function isRegExpLiteralStart(maskedPrefix: string): boolean {
+  let index = maskedPrefix.length - 1;
+  while (index >= 0) {
+    const character = maskedPrefix[index];
+    if (character === " " || character === "\n" || character === "\t" || character === "\r") {
+      index -= 1;
+      continue;
+    }
+    break;
+  }
+  if (index < 0) {
+    return true;
+  }
+  const character = maskedPrefix[index];
+  assert(character != null, "isRegExpLiteralStart: character is required");
+  if (IDENTIFIER_CHARACTER.test(character)) {
+    let start = index;
+    while (start >= 0) {
+      const wordCharacter = maskedPrefix[start];
+      assert(wordCharacter != null, "isRegExpLiteralStart: word character is required");
+      if (!IDENTIFIER_CHARACTER.test(wordCharacter)) {
+        break;
+      }
+      start -= 1;
+    }
+    return REGEX_PRECEDING_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
+  }
+  return character !== ")" && character !== "]";
 }
 
 function isTopLevelStaticMatch(maskedSource: string, matchIndex: number): boolean {

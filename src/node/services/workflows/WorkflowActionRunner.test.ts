@@ -361,6 +361,55 @@ describe("WorkflowActionRunner", () => {
     expect(description.hasReconcile).toBe(false);
   });
 
+  test("detects exports in sources containing regex literals", async () => {
+    using tmp = new DisposableTempDir("workflow-action-regex-mask");
+    const sourcePath = path.join(tmp.path, "regex.js");
+    // Regression: "//" inside regex literals (URL matchers, comment strippers) was
+    // misread as a line comment, swallowing the rest of the line. That unbalanced the
+    // masked source and hid the execute export ("must export an execute function").
+    const source = `
+      module.exports.metadata = { version: 1, description: "Regex", effect: "read" };
+      function stripBlockComments(text) {
+        return String(text).replace(/\\/\\*[\\s\\S]*?\\*\\//g, "");
+      }
+      function isHttpUrl(text) {
+        return /^https?:\\/\\//.test(text);
+      }
+      const half = 10 / 2;
+      module.exports.execute = async function (input) {
+        return { url: isHttpUrl(String(input)), ratio: stripBlockComments(String(input)).length / half };
+      };
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    const description = await runner.describe(createAction(sourcePath, source));
+
+    expect(description.metadata.description).toBe("Regex");
+    expect(description.hasReconcile).toBe(false);
+  });
+
+  test("describes every built-in workflow action", async () => {
+    // Built-in sources must always pass static describe validation; a failure here
+    // surfaces in the UI as a "blocked" action (e.g. security.hashFiles, whose regex
+    // literals previously broke the static export detection).
+    using tmp = new DisposableTempDir("workflow-action-built-in-describe");
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const runner = new WorkflowActionRunner();
+
+    const actions = await registry.listActions({ projectTrusted: false });
+
+    expect(actions.length).toBeGreaterThan(0);
+    for (const action of actions) {
+      const resolved = await registry.resolveAction(action.name, { projectTrusted: false });
+      const description = await runner.describe(resolved);
+      expect(description.metadata.description).toBeTruthy();
+    }
+  });
+
   test("does not rewrite export syntax inside action strings", async () => {
     using tmp = new DisposableTempDir("workflow-action-export-template");
     const sourcePath = path.join(tmp.path, "template.js");
