@@ -400,6 +400,13 @@ describe("WorkflowActionRunner", () => {
       `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = \`10\` / 2; module.exports.execute = async () => ({ n });`,
       `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; let count = 4; const n = count++ / 2; module.exports.execute = async () => ({ n });`,
       `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = { valueOf() { return 10; } } / 2; module.exports.execute = async () => ({ n });`,
+      // Object-literal division followed by a real regex on the same line: the later
+      // "/" must not be mistaken for the closing delimiter of a regex starting at the
+      // division slash (which would mask the execute export between them).
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = { valueOf() { return 10; } } / 2; module.exports.execute = async () => /x/.test("x");`,
+      // Counter-case: "}" closing a block (not an object literal) still starts a regex;
+      // the "(" inside the character class must stay masked or it corrupts paren depth.
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; if (globalThis.x) {} /^[(]/.test("a"); module.exports.execute = async () => ({ ok: true });`,
     ];
     const runner = new WorkflowActionRunner();
     for (const [index, source] of sources.entries()) {

@@ -704,6 +704,12 @@ function isRegExpLiteralStart(maskedPrefix: string): boolean {
     // Require exactly two: `a+++/x/` lexes as `a++ + /x/`, a regex context.
     return !(maskedPrefix[index - 1] === character && maskedPrefix[index - 2] !== character);
   }
+  if (character === "}") {
+    // "}" is ambiguous: an object literal end is a value (division follows), while a
+    // block end is statement position (regex follows). Classify by what introduced
+    // the matching "{".
+    return !isObjectLiteralEnd(maskedPrefix, index);
+  }
   // Values end with ")", "]", or a kept quote delimiter of a masked literal;
   // a "/" after any of these is division, not a regex literal.
   return (
@@ -713,6 +719,86 @@ function isRegExpLiteralStart(maskedPrefix: string): boolean {
     character !== "'" &&
     character !== "`"
   );
+}
+
+// Keywords that expect an expression next, so a following "{" opens an object literal
+// (e.g. `return {}`). Unlike REGEX_PRECEDING_KEYWORDS this excludes do/else, which
+// introduce blocks.
+const OBJECT_PRECEDING_KEYWORDS = new Set([
+  "return",
+  "throw",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "case",
+  "yield",
+  "await",
+]);
+
+/**
+ * Determines whether the "}" at closeBraceIndex ends an object literal (a value) or a
+ * block (statement position) by finding the matching "{" in the masked prefix and
+ * inspecting the token before it: expression contexts ("=", "(", "[", ",", ":", or an
+ * expression keyword like `return`) open object literals; anything else (statement
+ * start, ")", "=>", ";") is treated as a block.
+ */
+function isObjectLiteralEnd(maskedPrefix: string, closeBraceIndex: number): boolean {
+  assert(maskedPrefix[closeBraceIndex] === "}", "isObjectLiteralEnd: index must point at '}'");
+  let depth = 0;
+  let openBraceIndex = -1;
+  for (let index = closeBraceIndex; index >= 0; index -= 1) {
+    const character = maskedPrefix[index];
+    if (character === "}") {
+      depth += 1;
+    } else if (character === "{") {
+      depth -= 1;
+      if (depth === 0) {
+        openBraceIndex = index;
+        break;
+      }
+    }
+  }
+  if (openBraceIndex <= 0) {
+    // Unmatched or file-initial "{": statement-position block.
+    return false;
+  }
+  let index = openBraceIndex - 1;
+  while (index >= 0) {
+    const character = maskedPrefix[index];
+    if (character === " " || character === "\n" || character === "\t" || character === "\r") {
+      index -= 1;
+      continue;
+    }
+    break;
+  }
+  if (index < 0) {
+    return false;
+  }
+  const character = maskedPrefix[index];
+  assert(character != null, "isObjectLiteralEnd: character is required");
+  if (character === "=") {
+    return true;
+  }
+  if (character === "(" || character === "[" || character === "," || character === ":") {
+    return true;
+  }
+  if (IDENTIFIER_CHARACTER.test(character)) {
+    let start = index;
+    while (start >= 0) {
+      const wordCharacter = maskedPrefix[start];
+      assert(wordCharacter != null, "isObjectLiteralEnd: word character is required");
+      if (!IDENTIFIER_CHARACTER.test(wordCharacter)) {
+        break;
+      }
+      start -= 1;
+    }
+    return OBJECT_PRECEDING_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
+  }
+  return false;
 }
 
 function isTopLevelStaticMatch(maskedSource: string, matchIndex: number): boolean {
