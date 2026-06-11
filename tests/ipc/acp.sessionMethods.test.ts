@@ -315,7 +315,7 @@ describe("ACP unstable session support", () => {
 
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
 
-    const firstPage = await harness.agent.unstable_listSessions({
+    const firstPage = await harness.agent.listSessions({
       cwd: "/repo/a/",
     });
 
@@ -327,7 +327,7 @@ describe("ACP unstable session support", () => {
       new Date(repoAArchivedRecency).toISOString(),
     ]);
 
-    const secondPage = await harness.agent.unstable_listSessions({
+    const secondPage = await harness.agent.listSessions({
       cwd: "/repo/a/",
       cursor: "1",
     });
@@ -351,7 +351,7 @@ describe("ACP unstable session support", () => {
 
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
 
-    const listResponse = await harness.agent.unstable_listSessions({
+    const listResponse = await harness.agent.listSessions({
       cwd: "/repo/monorepo/packages/api",
     });
     expect(listResponse.sessions.map((session) => session.sessionId)).toEqual(["ws-sub-project"]);
@@ -373,13 +373,13 @@ describe("ACP unstable session support", () => {
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
 
     await expect(
-      harness.agent.unstable_listSessions({
+      harness.agent.listSessions({
         cursor: "not-a-number",
       })
     ).rejects.toThrow("invalid cursor");
 
     await expect(
-      harness.agent.unstable_listSessions({
+      harness.agent.listSessions({
         cursor: "1abc",
       })
     ).rejects.toThrow("invalid cursor");
@@ -400,7 +400,7 @@ describe("ACP unstable session support", () => {
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
 
     await expect(
-      harness.agent.unstable_resumeSession({
+      harness.agent.resumeSession({
         sessionId: "ws-cwd-check",
         cwd: "/repo/wrong",
         mcpServers: [],
@@ -422,7 +422,7 @@ describe("ACP unstable session support", () => {
 
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
 
-    const response = await harness.agent.unstable_resumeSession({
+    const response = await harness.agent.resumeSession({
       sessionId: "ws-resume",
       cwd: "/repo/resume/",
       mcpServers: [],
@@ -449,7 +449,7 @@ describe("ACP unstable session support", () => {
 
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
 
-    await harness.agent.unstable_resumeSession({
+    await harness.agent.resumeSession({
       sessionId: "ws-live-to-full",
       cwd: "/repo/resume",
       mcpServers: [],
@@ -600,17 +600,17 @@ describe("ACP unstable session support", () => {
 
     await harness.agent.initialize({ protocolVersion: PROTOCOL_VERSION });
 
-    await harness.agent.unstable_resumeSession({
+    await harness.agent.resumeSession({
       sessionId: "ws-a",
       cwd: "/repo/lru",
       mcpServers: [],
     });
-    await harness.agent.unstable_resumeSession({
+    await harness.agent.resumeSession({
       sessionId: "ws-b",
       cwd: "/repo/lru",
       mcpServers: [],
     });
-    await harness.agent.unstable_resumeSession({
+    await harness.agent.resumeSession({
       sessionId: "ws-c",
       cwd: "/repo/lru",
       mcpServers: [],

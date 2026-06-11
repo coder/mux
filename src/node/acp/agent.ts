@@ -84,8 +84,8 @@ const ACP_DELEGATION_CANDIDATE_TOOLS = [
 ] as const;
 const DEFAULT_DISCONNECT_CLEANUP_MAX_WAIT_MS = 10_000;
 /**
- * ACP currently has no session/close RPC. Keep idle sessions bounded so long-lived
- * editor connections cannot leak subscriptions and per-session caches forever.
+ * Mux does not implement the session/close RPC yet. Keep idle sessions bounded so
+ * long-lived editor connections cannot leak subscriptions and per-session caches forever.
  */
 const DEFAULT_SESSION_IDLE_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_TRACKED_SESSIONS = 24;
@@ -425,9 +425,9 @@ export class MuxAgent implements Agent {
     return resumed.response;
   }
 
-  async unstable_listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
-    this.assertInitialized("unstable_listSessions");
-    assert(params != null, "unstable_listSessions: params are required");
+  async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
+    this.assertInitialized("listSessions");
+    assert(params != null, "listSessions: params are required");
 
     const normalizedCwd = normalizeOptionalPath(params.cwd);
     const offset = parseSessionListCursor(params.cursor);
@@ -464,14 +464,14 @@ export class MuxAgent implements Agent {
     };
   }
 
-  async unstable_resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
-    this.assertInitialized("unstable_resumeSession");
+  async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
+    this.assertInitialized("resumeSession");
 
     const sessionId = params.sessionId.trim();
-    assert(sessionId.length > 0, "unstable_resumeSession: sessionId must be non-empty");
+    assert(sessionId.length > 0, "resumeSession: sessionId must be non-empty");
 
     const cwd = params.cwd.trim();
-    assert(cwd.length > 0, "unstable_resumeSession: cwd must be non-empty");
+    assert(cwd.length > 0, "resumeSession: cwd must be non-empty");
 
     const existingState = this.sessionStateById.get(sessionId);
     const resumed = await loadSessionFromWorkspace(
@@ -628,6 +628,13 @@ export class MuxAgent implements Agent {
     const workspaceId = this.sessionManager.getWorkspaceId(sessionId);
     const trimmedConfigId = params.configId.trim();
     assert(trimmedConfigId.length > 0, "setSessionConfigOption: configId must be non-empty");
+
+    // ACP supports boolean config options since schema 0.13, but mux only
+    // exposes select options; reject boolean values until one exists.
+    assert(
+      typeof params.value === "string",
+      `setSessionConfigOption: config option '${trimmedConfigId}' expects a select value`
+    );
 
     const activeAgentId = this.sessionStateById.get(sessionId)?.agentId;
     const configOptions = await handleSetConfigOption(
@@ -2352,10 +2359,10 @@ function parseSessionListCursor(cursor: string | null | undefined): number {
     return 0;
   }
 
-  assert(/^\d+$/.test(trimmed), `unstable_listSessions: invalid cursor '${cursor}'`);
+  assert(/^\d+$/.test(trimmed), `listSessions: invalid cursor '${cursor}'`);
 
   const parsed = Number(trimmed);
-  assert(Number.isSafeInteger(parsed), `unstable_listSessions: invalid cursor '${cursor}'`);
+  assert(Number.isSafeInteger(parsed), `listSessions: invalid cursor '${cursor}'`);
   return parsed;
 }
 
