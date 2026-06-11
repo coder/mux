@@ -7,7 +7,6 @@ import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchive
 import type { WorktreeArchiveBehavior } from "@/common/config/worktreeArchiveBehavior";
 import type {
   AppConfigMigrations,
-  FeatureFlagOverride,
   ModelFallbacks,
   UpdateChannel,
 } from "@/common/config/schemas/appConfigOnDisk";
@@ -25,7 +24,7 @@ export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
-export type { FeatureFlagOverride, UpdateChannel };
+export type { UpdateChannel };
 
 export interface ProjectsConfig {
   projects: Map<string, ProjectConfig>;
@@ -77,8 +76,6 @@ export interface ProjectsConfig {
   defaultProjectDir?: string;
   /** IDs of splash screens that have been viewed */
   viewedSplashScreens?: string[];
-  /** Cross-client feature flag overrides (shared via ~/.mux/config.json). */
-  featureFlagOverrides?: Record<string, FeatureFlagOverride>;
   /** User preferences shared across local browser origins through ~/.mux/config.json. */
   userPreferences?: UserPreferences;
   /** Global task settings (agent sub-workspaces, queue limits, nesting depth) */

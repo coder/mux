@@ -16,7 +16,6 @@ import type {
   Workspace,
   ProjectConfig,
   ProjectsConfig,
-  FeatureFlagOverride,
   UpdateChannel,
 } from "@/common/types/project";
 import type {
@@ -1016,7 +1015,6 @@ export class Config {
           // support legacy mirror compatibility.
           subagentAiDefaults: legacySubagentAiDefaults,
           migrations,
-          featureFlagOverrides: parsed.featureFlagOverrides,
           useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
           muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
           muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
@@ -1201,9 +1199,6 @@ export class Config {
       if (defaultProjectDir) {
         data.defaultProjectDir = defaultProjectDir;
       }
-      if (config.featureFlagOverrides) {
-        data.featureFlagOverrides = config.featureFlagOverrides;
-      }
       const userPreferences = normalizeUserPreferences(config.userPreferences);
       if (userPreferences) {
         data.userPreferences = userPreferences;
@@ -1341,32 +1336,6 @@ export class Config {
   async setUpdateChannel(channel: UpdateChannel): Promise<void> {
     await this.editConfig((config) => {
       config.updateChannel = channel;
-      return config;
-    });
-  }
-
-  /**
-   * Cross-client feature flag overrides (shared via ~/.mux/config.json).
-   */
-  getFeatureFlagOverride(flagKey: string): FeatureFlagOverride {
-    const config = this.loadConfigOrDefault();
-    const override = config.featureFlagOverrides?.[flagKey];
-    if (override === "on" || override === "off" || override === "default") {
-      return override;
-    }
-    return "default";
-  }
-
-  async setFeatureFlagOverride(flagKey: string, override: FeatureFlagOverride): Promise<void> {
-    await this.editConfig((config) => {
-      const next = { ...(config.featureFlagOverrides ?? {}) };
-      if (override === "default") {
-        delete next[flagKey];
-      } else {
-        next[flagKey] = override;
-      }
-
-      config.featureFlagOverrides = Object.keys(next).length > 0 ? next : undefined;
       return config;
     });
   }

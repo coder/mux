@@ -82,8 +82,6 @@ export const AppConfigMigrationsSchema = z
   // their one-time migrations after re-upgrade (see normalizeConfigMigrations).
   .catchall(z.boolean());
 
-export const FeatureFlagOverrideSchema = z.enum(["default", "on", "off"]);
-
 export const UpdateChannelSchema = z.enum(["stable", "nightly"]);
 
 export const AppConfigOnDiskSchema = z
@@ -98,7 +96,6 @@ export const AppConfigOnDiskSchema = z
     serverAuthGithubOwner: z.string().optional(),
     defaultProjectDir: z.string().optional(),
     viewedSplashScreens: z.array(z.string()).optional(),
-    featureFlagOverrides: z.record(z.string(), FeatureFlagOverrideSchema).optional(),
     layoutPresets: z.unknown().optional(),
     userPreferences: UserPreferencesSchema.optional(),
     taskSettings: TaskSettingsSchema.optional(),
@@ -170,7 +167,6 @@ export type GoalDefaultsConfig = z.infer<typeof GoalDefaultsSchema>;
 export type ModelFallbackTrigger = z.infer<typeof ModelFallbackTriggerSchema>;
 export type ModelFallbackEntry = z.infer<typeof ModelFallbackEntrySchema>;
 export type ModelFallbacks = z.infer<typeof ModelFallbacksSchema>;
-export type FeatureFlagOverride = z.infer<typeof FeatureFlagOverrideSchema>;
 export type UpdateChannel = z.infer<typeof UpdateChannelSchema>;
 
 export type AppConfigOnDisk = z.infer<typeof AppConfigOnDiskSchema>;

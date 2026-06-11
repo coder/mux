@@ -49,10 +49,9 @@ export default function workflow() { return { reportMarkdown: "trusted via cli" 
       trusted: true,
     });
 
-    const listTrusted =
-      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo} -e dynamic-workflows`
-        .env(env)
-        .quiet();
+    const listTrusted = await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo}`
+      .env(env)
+      .quiet();
     expect(listTrusted.stdout.toString()).toContain("echo-review\tproject\tEcho review input");
     expect(listTrusted.stderr.toString()).not.toContain("skipped project workflows");
 
@@ -65,10 +64,9 @@ export default function workflow() { return { reportMarkdown: "trusted via cli" 
       trusted: false,
     });
 
-    const listRevoked =
-      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo} -e dynamic-workflows`
-        .env(env)
-        .quiet();
+    const listRevoked = await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo}`
+      .env(env)
+      .quiet();
     expect(listRevoked.stdout.toString()).not.toContain("echo-review");
     expect(listRevoked.stderr.toString()).toContain("skipped project workflows");
   }, 15_000);

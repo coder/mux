@@ -7,6 +7,8 @@ import { parseWorkflowArgs } from "./workflow";
 
 const BUN_EXECUTABLE = process.execPath;
 const WORKFLOW_ENTRY = path.join(import.meta.dir, "workflow.ts");
+// index.ts imports the generated src/version.ts; direct `bun test` runs in a fresh
+// worktree need `./scripts/generate-version.sh` first (`make test` generates it).
 const INDEX_ENTRY = path.join(import.meta.dir, "index.ts");
 
 async function getRejectedMessage(promise: Promise<unknown>): Promise<string> {
@@ -77,6 +79,17 @@ describe("mux workflow CLI helpers", () => {
 
     expect(result.stderr.toString()).toBe("");
     expect(result.exitCode).toBe(0);
+
+    // Backward compat: historical scripted invocations passed -e dynamic-workflows
+    // (the required syntax before the gate was removed); it must stay accepted as a
+    // no-op even if the experiment ID ever graduates out of EXPERIMENT_IDS.
+    const legacyFlag =
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo} -e dynamic-workflows`
+        .env({ ...process.env, MUX_ROOT: muxRoot })
+        .nothrow()
+        .quiet();
+    expect(legacyFlag.stderr.toString()).toBe("");
+    expect(legacyFlag.exitCode).toBe(0);
   });
 
   test("CLI run reports an actionable trust error for untrusted project workflows", async () => {

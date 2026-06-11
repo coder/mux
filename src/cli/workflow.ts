@@ -674,7 +674,12 @@ export async function main(): Promise<number> {
     .option("--args-json <json>", "workflow args as JSON")
     .option("--args-file <path>", "read workflow args JSON from a file")
     .option("--args-stdin", "read workflow args JSON from stdin")
-    .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
+    .option(
+      "-e, --experiment <id>",
+      "enable an additional experiment for workflow-owned child agents (can be repeated)",
+      collectExperiments,
+      []
+    )
     .option("-v, --verbose", "show info-level logs")
     .option("--log-level <level>", "set log level: error, warn, info, debug");
 
