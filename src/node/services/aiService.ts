@@ -1362,6 +1362,7 @@ export class AIService extends EventEmitter {
           workspacePath,
           workspaceId,
           agentDefinition,
+          effectiveMode,
           agentDiscoveryRuntime,
           agentDiscoveryPath,
           isSubagentWorkspace,

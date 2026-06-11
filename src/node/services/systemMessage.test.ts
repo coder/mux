@@ -457,7 +457,7 @@ Plan thoroughly before proposing.
       undefined,
       undefined,
       undefined,
-      { mode: "plan" }
+      { modes: ["plan"] }
     );
 
     const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
@@ -466,6 +466,44 @@ Plan thoroughly before proposing.
     expect(systemMessage).toContain("<mode-plan>");
     expect(systemMessage).toContain("Plan thoroughly before proposing.");
     expect(systemMessage).toContain("</mode-plan>");
+  });
+
+  test("Mode: plan matches custom plan-like agents via the effective mode candidate", async () => {
+    // A custom plan-like agent runs with effectiveMode "plan" but keeps its
+    // own agent id; both candidates are checked so "Mode: plan" guidance
+    // still applies (and per-agent sections also match).
+    await fs.mkdir(path.join(workspaceDir, ".mux"), { recursive: true });
+    await fs.writeFile(
+      path.join(workspaceDir, ".mux", "AGENTS.md"),
+      `## Mode: plan
+Shared plan-mode guidance.
+
+## Mode: my-planner
+Planner-specific guidance.
+`
+    );
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(
+      metadata,
+      runtime,
+      workspaceDir,
+      undefined,
+      undefined,
+      undefined,
+      { modes: ["plan", "my-planner"] }
+    );
+
+    const modeSection = extractTagContent(systemMessage, "mode-plan") ?? "";
+    expect(modeSection).toContain("Shared plan-mode guidance.");
+    expect(modeSection).toContain("Planner-specific guidance.");
   });
 
   test("ignores Mode sections in shared workspace AGENTS.md and non-matching modes", async () => {
@@ -499,7 +537,7 @@ Exec-only guidance.
       undefined,
       undefined,
       undefined,
-      { mode: "plan" }
+      { modes: ["plan"] }
     );
 
     // Shared AGENTS.md Mode: headings stay plain markdown; no mode tag is built
@@ -545,7 +583,7 @@ Plan-only guidance.
       undefined,
       undefined,
       undefined,
-      { mode: "plan" }
+      { modes: ["plan"] }
     );
 
     const modeSection = extractTagContent(systemMessage, "mode-plan") ?? "";

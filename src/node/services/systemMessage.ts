@@ -477,9 +477,10 @@ export async function loadInstructionSources(
  *    single-project workspaces
  * 3. Model: Extracts "Model: <regex>" sections from Mux-dedicated sources only
  *    (agent definition → .mux/AGENTS.md context files → ~/.mux/AGENTS.md), if modelString provided
- * 4. Mode: Extracts "Mode: <mode>" sections from the same Mux-dedicated sources, if options.mode
- *    provided. Shared AGENTS.md files never contribute Model:/Mode: sections — non-Mux agents
- *    read those files too, so the headings stay ordinary markdown there.
+ * 4. Mode: Extracts "Mode: <mode>" sections from the same Mux-dedicated sources for every
+ *    options.modes candidate (effective mode + agent id). Shared AGENTS.md files never contribute
+ *    Model:/Mode: sections — non-Mux agents read those files too, so the headings stay ordinary
+ *    markdown there.
  *
  * File search order: AGENTS.md → AGENT.md → CLAUDE.md
  * Local variants: AGENTS.local.md appended if found (for .gitignored personal preferences)
@@ -507,10 +508,13 @@ export async function buildSystemMessage(
      */
     agentSystemPromptSections?: readonly string[];
     /**
-     * Active mode (agent id, e.g. "plan"/"exec"/custom agent name) used to
-     * extract "Mode: <mode>" sections from Mux-dedicated instruction sources.
+     * Active mode identifiers used to extract "Mode: <mode>" sections from
+     * Mux-dedicated instruction sources: the effective mode (plan/exec/compact)
+     * plus the agent id, so "Mode: plan" covers custom plan-like agents and
+     * "Mode: <agent>" covers per-agent sections. The first entry names the
+     * injected <mode-...> tag. Duplicates are ignored.
      */
-    mode?: string;
+    modes?: readonly string[];
   }
 ): Promise<string> {
   if (!metadata) throw new Error("Invalid workspace metadata: metadata is required");
@@ -554,8 +558,9 @@ export async function buildSystemMessage(
   const agentPromptSections = (options?.agentSystemPromptSections ?? [])
     .map((section) => section.trim())
     .filter((section) => section.length > 0);
-  const trimmedMode = options?.mode?.trim();
-  const mode = trimmedMode && trimmedMode.length > 0 ? trimmedMode : null;
+  const modeCandidates = Array.from(
+    new Set((options?.modes ?? []).map((m) => m.trim()).filter((m) => m.length > 0))
+  );
 
   // Strip the scoped sections a source honors before injecting its plain text:
   // Mux-dedicated sources honor Model:/Mode:/Tool:, shared files only Tool:.
@@ -602,13 +607,18 @@ export async function buildSystemMessage(
         .join("\n\n")
     : null;
 
-  // Extract mode-specific section based on active mode (agent id)
-  const modeContent = mode
-    ? muxScopedSources
-        .map((src) => (src ? extractModeSection(src, mode) : null))
-        .filter((content): content is string => content != null && content.trim().length > 0)
-        .join("\n\n")
-    : null;
+  // Extract mode-specific sections for every candidate (effective mode +
+  // agent id). Source priority dominates: all candidates are checked within a
+  // source before moving to the next source.
+  const modeContent =
+    modeCandidates.length > 0
+      ? muxScopedSources
+          .flatMap((src) =>
+            src ? modeCandidates.map((candidate) => extractModeSection(src, candidate)) : []
+          )
+          .filter((content): content is string => content != null && content.trim().length > 0)
+          .join("\n\n")
+      : null;
 
   if (customInstructions) {
     systemMessage += `\n<custom-instructions>\n${customInstructions}\n</custom-instructions>`;
@@ -621,8 +631,8 @@ export async function buildSystemMessage(
     }
   }
 
-  if (modeContent && mode) {
-    const modeSection = buildTaggedSection(modeContent, `mode-${mode}`, "mode");
+  if (modeContent && modeCandidates.length > 0) {
+    const modeSection = buildTaggedSection(modeContent, `mode-${modeCandidates[0]}`, "mode");
     if (modeSection) {
       systemMessage += modeSection;
     }

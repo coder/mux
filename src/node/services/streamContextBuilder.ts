@@ -233,6 +233,12 @@ export interface BuildStreamSystemContextOptions {
   workspaceId: string;
   /** Agent definition (may have fallen back to exec). Use `.id` for resolution. */
   agentDefinition: { id: string; scope: AgentDefinitionScope };
+  /**
+   * Effective mode for the stream. Custom plan-like agents run with
+   * effectiveMode "plan" while keeping their own agent id, so "Mode: <mode>"
+   * scoped instructions match against both this and the agent id.
+   */
+  effectiveMode: "plan" | "exec" | "compact";
   /** Runtime that resolved the active agent definition. May be the parent workspace runtime for subagents. */
   agentDiscoveryRuntime: Runtime;
   agentDiscoveryPath: string;
@@ -465,6 +471,7 @@ export async function buildStreamSystemContext(
     workspacePath,
     workspaceId,
     agentDefinition,
+    effectiveMode,
     agentDiscoveryRuntime,
     agentDiscoveryPath,
     isSubagentWorkspace,
@@ -574,10 +581,12 @@ export async function buildStreamSystemContext(
     mergedAdditionalInstructions,
     modelString,
     mcpServers,
-    // Mode = active agent id; drives "Mode: <mode>" sections in Mux-dedicated
-    // instruction sources. Use agentDefinition.id (may have fallen back to
-    // exec) so the mode section matches the prompt actually in effect.
-    { agentSystemPromptSections, mode: agentDefinition.id }
+    // "Mode: <mode>" sections in Mux-dedicated instruction sources match the
+    // effective mode (so "Mode: plan" also covers custom plan-like agents)
+    // and the agent id (so per-agent sections work). The effective mode names
+    // the injected <mode-...> tag; agentDefinition.id (may have fallen back
+    // to exec) is the prompt actually in effect.
+    { agentSystemPromptSections, modes: [effectiveMode, agentDefinition.id] }
   );
 
   // Count system message tokens for cost tracking

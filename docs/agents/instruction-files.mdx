@@ -126,8 +126,9 @@ Scope instructions to a specific mode or custom agent. The matched content is in
 
 **Syntax**: `Mode: <mode>`
 
-- `<mode>` is matched exactly (case-insensitive) against the active mode/agent id (e.g. `plan`,
-  `exec`, or a custom agent name).
+- `<mode>` is matched exactly (case-insensitive) against the effective mode (`plan` or `exec`) and
+  the active agent id (e.g. a custom agent name). A custom plan-like agent therefore picks up both
+  `Mode: plan` and `Mode: <its-name>` sections.
 - Matching sections from multiple sources are **concatenated** (not first-match-wins).
 
 **Example** (in `.mux/AGENTS.md`):
