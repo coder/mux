@@ -403,6 +403,7 @@ function appendAssistantTextRow(
       message.metadata?.routeProvider,
       message.metadata?.routedThroughGateway
     ),
+    modelFallback: message.metadata?.modelFallback,
     mode: message.metadata?.mode,
     agentId: message.metadata?.agentId ?? message.metadata?.mode,
     timestamp: part.timestamp ?? options.baseTimestamp,

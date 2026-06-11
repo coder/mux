@@ -26,6 +26,7 @@ import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { formatProviderDisplayName } from "@/common/utils/providers/customProviders";
 import {
+  formatModelStringForDisplay,
   getExplicitGatewayPrefix,
   getModelName,
   getModelProvider,
@@ -277,7 +278,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const canonicalValue = hasValue ? normalizeToCanonical(value) : "";
     const selectedProvider = hasValue ? getModelProvider(canonicalValue) : "";
     const displayValue = hasValue
-      ? formatModelDisplayName(getModelName(canonicalValue))
+      ? formatModelStringForDisplay(canonicalValue)
       : (emptyLabel ?? "");
 
     // Explicit gateway selections short-circuit route resolution: the user

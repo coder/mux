@@ -6,6 +6,7 @@ import { ChatUsageDisplaySchema } from "./chatStats";
 import { StreamErrorTypeSchema } from "./errors";
 import {
   FilePartSchema,
+  ModelFallbackRecordSchema,
   MuxMessageSchema,
   MuxReasoningPartSchema,
   MuxTextPartSchema,
@@ -234,6 +235,8 @@ export const StreamEndEventSchema = z.object({
       thinkingLevel: ThinkingLevelSchema.optional(),
       routedThroughGateway: z.boolean().optional(),
       routeProvider: z.string().optional(),
+      // Present when a fallback model answered after the requested model refused.
+      modelFallback: ModelFallbackRecordSchema.optional(),
       // Total usage across all steps (for cost calculation)
       usage: LanguageModelV2UsageSchema.optional(),
       // Last step's usage only (for context window display - inputTokens = current context size)

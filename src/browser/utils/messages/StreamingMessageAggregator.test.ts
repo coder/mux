@@ -402,6 +402,36 @@ describe("StreamingMessageAggregator", () => {
   });
 
   describe("display flags", () => {
+    test("propagates modelFallback metadata to displayed assistant rows", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const fallback = createMuxMessage("a1", "assistant", "answer", {
+        timestamp: 1,
+        historySequence: 1,
+        model: "anthropic:claude-opus-4-8",
+        modelFallback: {
+          requestedModel: "openai:gpt-5.5",
+          refusedModels: ["openai:gpt-5.5"],
+        },
+      });
+      const plain = createMuxMessage("a2", "assistant", "no fallback", {
+        timestamp: 2,
+        historySequence: 2,
+        model: "anthropic:claude-opus-4-8",
+      });
+
+      aggregator.loadHistoricalMessages([fallback, plain], false);
+
+      const assistantRows = aggregator.getDisplayedMessages().filter((m) => m.type === "assistant");
+
+      expect(assistantRows).toHaveLength(2);
+      expect(assistantRows[0]?.modelFallback).toEqual({
+        requestedModel: "openai:gpt-5.5",
+        refusedModels: ["openai:gpt-5.5"],
+      });
+      expect(assistantRows[1]?.modelFallback).toBeUndefined();
+    });
+
     test("should hide synthetic messages by default", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
