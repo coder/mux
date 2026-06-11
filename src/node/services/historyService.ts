@@ -22,6 +22,7 @@ import {
   isDurableCompactedMarker,
   isDurableContextBoundaryMarker,
 } from "@/common/utils/messages/compactionBoundary";
+import { isRefusalFinishReason } from "@/common/utils/messages/refusalFinishReason";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isNonNegativeInteger, isPositiveInteger } from "@/common/utils/numbers";
 
@@ -1001,6 +1002,14 @@ export class HistoryService {
         return false;
       });
 
+      // Refusal errors can be durable even with zero assistant-visible parts:
+      // usage and finishReason keep cost rebuilds accurate and let the UI show
+      // a refusal row after error/errorType are stripped on commit.
+      const hasDurableRefusalMetadata =
+        hadErrorMetadata &&
+        isRefusalFinishReason(partial.metadata?.finishReason) &&
+        (partial.metadata?.usage != null || (partial.metadata?.toolModelUsages?.length ?? 0) > 0);
+
       const existingMessage = existingMessages.find(
         (message) => message.metadata?.historySequence === partialSeq
       );
@@ -1023,12 +1032,15 @@ export class HistoryService {
       }
 
       const shouldCommit =
-        (!existingMessage || (partial.parts?.length ?? 0) > (existingMessage.parts?.length ?? 0)) &&
-        hasCommitWorthyParts;
+        (!existingMessage ||
+          (partial.parts?.length ?? 0) > (existingMessage.parts?.length ?? 0) ||
+          hasDurableRefusalMetadata) &&
+        (hasCommitWorthyParts || hasDurableRefusalMetadata);
 
       const shouldDeleteErroredPlaceholder =
         hadErrorMetadata &&
         !hasCommitWorthyParts &&
+        !hasDurableRefusalMetadata &&
         existingMessage?.id === partial.id &&
         (existingMessage.parts?.length ?? 0) === 0;
 

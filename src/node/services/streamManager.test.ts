@@ -1791,7 +1791,7 @@ describe("StreamManager - empty stream completions", () => {
   test("classifies zero-output refusal finish as terminal model_refusal without empty-stream retry", async () => {
     // The AI SDK's Anthropic adapter maps stop_reason "refusal" to the unified
     // finish reason "content-filter" with rawFinishReason "refusal" (pinned
-    // against @ai-sdk/anthropic 3.0.75). A refusal with zero output is a
+    // against @ai-sdk/anthropic 3.0.82). A refusal with zero output is a
     // deliberate terminal outcome: it must NOT take the empty-output recovery
     // path (in-stream retry + retryable empty_output), which previously looped
     // auto-retries on the same refusal forever.
@@ -1860,6 +1860,22 @@ describe("StreamManager - empty stream completions", () => {
 
     const partial = await historyService.readPartial(workspaceId);
     expect(partial?.metadata?.errorType).toBe("model_refusal");
+    expect(partial?.metadata?.finishReason).toBe("content-filter");
+    expect(partial?.metadata?.usage).toMatchObject({ inputTokens: 30000, outputTokens: 0 });
+
+    const commitResult = await historyService.commitPartial(workspaceId);
+    expect(commitResult.success).toBe(true);
+    const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) {
+      throw new Error(historyResult.error);
+    }
+    const committed = historyResult.data.find((message) => message.id === messageId);
+    expect(committed?.parts).toEqual([]);
+    expect(committed?.metadata?.error).toBeUndefined();
+    expect(committed?.metadata?.errorType).toBeUndefined();
+    expect(committed?.metadata?.finishReason).toBe("content-filter");
+    expect(committed?.metadata?.usage).toMatchObject({ inputTokens: 30000, outputTokens: 0 });
   });
 
   test("refusal finish after partial output fails visibly when no fallback is configured", async () => {
