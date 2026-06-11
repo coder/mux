@@ -1,4 +1,28 @@
-import { extractModeSection, extractToolSection, stripScopedInstructionSections } from "./markdown";
+import {
+  extractModeSection,
+  extractModelSection,
+  extractToolSection,
+  stripScopedInstructionSections,
+} from "./markdown";
+
+describe("extractModelSection", () => {
+  it("should join all matching model sections in source order (multi-file blobs)", () => {
+    const multiFile = `
+# Model: sonnet
+Parent sonnet guidance.
+
+# Model: /openai:.*/
+OpenAI-only guidance.
+
+# Model: sonnet
+Sub-project sonnet guidance.
+`.trim();
+
+    expect(extractModelSection(multiFile, "anthropic:claude-3.5-sonnet")).toBe(
+      "Parent sonnet guidance.\n\nSub-project sonnet guidance."
+    );
+  });
+});
 
 describe("extractToolSection", () => {
   describe("basic extraction", () => {
@@ -147,6 +171,25 @@ Custom agent content
 
   it("should return null when no mode section matches", () => {
     expect(extractModeSection(markdown, "exec")).toBeNull();
+  });
+
+  it("should join all matching mode sections in source order (multi-file blobs)", () => {
+    // Mux context content is a concatenation of parent + sub-project/project
+    // .mux/AGENTS.md files; every file's section for the active mode must survive.
+    const multiFile = `
+# Mode: plan
+Parent plan guidance.
+
+# Other
+Noise
+
+# Mode: plan
+Sub-project plan guidance.
+`.trim();
+
+    expect(extractModeSection(multiFile, "plan")).toBe(
+      "Parent plan guidance.\n\nSub-project plan guidance."
+    );
   });
 
   it("should return null for empty inputs", () => {
