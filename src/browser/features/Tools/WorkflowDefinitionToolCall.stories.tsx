@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { waitFor, within } from "@storybook/test";
 
 import {
   WorkflowListToolCall,
@@ -6,6 +7,31 @@ import {
 } from "@/browser/features/Tools/WorkflowDefinitionToolCall";
 import { WorkflowActionListToolCall } from "@/browser/features/Tools/WorkflowActionListToolCall";
 import { lightweightMeta } from "@/browser/stories/meta.js";
+
+/**
+ * Pinned mobile mode for the narrow-container list layouts; without an explicit
+ * viewport these stories would silently snapshot the wide grid.
+ */
+const NARROW_CHROMATIC_MODES = {
+  "dark-mobile": { theme: "dark", viewport: "mobile1" },
+} as const;
+
+const NARROW_VIEWPORT_GLOBALS = { viewport: { value: "mobile1", isRotated: false } };
+
+/**
+ * Assert the narrow list layout engaged: the description must wrap onto its own
+ * grid row below the name instead of sharing the single-line wide layout.
+ */
+async function expectDescriptionBelowName(canvasElement: HTMLElement, name: string, desc: RegExp) {
+  const canvas = within(canvasElement);
+  const nameEl = await canvas.findByText(name);
+  const descEl = canvas.getByText(desc);
+  await waitFor(() => {
+    if (descEl.getBoundingClientRect().top < nameEl.getBoundingClientRect().bottom) {
+      throw new Error(`Expected narrow layout: description below "${name}" row`);
+    }
+  });
+}
 
 const source = `export default function workflow({ args, agent, phase, log }) {
   phase("review", { artifact: args.artifact });
@@ -117,6 +143,20 @@ export const WorkflowActionList: Story = {
   ),
 };
 
+/** iPhone-sized variant: name + badges on one row, description stacked below. */
+export const WorkflowActionListNarrow: Story = {
+  ...WorkflowActionList,
+  globals: NARROW_VIEWPORT_GLOBALS,
+  parameters: { chromatic: { modes: NARROW_CHROMATIC_MODES } },
+  play: async ({ canvasElement }) => {
+    await expectDescriptionBelowName(
+      canvasElement,
+      "git.changedFiles",
+      /Return changed file lists/
+    );
+  },
+};
+
 export const WorkflowList: Story = {
   render: () => (
     <WorkflowListToolCall
@@ -150,4 +190,14 @@ export const WorkflowList: Story = {
       }}
     />
   ),
+};
+
+/** iPhone-sized variant of the definitions list. */
+export const WorkflowListNarrow: Story = {
+  ...WorkflowList,
+  globals: NARROW_VIEWPORT_GLOBALS,
+  parameters: { chromatic: { modes: NARROW_CHROMATIC_MODES } },
+  play: async ({ canvasElement }) => {
+    await expectDescriptionBelowName(canvasElement, "deep-research", /Coordinate staged research/);
+  },
 };
