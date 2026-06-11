@@ -720,7 +720,7 @@ export const TaskApplyGitPatchToolResultSchema = z.union([
 ]);
 
 // -----------------------------------------------------------------------------
-// task_terminate (terminate one or more sub-agent tasks)
+// task_terminate (terminate sub-agent/bash tasks, interrupt workflow runs)
 // -----------------------------------------------------------------------------
 export const TaskTerminateToolArgsSchema = z
   .object({
@@ -728,7 +728,8 @@ export const TaskTerminateToolArgsSchema = z
       .array(z.string().min(1))
       .min(1)
       .describe(
-        "List of task IDs to terminate. Each must be a descendant sub-agent task of the current workspace."
+        "List of task IDs to terminate. Sub-agent task IDs and bash task IDs must belong to descendants of the current workspace; " +
+          "workflow run IDs (wfr_...) must belong to the current workspace and are interrupted (resumable) rather than destroyed."
       ),
   })
   .strict();
@@ -740,6 +741,16 @@ export const TaskTerminateToolTerminatedResultSchema = z
     terminatedTaskIds: z
       .array(z.string())
       .describe("All terminated task IDs (includes descendants)"),
+  })
+  .strict();
+
+// Workflow runs are durable: interrupting preserves the event log so the run can be resumed
+// later via workflow_resume. This is intentionally distinct from "terminated" (work discarded).
+export const TaskTerminateToolInterruptedResultSchema = z
+  .object({
+    status: z.literal("interrupted"),
+    taskId: z.string(),
+    note: z.string(),
   })
   .strict();
 
@@ -772,6 +783,7 @@ export const TaskTerminateToolResultSchema = z
     results: z.array(
       z.discriminatedUnion("status", [
         TaskTerminateToolTerminatedResultSchema,
+        TaskTerminateToolInterruptedResultSchema,
         TaskTerminateToolNotFoundResultSchema,
         TaskTerminateToolInvalidScopeResultSchema,
         TaskTerminateToolErrorResultSchema,
@@ -784,6 +796,9 @@ export const TaskTerminateToolResultSchema = z
 // task_list (list descendant sub-agent tasks)
 // -----------------------------------------------------------------------------
 
+// Agent tasks use queued/starting/running/awaiting_report/interrupted/reported; workflow runs
+// additionally use pending/backgrounded/failed/completed. The vocabularies share "running" and
+// "interrupted"; task IDs are self-describing (wfr_... = workflow run, bash:... = bash task).
 const TaskListStatusSchema = z.enum([
   "queued",
   "starting",
@@ -791,6 +806,10 @@ const TaskListStatusSchema = z.enum([
   "awaiting_report",
   "interrupted",
   "reported",
+  "pending",
+  "backgrounded",
+  "failed",
+  "completed",
 ]);
 const TaskListThinkingLevelSchema = z.enum(THINKING_LEVELS);
 
@@ -800,7 +819,8 @@ export const TaskListToolArgsSchema = z
       .array(TaskListStatusSchema)
       .nullish()
       .describe(
-        "Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report."
+        "Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report, pending, backgrounded. " +
+          "Pass ['interrupted', 'failed'] to discover workflow runs that may be resumable via workflow_resume."
       ),
   })
   .strict();
@@ -881,6 +901,43 @@ export const WorkflowRunToolResultSchema = z
     result: z.unknown(),
     run: WorkflowRunRecordSchema.optional(),
     note: z.string().optional(),
+  })
+  .strict();
+
+// Resuming replays the durable event log and continues from the last checkpoint; completed
+// steps never re-execute. Checkpoint retry of a *failed* run re-executes whatever followed the
+// last durable event (potentially side-effectful), so it must be requested explicitly via mode.
+export const WorkflowResumeModeSchema = z.enum(["resume", "retry_from_checkpoint"]);
+
+export const WorkflowResumeToolArgsSchema = z
+  .object({
+    run_id: z
+      .string()
+      .min(1)
+      .describe("Workflow run ID (wfr_...) to resume. Must belong to the current workspace."),
+    run_in_background: z
+      .boolean()
+      .nullish()
+      .default(false)
+      .describe(
+        "Defaults to false (foreground): waits until the run reaches a terminal status and returns its result. " +
+          "Set true to resume in the background and continue other work; await the runId with task_await when you need the result."
+      ),
+    mode: WorkflowResumeModeSchema.nullish().describe(
+      "Defaults to 'resume', which continues interrupted or crash-orphaned runs from durable state and never re-executes completed steps. " +
+        "Use 'retry_from_checkpoint' only for failed runs; it re-executes work after the last checkpoint and is rejected when unsafe."
+    ),
+  })
+  .strict();
+
+export const WorkflowResumeToolResultSchema = z
+  .object({
+    status: WorkflowRunStatusSchema,
+    runId: z.string().min(1),
+    result: z.unknown(),
+    mode: WorkflowResumeModeSchema,
+    note: z.string().optional(),
+    run: WorkflowRunRecordSchema.optional(),
   })
   .strict();
 
@@ -1593,17 +1650,17 @@ export const TOOL_DEFINITIONS = {
   },
   task_terminate: {
     description:
-      "Terminate one or more tasks immediately (sub-agent tasks or background bash tasks). " +
-      "For sub-agent tasks, this stops their AI streams and deletes their workspaces (best-effort). " +
-      "No report will be delivered; any in-progress work is discarded. " +
-      "If the task has descendant sub-agent tasks, they are terminated too.",
+      "Terminate one or more tasks immediately (sub-agent tasks, background bash tasks, or workflow runs). " +
+      "For sub-agent tasks, this stops their AI streams and deletes their workspaces (best-effort); " +
+      "no report will be delivered, any in-progress work is discarded, and descendant sub-agent tasks are terminated too. " +
+      "For workflow runs (wfr_... IDs), this interrupts the run instead: durable state is preserved and the run can be resumed later with workflow_resume.",
     schema: TaskTerminateToolArgsSchema,
   },
   task_list: {
     description:
       "List descendant tasks for the current workspace, including status + metadata. " +
-      "This includes sub-agent tasks and background bash tasks, but omits workflow-owned sub-agents (and their background bash tasks) whose reports are consumed through their workflow run. " +
-      "Use this after compaction or interruptions to rediscover which tasks are still active. " +
+      "This includes sub-agent tasks, background bash tasks, and workflow runs, but omits workflow-owned sub-agents (and their background bash tasks) whose reports are consumed through their workflow run. " +
+      "Use this after compaction, interruptions, or an app restart to rediscover active tasks and resumable workflow runs (statuses interrupted/failed; resume with workflow_resume). " +
       "This is a discovery tool, NOT a waiting mechanism. If the current request actually depends on a task's output, call task_await with the specific task IDs you need; do not await all active tasks just because they appear here.",
     schema: TaskListToolArgsSchema,
   },
@@ -1631,6 +1688,17 @@ export const TOOL_DEFINITIONS = {
       "Use background mode only when you intend to start another workflow/task or do independent work while the workflow runs. " +
       "To create a scratch workflow, first read the built-in workflow-authoring skill, then write .mux/workflows/.scratch/<name>.js with a // description: header and default exported function, then run it by name.",
     schema: WorkflowRunToolArgsSchema,
+  },
+  workflow_resume: {
+    description:
+      "Resume an existing durable workflow run by run ID (wfr_...). Use this for runs that were interrupted (by the user, task_terminate, or an app crash/restart) — " +
+      "resume replays the durable event log and continues from the last checkpoint without re-executing completed steps. " +
+      "Discover resumable runs with task_list (statuses interrupted/failed). " +
+      "For failed runs, pass mode='retry_from_checkpoint' explicitly; it re-executes work after the last checkpoint, so only use it when that is acceptable, and start a fresh workflow_run when it is rejected as unsafe. " +
+      "Calling this on a completed run returns its existing result without re-running anything. " +
+      "Prefer foreground mode (run_in_background omitted or false) to get the final result directly; " +
+      "if the returned status is running or backgrounded, await the runId with task_await before using the result.",
+    schema: WorkflowResumeToolArgsSchema,
   },
   agent_report: {
     description:
@@ -2431,7 +2499,13 @@ export function getAvailableTools(
     "task_terminate",
     "task_list",
     ...(enableDynamicWorkflows
-      ? ["workflow_list", "workflow_read", "workflow_action_list", "workflow_run"]
+      ? [
+          "workflow_list",
+          "workflow_read",
+          "workflow_action_list",
+          "workflow_run",
+          "workflow_resume",
+        ]
       : []),
     ...(enableAgentReport ? ["agent_report"] : []),
     "get_goal",

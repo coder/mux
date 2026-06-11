@@ -817,6 +817,236 @@ export default function workflow({ args, agent }) {
     expect(backgroundFlags).toEqual([true, false]);
   });
 
+  test("rejects resume when the caller is already aborted without touching run state", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_resume_preaborted",
+      workspaceId: "workspace-1",
+      definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow({ agent }) { return agent({ id: 'step', prompt: 'p' }); }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus("wfr_resume_preaborted", "interrupted", "2026-05-29T00:00:01.000Z");
+
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("runner must not start for a pre-aborted resume");
+        },
+      },
+      runnerId: "runner-a",
+    });
+    const abortController = new AbortController();
+    abortController.abort();
+
+    await expect(
+      service.resumeRun({
+        workspaceId: "workspace-1",
+        runId: "wfr_resume_preaborted",
+        projectTrusted: true,
+        abortSignal: abortController.signal,
+      })
+    ).rejects.toThrow("Workflow run interrupted: wfr_resume_preaborted");
+    // The run must stay resumable: no status churn from the rejected resume.
+    await expect(runStore.getRun("wfr_resume_preaborted")).resolves.toMatchObject({
+      status: "interrupted",
+    });
+  });
+
+  test("interrupts resumed foreground workflow runs when the caller aborts", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_resume_abort",
+      workspaceId: "workspace-1",
+      definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus("wfr_resume_abort", "interrupted", "2026-05-29T00:00:01.000Z");
+
+    let agentWaitStarted = false;
+    let interruptCalls = 0;
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(_spec, _lifecycle, waitOptions) {
+          agentWaitStarted = true;
+          return await new Promise((_, reject) => {
+            waitOptions?.abortSignal?.addEventListener(
+              "abort",
+              () => reject(new Error("Task interrupted")),
+              { once: true }
+            );
+          });
+        },
+        async interruptRun() {
+          interruptCalls += 1;
+        },
+      },
+      runnerId: "runner-a",
+    });
+    const abortController = new AbortController();
+
+    const resumePromise = service.resumeRun({
+      workspaceId: "workspace-1",
+      runId: "wfr_resume_abort",
+      projectTrusted: true,
+      abortSignal: abortController.signal,
+    });
+    await waitForCondition("resumed foreground agent to start", () => agentWaitStarted);
+    abortController.abort();
+
+    await expect(resumePromise).rejects.toThrow(/interrupted|aborted/i);
+    await expect(runStore.getRun("wfr_resume_abort")).resolves.toMatchObject({
+      status: "interrupted",
+    });
+    expect(interruptCalls).toBe(1);
+  });
+
+  test("retries recoverable failed workflows from their checkpoint in the foreground", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_retry_checkpoint_fg",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource:
+        "export default function workflow({ agent }) { const child = agent({ id: 'summarize-topic', prompt: 'Summarize durable workflows' }); return { reportMarkdown: 'Final: ' + child.reportMarkdown }; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    await runStore.recordStepStarted("wfr_retry_checkpoint_fg", {
+      stepId: spec.id,
+      inputHash: hashWorkflowStepInput(spec.id, spec),
+      taskId: "task_existing",
+      startedAt: "2026-05-29T00:00:00.500Z",
+    });
+    await runStore.appendEvent("wfr_retry_checkpoint_fg", {
+      sequence: 1,
+      type: "error",
+      at: "2026-05-29T00:00:00.750Z",
+      message: "Execution interrupted",
+    });
+    await runStore.appendStatus("wfr_retry_checkpoint_fg", "failed", "2026-05-29T00:00:00.751Z");
+
+    const waitedFor: string[] = [];
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("retry should harvest existing task before spawning replacement");
+        },
+        async waitForAgentTask(taskId) {
+          waitedFor.push(taskId);
+          return { taskId, reportMarkdown: "summary" };
+        },
+      },
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await expect(
+      service.retryRunFromCheckpoint({
+        workspaceId: "workspace-1",
+        runId: "wfr_retry_checkpoint_fg",
+        projectTrusted: true,
+      })
+    ).resolves.toEqual({
+      runId: "wfr_retry_checkpoint_fg",
+      status: "completed",
+      result: { reportMarkdown: "Final: summary" },
+    });
+    expect(waitedFor).toEqual(["task_existing"]);
+    await expect(runStore.getRun("wfr_retry_checkpoint_fg")).resolves.toMatchObject({
+      status: "completed",
+    });
+  });
+
+  test("foreground checkpoint retry rejects non-recoverable failed workflows", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_retry_unsafe_fg",
+      workspaceId: "workspace-1",
+      definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow({ applyPatch }) { return applyPatch({ id: 'patch', taskId: 't' }); }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    // An unfinished patch event makes checkpoint retry unsafe (side effects may have landed).
+    await runStore.appendEvent("wfr_retry_unsafe_fg", {
+      sequence: 1,
+      type: "patch",
+      at: "2026-05-29T00:00:00.400Z",
+      stepId: "patch",
+      sourceTaskId: "t",
+      status: "started",
+    });
+    await runStore.appendStatus("wfr_retry_unsafe_fg", "failed", "2026-05-29T00:00:00.500Z");
+
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("unsafe retry must not start a runner");
+        },
+      },
+      runnerId: "runner-a",
+    });
+
+    await expect(
+      service.retryRunFromCheckpoint({
+        workspaceId: "workspace-1",
+        runId: "wfr_retry_unsafe_fg",
+        projectTrusted: true,
+      })
+    ).rejects.toThrow(/cannot be retried from checkpoint/i);
+    await expect(runStore.getRun("wfr_retry_unsafe_fg")).resolves.toMatchObject({
+      status: "failed",
+    });
+  });
+
   test("retries recoverable failed workflows from their checkpoint in the background", async () => {
     using tmp = new DisposableTempDir("workflow-service");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });

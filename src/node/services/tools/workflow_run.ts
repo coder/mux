@@ -1,15 +1,16 @@
 import { tool } from "ai";
 
-import { getErrorMessage } from "@/common/utils/errors";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
-import { log } from "@/node/services/log";
-import { recordAgentWorkflowRunReference } from "@/node/services/agentWorkflowRunReferences";
 import {
   COMPLETED_REPORT_REFETCH_NOTE,
   WorkflowRunToolResultSchema,
   TOOL_DEFINITIONS,
 } from "@/common/utils/tools/toolDefinitions";
-import { parseToolResult, requireWorkspaceId } from "./toolUtils";
+import {
+  parseToolResult,
+  recordBackgroundWorkflowRunReference,
+  requireWorkspaceId,
+} from "./toolUtils";
 
 function requireWorkflowService(config: ToolConfiguration) {
   if (!config.workflowService) {
@@ -25,29 +26,6 @@ function requireBackgroundWorkflowStart(
     throw new Error("workflow_run background mode requires startNamedWorkflowInBackground");
   }
   return workflowService.startNamedWorkflowInBackground.bind(workflowService);
-}
-
-async function recordBackgroundWorkflowRun(
-  config: ToolConfiguration,
-  runId: string,
-  createdAtMs: number
-): Promise<void> {
-  const workspaceSessionDir = config.workspaceSessionDir;
-  if (workspaceSessionDir == null || workspaceSessionDir.length === 0) {
-    log.warn("Skipping agent workflow run reference without workspace session dir", { runId });
-    return;
-  }
-
-  try {
-    await recordAgentWorkflowRunReference({ workspaceSessionDir, runId, createdAtMs });
-  } catch (error: unknown) {
-    // History scanning is still a best-effort fallback for the current context epoch; failing the
-    // tool here would strand a workflow that already started successfully.
-    log.warn("Failed to record agent workflow run reference", {
-      runId,
-      error: getErrorMessage(error),
-    });
-  }
 }
 
 function isBackgroundWorkflowResult(
@@ -81,7 +59,7 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
             });
 
       if (isBackgroundWorkflowResult(args, result.status)) {
-        await recordBackgroundWorkflowRun(config, result.runId, invocationStartedAtMs);
+        await recordBackgroundWorkflowRunReference(config, result.runId, invocationStartedAtMs);
       }
 
       const run = await workflowService.getRun?.({ workspaceId, runId: result.runId });

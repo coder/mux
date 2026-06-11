@@ -284,12 +284,73 @@ export class WorkflowService {
     workspaceId: string;
     runId: string;
     projectTrusted: boolean;
+    abortSignal?: AbortSignal;
   }): Promise<StartNamedWorkflowResult> {
     const run = await this.requireRunForWorkspace(input);
     assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
     assertWorkflowRunCanTransition(run.status, "running");
+    return await this.runForegroundWithAbortInterrupt({
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      projectTrusted: input.projectTrusted,
+      abortSignal: input.abortSignal,
+      runnerOptions: { allowResumeFromInterrupted: run.status === "interrupted" },
+      backgroundedFailureMessage: "Backgrounded workflow resume failed:",
+    });
+  }
+
+  async retryRunFromCheckpoint(input: {
+    workspaceId: string;
+    runId: string;
+    projectTrusted: boolean;
+    abortSignal?: AbortSignal;
+  }): Promise<StartNamedWorkflowResult> {
+    const run = await this.requireRunForWorkspace(input);
+    assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
+    assertWorkflowRunCanRetryFromCheckpoint(run);
+    return await this.runForegroundWithAbortInterrupt({
+      workspaceId: input.workspaceId,
+      runId: input.runId,
+      projectTrusted: input.projectTrusted,
+      abortSignal: input.abortSignal,
+      runnerOptions: { allowRetryFromFailedCheckpoint: true },
+      backgroundedFailureMessage: "Backgrounded workflow checkpoint retry failed:",
+    });
+  }
+
+  /**
+   * Shared foreground runner choreography: abort-signal -> interrupt wiring, lease-scoped
+   * runner abort registration, and self-backgrounding continuation. The runner options are
+   * forwarded to the background continuation as well so a run that backgrounds itself before
+   * its status transition still resumes/retries with the same permissions.
+   * (`backgroundOnMessageQueued` is intentionally excluded: the runner's foreground default
+   * applies here, and forwarding it would override runInBackground's hardcoded `false`.)
+   */
+  private async runForegroundWithAbortInterrupt(input: {
+    workspaceId: string;
+    runId: string;
+    projectTrusted: boolean;
+    abortSignal?: AbortSignal;
+    runnerOptions: Pick<
+      WorkflowRunnerRunOptions,
+      "allowResumeFromInterrupted" | "allowRetryFromFailedCheckpoint"
+    >;
+    backgroundedFailureMessage: string;
+  }): Promise<StartNamedWorkflowResult> {
+    if (input.abortSignal?.aborted === true) {
+      // The caller was aborted before the runner started; leave the run in its current
+      // (still resumable) state instead of churning status transitions.
+      throw new Error(`Workflow run interrupted: ${input.runId}`);
+    }
+
     const runnerAbortController = new AbortController();
     let unregisterRunnerAbort: () => void = () => undefined;
+    const abortInterrupt = this.interruptRunOnAbort(
+      input.workspaceId,
+      input.runId,
+      input.abortSignal,
+      runnerAbortController
+    );
     try {
       const runner = this.createRunner(input.runId, input.projectTrusted);
       const result = await runner.run(input.runId, {
@@ -300,18 +361,21 @@ export class WorkflowService {
             runnerAbortController
           );
         },
-        allowResumeFromInterrupted: run.status === "interrupted",
+        ...input.runnerOptions,
       });
       return { runId: input.runId, status: "completed", result };
     } catch (error) {
       if (error instanceof WorkflowRunBackgroundedError) {
-        void this.runInBackground(input.runId, "Backgrounded workflow resume failed:", {
+        void this.runInBackground(input.runId, input.backgroundedFailureMessage, {
+          ...input.runnerOptions,
           projectTrusted: input.projectTrusted,
         }).catch(() => undefined);
         return { runId: input.runId, status: "backgrounded", result: null };
       }
       throw error;
     } finally {
+      abortInterrupt.remove();
+      await abortInterrupt.wait();
       unregisterRunnerAbort();
     }
   }

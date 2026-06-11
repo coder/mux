@@ -157,6 +157,7 @@ describe("getToolsForModel", () => {
     expect(withoutExperiment.workflow_read).toBeUndefined();
     expect(withoutExperiment.workflow_action_list).toBeUndefined();
     expect(withoutExperiment.workflow_run).toBeUndefined();
+    expect(withoutExperiment.workflow_resume).toBeUndefined();
 
     const withExperiment = await getToolsForModel(
       "noop:model",
@@ -187,6 +188,7 @@ describe("getToolsForModel", () => {
     expect(withExperiment.workflow_read).toBeDefined();
     expect(withExperiment.workflow_action_list).toBeDefined();
     expect(withExperiment.workflow_run).toBeDefined();
+    expect(withExperiment.workflow_resume).toBeDefined();
   });
 
   test("includes desktop tools when workspace capability is available", async () => {

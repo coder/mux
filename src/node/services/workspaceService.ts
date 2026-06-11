@@ -272,7 +272,12 @@ function isWorkflowInvocationMessage(message: MuxMessage, runId: string): boolea
   }
 
   return message.parts.some((part) => {
-    if (part.type !== "dynamic-tool" || part.toolName !== "workflow_run") {
+    // A workflow_resume call re-attaches the agent to an existing run, so it counts as the
+    // current invocation for background-continuation supersession checks too.
+    if (
+      part.type !== "dynamic-tool" ||
+      (part.toolName !== "workflow_run" && part.toolName !== "workflow_resume")
+    ) {
       return false;
     }
     if (part.state !== "output-available") {

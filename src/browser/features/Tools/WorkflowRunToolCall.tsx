@@ -27,6 +27,8 @@ import type {
   WorkflowStepRecord,
 } from "@/common/types/workflow";
 import type {
+  WorkflowResumeToolArgs,
+  WorkflowResumeToolResult,
   WorkflowRunToolArgs,
   WorkflowRunToolResult,
   WorkflowRunToolSuccessResult,
@@ -69,6 +71,13 @@ interface WorkflowRunToolCallProps {
   status?: ToolStatus;
   workspaceId?: string;
   startedAt?: number;
+  /** Which tool rendered this card; controls the header icon. */
+  toolName?: "workflow_run" | "workflow_resume";
+  /**
+   * Exact run identity known from the tool args (workflow_resume passes its run_id). Enables
+   * direct getRun discovery while executing instead of name+args matching against listRuns.
+   */
+  knownRunId?: string;
 }
 
 type WorkflowRunAction = "interrupt" | "resume" | "retryFromCheckpoint";
@@ -937,6 +946,8 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   status = "pending",
   workspaceId,
   startedAt,
+  toolName = "workflow_run",
+  knownRunId,
 }) => {
   const apiState = useContext(APIContext);
   const commandRegistry = useOptionalCommandRegistry();
@@ -958,7 +969,9 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   };
   const baseRun = successResult?.run;
   const selectedRun = selectWorkflowRunSnapshot({
-    runId: successResult?.runId,
+    // knownRunId (workflow_resume) provides exact identity before any result arrives, which
+    // also disables the heuristic name+args foreground discovery below.
+    runId: successResult?.runId ?? knownRunId,
     baseRun,
     refreshedRun,
   });
@@ -1001,6 +1014,9 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   const resumeOrRetryPendingForRun =
     runId != null && (resumingRunId === runId || workflowActionInFlightRunId === runId);
   const displayDefinition = promotedDefinition ?? run?.definition;
+  // workflow_resume cards only know the run ID until a snapshot loads; prefer the real
+  // workflow name once available.
+  const displayName = displayDefinition?.name ?? args.name;
   // A uniquely discovered foreground run is actionable before the blocking tool call returns.
   const discoveredForegroundRunConfirmed =
     status === "executing" &&
@@ -1009,8 +1025,18 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     refreshedRun != null &&
     runId === refreshedRun.id &&
     refreshedRun.workspaceId === workspaceId;
+  // knownRunId comes from the tool args themselves, so a fetched snapshot with a matching
+  // ID confirms identity regardless of foreground/background mode.
+  const discoveredKnownRunConfirmed =
+    knownRunId != null &&
+    workspaceId != null &&
+    refreshedRun?.id === knownRunId &&
+    refreshedRun.workspaceId === workspaceId;
   const runIdentityConfirmed =
-    successResult?.runId != null || baseRun?.id != null || discoveredForegroundRunConfirmed;
+    successResult?.runId != null ||
+    baseRun?.id != null ||
+    discoveredForegroundRunConfirmed ||
+    discoveredKnownRunConfirmed;
   const canInterrupt =
     runIdentityConfirmed &&
     apiState?.api != null &&
@@ -1136,35 +1162,35 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     }
 
     const unregister = registerCommandSource(() => {
-      const subtitle = `${args.name} • ${runId}`;
+      const subtitle = `${displayName} • ${runId}`;
       const actions: CommandAction[] = [];
       if (canInterrupt) {
         actions.push({
           id: `workflow:${runId}:interrupt`,
-          title: `Interrupt workflow: ${args.name}`,
+          title: `Interrupt workflow: ${displayName}`,
           subtitle,
           section: "Workflows",
-          keywords: ["workflow", "interrupt", "stop", args.name, runId],
+          keywords: ["workflow", "interrupt", "stop", displayName, runId],
           run: () => updateRunFromActionRef.current("interrupt"),
         });
       }
       if (canResume) {
         actions.push({
           id: `workflow:${runId}:resume`,
-          title: `Resume workflow: ${args.name}`,
+          title: `Resume workflow: ${displayName}`,
           subtitle,
           section: "Workflows",
-          keywords: ["workflow", "resume", "continue", args.name, runId],
+          keywords: ["workflow", "resume", "continue", displayName, runId],
           run: () => updateRunFromActionRef.current("resume"),
         });
       }
       if (canRetryFromCheckpoint) {
         actions.push({
           id: `workflow:${runId}:retry-from-checkpoint`,
-          title: `Retry workflow from checkpoint: ${args.name}`,
+          title: `Retry workflow from checkpoint: ${displayName}`,
           subtitle,
           section: "Workflows",
-          keywords: ["workflow", "retry", "resume", "checkpoint", args.name, runId],
+          keywords: ["workflow", "retry", "resume", "checkpoint", displayName, runId],
           run: () => updateRunFromActionRef.current("retryFromCheckpoint"),
         });
       }
@@ -1172,10 +1198,10 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
         actions.push(
           {
             id: `workflow:${runId}:save-project`,
-            title: `Save workflow to project workflows: ${args.name}`,
+            title: `Save workflow to project workflows: ${displayName}`,
             subtitle,
             section: "Workflows",
-            keywords: ["workflow", "save", "project", "scratch", args.name, runId],
+            keywords: ["workflow", "save", "project", "scratch", displayName, runId],
             run: () => {
               userToggledExpansionRef.current = true;
               setExpanded(true);
@@ -1184,10 +1210,10 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
           },
           {
             id: `workflow:${runId}:save-global`,
-            title: `Save workflow to global workflows: ${args.name}`,
+            title: `Save workflow to global workflows: ${displayName}`,
             subtitle,
             section: "Workflows",
-            keywords: ["workflow", "save", "global", "scratch", args.name, runId],
+            keywords: ["workflow", "save", "global", "scratch", displayName, runId],
             run: () => {
               userToggledExpansionRef.current = true;
               setExpanded(true);
@@ -1202,7 +1228,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     return unregister;
   }, [
     apiState?.api,
-    args.name,
+    displayName,
     canInterrupt,
     canRetryFromCheckpoint,
     canPromote,
@@ -1247,6 +1273,42 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
       window.clearInterval(interval);
     };
   }, [apiState?.api, args, runId, startedAt, status, workspaceId]);
+
+  useEffect(() => {
+    // workflow_resume knows the exact run from its args, so fetch the live snapshot by ID
+    // while the tool call executes; the regular refresh effect takes over once a snapshot
+    // (with workspaceId) exists.
+    if (
+      apiState?.api == null ||
+      workspaceId == null ||
+      knownRunId == null ||
+      run != null ||
+      status !== "executing"
+    ) {
+      return;
+    }
+
+    let ignore = false;
+    const discover = async () => {
+      try {
+        const nextRun = await apiState.api.workflows.getRun({ workspaceId, runId: knownRunId });
+        if (!ignore && nextRun != null) {
+          setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, nextRun));
+        }
+      } catch (error) {
+        console.error("Failed to discover workflow run by id:", error);
+      }
+    };
+
+    void discover();
+    const interval = window.setInterval(() => {
+      void discover();
+    }, 2_000);
+    return () => {
+      ignore = true;
+      window.clearInterval(interval);
+    };
+  }, [apiState?.api, knownRunId, run, status, workspaceId]);
 
   useEffect(() => {
     if (
@@ -1296,9 +1358,9 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     <ToolContainer expanded={expanded}>
       <ToolHeader onClick={toggleWorkflowExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <ToolIcon toolName="workflow_run" />
+        <ToolIcon toolName={toolName} />
         <WorkflowKindBadge />
-        <ToolName>{args.name}</ToolName>
+        <ToolName>{displayName}</ToolName>
         <StatusIndicator status={headerStatus}>{getStatusDisplay(headerStatus)}</StatusIndicator>
       </ToolHeader>
 
@@ -1476,5 +1538,36 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
         </ToolDetails>
       )}
     </ToolContainer>
+  );
+};
+
+interface WorkflowResumeToolCallProps {
+  args: WorkflowResumeToolArgs;
+  result?: WorkflowResumeToolResult;
+  status?: ToolStatus;
+  workspaceId?: string;
+  startedAt?: number;
+}
+
+/**
+ * workflow_resume renders the same run card as workflow_run. The args only carry a run ID
+ * (no workflow name/args), so the run ID doubles as the display name until the run record
+ * loads, and knownRunId enables exact-by-ID discovery instead of name+args matching.
+ */
+export const WorkflowResumeToolCall: React.FC<WorkflowResumeToolCallProps> = (props) => {
+  return (
+    <WorkflowRunToolCall
+      args={{
+        name: props.args.run_id,
+        args: undefined,
+        run_in_background: props.args.run_in_background ?? false,
+      }}
+      result={props.result}
+      status={props.status}
+      workspaceId={props.workspaceId}
+      startedAt={props.startedAt}
+      toolName="workflow_resume"
+      knownRunId={props.args.run_id}
+    />
   );
 };

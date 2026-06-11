@@ -1,12 +1,39 @@
 import { tool } from "ai";
 
+import type { TaskListToolSuccessResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
+import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
 import { TaskListToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+
+import type { AgentTaskStatus } from "@/node/services/taskService";
 
 import { toBashTaskId } from "./taskId";
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
 
-const DEFAULT_STATUSES = ["queued", "starting", "running", "awaiting_report"] as const;
+// "pending" and "backgrounded" are workflow-run statuses; agent/bash tasks never carry them.
+const DEFAULT_STATUSES = [
+  "queued",
+  "starting",
+  "running",
+  "awaiting_report",
+  "pending",
+  "backgrounded",
+] as const;
+
+// Statuses agent tasks can actually carry; the wider tool enum additionally accepts
+// workflow-run statuses, which must not reach taskService.listDescendantAgentTasks.
+const AGENT_TASK_STATUSES: readonly AgentTaskStatus[] = [
+  "queued",
+  "starting",
+  "running",
+  "awaiting_report",
+  "interrupted",
+  "reported",
+];
+
+function isAgentTaskStatus(status: string): status is AgentTaskStatus {
+  return (AGENT_TASK_STATUSES as readonly string[]).includes(status);
+}
 
 export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
@@ -18,12 +45,37 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
 
       const statuses =
         args.statuses && args.statuses.length > 0 ? args.statuses : [...DEFAULT_STATUSES];
+      const agentStatuses = statuses.filter(isAgentTaskStatus);
 
-      const agentTasks = taskService.listDescendantAgentTasks(workspaceId, {
-        statuses,
-        excludeWorkflowTasks: true,
-      });
-      const tasks = [...agentTasks];
+      const agentTasks =
+        agentStatuses.length > 0
+          ? taskService.listDescendantAgentTasks(workspaceId, {
+              statuses: agentStatuses,
+              excludeWorkflowTasks: true,
+            })
+          : [];
+      const tasks: TaskListToolSuccessResult["tasks"] = [...agentTasks];
+
+      // Workflow runs are workspace-scoped (not parent/child workspaces), so they surface as
+      // depth-1 entries. interrupted/failed runs stay listable here because they are the
+      // resumable ones (workflow_resume).
+      if (config.workflowService?.listRuns != null) {
+        const runs = await config.workflowService.listRuns({ workspaceId });
+        for (const rawRun of runs) {
+          const parsed = WorkflowRunRecordSchema.safeParse(rawRun);
+          if (!parsed.success || !statuses.includes(parsed.data.status)) {
+            continue;
+          }
+          tasks.push({
+            taskId: parsed.data.id,
+            status: parsed.data.status,
+            parentWorkspaceId: workspaceId,
+            title: parsed.data.definition.name,
+            createdAt: parsed.data.createdAt,
+            depth: 1,
+          });
+        }
+      }
 
       if (config.backgroundProcessManager) {
         const depthByWorkspaceId = new Map<string, number>();

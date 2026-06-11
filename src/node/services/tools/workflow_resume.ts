@@ -1,0 +1,223 @@
+import { tool } from "ai";
+
+import { getErrorMessage } from "@/common/utils/errors";
+import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
+import type { WorkflowRunRecord } from "@/common/types/workflow";
+import { getWorkflowCheckpointRetryEligibility } from "@/common/utils/workflowRetryEligibility";
+import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
+import {
+  WorkflowResumeToolResultSchema,
+  TOOL_DEFINITIONS,
+} from "@/common/utils/tools/toolDefinitions";
+import { isWorkflowRunTaskId } from "./taskId";
+import {
+  parseToolResult,
+  recordBackgroundWorkflowRunReference,
+  requireWorkspaceId,
+} from "./toolUtils";
+
+type WorkflowResumeMode = "resume" | "retry_from_checkpoint";
+
+interface WorkflowResumeService {
+  getRun(input: { workspaceId: string; runId: string }): Promise<unknown>;
+  resumeRun(input: {
+    workspaceId: string;
+    runId: string;
+    projectTrusted: boolean;
+    abortSignal?: AbortSignal;
+  }): Promise<{ runId: string; status: string; result: unknown }>;
+  resumeRunInBackground(input: {
+    workspaceId: string;
+    runId: string;
+    projectTrusted: boolean;
+  }): Promise<{ runId: string; status: string; result: unknown }>;
+  retryRunFromCheckpoint(input: {
+    workspaceId: string;
+    runId: string;
+    projectTrusted: boolean;
+    abortSignal?: AbortSignal;
+  }): Promise<{ runId: string; status: string; result: unknown }>;
+  retryRunFromCheckpointInBackground(input: {
+    workspaceId: string;
+    runId: string;
+    projectTrusted: boolean;
+  }): Promise<{ runId: string; status: string; result: unknown }>;
+}
+
+function requireWorkflowResumeService(config: ToolConfiguration): WorkflowResumeService {
+  const workflowService = config.workflowService;
+  if (!workflowService) {
+    throw new Error("workflow_resume requires workflowService");
+  }
+  if (
+    workflowService.getRun == null ||
+    workflowService.resumeRun == null ||
+    workflowService.resumeRunInBackground == null ||
+    workflowService.retryRunFromCheckpoint == null ||
+    workflowService.retryRunFromCheckpointInBackground == null
+  ) {
+    throw new Error("workflow_resume requires workflow run lifecycle support");
+  }
+  return {
+    getRun: workflowService.getRun.bind(workflowService),
+    resumeRun: workflowService.resumeRun.bind(workflowService),
+    resumeRunInBackground: workflowService.resumeRunInBackground.bind(workflowService),
+    retryRunFromCheckpoint: workflowService.retryRunFromCheckpoint.bind(workflowService),
+    retryRunFromCheckpointInBackground:
+      workflowService.retryRunFromCheckpointInBackground.bind(workflowService),
+  };
+}
+
+async function getWorkflowRunForWorkspace(
+  service: WorkflowResumeService,
+  workspaceId: string,
+  runId: string
+): Promise<WorkflowRunRecord | null> {
+  const run = await service.getRun({ workspaceId, runId });
+  if (run == null) {
+    return null;
+  }
+  return WorkflowRunRecordSchema.parse(run);
+}
+
+function getLatestWorkflowResult(run: WorkflowRunRecord): unknown {
+  return run.events.findLast((event) => event.type === "result")?.result ?? null;
+}
+
+function isWorkflowRunAlreadyActiveError(error: unknown, runId: string): boolean {
+  return getErrorMessage(error) === `Workflow run is already active: ${runId}`;
+}
+
+/**
+ * Resuming an interrupted/crashed run only replays durable state (never re-executes completed
+ * steps), so it is the safe default. Checkpoint retry of a *failed* run re-executes whatever
+ * followed the last durable event, so it must be requested explicitly — see the user rationale
+ * captured in this tool's description.
+ */
+function assertRunStatusAllowsMode(run: WorkflowRunRecord, mode: WorkflowResumeMode): void {
+  if (mode === "retry_from_checkpoint") {
+    if (run.status !== "failed") {
+      throw new Error(
+        `retry_from_checkpoint requires a failed workflow run; ${run.id} is ${run.status}. ` +
+          "Use mode 'resume' (or omit mode) for interrupted or crash-orphaned runs."
+      );
+    }
+    const eligibility = getWorkflowCheckpointRetryEligibility(run);
+    if (!eligibility.canRetry) {
+      throw new Error(
+        `${eligibility.reason ?? "Workflow run cannot be retried from checkpoint"}. ` +
+          "Start a fresh run with workflow_run instead."
+      );
+    }
+    return;
+  }
+
+  if (run.status === "failed") {
+    const eligibility = getWorkflowCheckpointRetryEligibility(run);
+    throw new Error(
+      `Workflow run failed: ${run.id}. Resume only continues interrupted or crash-orphaned runs. ` +
+        (eligibility.canRetry
+          ? "Retry it from the last durable checkpoint with mode 'retry_from_checkpoint' (re-executes work after the checkpoint), or start a fresh run with workflow_run."
+          : `It cannot be retried from checkpoint (${eligibility.reason ?? "ineligible"}); start a fresh run with workflow_run.`)
+    );
+  }
+}
+
+export const createWorkflowResumeTool: ToolFactory = (config: ToolConfiguration) => {
+  return tool({
+    description: TOOL_DEFINITIONS.workflow_resume.description,
+    inputSchema: TOOL_DEFINITIONS.workflow_resume.schema,
+    execute: async (args, options): Promise<unknown> => {
+      const workspaceId = requireWorkspaceId(config, "workflow_resume");
+      const workflowService = requireWorkflowResumeService(config);
+
+      const runId = args.run_id.trim();
+      if (!isWorkflowRunTaskId(runId)) {
+        throw new Error(
+          `workflow_resume requires a workflow run ID (wfr_...); got: ${args.run_id}. ` +
+            "Discover run IDs with task_list or from a prior workflow_run result."
+        );
+      }
+
+      const run = await getWorkflowRunForWorkspace(workflowService, workspaceId, runId);
+      if (run == null) {
+        throw new Error(`Workflow run not found in this workspace: ${runId}`);
+      }
+
+      const mode: WorkflowResumeMode = args.mode ?? "resume";
+      const invocationStartedAtMs = Date.now();
+
+      // Idempotent success: the work is already done, so hand back the durable result instead
+      // of failing the agent's recovery loop (e.g. resuming after a crash that actually finished).
+      if (run.status === "completed" && mode === "resume") {
+        return parseToolResult(
+          WorkflowResumeToolResultSchema,
+          {
+            status: "completed",
+            runId,
+            result: getLatestWorkflowResult(run),
+            mode,
+            note: "Workflow run had already completed; returning its existing result without re-running.",
+            run,
+          },
+          "workflow_resume"
+        );
+      }
+
+      assertRunStatusAllowsMode(run, mode);
+
+      const dispatchInput = {
+        workspaceId,
+        runId,
+        projectTrusted: config.trusted === true,
+      };
+      let dispatched: { runId: string; status: string; result: unknown };
+      try {
+        if (mode === "retry_from_checkpoint") {
+          dispatched =
+            args.run_in_background === true
+              ? await workflowService.retryRunFromCheckpointInBackground(dispatchInput)
+              : await workflowService.retryRunFromCheckpoint({
+                  ...dispatchInput,
+                  ...(options.abortSignal != null ? { abortSignal: options.abortSignal } : {}),
+                });
+        } else {
+          dispatched =
+            args.run_in_background === true
+              ? await workflowService.resumeRunInBackground(dispatchInput)
+              : await workflowService.resumeRun({
+                  ...dispatchInput,
+                  ...(options.abortSignal != null ? { abortSignal: options.abortSignal } : {}),
+                });
+        }
+      } catch (error: unknown) {
+        if (isWorkflowRunAlreadyActiveError(error, runId)) {
+          throw new Error(
+            `Workflow run is already active: ${runId}. It does not need resuming — await it with task_await.`
+          );
+        }
+        throw error;
+      }
+
+      // Background-style resumes outlive this turn; persist provenance so the run is
+      // rediscoverable (task_await/task_list) and its terminal result re-engages the agent.
+      if (args.run_in_background === true || dispatched.status === "backgrounded") {
+        await recordBackgroundWorkflowRunReference(config, runId, invocationStartedAtMs);
+      }
+
+      const refreshedRun = await getWorkflowRunForWorkspace(workflowService, workspaceId, runId);
+
+      return parseToolResult(
+        WorkflowResumeToolResultSchema,
+        {
+          status: dispatched.status,
+          runId: dispatched.runId,
+          result: dispatched.result,
+          mode,
+          ...(refreshedRun != null ? { run: refreshedRun } : {}),
+        },
+        "workflow_resume"
+      );
+    },
+  });
+};

@@ -648,20 +648,20 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 <details>
 <summary>task_list (2)</summary>
 
-| Env var                           | JSON path           | Type   | Description                                                                                                                      |
-| --------------------------------- | ------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `MUX_TOOL_INPUT_STATUSES_<INDEX>` | `statuses[<INDEX>]` | enum   | Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report.                                  |
-| `MUX_TOOL_INPUT_STATUSES_COUNT`   | `statuses.length`   | number | Number of elements in statuses (Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report.) |
+| Env var                           | JSON path           | Type   | Description                                                                                                                                                                                                                                                 |
+| --------------------------------- | ------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_STATUSES_<INDEX>` | `statuses[<INDEX>]` | enum   | Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report, pending, backgrounded. Pass ['interrupted', 'failed'] to discover workflow runs that may be resumable via workflow_resume.                                  |
+| `MUX_TOOL_INPUT_STATUSES_COUNT`   | `statuses.length`   | number | Number of elements in statuses (Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report, pending, backgrounded. Pass ['interrupted', 'failed'] to discover workflow runs that may be resumable via workflow_resume.) |
 
 </details>
 
 <details>
 <summary>task_terminate (2)</summary>
 
-| Env var                           | JSON path           | Type   | Description                                                                                                                        |
-| --------------------------------- | ------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `MUX_TOOL_INPUT_TASK_IDS_<INDEX>` | `task_ids[<INDEX>]` | string | List of task IDs to terminate. Each must be a descendant sub-agent task of the current workspace.                                  |
-| `MUX_TOOL_INPUT_TASK_IDS_COUNT`   | `task_ids.length`   | number | Number of elements in task_ids (List of task IDs to terminate. Each must be a descendant sub-agent task of the current workspace.) |
+| Env var                           | JSON path           | Type   | Description                                                                                                                                                                                                                                                                      |
+| --------------------------------- | ------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_TASK_IDS_<INDEX>` | `task_ids[<INDEX>]` | string | List of task IDs to terminate. Sub-agent task IDs and bash task IDs must belong to descendants of the current workspace; workflow run IDs (wfr\_...) must belong to the current workspace and are interrupted (resumable) rather than destroyed.                                 |
+| `MUX_TOOL_INPUT_TASK_IDS_COUNT`   | `task_ids.length`   | number | Number of elements in task*ids (List of task IDs to terminate. Sub-agent task IDs and bash task IDs must belong to descendants of the current workspace; workflow run IDs (wfr*...) must belong to the current workspace and are interrupted (resumable) rather than destroyed.) |
 
 </details>
 
@@ -691,6 +691,17 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 | Env var               | JSON path | Type   | Description |
 | --------------------- | --------- | ------ | ----------- |
 | `MUX_TOOL_INPUT_NAME` | `name`    | string | —           |
+
+</details>
+
+<details>
+<summary>workflow_resume (3)</summary>
+
+| Env var                            | JSON path           | Type    | Description                                                                                                                                                                                                                                                     |
+| ---------------------------------- | ------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_MODE`              | `mode`              | enum    | Defaults to 'resume', which continues interrupted or crash-orphaned runs from durable state and never re-executes completed steps. Use 'retry_from_checkpoint' only for failed runs; it re-executes work after the last checkpoint and is rejected when unsafe. |
+| `MUX_TOOL_INPUT_RUN_ID`            | `run_id`            | string  | Workflow run ID (wfr\_...) to resume. Must belong to the current workspace.                                                                                                                                                                                     |
+| `MUX_TOOL_INPUT_RUN_IN_BACKGROUND` | `run_in_background` | boolean | Defaults to false (foreground): waits until the run reaches a terminal status and returns its result. Set true to resume in the background and continue other work; await the runId with task_await when you need the result.                                   |
 
 </details>
 

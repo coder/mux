@@ -90,4 +90,111 @@ describe("task_list tool", () => {
       ],
     });
   });
+
+  const buildWorkflowRun = (id: string, status: string) => ({
+    id,
+    workspaceId: "root-workspace",
+    definition: {
+      name: "deep-research",
+      description: "Deep research",
+      scope: "built-in" as const,
+      executable: true,
+    },
+    definitionSource: "export default function workflow() { return null; }",
+    definitionHash: "sha256:test",
+    args: {},
+    status,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:01.000Z",
+    events: [],
+    steps: [],
+  });
+
+  it("includes workflow runs with their native statuses", async () => {
+    using tempDir = new TestTempDir("test-task-list-workflows");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const listDescendantAgentTasks = mock(() => []);
+    const taskService = { listDescendantAgentTasks } as unknown as TaskService;
+    const listRuns = mock(() =>
+      Promise.resolve([
+        buildWorkflowRun("wfr_active", "backgrounded"),
+        // Terminal/interrupted runs are excluded by the default (active) status filter.
+        buildWorkflowRun("wfr_done", "completed"),
+        buildWorkflowRun("wfr_stopped", "interrupted"),
+      ])
+    );
+
+    const tool = createTaskListTool({
+      ...baseConfig,
+      taskService,
+      workflowService: {
+        listDefinitions: mock(() => Promise.resolve([])),
+        readDefinition: mock(() => Promise.reject(new Error("unused"))),
+        startNamedWorkflow: mock(() => Promise.reject(new Error("unused"))),
+        listRuns,
+      },
+    });
+
+    const result: unknown = await Promise.resolve(tool.execute!({}, mockToolCallOptions));
+
+    expect(listRuns).toHaveBeenCalledWith({ workspaceId: "root-workspace" });
+    expect(result).toEqual({
+      tasks: [
+        {
+          taskId: "wfr_active",
+          status: "backgrounded",
+          parentWorkspaceId: "root-workspace",
+          title: "deep-research",
+          createdAt: "2026-05-29T00:00:00.000Z",
+          depth: 1,
+        },
+      ],
+    });
+  });
+
+  it("discovers resumable workflow runs without querying agent tasks", async () => {
+    using tempDir = new TestTempDir("test-task-list-resumable-workflows");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const listDescendantAgentTasks = mock(() => {
+      throw new Error("workflow-only statuses must not hit the agent task index");
+    });
+    const taskService = { listDescendantAgentTasks } as unknown as TaskService;
+    const listRuns = mock(() =>
+      Promise.resolve([
+        buildWorkflowRun("wfr_running", "running"),
+        buildWorkflowRun("wfr_failed", "failed"),
+      ])
+    );
+
+    const tool = createTaskListTool({
+      ...baseConfig,
+      taskService,
+      workflowService: {
+        listDefinitions: mock(() => Promise.resolve([])),
+        readDefinition: mock(() => Promise.reject(new Error("unused"))),
+        startNamedWorkflow: mock(() => Promise.reject(new Error("unused"))),
+        listRuns,
+      },
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ statuses: ["failed"] }, mockToolCallOptions)
+    );
+
+    expect(listDescendantAgentTasks).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      tasks: [
+        {
+          taskId: "wfr_failed",
+          status: "failed",
+          parentWorkspaceId: "root-workspace",
+          title: "deep-research",
+          createdAt: "2026-05-29T00:00:00.000Z",
+          depth: 1,
+        },
+      ],
+    });
+  });
 });

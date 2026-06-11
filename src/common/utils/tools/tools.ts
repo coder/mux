@@ -46,6 +46,7 @@ import {
   createWorkflowReadTool,
 } from "@/node/services/tools/workflow_definitions";
 import { createWorkflowRunTool } from "@/node/services/tools/workflow_run";
+import { createWorkflowResumeTool } from "@/node/services/tools/workflow_resume";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
@@ -169,6 +170,29 @@ export interface ToolConfiguration {
       projectTrusted: boolean;
       args: unknown;
       abortSignal?: AbortSignal;
+    }): Promise<{ runId: string; status: string; result: unknown }>;
+    interruptRun?(input: { workspaceId: string; runId: string }): Promise<unknown>;
+    resumeRun?(input: {
+      workspaceId: string;
+      runId: string;
+      projectTrusted: boolean;
+      abortSignal?: AbortSignal;
+    }): Promise<{ runId: string; status: string; result: unknown }>;
+    resumeRunInBackground?(input: {
+      workspaceId: string;
+      runId: string;
+      projectTrusted: boolean;
+    }): Promise<{ runId: string; status: string; result: unknown }>;
+    retryRunFromCheckpoint?(input: {
+      workspaceId: string;
+      runId: string;
+      projectTrusted: boolean;
+      abortSignal?: AbortSignal;
+    }): Promise<{ runId: string; status: string; result: unknown }>;
+    retryRunFromCheckpointInBackground?(input: {
+      workspaceId: string;
+      runId: string;
+      projectTrusted: boolean;
     }): Promise<{ runId: string; status: string; result: unknown }>;
   };
   /** Workspace goal lifecycle service for model-facing goal tools. */
@@ -500,6 +524,7 @@ export async function getToolsForModel(
           workflow_read: createWorkflowReadTool(config),
           workflow_action_list: createWorkflowActionListTool(config),
           workflow_run: createWorkflowRunTool(config),
+          workflow_resume: createWorkflowResumeTool(config),
         }
       : {}),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),

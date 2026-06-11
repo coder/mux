@@ -378,7 +378,9 @@ function maybeCollectWorkflowDefinitionPreview(
   for (const part of message.parts) {
     if (
       !isDynamicToolPart(part) ||
-      part.toolName !== "workflow_run" ||
+      // workflow_resume outputs embed the same run record shape, so they can seed
+      // definition previews for synthetic continuation messages too.
+      (part.toolName !== "workflow_run" && part.toolName !== "workflow_resume") ||
       part.state !== "output-available"
     ) {
       continue;
