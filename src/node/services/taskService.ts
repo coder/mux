@@ -75,7 +75,10 @@ import type { ParsedThinkingInput, ThinkingLevel } from "@/common/types/thinking
 import type { ErrorEvent, StreamEndEvent } from "@/common/types/stream";
 import type { WorkflowRunStatus } from "@/common/types/workflow";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
-import { isWorkflowDisplayOnlyMessage } from "@/common/utils/workflowRunMessages";
+import {
+  isWorkflowDisplayOnlyMessage,
+  isWorkflowRunEmittingToolName,
+} from "@/common/utils/workflowRunMessages";
 import {
   AgentReportInlineToolArgsSchema,
   AgentReportSubmittedReportSchema,
@@ -611,7 +614,7 @@ function collectAgentReferencedWorkflowRunIdsFromParts(
     }
     // workflow_resume re-establishes agent provenance the same way workflow_run does: both
     // outputs carry the runId of a run the agent explicitly owns.
-    if (part.toolName !== "workflow_run" && part.toolName !== "workflow_resume") {
+    if (!isWorkflowRunEmittingToolName(part.toolName)) {
       continue;
     }
     for (const runId of collectWorkflowRunIdsFromToolOutput(part.output)) {

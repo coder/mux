@@ -126,6 +126,7 @@ import {
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
   WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
   buildWorkflowRunCardMessage,
+  isWorkflowRunEmittingToolName,
 } from "@/common/utils/workflowRunMessages";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import {
@@ -274,10 +275,7 @@ function isWorkflowInvocationMessage(message: MuxMessage, runId: string): boolea
   return message.parts.some((part) => {
     // A workflow_resume call re-attaches the agent to an existing run, so it counts as the
     // current invocation for background-continuation supersession checks too.
-    if (
-      part.type !== "dynamic-tool" ||
-      (part.toolName !== "workflow_run" && part.toolName !== "workflow_resume")
-    ) {
+    if (part.type !== "dynamic-tool" || !isWorkflowRunEmittingToolName(part.toolName)) {
       return false;
     }
     if (part.state !== "output-available") {

@@ -167,6 +167,20 @@ async function updateWorkflowRunFromAction(input: {
     input.setActionError(
       error instanceof Error ? error.message : `Failed to ${input.action} workflow`
     );
+    // A failed action usually means this card's snapshot is stale (e.g. Resume on a run an
+    // agent already resumed via workflow_resume -> "already active"). Re-sync best-effort so
+    // the card converges to the live status instead of keeping dead-end affordances.
+    try {
+      const refreshed = await input.api.workflows.getRun({
+        workspaceId: input.workspaceId,
+        runId: input.runId,
+      });
+      if (refreshed != null) {
+        input.setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, refreshed));
+      }
+    } catch {
+      // Keep the action error visible even when the refresh itself fails.
+    }
   }
 }
 
@@ -1276,13 +1290,15 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
 
   useEffect(() => {
     // workflow_resume knows the exact run from its args, so fetch the live snapshot by ID
-    // while the tool call executes; the regular refresh effect takes over once a snapshot
-    // (with workspaceId) exists.
+    // while the tool call executes. Keep polling even after a snapshot loads: the first
+    // poll can race the backend's `running` append and capture the stale pre-resume
+    // status (interrupted/failed), which the regular refresh effect never polls. Hand off
+    // only once the snapshot reaches a status the regular refresh effect covers.
     if (
       apiState?.api == null ||
       workspaceId == null ||
       knownRunId == null ||
-      run != null ||
+      (run != null && REFRESHING_WORKFLOW_STATUSES.has(run.status)) ||
       status !== "executing"
     ) {
       return;

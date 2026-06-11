@@ -474,11 +474,16 @@ function escapeMarkdownTableCodeCell(value: string): string {
 function escapeMarkdownTableTextCell(value: string): string {
   // docs/hooks/tools.mdx is MDX; raw `<...>` sequences can be parsed as JSX.
   // Escape them so tool descriptions like "(<5s)" render correctly.
+  // `_` and `*` must also be escaped: identifiers like `task_ids`/`wfr_...` can pair up
+  // into emphasis spans, which Prettier then normalizes into mid-word `*` delimiters,
+  // shipping mangled text (e.g. "task*ids") to the docs site and built-in skills.
   return value
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll("|", "\\|")
+    .replaceAll("_", "\\_")
+    .replaceAll("*", "\\*")
     .replaceAll("\\n", " ")
     .replaceAll("\n", " ")
     .trim();

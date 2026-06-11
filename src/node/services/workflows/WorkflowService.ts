@@ -320,11 +320,7 @@ export class WorkflowService {
 
   /**
    * Shared foreground runner choreography: abort-signal -> interrupt wiring, lease-scoped
-   * runner abort registration, and self-backgrounding continuation. The runner options are
-   * forwarded to the background continuation as well so a run that backgrounds itself before
-   * its status transition still resumes/retries with the same permissions.
-   * (`backgroundOnMessageQueued` is intentionally excluded: the runner's foreground default
-   * applies here, and forwarding it would override runInBackground's hardcoded `false`.)
+   * runner abort registration, and self-backgrounding continuation.
    */
   private async runForegroundWithAbortInterrupt(input: {
     workspaceId: string;
@@ -366,10 +362,19 @@ export class WorkflowService {
       return { runId: input.runId, status: "completed", result };
     } catch (error) {
       if (error instanceof WorkflowRunBackgroundedError) {
-        void this.runInBackground(input.runId, input.backgroundedFailureMessage, {
-          ...input.runnerOptions,
-          projectTrusted: input.projectTrusted,
-        }).catch(() => undefined);
+        // The runner durably appended `backgrounded` before throwing, so the continuation
+        // needs no resume/retry permission flags. Deliberately do NOT forward
+        // `allowResumeFromInterrupted`/`allowRetryFromFailedCheckpoint` here: an
+        // `interrupted` status observed by the continuation means someone interrupted the
+        // run during the lease handoff, and that interrupt must win instead of being
+        // silently reverted back to `running`. Likewise skip the continuation entirely
+        // when this call was aborted (interruptRunOnAbort aborts our runner controller and
+        // is concurrently transitioning the run to `interrupted`).
+        if (!runnerAbortController.signal.aborted) {
+          void this.runInBackground(input.runId, input.backgroundedFailureMessage, {
+            projectTrusted: input.projectTrusted,
+          }).catch(() => undefined);
+        }
         return { runId: input.runId, status: "backgrounded", result: null };
       }
       throw error;

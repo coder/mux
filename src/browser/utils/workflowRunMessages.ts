@@ -7,6 +7,7 @@ import {
   WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
   buildWorkflowRunCardMessage,
   filterWorkflowDisplayOnlyMessages,
+  isWorkflowRunEmittingToolName,
   type WorkflowRunCardInput,
   type WorkflowRunCardResult,
 } from "@/common/utils/workflowRunMessages";
@@ -119,11 +120,16 @@ export function hasWorkflowRunToolCallMessage(
   assert(run.id.length > 0, "hasWorkflowRunToolCallMessage: run id is required");
   return messages.some((message) =>
     message.parts.some((part) => {
-      if (part.type !== "dynamic-tool" || part.toolName !== "workflow_run") {
+      if (part.type !== "dynamic-tool" || !isWorkflowRunEmittingToolName(part.toolName)) {
         return false;
       }
       if (part.state === "output-available") {
         return getOutputRunId(part.output) === run.id;
+      }
+      // The name+args heuristic deliberately stays workflow_run-only: workflow_resume
+      // inputs carry a run_id, not a workflow name/args pair.
+      if (part.toolName !== "workflow_run") {
+        return false;
       }
       const input = getWorkflowInput(part.input);
       return input?.name === run.definition.name && jsonEqual(input.args, run.args);

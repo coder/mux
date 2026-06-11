@@ -77,7 +77,13 @@ async function getWorkflowRunForWorkspace(
   if (run == null) {
     return null;
   }
-  return WorkflowRunRecordSchema.parse(run);
+  // safeParse keeps the failure actionable: an unreadable record should produce a concise
+  // tool error instead of leaking a verbose zod stack (self-healing doctrine).
+  const parsed = WorkflowRunRecordSchema.safeParse(run);
+  if (!parsed.success) {
+    throw new Error(`Workflow run record is unreadable: ${runId}`);
+  }
+  return parsed.data;
 }
 
 function getLatestWorkflowResult(run: WorkflowRunRecord): unknown {
@@ -201,11 +207,20 @@ export const createWorkflowResumeTool: ToolFactory = (config: ToolConfiguration)
 
       // Background-style resumes outlive this turn; persist provenance so the run is
       // rediscoverable (task_await/task_list) and its terminal result re-engages the agent.
-      if (args.run_in_background === true || dispatched.status === "backgrounded") {
+      const isBackgroundDispatch =
+        args.run_in_background === true || dispatched.status === "backgrounded";
+      if (isBackgroundDispatch) {
         await recordBackgroundWorkflowRunReference(config, runId, invocationStartedAtMs);
       }
 
       const refreshedRun = await getWorkflowRunForWorkspace(workflowService, workspaceId, runId);
+      // Background dispatch resolves at lease acquisition, which can race the runner's
+      // `running` status append. A snapshot still showing the pre-dispatch status is stale:
+      // embedding it would freeze the UI card (and mislead the agent) on a status the run has
+      // already left, with no poller applying after the tool result lands. Omit it; the
+      // result's `status` field plus run polling converge on the live state.
+      const refreshedRunIsStale =
+        isBackgroundDispatch && refreshedRun != null && refreshedRun.status === run.status;
 
       return parseToolResult(
         WorkflowResumeToolResultSchema,
@@ -214,7 +229,7 @@ export const createWorkflowResumeTool: ToolFactory = (config: ToolConfiguration)
           runId: dispatched.runId,
           result: dispatched.result,
           mode,
-          ...(refreshedRun != null ? { run: refreshedRun } : {}),
+          ...(refreshedRun != null && !refreshedRunIsStale ? { run: refreshedRun } : {}),
         },
         "workflow_resume"
       );

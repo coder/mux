@@ -43,7 +43,17 @@ async function interruptWorkflowRun(
   if (rawRun == null) {
     return { status: "not_found" as const, taskId };
   }
-  const run = WorkflowRunRecordSchema.parse(rawRun);
+  // safeParse keeps batch entries isolated: one unreadable record must not collapse the
+  // whole Promise.all into a single opaque tool error (self-healing doctrine).
+  const parsedRun = WorkflowRunRecordSchema.safeParse(rawRun);
+  if (!parsedRun.success) {
+    return {
+      status: "error" as const,
+      taskId,
+      error: "Workflow run record is unreadable and cannot be interrupted.",
+    };
+  }
+  const run = parsedRun.data;
 
   if (run.status === "interrupted") {
     // Idempotent: re-interrupting an interrupted run is a no-op success.
