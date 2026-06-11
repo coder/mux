@@ -53,17 +53,23 @@ export function joinInstructionSets(sets: ReadonlyArray<InstructionSet | null>):
 }
 
 /**
- * Concatenate only the Mux-dedicated (`muxOnly`) files from a sequence of
- * instruction sets, in prompt order. This is the source text for scoped
+ * Collect the contents of Mux-dedicated (`muxOnly`) files from a sequence of
+ * instruction sets, in prompt order. These are the source texts for scoped
  * `Model:`/`Mode:` directives — shared AGENTS.md content is deliberately
  * excluded so those directives never activate from files that non-Mux agents
- * also read. Returns "" when no mux-only files contribute content.
+ * also read.
+ *
+ * Returned per-file (not concatenated) so a scoped section at the end of one
+ * file cannot swallow the next file's unscoped content — markdown section
+ * bounds only stop at another same-or-higher heading, which a following file
+ * may not start with.
  */
-export function joinMuxOnlyInstructionContent(sets: ReadonlyArray<InstructionSet | null>): string {
+export function collectMuxOnlyInstructionContents(
+  sets: ReadonlyArray<InstructionSet | null>
+): string[] {
   return sets
     .flatMap((set) => set?.files ?? [])
     .filter((file) => file.muxOnly)
     .map((file) => file.content)
-    .filter((content) => content.length > 0)
-    .join("\n\n");
+    .filter((content) => content.length > 0);
 }

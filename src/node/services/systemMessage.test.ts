@@ -474,6 +474,51 @@ Exec-only guidance.
     expect(customInstructions).toContain("Shared plan guidance.");
   });
 
+  test("scoped sections do not swallow the next mux file's unscoped content", async () => {
+    // .mux/AGENTS.md ends with a Mode: section; .mux/AGENTS.local.md starts
+    // with plain text. Extraction must run per file — concatenating first
+    // would pull the local file's unscoped content into <mode-plan>.
+    await fs.mkdir(path.join(workspaceDir, ".mux"), { recursive: true });
+    await fs.writeFile(
+      path.join(workspaceDir, ".mux", "AGENTS.md"),
+      `General mux guidance.
+
+## Mode: plan
+Plan-only guidance.
+`
+    );
+    await fs.writeFile(
+      path.join(workspaceDir, ".mux", "AGENTS.local.md"),
+      `Local unscoped guidance.
+`
+    );
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(
+      metadata,
+      runtime,
+      workspaceDir,
+      undefined,
+      undefined,
+      undefined,
+      { mode: "plan" }
+    );
+
+    const modeSection = extractTagContent(systemMessage, "mode-plan") ?? "";
+    expect(modeSection).toContain("Plan-only guidance.");
+    expect(modeSection).not.toContain("Local unscoped guidance.");
+
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+    expect(customInstructions).toContain("Local unscoped guidance.");
+  });
+
   test("falls back to global model section when project lacks a match", async () => {
     await fs.writeFile(
       path.join(globalDir, "AGENTS.md"),

@@ -7,8 +7,8 @@ import { RUNTIME_MODE } from "@/common/types/runtime";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import {
   INSTRUCTION_SCOPE,
+  collectMuxOnlyInstructionContents,
   joinInstructionSets,
-  joinMuxOnlyInstructionContent,
   type InstructionSet,
   type InstructionSources,
 } from "@/common/types/instructions";
@@ -535,14 +535,14 @@ export async function buildSystemMessage(
   // For non-sub-project workspaces this is a no-op (root === execution path).
   const workspaceRootPath = subProjectAwareWorkspaceRoot(metadata, runtime, workspacePath);
   const instructionSources = await loadInstructionSources(metadata, runtime, workspaceRootPath);
-  // The global set (~/.mux/AGENTS.md) is Mux-dedicated by construction.
-  const globalInstructions = instructionSources.global?.combinedContent ?? null;
-  // Mux-dedicated context content (<dir>/.mux/AGENTS.md files). Scoped
-  // Model:/Mode: directives are honored ONLY in Mux-dedicated sources so a
-  // "Model: …" heading in a shared AGENTS.md (read by non-Mux agents too)
-  // stays ordinary markdown. The structured form lives in `instructionSources`
-  // for consumers that need per-file metadata.
-  const muxContextInstructions = joinMuxOnlyInstructionContent(instructionSources.context) || null;
+  // Mux-dedicated per-file contents (<dir>/.mux/AGENTS.md context files, then
+  // the global ~/.mux/AGENTS.md set, which is Mux-dedicated by construction).
+  // Scoped Model:/Mode: directives are honored ONLY in Mux-dedicated sources
+  // so a "Model: …" heading in a shared AGENTS.md (read by non-Mux agents too)
+  // stays ordinary markdown. Extraction runs per file: a scoped section at the
+  // end of one file must not swallow the next file's unscoped content.
+  const muxContextContents = collectMuxOnlyInstructionContents(instructionSources.context);
+  const muxGlobalContents = collectMuxOnlyInstructionContents([instructionSources.global]);
 
   const agentPrompt = options?.agentSystemPrompt?.trim() ?? null;
   const trimmedMode = options?.mode?.trim();
@@ -581,7 +581,7 @@ export async function buildSystemMessage(
 
   // Scoped directive sources in priority order: agent definition → workspace
   // .mux/AGENTS.md files → global ~/.mux/AGENTS.md. All matches are joined.
-  const muxScopedSources = [agentPrompt, muxContextInstructions, globalInstructions];
+  const muxScopedSources = [agentPrompt, ...muxContextContents, ...muxGlobalContents];
 
   // Extract model-specific section based on active model identifier
   const modelContent = modelString
