@@ -55,6 +55,41 @@ describe("Config", () => {
     });
   });
 
+  describe("editConfig", () => {
+    it("serializes concurrent edits so no update is lost", async () => {
+      // Regression: editConfig used to be a non-serialized read-modify-write
+      // (load → mutate → async save). Two concurrent edits could both load the
+      // same snapshot, and the later write clobbered the earlier one. TaskService
+      // launches tasks in parallel and flips each task's status via editConfig,
+      // so a lost update left tasks stuck in "starting" (flaky
+      // "resumes accepted queued starts instead of replaying prompts").
+      await config.editConfig((cfg) => {
+        cfg.projects.set("/repo", {
+          workspaces: [
+            { path: "/repo/a", id: "aaaaaaaaaa", name: "a", taskStatus: "starting" },
+            { path: "/repo/b", id: "bbbbbbbbbb", name: "b", taskStatus: "starting" },
+          ],
+        });
+        return cfg;
+      });
+
+      const setStatus = (id: string) =>
+        config.editConfig((cfg) => {
+          const ws = cfg.projects.get("/repo")?.workspaces.find((w) => w.id === id);
+          if (ws) ws.taskStatus = "running";
+          return cfg;
+        });
+
+      // Fire both edits without awaiting in between, mirroring parallel task launches.
+      await Promise.all([setStatus("aaaaaaaaaa"), setStatus("bbbbbbbbbb")]);
+
+      const workspaces = new Config(tempDir)
+        .loadConfigOrDefault()
+        .projects.get("/repo")?.workspaces;
+      expect(workspaces?.map((w) => w.taskStatus)).toEqual(["running", "running"]);
+    });
+  });
+
   describe("userPreferences", () => {
     it("loads and saves user preferences", async () => {
       await config.editConfig((cfg) => ({

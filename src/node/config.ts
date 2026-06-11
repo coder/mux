@@ -585,6 +585,8 @@ export class Config {
   private readonly providersFile: string;
   private readonly secretsFile: string;
   private readonly emitter = new EventEmitter();
+  /** Serializes editConfig calls; see editConfig for why. */
+  private editConfigQueue: Promise<void> = Promise.resolve();
 
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getMuxHome();
@@ -1314,14 +1316,27 @@ export class Config {
   /**
    * Edit config atomically using a transformation function
    * @param fn Function that takes current config and returns modified config
+   *
+   * Edits are serialized on an internal queue: each edit's read happens only
+   * after the previous edit's write has landed. Without this, concurrent edits
+   * (e.g. parallel task launches updating taskStatus) read the same snapshot
+   * and the later write silently clobbers the earlier one.
    */
   async editConfig(fn: (config: ProjectsConfig) => ProjectsConfig): Promise<void> {
-    const config = this.loadConfigOrDefault();
-    const newConfig = fn(config);
-    await this.saveConfig(newConfig);
-    // Backend-initiated config edits (for example gateway auth changes) use this signal
-    // so frontend subscribers can refresh derived state without polling.
-    this.notifyConfigChanged();
+    const run = this.editConfigQueue.then(async () => {
+      const config = this.loadConfigOrDefault();
+      const newConfig = fn(config);
+      await this.saveConfig(newConfig);
+      // Backend-initiated config edits (for example gateway auth changes) use this signal
+      // so frontend subscribers can refresh derived state without polling.
+      this.notifyConfigChanged();
+    });
+    // Keep the queue alive when an edit fails; the failure still propagates to this caller.
+    this.editConfigQueue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
   }
 
   getUpdateChannel(): UpdateChannel {
