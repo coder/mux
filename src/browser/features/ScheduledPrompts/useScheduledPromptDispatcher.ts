@@ -5,6 +5,8 @@ import { getScheduledPromptsKey } from "@/common/constants/storage";
 import { prepareUserMessageForSend, type MuxMessageMetadata } from "@/common/types/message";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
+import type { SendMessageError } from "@/common/types/errors";
+import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 import {
   getDueScheduledPrompts,
   getNextScheduledPromptRunAt,
@@ -16,6 +18,26 @@ import {
 } from "./scheduledPrompts";
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const DISPATCH_LOCK_TTL_MS = 5 * 60 * 1000;
+const DISPATCH_LOCK_RETRY_DELAY_MS = 1_000;
+const SEND_MESSAGE_ERROR_TYPES = new Set<string>([
+  "api_key_not_found",
+  "oauth_not_connected",
+  "provider_disabled",
+  "provider_not_supported",
+  "model_not_available",
+  "invalid_model_string",
+  "incompatible_workspace",
+  "runtime_not_ready",
+  "runtime_start_failed",
+  "policy_denied",
+  "unknown",
+]);
+
+interface ScheduledDispatchLock {
+  ownerId: string;
+  expiresAt: number;
+}
 
 interface ScheduledPromptDispatcherOptions {
   api: APIClient | null;
@@ -27,7 +49,91 @@ interface ScheduledPromptDispatcherOptions {
   onMessageSent?: (dispatchMode: QueueDispatchMode) => void;
 }
 
+function createDispatcherOwnerId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+}
+
+function getDispatchLockKey(storageKey: string): string {
+  return `${storageKey}:dispatch-lock`;
+}
+
+function readDispatchLock(raw: string | null): ScheduledDispatchLock | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<ScheduledDispatchLock>;
+    if (
+      typeof parsed.ownerId === "string" &&
+      typeof parsed.expiresAt === "number" &&
+      Number.isFinite(parsed.expiresAt)
+    ) {
+      return {
+        ownerId: parsed.ownerId,
+        expiresAt: parsed.expiresAt,
+      };
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function tryAcquireDispatchLock(lockKey: string, ownerId: string): boolean {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return true;
+  }
+
+  try {
+    const now = Date.now();
+    const currentLock = readDispatchLock(window.localStorage.getItem(lockKey));
+    if (currentLock && currentLock.ownerId !== ownerId && currentLock.expiresAt > now) {
+      return false;
+    }
+
+    const nextLock: ScheduledDispatchLock = {
+      ownerId,
+      expiresAt: now + DISPATCH_LOCK_TTL_MS,
+    };
+    window.localStorage.setItem(lockKey, JSON.stringify(nextLock));
+
+    return readDispatchLock(window.localStorage.getItem(lockKey))?.ownerId === ownerId;
+  } catch {
+    return true;
+  }
+}
+
+function releaseDispatchLock(lockKey: string, ownerId: string): void {
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+
+  try {
+    const currentLock = readDispatchLock(window.localStorage.getItem(lockKey));
+    if (!currentLock || currentLock.ownerId === ownerId) {
+      window.localStorage.removeItem(lockKey);
+    }
+  } catch {
+    // Ignore storage failures; the lock expires automatically.
+  }
+}
+
+function isSendMessageError(error: unknown): error is SendMessageError {
+  if (typeof error !== "object" || error === null || !("type" in error)) {
+    return false;
+  }
+  const type = (error as { type?: unknown }).type;
+  return typeof type === "string" && SEND_MESSAGE_ERROR_TYPES.has(type);
+}
+
 function getErrorMessage(error: unknown): string {
+  if (isSendMessageError(error)) {
+    const formatted = formatSendMessageError(error);
+    return [formatted.message, formatted.resolutionHint].filter(Boolean).join(" ");
+  }
+
   if (error instanceof Error && error.message) {
     return error.message;
   }
@@ -69,6 +175,7 @@ export function useScheduledPromptDispatcher(options: ScheduledPromptDispatcherO
   });
   const inFlightIdsRef = useRef(new Set<string>());
   const isDispatchingRef = useRef(false);
+  const dispatcherOwnerIdRef = useRef(createDispatcherOwnerId());
   const [timerNonce, setTimerNonce] = useState(0);
 
   useEffect(() => {
@@ -88,6 +195,9 @@ export function useScheduledPromptDispatcher(options: ScheduledPromptDispatcherO
     }
 
     const timeout = window.setTimeout(() => {
+      const lockKey = getDispatchLockKey(storageKey);
+      const ownerId = dispatcherOwnerIdRef.current;
+
       if (isDispatchingRef.current) {
         return;
       }
@@ -97,6 +207,14 @@ export function useScheduledPromptDispatcher(options: ScheduledPromptDispatcherO
       );
       if (runnablePrompts.length === 0) {
         setTimerNonce((current) => current + 1);
+        return;
+      }
+
+      if (!tryAcquireDispatchLock(lockKey, ownerId)) {
+        window.setTimeout(
+          () => setTimerNonce((current) => current + 1),
+          DISPATCH_LOCK_RETRY_DELAY_MS
+        );
         return;
       }
 
@@ -164,6 +282,7 @@ export function useScheduledPromptDispatcher(options: ScheduledPromptDispatcherO
         }
       })().finally(() => {
         isDispatchingRef.current = false;
+        releaseDispatchLock(lockKey, ownerId);
       });
     }, delay);
 
