@@ -689,6 +689,78 @@ describe("StreamingMessageAggregator", () => {
       });
     });
 
+    test("seeds workflow definition preview from workflow_resume tool parts", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const workflowSource = `// description: Review deeply\nexport default function deepReviewWorkflow() {\n  return { reportMarkdown: "done" };\n}`;
+      const command = createMuxMessage("workflow-command", "user", "/deep-review-workflow mux", {
+        timestamp: 1,
+        historySequence: 1,
+        muxMetadata: {
+          type: "workflow-trigger-display",
+          rawCommand: "/deep-review-workflow mux",
+          commandPrefix: "/deep-review-workflow",
+          runId: "wfr_preview_resume",
+        },
+      });
+      const card = buildWorkflowRunCardMessage(
+        { name: "deep-review-workflow", args: { input: "mux" } },
+        {
+          runId: "wfr_preview_resume",
+          status: "running",
+          result: null,
+          run: {
+            id: "wfr_preview_resume",
+            workspaceId: "workspace-1",
+            definition: {
+              name: "deep-review-workflow",
+              description: "Review deeply",
+              scope: "built-in",
+              executable: true,
+            },
+            definitionSource: workflowSource,
+            definitionHash: "sha256-preview",
+            args: { input: "mux" },
+            status: "running",
+            createdAt: "2024-01-01T00:00:00.000Z",
+            updatedAt: "2024-01-01T00:00:01.000Z",
+            events: [],
+            steps: [],
+          },
+        },
+        2
+      );
+      card.metadata = {
+        timestamp: 2,
+        historySequence: 2,
+        synthetic: true,
+        uiVisible: true,
+        muxMetadata: { type: "workflow-run-card-display", runId: "wfr_preview_resume" },
+      };
+
+      const toolPart = card.parts[0];
+      if (toolPart?.type !== "dynamic-tool" || toolPart.state !== "output-available") {
+        throw new Error("Expected workflow card to contain an output-available tool part");
+      }
+      // buildWorkflowRunToolPart hardcodes workflow_run; resume continuations carry the same
+      // run record under workflow_resume and must seed definition previews identically.
+      toolPart.toolName = "workflow_resume";
+
+      aggregator.loadHistoricalMessages([command, card], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed[0]).toMatchObject({
+        type: "user",
+        workflowDefinitionPreview: {
+          descriptor: {
+            name: "deep-review-workflow",
+            description: "Review deeply",
+            scope: "built-in",
+          },
+          source: workflowSource,
+        },
+      });
+    });
+
     test("should strip legacy goal-cleared label from displayed summaries", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       const legacySummary = createMuxMessage(

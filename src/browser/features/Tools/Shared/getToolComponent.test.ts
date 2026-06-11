@@ -8,7 +8,7 @@ import { DesktopActionToolCall } from "../DesktopActionToolCall";
 import { DesktopScreenshotToolCall } from "../DesktopScreenshotToolCall";
 import { GenericToolCall } from "../GenericToolCall";
 import { GoogleSearchToolCall } from "../GoogleSearchToolCall";
-import { WorkflowRunToolCall } from "../WorkflowRunToolCall";
+import { WorkflowResumeToolCall, WorkflowRunToolCall } from "../WorkflowRunToolCall";
 import { WorkflowListToolCall, WorkflowReadToolCall } from "../WorkflowDefinitionToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
 import { getToolComponent } from "./getToolComponent";
@@ -22,6 +22,11 @@ describe("getToolComponent", () => {
   test("returns WorkflowRunToolCall for workflow_run", () => {
     const component = getToolComponent("workflow_run", { name: "deep-research" });
     expect(component).toBe(WorkflowRunToolCall);
+  });
+
+  test("returns WorkflowResumeToolCall for workflow_resume", () => {
+    const component = getToolComponent("workflow_resume", { run_id: "wfr_123" });
+    expect(component).toBe(WorkflowResumeToolCall);
   });
 
   test("returns AgentReportToolCall for agent_report", () => {

@@ -99,7 +99,7 @@ void mock.module("@/browser/components/Dialog/Dialog", () => ({
   ),
 }));
 
-import { WorkflowRunToolCall } from "./WorkflowRunToolCall";
+import { WorkflowResumeToolCall, WorkflowRunToolCall } from "./WorkflowRunToolCall";
 
 function APIHarness(props: { client: unknown; children: ReactNode }) {
   return (
@@ -1074,6 +1074,205 @@ describe("WorkflowRunToolCall", () => {
     expect(view.queryByText("second")).toBeNull();
     expect(view.queryByRole("button", { name: "Interrupt workflow" })).toBeNull();
     expect(getRun).not.toHaveBeenCalled();
+  });
+
+  test("discovers workflow_resume runs by exact id and promotes the live run details", async () => {
+    const runningRun = {
+      id: "wfr_known",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:known",
+      args: { topic: "workflow cards" },
+      status: "running" as const,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:01.000Z",
+      events: [
+        {
+          sequence: 1,
+          type: "status" as const,
+          at: "2026-05-29T00:00:00.000Z",
+          status: "running" as const,
+        },
+        { sequence: 2, type: "phase" as const, at: "2026-05-29T00:00:01.000Z", name: "scope" },
+      ],
+      steps: [],
+    };
+    const getRun = mock(async (input: { workspaceId: string; runId: string }) => {
+      expect(input).toEqual({ workspaceId: "workspace-1", runId: "wfr_known" });
+      return runningRun;
+    });
+    const api = {
+      workflows: {
+        getRun,
+      },
+    };
+
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowResumeToolCall
+              args={{ run_id: "wfr_known", run_in_background: false }}
+              status="executing"
+              workspaceId="workspace-1"
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    // Until the snapshot loads, the run id doubles as the header display name.
+    expect(getWorkflowHeader(view).textContent).toContain("wfr_known");
+
+    await waitFor(() => expect(getWorkflowHeader(view).textContent).toContain("deep-research"));
+    expect(getWorkflowHeader(view).textContent).not.toContain("wfr_known");
+    expect(getWorkflowHeader(view).textContent).toContain("executing");
+    expect(view.getByText("wfr_known")).toBeTruthy();
+    expect(view.getAllByText("built-in").length).toBeGreaterThan(0);
+    expect(view.getByText("Workflow events (1)")).toBeTruthy();
+    expect(view.getByText("scope")).toBeTruthy();
+    // The fetched snapshot matches the args' run id and this workspace, so the run is
+    // actionable before the blocking tool call returns a result.
+    expect(view.getByRole("button", { name: "Interrupt workflow" })).toBeTruthy();
+    expect(getRun).toHaveBeenCalledWith({ workspaceId: "workspace-1", runId: "wfr_known" });
+  });
+
+  test("does not confirm workflow_resume identity for snapshots from another workspace", async () => {
+    const otherWorkspaceRun = {
+      id: "wfr_known",
+      workspaceId: "workspace-other",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:known",
+      args: { topic: "workflow cards" },
+      status: "running" as const,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:01.000Z",
+      events: [
+        {
+          sequence: 1,
+          type: "status" as const,
+          at: "2026-05-29T00:00:00.000Z",
+          status: "running" as const,
+        },
+      ],
+      steps: [],
+    };
+    const getRun = mock(async () => otherWorkspaceRun);
+    const api = {
+      workflows: {
+        getRun,
+      },
+    };
+
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowResumeToolCall
+              args={{ run_id: "wfr_known", run_in_background: false }}
+              status="executing"
+              workspaceId="workspace-1"
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    await waitFor(() => expect(getWorkflowHeader(view).textContent).toContain("deep-research"));
+    // The snapshot still renders, but a cross-workspace id match must not unlock actions.
+    expect(view.queryByRole("button", { name: "Interrupt workflow" })).toBeNull();
+  });
+
+  test("keeps polling workflow_resume past a stale interrupted snapshot until the run is live", async () => {
+    const staleInterruptedRun = {
+      id: "wfr_known",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:known",
+      args: { topic: "workflow cards" },
+      status: "interrupted" as const,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:01.000Z",
+      events: [
+        {
+          sequence: 1,
+          type: "status" as const,
+          at: "2026-05-29T00:00:01.000Z",
+          status: "interrupted" as const,
+        },
+      ],
+      steps: [],
+    };
+    const resumedRun = {
+      ...staleInterruptedRun,
+      status: "running" as const,
+      updatedAt: "2026-05-29T00:00:02.000Z",
+      events: [
+        ...staleInterruptedRun.events,
+        {
+          sequence: 2,
+          type: "status" as const,
+          at: "2026-05-29T00:00:02.000Z",
+          status: "running" as const,
+        },
+        {
+          sequence: 3,
+          type: "phase" as const,
+          at: "2026-05-29T00:00:02.000Z",
+          name: "post-resume",
+        },
+      ],
+    };
+    let getRunCalls = 0;
+    const getRun = mock(async () => {
+      getRunCalls += 1;
+      return getRunCalls === 1 ? staleInterruptedRun : resumedRun;
+    });
+    const api = {
+      workflows: {
+        getRun,
+      },
+    };
+
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowResumeToolCall
+              args={{ run_id: "wfr_known", run_in_background: false }}
+              status="executing"
+              workspaceId="workspace-1"
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    // The first poll races the backend's resume transition and captures the stale pre-resume
+    // "interrupted" snapshot; discovery must keep polling instead of pinning the card on it.
+    await waitFor(() => expect(view.getByText("post-resume")).toBeTruthy());
+    expect(getRunCalls).toBeGreaterThanOrEqual(2);
+    expect(getWorkflowHeader(view).textContent).toContain("executing");
+    expect(view.getByRole("button", { name: "Interrupt workflow" })).toBeTruthy();
+    expect(view.queryByRole("button", { name: "Resume workflow" })).toBeNull();
   });
 
   test("keeps the newest workflow refresh snapshot when polls resolve out of order", async () => {
@@ -2534,8 +2733,41 @@ describe("WorkflowRunToolCall", () => {
     expect(view.queryByRole("button", { name: "Retry from checkpoint" })).toBeNull();
   });
 
-  test("clears resume polling when resume fails", async () => {
+  test("clears resume polling and re-syncs the run snapshot when resume fails", async () => {
     let getRunCalls = 0;
+    // A failed resume often means the card was stale (e.g. another agent already resumed the
+    // run); the catch path re-fetches the run once so the card converges to the live record.
+    const refreshedRun = {
+      id: "wfr_resume_failed",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:test",
+      args: { topic: "workflow cards" },
+      status: "interrupted" as const,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:02.000Z",
+      events: [
+        {
+          sequence: 1,
+          type: "status" as const,
+          at: "2026-05-29T00:00:00.000Z",
+          status: "interrupted" as const,
+        },
+        {
+          sequence: 2,
+          type: "log" as const,
+          at: "2026-05-29T00:00:02.000Z",
+          message: "Trust gate blocked resume",
+        },
+      ],
+      steps: [],
+    };
     const api = {
       workflows: {
         resume: async () => {
@@ -2543,7 +2775,7 @@ describe("WorkflowRunToolCall", () => {
         },
         getRun: async () => {
           getRunCalls += 1;
-          return null;
+          return refreshedRun;
         },
       },
     };
@@ -2598,8 +2830,15 @@ describe("WorkflowRunToolCall", () => {
     fireEvent.click(view.getByRole("button", { name: "Resume workflow" }));
 
     await waitFor(() => expect(view.getByText("Project trust is required")).toBeTruthy());
+    // The best-effort getRun re-sync ran and its snapshot was applied to the card.
+    await waitFor(() => expect(view.getByText("Trust gate blocked resume")).toBeTruthy());
+    expect(getRunCalls).toBe(1);
+    expect(view.getByText("Project trust is required")).toBeTruthy();
+    // The pending-resume marker was cleared: the run is immediately resumable again and no
+    // resume polling keeps hitting getRun after the failure.
+    expect(view.getByRole("button", { name: "Resume workflow" })).toBeTruthy();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(getRunCalls).toBe(0);
+    expect(getRunCalls).toBe(1);
   });
 
   test("saves scratch workflow runs directly to project workflows", async () => {
