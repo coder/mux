@@ -9,7 +9,7 @@ import * as path from "node:path";
 import { Command } from "commander";
 
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
-import type { FeatureFlagOverride, ProjectConfig } from "@/common/types/project";
+import type { ProjectConfig } from "@/common/types/project";
 import { parseRuntimeModeAndHost, RUNTIME_MODE, type RuntimeConfig } from "@/common/types/runtime";
 import {
   DEFAULT_THINKING_LEVEL,
@@ -39,7 +39,6 @@ import { getParseOptions } from "./argv";
 import { exitAfterStdoutFlush } from "./processExit";
 import { resolveProjectDir, resolveProjectTrusted } from "./trust";
 
-const DYNAMIC_WORKFLOWS_EXPERIMENT = EXPERIMENT_IDS.DYNAMIC_WORKFLOWS;
 const VALID_EXPERIMENT_IDS = new Set<string>(Object.values(EXPERIMENT_IDS));
 const THINKING_LABELS_LIST = [...new Set(Object.values(THINKING_DISPLAY_LABELS))].join(", ");
 
@@ -82,13 +81,6 @@ interface WorkflowContext {
   services: WorkflowServices;
   session: AgentSession;
   codexOauthService: CodexOauthService;
-}
-
-export function workflowExperimentEnabled(
-  experimentIds: readonly string[],
-  persistedOverride: FeatureFlagOverride
-): boolean {
-  return experimentIds.includes(DYNAMIC_WORKFLOWS_EXPERIMENT) || persistedOverride === "on";
 }
 
 export async function parseWorkflowArgs(input: ParseWorkflowArgsInput): Promise<unknown> {
@@ -235,6 +227,8 @@ function buildExperimentsObject(experimentIds: readonly string[]) {
       EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
     ),
     execSubagentHardRestart: experimentIds.includes(EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART),
+    // Invoking `mux workflow` is an explicit opt-in, so the dynamic-workflows
+    // experiment is enabled implicitly for this invocation (never persisted).
     dynamicWorkflows: true,
     subagentFileReports: experimentIds.includes(EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS),
   };
@@ -460,7 +454,6 @@ async function runList(options: WorkflowCLIOptions): Promise<number> {
     explicitDir: options.dir,
   });
   const realConfig = new Config();
-  enforceWorkflowExperiment(realConfig, options.experiment);
   const projectTrusted = await resolveProjectTrusted(realConfig, projectDir);
   await warnIfUntrustedProjectWorkflowsSkipped(projectDir, projectTrusted);
   const store = createDefinitionStore({ realConfig, projectDir });
@@ -484,7 +477,6 @@ async function runShow(
     explicitDir: options.dir,
   });
   const realConfig = new Config();
-  enforceWorkflowExperiment(realConfig, options.experiment);
   const projectTrusted = await resolveProjectTrusted(realConfig, projectDir);
   await warnIfUntrustedProjectWorkflowsSkipped(projectDir, projectTrusted);
   const store = createDefinitionStore({ realConfig, projectDir });
@@ -517,7 +509,6 @@ async function runWorkflow(
     explicitDir: options.dir,
   });
   const realConfig = new Config();
-  enforceWorkflowExperiment(realConfig, options.experiment);
   parseRuntimeConfig(options.runtime);
   const store = createDefinitionStore({ realConfig, projectDir });
   await assertProjectWorkflowTrusted({
@@ -645,20 +636,6 @@ function extractReportMarkdown(result: unknown): string {
   return "";
 }
 
-function enforceWorkflowExperiment(realConfig: Config, experimentIds: readonly string[]): void {
-  if (
-    workflowExperimentEnabled(
-      experimentIds,
-      realConfig.getFeatureFlagOverride(DYNAMIC_WORKFLOWS_EXPERIMENT)
-    )
-  ) {
-    return;
-  }
-  throw new Error(
-    `mux workflow requires the ${DYNAMIC_WORKFLOWS_EXPERIMENT} experiment. Re-run with -e ${DYNAMIC_WORKFLOWS_EXPERIMENT} or enable it in settings.`
-  );
-}
-
 function configureLogging(options: Pick<WorkflowCLIOptions, "logLevel" | "verbose">): void {
   if (options.logLevel == null) {
     if (options.verbose === true) log.setLevel("info");
@@ -675,7 +652,9 @@ export async function main(): Promise<number> {
   const program = new Command();
   program
     .name("mux workflow")
-    .description("List, inspect, and run mux workflow definitions")
+    .description(
+      "List, inspect, and run mux workflow definitions.\n\nExperimental: invoking this command implicitly enables the dynamic-workflows\nexperiment for this invocation only."
+    )
     .option("-d, --dir <path>", "project directory")
     .option("-r, --runtime <runtime>", "runtime type (currently only local is supported)", "local")
     .option("-m, --model <model>", "model to use for workflow-owned agents", defaultModel)
@@ -695,7 +674,12 @@ export async function main(): Promise<number> {
     .option("--args-json <json>", "workflow args as JSON")
     .option("--args-file <path>", "read workflow args JSON from a file")
     .option("--args-stdin", "read workflow args JSON from stdin")
-    .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
+    .option(
+      "-e, --experiment <id>",
+      "enable an additional experiment for workflow-owned child agents (can be repeated)",
+      collectExperiments,
+      []
+    )
     .option("-v, --verbose", "show info-level logs")
     .option("--log-level <level>", "set log level: error, warn, info, debug");
 
