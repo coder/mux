@@ -710,15 +710,71 @@ function isRegExpLiteralStart(maskedPrefix: string): boolean {
     // the matching "{".
     return !isObjectLiteralEnd(maskedPrefix, index);
   }
-  // Values end with ")", "]", or a kept quote delimiter of a masked literal;
+  if (character === ")") {
+    // ")" is ambiguous too: a control-statement header (`if (x) /re/.test(s)`) is
+    // followed by statement position, while a call/grouping result is a value.
+    return isControlHeaderEnd(maskedPrefix, index);
+  }
+  // Values end with "]" or a kept quote delimiter of a masked literal;
   // a "/" after any of these is division, not a regex literal.
-  return (
-    character !== ")" &&
-    character !== "]" &&
-    character !== '"' &&
-    character !== "'" &&
-    character !== "`"
-  );
+  return character !== "]" && character !== '"' && character !== "'" && character !== "`";
+}
+
+// Keywords whose parenthesized header is followed by statement position, so a "/"
+// after the closing ")" starts a regex (e.g. `if (x) /re/.test(s)`).
+const PAREN_STATEMENT_KEYWORDS = new Set(["if", "while", "for", "switch", "with"]);
+
+/**
+ * Determines whether the ")" at closeParenIndex ends a control-statement header by
+ * finding the matching "(" in the masked prefix and checking whether a control
+ * keyword precedes it.
+ */
+function isControlHeaderEnd(maskedPrefix: string, closeParenIndex: number): boolean {
+  assert(maskedPrefix[closeParenIndex] === ")", "isControlHeaderEnd: index must point at ')'");
+  let depth = 0;
+  let openParenIndex = -1;
+  for (let index = closeParenIndex; index >= 0; index -= 1) {
+    const character = maskedPrefix[index];
+    if (character === ")") {
+      depth += 1;
+    } else if (character === "(") {
+      depth -= 1;
+      if (depth === 0) {
+        openParenIndex = index;
+        break;
+      }
+    }
+  }
+  if (openParenIndex <= 0) {
+    return false;
+  }
+  let index = openParenIndex - 1;
+  while (index >= 0) {
+    const character = maskedPrefix[index];
+    if (character === " " || character === "\n" || character === "\t" || character === "\r") {
+      index -= 1;
+      continue;
+    }
+    break;
+  }
+  if (index < 0) {
+    return false;
+  }
+  const character = maskedPrefix[index];
+  assert(character != null, "isControlHeaderEnd: character is required");
+  if (!IDENTIFIER_CHARACTER.test(character)) {
+    return false;
+  }
+  let start = index;
+  while (start >= 0) {
+    const wordCharacter = maskedPrefix[start];
+    assert(wordCharacter != null, "isControlHeaderEnd: word character is required");
+    if (!IDENTIFIER_CHARACTER.test(wordCharacter)) {
+      break;
+    }
+    start -= 1;
+  }
+  return PAREN_STATEMENT_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
 }
 
 // Keywords that expect an expression next, so a following "{" opens an object literal
@@ -742,9 +798,10 @@ const OBJECT_PRECEDING_KEYWORDS = new Set([
 /**
  * Determines whether the "}" at closeBraceIndex ends an object literal (a value) or a
  * block (statement position) by finding the matching "{" in the masked prefix and
- * inspecting the token before it: expression contexts ("=", "(", "[", ",", ":", or an
- * expression keyword like `return`) open object literals; anything else (statement
- * start, ")", "=>", ";") is treated as a block.
+ * inspecting the token before it. Block contexts are enumerated (")", ";", "{", "}",
+ * "=>", block keywords like `do`/`else`, file start); any other preceding operator or
+ * punctuation ("=", "(", "[", ",", ":", "?", "||", arithmetic, ...) leaves the "{" in
+ * expression position, so it opens an object literal.
  */
 function isObjectLiteralEnd(maskedPrefix: string, closeBraceIndex: number): boolean {
   assert(maskedPrefix[closeBraceIndex] === "}", "isObjectLiteralEnd: index must point at '}'");
@@ -780,12 +837,6 @@ function isObjectLiteralEnd(maskedPrefix: string, closeBraceIndex: number): bool
   }
   const character = maskedPrefix[index];
   assert(character != null, "isObjectLiteralEnd: character is required");
-  if (character === "=") {
-    return true;
-  }
-  if (character === "(" || character === "[" || character === "," || character === ":") {
-    return true;
-  }
   if (IDENTIFIER_CHARACTER.test(character)) {
     let start = index;
     while (start >= 0) {
@@ -796,9 +847,21 @@ function isObjectLiteralEnd(maskedPrefix: string, closeBraceIndex: number): bool
       }
       start -= 1;
     }
+    // Expression keywords (return, typeof, ...) take object literals; any other
+    // identifier (do/else/try/finally, class names, function headers) opens a block.
     return OBJECT_PRECEDING_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
   }
-  return false;
+  if (character === ")" || character === ";" || character === "{" || character === "}") {
+    // Control headers (`if (...) {`), statement boundaries, and adjacent blocks.
+    return false;
+  }
+  if (character === ">" && maskedPrefix[index - 1] === "=") {
+    // "=>" introduces an arrow function block body.
+    return false;
+  }
+  // Any other punctuation ("=", "(", "[", ",", ":", "?", "&", "|", arithmetic, ...)
+  // keeps the "{" in expression position: object literal.
+  return true;
 }
 
 function isTopLevelStaticMatch(maskedSource: string, matchIndex: number): boolean {

@@ -407,6 +407,12 @@ describe("WorkflowActionRunner", () => {
       // Counter-case: "}" closing a block (not an object literal) still starts a regex;
       // the "(" inside the character class must stay masked or it corrupts paren depth.
       `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; if (globalThis.x) {} /^[(]/.test("a"); module.exports.execute = async () => ({ ok: true });`,
+      // Object literals introduced by ternary/logical operators are values too.
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = globalThis.cond ? { valueOf() { return 10; } } / 2 : 0; module.exports.execute = async () => /x/.test("x");`,
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; const n = globalThis.flag || { valueOf() { return 10; } } / 2; module.exports.execute = async () => /x/.test("x");`,
+      // Counter-case: ")" closing a control-statement header is statement position, so
+      // a regex (not division) follows; its "(" must stay masked.
+      `module.exports.metadata = { version: 1, description: "Division", effect: "read" }; if (globalThis.x) /^[(]/.test("a"); module.exports.execute = async () => ({ ok: true });`,
     ];
     const runner = new WorkflowActionRunner();
     for (const [index, source] of sources.entries()) {
