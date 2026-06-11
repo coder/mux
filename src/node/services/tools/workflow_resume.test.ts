@@ -267,6 +267,40 @@ describe("workflow_resume tool", () => {
     });
   });
 
+  test("retries a failed run from checkpoint in the background and records a run reference", async () => {
+    using tempDir = new TestTempDir("test-workflow-resume-retry-bg");
+    const workflowService = buildWorkflowService({ getRun: mock(async () => buildFailedRun()) });
+    const tool = createWorkflowResumeTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: false,
+      workflowService,
+    });
+
+    const result = await tool.execute!(
+      { run_id: "wfr_resume_me", run_in_background: true, mode: "retry_from_checkpoint" },
+      mockToolCallOptions
+    );
+
+    expect(workflowService.retryRunFromCheckpointInBackground).toHaveBeenCalledWith({
+      workspaceId: "workspace-1",
+      runId: "wfr_resume_me",
+      projectTrusted: false,
+    });
+    expect(workflowService.retryRunFromCheckpoint).not.toHaveBeenCalled();
+    expect(workflowService.resumeRun).not.toHaveBeenCalled();
+    expect(workflowService.resumeRunInBackground).not.toHaveBeenCalled();
+    const references = await readAgentWorkflowRunReferences(tempDir.path);
+    expect(references.map((reference) => reference.runId)).toContain("wfr_resume_me");
+    expect(result).toMatchObject({
+      status: "running",
+      runId: "wfr_resume_me",
+      mode: "retry_from_checkpoint",
+    });
+    // The static getRun mock still reports the pre-dispatch "failed" status after dispatch, so
+    // the stale run snapshot must be omitted from the background-dispatch result.
+    expect(result).not.toHaveProperty("run");
+  });
+
   test("rejects checkpoint retry of an ineligible failed run", async () => {
     using tempDir = new TestTempDir("test-workflow-resume-retry-unsafe");
     // An unfinished patch step makes checkpoint retry unsafe.

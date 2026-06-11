@@ -817,6 +817,94 @@ export default function workflow({ args, agent }) {
     expect(backgroundFlags).toEqual([true, false]);
   });
 
+  test("does not revert a concurrent interrupt when a self-backgrounded resume continuation starts", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_resume_interrupt_race",
+      workspaceId: "workspace-1",
+      definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus(
+      "wfr_resume_interrupt_race",
+      "interrupted",
+      "2026-05-29T00:00:01.000Z"
+    );
+
+    // Hold the self-backgrounding continuation at its lease acquisition (the second acquire;
+    // the first is the foreground resume) so interruptRun deterministically lands before the
+    // continuation reads the run status. Forwarding allowResumeFromInterrupted to the
+    // continuation used to let it silently revert that interrupt back to "running".
+    let leaseCalls = 0;
+    let continuationDone = false;
+    const continuationGate = Promise.withResolvers<void>();
+    const acquireLease = runStore.acquireLease.bind(runStore);
+    runStore.acquireLease = async (runId, ownerId, nowMs) => {
+      leaseCalls += 1;
+      if (leaseCalls > 1) {
+        await continuationGate.promise;
+      }
+      return await acquireLease(runId, ownerId, nowMs);
+    };
+    const releaseLease = runStore.releaseLease.bind(runStore);
+    runStore.releaseLease = async (runId, ownerId) => {
+      await releaseLease(runId, ownerId);
+      if (leaseCalls > 1) {
+        continuationDone = true;
+      }
+    };
+
+    let agentCalls = 0;
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          agentCalls += 1;
+          if (agentCalls === 1) {
+            throw new ForegroundWaitBackgroundedError();
+          }
+          return { taskId: "task_slow", reportMarkdown: "done" };
+        },
+      },
+      runnerId: "runner-a",
+    });
+
+    const result = await service.resumeRun({
+      workspaceId: "workspace-1",
+      runId: "wfr_resume_interrupt_race",
+      projectTrusted: true,
+    });
+    expect(result).toEqual({
+      runId: "wfr_resume_interrupt_race",
+      status: "backgrounded",
+      result: null,
+    });
+
+    await service.interruptRun({
+      workspaceId: "workspace-1",
+      runId: "wfr_resume_interrupt_race",
+    });
+    continuationGate.resolve();
+
+    await waitForCondition("self-backgrounded continuation to settle", () => continuationDone);
+    // The interrupt must win: the continuation has no resume permission, so it must refuse to
+    // re-run the workflow instead of transitioning the run back to "running".
+    await expect(runStore.getRun("wfr_resume_interrupt_race")).resolves.toMatchObject({
+      status: "interrupted",
+    });
+    expect(agentCalls).toBe(1);
+  });
+
   test("rejects resume when the caller is already aborted without touching run state", async () => {
     using tmp = new DisposableTempDir("workflow-service");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
