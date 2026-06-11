@@ -15,6 +15,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubset } from "@/common/utils/jsonSchemaSubset";
 import type { IJSRuntime, IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
+import { AsyncSemaphore } from "@/node/utils/concurrency/asyncSemaphore";
 import type { ResolvedWorkflowAction, WorkflowActionRegistry } from "./WorkflowActionRegistry";
 import {
   WorkflowActionExecutionError,
@@ -172,6 +173,28 @@ function createForegroundWaitBackgroundedError(): Error {
   const error = new Error("Workflow foreground wait backgrounded");
   error.name = "ForegroundWaitBackgroundedError";
   return error;
+}
+
+// parallelAgents accepts an optional second argument: { maxParallel?: number }.
+// maxParallel caps how many sub-agent tasks run at once; remaining specs start
+// as running ones finish (sliding window) instead of all launching up front.
+function parseParallelAgentsOptions(raw: unknown): { maxParallel?: number } {
+  if (raw == null) {
+    return {};
+  }
+  assert(
+    typeof raw === "object" && !Array.isArray(raw),
+    "parallelAgents options must be an object"
+  );
+  const { maxParallel } = raw as { maxParallel?: unknown };
+  if (maxParallel == null) {
+    return {};
+  }
+  assert(
+    typeof maxParallel === "number" && Number.isInteger(maxParallel) && maxParallel > 0,
+    "parallelAgents options.maxParallel must be a positive integer"
+  );
+  return { maxParallel };
 }
 
 function shouldRestartUnrecoverableStartedTask(error: unknown): boolean {
@@ -444,12 +467,13 @@ export class WorkflowRunner {
             throw error;
           }
         });
-        setupRuntime.registerFunction("__workflowParallelAgents", async (rawSpecs) => {
+        setupRuntime.registerFunction("__workflowParallelAgents", async (rawSpecs, rawOptions) => {
           try {
             return await this.runAgentStepsInParallel(runId, sequence, rawSpecs, {
               ignoreStartedTaskIds,
               waitOptions: getWorkflowAgentWaitOptions(setupRuntime, options),
               leaseGuard,
+              rawOptions,
             });
           } catch (error) {
             if (isForegroundWaitBackgroundedError(error)) {
@@ -1225,10 +1249,12 @@ export class WorkflowRunner {
       ignoreStartedTaskIds: boolean;
       waitOptions?: WorkflowAgentWaitOptions;
       leaseGuard: WorkflowRunnerLeaseGuard;
+      rawOptions?: unknown;
     }
   ): Promise<StructuredTaskOutput[]> {
     assert(Array.isArray(rawSpecs), "parallelAgents requires an array of agent specs");
     assert(rawSpecs.length > 0, "parallelAgents requires at least one agent spec");
+    const { maxParallel } = parseParallelAgentsOptions(options.rawOptions);
 
     const results = new Array<StructuredTaskOutput>(rawSpecs.length);
     const parsedSteps = rawSpecs.map((rawSpec) => {
@@ -1313,7 +1339,18 @@ export class WorkflowRunner {
                 step.retryMessage ?? "previous attempt failed"
               ),
       }));
-      const bulkCreatableSteps = effectivePending.filter((step) => step.taskId == null);
+      // maxParallel caps live child tasks with a sliding window: the next spec
+      // starts as soon as any running one finishes, instead of waiting for a
+      // whole fixed-size batch to drain.
+      const windowSemaphore =
+        maxParallel != null && maxParallel < effectivePending.length
+          ? new AsyncSemaphore(maxParallel)
+          : undefined;
+      // Under a window, tasks must be created lazily when a slot frees;
+      // bulk-creating the whole wave up front would start every child at once.
+      const bulkCreatableSteps = windowSemaphore
+        ? []
+        : effectivePending.filter((step) => step.taskId == null);
       if (
         bulkCreatableSteps.length > 0 &&
         this.taskAdapter.createAgentTasks != null &&
@@ -1362,8 +1399,18 @@ export class WorkflowRunner {
           throw error;
         }
       }
+      // Any settled sibling failure dooms the whole batch (the settle loop
+      // below rethrows it), so window-queued steps that have not started yet
+      // must not spawn fresh child tasks once a sibling has failed.
+      let batchFailed = false;
       const guardedRuns = effectivePending.map(async (step, pendingIndex) => {
+        const slot = windowSemaphore ? await windowSemaphore.acquire() : undefined;
         try {
+          if (batchFailed || batchAbortController.signal.aborted) {
+            throw new Error(
+              `parallelAgents step ${step.spec.id} canceled before it started: a sibling task failed or the batch was aborted`
+            );
+          }
           const rawResult = await this.runOrResumeAgentStep(runId, sequence, {
             spec: step.runSpec,
             inputHash: step.inputHash,
@@ -1374,6 +1421,9 @@ export class WorkflowRunner {
           });
           return { pendingIndex, step, rawResult };
         } catch (error) {
+          // Set before the slot is released (finally below) so the next
+          // admitted waiter deterministically observes the failure.
+          batchFailed = true;
           if (isForegroundWaitBackgroundedError(error)) {
             foregroundBackgrounded = true;
             abortBatch();
@@ -1381,6 +1431,8 @@ export class WorkflowRunner {
             await interruptRemainingTasks();
           }
           return { pendingIndex, step, error };
+        } finally {
+          slot?.release();
         }
       });
       const unsettledRuns = new Map(guardedRuns.map((run, index) => [index, run]));

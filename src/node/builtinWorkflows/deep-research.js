@@ -34,7 +34,7 @@ export const RESEARCH_CONFIGS = {
     maxVerifyClaims: 8,
     votesPerClaim: 1,
     refutationsRequired: 1,
-    verificationBatchSize: 4,
+    maxParallelVerifiers: 4,
   },
   smart: {
     mode: "smart",
@@ -44,7 +44,7 @@ export const RESEARCH_CONFIGS = {
     maxVerifyClaims: 16,
     votesPerClaim: 3,
     refutationsRequired: 2,
-    verificationBatchSize: 6,
+    maxParallelVerifiers: 12,
   },
 };
 
@@ -598,11 +598,10 @@ function compareClaimsForRanking(left, right) {
 
 function verifyClaims({ parallelAgents, refinedTopic, claims, config }) {
   const voteSpecs = buildVerificationSpecs({ claims, config, refinedTopic });
-  const voteResults = runParallelAgentBatches(
-    voteSpecs,
-    config.verificationBatchSize,
-    parallelAgents
-  );
+  // Verification fans out claims x votes; maxParallel caps live verifier
+  // agents with a sliding window so the queue keeps draining while slow
+  // verifiers finish, instead of stalling whole fixed-size batches.
+  const voteResults = parallelAgents(voteSpecs, { maxParallel: config.maxParallelVerifiers });
   const votedClaims = aggregateVotes(claims, voteResults, config);
   const confirmedClaims = votedClaims.filter((claim) => claim.survives);
   const refutedClaims = votedClaims.filter((claim) => !claim.survives);
@@ -638,18 +637,6 @@ Claim: ${JSON.stringify(claim)}
 Vote: ${vote + 1} of ${votesPerClaim}
 
 Return a specific verdict. Evidence must explain why the claim is supported or refuted. Structured output only.`;
-}
-
-// Verification fans out claims x votes; cap how many verifier agents run in a
-// single parallel wave.
-function runParallelAgentBatches(specs, batchSize, parallelAgents) {
-  const results = [];
-  for (let index = 0; index < specs.length; index += batchSize) {
-    for (const result of parallelAgents(specs.slice(index, index + batchSize))) {
-      results.push(result);
-    }
-  }
-  return results;
 }
 
 export function aggregateVotes(claims, voteResults, config) {

@@ -1,4 +1,10 @@
 // description: Audit a repository for security risk, persist threat-model state, and synthesize findings.
+
+// Verification/fixer fan-out scales with maxFindings/maxFixes (clamped only at
+// 1000 via boundedInt); cap live agents so large budgets queue work instead of
+// launching hundreds of concurrent agents in one wave. Matches deep-research's
+// smart-mode verifier cap.
+const MAX_PARALLEL_AGENTS = 12;
 export default function securityScanWorkflow({
   args,
   phase,
@@ -142,7 +148,10 @@ export default function securityScanWorkflow({
         outputSchema: securityVerificationSchema(),
       };
     });
-  const verificationResults = verificationTasks.length > 0 ? parallelAgents(verificationTasks) : [];
+  const verificationResults =
+    verificationTasks.length > 0
+      ? parallelAgents(verificationTasks, { maxParallel: MAX_PARALLEL_AGENTS })
+      : [];
   const verifications = mergeVerificationResults(verificationPlan, verificationResults);
   const evidenceBundles = verifications.map(function (verification, index) {
     if (verification && verification.skipEvidenceBundle === true) {
@@ -777,7 +786,8 @@ function runSecurityFix(context) {
         prompt: buildSecurityFixPrompt(context.input, item),
         outputSchema: securityFixAttemptSchema(),
       };
-    })
+    }),
+    { maxParallel: MAX_PARALLEL_AGENTS }
   );
 
   const integratedFindingIds = [];

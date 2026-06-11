@@ -14,7 +14,7 @@ export interface ResearchConfig {
   maxVerifyClaims: number;
   votesPerClaim: number;
   refutationsRequired: number;
-  verificationBatchSize: number;
+  maxParallelVerifiers: number;
 }
 
 export declare const RESEARCH_CONFIGS: Record<"quick" | "smart", ResearchConfig>;

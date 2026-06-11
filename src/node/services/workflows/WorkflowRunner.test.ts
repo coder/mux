@@ -1217,6 +1217,113 @@ describe("WorkflowRunner", () => {
     await expect(runPromise).resolves.toEqual({ reportMarkdown: "source-a + source-b" });
   });
 
+  test("maxParallel admits queued specs as running ones finish without bulk-creating tasks", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-max-parallel");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_parallel_window",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ parallelAgents }) {
+        const results = parallelAgents(
+          [
+            { id: "verify-a", prompt: "Verify A" },
+            { id: "verify-b", prompt: "Verify B" },
+            { id: "verify-c", prompt: "Verify C" },
+          ],
+          { maxParallel: 2 }
+        );
+        return { reportMarkdown: results.map((result) => result.reportMarkdown).join(" + ") };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const blocks = new Map([
+      ["verify-a", createDeferred()],
+      ["verify-b", createDeferred()],
+      ["verify-c", createDeferred()],
+    ]);
+    const entered: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    const enteredTwo = createDeferred();
+    const enteredC = createDeferred();
+    const runner = createRunner(store, {
+      async runAgent(spec, lifecycle) {
+        await lifecycle?.onTaskCreated?.(`task_${spec.id}`);
+        entered.push(spec.id);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        if (entered.length === 2) {
+          enteredTwo.resolve();
+        }
+        if (spec.id === "verify-c") {
+          enteredC.resolve();
+        }
+        await blocks.get(spec.id)?.promise;
+        active -= 1;
+        return { taskId: `task_${spec.id}`, reportMarkdown: spec.id };
+      },
+      async createAgentTasks() {
+        throw new Error("maxParallel must not bulk-create the whole wave up front");
+      },
+      async waitForAgentTask() {
+        throw new Error("unexpected waitForAgentTask call");
+      },
+    });
+
+    const runPromise = runner.run("wfr_parallel_window");
+    await enteredTwo.promise;
+    // Window full: only the first two specs may start while both are blocked.
+    expect(entered).toEqual(["verify-a", "verify-b"]);
+
+    blocks.get("verify-a")?.resolve();
+    // One finished task frees a slot for verify-c while verify-b still runs;
+    // a batch-based scheduler would wait for verify-b before starting it.
+    await enteredC.promise;
+    expect(entered).toEqual(["verify-a", "verify-b", "verify-c"]);
+
+    blocks.get("verify-b")?.resolve();
+    blocks.get("verify-c")?.resolve();
+    await expect(runPromise).resolves.toEqual({
+      reportMarkdown: "verify-a + verify-b + verify-c",
+    });
+    // verify-a and verify-b only unblock via the explicit deferreds above, so
+    // any third concurrent entry would have pushed maxActive to 3.
+    expect(maxActive).toBe(2);
+  });
+
+  test("rejects a non-positive parallelAgents maxParallel option", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-max-parallel-invalid");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_parallel_window_invalid",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ parallelAgents }) {
+        parallelAgents([{ id: "verify-a", prompt: "Verify A" }], { maxParallel: 0 });
+        return { reportMarkdown: "unreachable" };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("runAgent must not be called for invalid options");
+      },
+    });
+
+    await expect(runner.run("wfr_parallel_window_invalid")).rejects.toThrow(
+      "parallelAgents options.maxParallel must be a positive integer"
+    );
+  });
+
   test("interrupts sibling parallelAgents when one child task fails", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
     const store = new WorkflowRunStore({

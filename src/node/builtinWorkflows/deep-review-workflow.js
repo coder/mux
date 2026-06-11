@@ -2,6 +2,11 @@
 //
 // Keep the lightweight /deep-review skill; this workflow is the heavier structured path with
 // adversarial verification for review findings.
+
+// Verification/fixer fan-out scales with maxCandidates/maxFixes (clamped at 20);
+// cap live agents so raising those budgets queues work instead of launching one
+// wave of 20 concurrent agents. Matches deep-research's smart-mode verifier cap.
+const MAX_PARALLEL_AGENTS = 12;
 export default function deepReviewWorkflow({
   args,
   phase,
@@ -214,7 +219,8 @@ function runDeepReviewPass(context) {
                 JSON.stringify(issue, null, 2),
               outputSchema: verificationSchema(),
             };
-          })
+          }),
+          { maxParallel: MAX_PARALLEL_AGENTS }
         )
       : [];
   const verifications = verificationResults.map(function (verification) {
@@ -440,7 +446,8 @@ function runDeepReviewFix(context) {
         prompt: buildFixPrompt(input, item),
         outputSchema: fixAttemptSchema(),
       };
-    })
+    }),
+    { maxParallel: MAX_PARALLEL_AGENTS }
   );
 
   const integratedIssues = [];

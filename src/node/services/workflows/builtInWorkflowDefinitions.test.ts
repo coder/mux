@@ -2218,7 +2218,7 @@ describe("built-in deep-research workflow", () => {
 
     expect(callIds.filter((id) => id.startsWith("extract-source-")).length).toBe(15);
     expect(callIds.filter((id) => id.startsWith("verify-claim-")).length).toBe(48);
-    expect(maxActiveVerifyTasks).toBeLessThanOrEqual(6);
+    expect(maxActiveVerifyTasks).toBeLessThanOrEqual(12);
     expect(callIds).not.toContain("extract-source-15");
     expect(callIds).not.toContain("verify-claim-16-vote-0");
     const structuredOutput = (
