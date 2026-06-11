@@ -69,8 +69,19 @@ function removeSectionsByHeading(markdown: string, headingMatcher: HeadingMatche
   const { bounds, lines } = collectSectionBounds(markdown, headingMatcher);
   if (bounds.length === 0) return markdown;
 
+  // Keep only outermost matched bounds. A matched heading nested inside
+  // another matched section (e.g. "## Tool: bash" inside "# Mode: plan") is
+  // already removed by the outer splice; splicing both would shift line
+  // offsets and delete unrelated content that follows the outer section.
+  const outermostBounds = bounds.filter(
+    (bound) =>
+      !bounds.some(
+        (other) => other.headingStartLine < bound.headingStartLine && other.endLine >= bound.endLine
+      )
+  );
+
   const updatedLines = [...lines];
-  const sortedBounds = [...bounds].sort((a, b) => b.headingStartLine - a.headingStartLine);
+  const sortedBounds = [...outermostBounds].sort((a, b) => b.headingStartLine - a.headingStartLine);
   for (const { headingStartLine, endLine } of sortedBounds) {
     updatedLines.splice(headingStartLine, endLine - headingStartLine);
   }

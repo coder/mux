@@ -265,4 +265,25 @@ Tool content
     expect(stripScopedInstructionSections("", "mux")).toBe("");
     expect(stripScopedInstructionSections("", "shared")).toBe("");
   });
+
+  it("should preserve content after a scoped section containing a nested scoped heading", () => {
+    // Both "# Mode: plan" and the nested "## Tool: bash" match the mux strip
+    // predicate. Only the outer section may be spliced — removing both would
+    // shift line offsets and delete the unrelated "# General" section below.
+    const nested = `
+# Mode: plan
+Plan content
+
+## Tool: bash
+Nested tool content
+
+# General
+General content
+`.trim();
+
+    const result = stripScopedInstructionSections(nested, "mux");
+    expect(result).toContain("General content");
+    expect(result).not.toContain("Plan content");
+    expect(result).not.toContain("Nested tool content");
+  });
 });
