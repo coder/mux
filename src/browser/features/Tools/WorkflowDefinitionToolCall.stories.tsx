@@ -1,4 +1,7 @@
+import type { ComponentType } from "react";
+
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { waitFor, within } from "@storybook/test";
 
 import {
   WorkflowListToolCall,
@@ -6,6 +9,39 @@ import {
 } from "@/browser/features/Tools/WorkflowDefinitionToolCall";
 import { WorkflowActionListToolCall } from "@/browser/features/Tools/WorkflowActionListToolCall";
 import { lightweightMeta } from "@/browser/stories/meta.js";
+
+const NARROW_VIEWPORT_GLOBALS = { viewport: { value: "mobile1", isRotated: false } };
+
+/**
+ * Forces the narrow tool-card layout regardless of window size: ToolContainer is
+ * an inline-size container, so capping the wrapper width engages the
+ * `@container(max-width:640px)` styles. Required because the Storybook
+ * test-runner applies neither story `globals.viewport` nor Chromatic modes —
+ * plays execute at desktop window size, where the pinned mobile1 viewport alone
+ * would never engage and the layout assertions below would fail.
+ */
+function NarrowContainerDecorator(Story: ComponentType) {
+  return (
+    <div style={{ maxWidth: 375 }}>
+      <Story />
+    </div>
+  );
+}
+
+/**
+ * Assert the narrow list layout engaged: the description must wrap onto its own
+ * grid row below the name instead of sharing the single-line wide layout.
+ */
+async function expectDescriptionBelowName(canvasElement: HTMLElement, name: string, desc: RegExp) {
+  const canvas = within(canvasElement);
+  const nameEl = await canvas.findByText(name);
+  const descEl = canvas.getByText(desc);
+  await waitFor(() => {
+    if (descEl.getBoundingClientRect().top < nameEl.getBoundingClientRect().bottom) {
+      throw new Error(`Expected narrow layout: description below "${name}" row`);
+    }
+  });
+}
 
 const source = `export default function workflow({ args, agent, phase, log }) {
   phase("review", { artifact: args.artifact });
@@ -117,6 +153,26 @@ export const WorkflowActionList: Story = {
   ),
 };
 
+/** iPhone-sized variant: name + badges on one row, description stacked below. */
+export const WorkflowActionListNarrow: Story = {
+  ...WorkflowActionList,
+  globals: NARROW_VIEWPORT_GLOBALS,
+  decorators: [NarrowContainerDecorator],
+  parameters: {
+    // Pinned mobile mode so Chromatic doesn't silently snapshot the wide grid.
+    // hasTouch matches the repo's other mobile1 modes so touch-target CSS applies.
+    // Modes stay inline (not hoisted) so the snapshot budget estimator counts them.
+    chromatic: { modes: { "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true } } },
+  },
+  play: async ({ canvasElement }) => {
+    await expectDescriptionBelowName(
+      canvasElement,
+      "git.changedFiles",
+      /Return changed file lists/
+    );
+  },
+};
+
 export const WorkflowList: Story = {
   render: () => (
     <WorkflowListToolCall
@@ -150,4 +206,18 @@ export const WorkflowList: Story = {
       }}
     />
   ),
+};
+
+/** iPhone-sized variant of the definitions list. */
+export const WorkflowListNarrow: Story = {
+  ...WorkflowList,
+  globals: NARROW_VIEWPORT_GLOBALS,
+  decorators: [NarrowContainerDecorator],
+  parameters: {
+    // Inline modes for the budget estimator; see WorkflowActionListNarrow.
+    chromatic: { modes: { "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true } } },
+  },
+  play: async ({ canvasElement }) => {
+    await expectDescriptionBelowName(canvasElement, "deep-research", /Coordinate staged research/);
+  },
 };

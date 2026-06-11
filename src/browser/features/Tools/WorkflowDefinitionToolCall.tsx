@@ -139,13 +139,19 @@ export function formatWorkflowSavedMessage(scope: WorkflowPromotionTarget): stri
 
 function WorkflowDefinitionListRow(props: { descriptor: WorkflowDefinitionDescriptor }) {
   const descriptor = props.descriptor;
+  // Badges live in a flex wrapper (not their own grid cells) so they keep their
+  // natural width on narrow containers instead of stretching to the cell width.
+  // Narrow layout: "name [badges]" on one row, description spanning a second row.
   return (
-    <div className="grid grid-cols-[minmax(8rem,16rem)_auto_minmax(0,1fr)_auto] items-center gap-2 px-2 py-1.5 [@container(max-width:640px)]:grid-cols-1 [@container(max-width:640px)]:items-start">
+    <div className="grid grid-cols-[minmax(8rem,16rem)_auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 px-2 py-1.5 [@container(max-width:640px)]:grid-cols-[minmax(0,1fr)_auto]">
       <span className="text-foreground truncate font-mono text-[12px] font-medium">
         {descriptor.name}
       </span>
-      <WorkflowBadge>{descriptor.scope}</WorkflowBadge>
-      <div className="min-w-0">
+      <div className="flex items-center gap-1.5">
+        <WorkflowBadge>{descriptor.scope}</WorkflowBadge>
+        {!descriptor.executable && <WorkflowBadge tone="warning">blocked</WorkflowBadge>}
+      </div>
+      <div className="min-w-0 [@container(max-width:640px)]:col-span-2">
         <div className="text-muted truncate text-[11px]" title={descriptor.description}>
           {descriptor.description}
         </div>
@@ -158,7 +164,6 @@ function WorkflowDefinitionListRow(props: { descriptor: WorkflowDefinitionDescri
           </div>
         )}
       </div>
-      {!descriptor.executable && <WorkflowBadge tone="warning">blocked</WorkflowBadge>}
     </div>
   );
 }

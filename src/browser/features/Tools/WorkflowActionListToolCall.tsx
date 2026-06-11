@@ -108,25 +108,35 @@ function WorkflowActionListRow(props: { descriptor: WorkflowActionDescriptor }) 
   const description = action.executable ? action.metadata.description : action.blockedReason;
   return (
     <div>
+      {/* Badges share one flex cell so they keep natural width, and the narrow
+          layout pins the truncating description to the minmax(0,1fr) span below
+          the name — putting nowrap text in an `auto` column would inflate it to
+          the text's full width and push the other cells off-screen. */}
       <button
         type="button"
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
-        className="grid w-full cursor-pointer grid-cols-[auto_minmax(8rem,16rem)_auto_auto_minmax(0,1fr)] items-center gap-2 px-2 py-1.5 text-left hover:bg-white/5 [@container(max-width:640px)]:grid-cols-[auto_minmax(0,1fr)] [@container(max-width:640px)]:items-start"
+        className="grid w-full cursor-pointer grid-cols-[auto_minmax(8rem,16rem)_auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1 px-2 py-1.5 text-left hover:bg-white/5 [@container(max-width:640px)]:grid-cols-[auto_minmax(0,1fr)_auto]"
       >
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <span className="text-foreground truncate font-mono text-[12px] font-medium">
           {action.name}
         </span>
-        <WorkflowBadge>{action.scope}</WorkflowBadge>
-        {action.executable ? (
-          <WorkflowBadge tone={EFFECT_TONE[action.metadata.effect]}>
-            {action.metadata.effect}
-          </WorkflowBadge>
-        ) : (
-          <WorkflowBadge tone="warning">blocked</WorkflowBadge>
-        )}
-        <span className="text-muted truncate text-[11px]" title={description}>
+        {/* span (not div): buttons only allow phrasing content */}
+        <span className="flex items-center gap-1.5">
+          <WorkflowBadge>{action.scope}</WorkflowBadge>
+          {action.executable ? (
+            <WorkflowBadge tone={EFFECT_TONE[action.metadata.effect]}>
+              {action.metadata.effect}
+            </WorkflowBadge>
+          ) : (
+            <WorkflowBadge tone="warning">blocked</WorkflowBadge>
+          )}
+        </span>
+        <span
+          className="text-muted truncate text-[11px] [@container(max-width:640px)]:col-span-2 [@container(max-width:640px)]:col-start-2"
+          title={description}
+        >
           {description}
         </span>
       </button>
