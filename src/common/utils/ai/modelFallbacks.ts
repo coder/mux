@@ -15,12 +15,22 @@ export const MODEL_FALLBACK_CHAIN_LIMIT = 3;
  * Opus 4.8 is the sensible out-of-the-box behavior.
  *
  * Seeded into the config exactly once, guarded by
- * migrations.defaultModelFallbacksSeeded — user edits or deletions of these
- * chains are never overridden by later app updates.
+ * migrations.defaultModelFallbacksSeeded — on versions that know the flag,
+ * user edits or deletions of these chains are never overridden by updates.
+ * (Versions predating the flag strip it on save, so a downgrade→save→
+ * re-upgrade round-trip re-seeds a deleted chain; bounded to re-adding this
+ * benign, re-deletable default.)
  */
 export const DEFAULT_MODEL_FALLBACKS: ModelFallbacks = {
   [KNOWN_MODELS.FABLE.id]: { models: [KNOWN_MODELS.OPUS.id] },
 };
+// Deep-freeze: entries are spread by reference into live configs (fresh-install
+// defaults, seed merge). Accidental in-place mutation must crash fast instead
+// of silently corrupting the process-wide default.
+for (const entry of Object.values(Object.freeze(DEFAULT_MODEL_FALLBACKS))) {
+  Object.freeze(entry);
+  Object.freeze(entry.models);
+}
 
 /**
  * Sanitize one fallback chain relative to its source model: canonicalize every

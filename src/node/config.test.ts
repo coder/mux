@@ -307,6 +307,97 @@ describe("Config", () => {
       expect(config.loadConfigOrDefault().modelFallbacks).toBeUndefined();
     });
 
+    it("merges the seeded default with pre-existing chains for other source models", () => {
+      fs.writeFileSync(
+        configFilePath(),
+        JSON.stringify({
+          projects: [],
+          modelFallbacks: {
+            "anthropic:claude-opus-4-6": { models: ["openai:gpt-5.5"] },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.modelFallbacks).toEqual({
+        "anthropic:claude-opus-4-6": { models: ["openai:gpt-5.5"] },
+        [FABLE]: { models: [OPUS] },
+      });
+
+      // The user's chain must survive the seed write-back on disk unchanged.
+      const raw = JSON.parse(fs.readFileSync(configFilePath(), "utf-8")) as {
+        modelFallbacks?: unknown;
+        migrations?: { defaultModelFallbacksSeeded?: unknown };
+      };
+      expect(raw.modelFallbacks).toEqual({
+        "anthropic:claude-opus-4-6": { models: ["openai:gpt-5.5"] },
+        [FABLE]: { models: [OPUS] },
+      });
+      expect(raw.migrations?.defaultModelFallbacksSeeded).toBe(true);
+    });
+
+    it("does not double-seed when the user chain uses a gateway-prefixed Fable key", () => {
+      fs.writeFileSync(
+        configFilePath(),
+        JSON.stringify({
+          projects: [],
+          modelFallbacks: {
+            "openrouter:anthropic/claude-fable-5": { models: ["openai:gpt-5.5"] },
+          },
+        })
+      );
+
+      // The gateway-prefixed key canonicalizes to the same source model, so
+      // the seed must treat it as configured and leave the user's chain alone.
+      expect(config.loadConfigOrDefault().modelFallbacks).toEqual({
+        [FABLE]: { models: ["openai:gpt-5.5"] },
+      });
+    });
+
+    it("respects a hand-edited tombstone whose chain sanitizes away", () => {
+      fs.writeFileSync(
+        configFilePath(),
+        JSON.stringify({
+          projects: [],
+          modelFallbacks: {
+            [FABLE]: { enabled: false, models: [] },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      // The entry sanitizes to nothing at runtime (no fallback fires), but it
+      // is still user intent: the seed must not replace it with an enabled
+      // default chain, and the raw on-disk form must survive.
+      expect(loaded.modelFallbacks).toBeUndefined();
+      expect(loaded.migrations?.defaultModelFallbacksSeeded).toBe(true);
+
+      const raw = JSON.parse(fs.readFileSync(configFilePath(), "utf-8")) as {
+        modelFallbacks?: unknown;
+      };
+      expect(raw.modelFallbacks).toEqual({ [FABLE]: { enabled: false, models: [] } });
+    });
+
+    it("preserves unknown migration flags from newer app versions across saves", async () => {
+      fs.writeFileSync(
+        configFilePath(),
+        JSON.stringify({
+          projects: [],
+          migrations: { defaultModelFallbacksSeeded: true, futureFlag: true },
+        })
+      );
+
+      await config.editConfig((cfg) => cfg);
+
+      // A downgrade to this version + save must not strip flags it does not
+      // know, or the corresponding one-time migrations re-run on re-upgrade.
+      const raw = JSON.parse(fs.readFileSync(configFilePath(), "utf-8")) as {
+        migrations?: Record<string, unknown>;
+      };
+      expect(raw.migrations?.futureFlag).toBe(true);
+      expect(raw.migrations?.defaultModelFallbacksSeeded).toBe(true);
+    });
+
     it("preserves a pre-existing user chain for the seeded source model", () => {
       fs.writeFileSync(
         configFilePath(),

@@ -371,11 +371,17 @@ function normalizeConfigMigrations(value: unknown): AppConfigMigrations {
   }
 
   const record = value as Record<string, unknown>;
-  return {
-    ...(record.execSubagentDefaultsSplit === true ? { execSubagentDefaultsSplit: true } : {}),
-    ...(record.userPreferencesInitialized === true ? { userPreferencesInitialized: true } : {}),
-    ...(record.defaultModelFallbacksSeeded === true ? { defaultModelFallbacksSeeded: true } : {}),
-  };
+  // Pass through every true-valued flag, including ones this version does not
+  // know about. Migration flags from newer app versions must survive a
+  // downgrade-to-here + save, otherwise their one-time migrations re-run after
+  // re-upgrade (e.g. re-seeding defaults a user deleted).
+  const migrations: AppConfigMigrations = {};
+  for (const [flag, flagValue] of Object.entries(record)) {
+    if (flagValue === true) {
+      migrations[flag] = true;
+    }
+  }
+  return migrations;
 }
 
 function extractAgentDefaultsFromLegacySubagents(
@@ -826,16 +832,31 @@ export class Config {
         // default chains are not overridden on subsequent loads/updates.
         const migrationsBeforeSeed = normalizeConfigMigrations(parsed.migrations);
         if (migrationsBeforeSeed.defaultModelFallbacksSeeded !== true) {
-          const existingFallbacks = normalizeModelFallbacks(parsed.modelFallbacks);
-          // Respect chains the user already configured for a default's source
-          // model (including explicitly disabled ones); only fill in the gaps.
+          // Gap-check against the RAW on-disk map with canonicalized keys, not
+          // the sanitized map: a hand-edited entry whose chain sanitizes away
+          // (e.g. {enabled:false, models:[]}) is still user intent and must not
+          // be overwritten. Merging into the raw map also keeps unrelated
+          // chains byte-identical on disk (lenient-on-read preserved).
+          const rawFallbacks =
+            typeof parsed.modelFallbacks === "object" &&
+            parsed.modelFallbacks !== null &&
+            !Array.isArray(parsed.modelFallbacks)
+              ? (parsed.modelFallbacks as Record<string, unknown>)
+              : {};
+          const existingCanonicalKeys = new Set(
+            Object.keys(rawFallbacks).map((key) => normalizeToCanonical(key).trim())
+          );
           const missingDefaults = Object.fromEntries(
             Object.entries(DEFAULT_MODEL_FALLBACKS).filter(
-              ([sourceModel]) => existingFallbacks?.[sourceModel] === undefined
+              ([sourceModel]) => !existingCanonicalKeys.has(sourceModel)
             )
           );
           if (Object.keys(missingDefaults).length > 0) {
-            parsed.modelFallbacks = { ...existingFallbacks, ...missingDefaults };
+            // Write through the raw-record view: user entries are deliberately
+            // kept unvalidated on disk (normalizeModelFallbacks sanitizes on
+            // every read), so the merged map is not a ModelFallbacks yet.
+            const rawParsed: Record<string, unknown> = parsed;
+            rawParsed.modelFallbacks = { ...rawFallbacks, ...missingDefaults };
           }
           parsed.migrations = {
             ...migrationsBeforeSeed,
@@ -1218,10 +1239,10 @@ export class Config {
       }
 
       const migrations = normalizeConfigMigrations(config.migrations);
+      // Any true flag (known or from a newer version) must persist; the spread
+      // below writes them all, so gate only on presence.
       if (
-        migrations.execSubagentDefaultsSplit === true ||
-        migrations.userPreferencesInitialized === true ||
-        migrations.defaultModelFallbacksSeeded === true ||
+        Object.keys(migrations).length > 0 ||
         config.userPreferences !== undefined ||
         config.agentAiDefaults?.exec != null ||
         config.subagentAiDefaults?.exec != null

@@ -70,12 +70,17 @@ export const ModelFallbackEntrySchema = z.object({
 /** Per-model fallback chains, keyed by canonical source model. */
 export const ModelFallbacksSchema = z.record(z.string(), ModelFallbackEntrySchema);
 
-export const AppConfigMigrationsSchema = z.object({
-  execSubagentDefaultsSplit: z.boolean().optional(),
-  userPreferencesInitialized: z.boolean().optional(),
-  /** One-time seed of DEFAULT_MODEL_FALLBACKS; never re-applied once true. */
-  defaultModelFallbacksSeeded: z.boolean().optional(),
-});
+export const AppConfigMigrationsSchema = z
+  .object({
+    execSubagentDefaultsSplit: z.boolean().optional(),
+    userPreferencesInitialized: z.boolean().optional(),
+    /** One-time seed of DEFAULT_MODEL_FALLBACKS; not re-applied while true. */
+    defaultModelFallbacksSeeded: z.boolean().optional(),
+  })
+  // Preserve flags introduced by newer app versions: without the catchall a
+  // downgrade to this version would strip unknown flags on save, re-running
+  // their one-time migrations after re-upgrade (see normalizeConfigMigrations).
+  .catchall(z.boolean());
 
 export const FeatureFlagOverrideSchema = z.enum(["default", "on", "off"]);
 

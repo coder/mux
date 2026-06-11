@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import {
+  DEFAULT_MODEL_FALLBACKS,
   MODEL_FALLBACK_CHAIN_LIMIT,
   resolveModelFallbackChain,
   sanitizeModelFallbackChain,
@@ -102,5 +103,24 @@ describe("sanitizeModelFallbacks", () => {
     ).toEqual({
       [SOURCE]: { enabled: true, triggers: ["model_refusal"], models: [FALLBACK_A] },
     });
+  });
+});
+
+describe("DEFAULT_MODEL_FALLBACKS", () => {
+  it("survives sanitization unchanged", () => {
+    // The config seed writes the constant verbatim while every read path
+    // sanitizes; a default that violates chain invariants (self-fallback,
+    // non-canonical key, over-limit chain) would be silently dropped on read,
+    // turning the shipped default into a no-op.
+    expect(sanitizeModelFallbacks(DEFAULT_MODEL_FALLBACKS)).toEqual(DEFAULT_MODEL_FALLBACKS);
+  });
+
+  it("is deeply frozen so shared references cannot be mutated in place", () => {
+    for (const [sourceModel, entry] of Object.entries(DEFAULT_MODEL_FALLBACKS)) {
+      expect(() => entry.models.push(sourceModel)).toThrow();
+      expect(() => {
+        entry.enabled = false;
+      }).toThrow();
+    }
   });
 });
