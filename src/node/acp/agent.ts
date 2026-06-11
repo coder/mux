@@ -26,6 +26,7 @@ import type {
   SetSessionConfigOptionResponse,
   Usage,
 } from "@agentclientprotocol/sdk";
+import { RequestError } from "@agentclientprotocol/sdk";
 import {
   DEFAULT_COMPACTION_WORD_TARGET,
   WORDS_TO_TOKENS_RATIO,
@@ -630,11 +631,15 @@ export class MuxAgent implements Agent {
     assert(trimmedConfigId.length > 0, "setSessionConfigOption: configId must be non-empty");
 
     // ACP supports boolean config options since schema 0.13, but mux only
-    // exposes select options; reject boolean values until one exists.
-    assert(
-      typeof params.value === "string",
-      `setSessionConfigOption: config option '${trimmedConfigId}' expects a select value`
-    );
+    // exposes select options; reject boolean values until one exists. Surface
+    // a spec-correct InvalidParams (-32602) error — matching what pre-0.25 SDK
+    // schemas returned for boolean values — instead of a generic internal error.
+    if (typeof params.value !== "string") {
+      throw RequestError.invalidParams(
+        { configId: trimmedConfigId },
+        `config option '${trimmedConfigId}' expects a select value`
+      );
+    }
 
     const activeAgentId = this.sessionStateById.get(sessionId)?.agentId;
     const configOptions = await handleSetConfigOption(
