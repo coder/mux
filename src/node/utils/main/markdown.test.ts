@@ -1,4 +1,4 @@
-import { extractToolSection, stripScopedInstructionSections } from "./markdown";
+import { extractModeSection, extractToolSection, stripScopedInstructionSections } from "./markdown";
 
 describe("extractToolSection", () => {
   describe("basic extraction", () => {
@@ -124,50 +124,47 @@ Second bash section
   });
 });
 
+describe("extractModeSection", () => {
+  const markdown = `
+# General
+General content
+
+# Mode: plan
+Plan-only content
+
+# Mode: my-agent
+Custom agent content
+`.trim();
+
+  it("should extract content under Mode: heading by exact agent id", () => {
+    expect(extractModeSection(markdown, "plan")).toBe("Plan-only content");
+    expect(extractModeSection(markdown, "my-agent")).toBe("Custom agent content");
+  });
+
+  it("should match case-insensitively", () => {
+    expect(extractModeSection("# MODE: Plan\nContent", "plan")).toBe("Content");
+  });
+
+  it("should return null when no mode section matches", () => {
+    expect(extractModeSection(markdown, "exec")).toBeNull();
+  });
+
+  it("should return null for empty inputs", () => {
+    expect(extractModeSection("", "plan")).toBeNull();
+    expect(extractModeSection(markdown, "")).toBeNull();
+  });
+});
+
 describe("stripScopedInstructionSections", () => {
-  it("should strip Model sections", () => {
-    const markdown = `
-# General
-General content
-
-# Model: gpt-4
-Model-specific content
-
-# More General
-More general content
-`.trim();
-
-    const result = stripScopedInstructionSections(markdown);
-    expect(result).toContain("General content");
-    expect(result).toContain("More general content");
-    expect(result).not.toContain("Model-specific content");
-  });
-
-  it("should strip Tool sections", () => {
-    const markdown = `
-# General
-General content
-
-# Tool: bash
-Tool-specific content
-
-# More General
-More general content
-`.trim();
-
-    const result = stripScopedInstructionSections(markdown);
-    expect(result).toContain("General content");
-    expect(result).toContain("More general content");
-    expect(result).not.toContain("Tool-specific content");
-  });
-
-  it("should strip Model and Tool sections together", () => {
-    const markdown = `
+  const markdown = `
 # General
 General content
 
 # Model: gpt-4
 Model content
+
+# Mode: plan
+Mode content
 
 # Tool: bash
 Tool content
@@ -176,37 +173,40 @@ Tool content
 More general content
 `.trim();
 
-    const result = stripScopedInstructionSections(markdown);
+  it("should strip Model, Mode, and Tool sections from mux sources", () => {
+    const result = stripScopedInstructionSections(markdown, "mux");
     expect(result).toContain("General content");
     expect(result).toContain("More general content");
     expect(result).not.toContain("Model content");
+    expect(result).not.toContain("Mode content");
     expect(result).not.toContain("Tool content");
   });
 
-  it("should NOT strip Agent or Mode sections (no longer scoped)", () => {
-    const markdown = `
+  it("should strip only Tool sections from shared sources (Model/Mode stay as plain markdown)", () => {
+    const result = stripScopedInstructionSections(markdown, "shared");
+    expect(result).toContain("General content");
+    expect(result).toContain("More general content");
+    expect(result).toContain("Model content");
+    expect(result).toContain("Mode content");
+    expect(result).not.toContain("Tool content");
+  });
+
+  it("should NOT strip Agent sections (no longer scoped)", () => {
+    const agentMarkdown = `
 # General
 General content
 
 # Agent: foo
 Agent content
-
-# Mode: plan
-Mode content
-
-# More General
-More general content
 `.trim();
 
-    const result = stripScopedInstructionSections(markdown);
+    const result = stripScopedInstructionSections(agentMarkdown, "mux");
     expect(result).toContain("General content");
-    expect(result).toContain("More general content");
     expect(result).toContain("Agent content");
-    expect(result).toContain("Mode content");
   });
 
-  it("should return empty string for markdown with only scoped sections", () => {
-    const markdown = `
+  it("should return empty string for mux markdown with only scoped sections", () => {
+    const scopedOnly = `
 # Model: gpt-4
 Model content
 
@@ -214,11 +214,12 @@ Model content
 Tool content
 `.trim();
 
-    const result = stripScopedInstructionSections(markdown);
+    const result = stripScopedInstructionSections(scopedOnly, "mux");
     expect(result.trim()).toBe("");
   });
 
   it("should handle empty markdown", () => {
-    expect(stripScopedInstructionSections("")).toBe("");
+    expect(stripScopedInstructionSections("", "mux")).toBe("");
+    expect(stripScopedInstructionSections("", "shared")).toBe("");
   });
 });

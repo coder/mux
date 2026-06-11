@@ -326,9 +326,10 @@ From secondary repo: prefer rg --files before find.
     );
   });
 
-  test("includes model-specific section when regex matches active model", async () => {
+  test("includes model-specific section from workspace .mux/AGENTS.md when regex matches active model", async () => {
+    await fs.mkdir(path.join(workspaceDir, ".mux"), { recursive: true });
     await fs.writeFile(
-      path.join(workspaceDir, "AGENTS.md"),
+      path.join(workspaceDir, ".mux", "AGENTS.md"),
       `# Instructions
 ## Model: sonnet
 Respond to Sonnet tickets in two sentences max.
@@ -357,6 +358,120 @@ Respond to Sonnet tickets in two sentences max.
     expect(systemMessage).toContain("<model-anthropic-claude-3-5-sonnet>");
     expect(systemMessage).toContain("Respond to Sonnet tickets in two sentences max.");
     expect(systemMessage).toContain("</model-anthropic-claude-3-5-sonnet>");
+  });
+
+  test("ignores Model sections in shared workspace AGENTS.md (breaking change)", async () => {
+    // Shared AGENTS.md is read by non-Mux agents too, so "Model:" headings
+    // there are no longer parsed as Mux directives — they stay plain markdown
+    // inside <custom-instructions>.
+    await fs.writeFile(
+      path.join(workspaceDir, "AGENTS.md"),
+      `# Instructions
+## Model: sonnet
+Respond to Sonnet tickets in two sentences max.
+`
+    );
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(
+      metadata,
+      runtime,
+      workspaceDir,
+      undefined,
+      "anthropic:claude-3.5-sonnet"
+    );
+
+    expect(systemMessage).not.toContain("<model-anthropic-claude-3-5-sonnet>");
+
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+    expect(customInstructions).toContain("Model: sonnet");
+    expect(customInstructions).toContain("Respond to Sonnet tickets in two sentences max.");
+  });
+
+  test("includes mode-specific section from workspace .mux/AGENTS.md", async () => {
+    await fs.mkdir(path.join(workspaceDir, ".mux"), { recursive: true });
+    await fs.writeFile(
+      path.join(workspaceDir, ".mux", "AGENTS.md"),
+      `# Instructions
+## Mode: plan
+Plan thoroughly before proposing.
+`
+    );
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(
+      metadata,
+      runtime,
+      workspaceDir,
+      undefined,
+      undefined,
+      undefined,
+      { mode: "plan" }
+    );
+
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+    expect(customInstructions).not.toContain("Plan thoroughly before proposing.");
+
+    expect(systemMessage).toContain("<mode-plan>");
+    expect(systemMessage).toContain("Plan thoroughly before proposing.");
+    expect(systemMessage).toContain("</mode-plan>");
+  });
+
+  test("ignores Mode sections in shared workspace AGENTS.md and non-matching modes", async () => {
+    await fs.writeFile(
+      path.join(workspaceDir, "AGENTS.md"),
+      `# Instructions
+## Mode: plan
+Shared plan guidance.
+`
+    );
+    await fs.mkdir(path.join(workspaceDir, ".mux"), { recursive: true });
+    await fs.writeFile(
+      path.join(workspaceDir, ".mux", "AGENTS.md"),
+      `## Mode: exec
+Exec-only guidance.
+`
+    );
+
+    const metadata: WorkspaceMetadata = {
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath: projectDir,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    };
+
+    const systemMessage = await buildSystemMessage(
+      metadata,
+      runtime,
+      workspaceDir,
+      undefined,
+      undefined,
+      undefined,
+      { mode: "plan" }
+    );
+
+    // Shared AGENTS.md Mode: headings stay plain markdown; no mode tag is built
+    // from them, and the .mux/AGENTS.md exec section does not match plan mode.
+    expect(systemMessage).not.toContain("<mode-plan>");
+    expect(systemMessage).not.toContain("Exec-only guidance.");
+
+    const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+    expect(customInstructions).toContain("Shared plan guidance.");
   });
 
   test("falls back to global model section when project lacks a match", async () => {
@@ -439,9 +554,10 @@ Be extra concise when using Sonnet.
       expect(systemMessage).toContain("Be extra concise when using Sonnet.");
     });
 
-    test("agentSystemPrompt model section takes precedence over AGENTS.md", async () => {
+    test("agentSystemPrompt model section takes precedence over .mux/AGENTS.md", async () => {
+      await fs.mkdir(path.join(workspaceDir, ".mux"), { recursive: true });
       await fs.writeFile(
-        path.join(workspaceDir, "AGENTS.md"),
+        path.join(workspaceDir, ".mux", "AGENTS.md"),
         `## Model: sonnet
 From AGENTS.md: Be verbose.
 `
@@ -476,9 +592,10 @@ From agent: Be terse.
       );
     });
 
-    test("falls back to AGENTS.md when agentSystemPrompt has no matching model section", async () => {
+    test("falls back to .mux/AGENTS.md when agentSystemPrompt has no matching model section", async () => {
+      await fs.mkdir(path.join(workspaceDir, ".mux"), { recursive: true });
       await fs.writeFile(
-        path.join(workspaceDir, "AGENTS.md"),
+        path.join(workspaceDir, ".mux", "AGENTS.md"),
         `## Model: sonnet
 From AGENTS.md: Sonnet instructions.
 `
@@ -563,7 +680,9 @@ OpenAI-only instructions.
 
     for (const scenario of scopingScenarios) {
       test(scenario.name, async () => {
-        await fs.writeFile(path.join(workspaceDir, "AGENTS.md"), scenario.mdContent);
+        // Scoped Model: sections only activate in Mux-dedicated files.
+        await fs.mkdir(path.join(workspaceDir, ".mux"), { recursive: true });
+        await fs.writeFile(path.join(workspaceDir, ".mux", "AGENTS.md"), scenario.mdContent);
 
         const metadata: WorkspaceMetadata = {
           id: "test-workspace",

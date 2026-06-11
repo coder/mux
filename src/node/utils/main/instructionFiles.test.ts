@@ -115,6 +115,60 @@ describe("instructionFiles", () => {
       expect(result?.projectName).toBe("my-project");
       expect(result?.files[0]?.projectName).toBe("my-project");
     });
+
+    it("should mark shared base files as not muxOnly", async () => {
+      await fs.writeFile(path.join(tempDir, "AGENTS.md"), "base instructions");
+      await fs.writeFile(path.join(tempDir, "AGENTS.local.md"), "local overrides");
+
+      const result = await readInstructionSet(tempDir, INSTRUCTION_SCOPE.WORKSPACE);
+      expect(result?.files.map((f) => f.muxOnly)).toEqual([false, false]);
+    });
+
+    it("should read .mux/AGENTS.md as a muxOnly file even without a shared base file", async () => {
+      await fs.mkdir(path.join(tempDir, ".mux"));
+      await fs.writeFile(path.join(tempDir, ".mux", "AGENTS.md"), "mux-only directives");
+
+      const result = await readInstructionSet(tempDir, INSTRUCTION_SCOPE.WORKSPACE);
+      expect(result?.combinedContent).toBe("mux-only directives");
+      expect(result?.files).toHaveLength(1);
+      expect(result?.files[0]?.filename).toBe("AGENTS.md");
+      expect(result?.files[0]?.path).toBe(path.join(tempDir, ".mux", "AGENTS.md"));
+      expect(result?.files[0]?.muxOnly).toBe(true);
+    });
+
+    it("should append .mux/AGENTS.md (+ .local.md) after the shared files", async () => {
+      await fs.writeFile(path.join(tempDir, "AGENTS.md"), "shared base");
+      await fs.writeFile(path.join(tempDir, "AGENTS.local.md"), "shared local");
+      await fs.mkdir(path.join(tempDir, ".mux"));
+      await fs.writeFile(path.join(tempDir, ".mux", "AGENTS.md"), "mux base");
+      await fs.writeFile(path.join(tempDir, ".mux", "AGENTS.local.md"), "mux local");
+
+      const result = await readInstructionSet(tempDir, INSTRUCTION_SCOPE.WORKSPACE);
+      expect(result?.combinedContent).toBe("shared base\n\nshared local\n\nmux base\n\nmux local");
+      expect(result?.files.map((f) => f.muxOnly)).toEqual([false, false, true, true]);
+      expect(result?.files.map((f) => f.isLocal)).toEqual([false, true, false, true]);
+    });
+
+    it("should ignore .mux/AGENTS.local.md when .mux/AGENTS.md is missing", async () => {
+      await fs.writeFile(path.join(tempDir, "AGENTS.md"), "shared base");
+      await fs.mkdir(path.join(tempDir, ".mux"));
+      await fs.writeFile(path.join(tempDir, ".mux", "AGENTS.local.md"), "mux local only");
+
+      const result = await readInstructionSet(tempDir, INSTRUCTION_SCOPE.WORKSPACE);
+      expect(result?.combinedContent).toBe("shared base");
+    });
+
+    it("should mark global files as muxOnly and skip nested .mux lookup", async () => {
+      // Global scope reads ~/.mux itself, which is Mux-dedicated by construction.
+      await fs.writeFile(path.join(tempDir, "AGENTS.md"), "global instructions");
+      await fs.mkdir(path.join(tempDir, ".mux"));
+      await fs.writeFile(path.join(tempDir, ".mux", "AGENTS.md"), "should not be read");
+
+      const result = await readInstructionSet(tempDir, INSTRUCTION_SCOPE.GLOBAL);
+      expect(result?.combinedContent).toBe("global instructions");
+      expect(result?.files).toHaveLength(1);
+      expect(result?.files[0]?.muxOnly).toBe(true);
+    });
   });
 
   describe("gatherInstructionSets", () => {

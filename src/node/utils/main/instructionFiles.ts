@@ -1,9 +1,10 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import type {
-  InstructionFile,
-  InstructionScope,
-  InstructionSet,
+import {
+  INSTRUCTION_SCOPE,
+  type InstructionFile,
+  type InstructionScope,
+  type InstructionSet,
 } from "@/common/types/instructions";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
@@ -27,6 +28,17 @@ const INSTRUCTION_FILE_NAMES = ["AGENTS.md", "AGENT.md", "CLAUDE.md"] as const;
  * Example: If AGENTS.md exists, we also check for AGENTS.local.md
  */
 const LOCAL_INSTRUCTION_FILENAME = "AGENTS.local.md";
+
+/**
+ * Mux-dedicated instruction subdirectory. `<dir>/.mux/AGENTS.md` (plus an
+ * optional `<dir>/.mux/AGENTS.local.md`) is read in addition to the shared
+ * base files. Because only Mux reads files under `.mux/`, this is where scoped
+ * `Model:`/`Mode:` directives live — keeping them out of the shared AGENTS.md
+ * that non-Mux agents also consume. Only the `AGENTS.md` name is supported
+ * here (no AGENT.md/CLAUDE.md fallback; those exist for other tools' sake).
+ */
+const MUX_INSTRUCTION_SUBDIR = ".mux";
+const MUX_INSTRUCTION_FILENAME = "AGENTS.md";
 
 /**
  * File reader abstraction for reading files from either local fs or Runtime.
@@ -62,7 +74,8 @@ async function readSingleFile(
   filename: string,
   scope: InstructionScope,
   isLocal: boolean,
-  projectName: string | undefined
+  projectName: string | undefined,
+  muxOnly: boolean
 ): Promise<ReadInstructionFileResult> {
   let raw: string;
   try {
@@ -78,6 +91,7 @@ async function readSingleFile(
       path: path.join(directory, filename),
       filename,
       isLocal,
+      muxOnly,
       scope,
       projectName: projectName ?? null,
       content: sanitized,
@@ -92,10 +106,19 @@ async function readBaseInstructionFile(
   reader: FileReader,
   directory: string,
   scope: InstructionScope,
-  projectName: string | undefined
+  projectName: string | undefined,
+  muxOnly: boolean
 ): Promise<ReadInstructionFileResult> {
   for (const filename of INSTRUCTION_FILE_NAMES) {
-    const result = await readSingleFile(reader, directory, filename, scope, false, projectName);
+    const result = await readSingleFile(
+      reader,
+      directory,
+      filename,
+      scope,
+      false,
+      projectName,
+      muxOnly
+    );
     // Existence, not post-comment content, decides base-file priority. This
     // preserves the historical behavior where an AGENTS.md containing only
     // comments still enables AGENTS.local.md and prevents lower-priority
@@ -119,21 +142,62 @@ async function readInstructionSetWith(
   scope: InstructionScope,
   projectName?: string
 ): Promise<InstructionSet | null> {
-  const base = await readBaseInstructionFile(reader, directory, scope, projectName);
-  if (!base.exists) return null;
+  // The global set lives inside the Mux home itself (~/.mux/AGENTS.md), so its
+  // files are Mux-dedicated by construction — scoped Model:/Mode: directives
+  // are honored there and we must not look for a nested ~/.mux/.mux/AGENTS.md.
+  const isGlobalScope = scope === INSTRUCTION_SCOPE.GLOBAL;
 
-  const local = await readSingleFile(
-    reader,
-    directory,
-    LOCAL_INSTRUCTION_FILENAME,
-    scope,
-    true,
-    projectName
-  );
+  const base = await readBaseInstructionFile(reader, directory, scope, projectName, isGlobalScope);
 
-  const files: InstructionFile[] = [base.file, local.exists ? local.file : null].filter(
-    (file): file is InstructionFile => file != null
-  );
+  const local = base.exists
+    ? await readSingleFile(
+        reader,
+        directory,
+        LOCAL_INSTRUCTION_FILENAME,
+        scope,
+        true,
+        projectName,
+        isGlobalScope
+      )
+    : ({ exists: false } satisfies ReadInstructionFileResult);
+
+  // Mux-dedicated companion: <dir>/.mux/AGENTS.md (+ .local.md). Read
+  // independently of the shared base file so a repo can provide only
+  // Mux-specific instructions. Skipped for the global set (see above).
+  let muxBase: ReadInstructionFileResult = { exists: false };
+  let muxLocal: ReadInstructionFileResult = { exists: false };
+  if (!isGlobalScope) {
+    const muxDirectory = path.join(directory, MUX_INSTRUCTION_SUBDIR);
+    muxBase = await readSingleFile(
+      reader,
+      muxDirectory,
+      MUX_INSTRUCTION_FILENAME,
+      scope,
+      false,
+      projectName,
+      true
+    );
+    if (muxBase.exists) {
+      muxLocal = await readSingleFile(
+        reader,
+        muxDirectory,
+        LOCAL_INSTRUCTION_FILENAME,
+        scope,
+        true,
+        projectName,
+        true
+      );
+    }
+  }
+
+  if (!base.exists && !muxBase.exists) return null;
+
+  const files: InstructionFile[] = [
+    base.exists ? base.file : null,
+    local.exists ? local.file : null,
+    muxBase.exists ? muxBase.file : null,
+    muxLocal.exists ? muxLocal.file : null,
+  ].filter((file): file is InstructionFile => file != null);
   if (files.length === 0) return null;
 
   const combinedContent = files.map((f) => f.content).join("\n\n");

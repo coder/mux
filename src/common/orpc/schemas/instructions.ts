@@ -42,6 +42,14 @@ export const InstructionFileSchema = z.object({
   filename: z.string(),
   /** True for the .local.md variant appended to the base file. */
   isLocal: z.boolean(),
+  /**
+   * True for Mux-dedicated instruction files that only Mux reads: the global
+   * `~/.mux/AGENTS.md` set and per-directory `.mux/AGENTS.md` files. Scoped
+   * `Model:`/`Mode:` directives are honored ONLY in these files, so a
+   * heading like "Model: sonnet" never confuses non-Mux agents reading the
+   * shared workspace AGENTS.md.
+   */
+  muxOnly: z.boolean(),
   /** Logical scope of the file (drives panel grouping). */
   scope: InstructionScopeSchema,
   /** Project name when scope === "project" (multi-project workspaces). */

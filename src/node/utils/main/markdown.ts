@@ -84,11 +84,30 @@ function removeSectionsByHeading(markdown: string, headingMatcher: HeadingMatche
 }
 
 /**
+ * Extract the content under a heading titled "Mode: <mode>" (case-insensitive),
+ * where <mode> is the active agent/mode id (e.g. "plan", "exec", or a custom
+ * agent name). Mode sections are only honored in Mux-dedicated sources (agent
+ * definitions and Mux instruction files) — never in shared AGENTS.md files.
+ */
+export function extractModeSection(markdown: string, mode: string): string | null {
+  if (!markdown || !mode) return null;
+
+  const expectedHeading = `mode: ${mode}`.toLowerCase();
+  return extractSectionByHeading(
+    markdown,
+    (headingText) => headingText.toLowerCase() === expectedHeading
+  );
+}
+
+/**
  * Extract the first section whose heading matches "Model: <regex>" and whose regex matches
  * the provided model identifier. Matching is case-insensitive by default unless the regex
  * heading explicitly specifies flags via /pattern/flags syntax.
+ *
+ * Like Mode sections, Model sections are only honored in Mux-dedicated sources —
+ * shared AGENTS.md files are read by non-Mux agents too, where a "Model:" heading
+ * would be misleading.
  */
-
 export function extractModelSection(markdown: string, modelId: string): string | null {
   if (!markdown || !modelId) return null;
 
@@ -139,11 +158,30 @@ export function extractToolSection(markdown: string, toolName: string): string |
   return matches.length > 0 ? matches.join("\n\n") : null;
 }
 
-export function stripScopedInstructionSections(markdown: string): string {
+/**
+ * Kind of instruction source for scoped-section handling:
+ * - "mux": Mux-dedicated sources (agent definitions, `~/.mux/AGENTS.md`,
+ *   `<dir>/.mux/AGENTS.md`). All scoped directives (`Model:`, `Mode:`, `Tool:`)
+ *   are honored and therefore stripped from the plain instruction text.
+ * - "shared": shared AGENTS.md/AGENT.md/CLAUDE.md files read by non-Mux agents
+ *   too. Only `Tool:` sections are honored/stripped; `Model:`/`Mode:` headings
+ *   are left untouched as ordinary markdown (breaking change — they used to be
+ *   parsed here).
+ */
+export type InstructionSourceKind = "mux" | "shared";
+
+export function stripScopedInstructionSections(
+  markdown: string,
+  sourceKind: InstructionSourceKind
+): string {
   if (!markdown) return markdown;
 
   return removeSectionsByHeading(markdown, (headingText) => {
     const normalized = headingText.trim().toLowerCase();
-    return normalized.startsWith("model:") || normalized.startsWith("tool:");
+    if (normalized.startsWith("tool:")) return true;
+    if (sourceKind === "mux") {
+      return normalized.startsWith("model:") || normalized.startsWith("mode:");
+    }
+    return false;
   });
 }

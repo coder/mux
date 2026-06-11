@@ -213,6 +213,13 @@ function FileRow({ file, projectName }: FileRowProps) {
               )}
             </span>
             <ScopeBadge scope={file.scope} projectName={projectName} />
+            {/* Mux-dedicated files (~/.mux/AGENTS.md, <dir>/.mux/AGENTS.md) are the
+                only sources where scoped Model:/Mode: directives are honored. */}
+            {file.muxOnly && (
+              <span className="text-muted bg-muted/20 shrink-0 rounded px-1.5 py-0.5 text-[9px] tracking-wider uppercase">
+                mux-only
+              </span>
+            )}
             <span className="text-muted ml-auto shrink-0 text-[10px] tabular-nums">
               {file.tokens != null && <>~{formatTokens(file.tokens)}t · </>}
               {formatBytes(file.bytes)}

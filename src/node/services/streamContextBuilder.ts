@@ -570,7 +570,10 @@ export async function buildStreamSystemContext(
     mergedAdditionalInstructions,
     modelString,
     mcpServers,
-    { agentSystemPrompt }
+    // Mode = active agent id; drives "Mode: <mode>" sections in Mux-dedicated
+    // instruction sources. Use agentDefinition.id (may have fallen back to
+    // exec) so the mode section matches the prompt actually in effect.
+    { agentSystemPrompt, mode: agentDefinition.id }
   );
 
   // Count system message tokens for cost tracking
