@@ -1,3 +1,4 @@
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import type { ModelFallbacks } from "@/common/config/schemas/appConfigOnDisk";
 
@@ -6,6 +7,20 @@ import type { ModelFallbacks } from "@/common/config/schemas/appConfigOnDisk";
  * per turn, so this bounds the worst case to 1 + 3 provider calls per refusal.
  */
 export const MODEL_FALLBACK_CHAIN_LIMIT = 3;
+
+/**
+ * Default refusal-fallback chains shipped with the app. Fable 5 runs with
+ * safeguards that refuse some requests Opus happily serves (Anthropic itself
+ * falls back to Opus 4.8 server-side for flagged requests), so retrying on
+ * Opus 4.8 is the sensible out-of-the-box behavior.
+ *
+ * Seeded into the config exactly once, guarded by
+ * migrations.defaultModelFallbacksSeeded — user edits or deletions of these
+ * chains are never overridden by later app updates.
+ */
+export const DEFAULT_MODEL_FALLBACKS: ModelFallbacks = {
+  [KNOWN_MODELS.FABLE.id]: { models: [KNOWN_MODELS.OPUS.id] },
+};
 
 /**
  * Sanitize one fallback chain relative to its source model: canonicalize every

@@ -73,6 +73,8 @@ export const ModelFallbacksSchema = z.record(z.string(), ModelFallbackEntrySchem
 export const AppConfigMigrationsSchema = z.object({
   execSubagentDefaultsSplit: z.boolean().optional(),
   userPreferencesInitialized: z.boolean().optional(),
+  /** One-time seed of DEFAULT_MODEL_FALLBACKS; never re-applied once true. */
+  defaultModelFallbacksSeeded: z.boolean().optional(),
 });
 
 export const FeatureFlagOverrideSchema = z.enum(["default", "on", "off"]);

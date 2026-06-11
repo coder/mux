@@ -26,7 +26,7 @@ import type {
   ModelFallbacks,
   ProvidersConfig as CanonicalProvidersConfig,
 } from "@/common/config/schemas";
-import { sanitizeModelFallbacks } from "@/common/utils/ai/modelFallbacks";
+import { DEFAULT_MODEL_FALLBACKS, sanitizeModelFallbacks } from "@/common/utils/ai/modelFallbacks";
 import {
   DEFAULT_TASK_SETTINGS,
   deriveLegacySubagentAiDefaultsFromAgentDefaults,
@@ -374,6 +374,7 @@ function normalizeConfigMigrations(value: unknown): AppConfigMigrations {
   return {
     ...(record.execSubagentDefaultsSplit === true ? { execSubagentDefaultsSplit: true } : {}),
     ...(record.userPreferencesInitialized === true ? { userPreferencesInitialized: true } : {}),
+    ...(record.defaultModelFallbacksSeeded === true ? { defaultModelFallbacksSeeded: true } : {}),
   };
 }
 
@@ -819,6 +820,30 @@ export class Config {
         const minThinkingLevelByModel = normalizeMinThinkingLevelByModel(
           parsed.minThinkingLevelByModel
         );
+        // One-time seed of the default refusal-fallback chains (e.g. Fable 5 →
+        // Opus 4.8). Guarded by migrations.defaultModelFallbacksSeeded so the
+        // seed is applied exactly once: users who later edit or delete the
+        // default chains are not overridden on subsequent loads/updates.
+        const migrationsBeforeSeed = normalizeConfigMigrations(parsed.migrations);
+        if (migrationsBeforeSeed.defaultModelFallbacksSeeded !== true) {
+          const existingFallbacks = normalizeModelFallbacks(parsed.modelFallbacks);
+          // Respect chains the user already configured for a default's source
+          // model (including explicitly disabled ones); only fill in the gaps.
+          const missingDefaults = Object.fromEntries(
+            Object.entries(DEFAULT_MODEL_FALLBACKS).filter(
+              ([sourceModel]) => existingFallbacks?.[sourceModel] === undefined
+            )
+          );
+          if (Object.keys(missingDefaults).length > 0) {
+            parsed.modelFallbacks = { ...existingFallbacks, ...missingDefaults };
+          }
+          parsed.migrations = {
+            ...migrationsBeforeSeed,
+            defaultModelFallbacksSeeded: true,
+          };
+          configModified = true;
+        }
+
         const modelFallbacks = normalizeModelFallbacks(parsed.modelFallbacks);
 
         const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
@@ -999,6 +1024,11 @@ export class Config {
       coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
       worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
       deleteWorktreeOnArchive: false,
+      // Fresh installs get the default refusal-fallback chains immediately; the
+      // migration flag rides along so the first save locks in seed-once
+      // semantics (later loads never re-apply the defaults).
+      modelFallbacks: { ...DEFAULT_MODEL_FALLBACKS },
+      migrations: { defaultModelFallbacksSeeded: true },
     };
   }
 
@@ -1191,6 +1221,7 @@ export class Config {
       if (
         migrations.execSubagentDefaultsSplit === true ||
         migrations.userPreferencesInitialized === true ||
+        migrations.defaultModelFallbacksSeeded === true ||
         config.userPreferences !== undefined ||
         config.agentAiDefaults?.exec != null ||
         config.subagentAiDefaults?.exec != null
