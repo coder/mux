@@ -504,6 +504,68 @@ describe("useAnalytics hooks", () => {
     expect(result.current.data).toBeNull();
   });
 
+  test("executeRawQuery ignores stale completions when a newer query is issued", async () => {
+    // Regression: saved panels auto re-run on dashboard date-range changes.
+    // A slower superseded query must not overwrite the newer query's result.
+    const makeResult = (marker: string) => ({
+      columns: [{ name: "v", type: "VARCHAR" }],
+      rows: [{ v: marker }],
+      truncated: false,
+      rowCount: 1,
+      rowCountExact: true,
+      durationMs: 1,
+    });
+
+    const deferredBySql = new Map<string, (marker: string) => void>();
+    const analyticsStub = createAnalyticsServiceStub(summaryFixture);
+    analyticsStub.service.executeRawQuery = (sql: string) =>
+      new Promise((resolve) => {
+        deferredBySql.set(sql, (marker: string) => resolve(makeResult(marker)));
+      });
+
+    await server?.close();
+    const context: Partial<ORPCContext> = {
+      analyticsService: analyticsStub.service as unknown as ORPCContext["analyticsService"],
+    };
+
+    const createOrpcServer = importCreateOrpcServer();
+
+    server = await createOrpcServer({
+      host: "127.0.0.1",
+      port: 0,
+      context: context as ORPCContext,
+      onOrpcError: () => undefined,
+    });
+    currentApiClient = createHttpClient(server.baseUrl);
+
+    const { result } = renderAnalyticsHook(() => useAnalyticsRawQuery());
+
+    let stalePromise!: Promise<void>;
+    let freshPromise!: Promise<void>;
+    act(() => {
+      stalePromise = result.current.executeQuery("SELECT 'stale'");
+      freshPromise = result.current.executeQuery("SELECT 'fresh'");
+    });
+
+    await waitFor(() => expect(deferredBySql.size).toBe(2));
+
+    // Resolve the newer query first, then let the stale one complete late.
+    deferredBySql.get("SELECT 'fresh'")?.("fresh");
+    await act(async () => {
+      await freshPromise;
+    });
+    await waitFor(() => expect(result.current.data?.rows).toEqual([{ v: "fresh" }]));
+
+    deferredBySql.get("SELECT 'stale'")?.("stale");
+    await act(async () => {
+      await stalePromise;
+    });
+
+    expect(result.current.data?.rows).toEqual([{ v: "fresh" }]);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBeNull();
+  });
+
   test("executeRawQuery keeps infrastructure failures as generic internal errors", async () => {
     const analyticsStub = createAnalyticsServiceStub(summaryFixture);
     analyticsStub.service.executeRawQuery = () =>
