@@ -4,7 +4,7 @@ import { GlobalWindow } from "happy-dom";
 
 import type { APIClient } from "@/browser/contexts/API";
 import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getScheduledPromptsKey } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import { createScheduledPrompt, type ScheduledPrompt } from "./scheduledPrompts";
@@ -223,5 +223,72 @@ describe("useScheduledPromptDispatcher", () => {
       throw new Error("Expected scheduled prompt send");
     }
     expect(firstCall.options.additionalSystemContext).toBe("Stay concise.");
+  });
+
+  test("keeps only one renderer dispatching scheduled prompts at a time", async () => {
+    const prompt = createScheduledPrompt(
+      { content: "send once", runAt: NOW - 1, queueDispatchMode: "tool-end" },
+      NOW,
+      "shared-lock"
+    );
+    writePrompts([prompt]);
+
+    const sendMessage = mock(
+      (_input: SendMessageInput) => new Promise<SendMessageSuccess>(() => {})
+    );
+    const firstApi = {
+      workspace: {
+        sendMessage,
+      },
+    } as unknown as APIClient;
+    const secondApi = {
+      workspace: {
+        sendMessage,
+      },
+    } as unknown as APIClient;
+
+    render(
+      <>
+        <Dispatcher api={firstApi} />
+        <Dispatcher api={secondApi} />
+      </>
+    );
+
+    await waitForDispatcherTick();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test("stores formatted structured send errors", async () => {
+    const prompt = createScheduledPrompt(
+      { content: "needs key", runAt: NOW - 1, queueDispatchMode: "tool-end" },
+      NOW,
+      "structured-error"
+    );
+    writePrompts([prompt]);
+
+    const sendMessage = mock((_input: SendMessageInput) =>
+      Promise.resolve({
+        success: false as const,
+        error: { type: "api_key_not_found" as const, provider: "openai" },
+      })
+    );
+    const api = {
+      workspace: {
+        sendMessage,
+      },
+    } as unknown as APIClient;
+
+    render(<Dispatcher api={api} />);
+
+    await waitForDispatcherTick();
+    await waitForDispatcherTick();
+
+    const storedPrompts = readPersistedState<ScheduledPrompt[]>(
+      getScheduledPromptsKey(WORKSPACE_ID),
+      []
+    );
+    expect(storedPrompts[0]?.status).toBe("failed");
+    expect(storedPrompts[0]?.error).toContain("API key not found for OpenAI.");
+    expect(storedPrompts[0]?.error).toContain("Open Settings");
   });
 });
