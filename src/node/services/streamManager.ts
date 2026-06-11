@@ -1881,6 +1881,12 @@ export class StreamManager extends EventEmitter {
       return {};
     }
 
+    // Refused attempts never reach the normal stream-end path, so backfill
+    // provider-omitted reasoningTokens before snapshotting usage for the
+    // refusing model. reasoningBackfillStartIndex excludes earlier refused hops
+    // when a later fallback also refuses after preserved parts.
+    await this.backfillReasoningTokensFromParts(streamInfo, usage);
+
     providerMetadata =
       providerMetadata ??
       (streamInfo.cumulativeProviderMetadata

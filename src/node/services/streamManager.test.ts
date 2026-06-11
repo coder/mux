@@ -2251,6 +2251,107 @@ describe("StreamManager - empty stream completions", () => {
     ).toEqual(["partial answer", "bash", "fallback continuation"]);
   });
 
+  test("partial refusal backfills refused-hop reasoning usage before fallback swap", async () => {
+    const streamManager = new StreamManager(historyService);
+    const errorEvents: unknown[] = [];
+    const streamEndEvents: Array<{
+      metadata?: {
+        usage?: { reasoningTokens?: number };
+        toolModelUsages?: Array<{
+          model: string;
+          usage?: { reasoningTokens?: number };
+        }>;
+      };
+    }> = [];
+
+    streamManager.on("error", (data) => errorEvents.push(data));
+    streamManager.on("stream-end", (data) => {
+      streamEndEvents.push(data as (typeof streamEndEvents)[number]);
+    });
+
+    Reflect.set(streamManager, "tokenTracker", {
+      setModel: () => Promise.resolve(undefined),
+      countTokens: () => Promise.resolve(0),
+    });
+
+    const workspaceId = "fallback-reasoning-refusal-workspace";
+    const messageId = "fallback-reasoning-refusal-message";
+    const historySequence = 1;
+    const fallbackModel = KNOWN_MODELS.GPT.id;
+    const refusedReasoning = "Reasoning before refusal";
+    const expectedReasoningTokens = await countTokens(KNOWN_MODELS.SONNET.id, refusedReasoning);
+
+    await appendPartialAssistantForTests(workspaceId, messageId, historySequence);
+    const processStreamWithCleanup = getProcessStreamWithCleanupForTests(streamManager);
+
+    const createStreamResult = mock(() =>
+      createStreamResultForTests(
+        (async function* () {
+          await Promise.resolve();
+          yield { type: "text-delta", text: "fallback answer" };
+          yield { type: "finish", finishReason: "stop" };
+        })(),
+        { inputTokens: 7, outputTokens: 4, totalTokens: 11 }
+      )
+    );
+    expect(Reflect.set(streamManager, "createStreamResult", createStreamResult)).toBe(true);
+
+    const prepare = mock((nextModelString: string, _options?: ModelFallbackPrepareOptions) =>
+      Promise.resolve(
+        Ok({
+          model: createTestLanguageModel("fallback-reasoning-refusal-model"),
+          modelString: nextModelString,
+          messages: [],
+          system: "fallback system",
+          tools: {},
+          thinkingLevel: "off",
+        })
+      )
+    );
+
+    const startTime = Date.now() - 250;
+    const streamInfo = createStreamInfoForTests({
+      streamResult: createStreamResultForTests(
+        (async function* () {
+          await Promise.resolve();
+          yield { type: "reasoning-delta", text: refusedReasoning };
+          yield { type: "text-delta", text: "partial answer" };
+          yield {
+            type: "finish-step",
+            usage: { inputTokens: 12, outputTokens: 5, totalTokens: 17 },
+          };
+          yield { type: "finish", finishReason: "content-filter", rawFinishReason: "refusal" };
+        })(),
+        { inputTokens: 12, outputTokens: 5, totalTokens: 17 }
+      ),
+      messageId,
+      startTime,
+      lastPartTimestamp: startTime,
+      model: KNOWN_MODELS.SONNET.id,
+      metadataModel: KNOWN_MODELS.SONNET.id,
+      historySequence,
+      initialMetadata: { agentId: "plan" },
+      runtime,
+      modelFallback: {
+        options: { chain: [fallbackModel], prepare },
+        requestedModel: KNOWN_MODELS.SONNET.id,
+        refusedModels: [],
+        original: { maxOutputTokens: undefined },
+      },
+    });
+
+    await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
+
+    expect(errorEvents).toHaveLength(0);
+    expect(streamEndEvents).toHaveLength(1);
+    const metadata = streamEndEvents[0]?.metadata;
+    expect(metadata?.toolModelUsages?.[0]).toMatchObject({
+      model: KNOWN_MODELS.SONNET.id,
+      usage: { reasoningTokens: expectedReasoningTokens },
+    });
+    expect(metadata?.usage?.reasoningTokens).toBeUndefined();
+  });
+
   test("partial refusal skips fallback when a tool call is still incomplete", async () => {
     const streamManager = new StreamManager(historyService);
     const errorEvents: Array<{ messageId: string; error: string; errorType?: string }> = [];
