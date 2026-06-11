@@ -5,6 +5,10 @@ import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import type { SendMessageError as SendMessageErrorType } from "@/common/types/errors";
 import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 
+// Shared across the provider-related error toasts (missing key, OAuth, disabled,
+// unsupported) so the providers docs link is defined in exactly one place.
+const providersDocsLink = <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>;
+
 export function createInvalidCompactModelToast(model: string): Toast {
   return {
     id: Date.now().toString(),
@@ -136,7 +140,7 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
             <SolutionLabel>Fix:</SolutionLabel>
             {formatted.resolutionHint ?? "Open Settings → Providers and add an API key."}
             <br />
-            <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
+            {providersDocsLink}
           </>
         ),
       };
@@ -154,7 +158,7 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
             <SolutionLabel>Fix:</SolutionLabel>
             {formatted.resolutionHint ?? "Open Settings → Providers and connect your account."}
             <br />
-            <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
+            {providersDocsLink}
           </>
         ),
       };
@@ -172,7 +176,7 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
             <SolutionLabel>Fix:</SolutionLabel>
             {formatted.resolutionHint ?? "Open Settings → Providers and enable this provider."}
             <br />
-            <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
+            {providersDocsLink}
           </>
         ),
       };
@@ -190,7 +194,7 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
             <SolutionLabel>Try This:</SolutionLabel>
             Choose a supported provider in Settings → Providers.
             <br />
-            <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
+            {providersDocsLink}
           </>
         ),
       };
