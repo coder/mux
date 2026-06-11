@@ -122,7 +122,8 @@ function WorkflowActionListRow(props: { descriptor: WorkflowActionDescriptor }) 
         <span className="text-foreground truncate font-mono text-[12px] font-medium">
           {action.name}
         </span>
-        <div className="flex items-center gap-1.5">
+        {/* span (not div): buttons only allow phrasing content */}
+        <span className="flex items-center gap-1.5">
           <WorkflowBadge>{action.scope}</WorkflowBadge>
           {action.executable ? (
             <WorkflowBadge tone={EFFECT_TONE[action.metadata.effect]}>
@@ -131,7 +132,7 @@ function WorkflowActionListRow(props: { descriptor: WorkflowActionDescriptor }) 
           ) : (
             <WorkflowBadge tone="warning">blocked</WorkflowBadge>
           )}
-        </div>
+        </span>
         <span
           className="text-muted truncate text-[11px] [@container(max-width:640px)]:col-span-2 [@container(max-width:640px)]:col-start-2"
           title={description}
