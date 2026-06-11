@@ -760,6 +760,103 @@ export default function workflow({ args, agent }) {
     expect(taskCalls).toEqual(["second"]);
   });
 
+  test("resumes crash-orphaned running workflow runs", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_resume_running_orphan",
+      workspaceId: "workspace-1",
+      definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow({ agent }) { return agent({ id: 'orphaned-step', prompt: 'resume' }); }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus("wfr_resume_running_orphan", "running", "2026-05-29T00:00:01.000Z");
+
+    const taskCalls: string[] = [];
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec.id);
+          return { taskId: `task_${spec.id}`, reportMarkdown: "resumed" };
+        },
+      },
+      runnerId: "runner-a",
+    });
+
+    await expect(
+      service.resumeRun({
+        workspaceId: "workspace-1",
+        runId: "wfr_resume_running_orphan",
+        projectTrusted: true,
+      })
+    ).resolves.toEqual({
+      runId: "wfr_resume_running_orphan",
+      status: "completed",
+      result: { reportMarkdown: "resumed" },
+    });
+    expect(taskCalls).toEqual(["orphaned-step"]);
+  });
+
+  test("resumes crash-orphaned backgrounded workflow runs in the background", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_resume_backgrounded_orphan",
+      workspaceId: "workspace-1",
+      definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow({ agent }) { return agent({ id: 'backgrounded-step', prompt: 'resume' }); }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus(
+      "wfr_resume_backgrounded_orphan",
+      "backgrounded",
+      "2026-05-29T00:00:01.000Z"
+    );
+
+    const taskCalls: string[] = [];
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec.id);
+          return { taskId: `task_${spec.id}`, reportMarkdown: "resumed" };
+        },
+      },
+      runnerId: "runner-a",
+    });
+
+    await expect(
+      service.resumeRunInBackground({
+        workspaceId: "workspace-1",
+        runId: "wfr_resume_backgrounded_orphan",
+        projectTrusted: true,
+      })
+    ).resolves.toEqual({
+      runId: "wfr_resume_backgrounded_orphan",
+      status: "running",
+      result: null,
+    });
+    await waitForWorkflowStatus(runStore, "wfr_resume_backgrounded_orphan", "completed");
+    expect(taskCalls).toEqual(["backgrounded-step"]);
+  });
+
   test("keeps resumed workflow running when foreground wait backgrounds", async () => {
     using tmp = new DisposableTempDir("workflow-service");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
