@@ -106,8 +106,16 @@ Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mu
 
 /**
  * Build environment context XML block describing the workspace.
- * @param workspacePath - Workspace directory path
+ *
+ * Sub-project workspaces are framed identically to regular projects: the cwd
+ * (already the sub-project directory thanks to resolveWorkspaceExecutionPath)
+ * is presented as "the project" with no parent-repo callout. The agent does
+ * not need to know about the parent's existence to do work — it just sees a
+ * project rooted at this directory.
+ *
+ * @param workspacePath - Workspace directory path (cwd; for sub-projects this is already the sub-project path)
  * @param runtimeType - Runtime type (local, worktree, ssh, docker)
+ * @param bestOf - Best-of grouping metadata for sibling sub-agent batches
  */
 function buildEnvironmentContext(
   workspacePath: string,
@@ -319,7 +327,14 @@ function subProjectAwareWorkspaceRoot(
   runtime: Runtime,
   workspacePath: string
 ): string {
-  if (!metadata.subProjectPath?.trim()) return workspacePath;
+  const subProjectPath = metadata.subProjectPath?.trim();
+  if (!subProjectPath) return workspacePath;
+  // If persisted sub-project metadata is stale, instruction loading should
+  // degrade to the caller's cwd instead of treating some unrelated path as a
+  // parent root. Normal execution already self-heals stale sub-project paths to
+  // the root, so this preserves the active cwd either way.
+  const subProjectRelativePath = deriveSubProjectRelativePath(metadata.projectPath, subProjectPath);
+  if (!subProjectRelativePath) return workspacePath;
   return resolveWorkspaceRootPath(metadata, runtime);
 }
 
@@ -376,17 +391,12 @@ async function readSingleProjectContextInstructions(
   runtime: Runtime,
   workspaceRootPath: string
 ): Promise<InstructionSet[]> {
-  // Read parent + sub-project AGENTS.md from the workspace's *own* checkout
-  // (via the runtime). For worktree/SSH/Docker flows the parent project's host
-  // path is a different checkout than the workspace branch — mixing the two
-  // would inject contradictory or stale guidance and prevent workspace-branch
-  // edits from overriding parent guidance. The workspace root is by
-  // construction the parent project's checkout, and any registered
-  // sub-project's relative path is stable across checkouts of the same repo.
-  //
-  // `workspaceRootPath` is the parent project's checkout root — *without* the
-  // sub-project segment appended (see `resolveWorkspaceRootPath`). The
-  // sub-project's AGENTS.md is read at `<root>/<subProjectRelativePath>`.
+  // Sub-project workspaces should look like regular projects in <environment>
+  // and tool descriptions, while still inheriting the parent project's
+  // AGENTS.md. We therefore load parent then sub-project from the workspace's
+  // own checkout and add only lightweight path-source headings/comments to the
+  // prompt content so relative-path guidance remains anchored to the directory
+  // where each segment was authored.
   const subProjectRelativePath = metadata.subProjectPath
     ? deriveSubProjectRelativePath(metadata.projectPath, metadata.subProjectPath)
     : null;
@@ -394,8 +404,9 @@ async function readSingleProjectContextInstructions(
   // path.relative emits host-native separators (e.g., "packages\\api" on Windows),
   // but SSH/Docker/devcontainer runtimes read files via POSIX paths. Normalize to
   // forward slashes and let the runtime joiner produce a runtime-correct path.
-  const subProjectInstructionsDir = subProjectRelativePath
-    ? runtime.normalizePath(subProjectRelativePath.replace(/\\/g, "/"), workspaceRootPath)
+  const normalizedSubProjectRelativePath = subProjectRelativePath?.replace(/\\/g, "/") ?? null;
+  const subProjectInstructionsDir = normalizedSubProjectRelativePath
+    ? runtime.normalizePath(normalizedSubProjectRelativePath, workspaceRootPath)
     : null;
 
   const [parentInstructions, subProjectInstructions] = await Promise.all([
@@ -409,9 +420,154 @@ async function readSingleProjectContextInstructions(
       : Promise.resolve(null),
   ]);
 
-  return [parentInstructions, subProjectInstructions].filter(
+  // Non-sub-project workspaces and stale sub-project metadata preserve the
+  // historical prompt: one unwrapped AGENTS.md source, no path-source markers.
+  if (!normalizedSubProjectRelativePath) {
+    return [parentInstructions].filter(
+      (set): set is InstructionSet => set != null && set.combinedContent.trim().length > 0
+    );
+  }
+
+  const parentAgentsMdRelativePath = parentAgentsMdRelativePathForSubProject(
+    normalizedSubProjectRelativePath
+  );
+  const taggedParentInstructions = parentInstructions
+    ? tagInstructionSetContent(parentInstructions, parentAgentsMdRelativePath)
+    : null;
+  const taggedSubProjectInstructions = subProjectInstructions
+    ? tagInstructionSetContent(subProjectInstructions, "./AGENTS.md")
+    : null;
+
+  return [taggedParentInstructions, taggedSubProjectInstructions].filter(
     (set): set is InstructionSet => set != null && set.combinedContent.trim().length > 0
   );
+}
+
+/**
+ * Match an ATX-style scoped heading line at any heading level (`## Tool: bash`,
+ * `### Model: …`, etc.). Used by `tagAgentsSegment` to find heading lines
+ * that should receive an injected path-source comment.
+ *
+ * Per CommonMark §4.2, ATX headings may start with up to 3 spaces of
+ * indentation and still be parsed as headings — markdown-it recognizes
+ * these and the downstream `extractToolSection`/`extractModelSection`
+ * extract them. Allow the same optional leading spaces here so the scanner
+ * stays aligned with the parser used downstream; otherwise an indented
+ * `   ## Tool: bash` heading would survive into the per-tool prompt
+ * without provenance.
+ *
+ * Setext-style headings (underline form) are intentionally not handled —
+ * the codebase consistently uses ATX for AGENTS.md scoped headings, and
+ * supporting setext would require AST-based injection.
+ */
+const SCOPED_HEADING_LINE_REGEX = /^ {0,3}#{1,6}\s+(?:Tool|Model):/i;
+
+/**
+ * Match a CommonMark-style fenced-code-block delimiter line: three or more
+ * backticks or tildes at the start of the line (with up to 3 leading
+ * spaces, per CommonMark §4.5). Capture group 1 is the fence marker, group
+ * 2 is anything after the marker (info string, trailing whitespace, etc.).
+ *
+ * The two captures are required because opening and closing fences obey
+ * different rules:
+ *
+ *   - An opening fence may carry an info string (`` ```markdown ``,
+ *     `` ```ts ``, etc.).
+ *   - A closing fence must have NO info string — only optional trailing
+ *     whitespace. Anything else (e.g. `` ```ts `` inside an outer
+ *     `` ```markdown `` fence) is parsed by markdown-it as still-inside-
+ *     the-fence content, NOT as a closer.
+ */
+const FENCE_LINE_REGEX = /^ {0,3}(`{3,}|~{3,})(.*)/;
+
+/**
+ * Wrap a sub-project AGENTS.md segment with path-source markers so the
+ * agent can resolve relative path references in each segment to the right
+ * root, and so scoped sections inside the segment don't accidentally span
+ * across the segment join.
+ *
+ * The wrapper does two things:
+ *
+ *   1. Emit an H1 heading with the source path as the heading body
+ *      (e.g. `` # `../../AGENTS.md` ``). This is a visible note that names
+ *      the segment's source AND bounds any scoped `## Tool:` / `## Model:`
+ *      sections inside the segment. Without an H1 boundary, a scoped
+ *      section in the parent segment would extend across the join into
+ *      the sub-project's narrative — `stripScopedInstructionSections`
+ *      would then delete the sub-project's narrative along with the
+ *      parent's scoped section.
+ *
+ *   2. Inject a markdown-invisible HTML comment with the same path
+ *      immediately after every ATX-style `## Tool:` / `## Model:` heading
+ *      in the segment. The H1 above doesn't survive scoped extraction
+ *      (extractToolSection returns the section body, not the surrounding
+ *      H1), so the inner HTML comment carries the path provenance into
+ *      per-tool/per-model contexts.
+ *
+ *      Heading-line scanning is fence-aware: scoped-looking lines that
+ *      sit inside a fenced code block (e.g. an AGENTS.md authored with a
+ *      `markdown` example showing how to structure scoped sections) do
+ *      NOT receive an injected comment. The downstream markdown parser
+ *      used by `stripScopedInstructionSections` / `extractToolSection`
+ *      correctly ignores fenced content, so injecting there would only
+ *      corrupt the documented example without serving any provenance
+ *      purpose.
+ *
+ * The visible H1 heading is deliberately a lightweight `path note` rather
+ * than the v1 framing `# Project context (root: …)`: it tells the agent
+ * which directory the segment was authored against without dressing the
+ * sub-project up as a special structural feature.
+ */
+function tagAgentsSegment(content: string, sourcePath: string): string {
+  const comment = `<!-- ${sourcePath} -->`;
+  const lines = content.split("\n");
+  const out: string[] = [];
+  // Tracks the marker that opened the current fence (e.g. "```" or "~~~~").
+  // Closing fences must use the same character as the opener and at least
+  // as many delimiters; null means we are not currently inside a fence.
+  let openFence: string | null = null;
+
+  for (const line of lines) {
+    out.push(line);
+
+    const fenceMatch = FENCE_LINE_REGEX.exec(line);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      const trailing = fenceMatch[2];
+      if (openFence === null) {
+        // Opening fence — info string is allowed and ignored here.
+        openFence = marker;
+      } else if (
+        marker.startsWith(openFence[0]) &&
+        marker.length >= openFence.length &&
+        trailing.trim().length === 0
+      ) {
+        // Closing fence — must use the same character as the opener, be
+        // at least as long, and carry NO info string (only optional
+        // trailing whitespace). Per CommonMark §4.5, an inner line like
+        // `` ```ts `` inside an outer `` ```markdown `` fence is NOT a
+        // closer and the outer fence stays open.
+        openFence = null;
+      }
+      continue;
+    }
+
+    if (openFence === null && SCOPED_HEADING_LINE_REGEX.test(line)) {
+      out.push(comment);
+    }
+  }
+
+  return `# \`${sourcePath}\`\n\n${out.join("\n")}`;
+}
+
+function tagInstructionSetContent(set: InstructionSet, sourcePath: string): InstructionSet {
+  return {
+    ...set,
+    // Prompt-only wrapper: `files` stay as authored so the Instructions tab can
+    // render the real file contents, while prompt consumers that read
+    // `combinedContent` get path provenance for each flattened segment.
+    combinedContent: tagAgentsSegment(set.combinedContent, sourcePath),
+  };
 }
 
 /**
@@ -419,7 +575,7 @@ async function readSingleProjectContextInstructions(
  * the workspace's own checkout. Returns `null` if the recorded sub-project
  * path is not actually a descendant of the parent project (stale persisted
  * state) — callers should treat that as "no sub-project segment" and fall
- * back to parent-only instructions rather than failing.
+ * back to unwrapped cwd/root instructions rather than failing.
  */
 function deriveSubProjectRelativePath(projectPath: string, subProjectPath: string): string | null {
   const relative = path.relative(projectPath, subProjectPath);
@@ -427,6 +583,16 @@ function deriveSubProjectRelativePath(projectPath: string, subProjectPath: strin
     return null;
   }
   return relative;
+}
+
+function parentAgentsMdRelativePathForSubProject(posixRelativeSubProjectPath: string): string {
+  // Depth = number of non-empty segments in the sub-project relative path,
+  // which equals the number of "../" levels needed to climb from the cwd
+  // to the parent root.
+  const depth = posixRelativeSubProjectPath
+    .split("/")
+    .filter((segment) => segment.length > 0).length;
+  return `${"../".repeat(depth)}AGENTS.md`;
 }
 
 /**

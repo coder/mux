@@ -1,4 +1,8 @@
-import { extractToolSection, stripScopedInstructionSections } from "./markdown";
+import {
+  extractModelSection,
+  extractToolSection,
+  stripScopedInstructionSections,
+} from "./markdown";
 
 describe("extractToolSection", () => {
   describe("basic extraction", () => {
@@ -220,5 +224,68 @@ Tool content
 
   it("should handle empty markdown", () => {
     expect(stripScopedInstructionSections("")).toBe("");
+  });
+});
+
+describe("extractModelSection", () => {
+  it("returns all matching Model: sections in source order so later sources override earlier ones", () => {
+    // Mirrors extractToolSection's multi-match semantics: parent + sub-project
+    // (or multi-project) AGENTS.md flatten into one blob, so collecting every
+    // matching scoped section in order lets later sources naturally override
+    // earlier ones via concatenation. Returning only the first match would
+    // silently drop sub-project model overrides.
+    const markdown = `
+# Model: claude-sonnet
+Parent model rule
+
+# Other Section
+Other content
+
+# Model: claude-sonnet
+Sub-project model rule
+`.trim();
+
+    const result = extractModelSection(markdown, "anthropic:claude-sonnet-4-20250514");
+    expect(result).toBe("Parent model rule\n\nSub-project model rule");
+  });
+
+  it("supports regex-style heading patterns and still collects all matches", () => {
+    const markdown = `
+# Model: /openai:.*codex/i
+First codex rule
+
+# Model: /openai:.*codex/i
+Second codex rule
+`.trim();
+
+    const result = extractModelSection(markdown, "openai:gpt-5-1-codex");
+    expect(result).toBe("First codex rule\n\nSecond codex rule");
+  });
+
+  it("returns null when no Model: heading matches the active model", () => {
+    const markdown = `
+# Model: claude-opus
+Opus rule
+
+# General
+General content
+`.trim();
+
+    expect(extractModelSection(markdown, "anthropic:claude-sonnet-4-20250514")).toBeNull();
+  });
+
+  it("skips empty matching sections while keeping later content", () => {
+    const markdown = `
+# Model: claude-sonnet
+
+# Other
+Other content
+
+# Model: claude-sonnet
+Real sonnet rule
+`.trim();
+
+    const result = extractModelSection(markdown, "anthropic:claude-sonnet-4-20250514");
+    expect(result).toBe("Real sonnet rule");
   });
 });

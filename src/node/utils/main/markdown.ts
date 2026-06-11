@@ -63,11 +63,6 @@ function extractSectionsByHeading(markdown: string, headingMatcher: HeadingMatch
     .filter((slice) => slice.length > 0);
 }
 
-function extractSectionByHeading(markdown: string, headingMatcher: HeadingMatcher): string | null {
-  const [firstMatch] = extractSectionsByHeading(markdown, headingMatcher);
-  return firstMatch ?? null;
-}
-
 function removeSectionsByHeading(markdown: string, headingMatcher: HeadingMatcher): string {
   if (!markdown) return markdown;
 
@@ -116,12 +111,20 @@ export function extractModelSection(markdown: string, modelId: string): string |
     }
   };
 
-  return extractSectionByHeading(markdown, (headingText) => {
+  // Collect every matching `## Model: …` section in source order. Mirrors
+  // extractToolSection's multi-match semantics so that flattened multi-
+  // source instruction blobs (e.g. parent + sub-project AGENTS.md, or
+  // multi-project workspaces) layer naturally — later sections override
+  // earlier ones by appearing later in the system prompt rather than
+  // silently dropping out. A single AGENTS.md with multiple matching
+  // sections (rare but legal) gets the same treatment.
+  const matches = extractSectionsByHeading(markdown, (headingText) => {
     const match = headingPattern.exec(headingText);
     if (!match) return false;
     const regex = compileRegex(match[1] ?? "");
     return Boolean(regex?.test(modelId));
   });
+  return matches.length > 0 ? matches.join("\n\n") : null;
 }
 
 /**
