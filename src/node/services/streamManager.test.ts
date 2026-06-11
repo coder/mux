@@ -2,6 +2,7 @@ import { describe, test, expect, afterEach, beforeEach, mock, spyOn } from "bun:
 import * as fs from "node:fs/promises";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { StreamEndEventSchema } from "@/common/orpc/schemas/stream";
 import { Ok, Err } from "@/common/types/result";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamManager, stripEncryptedContent } from "./streamManager";
@@ -2026,6 +2027,14 @@ describe("StreamManager - empty stream completions", () => {
     const metadata = streamEndEvents[0]?.metadata;
     expect(metadata?.model).toBe(fallbackModel);
     expect(metadata?.modelFallback).toEqual({
+      requestedModel: KNOWN_MODELS.SONNET.id,
+      refusedModels: [KNOWN_MODELS.SONNET.id],
+    });
+    // Pin the IPC passthrough: the oRPC schema strips unknown metadata keys, so
+    // modelFallback must survive StreamEndEventSchema or the live transcript
+    // never learns about the swap.
+    const ipcEvent = StreamEndEventSchema.parse(streamEndEvents[0]);
+    expect(ipcEvent.metadata.modelFallback).toEqual({
       requestedModel: KNOWN_MODELS.SONNET.id,
       refusedModels: [KNOWN_MODELS.SONNET.id],
     });

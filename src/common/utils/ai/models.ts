@@ -4,6 +4,7 @@
 
 import { DEFAULT_MODEL, MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
+import { formatModelDisplayName } from "./modelDisplay";
 
 export const defaultModel = DEFAULT_MODEL;
 
@@ -100,6 +101,16 @@ export function getModelName(modelString: string): string {
     return normalized;
   }
   return normalized.substring(colonIndex + 1);
+}
+
+/**
+ * Format a full model string (e.g. "anthropic:claude-sonnet-4-5") into its
+ * human display name (e.g. "Sonnet 4.5"). Shared by ModelDisplay,
+ * ModelSelector, and ModelFallbackBadge. Lives here (not modelDisplay.ts) to
+ * avoid a modelDisplay -> knownModels -> modelDisplay import cycle.
+ */
+export function formatModelStringForDisplay(modelString: string): string {
+  return formatModelDisplayName(getModelName(modelString));
 }
 
 /**

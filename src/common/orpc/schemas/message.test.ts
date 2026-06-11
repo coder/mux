@@ -43,6 +43,48 @@ describe("MuxMessageSchema compactionEpoch parsing", () => {
     expect(parsed.metadata?.routeProvider).toBe("openai");
   });
 
+  test("preserves modelFallback metadata", () => {
+    const parsed = MuxMessageSchema.parse({
+      ...createMessage(),
+      metadata: {
+        modelFallback: {
+          requestedModel: "openai:gpt-5.5",
+          refusedModels: ["openai:gpt-5.5", "google:gemini-3.1-pro-preview"],
+        },
+      },
+    });
+
+    expect(parsed.metadata?.modelFallback).toEqual({
+      requestedModel: "openai:gpt-5.5",
+      refusedModels: ["openai:gpt-5.5", "google:gemini-3.1-pro-preview"],
+    });
+  });
+
+  test("tolerates malformed modelFallback values by treating them as absent", () => {
+    const malformedModelFallbackValues: unknown[] = [
+      null,
+      "openai:gpt-5.5",
+      7,
+      [],
+      {},
+      { requestedModel: "openai:gpt-5.5" }, // missing refusedModels
+      { refusedModels: ["openai:gpt-5.5"] }, // missing requestedModel
+      { requestedModel: "openai:gpt-5.5", refusedModels: [7] }, // wrong element type
+      { requestedModel: 7, refusedModels: ["openai:gpt-5.5"] },
+    ];
+
+    for (const malformedModelFallback of malformedModelFallbackValues) {
+      const parsed = MuxMessageSchema.parse({
+        ...createMessage(),
+        metadata: {
+          modelFallback: malformedModelFallback,
+        },
+      });
+
+      expect(parsed.metadata?.modelFallback).toBeUndefined();
+    }
+  });
+
   test("tolerates malformed compactionEpoch values by treating them as absent", () => {
     const malformedCompactionEpochValues: unknown[] = [
       0,

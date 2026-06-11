@@ -126,7 +126,10 @@ export const MuxMessageSchema = z.object({
       thinkingLevel: ThinkingLevelSchema.optional(),
       routedThroughGateway: z.boolean().optional(),
       routeProvider: z.string().optional(), // Preserve replayed/non-stream route attribution.
-      modelFallback: ModelFallbackRecordSchema.optional(),
+      // Self-healing read path (like agentId/compactionEpoch): the badge is purely
+      // decorative, so a shape-corrupt persisted record must degrade to "no badge"
+      // instead of failing whole-chat loading at the oRPC output boundary.
+      modelFallback: ModelFallbackRecordSchema.optional().catch(undefined),
       usage: z.any().optional(),
       contextUsage: z.any().optional(),
       providerMetadata: z.record(z.string(), z.unknown()).optional(),

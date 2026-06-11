@@ -2,12 +2,7 @@ import React from "react";
 import { ArrowRightLeft } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import type { ModelFallbackRecord } from "@/common/types/message";
-import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
-import { getModelName, normalizeToCanonical } from "@/common/utils/ai/models";
-
-function formatModel(modelString: string): string {
-  return formatModelDisplayName(getModelName(normalizeToCanonical(modelString)));
-}
+import { formatModelStringForDisplay } from "@/common/utils/ai/models";
 
 /**
  * Tooltip copy for a fallback badge, one line per entry.
@@ -24,11 +19,13 @@ export function buildModelFallbackTooltipLines(
   const refused = record.refusedModels.length > 0 ? record.refusedModels : [record.requestedModel];
   const lines = refused.map((model, index) =>
     index === 0
-      ? `Requested ${formatModel(model)} refused to respond.`
-      : `Fallback ${formatModel(model)} also refused.`
+      ? `Requested ${formatModelStringForDisplay(model)} refused to respond.`
+      : `Fallback ${formatModelStringForDisplay(model)} also refused.`
   );
-  if (effectiveModel !== undefined) {
-    lines.push(`Answered by ${formatModel(effectiveModel)}.`);
+  // Truthy guard (not just !== undefined): an empty-string model must not
+  // render a dangling "Answered by ." line; matches ModelDisplay's gating.
+  if (effectiveModel) {
+    lines.push(`Answered by ${formatModelStringForDisplay(effectiveModel)}.`);
   }
   return lines;
 }
@@ -49,7 +46,10 @@ export const ModelFallbackBadge: React.FC<ModelFallbackBadgeProps> = (props) => 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
+        {/* tabIndex makes the explanation keyboard-reachable (Radix opens tooltips on focus).
+            data-model-fallback-badge is a stable selector for browser-automation checks. */}
         <span
+          tabIndex={0}
           className="text-warning bg-warning/10 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase"
           data-model-fallback-badge
         >
@@ -58,8 +58,11 @@ export const ModelFallbackBadge: React.FC<ModelFallbackBadgeProps> = (props) => 
         </span>
       </TooltipTrigger>
       <TooltipContent align="center">
-        {lines.map((line) => (
-          <div key={line}>{line}</div>
+        {/* Keyed by index: distinct refused models can share a display name
+            (e.g. the same model via two providers), so line text is not unique.
+            The list is static per render and never reorders. */}
+        {lines.map((line, index) => (
+          <div key={index}>{line}</div>
         ))}
       </TooltipContent>
     </Tooltip>

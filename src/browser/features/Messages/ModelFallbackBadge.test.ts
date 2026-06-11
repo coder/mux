@@ -21,13 +21,15 @@ describe("buildModelFallbackTooltipLines", () => {
     expect(lines[2]).toContain("Opus 4.8");
   });
 
-  test("omits the answering line when the effective model is unknown", () => {
-    const lines = buildModelFallbackTooltipLines(
-      { requestedModel: "openai:gpt-5.5", refusedModels: ["openai:gpt-5.5"] },
-      undefined
-    );
+  test("omits the answering line when the effective model is unknown or empty", () => {
+    for (const effectiveModel of [undefined, ""]) {
+      const lines = buildModelFallbackTooltipLines(
+        { requestedModel: "openai:gpt-5.5", refusedModels: ["openai:gpt-5.5"] },
+        effectiveModel
+      );
 
-    expect(lines).toHaveLength(1);
+      expect(lines).toHaveLength(1);
+    }
   });
 
   test("falls back to the requested model when refusedModels is empty (malformed record)", () => {
