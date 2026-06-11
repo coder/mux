@@ -209,14 +209,17 @@ function getStructuredOutput(value: unknown): unknown {
 
 type WorkflowTaskEvent = Extract<WorkflowRunEvent, { type: "task" }>;
 type WorkflowActionEvent = Extract<WorkflowRunEvent, { type: "action" }>;
+type WorkflowPatchEvent = Extract<WorkflowRunEvent, { type: "patch" }>;
 
 type WorkflowDisplayRow =
   | { kind: "event"; event: WorkflowRunEvent }
   | { kind: "task"; firstEvent: WorkflowTaskEvent; latestEvent: WorkflowTaskEvent }
-  | { kind: "action"; firstEvent: WorkflowActionEvent; latestEvent: WorkflowActionEvent };
+  | { kind: "action"; firstEvent: WorkflowActionEvent; latestEvent: WorkflowActionEvent }
+  | { kind: "patch"; firstEvent: WorkflowPatchEvent; latestEvent: WorkflowPatchEvent };
 
 type WorkflowTaskRow = Extract<WorkflowDisplayRow, { kind: "task" }>;
 type WorkflowActionRow = Extract<WorkflowDisplayRow, { kind: "action" }>;
+type WorkflowPatchRow = Extract<WorkflowDisplayRow, { kind: "patch" }>;
 interface PendingWorkflowActionRows {
   rows: WorkflowActionRow[];
   ambiguous: boolean;
@@ -224,6 +227,10 @@ interface PendingWorkflowActionRows {
 
 function getTaskEventKey(event: WorkflowTaskEvent): string {
   return `task:${event.stepId}:${event.taskId}`;
+}
+
+function getPatchEventKey(event: WorkflowPatchEvent): string {
+  return `patch:${event.stepId}:${event.sourceTaskId}`;
 }
 
 function getActionEventKey(event: WorkflowActionEvent): string {
@@ -266,6 +273,7 @@ function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDi
   const rows: WorkflowDisplayRow[] = [];
   const taskRows = new Map<string, WorkflowTaskRow>();
   const actionRows = new Map<string, PendingWorkflowActionRows>();
+  const patchRows = new Map<string, WorkflowPatchRow>();
 
   for (const event of events) {
     if (event.type === "status" || event.type === "result") {
@@ -285,6 +293,27 @@ function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDi
         latestEvent: event,
       };
       taskRows.set(key, row);
+      rows.push(row);
+      continue;
+    }
+
+    if (event.type === "patch") {
+      // A patch step emits started → applied/conflict/failed for the same
+      // stepId+sourceTaskId; collapse them into one row (latest status wins),
+      // mirroring task-row coalescing.
+      const key = getPatchEventKey(event);
+      const existingRow = patchRows.get(key);
+      if (existingRow != null) {
+        existingRow.latestEvent = event;
+        continue;
+      }
+
+      const row: WorkflowPatchRow = {
+        kind: "patch",
+        firstEvent: event,
+        latestEvent: event,
+      };
+      patchRows.set(key, row);
       rows.push(row);
       continue;
     }
@@ -347,6 +376,9 @@ function getDisplayRowKey(row: WorkflowDisplayRow): string {
   }
   if (row.kind === "action") {
     return `${getActionEventKey(row.firstEvent)}:${row.firstEvent.sequence}`;
+  }
+  if (row.kind === "patch") {
+    return getPatchEventKey(row.firstEvent);
   }
   return getEventKey(row.event);
 }
@@ -519,7 +551,7 @@ function WorkflowEventTooltip(props: {
   );
 }
 
-function getWorkflowActionRowDetail(row: WorkflowActionRow): unknown {
+function getWorkflowMergedRowDetail(row: WorkflowActionRow | WorkflowPatchRow): unknown {
   const firstDetail = getWorkflowEventDetail(row.firstEvent);
   const latestDetail = getWorkflowEventDetail(row.latestEvent);
   if (row.firstEvent === row.latestEvent || row.latestEvent.status === "started") {
@@ -1512,13 +1544,13 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
                         />
                       );
                     }
-                    if (row.kind === "action") {
+                    if (row.kind === "action" || row.kind === "patch") {
                       return (
                         <WorkflowEventRow
                           key={getDisplayRowKey(row)}
                           event={row.latestEvent}
                           tooltipEvent={row.firstEvent}
-                          detailOverride={getWorkflowActionRowDetail(row)}
+                          detailOverride={getWorkflowMergedRowDetail(row)}
                           displayIndex={index + 1}
                           steps={run?.steps ?? []}
                         />

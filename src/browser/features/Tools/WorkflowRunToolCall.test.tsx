@@ -626,6 +626,83 @@ describe("WorkflowRunToolCall", () => {
     expect(view.container.textContent).toContain("durationMs");
   });
 
+  test("coalesces patch start and applied events into one row with combined details", () => {
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <TooltipProvider>
+          <WorkflowRunToolCall
+            args={{ name: "implementation", args: {}, run_in_background: true }}
+            status="completed"
+            result={{
+              status: "completed",
+              runId: "wfr_patch_rows",
+              result: null,
+              run: {
+                id: "wfr_patch_rows",
+                workspaceId: "workspace-1",
+                definition: {
+                  name: "implementation",
+                  description: "Implementation",
+                  scope: "built-in",
+                  executable: true,
+                },
+                definitionSource: "export default function workflow() { return null; }",
+                definitionHash: "sha256:patches",
+                args: {},
+                status: "completed",
+                createdAt: "2026-05-29T00:00:00.000Z",
+                updatedAt: "2026-05-29T00:00:02.000Z",
+                events: [
+                  {
+                    sequence: 1,
+                    type: "patch",
+                    at: "2026-05-29T00:00:00.000Z",
+                    stepId: "apply-p0-p1",
+                    sourceTaskId: "task_p0",
+                    status: "started",
+                    details: { target: "workspace" },
+                  },
+                  {
+                    sequence: 2,
+                    type: "patch",
+                    at: "2026-05-29T00:00:01.000Z",
+                    stepId: "apply-p0-p1",
+                    sourceTaskId: "task_p0",
+                    status: "applied",
+                    details: { commitCount: 3 },
+                  },
+                  {
+                    sequence: 3,
+                    type: "patch",
+                    at: "2026-05-29T00:00:02.000Z",
+                    stepId: "apply-p1-p2",
+                    sourceTaskId: "task_p1",
+                    status: "started",
+                    details: { target: "workspace" },
+                  },
+                ],
+                steps: [],
+              },
+            }}
+          />
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+
+    fireEvent.click(getWorkflowHeader(view));
+
+    expect(view.getByText("Workflow events (2)")).toBeTruthy();
+    expect(view.getAllByText("apply-p0-p1 / task_p0 / applied")).toHaveLength(1);
+    expect(view.queryByText("apply-p0-p1 / task_p0 / started")).toBeNull();
+    expect(view.getByText("apply-p1-p2 / task_p1 / started")).toBeTruthy();
+    expect(view.getByText("#1").getAttribute("aria-label")).toBe("Raw event #1");
+
+    fireEvent.click(view.getByText("apply-p0-p1 / task_p0 / applied"));
+
+    expect(view.container.textContent).toContain("target");
+    expect(view.container.textContent).toContain("commitCount");
+  });
+
   test("leaves cached action events separate from pending started rows", () => {
     const view = render(
       <ThemeProvider forcedTheme="dark">
