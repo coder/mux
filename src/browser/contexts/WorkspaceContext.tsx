@@ -1191,12 +1191,16 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           // removing it from the active metadata map. Otherwise we can briefly render the
           // root-route empty shell while still on `/workspace/:id`.
           //
-          // Prefer the next workspace in sidebar DOM order (like Ctrl+J) so the user
-          // stays in flow; fall back to the project page when no siblings remain.
+          // Prefer nearby chats in the same project first so archive does not jump the
+          // user into another project; fall back to the project page when none remain.
           if (meta !== null && isNowArchived) {
             const currentSelection = selectedWorkspaceRef.current;
             if (currentSelection?.workspaceId === event.workspaceId) {
-              const nextId = findAdjacentWorkspaceId(event.workspaceId);
+              const nextId = findAdjacentWorkspaceId(event.workspaceId, {
+                preferredProjectPath: meta.projectPath,
+                getProjectPath: (workspaceId) =>
+                  workspaceMetadataRef.current.get(workspaceId)?.projectPath,
+              });
               const nextMeta = nextId ? workspaceMetadataRef.current.get(nextId) : null;
 
               if (nextMeta) {
