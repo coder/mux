@@ -1,6 +1,14 @@
 import type { FilePart, GoalInterventionPolicy, SendMessageOptions } from "@/common/orpc/types";
 import type { ReviewNoteData } from "@/common/types/review";
 
+// Shared object-shape narrowing so the metadata type guards below don't each
+// re-inline the same `typeof === "object" && !== null` check plus a manual
+// `as Record<string, unknown>` cast. Mirrors the local `isRecord` helper used
+// across many other modules in the codebase.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 // Type guard for compaction request metadata (for display text)
 interface CompactionMetadata {
   type: "compaction-request";
@@ -16,19 +24,18 @@ interface AgentSkillMetadata {
 }
 
 function isAgentSkillMetadata(meta: unknown): meta is AgentSkillMetadata {
-  if (typeof meta !== "object" || meta === null) return false;
-  const obj = meta as Record<string, unknown>;
-  if (obj.type !== "agent-skill") return false;
-  if (typeof obj.rawCommand !== "string") return false;
-  if (typeof obj.skillName !== "string") return false;
-  if (obj.scope !== "project" && obj.scope !== "global" && obj.scope !== "built-in") return false;
+  if (!isRecord(meta)) return false;
+  if (meta.type !== "agent-skill") return false;
+  if (typeof meta.rawCommand !== "string") return false;
+  if (typeof meta.skillName !== "string") return false;
+  if (meta.scope !== "project" && meta.scope !== "global" && meta.scope !== "built-in")
+    return false;
   return true;
 }
 
 function isCompactionMetadata(meta: unknown): meta is CompactionMetadata {
-  if (typeof meta !== "object" || meta === null) return false;
-  const obj = meta as Record<string, unknown>;
-  return obj.type === "compaction-request" && typeof obj.rawCommand === "string";
+  if (!isRecord(meta)) return false;
+  return meta.type === "compaction-request" && typeof meta.rawCommand === "string";
 }
 
 // Type guard for metadata with reviews
@@ -37,9 +44,8 @@ interface MetadataWithReviews {
 }
 
 function hasReviews(meta: unknown): meta is MetadataWithReviews {
-  if (typeof meta !== "object" || meta === null) return false;
-  const obj = meta as Record<string, unknown>;
-  return Array.isArray(obj.reviews);
+  if (!isRecord(meta)) return false;
+  return Array.isArray(meta.reviews);
 }
 
 // Derive from the Zod schema (SendMessageOptions) to stay in sync automatically.
