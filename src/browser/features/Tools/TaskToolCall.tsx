@@ -107,15 +107,15 @@ const TaskStatusBadge: React.FC<{
       case "queued":
         return "bg-muted/20 text-muted";
       case "terminated":
-      // Workflow runs surface "interrupted" (resumable) through task_terminate results and
-      // task_list rows; style it like "terminated" rather than the muted default.
       case "interrupted":
+        // Workflow runs surface "interrupted" (resumable) through task_terminate results and
+        // task_list rows; style it like "terminated" rather than the muted default.
         return "bg-interrupted/20 text-interrupted";
       case "not_found":
       case "invalid_scope":
       case "error":
-      // Workflow-run terminal failure status (task_list rows).
       case "failed":
+        // Workflow-run terminal failure status (task_list rows).
         return "bg-danger/20 text-danger";
       default:
         return "bg-muted/20 text-muted";
