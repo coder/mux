@@ -1048,6 +1048,67 @@ export default function workflow({ args, agent }) {
     });
   });
 
+  test("keeps aborted resumes interrupted when abort wins before running status append", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const runId = "wfr_resume_abort_before_running";
+    await runStore.createRun({
+      id: runId,
+      workspaceId: "workspace-1",
+      definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus(runId, "interrupted", "2026-05-29T00:00:01.000Z");
+
+    const abortController = new AbortController();
+    const appendNextEvent = runStore.appendNextEvent.bind(runStore);
+    let abortedBeforeRunningAppend = false;
+    runStore.appendNextEvent = async (...args: Parameters<WorkflowRunStore["appendNextEvent"]>) => {
+      const [eventRunId, event] = args;
+      if (
+        !abortedBeforeRunningAppend &&
+        eventRunId === runId &&
+        event.type === "status" &&
+        event.status === "running"
+      ) {
+        abortedBeforeRunningAppend = true;
+        abortController.abort();
+        await waitForWorkflowStatus(runStore, runId, "interrupted");
+      }
+      return await appendNextEvent(...args);
+    };
+
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("aborted workflow must not start child agents");
+        },
+      },
+      runnerId: "runner-a",
+    });
+
+    await expect(
+      service.resumeRun({
+        workspaceId: "workspace-1",
+        runId,
+        projectTrusted: true,
+        abortSignal: abortController.signal,
+      })
+    ).rejects.toThrow(/interrupted|aborted/i);
+    expect(abortedBeforeRunningAppend).toBe(true);
+    await expect(runStore.getRun(runId)).resolves.toMatchObject({ status: "interrupted" });
+  });
+
   test("interrupts resumed foreground workflow runs when the caller aborts", async () => {
     using tmp = new DisposableTempDir("workflow-service");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });

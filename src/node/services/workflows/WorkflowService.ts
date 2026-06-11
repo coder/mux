@@ -380,8 +380,12 @@ export class WorkflowService {
       throw error;
     } finally {
       abortInterrupt.remove();
-      await abortInterrupt.wait();
-      unregisterRunnerAbort();
+      try {
+        await abortInterrupt.wait();
+        await this.ensureInterruptedAfterAbort(input.workspaceId, input.runId, input.abortSignal);
+      } finally {
+        unregisterRunnerAbort();
+      }
     }
   }
 
@@ -579,6 +583,30 @@ export class WorkflowService {
 
   private abortActiveRunner(runId: string): void {
     activeWorkflowRunnerAbortControllers.get(runId)?.abort();
+  }
+
+  private async ensureInterruptedAfterAbort(
+    workspaceId: string,
+    runId: string,
+    callerAbortSignal: AbortSignal | undefined
+  ): Promise<void> {
+    // Only the caller's abort signal means this resume/retry should preserve an interrupt.
+    // The runner controller can also be aborted during legitimate lease handoffs/replacements.
+    if (callerAbortSignal?.aborted !== true) {
+      return;
+    }
+
+    const run = await this.getRun({ workspaceId, runId });
+    if (
+      run == null ||
+      run.status === "completed" ||
+      run.status === "failed" ||
+      run.status === "interrupted"
+    ) {
+      return;
+    }
+
+    await this.interruptRun({ workspaceId, runId });
   }
 
   private interruptRunOnAbort(
