@@ -267,6 +267,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const workspaceHeartbeatsExperimentEnabled = useExperimentValue(
     EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
   );
+  const memoryExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.MEMORY);
   const memoryConsolidationExperimentEnabled = useExperimentValue(
     EXPERIMENT_IDS.MEMORY_CONSOLIDATION
   );
@@ -1493,6 +1494,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         resolveSlashCommandExperimentValue(experimentId, {
           workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
           dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
+          memory: memoryExperimentEnabled,
           memoryConsolidation: memoryConsolidationExperimentEnabled,
         }),
     });
@@ -1505,6 +1507,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant,
     workspaceHeartbeatsExperimentEnabled,
     dynamicWorkflowsExperimentEnabled,
+    memoryExperimentEnabled,
     memoryConsolidationExperimentEnabled,
   ]);
 
@@ -1539,6 +1542,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       resolveSlashCommandExperimentValue(experimentId, {
         workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
         dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
+        memory: memoryExperimentEnabled,
         memoryConsolidation: memoryConsolidationExperimentEnabled,
       }),
   });

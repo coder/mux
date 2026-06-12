@@ -3,6 +3,7 @@ import { EXPERIMENT_IDS, type ExperimentId } from "@/common/constants/experiment
 export interface SlashCommandExperimentSnapshot {
   workspaceHeartbeats: boolean;
   dynamicWorkflows?: boolean;
+  memory?: boolean;
   memoryConsolidation?: boolean;
 }
 
@@ -16,7 +17,9 @@ export function resolveSlashCommandExperimentValue(
     case EXPERIMENT_IDS.DYNAMIC_WORKFLOWS:
       return snapshot.dynamicWorkflows;
     case EXPERIMENT_IDS.MEMORY_CONSOLIDATION:
-      return snapshot.memoryConsolidation;
+      // Sub-experiment of MEMORY: the backend rejects consolidation unless
+      // BOTH flags are on, so /dream must not surface on the sub-flag alone.
+      return snapshot.memoryConsolidation === true && snapshot.memory === true;
     default:
       return undefined;
   }
