@@ -13,6 +13,7 @@ import {
   MemoryService,
   projectMemoryDirName,
   resolveMemoryProjectAnchor,
+  resolveMemoryProjectIdentity,
   type MemoryScopeContext,
 } from "./memoryService";
 import { MemoryMetaService } from "./memoryMeta";
@@ -203,6 +204,32 @@ describe("MemoryService", () => {
       // Original content untouched.
       const physical = path.join(fixture.muxHome, "memory", "a.md");
       expect(await fsPromises.readFile(physical, "utf-8")).toBe("v1");
+    });
+  });
+
+  describe("resolveMemoryProjectIdentity", () => {
+    const baseMetadata = {
+      id: "ws-1",
+      name: "ws-1",
+      projectName: "alpha",
+      projectPath: "/projects/alpha",
+      createdAt: new Date().toISOString(),
+      runtimeConfig: { type: "local" as const, srcBaseDir: "/tmp" },
+    };
+
+    it("passes through the single-project identity", () => {
+      expect(resolveMemoryProjectIdentity(baseMetadata)).toBe("/projects/alpha");
+    });
+
+    it("returns '' for multi-project metadata (projectPath is just the first project)", () => {
+      const multi = {
+        ...baseMetadata,
+        projects: [
+          { projectPath: "/projects/alpha", projectName: "alpha" },
+          { projectPath: "/projects/beta", projectName: "beta" },
+        ],
+      };
+      expect(resolveMemoryProjectIdentity(multi)).toBe("");
     });
   });
 

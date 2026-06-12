@@ -51,6 +51,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import {
   formatMemoryIndexBlock,
   resolveMemoryProjectAnchor,
+  resolveMemoryProjectIdentity,
   type MemoryService,
 } from "@/node/services/memoryService";
 
@@ -620,7 +621,7 @@ export async function buildStreamSystemContext(
         // tool/UI/hot-set; "" disables the project scope.
         checkoutCwd: resolveMemoryProjectAnchor(metadata, runtime) ?? "",
         workspaceId,
-        projectPath: metadata.projectPath,
+        projectPath: resolveMemoryProjectIdentity(metadata),
       });
       systemMessage = `${systemMessage}\n\n${formatMemoryIndexBlock(entries)}`;
     } catch (error) {

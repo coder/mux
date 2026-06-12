@@ -318,6 +318,18 @@ export function resolveMemoryProjectAnchor(
   }
 }
 
+/**
+ * Stable project identity for memory scope contexts ("" disables the
+ * project-keyed scopes and sidecar keys). Multi-project workspaces have no
+ * single project identity — metadata.projectPath resolves to the FIRST
+ * project's path (see Config.getAllWorkspaceMetadata), so passing it through
+ * would silently bind project-local memories (and sidecar stats) to whichever
+ * project happens to be listed first.
+ */
+export function resolveMemoryProjectIdentity(metadata: WorkspaceMetadata): string {
+  return isMultiProject(metadata) ? "" : metadata.projectPath;
+}
+
 const SYMLINKED_MEMORY_ROOT_ERROR =
   "Project memory is unavailable: .mux/memory (or a repo-controlled ancestor) is a symlink";
 

@@ -80,6 +80,32 @@ describe("memory tool sub-project workspaces", () => {
   });
 });
 
+describe("memory tool multi-project workspaces", () => {
+  it("disables project-local (no single project identity, even though workspaceProjectPath is set)", async () => {
+    using fixture = await createFixture();
+    // Multi-project tool configs carry the FIRST project's path in
+    // workspaceProjectPath; binding stores to it would expose one project's
+    // private notes to every multi-project session that lists it first.
+    fixture.config.workspaceProjectPath = "/projects/alpha";
+    fixture.config.projects = [
+      { projectPath: "/projects/alpha", projectName: "alpha" },
+      { projectPath: "/projects/beta", projectName: "beta" },
+    ];
+    const tool = createMemoryTool(fixture.config);
+
+    const result = await run(tool, {
+      command: "create",
+      path: "/memories/project-local/notes.md",
+      file_text: "leaked",
+    });
+    expect(result).toEqual({
+      success: false,
+      error: "Project-local memory is unavailable: no project is associated with this session",
+    });
+    expect(await pathExists(path.join(fixture.muxHome, "project-memory"))).toBe(false);
+  });
+});
+
 async function run(tool: Tool, input: Record<string, unknown>): Promise<MemoryToolResult> {
   const parsed = TOOL_DEFINITIONS.memory.schema.parse(input);
   return (await tool.execute!(parsed, mockToolCallOptions)) as MemoryToolResult;

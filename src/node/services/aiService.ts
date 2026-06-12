@@ -87,7 +87,11 @@ import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
 import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 import type { TaskService } from "@/node/services/taskService";
-import { resolveMemoryProjectAnchor, type MemoryService } from "@/node/services/memoryService";
+import {
+  resolveMemoryProjectAnchor,
+  resolveMemoryProjectIdentity,
+  type MemoryService,
+} from "@/node/services/memoryService";
 import { formatHotMemoriesBlock } from "@/node/services/memoryHotSet";
 import { resolveMemoryAccessPolicy } from "@/node/services/tools/memory";
 import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
@@ -520,7 +524,7 @@ export class AIService extends EventEmitter {
         // "" disables the project scope (multi-project / unresolvable root).
         checkoutCwd: resolveMemoryProjectAnchor(metadata, runtime) ?? "",
         workspaceId,
-        projectPath: metadata.projectPath,
+        projectPath: resolveMemoryProjectIdentity(metadata),
       });
       return items.length === 0 ? null : formatHotMemoriesBlock(items);
     } catch (error) {

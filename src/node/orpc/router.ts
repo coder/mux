@@ -47,6 +47,7 @@ import { readPlanFile } from "@/node/utils/runtime/helpers";
 import {
   parseMemoryPath,
   resolveMemoryProjectAnchor,
+  resolveMemoryProjectIdentity,
   type MemoryChangeEvent,
   type MemoryScopeContext,
 } from "@/node/services/memoryService";
@@ -316,9 +317,12 @@ async function resolveMemoryScopeContext(
   const runtime = createRuntimeForWorkspace(metadata);
   // "" disables the project scope (multi-project container / unresolvable root).
   const checkoutCwd = resolveMemoryProjectAnchor(metadata, runtime) ?? "";
+  // "" for multi-project workspaces: metadata.projectPath is the first
+  // project's path, not a single stable identity.
+  const projectPath = resolveMemoryProjectIdentity(metadata);
   return {
-    projectPath: metadata.projectPath,
-    scopeCtx: { runtime, checkoutCwd, workspaceId, projectPath: metadata.projectPath },
+    projectPath,
+    scopeCtx: { runtime, checkoutCwd, workspaceId, projectPath },
   };
 }
 
@@ -3800,8 +3804,13 @@ export const router = (authToken?: string) => {
           // scope) is a physically different file, so those events are
           // dropped here rather than badging unrelated files in the UI.
           const boundWorkspaceId = input.workspaceId ?? null;
-          const boundProjectPath = boundWorkspaceId
-            ? ((await context.workspaceService.getInfo(boundWorkspaceId))?.projectPath ?? null)
+          const boundMetadata = boundWorkspaceId
+            ? await context.workspaceService.getInfo(boundWorkspaceId)
+            : null;
+          // Same identity resolution as the scope context: multi-project
+          // subscribers bind "" so no project-keyed events match.
+          const boundProjectPath = boundMetadata
+            ? resolveMemoryProjectIdentity(boundMetadata)
             : null;
           const queue = createAsyncEventQueue<MemoryChangeEvent>();
 

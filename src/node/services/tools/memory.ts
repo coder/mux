@@ -67,8 +67,13 @@ export const createMemoryTool: ToolFactory = (config: ToolConfiguration) => {
         ? ""
         : (config.workspaceCheckoutRootPath ?? config.cwd),
     workspaceId: config.workspaceId ?? "",
-    // Stable project identity for sidecar logical keys (never the checkout cwd).
-    projectPath: config.workspaceProjectPath ?? "",
+    // Stable project identity for sidecar logical keys (never the checkout
+    // cwd). Multi-project workspaces have no single identity — their
+    // workspaceProjectPath is the FIRST project's path, which must not become
+    // the project-local store key — so "" disables the project-keyed scopes
+    // (same resolution as resolveMemoryProjectIdentity; config.projects
+    // mirrors metadata.projects via getProjects).
+    projectPath: (config.projects?.length ?? 0) > 1 ? "" : (config.workspaceProjectPath ?? ""),
   };
 
   /**
