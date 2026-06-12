@@ -267,6 +267,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const workspaceHeartbeatsExperimentEnabled = useExperimentValue(
     EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
   );
+  const memoryConsolidationExperimentEnabled = useExperimentValue(
+    EXPERIMENT_IDS.MEMORY_CONSOLIDATION
+  );
   const atMentionProjectPath = variant === "creation" ? props.projectPath : null;
   const asyncCommandScopeRef = useRef<{ variant: typeof variant; workspaceId: string | null }>({
     variant,
@@ -1490,6 +1493,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         resolveSlashCommandExperimentValue(experimentId, {
           workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
           dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
+          memoryConsolidation: memoryConsolidationExperimentEnabled,
         }),
     });
     setCommandSuggestions((prev) => replaceSuggestions(prev, suggestions));
@@ -1501,6 +1505,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant,
     workspaceHeartbeatsExperimentEnabled,
     dynamicWorkflowsExperimentEnabled,
+    memoryConsolidationExperimentEnabled,
   ]);
 
   // Watch input/cursor for `\symbol` backslash commands and surface the menu.
@@ -1534,6 +1539,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       resolveSlashCommandExperimentValue(experimentId, {
         workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
         dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
+        memoryConsolidation: memoryConsolidationExperimentEnabled,
       }),
   });
 

@@ -79,3 +79,14 @@ export const MEMORY_CONSOLIDATION_MAX_STEPS = 32;
 export const MEMORY_CONSOLIDATION_DEBOUNCE_MS = 6 * 60 * 60 * 1000;
 /** Launch sweep: a workspace qualifies after this much user inactivity. */
 export const MEMORY_CONSOLIDATION_IDLE_MS = 24 * 60 * 60 * 1000;
+/**
+ * Launch sweep: at most this many workspaces consolidate per app launch, so a
+ * backlog of idle workspaces can never stampede the provider on startup.
+ */
+export const MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP = 3;
+/**
+ * Hard wall-clock ceiling per consolidation run. Without it a half-alive
+ * provider stream (keepalives but no progress) would hold the workspace's
+ * in-flight lock forever and block every future trigger.
+ */
+export const MEMORY_CONSOLIDATION_TIMEOUT_MS = 5 * 60 * 1000;

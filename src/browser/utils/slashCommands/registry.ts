@@ -116,8 +116,9 @@ const clearCommandDefinition: SlashCommandDefinition = {
 
 const dreamCommandDefinition: SlashCommandDefinition = {
   key: "dream",
+  experimentGate: EXPERIMENT_IDS.MEMORY_CONSOLIDATION,
   description:
-    "Consolidate this workspace's agent memory now (merge duplicates, prune stale facts). Requires the Memory Consolidation experiment.",
+    "Consolidate this workspace's agent memory now (merge duplicates, prune stale facts)",
   handler: (): ParsedCommand => ({ type: "dream" }),
 };
 

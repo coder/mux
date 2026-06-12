@@ -6,9 +6,14 @@ import { MockLanguageModelV3, simulateReadableStream } from "ai/test";
 import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
 
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP } from "@/common/constants/memory";
 import { Ok } from "@/common/types/result";
 import { Config } from "@/node/config";
-import { MemoryConsolidationService, resolveDreamModelString } from "./memoryConsolidationService";
+import {
+  MemoryConsolidationService,
+  resolveDreamAgentBody,
+  resolveDreamModelString,
+} from "./memoryConsolidationService";
 import { MemoryMetaService } from "./memoryMeta";
 import { MemoryService } from "./memoryService";
 import { TestTempDir } from "./tools/testHelpers";
@@ -48,9 +53,13 @@ interface Fixture extends Disposable {
   metaService: MemoryMetaService;
   modelCalls: number[];
   setEnabled: (enabled: boolean) => void;
+  addWorkspace: (id: string, opts?: { archivedAt?: string }) => Promise<void>;
 }
 
-async function createFixture(): Promise<Fixture> {
+async function createFixture(options?: {
+  /** Holds every model run open until resolved (for in-flight race tests). */
+  modelGate?: Promise<void>;
+}): Promise<Fixture> {
   const tempDir = new TestTempDir("test-memory-consolidation-service");
   const muxHome = path.join(tempDir.path, "mux-home");
   await fsPromises.mkdir(path.join(muxHome, "memory"), { recursive: true });
@@ -74,9 +83,10 @@ async function createFixture(): Promise<Fixture> {
     memoryService,
     metaService,
     {
-      createModel: () => {
+      createModel: async () => {
         modelCalls.push(Date.now());
-        return Promise.resolve(Ok(scriptedModel()));
+        if (options?.modelGate) await options.modelGate;
+        return Ok(scriptedModel());
       },
     },
     {
@@ -93,6 +103,17 @@ async function createFixture(): Promise<Fixture> {
     modelCalls,
     setEnabled: (value) => {
       enabled = value;
+    },
+    addWorkspace: async (id, opts) => {
+      await config.editConfig((cfg) => {
+        cfg.projects.get("/projects/demo")?.workspaces.push({
+          id,
+          name: id,
+          path: `/projects/demo/${id}`,
+          archivedAt: opts?.archivedAt,
+        });
+        return cfg;
+      });
     },
     [Symbol.dispose]() {
       tempDir[Symbol.dispose]();
@@ -120,17 +141,76 @@ describe("MemoryConsolidationService", () => {
     expect(raw).toContain("ws-dream");
   });
 
-  it("debounces automatic triggers but lets manual runs through", async () => {
+  it("debounces automatic triggers but lets manual and archive runs through", async () => {
     using fixture = await createFixture();
     expect((await fixture.service.maybeRun("ws-dream", "compaction")).success).toBe(true);
 
-    const debounced = await fixture.service.maybeRun("ws-dream", "archive");
+    const debounced = await fixture.service.maybeRun("ws-dream", "compaction");
     expect(debounced.success).toBe(false);
     if (!debounced.success) expect(debounced.error).toContain("debounced");
 
+    // Archive bypasses debounce: it is the workspace's one-shot final pass
+    // (workspace→global promotion) and typically lands right after a
+    // compaction-triggered run anchored the debounce window.
+    const archive = await fixture.service.maybeRun("ws-dream", "archive");
+    expect(archive.success).toBe(true);
+
     const manual = await fixture.service.maybeRun("ws-dream", "manual");
     expect(manual.success).toBe(true);
-    expect(fixture.modelCalls).toHaveLength(2);
+    expect(fixture.modelCalls).toHaveLength(3);
+  });
+
+  it("rejects a second trigger while a run is still in flight", async () => {
+    let releaseModel!: () => void;
+    const modelGate = new Promise<void>((resolve) => {
+      releaseModel = resolve;
+    });
+    using fixture = await createFixture({ modelGate });
+
+    // Run lock must be reserved synchronously: the model-creation await keeps
+    // the first run open while the second trigger arrives.
+    const first = fixture.service.maybeRun("ws-dream", "manual");
+    const second = await fixture.service.maybeRun("ws-dream", "compaction");
+    expect(second.success).toBe(false);
+    if (!second.success) expect(second.error).toContain("in flight");
+
+    releaseModel();
+    expect((await first).success).toBe(true);
+    expect(fixture.modelCalls).toHaveLength(1);
+  });
+
+  it("self-heals a corrupt sidecar instead of failing every later read", async () => {
+    using fixture = await createFixture();
+    const sidecarPath = path.join(fixture.muxHome, "memory-consolidation.json");
+    // typeof null === "object": this once passed a hand-rolled validity check
+    // and then blew up getRecord/saveRecord with a TypeError forever.
+    await fsPromises.writeFile(sidecarPath, JSON.stringify({ workspaces: null }));
+    expect(await fixture.service.getRecord("ws-dream")).toBeNull();
+
+    // The next completed run repairs the file.
+    expect((await fixture.service.maybeRun("ws-dream", "manual")).success).toBe(true);
+    const record = await fixture.service.getRecord("ws-dream");
+    expect(record?.trigger).toBe("manual");
+  });
+
+  it("dream override shadows the built-in; malformed overrides fall back", async () => {
+    using fixture = await createFixture();
+    // Resolution is rooted at the provided mux root (Config.rootDir), never a
+    // hardcoded ~/.mux — the fixture root proves the isolation.
+    const builtIn = await resolveDreamAgentBody(fixture.muxHome);
+    expect(builtIn).not.toBeNull();
+
+    const agentsDir = path.join(fixture.muxHome, "agents");
+    await fsPromises.mkdir(agentsDir, { recursive: true });
+    await fsPromises.writeFile(
+      path.join(agentsDir, "dream.md"),
+      "---\nname: Dream\n---\n\nCustom dream body\n"
+    );
+    expect(await resolveDreamAgentBody(fixture.muxHome)).toBe("Custom dream body");
+
+    // Malformed override (missing frontmatter) falls back to the built-in.
+    await fsPromises.writeFile(path.join(agentsDir, "dream.md"), "body without frontmatter\n");
+    expect(await resolveDreamAgentBody(fixture.muxHome)).toBe(builtIn);
   });
 
   it("does nothing when the experiment is disabled", async () => {
@@ -162,6 +242,51 @@ describe("MemoryConsolidationService", () => {
     // Recently-active workspaces are never swept regardless of writes.
     await fixture.metaService.recordAccess("global:lesson2.md", { write: true });
     await fixture.service.runLaunchSweep(new Map([["ws-dream", now]]));
+    expect(fixture.modelCalls).toHaveLength(1);
+  });
+
+  it("launch sweep skips archived workspaces and caps runs per launch", async () => {
+    using fixture = await createFixture();
+    const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
+    await fixture.addWorkspace("ws-archived", { archivedAt: new Date().toISOString() });
+    const extraIds: string[] = [];
+    for (let i = 0; i < MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP + 1; i++) {
+      const id = `ws-extra-${i}`;
+      extraIds.push(id);
+      await fixture.addWorkspace(id);
+    }
+    // A fresh global write qualifies every idle workspace at once...
+    await fixture.metaService.recordAccess("global:lesson.md", { write: true });
+
+    const recency = new Map<string, number>([
+      ["ws-archived", dayAgo],
+      ...extraIds.map((id): [string, number] => [id, dayAgo]),
+    ]);
+    await fixture.service.runLaunchSweep(recency);
+
+    // ...but archived workspaces never run (they got their final pass at
+    // archive time) and the cap bounds the rest.
+    expect(fixture.modelCalls).toHaveLength(MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP);
+    expect(await fixture.service.getRecord("ws-archived")).toBeNull();
+    expect(
+      await fixture.service.getRecord(`ws-extra-${MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP}`)
+    ).toBeNull();
+  });
+
+  it("launch sweep does not re-qualify other workspaces from a global write already covered by a newer run", async () => {
+    using fixture = await createFixture();
+    await fixture.addWorkspace("ws-other");
+    const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
+    await fixture.metaService.recordAccess("global:lesson.md", { write: true });
+
+    // First sweep consolidates ws-dream — every run covers global scope.
+    await fixture.service.runLaunchSweep(new Map([["ws-dream", dayAgo]]));
+    expect(fixture.modelCalls).toHaveLength(1);
+
+    // The same (now covered) global write must not qualify ws-other later;
+    // otherwise each run's own global writes re-qualify every other idle
+    // workspace in an endless multi-launch feedback loop.
+    await fixture.service.runLaunchSweep(new Map([["ws-other", dayAgo]]));
     expect(fixture.modelCalls).toHaveLength(1);
   });
 

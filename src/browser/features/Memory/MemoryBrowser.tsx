@@ -529,12 +529,15 @@ function ConsolidationFooter(props: {
     }
   };
 
+  // "Changes" counts applied ops only; the journal also records rejected and
+  // failed commands, which must not inflate the user-facing number.
+  const appliedCount = record?.ops.filter((op) => op.applied).length ?? 0;
   return (
     <div className="border-border-light flex items-center justify-between gap-2 border-t px-3 py-2 text-xs">
       <span className="text-muted truncate" title={record?.summary}>
         {record === null
           ? "Never consolidated"
-          : `Last consolidated ${formatRelativeTime(record.lastRunAt)} (${record.trigger}, ${record.ops.length} change${record.ops.length === 1 ? "" : "s"})`}
+          : `Last consolidated ${formatRelativeTime(record.lastRunAt)} (${record.trigger}, ${appliedCount} change${appliedCount === 1 ? "" : "s"})`}
         {runError !== null && <span className="text-error"> — {runError}</span>}
       </span>
       <button

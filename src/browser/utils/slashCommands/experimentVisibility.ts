@@ -3,6 +3,7 @@ import { EXPERIMENT_IDS, type ExperimentId } from "@/common/constants/experiment
 export interface SlashCommandExperimentSnapshot {
   workspaceHeartbeats: boolean;
   dynamicWorkflows?: boolean;
+  memoryConsolidation?: boolean;
 }
 
 export function resolveSlashCommandExperimentValue(
@@ -14,6 +15,8 @@ export function resolveSlashCommandExperimentValue(
       return snapshot.workspaceHeartbeats;
     case EXPERIMENT_IDS.DYNAMIC_WORKFLOWS:
       return snapshot.dynamicWorkflows;
+    case EXPERIMENT_IDS.MEMORY_CONSOLIDATION:
+      return snapshot.memoryConsolidation;
     default:
       return undefined;
   }

@@ -8,14 +8,19 @@
  * Rails live HERE in code, not in the agent prompt:
  * - scope restriction: v1 consolidates workspace + global only (host-local,
  *   runtime-independent); project-scope mutations are rejected
- * - pin protection: pinned files may be edited, never deleted or renamed
+ * - pin protection: pinned files may be edited, never deleted or renamed —
+ *   including via a delete/rename of an ancestor directory (subtree check)
  * - op budget: at most MEMORY_CONSOLIDATION_OP_BUDGET mutating commands per
- *   run (reads unlimited); rejected/failed commands consume budget so a
- *   misbehaving model cannot retry forever
+ *   run (reads unlimited). Budget is consumed by accepted mutations only
+ *   (applied, dry-run, and dispatch failures); guard rejections do not
+ *   consume it — runaway retries are bounded by the step ceiling instead.
  * - dry-run: mutations are journaled as proposed but not applied
  *
  * Every mutating command is journaled ({command, path, applied, rejected})
  * for the audit trail that feeds the Memory tab's "last consolidated" line.
+ * Global-scope writes are intentionally permitted (merging into global files
+ * is core consolidation work); they remain auditable in the journal via the
+ * /memories/global/ path prefix.
  *
  * TODO(#3534, phase 2): net-shrink enforcement needs a byte-size API on
  * MemoryService; until then the journal is the only post-run signal.
@@ -28,6 +33,7 @@ import {
   MEMORY_CONSOLIDATION_OP_BUDGET,
 } from "@/common/constants/memory";
 import type { MemoryToolResult } from "@/common/types/tools";
+import type { MemoryConsolidationOp } from "@/common/orpc/schemas/memory";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { getErrorMessage } from "@/common/utils/errors";
 import { memoryLogicalKey, type MemoryMetaService } from "@/node/services/memoryMeta";
@@ -35,24 +41,17 @@ import { parseMemoryPath, type MemoryScopeContext } from "@/node/services/memory
 import type { MemoryService } from "@/node/services/memoryService";
 import { executeMemoryCommand, type MemoryCommandInput } from "@/node/services/tools/memory";
 
-/** One journaled mutating command (reads are not journaled). */
-export interface MemoryConsolidationOp {
-  command: "create" | "str_replace" | "insert" | "delete" | "rename";
-  /** Primary virtual path (the source path for rename). */
-  path: string;
-  /** Rename target. */
-  newPath?: string;
-  /** True when the command was executed against disk and succeeded. */
-  applied: boolean;
-  /** Rejection/failure reason (guard rail, dry-run, or dispatch error). */
-  note?: string;
-}
+// Re-exported for journal consumers; defined next to the oRPC schema so the
+// wire shape and the node shape can never drift (z.infer single source).
+export type { MemoryConsolidationOp };
 
 export interface MemoryConsolidationResult {
   ops: MemoryConsolidationOp[];
   /** The model's one-line closing summary (best-effort). */
   summary: string;
   budgetExhausted: boolean;
+  /** Token cost of the run; undefined when the provider reported none. */
+  usage?: { inputTokens: number; outputTokens: number };
 }
 
 interface MutationTarget {
@@ -89,7 +88,7 @@ export function createConsolidationMemoryTool(args: {
   dryRun: boolean;
   /** Run-scoped journal; the tool appends every mutating command to it. */
   journal: MemoryConsolidationOp[];
-}): Tool {
+}): { tool: Tool; getMutationCount: () => number } {
   const { memoryService, metaService, ctx, dryRun, journal } = args;
   let mutationCount = 0;
 
@@ -104,6 +103,9 @@ export function createConsolidationMemoryTool(args: {
       }
     }
     // Pin protection: pinned files are editable but never deleted/renamed.
+    // Deletes/renames may target a directory (MemoryService removes
+    // recursively), so reject when the path itself OR anything under it is
+    // pinned — otherwise `delete dir/` would silently destroy dir/pinned.md.
     if (target.command === "delete" || target.command === "rename") {
       const { scope, relPath } = parseMemoryPath(target.path);
       assert(scope !== null && scope !== "project", "guard scope check must run first");
@@ -112,17 +114,18 @@ export function createConsolidationMemoryTool(args: {
         projectPath: ctx.projectPath,
         workspaceId: ctx.workspaceId,
       });
-      if (entries.get(key)?.pinned === true) {
-        return `${target.path} is pinned by the user; pinned files may be edited but never deleted or renamed.`;
+      const subtreePrefix = `${key}/`;
+      for (const [entryKey, entry] of entries) {
+        if (entry.pinned !== true) continue;
+        if (entryKey === key || entryKey.startsWith(subtreePrefix)) {
+          return `${target.path} is pinned by the user (directly or via a pinned file inside it); pinned files may be edited but never deleted or renamed.`;
+        }
       }
-    }
-    if (mutationCount >= MEMORY_CONSOLIDATION_OP_BUDGET) {
-      return `Mutation budget exhausted (${MEMORY_CONSOLIDATION_OP_BUDGET} per run); stop and summarize.`;
     }
     return null;
   };
 
-  return tool({
+  const memoryTool = tool({
     description:
       "Manage the persistent memory directory you are consolidating. " +
       TOOL_DEFINITIONS.memory.description,
@@ -146,14 +149,17 @@ export function createConsolidationMemoryTool(args: {
         return { success: false, error: rejection };
       }
 
-      // Budget is consumed by every accepted mutation — including dry-run and
-      // dispatch failures — so dry-run mirrors a real run and a failing
-      // command cannot be retried indefinitely.
+      // Budget check + reservation in ONE synchronous block: the AI SDK runs
+      // parallel tool calls concurrently, so an await between check and
+      // increment would let two calls at budget-1 both pass. Budget is
+      // consumed by every accepted mutation — including dry-run and dispatch
+      // failures — so dry-run mirrors a real run.
+      if (mutationCount >= MEMORY_CONSOLIDATION_OP_BUDGET) {
+        const note = `Mutation budget exhausted (${MEMORY_CONSOLIDATION_OP_BUDGET} per run); stop and summarize.`;
+        journal.push({ ...target, applied: false, note });
+        return { success: false, error: note };
+      }
       mutationCount++;
-      assert(
-        mutationCount <= MEMORY_CONSOLIDATION_OP_BUDGET,
-        "mutation count must never exceed the budget"
-      );
 
       if (dryRun) {
         journal.push({ ...target, applied: false, note: "dry-run" });
@@ -169,6 +175,7 @@ export function createConsolidationMemoryTool(args: {
       return result;
     },
   });
+  return { tool: memoryTool, getMutationCount: () => mutationCount };
 }
 
 /**
@@ -193,7 +200,7 @@ export async function runMemoryConsolidation(args: {
 }): Promise<MemoryConsolidationResult> {
   assert(args.agentBody.trim().length > 0, "dream agent body must not be empty");
   const journal: MemoryConsolidationOp[] = [];
-  const memoryTool = createConsolidationMemoryTool({
+  const { tool: memoryTool, getMutationCount } = createConsolidationMemoryTool({
     memoryService: args.memoryService,
     metaService: args.metaService,
     ctx: args.ctx,
@@ -227,9 +234,26 @@ export async function runMemoryConsolidation(args: {
   const summary =
     streamErrors.length === 0 ? (await stream.text).trim() : `stream error: ${streamErrors[0]}`;
 
+  // Cost telemetry: headless runs bypass the chat cost pipeline, so the
+  // journal record is the only place token usage is visible. Best-effort —
+  // totalUsage rejects when the stream errored mid-flight.
+  let usage: MemoryConsolidationResult["usage"];
+  try {
+    const totalUsage = await stream.totalUsage;
+    usage = {
+      inputTokens: totalUsage.inputTokens ?? 0,
+      outputTokens: totalUsage.outputTokens ?? 0,
+    };
+  } catch {
+    usage = undefined;
+  }
+
   return {
     ops: journal,
     summary,
-    budgetExhausted: journal.length >= MEMORY_CONSOLIDATION_OP_BUDGET,
+    // Derived from accepted mutations, not journal length: journaled guard
+    // rejections must not report a budget the run never spent (MEM-RPT-01).
+    budgetExhausted: getMutationCount() >= MEMORY_CONSOLIDATION_OP_BUDGET,
+    usage,
   };
 }

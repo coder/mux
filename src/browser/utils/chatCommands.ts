@@ -743,20 +743,26 @@ export async function processSlashCommand(
           return { clearInput: false, toastShown: true };
         }
         // Fire-and-forget by design (PRD #3534): the dream run is background
-        // housekeeping; results surface in the Memory tab, not the chat.
+        // housekeeping; results surface in the Memory tab, not the chat. The
+        // only toast is the settle toast — an optimistic "started" success
+        // toast would flash green-then-red whenever the backend rejects
+        // immediately (experiment off, debounced, run already in flight).
         const dreamWorkspaceId = context.workspaceId;
         void dreamClient.memory
           .consolidate({ workspaceId: dreamWorkspaceId })
           .then((result) => {
+            // "Changes" counts applied ops only; the journal also records
+            // rejected/failed commands, which are not changes.
+            const applied = result.success ? result.data.ops.filter((op) => op.applied).length : 0;
             context.setToast(
               result.success
                 ? {
                     id: Date.now().toString(),
                     type: "success",
                     message:
-                      result.data.ops.length === 0
+                      applied === 0
                         ? "Memory consolidation: no changes needed"
-                        : `Memory consolidated: ${result.data.ops.length} change(s)`,
+                        : `Memory consolidated: ${applied} change(s)`,
                   }
                 : {
                     id: Date.now().toString(),
@@ -772,11 +778,6 @@ export async function processSlashCommand(
               message: `Memory consolidation failed: ${String(error)}`,
             });
           });
-        context.setToast({
-          id: Date.now().toString(),
-          type: "success",
-          message: "Memory consolidation started…",
-        });
         return { clearInput: true, toastShown: true };
       }
       case "fork":

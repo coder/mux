@@ -11,45 +11,51 @@
  * stream, compaction, archival, or app launch.
  */
 import * as fsPromises from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import writeFileAtomic from "write-file-atomic";
+import { z } from "zod";
 import type { LanguageModel } from "ai";
 import type { Result } from "@/common/types/result";
 
 import {
   MEMORY_CONSOLIDATION_DEBOUNCE_MS,
   MEMORY_CONSOLIDATION_IDLE_MS,
+  MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP,
+  MEMORY_CONSOLIDATION_TIMEOUT_MS,
 } from "@/common/constants/memory";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import {
+  MemoryConsolidationRecordSchema,
+  type MemoryConsolidationRecordPayload,
+  type MemoryConsolidationTrigger,
+} from "@/common/orpc/schemas/memory";
 import { defaultModel } from "@/common/utils/ai/models";
+import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getErrorMessage } from "@/common/utils/errors";
 import { Err, Ok } from "@/common/types/result";
 import type { Config } from "@/node/config";
 import { getBuiltInAgentDefinitions } from "@/node/services/agentDefinitions/builtInAgentDefinitions";
 import { parseAgentDefinitionMarkdown } from "@/node/services/agentDefinitions/parseAgentDefinitionMarkdown";
 import { log } from "@/node/services/log";
-import {
-  runMemoryConsolidation,
-  type MemoryConsolidationOp,
-} from "@/node/services/memoryConsolidation";
+import { runMemoryConsolidation } from "@/node/services/memoryConsolidation";
 import type { MemoryScopeContext, MemoryService } from "@/node/services/memoryService";
 import { memoryLogicalKey, type MemoryMetaService } from "@/node/services/memoryMeta";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 
-export type MemoryConsolidationTrigger = "compaction" | "launch" | "archive" | "manual";
+// Types derive from the oRPC schemas (z.infer single source) so node-side
+// fields can never silently be stripped by output validation.
+export type { MemoryConsolidationTrigger };
+export type MemoryConsolidationRecord = MemoryConsolidationRecordPayload;
 
-/** Persisted per-workspace consolidation record (journal + debounce anchor). */
-export interface MemoryConsolidationRecord {
-  lastRunAt: number;
-  trigger: MemoryConsolidationTrigger;
-  summary: string;
-  ops: MemoryConsolidationOp[];
-}
-
-interface ConsolidationSidecarFile {
-  workspaces: Record<string, MemoryConsolidationRecord>;
-}
+/**
+ * Sidecar wire format. Validated with zod on load: hand-rolled checks once
+ * let `{"workspaces": null}` through (typeof null === "object") and bricked
+ * every later read with a TypeError.
+ */
+const ConsolidationSidecarFileSchema = z.object({
+  workspaces: z.record(z.string(), MemoryConsolidationRecordSchema),
+});
+type ConsolidationSidecarFile = z.infer<typeof ConsolidationSidecarFileSchema>;
 
 interface ExperimentsCheck {
   isExperimentEnabled(experimentId: string): boolean;
@@ -83,15 +89,17 @@ export function resolveDreamModelString(config: Config, workspaceId: string): st
 }
 
 /**
- * Resolve the dream agent prompt body: a user override at ~/.mux/agents/dream.md
+ * Resolve the dream agent prompt body: a user override at <muxRoot>/agents/dream.md
  * (global agent scope) shadows the built-in definition, like any other agent.
+ * `muxRoot` is Config.rootDir — NOT a hardcoded ~/.mux — so dev builds
+ * (~/.mux-dev), MUX_ROOT sandboxes, and tests all stay isolated.
  * Host-side read only — dream runs are runtime-independent in v1, so project
  * scope overrides (which need a live checkout) are deferred with project
  * memories. Shared with the debug CLI.
  */
-export async function resolveDreamAgentBody(): Promise<string | null> {
+export async function resolveDreamAgentBody(muxRoot: string): Promise<string | null> {
+  const overridePath = path.join(muxRoot, "agents", "dream.md");
   try {
-    const overridePath = path.join(os.homedir(), ".mux", "agents", "dream.md");
     const content = await fsPromises.readFile(overridePath, "utf-8");
     const parsed = parseAgentDefinitionMarkdown({
       content,
@@ -99,8 +107,19 @@ export async function resolveDreamAgentBody(): Promise<string | null> {
     });
     const body = parsed.body.trim();
     if (body.length > 0) return body;
-  } catch {
-    // Missing or malformed override — fall back to the built-in.
+    log.warn("[MemoryConsolidation] dream override has an empty body; using built-in", {
+      overridePath,
+    });
+  } catch (error) {
+    // Missing override is the normal case; anything else (malformed
+    // frontmatter, permissions) deserves a warning instead of a silent
+    // fallback the user cannot debug.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.warn("[MemoryConsolidation] failed to read dream override; using built-in", {
+        overridePath,
+        error: getErrorMessage(error),
+      });
+    }
   }
   const dream = getBuiltInAgentDefinitions().find((definition) => definition.id === "dream");
   return dream?.body ?? null;
@@ -108,9 +127,12 @@ export async function resolveDreamAgentBody(): Promise<string | null> {
 
 export class MemoryConsolidationService {
   private readonly sidecarPath: string;
-  /** Serializes sidecar reads/writes and prevents concurrent runs per process. */
+  /** Serializes sidecar read-modify-write cycles (journal persistence only). */
   private readonly locks = new MutexMap<string>();
-  /** Workspaces with a run in flight (debounce only anchors on completed runs). */
+  /**
+   * Per-workspace run lock. Reserved SYNCHRONOUSLY in maybeRun before any
+   * await so two near-simultaneous triggers can never both start a run.
+   */
   private readonly inFlight = new Set<string>();
 
   constructor(
@@ -134,16 +156,10 @@ export class MemoryConsolidationService {
   private async load(): Promise<ConsolidationSidecarFile> {
     try {
       const raw = await fsPromises.readFile(this.sidecarPath, "utf-8");
-      const parsed: unknown = JSON.parse(raw);
-      if (
-        typeof parsed === "object" &&
-        parsed !== null &&
-        typeof (parsed as ConsolidationSidecarFile).workspaces === "object"
-      ) {
-        return parsed as ConsolidationSidecarFile;
-      }
+      const parsed = ConsolidationSidecarFileSchema.safeParse(JSON.parse(raw));
+      if (parsed.success) return parsed.data;
     } catch {
-      // Missing or corrupt — start fresh.
+      // Missing or corrupt — start fresh (the next save overwrites the file).
     }
     return { workspaces: {} };
   }
@@ -171,42 +187,48 @@ export class MemoryConsolidationService {
   ): Promise<Result<MemoryConsolidationRecord, string>> {
     if (!this.enabled()) return Err("memory-consolidation experiment is disabled");
     if (this.inFlight.has(workspaceId)) return Err("a consolidation run is already in flight");
-
-    // Manual runs bypass debounce: an explicit /dream is an explicit intent.
-    if (trigger !== "manual") {
-      const record = await this.getRecord(workspaceId);
-      if (record !== null && Date.now() - record.lastRunAt < MEMORY_CONSOLIDATION_DEBOUNCE_MS) {
-        return Err("debounced: a recent consolidation run already covered this workspace");
-      }
-    }
-
-    const workspace = this.config.findWorkspace(workspaceId);
-    if (!workspace) return Err(`workspace not found: ${workspaceId}`);
-
-    const agentBody = await resolveDreamAgentBody();
-    if (agentBody === null) return Err("dream agent definition is missing");
-
-    const modelString = resolveDreamModelString(this.config, workspaceId);
-    const modelResult = await this.modelFactory.createModel(modelString, undefined, {
-      agentInitiated: true,
-      workspaceId,
-    });
-    if (!modelResult.success) {
-      return Err(`could not create model ${modelString}: ${modelResult.error.type}`);
-    }
-
-    // v1 scopes are host-local (workspace + global): runtime stays null and
-    // the project scope is structurally disabled, so stopped Docker/SSH
-    // workspaces consolidate fine (PRD #3534).
-    const ctx: MemoryScopeContext = {
-      runtime: null,
-      checkoutCwd: "",
-      workspaceId,
-      projectPath: workspace.projectPath,
-    };
-
+    // Reserve the run lock in the same synchronous frame as the check above:
+    // the awaits below (sidecar read, agent body, model creation) are a wide
+    // window where a racing trigger would otherwise also pass the check and
+    // start a second concurrent run over the same directories.
     this.inFlight.add(workspaceId);
     try {
+      // Manual runs bypass debounce (an explicit /dream is explicit intent).
+      // Archive too: it is the workspace's one-shot final pass — the only
+      // chance to promote durable lessons to global scope — and archival
+      // typically follows a compaction-triggered run within the window.
+      if (trigger !== "manual" && trigger !== "archive") {
+        const record = await this.getRecord(workspaceId);
+        if (record !== null && Date.now() - record.lastRunAt < MEMORY_CONSOLIDATION_DEBOUNCE_MS) {
+          return Err("debounced: a recent consolidation run already covered this workspace");
+        }
+      }
+
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) return Err(`workspace not found: ${workspaceId}`);
+
+      const agentBody = await resolveDreamAgentBody(this.config.rootDir);
+      if (agentBody === null) return Err("dream agent definition is missing");
+
+      const modelString = resolveDreamModelString(this.config, workspaceId);
+      const modelResult = await this.modelFactory.createModel(modelString, undefined, {
+        agentInitiated: true,
+        workspaceId,
+      });
+      if (!modelResult.success) {
+        return Err(`could not create model ${modelString}: ${modelResult.error.type}`);
+      }
+
+      // v1 scopes are host-local (workspace + global): runtime stays null and
+      // the project scope is structurally disabled, so stopped Docker/SSH
+      // workspaces consolidate fine (PRD #3534).
+      const ctx: MemoryScopeContext = {
+        runtime: null,
+        checkoutCwd: "",
+        workspaceId,
+        projectPath: workspace.projectPath,
+      };
+
       const result = await runMemoryConsolidation({
         model: modelResult.data,
         agentBody,
@@ -215,18 +237,25 @@ export class MemoryConsolidationService {
         ctx,
         dryRun: false,
         finalPass: trigger === "archive",
+        // Hard timeout: a wedged provider stream must not hold the in-flight
+        // lock forever (and stall the sequential launch sweep behind it).
+        abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
       });
       const record: MemoryConsolidationRecord = {
         lastRunAt: Date.now(),
         trigger,
         summary: result.summary,
         ops: result.ops,
+        usage: result.usage,
       };
       await this.saveRecord(workspaceId, record);
       log.debug("[MemoryConsolidation] run complete", {
         workspaceId,
         trigger,
         ops: result.ops.length,
+        applied: result.ops.filter((op) => op.applied).length,
+        globalWrites: result.ops.filter((op) => op.path.startsWith("/memories/global/")).length,
+        usage: result.usage,
       });
       return Ok(record);
     } finally {
@@ -262,33 +291,65 @@ export class MemoryConsolidationService {
    * workspaces idle ≥ MEMORY_CONSOLIDATION_IDLE_MS that have memory writes
    * newer than their last run. `recencyByWorkspace` comes from the host-local
    * extension metadata (last user interaction).
+   *
+   * Cost rails: archived workspaces never qualify (they got their final pass
+   * at archive time and would otherwise stay "idle" forever); global-scope
+   * writes are anchored on the newest run across ALL workspaces — global
+   * scope is shared, so one pass covers it, and anchoring per-workspace would
+   * let each run's own global cleanup re-qualify every other workspace in an
+   * endless multi-launch loop; at most MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP
+   * workspaces run per launch.
    */
   async runLaunchSweep(recencyByWorkspace: Map<string, number>): Promise<void> {
     if (!this.enabled()) return;
     const now = Date.now();
     const meta = await this.metaService.getEntries();
     const sidecar = await this.load();
+    // Newest completed run anywhere = last time global scope was covered
+    // (every run consolidates global). Derived, so no sidecar schema change.
+    const globalLastRunAt = Math.max(
+      0,
+      ...Object.values(sidecar.workspaces).map((record) => record.lastRunAt)
+    );
+    const archivedById = new Map<string, boolean>();
+    for (const project of this.config.loadConfigOrDefault().projects.values()) {
+      for (const workspace of project.workspaces) {
+        if (workspace.id === undefined) continue;
+        archivedById.set(
+          workspace.id,
+          isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt)
+        );
+      }
+    }
 
+    let started = 0;
     for (const [workspaceId, recency] of recencyByWorkspace) {
+      if (started >= MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP) break;
       if (now - recency < MEMORY_CONSOLIDATION_IDLE_MS) continue;
+      if (archivedById.get(workspaceId) === true) continue;
       const lastRunAt = sidecar.workspaces[workspaceId]?.lastRunAt ?? 0;
       // "Writes since last run": any workspace-scope entry for this workspace
-      // (or any global entry) written after the last consolidation. Prefix is
-      // derived via memoryLogicalKey (relPath "" => "workspace:<id>:") so the
-      // encoding always matches the sidecar's key scheme.
+      // (or any global entry newer than the newest run anywhere) qualifies.
+      // Prefix is derived via memoryLogicalKey (relPath "" =>
+      // "workspace:<id>:") so the encoding always matches the meta key scheme.
       const workspaceKeyPrefix = memoryLogicalKey("workspace", "", {
         projectPath: "",
         workspaceId,
       });
       let hasNewWrites = false;
       for (const [key, entry] of meta) {
-        if (entry.lastWriteAt === null || entry.lastWriteAt <= lastRunAt) continue;
-        if (key.startsWith(workspaceKeyPrefix) || key.startsWith("global:")) {
+        if (entry.lastWriteAt === null) continue;
+        if (key.startsWith(workspaceKeyPrefix) && entry.lastWriteAt > lastRunAt) {
+          hasNewWrites = true;
+          break;
+        }
+        if (key.startsWith("global:") && entry.lastWriteAt > globalLastRunAt) {
           hasNewWrites = true;
           break;
         }
       }
       if (!hasNewWrites) continue;
+      started++;
       // Sequential, not parallel: the sweep is background housekeeping and
       // must not stampede the provider on launch.
       const result = await this.maybeRun(workspaceId, "launch").catch((error: unknown) =>

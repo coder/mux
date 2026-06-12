@@ -26,6 +26,7 @@ interface Fixture extends Disposable {
   ctx: MemoryScopeContext;
   journal: MemoryConsolidationOp[];
   tool: Tool;
+  getMutationCount: () => number;
   globalMemoryDir: string;
 }
 
@@ -46,6 +47,13 @@ async function createFixture(options?: { dryRun?: boolean }): Promise<Fixture> {
     projectPath: "/projects/consolidation",
   };
   const journal: MemoryConsolidationOp[] = [];
+  const { tool, getMutationCount } = createConsolidationMemoryTool({
+    memoryService,
+    metaService,
+    ctx,
+    dryRun: options?.dryRun ?? false,
+    journal,
+  });
   return {
     muxHome,
     metaService,
@@ -53,13 +61,8 @@ async function createFixture(options?: { dryRun?: boolean }): Promise<Fixture> {
     ctx,
     journal,
     globalMemoryDir,
-    tool: createConsolidationMemoryTool({
-      memoryService,
-      metaService,
-      ctx,
-      dryRun: options?.dryRun ?? false,
-      journal,
-    }),
+    tool,
+    getMutationCount,
     [Symbol.dispose]() {
       tempDir[Symbol.dispose]();
     },
@@ -148,6 +151,70 @@ describe("consolidation memory tool rails", () => {
     expect(
       await fsPromises.readFile(path.join(fixture.globalMemoryDir, "pinned.md"), "utf-8")
     ).toContain("polished");
+  });
+
+  it("rejects deleting or renaming a directory that contains a pinned file", async () => {
+    using fixture = await createFixture();
+    const nestedDir = path.join(fixture.globalMemoryDir, "nested");
+    await fsPromises.mkdir(nestedDir, { recursive: true });
+    await fsPromises.writeFile(path.join(nestedDir, "pinned.md"), "keep me\n");
+    await fixture.metaService.setPinned(
+      memoryLogicalKey("global", "nested/pinned.md", {
+        projectPath: fixture.ctx.projectPath,
+        workspaceId: fixture.ctx.workspaceId,
+      }),
+      true
+    );
+
+    // Directory delete is recursive on disk; the guard must check the whole
+    // subtree, not just the directory's own (unpinned) key.
+    const deletion = await execute(fixture.tool, {
+      command: "delete",
+      path: "/memories/global/nested",
+    });
+    expect(deletion.success).toBe(false);
+    if (!deletion.success) expect(deletion.error).toContain("pinned");
+    expect(await pathExists(path.join(nestedDir, "pinned.md"))).toBe(true);
+
+    const rename = await execute(fixture.tool, {
+      command: "rename",
+      old_path: "/memories/global/nested",
+      new_path: "/memories/global/renamed",
+    });
+    expect(rename.success).toBe(false);
+    expect(await pathExists(path.join(nestedDir, "pinned.md"))).toBe(true);
+  });
+
+  it("never over-commits the budget when mutating tool calls run concurrently", async () => {
+    using fixture = await createFixture();
+    // Consume all but the last budget slot.
+    for (let i = 0; i < MEMORY_CONSOLIDATION_OP_BUDGET - 1; i++) {
+      const result = await execute(fixture.tool, {
+        command: "create",
+        path: `/memories/global/file-${i}.md`,
+        file_text: "x\n",
+      });
+      expect(result.success).toBe(true);
+    }
+
+    // The AI SDK executes parallel tool calls concurrently; check + reserve
+    // must happen in one synchronous block so exactly one of these wins.
+    const [a, b] = await Promise.all([
+      execute(fixture.tool, {
+        command: "create",
+        path: "/memories/global/race-a.md",
+        file_text: "x\n",
+      }),
+      execute(fixture.tool, {
+        command: "create",
+        path: "/memories/global/race-b.md",
+        file_text: "x\n",
+      }),
+    ]);
+    expect([a.success, b.success].filter(Boolean)).toHaveLength(1);
+    expect(fixture.getMutationCount()).toBe(MEMORY_CONSOLIDATION_OP_BUDGET);
+    const loser = a.success ? b : a;
+    if (!loser.success) expect(loser.error).toContain("budget");
   });
 
   it("exhausts the mutation budget and rejects further mutations while reads continue", async () => {

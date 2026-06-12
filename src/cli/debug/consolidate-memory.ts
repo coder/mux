@@ -32,8 +32,8 @@ export async function consolidateMemoryCommand(
   // with MemoryConsolidationService so CLI and app runs always agree.
   const modelString = resolveDreamModelString(defaultConfig, workspaceId);
 
-  // Built-in body, shadowed by ~/.mux/agents/dream.md like any global agent.
-  const agentBody = await resolveDreamAgentBody();
+  // Built-in body, shadowed by <muxRoot>/agents/dream.md like any global agent.
+  const agentBody = await resolveDreamAgentBody(defaultConfig.rootDir);
   if (agentBody === null) {
     console.error("❌ Dream agent definition is missing");
     process.exitCode = 1;
@@ -90,6 +90,9 @@ export async function consolidateMemoryCommand(
   }
   if (result.budgetExhausted) {
     console.log("\n⚠️  Mutation budget exhausted.");
+  }
+  if (result.usage) {
+    console.log(`\nUsage: ${result.usage.inputTokens} in / ${result.usage.outputTokens} out`);
   }
   console.log(`\nSummary: ${result.summary || "(none)"}\n`);
 }

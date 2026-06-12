@@ -49,7 +49,12 @@ export const MemorySaveErrorSchema = z.object({
 });
 export type MemorySaveError = z.infer<typeof MemorySaveErrorSchema>;
 
-/** One journaled mutating command from a consolidation ("dream") run. */
+/**
+ * One journaled mutating command from a consolidation ("dream") run.
+ * Single source of truth: the node services derive their types from these
+ * schemas (z.infer), so a field added on the node side cannot silently be
+ * stripped by oRPC output validation.
+ */
 export const MemoryConsolidationOpSchema = z.object({
   command: z.enum(["create", "str_replace", "insert", "delete", "rename"]),
   path: z.string(),
@@ -57,6 +62,7 @@ export const MemoryConsolidationOpSchema = z.object({
   applied: z.boolean(),
   note: z.string().optional(),
 });
+export type MemoryConsolidationOp = z.infer<typeof MemoryConsolidationOpSchema>;
 
 /** Persisted record of the latest consolidation run for a workspace. */
 export const MemoryConsolidationRecordSchema = z.object({
@@ -64,5 +70,8 @@ export const MemoryConsolidationRecordSchema = z.object({
   trigger: z.enum(["compaction", "launch", "archive", "manual"]),
   summary: z.string(),
   ops: z.array(MemoryConsolidationOpSchema),
+  /** Token cost of the run (absent for records persisted before telemetry). */
+  usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }).optional(),
 });
 export type MemoryConsolidationRecordPayload = z.infer<typeof MemoryConsolidationRecordSchema>;
+export type MemoryConsolidationTrigger = MemoryConsolidationRecordPayload["trigger"];
