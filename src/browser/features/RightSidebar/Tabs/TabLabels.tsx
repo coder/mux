@@ -225,6 +225,10 @@ export function OutputTabLabel() {
   return <>Output</>;
 }
 
+export function MemoryTabLabel() {
+  return <>Memory</>;
+}
+
 interface InstructionsTabLabelProps {
   workspaceId: string;
 }

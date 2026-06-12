@@ -48,6 +48,11 @@ import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { log } from "./log";
 import { getErrorMessage } from "@/common/utils/errors";
+import {
+  formatMemoryIndexBlock,
+  resolveMemoryProjectAnchor,
+  type MemoryService,
+} from "@/node/services/memoryService";
 
 // ---------------------------------------------------------------------------
 // Plan & Instructions Assembly
@@ -254,6 +259,20 @@ export interface BuildStreamSystemContextOptions {
   loadDesktopCapability?: () => Promise<DesktopCapability>;
   /** Whether the advisor tool is available for the current agent */
   advisorToolAvailable?: boolean;
+  /**
+   * Memory service for the per-request memory index block (memory experiment).
+   * The index is appended to the end of the system message only when
+   * memoryIndexEnabled is true; off => zero context cost.
+   */
+  memoryService?: MemoryService;
+  memoryIndexEnabled?: boolean;
+  /**
+   * Pre-rendered hot-memories block (pinned + frequently used memory files).
+   * Computed and cached by AgentSession at session start / compaction
+   * boundaries — never per turn — so it stays byte-identical within a session
+   * segment (prompt-cache-stable). Appended after the memory index.
+   */
+  hotMemoriesBlock?: string;
 }
 
 /** Result of system context assembly. */
@@ -574,7 +593,7 @@ export async function buildStreamSystemContext(
   );
 
   // Build system message from workspace metadata
-  const systemMessage = await buildSystemMessage(
+  let systemMessage = await buildSystemMessage(
     metadata,
     runtime,
     workspacePath,
@@ -588,6 +607,34 @@ export async function buildStreamSystemContext(
     // to exec) is the prompt actually in effect.
     { agentSystemPromptSections, modes: [effectiveMode, agentDefinition.id] }
   );
+
+  // Append the per-request memory index (memory experiment). Placed at the end
+  // of the system message so the most recent stable prompt prefix stays
+  // byte-identical for provider prompt caching as long as memories don't change.
+  if (opts.memoryIndexEnabled && opts.memoryService) {
+    try {
+      const entries = await opts.memoryService.listIndexEntries({
+        runtime,
+        // Single project checkout ROOT, not the execution cwd (sub-project /
+        // multi-project container) — same resolution as the memory
+        // tool/UI/hot-set; "" disables the project scope.
+        checkoutCwd: resolveMemoryProjectAnchor(metadata, runtime) ?? "",
+        workspaceId,
+        projectPath: metadata.projectPath,
+      });
+      systemMessage = `${systemMessage}\n\n${formatMemoryIndexBlock(entries)}`;
+    } catch (error) {
+      // Self-healing: the index is best-effort context and must never block a stream.
+      workspaceLog.warn("Failed to build memory index for system context", {
+        error: getErrorMessage(error),
+      });
+    }
+    // Hot-set tier (index -> hot set -> cold tool reads): the block is already
+    // rendered and session-cached, so appending here costs no extra I/O.
+    if (opts.hotMemoriesBlock) {
+      systemMessage = `${systemMessage}\n\n${opts.hotMemoriesBlock}`;
+    }
+  }
 
   // Count system message tokens for cost tracking
   const metadataModel = resolveModelForMetadata(modelString, providersConfig ?? null);

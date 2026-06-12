@@ -65,6 +65,9 @@ import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type { TaskService } from "@/node/services/taskService";
+import type { MemoryService } from "@/node/services/memoryService";
+import type { MemoryScopeAccess } from "@/common/constants/memory";
+import { createMemoryTool } from "@/node/services/tools/memory";
 import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { FileState } from "@/node/services/agentSession";
@@ -140,6 +143,20 @@ export interface ToolConfiguration {
   workspaceId?: string;
   /** Pre-resolved mux-managed resource scope (global ~/.mux vs project root). */
   muxScope?: MuxToolScope;
+  /**
+   * Workspace checkout root for the memory tool's project scope. On sub-project
+   * workspaces `cwd` is the execution directory (root + subProjectPath), but
+   * project memories must anchor at the checkout root so the Memory tab,
+   * index, and hot-set (which resolve the root) see the same files.
+   * `null` disables the project scope entirely (multi-project workspaces run
+   * in a shared container dir that is not a git repository); `undefined`
+   * falls back to `cwd` (single-project tool factories/tests).
+   */
+  workspaceCheckoutRootPath?: string | null;
+  /** Memory service for the memory tool (present only when the memory experiment is enabled). */
+  memoryService?: MemoryService;
+  /** Per-scope memory write policy for the current agent (defaults to read-only). */
+  memoryAccess?: MemoryScopeAccess;
   /** Callback to record file state for external edit detection (plan files) */
   recordFileState?: (filePath: string, state: FileState) => Promise<void>;
   /** Callback to notify that provider/config was written (triggers hot-reload). */
@@ -216,6 +233,7 @@ export interface ToolConfiguration {
     execSubagentHardRestart?: boolean;
     dynamicWorkflows?: boolean;
     subagentFileReports?: boolean;
+    memory?: boolean;
   };
   /** Available sub-agents for the task tool description (dynamic context) */
   availableSubagents?: AgentDefinitionDescriptor[];
@@ -495,6 +513,11 @@ export async function getToolsForModel(
     bash_background_terminate: wrap(createBashBackgroundTerminateTool(config)),
 
     web_fetch: wrap(createWebFetchTool(config)),
+
+    // Agent memory (experiment-gated; off => no tool, no context cost)
+    ...(config.memoryService && config.experiments?.memory
+      ? { memory: wrap(createMemoryTool(config)) }
+      : {}),
   };
 
   // Non-runtime tools execute immediately (no init wait needed)
@@ -652,6 +675,7 @@ export async function getToolsForModel(
         config.workflowService && config.experiments?.dynamicWorkflows
       ),
       enableAdvisor: Boolean(config.advisorRuntime),
+      enableMemory: Boolean(config.memoryService && config.experiments?.memory),
       // The Review pane belongs to the user-facing parent workspace. config
       // .enableAgentReport is the canonical "is sub-agent" signal (set true iff
       // the workspace has a parentWorkspaceId), so withhold the review_pane_*

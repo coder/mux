@@ -27,6 +27,8 @@ import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpO
 import type { PolicyService } from "@/node/services/policyService";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
+import { MemoryService } from "@/node/services/memoryService";
+import { MemoryMetaService } from "@/node/services/memoryMeta";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
 import type { DevToolsService } from "@/node/services/devToolsService";
@@ -68,6 +70,8 @@ export interface CoreServices {
   extensionMetadata: ExtensionMetadataService;
   workspaceService: WorkspaceService;
   taskService: TaskService;
+  memoryService: MemoryService;
+  memoryMetaService: MemoryMetaService;
 }
 
 export function createCoreServices(opts: CoreServicesOptions): CoreServices {
@@ -103,6 +107,13 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.opResolver,
     opts.experimentsService
   );
+
+  // Agent memory (memory experiment): scope roots derive from Config (mux home
+  // + session dirs); experiment gating happens per stream in AIService.
+  // Host-local sidecar for user-owned memory metadata (pins + usage stats).
+  const memoryMetaService = new MemoryMetaService(config.rootDir);
+  const memoryService = new MemoryService(config, memoryMetaService);
+  aiService.setMemoryService(memoryService);
 
   // MCP: allow callers to override which Config provides server definitions
   const mcpConfigService = new MCPConfigService(opts.mcpConfig ?? config);
@@ -192,5 +203,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     extensionMetadata,
     workspaceService,
     taskService,
+    memoryService,
+    memoryMetaService,
   };
 }

@@ -21,6 +21,8 @@ import type { VoiceService } from "@/node/services/voiceService";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import type { McpOauthService } from "@/node/services/mcpOauthService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
+import type { MemoryService } from "@/node/services/memoryService";
+import type { MemoryMetaService } from "@/node/services/memoryMeta";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { TelemetryService } from "@/node/services/telemetryService";
@@ -72,6 +74,8 @@ export interface ORPCContext {
   sessionTimingService: SessionTimingService;
   telemetryService: TelemetryService;
   experimentsService: ExperimentsService;
+  memoryService: MemoryService;
+  memoryMetaService: MemoryMetaService;
   sessionUsageService: SessionUsageService;
   instructionsService: InstructionsService;
   workspaceGoalService: WorkspaceGoalService;

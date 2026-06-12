@@ -220,6 +220,14 @@ describe("generateMuxTypes", () => {
     expect(types).not.toContain("function file_read(args: FileReadArgs): unknown");
   });
 
+  test("memory tool gets a typed result so sandbox code can check result.success", async () => {
+    const types = await generateMuxTypes({
+      memory: createMockTool(z.object({ command: z.string() })),
+    });
+    expect(types).toContain("MemoryResult");
+    expect(types).not.toContain("function memory(args: MemoryArgs): unknown");
+  });
+
   test("handles JSON Schema input (MCP tools)", async () => {
     // MCP tools come with JSON Schema, not Zod
     const mcpTool = {

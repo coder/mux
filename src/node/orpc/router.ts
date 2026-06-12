@@ -44,6 +44,13 @@ import { getRuntimeType } from "@/node/runtime/initHook";
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace, resolveWorkspaceRootPath } from "@/node/runtime/runtimeHelpers";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
+import {
+  parseMemoryPath,
+  resolveMemoryProjectAnchor,
+  type MemoryChangeEvent,
+  type MemoryScopeContext,
+} from "@/node/services/memoryService";
+import { memoryLogicalKey } from "@/node/services/memoryMeta";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
@@ -274,6 +281,45 @@ function assertDynamicWorkflowsEnabled(context: ORPCContext): void {
       message: "Dynamic workflows are disabled",
     });
   }
+}
+
+/** Server-side enforcement: memory.* routes reject while the experiment is off. */
+function assertMemoryEnabled(context: ORPCContext): void {
+  if (!context.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.MEMORY)) {
+    throw new ORPCError("BAD_REQUEST", {
+      message: "Agent memory is disabled",
+    });
+  }
+}
+
+/**
+ * Resolve a workspace's MemoryScopeContext (runtime + checkout cwd) the same
+ * way plan-file IPC does. Returns null for unknown workspaces. A nullish
+ * workspaceId (Settings → Memory manages global files without any workspace)
+ * yields a stub context where only the global scope is reachable —
+ * MemoryService fails project/workspace paths with a recoverable error.
+ */
+async function resolveMemoryScopeContext(
+  context: ORPCContext,
+  workspaceId: string | null | undefined
+): Promise<{ projectPath: string; scopeCtx: MemoryScopeContext } | null> {
+  if (workspaceId == null) {
+    return {
+      projectPath: "",
+      scopeCtx: { runtime: null, checkoutCwd: "", workspaceId: "", projectPath: "" },
+    };
+  }
+  const metadata = await context.workspaceService.getInfo(workspaceId);
+  if (!metadata) {
+    return null;
+  }
+  const runtime = createRuntimeForWorkspace(metadata);
+  // "" disables the project scope (multi-project container / unresolvable root).
+  const checkoutCwd = resolveMemoryProjectAnchor(metadata, runtime) ?? "";
+  return {
+    projectPath: metadata.projectPath,
+    scopeCtx: { runtime, checkoutCwd, workspaceId, projectPath: metadata.projectPath },
+  };
 }
 
 async function resolveWorkflowContext(
@@ -3611,6 +3657,180 @@ export const router = (authToken?: string) => {
           return context.coderService.listWorkspaces();
         }),
     },
+    memory: {
+      list: t
+        .input(schemas.memory.list.input)
+        .output(schemas.memory.list.output)
+        .handler(async ({ context, input }) => {
+          assertMemoryEnabled(context);
+          const resolved = await resolveMemoryScopeContext(context, input.workspaceId);
+          if (!resolved) {
+            return {
+              success: false as const,
+              error: `Workspace not found: ${input.workspaceId ?? "<none>"}`,
+            };
+          }
+          const entries = await context.memoryService.listIndexEntries(resolved.scopeCtx);
+          const meta = await context.memoryMetaService.getEntries();
+          const ids = { projectPath: resolved.projectPath, workspaceId: input.workspaceId ?? "" };
+          return {
+            success: true as const,
+            data: {
+              files: entries.map((entry) => {
+                const stats = meta.get(memoryLogicalKey(entry.scope, entry.relPath, ids));
+                return {
+                  path: entry.path,
+                  scope: entry.scope,
+                  description: entry.description,
+                  pinned: stats?.pinned ?? false,
+                  accessCount: stats?.accessCount ?? 0,
+                  lastAccessedAt: stats?.lastAccessedAt ?? null,
+                };
+              }),
+            },
+          };
+        }),
+      read: t
+        .input(schemas.memory.read.input)
+        .output(schemas.memory.read.output)
+        .handler(async ({ context, input }) => {
+          assertMemoryEnabled(context);
+          const resolved = await resolveMemoryScopeContext(context, input.workspaceId);
+          if (!resolved) {
+            return {
+              success: false as const,
+              error: `Workspace not found: ${input.workspaceId ?? "<none>"}`,
+            };
+          }
+          return context.memoryService.readFileWithSha(resolved.scopeCtx, input.path);
+        }),
+      save: t
+        .input(schemas.memory.save.input)
+        .output(schemas.memory.save.output)
+        .handler(async ({ context, input }) => {
+          assertMemoryEnabled(context);
+          const resolved = await resolveMemoryScopeContext(context, input.workspaceId);
+          if (!resolved) {
+            return {
+              success: false as const,
+              error: {
+                kind: "error" as const,
+                message: `Workspace not found: ${input.workspaceId ?? "<none>"}`,
+              },
+            };
+          }
+          return context.memoryService.saveFile(
+            resolved.scopeCtx,
+            input.path,
+            input.content,
+            input.expectedSha256,
+            "user"
+          );
+        }),
+      delete: t
+        .input(schemas.memory.delete.input)
+        .output(schemas.memory.delete.output)
+        .handler(async ({ context, input }) => {
+          assertMemoryEnabled(context);
+          const resolved = await resolveMemoryScopeContext(context, input.workspaceId);
+          if (!resolved) {
+            return {
+              success: false as const,
+              error: `Workspace not found: ${input.workspaceId ?? "<none>"}`,
+            };
+          }
+          // Stale pin/stats hygiene happens inside deletePath (the MemoryService
+          // chokepoint drops sidecar entries for the deleted subtree).
+          const result = await context.memoryService.deletePath(
+            resolved.scopeCtx,
+            input.path,
+            "user"
+          );
+          if (!result.success) {
+            return { success: false as const, error: result.error };
+          }
+          return { success: true as const, data: undefined };
+        }),
+      setPinned: t
+        .input(schemas.memory.setPinned.input)
+        .output(schemas.memory.setPinned.output)
+        .handler(async ({ context, input }) => {
+          assertMemoryEnabled(context);
+          const resolved = await resolveMemoryScopeContext(context, input.workspaceId);
+          if (!resolved) {
+            return {
+              success: false as const,
+              error: `Workspace not found: ${input.workspaceId ?? "<none>"}`,
+            };
+          }
+          let scope;
+          let relPath;
+          try {
+            ({ scope, relPath } = parseMemoryPath(input.path));
+          } catch (error) {
+            return { success: false as const, error: getErrorMessage(error) };
+          }
+          if (scope === null || relPath === "") {
+            return { success: false as const, error: `Cannot pin a directory: ${input.path}` };
+          }
+          // Pins bypass MemoryService stores, so mirror its scope guards here:
+          // without a workspace, only global files have a stable logical key.
+          if (input.workspaceId == null && scope !== "global") {
+            return {
+              success: false as const,
+              error: `${scope === "project" ? "Project" : "Workspace"} memory is unavailable: no workspace is associated with this request`,
+            };
+          }
+          await context.memoryMetaService.setPinned(
+            memoryLogicalKey(scope, relPath, {
+              projectPath: resolved.projectPath,
+              workspaceId: input.workspaceId ?? "",
+            }),
+            input.pinned
+          );
+          return { success: true as const, data: undefined };
+        }),
+      onChange: t
+        .input(schemas.memory.onChange.input)
+        .output(schemas.memory.onChange.output)
+        .handler(async function* ({ context, input, signal }) {
+          assertMemoryEnabled(context);
+          // Resolve the subscriber's identity once: the same virtual path in
+          // another workspace (workspace scope) or another project (project
+          // scope) is a physically different file, so those events are
+          // dropped here rather than badging unrelated files in the UI.
+          const boundWorkspaceId = input.workspaceId ?? null;
+          const boundProjectPath = boundWorkspaceId
+            ? ((await context.workspaceService.getInfo(boundWorkspaceId))?.projectPath ?? null)
+            : null;
+          const queue = createAsyncEventQueue<MemoryChangeEvent>();
+
+          // Global events are always forwarded (shared across everything).
+          const onChange = (event: MemoryChangeEvent) => {
+            if (event.scope === "workspace" && event.workspaceId !== boundWorkspaceId) return;
+            if (event.scope === "project" && event.projectPath !== boundProjectPath) return;
+            queue.push(event);
+          };
+          context.memoryService.on("change", onChange);
+
+          const onAbort = () => queue.end();
+          if (signal) {
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
+
+          try {
+            yield* queue.iterate();
+          } finally {
+            queue.end();
+            signal?.removeEventListener("abort", onAbort);
+            context.memoryService.off("change", onChange);
+          }
+        }),
+    },
     workspace: {
       list: t
         .input(schemas.workspace.list.input)
@@ -4441,7 +4661,10 @@ export const router = (authToken?: string) => {
           // Get workspace metadata to determine runtime and paths
           const metadata = await context.workspaceService.getInfo(input.workspaceId);
           if (!metadata) {
-            return { success: false as const, error: `Workspace not found: ${input.workspaceId}` };
+            return {
+              success: false as const,
+              error: `Workspace not found: ${input.workspaceId ?? "<none>"}`,
+            };
           }
 
           // Create runtime to read plan file (supports both local and SSH)

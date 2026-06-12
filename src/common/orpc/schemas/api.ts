@@ -30,6 +30,7 @@ import {
   GoalSetInputSchema,
 } from "./goal";
 import { ProjectConfigSchema } from "./project";
+import { MemoryChangeEventSchema, MemoryFileInfoSchema, MemorySaveErrorSchema } from "./memory";
 import { ResultSchema } from "./result";
 import { SshPromptEventSchema, SshPromptResponseInputSchema } from "./ssh";
 import {
@@ -974,6 +975,50 @@ const ArchiveWorkspaceResultSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("archived") }),
   ArchiveLossyUntrackedFilesConfirmationSchema,
 ]);
+
+/**
+ * Memory curation routes (Memory tab + Settings → Memory; experiment:
+ * "memory"). workspaceId is optional: when present, the router resolves that
+ * workspace's runtime + checkout cwd to map virtual /memories paths onto
+ * physical scope roots; when absent (Settings → Memory manages global files
+ * without any workspace), only the global scope is reachable — project and
+ * workspace paths fail with a recoverable error. Routes reject with
+ * BAD_REQUEST while the experiment is disabled.
+ */
+export const memory = {
+  /** Bulk list across all three scopes in one call (includes pin state). */
+  list: {
+    input: z.object({ workspaceId: z.string().nullish() }),
+    output: ResultSchema(z.object({ files: z.array(MemoryFileInfoSchema) }), z.string()),
+  },
+  read: {
+    input: z.object({ workspaceId: z.string().nullish(), path: z.string() }),
+    output: ResultSchema(z.object({ content: z.string(), sha256: z.string() }), z.string()),
+  },
+  /** Whole-file save; expectedSha256 null means "create new file". */
+  save: {
+    input: z.object({
+      workspaceId: z.string().nullish(),
+      path: z.string(),
+      content: z.string(),
+      expectedSha256: z.string().nullable(),
+    }),
+    output: ResultSchema(z.object({ sha256: z.string() }), MemorySaveErrorSchema),
+  },
+  delete: {
+    input: z.object({ workspaceId: z.string().nullish(), path: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  setPinned: {
+    input: z.object({ workspaceId: z.string().nullish(), path: z.string(), pinned: z.boolean() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  /** Live change events from agent tool calls and UI edits (all scopes). */
+  onChange: {
+    input: z.object({ workspaceId: z.string().nullish() }),
+    output: eventIterator(MemoryChangeEventSchema),
+  },
+};
 
 export const workspace = {
   list: {

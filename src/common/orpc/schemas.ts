@@ -156,6 +156,14 @@ export {
 // Tool schemas
 export { BashToolResultSchema, FileTreeNodeSchema } from "./schemas/tools";
 
+// Memory schemas (Memory tab)
+export {
+  MemoryChangeEventSchema,
+  MemoryFileInfoSchema,
+  MemorySaveErrorSchema,
+} from "./schemas/memory";
+export type { MemoryFileInfo, MemorySaveError } from "./schemas/memory";
+
 // Secrets schemas
 export { SecretSchema } from "./schemas/secrets";
 
@@ -288,6 +296,7 @@ export {
   projects,
   mcpOauth,
   mcp,
+  memory,
   secrets,
   CustomProviderMutationErrorSchema,
   ProviderConfigInfoSchema,

@@ -37,6 +37,7 @@ import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPr
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import {
   createRuntimeContextForWorkspace,
+  createRuntimeForWorkspace,
   resolveWorkspaceExecutionPath,
 } from "@/node/runtime/runtimeHelpers";
 import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
@@ -86,6 +87,10 @@ import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
 import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 import type { TaskService } from "@/node/services/taskService";
+import { resolveMemoryProjectAnchor, type MemoryService } from "@/node/services/memoryService";
+import { formatHotMemoriesBlock } from "@/node/services/memoryHotSet";
+import { resolveMemoryAccessPolicy } from "@/node/services/tools/memory";
+import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
 import {
   buildProviderOptions,
   buildRequestHeaders,
@@ -219,6 +224,15 @@ export interface StreamMessageOptions {
   recordFileState?: (filePath: string, state: FileState) => Promise<void>;
   changedFileAttachments?: EditedFileAttachment[];
   postCompactionAttachments?: PostCompactionAttachment[] | null;
+  /**
+   * Resolver for the hot-memories block (memory experiment). AgentSession
+   * caches the rendered block per session segment so its bytes stay
+   * prompt-cache-stable. A callback (not a pre-rendered string) because the
+   * block must be computed after runtime.ensureReady(): project-scope
+   * listing on a stopped Docker/remote workspace would otherwise cache an
+   * empty/partial block for the whole segment.
+   */
+  resolveHotMemoriesBlock?: () => Promise<string | undefined>;
   experiments?: SendMessageOptions["experiments"];
   workspaceGoalService?: WorkspaceGoalService;
   disableWorkspaceAgents?: boolean;
@@ -408,6 +422,7 @@ export class AIService extends EventEmitter {
   // Debug: captured LLM request payloads for last send per workspace
   private lastLlmRequestByWorkspace = new Map<string, DebugLlmRequestSnapshot>();
   private taskService?: TaskService;
+  private memoryService?: MemoryService;
   private extraTools?: Record<string, Tool>;
   private workflowResultContinuationSender?: WorkflowResultContinuationSender;
   private analyticsService?: { executeRawQuery(sql: string): Promise<unknown> };
@@ -475,6 +490,44 @@ export class AIService extends EventEmitter {
 
   setTaskService(taskService: TaskService): void {
     this.taskService = taskService;
+  }
+
+  setMemoryService(memoryService: MemoryService): void {
+    this.memoryService = memoryService;
+  }
+
+  /**
+   * Render the hot-memories context block (pinned + frequently used memory
+   * files) for a workspace. Returns null when the memory experiment is off or
+   * nothing qualifies.
+   *
+   * Callers (AgentSession) cache the result and recompute it only at session
+   * start and compaction boundaries — never per turn — so the injected bytes
+   * stay prompt-cache-stable within a session segment.
+   */
+  async buildHotMemoriesBlock(workspaceId: string): Promise<string | null> {
+    if (!this.memoryService) return null;
+    if (this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY) !== true) {
+      return null;
+    }
+    try {
+      const metadataResult = await this.getWorkspaceMetadata(workspaceId);
+      if (!metadataResult.success) return null;
+      const metadata = metadataResult.data;
+      const runtime = createRuntimeForWorkspace(metadata);
+      const items = await this.memoryService.listHotMemories({
+        runtime,
+        // "" disables the project scope (multi-project / unresolvable root).
+        checkoutCwd: resolveMemoryProjectAnchor(metadata, runtime) ?? "",
+        workspaceId,
+        projectPath: metadata.projectPath,
+      });
+      return items.length === 0 ? null : formatHotMemoriesBlock(items);
+    } catch (error) {
+      // Self-healing: hot memories are best-effort context, never a stream blocker.
+      log.warn("Failed to build hot memories block", { workspaceId, error });
+      return null;
+    }
   }
 
   setWorkflowResultContinuationSender(sender: WorkflowResultContinuationSender): void {
@@ -847,6 +900,7 @@ export class AIService extends EventEmitter {
       recordFileState,
       changedFileAttachments,
       postCompactionAttachments,
+      resolveHotMemoriesBlock,
       experiments,
       workspaceGoalService,
       disableWorkspaceAgents,
@@ -1193,6 +1247,14 @@ export class AIService extends EventEmitter {
         });
       }
 
+      // Hot memories (memory experiment): resolved only after ensureReady so
+      // project-scope listing sees a running runtime (a stopped Docker/remote
+      // workspace would yield an empty/partial block, and AgentSession caches
+      // the result for the whole session segment).
+      const hotMemoriesBlock = resolveHotMemoriesBlock
+        ? await resolveHotMemoriesBlock()
+        : undefined;
+
       // Resolve agent definition, compute effective mode & tool policy.
       const cfg = this.config.loadConfigOrDefault();
       const advisorExperimentEnabled =
@@ -1204,6 +1266,9 @@ export class AIService extends EventEmitter {
       const subagentFileReportsExperimentEnabled =
         experiments?.subagentFileReports ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS) === true;
+      const memoryExperimentEnabled =
+        experiments?.memory ??
+        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY) === true;
       emitStartupBreadcrumb("loading_workspace_context");
       const resolveAgentForStreamStartedAt = Date.now();
       const agentResult = await resolveAgentForStream({
@@ -1352,8 +1417,12 @@ export class AIService extends EventEmitter {
 
       // modelStringForSystem lets the refusal-fallback prepare() rebuild the
       // system prompt for the fallback model (model-keyed instruction sections).
-      const buildStreamSystemContextForAdvisor = (
-        advisorToolAvailable: boolean,
+      // Memory index eligibility mirrors memory tool registration (experiment +
+      // service); tool policy may still strip the tool, which forces a rebuild
+      // below so the prompt never advertises an absent tool.
+      const memoryToolEligible = memoryExperimentEnabled && this.memoryService !== undefined;
+      const buildStreamSystemContextForToolset = (
+        toolset: { advisorToolAvailable: boolean; memoryToolAvailable: boolean },
         modelStringForSystem: string = modelString
       ) =>
         buildStreamSystemContext({
@@ -1374,15 +1443,20 @@ export class AIService extends EventEmitter {
           mcpServers,
           muxScope,
           loadDesktopCapability,
-          advisorToolAvailable,
+          advisorToolAvailable: toolset.advisorToolAvailable,
+          memoryService: this.memoryService,
+          memoryIndexEnabled: toolset.memoryToolAvailable,
+          hotMemoriesBlock,
         });
 
       // Build provisional agent context before tool policy finalizes the toolset.
       // The final system prompt is rebuilt after policy application so advisor guidance cannot
       // survive when the resolved toolset strips the advisor tool.
       const buildStreamSystemContextStartedAt = Date.now();
-      const prePolicyStreamSystemContext =
-        await buildStreamSystemContextForAdvisor(advisorToolEligible);
+      const prePolicyStreamSystemContext = await buildStreamSystemContextForToolset({
+        advisorToolAvailable: advisorToolEligible,
+        memoryToolAvailable: memoryToolEligible,
+      });
       recordStartupPhaseTiming("buildStreamSystemContextMs", buildStreamSystemContextStartedAt);
       const {
         agentSystemPromptSections,
@@ -1880,11 +1954,24 @@ export class AIService extends EventEmitter {
         taskService: this.taskService,
         analyticsService: this.analyticsService,
         desktopSessionManager: this.desktopSessionManager,
+        // Agent memory (memory experiment): per-scope write policy derived from
+        // the agent class (exec-like / plan-like / read-only). Project memories
+        // anchor at the single project checkout root (not the sub-project or
+        // multi-project container execution cwd) so the tool, index, hot-set,
+        // and Memory tab all agree on one git-tracked location; null disables
+        // the project scope (recoverable tool error).
+        workspaceCheckoutRootPath: resolveMemoryProjectAnchor(metadataWithPath, runtime),
+        memoryService: this.memoryService,
+        memoryAccess: resolveMemoryAccessPolicy({
+          planLike: agentIsPlanLike,
+          editingCapable: isExecLikeEditingCapableInResolvedChain(agentInheritanceChain),
+        }),
         // Experiments for inheritance to subagents and workflow tool gating.
         experiments: {
           ...experiments,
           dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
           subagentFileReports: subagentFileReportsExperimentEnabled,
+          memory: memoryExperimentEnabled,
         },
         // Dynamic context for tool descriptions (moved from system prompt for better model attention)
         availableSubagents: agentDefinitions,
@@ -1931,14 +2018,20 @@ export class AIService extends EventEmitter {
       );
 
       const advisorToolAvailable = tools.advisor !== undefined;
+      const memoryToolAvailable = tools.memory !== undefined;
       const finalStreamSystemContext =
-        advisorToolAvailable === advisorToolEligible
+        advisorToolAvailable === advisorToolEligible && memoryToolAvailable === memoryToolEligible
           ? prePolicyStreamSystemContext
           : await (async () => {
-              // Rebuild only when policy/experiments changed advisor availability. On SSH this
-              // context build scans agents, skills, and instruction files over many small remote ops.
+              // Rebuild only when policy/experiments changed advisor or memory tool
+              // availability (stale advisor guidance / memory index must not advertise
+              // absent tools). On SSH this context build scans agents, skills, and
+              // instruction files over many small remote ops.
               const rebuildStreamSystemContextStartedAt = Date.now();
-              const rebuiltContext = await buildStreamSystemContextForAdvisor(advisorToolAvailable);
+              const rebuiltContext = await buildStreamSystemContextForToolset({
+                advisorToolAvailable,
+                memoryToolAvailable,
+              });
               recordStartupPhaseTiming(
                 "rebuildStreamSystemContextMs",
                 rebuildStreamSystemContextStartedAt
@@ -2301,8 +2394,11 @@ export class AIService extends EventEmitter {
                   // Rebuild the system prompt for the fallback model (tool
                   // instructions and "Model:" sections are model-keyed), keeping
                   // the MCP failure warning if one was applied.
-                  const nextSystemContext = await buildStreamSystemContextForAdvisor(
-                    nextTools.advisor !== undefined,
+                  const nextSystemContext = await buildStreamSystemContextForToolset(
+                    {
+                      advisorToolAvailable: nextTools.advisor !== undefined,
+                      memoryToolAvailable: nextTools.memory !== undefined,
+                    },
                     next.canonicalModelString
                   );
                   let nextSystem = nextSystemContext.systemMessage;

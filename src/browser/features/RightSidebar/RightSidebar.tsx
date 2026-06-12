@@ -673,6 +673,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const api = apiState.api;
   const desktopExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
   const browserExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_BROWSER);
+  const memoryExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.MEMORY);
   // Child task workspaces can't run goal actions — backend rejects them
   // via `WorkspaceGoalService.assertParentWorkspace`. We use this flag
   // both to hide the Goal tab below and to gate any inline goal UX.
@@ -960,6 +961,24 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       return prev;
     });
   }, [browserAvailable, initialActiveTab, setLayoutRaw]);
+
+  // Memory tab follows the experiment value (same shape as the browser tab).
+  React.useEffect(() => {
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      const hasMemory = collectAllTabs(prev.root).includes("memory");
+
+      if (memoryExperimentEnabled && !hasMemory) {
+        return addTabToFocusedTabset(prev, "memory", false);
+      }
+
+      if (!memoryExperimentEnabled && hasMemory) {
+        return removeTabEverywhere(prev, "memory");
+      }
+
+      return prev;
+    });
+  }, [memoryExperimentEnabled, initialActiveTab, setLayoutRaw]);
 
   React.useEffect(() => {
     setLayoutRaw((prevRaw) => {

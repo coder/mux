@@ -92,6 +92,8 @@ export class ServiceContainer {
   public readonly mcpServerManager: CoreServices["mcpServerManager"];
   public readonly sessionUsageService: CoreServices["sessionUsageService"];
   public readonly workspaceGoalService: CoreServices["workspaceGoalService"];
+  public readonly memoryService: CoreServices["memoryService"];
+  public readonly memoryMetaService: CoreServices["memoryMetaService"];
   private readonly extensionMetadata: CoreServices["extensionMetadata"];
   private readonly backgroundProcessManager: CoreServices["backgroundProcessManager"];
   // Desktop-only services
@@ -220,6 +222,8 @@ export class ServiceContainer {
     this.mcpServerManager = core.mcpServerManager;
     this.sessionUsageService = core.sessionUsageService;
     this.workspaceGoalService = core.workspaceGoalService;
+    this.memoryService = core.memoryService;
+    this.memoryMetaService = core.memoryMetaService;
     this.extensionMetadata = core.extensionMetadata;
     this.backgroundProcessManager = core.backgroundProcessManager;
 
@@ -519,6 +523,8 @@ export class ServiceContainer {
       experimentsService: this.experimentsService,
       sessionUsageService: this.sessionUsageService,
       workspaceGoalService: this.workspaceGoalService,
+      memoryService: this.memoryService,
+      memoryMetaService: this.memoryMetaService,
       devToolsService: this.devToolsService,
       browserSessionDiscoveryService: this.browserSessionDiscoveryService,
       browserBridgeTokenManager: this.browserBridgeTokenManager,

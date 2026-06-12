@@ -86,6 +86,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
       execSubagentHardRestart: isExperimentEnabled(EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART),
       dynamicWorkflows: isExperimentEnabled(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS),
       subagentFileReports: isExperimentEnabled(EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS),
+      memory: isExperimentEnabled(EXPERIMENT_IDS.MEMORY),
     },
   });
 }

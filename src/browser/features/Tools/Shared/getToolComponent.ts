@@ -19,6 +19,7 @@ import { FileEditToolCall } from "../FileEditToolCall";
 import { AgentSkillReadToolCall } from "../AgentSkillReadToolCall";
 import { AgentSkillReadFileToolCall } from "../AgentSkillReadFileToolCall";
 import { FileReadToolCall } from "../FileReadToolCall";
+import { MemoryToolCall } from "../MemoryToolCall";
 import { WebFetchToolCall } from "../WebFetchToolCall";
 import { WebSearchToolCall } from "../WebSearchToolCall";
 import { GoogleSearchToolCall } from "../GoogleSearchToolCall";
@@ -79,6 +80,7 @@ const legacyStatusSetSchema = z.object({
 const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   bash: { component: BashToolCall, schema: TOOL_DEFINITIONS.bash.schema },
   file_read: { component: FileReadToolCall, schema: TOOL_DEFINITIONS.file_read.schema },
+  memory: { component: MemoryToolCall, schema: TOOL_DEFINITIONS.memory.schema },
   attach_file: { component: AttachFileToolCall, schema: TOOL_DEFINITIONS.attach_file.schema },
   desktop_screenshot: {
     component: DesktopScreenshotToolCall,

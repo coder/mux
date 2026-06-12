@@ -53,6 +53,13 @@ const TAB_CONFIG_DEF = {
     defaultOrder: 35,
     paletteKeywords: ["goal", "target", "objective"],
   },
+  memory: {
+    name: "Memory",
+    contentClassName: "overflow-hidden p-0",
+    featureFlag: EXPERIMENT_IDS.MEMORY,
+    defaultOrder: 38,
+    paletteKeywords: ["memory", "memories", "remember"],
+  },
   desktop: {
     name: "Desktop",
     contentClassName: "overflow-hidden p-0",

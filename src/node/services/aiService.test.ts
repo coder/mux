@@ -61,6 +61,8 @@ import { TelemetryService } from "@/node/services/telemetryService";
 import * as agentResolution from "./agentResolution";
 import * as streamContextBuilder from "./streamContextBuilder";
 import * as messagePipeline from "./messagePipeline";
+import { MemoryMetaService } from "@/node/services/memoryMeta";
+import { MemoryService } from "@/node/services/memoryService";
 import * as toolAssembly from "./toolAssembly";
 import type { ToolModelUsageEvent } from "@/common/utils/tools/tools";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
@@ -1111,6 +1113,8 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     preparedToolNamesForSentinel: string[][];
     streamSystemContextMuxScopes: MuxToolScope[];
     streamSystemContextAdvisorFlags: Array<boolean | undefined>;
+    streamSystemContextMemoryIndexFlags: Array<boolean | undefined>;
+    streamSystemContextHotMemoriesBlocks: Array<string | undefined>;
     startStreamCalls: unknown[][];
     getToolsForModelSpy: ReturnType<typeof spyOn<typeof toolsModule, "getToolsForModel">>;
   }
@@ -1181,6 +1185,8 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const preparedToolNamesForSentinel: string[][] = [];
     const streamSystemContextMuxScopes: MuxToolScope[] = [];
     const streamSystemContextAdvisorFlags: Array<boolean | undefined> = [];
+    const streamSystemContextMemoryIndexFlags: Array<boolean | undefined> = [];
+    const streamSystemContextHotMemoriesBlocks: Array<string | undefined> = [];
     const startStreamCalls: unknown[][] = [];
 
     const getToolsForModelSpy = stubCommonStreamMessageDependencies({
@@ -1202,6 +1208,8 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         }
         streamSystemContextMuxScopes.push(contextArgs.muxScope);
         streamSystemContextAdvisorFlags.push(contextArgs.advisorToolAvailable);
+        streamSystemContextMemoryIndexFlags.push(contextArgs.memoryIndexEnabled);
+        streamSystemContextHotMemoriesBlocks.push(contextArgs.hotMemoriesBlock);
       },
       onPrepareMessagesForProvider: (pipelineArgs) => {
         preparedPayloadMessageIds.push(
@@ -1224,6 +1232,8 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       preparedToolNamesForSentinel,
       streamSystemContextMuxScopes,
       streamSystemContextAdvisorFlags,
+      streamSystemContextMemoryIndexFlags,
+      streamSystemContextHotMemoriesBlocks,
       startStreamCalls,
       getToolsForModelSpy,
     };
@@ -1576,6 +1586,81 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     expect(result.success).toBe(true);
     expect(harness.streamSystemContextAdvisorFlags).toEqual([true, false]);
+  });
+
+  it("rebuilds the stream system context without the memory index when policy strips the memory tool", async () => {
+    using muxHome = new DisposableTempDir("ai-service-rebuild-system-context-memory");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-rebuild-system-context-memory";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for memory availability gating
+    const stubTool: Tool = {} as never;
+    const harness = createHarness(muxHome.path, metadata, {
+      allTools: { memory: stubTool },
+      // Tool policy strips the memory tool: the final prompt must not claim
+      // the memory tool is enabled (no <memory_index>).
+      postPolicyTools: {},
+    });
+    harness.service.setMemoryService(
+      new MemoryService(harness.config, new MemoryMetaService(muxHome.path))
+    );
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+      experiments: { memory: true },
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.streamSystemContextMemoryIndexFlags).toEqual([true, false]);
+  });
+
+  it("resolves hot memories only after the runtime is ready", async () => {
+    using muxHome = new DisposableTempDir("ai-service-hot-memories-after-ready");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-hot-memories-after-ready";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    // Ordering is the contract under test: the resolver result is cached per
+    // session segment by AgentSession, so resolving before ensureReady on a
+    // stopped Docker/remote workspace would pin an empty/partial block for
+    // the whole segment.
+    const order: string[] = [];
+    const realCreateRuntime = runtimeFactory.createRuntime;
+    spyOn(runtimeFactory, "createRuntime").mockImplementation((runtimeConfig, options) => {
+      const runtime = realCreateRuntime(runtimeConfig, options);
+      const realEnsureReady = runtime.ensureReady.bind(runtime);
+      spyOn(runtime, "ensureReady").mockImplementation((...readyArgs) => {
+        order.push("ensureReady");
+        return realEnsureReady(...readyArgs);
+      });
+      return runtime;
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+      resolveHotMemoriesBlock: () => {
+        order.push("resolveHotMemories");
+        return Promise.resolve("<hot_memories>cached</hot_memories>");
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(order.indexOf("ensureReady")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("resolveHotMemories")).toBeGreaterThan(order.indexOf("ensureReady"));
+    expect(harness.streamSystemContextHotMemoriesBlocks).toContain(
+      "<hot_memories>cached</hot_memories>"
+    );
   });
 
   it("keeps legacy system workspaces on the global mux tool scope", async () => {

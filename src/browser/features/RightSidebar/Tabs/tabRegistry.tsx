@@ -22,6 +22,7 @@ import { DesktopPanel } from "@/browser/features/desktop/DesktopPanel";
 import { BrowserTab } from "@/browser/features/RightSidebar/BrowserTab";
 import { DevToolsTab } from "@/browser/features/RightSidebar/DevToolsTab";
 import { GoalTab, type GoalCreateIntent } from "@/browser/features/RightSidebar/GoalTab";
+import { MemoryTab } from "@/browser/features/RightSidebar/Memory/MemoryTab";
 import type { GoalSnapshot, GoalStatus } from "@/common/types/goal";
 import type { ReviewNoteData } from "@/common/types/review";
 import { BASE_TAB_IDS, TAB_CONFIG, type BaseTabType, type TabConfig } from "./tabConfig";
@@ -31,6 +32,7 @@ import {
   DesktopTabLabel,
   GoalTabLabel,
   InstructionsTabLabel,
+  MemoryTabLabel,
   OutputTabLabel,
   ReviewTabLabel,
   StatsTabLabel,
@@ -156,6 +158,10 @@ const TAB_RENDERERS = {
         />
       </ErrorBoundary>
     ),
+  },
+  memory: {
+    Label: MemoryTabLabel,
+    renderPanel: (ctx) => <MemoryTab workspaceId={ctx.workspaceId} />,
   },
   desktop: {
     Label: DesktopTabLabel,

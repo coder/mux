@@ -199,7 +199,7 @@ Freely make breaking changes, and reorganize / cleanup IPC as needed.
 
 ## Debugging & Diagnostics
 
-- `bun run debug ui-messages --workspace <name>` to inspect messages; add `--drop <n>` to skip recent entries. Workspace names live in `~/.mux/sessions/`.
+- Debug CLI (`src/cli/debug/index.ts`): `bun run debug list-workspaces`, `bun run debug costs <workspace-id>`, `bun run debug send-message <workspace-id> [--edit <message-id>] [--message <text>]`. Workspace names live in `~/.mux/sessions/`. To inspect raw provider requests, enable API Debug Logs and read `~/.mux/sessions/<workspace>/devtools.jsonl`.
 
 ## UX Guardrails
 

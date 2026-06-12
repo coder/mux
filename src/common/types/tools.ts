@@ -22,6 +22,7 @@ import type {
   MuxAgentsReadToolResultSchema,
   MuxAgentsWriteToolResultSchema,
   FileReadToolResultSchema,
+  MemoryToolResultSchema,
   AttachFileToolResultSchema,
   TaskToolResultSchema,
   TaskAwaitToolResultSchema,
@@ -131,6 +132,10 @@ export interface ToolOutputUiOnlyFields {
 
 // FileReadToolResult derived from Zod schema (single source of truth)
 export type FileReadToolResult = z.infer<typeof FileReadToolResultSchema>;
+
+// Memory tool types, derived from schema (avoid drift)
+export type MemoryToolArgs = z.infer<typeof TOOL_DEFINITIONS.memory.schema>;
+export type MemoryToolResult = z.infer<typeof MemoryToolResultSchema>;
 
 // AttachFileToolResult derived from Zod schema (single source of truth)
 export type AttachFileToolResult = z.infer<typeof AttachFileToolResultSchema>;

@@ -402,6 +402,14 @@ export class AgentSession {
    * This is intentionally delayed until stream-end so a crash mid-stream doesn't lose the diffs.
    */
   private ackPendingPostCompactionStateOnStreamEnd = false;
+
+  /**
+   * Cached hot-memories block (memory experiment). `undefined` means "not yet
+   * computed for this session segment"; `null` means "computed, nothing to
+   * inject". Recomputed only at session start and compaction boundaries —
+   * never per turn — so the injected bytes stay prompt-cache-stable.
+   */
+  private hotMemoriesBlock: string | null | undefined = undefined;
   /**
    * Cache the last-known experiment state so we don't spam metadata refresh
    * when post-compaction context is disabled.
@@ -3537,6 +3545,11 @@ export class AgentSession {
       changedFileAttachments:
         changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
       postCompactionAttachments,
+      // Invoked by AIService after runtime.ensureReady() (project-scope
+      // listing needs a running runtime). Still ordered after the
+      // post-compaction check above: a just-consumed compaction boundary has
+      // already reset the segment cache, so this stream recomputes the block.
+      resolveHotMemoriesBlock: () => this.resolveHotMemoriesBlock(),
       workspaceGoalService: this.workspaceGoalService,
       experiments: options?.experiments,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
@@ -5314,6 +5327,28 @@ export class AgentSession {
   }
 
   /**
+   * Resolve the hot-memories block for the current session segment.
+   *
+   * Computed lazily on the first stream (session start) and re-fetched only
+   * after getPostCompactionAttachmentsIfNeeded consumes a compaction boundary
+   * (which resets the cache) — never per turn — so the injected bytes stay
+   * byte-identical within a segment (prompt-cache-stable). Invoked by
+   * AIService.streamMessage after runtime.ensureReady(): caching before the
+   * runtime is started (stopped Docker/remote workspace) would pin an
+   * empty/partial block for the whole segment.
+   */
+  private async resolveHotMemoriesBlock(): Promise<string | undefined> {
+    if (this.hotMemoriesBlock === undefined) {
+      // Guard for test mocks that may not implement buildHotMemoriesBlock.
+      this.hotMemoriesBlock =
+        typeof this.aiService.buildHotMemoriesBlock === "function"
+          ? await this.aiService.buildHotMemoriesBlock(this.workspaceId)
+          : null;
+    }
+    return this.hotMemoriesBlock ?? undefined;
+  }
+
+  /**
    * Get post-compaction attachments if they should be injected this turn.
    *
    * Logic:
@@ -5330,6 +5365,9 @@ export class AgentSession {
       this.compactionOccurred = true;
       this.turnsSinceLastAttachment = 0;
       this.postCompactionLoadedSkills = pendingState.loadedSkills;
+      // Compaction boundary: invalidate the session-cached hot-memories block
+      // so the next stream recomputes it from current pins/usage stats.
+      this.hotMemoriesBlock = undefined;
       // Clear file state cache since history context is gone
       this.fileChangeTracker.clear();
 

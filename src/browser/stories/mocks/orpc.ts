@@ -5,6 +5,7 @@
  */
 import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults, type GoalDefaults } from "@/constants/goals";
 import type { GoalBoardSnapshot } from "@/common/types/goal";
+import type { MemoryFileInfo } from "@/common/orpc/schemas/memory";
 import type { APIClient } from "@/browser/contexts/API";
 import type {
   AgentDefinitionDescriptor,
@@ -155,6 +156,13 @@ export interface MockORPCClientOptions {
    * keyed by the workspace ID the story uses.
    */
   goalBoardSnapshots?: Map<string, GoalBoardSnapshot>;
+  /**
+   * Pre-seeded memory files for memory.list (Memory tab / Settings → Memory
+   * stories). read/save/delete/setPinned operate on this in-memory set.
+   */
+  memoryFiles?: MemoryFileInfo[];
+  /** Optional file contents for memory.read keyed by virtual path. */
+  memoryFileContents?: Map<string, string>;
   /** Initial route priority for config.getConfig */
   routePriority?: string[];
   /** Initial per-model route overrides for config.getConfig */
@@ -380,6 +388,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     heartbeatDefaultIntervalMs: initialHeartbeatDefaultIntervalMs,
     goalDefaults: initialGoalDefaults,
     goalBoardSnapshots = new Map<string, GoalBoardSnapshot>(),
+    memoryFiles = [],
+    memoryFileContents = new Map<string, string>(),
     routePriority: initialRoutePriority = ["direct"],
     routeOverrides: initialRouteOverrides = {},
     agentDefinitions: initialAgentDefinitions,
@@ -553,6 +563,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
   const globalMcpServersState: MockMcpServers = { ...globalMcpServers };
 
+  let memoryFilesState: MemoryFileInfo[] = memoryFiles.map((file) => ({ ...file }));
+  const memoryContentsState = new Map<string, { content: string; sha256: string }>(
+    [...memoryFileContents].map(([path, content]) => [path, { content, sha256: "mock-sha" }])
+  );
   let serverAuthSessionsState: ServerAuthSession[] = initialServerAuthSessions.map((session) => ({
     ...session,
   }));
@@ -1857,6 +1871,48 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         await new Promise<void>(() => undefined);
       },
       refreshNow: () => Promise.resolve({ success: true as const, value: policyResponse }),
+    },
+    // Memory curation surfaces (Memory tab / Settings → Memory). Backed by
+    // the `memoryFiles` option; mutations update the in-memory set so
+    // pin/delete/save interactions render plausibly in Storybook.
+    memory: {
+      list: () =>
+        Promise.resolve({
+          success: true as const,
+          data: { files: memoryFilesState.map((file) => ({ ...file })) },
+        }),
+      read: (input: { path: string }) =>
+        Promise.resolve({
+          success: true as const,
+          data: memoryContentsState.get(input.path) ?? {
+            content: `Mock memory content for ${input.path}\n`,
+            sha256: "mock-sha",
+          },
+        }),
+      save: (input: { path: string; content: string }) => {
+        memoryContentsState.set(input.path, {
+          content: input.content,
+          sha256: `mock-sha-${memoryContentsState.size + 1}`,
+        });
+        return Promise.resolve({
+          success: true as const,
+          data: { sha256: memoryContentsState.get(input.path)!.sha256 },
+        });
+      },
+      delete: (input: { path: string }) => {
+        memoryFilesState = memoryFilesState.filter((file) => file.path !== input.path);
+        return Promise.resolve({ success: true as const, data: undefined });
+      },
+      setPinned: (input: { path: string; pinned: boolean }) => {
+        memoryFilesState = memoryFilesState.map((file) =>
+          file.path === input.path ? { ...file, pinned: input.pinned } : file
+        );
+        return Promise.resolve({ success: true as const, data: undefined });
+      },
+      onChange: async function* () {
+        yield* [];
+        await new Promise<void>(() => undefined);
+      },
     },
     muxGovernorOauth: {
       startDesktopFlow: () =>

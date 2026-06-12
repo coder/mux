@@ -1196,6 +1196,76 @@ export const TOOL_DEFINITIONS = {
       })
     ),
   },
+  memory: {
+    description:
+      "Manage your persistent memory directory (experiment). " +
+      "MEMORY PROTOCOL: check relevant memories before acting on a task; record durable facts, preferences, and lessons as you learn them; update or delete memories that turn out to be wrong or stale.\n" +
+      "Scopes (all paths are virtual):\n" +
+      "- /memories/global/... — personal, permanent, shared across all projects\n" +
+      "- /memories/project/... — committed with the repository (git-tracked, reviewable); never store secrets here\n" +
+      "- /memories/workspace/... — scratch state for this workspace; deleted with the workspace\n" +
+      "Commands:\n" +
+      "- view: list a directory (up to 2 levels, dotfiles excluded) or show a file with line numbers (offset/limit supported)\n" +
+      "- create: create a new file; ERRORS if the file already exists (to overwrite: delete first, then create)\n" +
+      "- str_replace: replace a unique occurrence of old_str with new_str (errors with matching line numbers when ambiguous)\n" +
+      "- insert: insert insert_text after line insert_line (0 = top of file)\n" +
+      "- delete: delete a file or directory (recursive)\n" +
+      "- rename: move old_path to new_path within the same scope\n" +
+      "Files are Markdown; optional YAML frontmatter with a one-line `description:` is surfaced in your memory index.",
+    schema: z.preprocess(
+      (value) => {
+        // Compatibility shims (same mechanism as bash command->script): models
+        // trained on our file tools may emit file tool field names.
+        const normalized = normalizeFilePath(value); // file_path/filePath -> path
+        if (typeof normalized !== "object" || normalized === null || Array.isArray(normalized)) {
+          return normalized;
+        }
+        let obj = normalized as Record<string, unknown>;
+        obj = renameAliasField(obj, "content", "file_text");
+        obj = renameAliasField(obj, "old_string", "old_str");
+        obj = renameAliasField(obj, "new_string", "new_str");
+        return obj;
+      },
+      z.object({
+        command: z
+          .enum(["view", "create", "str_replace", "insert", "delete", "rename"])
+          .describe("The memory operation to perform."),
+        path: z
+          .string()
+          .nullish()
+          .describe(
+            "Virtual memory path (e.g. /memories/global/notes.md). Required for every command except rename."
+          ),
+        file_text: z.string().nullish().describe("create: full contents of the new file."),
+        old_str: z
+          .string()
+          .nullish()
+          .describe("str_replace: exact text to replace (must be unique in the file)."),
+        new_str: z.string().nullish().describe("str_replace: replacement text."),
+        insert_line: z
+          .number()
+          .int()
+          .nonnegative()
+          .nullish()
+          .describe("insert: line number to insert after (0 = top of file)."),
+        insert_text: z.string().nullish().describe("insert: text to insert."),
+        old_path: z.string().nullish().describe("rename: current virtual path."),
+        new_path: z.string().nullish().describe("rename: new virtual path (same scope)."),
+        offset: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe("view on a file: 1-based starting line number (optional)."),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe("view on a file: number of lines to return from offset (optional)."),
+      })
+    ),
+  },
   attach_file: {
     description:
       "Attach a supported file from the filesystem so later model steps receive it as a real attachment instead of a huge base64 JSON blob. " +
@@ -2350,6 +2420,17 @@ export const WebFetchToolResultSchema = z.union([
   }),
 ]);
 
+export const MemoryToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    output: z.string(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
 /**
  * Names of tools that are bridgeable to PTC sandbox.
  * If adding a new tool here, you must also add its result schema below.
@@ -2373,7 +2454,8 @@ export type BridgeableToolName =
   | "task_await"
   | "task_apply_git_patch"
   | "task_list"
-  | "task_terminate";
+  | "task_terminate"
+  | "memory";
 
 /**
  * Lookup map for result schemas by tool name.
@@ -2398,6 +2480,7 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   task_apply_git_patch: TaskApplyGitPatchToolResultSchema,
   task_list: TaskListToolResultSchema,
   task_terminate: TaskTerminateToolResultSchema,
+  memory: MemoryToolResultSchema,
 };
 
 /**
@@ -2445,6 +2528,8 @@ export function getAvailableTools(
     enableAnalyticsQuery?: boolean;
     enableAdvisor?: boolean;
     enableDynamicWorkflows?: boolean;
+    /** Whether the agent memory tool is available (memory experiment enabled). */
+    enableMemory?: boolean;
     /**
      * Whether the Review pane tools (review_pane_update/review_pane_get) are
      * available. The Review pane belongs to the user-facing parent workspace,
@@ -2461,6 +2546,7 @@ export function getAvailableTools(
   const enableAnalyticsQuery = options?.enableAnalyticsQuery ?? true;
   const enableAdvisor = options?.enableAdvisor ?? false;
   const enableDynamicWorkflows = options?.enableDynamicWorkflows ?? false;
+  const enableMemory = options?.enableMemory ?? false;
   const enableReviewPane = options?.enableReviewPane ?? true;
 
   // Base tools available for all models
@@ -2490,6 +2576,7 @@ export function getAvailableTools(
     "file_edit_replace_string",
     // "file_edit_replace_lines", // DISABLED: causes models to break repo state
     "file_edit_insert",
+    ...(enableMemory ? ["memory"] : []),
     ...(enableAdvisor ? ["advisor"] : []),
     "ask_user_question",
     "propose_plan",
