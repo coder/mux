@@ -159,6 +159,14 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       'If set, selects an agent definition for this workspace (e.g., "explore" or "exec").',
   }),
+  tags: z
+    .record(z.string(), z.string())
+    .optional()
+    .meta({
+      description:
+        "Programmatic key/value tags (e.g. workItemKey) set via API/CLI/workflow actions; " +
+        "not rendered in the UI. Stable identity for orchestration loops, unlike title/name.",
+    }),
   workflowTask: WorkflowTaskMetadataSchema.optional().meta({
     description: "Workflow run/step metadata for workflow-spawned child tasks.",
   }),

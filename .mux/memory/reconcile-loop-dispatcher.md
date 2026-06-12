@@ -26,23 +26,38 @@ description: Design decisions + V0 prototype learnings for the workspace reconci
 - `mux workflow run` CLI spins up its OWN isolated backend — cron must use
   `mux api` (lockfile discovery via MUX_ROOT) to reach the running server.
 
-## V0 prototype (scripts/prototypes/reconcile-loop/)
+## V1 implemented (V0 prototype deleted after absorbing learnings)
 
-All transitions validated against a dev-server sandbox: dry-run, budget-capped
-spawn, catch-up spawn, idempotent no-op tick, archive-on-done,
-archived-blocks-redispatch, delete-re-arms-respawn.
+Shipped on branch cli-workspace-ggt1:
+- Workspace tags: `tags?: Record<string,string>` on WorkspaceConfigSchema +
+  WorkspaceMetadataSchema, mapped at 4 sites in src/node/config.ts, persisted
+  atomically in workspaceService.create (8th param) + `updateTags` (merge,
+  null deletes; drops record when empty). ORPC: workspace.create input `tags`,
+  new workspace.updateTags. NOT rendered in UI by design.
+- Host actions: `workspace.list/ensure/sendMessage/awaitIdle/
+  getLatestAssistantMessage/archive` in
+  src/node/services/workflows/workspaceHostActions.ts. Mechanism: generated
+  CJS stub sources (real metadata + throwing execute) merged into
+  BUILT_IN_WORKFLOW_ACTION_SOURCES so registry/describe/replay-hash work
+  unchanged; WorkflowActionRunner intercepts built-in-scope names present in
+  its hostActions map and runs in-process. Map built once in coreServices,
+  shared via aiService.setWorkflowHostActions/getWorkflowHostActions (router's
+  buildWorkflowService consumes the getter).
+- ensure is idempotent by tag WORK_ITEM_TAG_KEY="workItemKey" (archived
+  blocks; reconcile = execute). sendMessage deliberately has NO reconcile.
 
-API-caller learnings for V1 actions:
-- workspace.create requires project trust (`projects set-trust`) and an explicit
-  `trunkBranch` (UI auto-detects; API callers must supply) → ensure action should detect.
-- trpc-cli output is lossy transport: empty array prints nothing; non-empty array
-  prints CONCATENATED pretty JSON objects (not a JSON array). Typed actions needed.
-- sendMessage works fire-and-forget on fresh workspace with
-  `{model, agentId: "exec", mode: "exec"}`; spawned peers happily spawn their own
-  sub-agent tasks (composition works).
-- Workspace title survives as idempotency key only because dispatcher sets it
-  explicitly; pendingAutoTitle/rename would break it → V1 wants explicit
-  workItemKey metadata field.
-- `make dev-server` watcher rebuilds dist/cli/api.mjs with mangled esbuild banner
-  quoting (`from'module'` loses quotes) → rebuild manually with proper quoting if
-  `bun dist/cli/api.mjs` throws a syntax error.
+Key gotchas learned in dogfooding:
+- Workflow JS receives the full WorkflowActionResult: payload is `.output`
+  (e.g. `action.workspace.ensure({...}).output.workspaceId`).
+- Host action outputs must be strict JSON: `undefined` props fail
+  JsonValueSchema; runner now JSON-round-trips host outputs to normalize.
+- workflows.start requires dynamic-workflows experiment
+  (`mux api experiments set-override --experiment-id dynamic-workflows --enabled`).
+- Project workflows are read from the WORKSPACE worktree (committed state at
+  fork time), not the project dir — sync/commit before creating the workspace.
+- `make dev-server` esbuild watcher still rebuilds dist/cli/api.mjs with the
+  mangled banner (`frommodule`); rebuild manually with proper quoting
+  (pre-existing bug, worth a separate fix).
+
+V2 next: WorkflowSchedulerService (wall-clock, at-least-once, skip-if-running).
+V3: agent teams (spawn_peer_workspace / send_to_workspace→turnId / await_reply).

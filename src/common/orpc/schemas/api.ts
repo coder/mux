@@ -1066,6 +1066,11 @@ export const workspace = {
        * message triggers an LLM-generated title (mirrors the /fork flow).
        */
       pendingAutoTitle: z.boolean().optional(),
+      /**
+       * Programmatic key/value tags persisted atomically with creation (not
+       * rendered in the UI). Used by orchestration callers for stable identity.
+       */
+      tags: z.record(z.string(), z.string()).optional(),
     }),
     output: z.discriminatedUnion("success", [
       z.object({ success: z.literal(true), metadata: FrontendWorkspaceMetadataSchema }),
@@ -1098,6 +1103,14 @@ export const workspace = {
   updateTitle: {
     input: z.object({ workspaceId: z.string(), title: z.string() }),
     output: ResultSchema(z.void(), z.string()),
+  },
+  updateTags: {
+    /** Merge tag updates into a workspace; a null value deletes that key. */
+    input: z.object({
+      workspaceId: z.string(),
+      tags: z.record(z.string(), z.string().nullable()),
+    }),
+    output: ResultSchema(z.object({ tags: z.record(z.string(), z.string()) }), z.string()),
   },
   regenerateTitle: {
     input: z.object({ workspaceId: z.string() }),

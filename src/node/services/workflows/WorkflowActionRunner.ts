@@ -50,6 +50,23 @@ export interface WorkflowActionRunnerOptions {
   timeoutMs: number;
 }
 
+/** Context passed to in-process host actions (see workspaceHostActions.ts). */
+export interface HostWorkflowActionContext {
+  cwd: string;
+  abortSignal?: AbortSignal;
+}
+
+/**
+ * A built-in action implemented in the mux host process with access to backend
+ * services. The registry still serves a generated stub source for metadata
+ * parsing and replay hashing; execute/reconcile are dispatched here in-process.
+ */
+export interface HostWorkflowAction {
+  metadata: WorkflowActionMetadata;
+  execute: (input: unknown, ctx: HostWorkflowActionContext) => Promise<unknown>;
+  reconcile?: (input: unknown, ctx: HostWorkflowActionContext) => Promise<unknown>;
+}
+
 interface WorkflowActionRunnerPayload {
   attemptId: string;
   mode: "describe" | "execute" | "reconcile";
@@ -169,6 +186,18 @@ export class WorkflowActionExecutionError extends Error {
 }
 
 export class WorkflowActionRunner {
+  /**
+   * In-process implementations for built-in host actions (workspace.*).
+   * Optional: when absent (CLI contexts without backend services, tests),
+   * these actions fall through to their generated stub source, which throws
+   * a descriptive "requires the mux host process" error in the child.
+   */
+  private readonly hostActions?: ReadonlyMap<string, HostWorkflowAction>;
+
+  constructor(options?: { hostActions?: ReadonlyMap<string, HostWorkflowAction> }) {
+    this.hostActions = options?.hostActions;
+  }
+
   describe(action: ResolvedWorkflowAction): Promise<WorkflowActionDescription> {
     try {
       assert(action.name.length > 0, "WorkflowActionRunner.describe: action name is required");
@@ -190,6 +219,10 @@ export class WorkflowActionRunner {
     action: ResolvedWorkflowAction,
     options: WorkflowActionRunnerOptions
   ): Promise<WorkflowActionExecutionResult> {
+    const hostAction = this.resolveHostAction(action);
+    if (hostAction != null) {
+      return await this.runHostAction("execute", hostAction, options);
+    }
     return await this.runExecutableChild("execute", action, options);
   }
 
@@ -197,7 +230,88 @@ export class WorkflowActionRunner {
     action: ResolvedWorkflowAction,
     options: WorkflowActionRunnerOptions
   ): Promise<WorkflowActionExecutionResult> {
+    const hostAction = this.resolveHostAction(action);
+    if (hostAction != null) {
+      return await this.runHostAction("reconcile", hostAction, options);
+    }
     return await this.runExecutableChild("reconcile", action, options);
+  }
+
+  /**
+   * Host actions only apply to built-in scope: a trusted project/global action
+   * shadowing the same name keeps standard child execution semantics.
+   */
+  private resolveHostAction(action: ResolvedWorkflowAction): HostWorkflowAction | undefined {
+    if (action.scope !== "built-in") {
+      return undefined;
+    }
+    return this.hostActions?.get(action.name);
+  }
+
+  private async runHostAction(
+    mode: "execute" | "reconcile",
+    hostAction: HostWorkflowAction,
+    options: WorkflowActionRunnerOptions
+  ): Promise<WorkflowActionExecutionResult> {
+    assert(options.timeoutMs > 0, "WorkflowActionRunner.runHostAction: timeoutMs must be positive");
+    const fn = mode === "reconcile" ? hostAction.reconcile : hostAction.execute;
+    const startedAt = Date.now();
+    const failure = (message: string) =>
+      new WorkflowActionExecutionError(message, {
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+        signal: null,
+        durationMs: Date.now() - startedAt,
+        artifacts: [],
+        metadata: hostAction.metadata,
+      });
+
+    if (fn == null) {
+      throw failure(`Host action does not support ${mode}`);
+    }
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(
+        () => reject(new Error(`Host action timed out after ${options.timeoutMs}ms`)),
+        options.timeoutMs
+      );
+    });
+    try {
+      const ctx: HostWorkflowActionContext = {
+        cwd: options.cwd,
+        abortSignal: options.abortSignal,
+      };
+      const output = await Promise.race([fn(options.input, ctx), timeoutPromise]);
+      // Mirror the child-result bound so host actions can't blow up run storage.
+      const serialized = JSON.stringify(output ?? null);
+      assert(
+        serialized != null && serialized.length <= WORKFLOW_ACTION_RESULT_LIMIT_BYTES,
+        "Host action output must be JSON-serializable and within the result size limit"
+      );
+      // Round-trip through JSON so host outputs match child-action semantics
+      // (child results cross a JSON file): drops `undefined` properties that
+      // would otherwise fail strict JSON-value validation downstream.
+      const normalizedOutput: unknown = JSON.parse(serialized);
+      return {
+        output: normalizedOutput,
+        metadata: hostAction.metadata,
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+        durationMs: Date.now() - startedAt,
+        artifacts: [],
+      };
+    } catch (error) {
+      if (error instanceof WorkflowActionExecutionError) {
+        throw error;
+      }
+      throw failure(getErrorMessage(error));
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
   }
 
   private async runExecutableChild(

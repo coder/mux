@@ -322,7 +322,7 @@ function actionNameToRelativePath(name: string): string {
 
 function getBuiltInActionSource(name: string): string | null {
   return Object.prototype.hasOwnProperty.call(BUILT_IN_WORKFLOW_ACTION_SOURCES, name)
-    ? BUILT_IN_WORKFLOW_ACTION_SOURCES[name as keyof typeof BUILT_IN_WORKFLOW_ACTION_SOURCES]
+    ? BUILT_IN_WORKFLOW_ACTION_SOURCES[name]
     : null;
 }
 

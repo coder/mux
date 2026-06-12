@@ -29,6 +29,7 @@ import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import { MemoryService } from "@/node/services/memoryService";
 import { MemoryConsolidationService } from "@/node/services/memoryConsolidationService";
+import { createWorkspaceHostActions } from "@/node/services/workflows/workspaceHostActions";
 import { MemoryMetaService } from "@/node/services/memoryMeta";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
@@ -186,6 +187,12 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   );
   aiService.setTaskService(taskService);
   workspaceService.setTaskService(taskService);
+  // workspace.* workflow host actions: built once here (the scope that owns
+  // WorkspaceService + HistoryService + Config) and shared via AIService with
+  // every workflow runner (workflow tools and the ORPC workflow router).
+  aiService.setWorkflowHostActions(
+    createWorkspaceHostActions({ workspaceService, historyService, config })
+  );
 
   // Goal continuation bridge lives at the core scope so every codepath that
   // uses createCoreServices (mux run, mux server via ServiceContainer, tests)

@@ -1652,6 +1652,7 @@ export class Config {
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
               agentId: workspace.agentId,
+              tags: workspace.tags,
               workflowTask: workspace.workflowTask,
               bestOf: workspace.bestOf,
               taskStatus: workspace.taskStatus,
@@ -1767,6 +1768,7 @@ export class Config {
             // Preserve sub-project assignment from config.
             metadata.subProjectPath ??= workspace.subProjectPath;
             metadata.forkFamilyBaseName ??= workspace.forkFamilyBaseName;
+            metadata.tags ??= workspace.tags;
 
             if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
               workspace.aiSettingsByAgent = metadata.aiSettingsByAgent;
@@ -1823,6 +1825,7 @@ export class Config {
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
               agentId: workspace.agentId,
+              tags: workspace.tags,
               workflowTask: workspace.workflowTask,
               bestOf: workspace.bestOf,
               taskStatus: workspace.taskStatus,
@@ -1876,6 +1879,7 @@ export class Config {
             parentWorkspaceId: workspace.parentWorkspaceId,
             agentType: workspace.agentType,
             agentId: workspace.agentId,
+            tags: workspace.tags,
             workflowTask: workspace.workflowTask,
             bestOf: workspace.bestOf,
             taskStatus: workspace.taskStatus,
@@ -1947,6 +1951,7 @@ export class Config {
         parentWorkspaceId: metadata.parentWorkspaceId,
         agentType: metadata.agentType,
         agentId: metadata.agentId,
+        tags: metadata.tags,
         workflowTask: metadata.workflowTask,
         bestOf: metadata.bestOf,
         taskStatus: metadata.taskStatus,

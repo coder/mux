@@ -2411,8 +2411,15 @@ export class WorkspaceService extends EventEmitter {
     title?: string,
     runtimeConfig?: RuntimeConfig,
     subProjectPath?: string,
-    pendingAutoTitle?: boolean
+    pendingAutoTitle?: boolean,
+    tags?: Record<string, string>
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
+    if (tags != null) {
+      for (const [tagKey, tagValue] of Object.entries(tags)) {
+        assert(tagKey.trim().length > 0, "Workspace tag keys must be non-empty");
+        assert(typeof tagValue === "string", "Workspace tag values must be strings");
+      }
+    }
     const configSnapshot = this.config.loadConfigOrDefault();
     const requestedProjectPath = stripTrailingSlashes(projectPath);
     const requestedProjectConfig = configSnapshot.projects.get(requestedProjectPath);
@@ -2639,6 +2646,10 @@ export class WorkspaceService extends EventEmitter {
           createdAt: metadata.createdAt,
           runtimeConfig: finalRuntimeConfig,
           subProjectPath: effectiveSubProjectPath,
+          // Persist tags atomically with creation so orchestration loops that
+          // look workspaces up by tag (e.g. workspace.ensure) never observe a
+          // created-but-untagged window after a crash.
+          ...(tags != null && Object.keys(tags).length > 0 ? { tags } : {}),
           // Mirror /fork: when /new is invoked with a start message, defer title
           // selection until the first message can drive LLM-based generation.
           ...(pendingAutoTitle === true ? { pendingAutoTitle: true } : {}),
@@ -4462,6 +4473,56 @@ export class WorkspaceService extends EventEmitter {
         workspaceId,
         error: clearPendingResult.error,
       });
+    }
+  }
+
+  /**
+   * Merge programmatic tag updates into a workspace (null value deletes a key).
+   * Tags are not rendered in the UI; they exist for API/CLI/workflow-action
+   * callers that need stable workspace identity (e.g. reconcile loops).
+   */
+  async updateTags(
+    workspaceId: string,
+    updates: Record<string, string | null>
+  ): Promise<Result<{ tags: Record<string, string> }>> {
+    assert(Object.keys(updates).length > 0, "updateTags requires at least one tag update");
+    for (const tagKey of Object.keys(updates)) {
+      assert(tagKey.trim().length > 0, "Workspace tag keys must be non-empty");
+    }
+    try {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Workspace not found");
+      }
+
+      let finalTags: Record<string, string> = {};
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(workspace.projectPath);
+        const workspaceEntry = projectConfig?.workspaces.find((entry) => entry.id === workspaceId);
+        if (!workspaceEntry) {
+          return config;
+        }
+        const merged = { ...workspaceEntry.tags };
+        for (const [tagKey, tagValue] of Object.entries(updates)) {
+          if (tagValue === null) {
+            delete merged[tagKey];
+          } else {
+            merged[tagKey] = tagValue;
+          }
+        }
+        if (Object.keys(merged).length > 0) {
+          workspaceEntry.tags = merged;
+        } else {
+          delete workspaceEntry.tags;
+        }
+        finalTags = merged;
+        return config;
+      });
+
+      await this.emitCurrentWorkspaceMetadata(workspaceId);
+      return Ok({ tags: finalTags });
+    } catch (error) {
+      return Err(`Failed to update workspace tags: ${getErrorMessage(error)}`);
     }
   }
 
