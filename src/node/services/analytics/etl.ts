@@ -18,46 +18,44 @@ export const CHAT_FILE_NAME = "chat.jsonl";
  * (see HistoryService). Analytics must consider both files or pre-compaction
  * usage/events would silently disappear after the first rotation.
  *
- * Returns null when chat.jsonl does not exist (no workspace history). The
- * reported mtime is the max across both files so watermark staleness checks
- * see archive-only mutations too.
+ * Returns null only when NEITHER file exists (no workspace history) — an
+ * archive-only session must keep its analytics state. The reported mtime is
+ * the max across both files so watermark staleness checks see archive-only
+ * mutations too.
  */
 async function statSessionChatHistory(sessionDir: string): Promise<{ mtimeMs: number } | null> {
-  let mtimeMs: number;
-  try {
-    mtimeMs = (await fs.stat(path.join(sessionDir, CHAT_FILE_NAME))).mtimeMs;
-  } catch (error) {
-    if (isRecord(error) && error.code === "ENOENT") {
-      return null;
-    }
-    throw error;
-  }
-
-  try {
-    const archiveStat = await fs.stat(path.join(sessionDir, CHAT_ARCHIVE_FILE_NAME));
-    mtimeMs = Math.max(mtimeMs, archiveStat.mtimeMs);
-  } catch (error) {
-    if (!(isRecord(error) && error.code === "ENOENT")) {
-      throw error;
+  let mtimeMs: number | null = null;
+  for (const fileName of [CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME]) {
+    try {
+      const stat = await fs.stat(path.join(sessionDir, fileName));
+      mtimeMs = mtimeMs === null ? stat.mtimeMs : Math.max(mtimeMs, stat.mtimeMs);
+    } catch (error) {
+      if (!(isRecord(error) && error.code === "ENOENT")) {
+        throw error;
+      }
     }
   }
 
-  return { mtimeMs };
+  return mtimeMs === null ? null : { mtimeMs };
 }
 
-/** Read full workspace history: sealed archive (older) followed by chat.jsonl. */
+/**
+ * Read full workspace history: sealed archive (older) followed by chat.jsonl.
+ * Either file may be missing (uncompacted or archive-only sessions).
+ */
 async function readSessionChatHistoryContents(sessionDir: string): Promise<string> {
-  let archived = "";
-  try {
-    archived = await fs.readFile(path.join(sessionDir, CHAT_ARCHIVE_FILE_NAME), "utf-8");
-  } catch (error) {
-    if (!(isRecord(error) && error.code === "ENOENT")) {
-      throw error;
+  let contents = "";
+  for (const fileName of [CHAT_ARCHIVE_FILE_NAME, CHAT_FILE_NAME]) {
+    try {
+      contents += await fs.readFile(path.join(sessionDir, fileName), "utf-8");
+    } catch (error) {
+      if (!(isRecord(error) && error.code === "ENOENT")) {
+        throw error;
+      }
     }
   }
 
-  const active = await fs.readFile(path.join(sessionDir, CHAT_FILE_NAME), "utf-8");
-  return archived + active;
+  return contents;
 }
 const METADATA_FILE_NAME = "metadata.json";
 const SUBAGENT_TRANSCRIPTS_DIR_NAME = "subagent-transcripts";

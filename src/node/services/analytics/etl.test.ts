@@ -894,6 +894,23 @@ describe("ingestWorkspace", () => {
     );
     expect(rows.map((row) => Number(row.input_tokens))).toEqual([11, 33]);
   });
+
+  test("keeps analytics for archive-only sessions (missing chat.jsonl)", async () => {
+    const conn = await createTestConn();
+    const sessionDir = await createTempSessionDir();
+    const workspaceId = "ws-archive-only";
+
+    // An archive-only session (active file deleted/truncated) still has history;
+    // it must be ingested rather than treated as a removed workspace.
+    await fs.writeFile(
+      path.join(sessionDir, "chat-archive.jsonl"),
+      [makeUserLine(), makeAssistantLine({ sequence: 1, inputTokens: 11 })].join("\n") + "\n"
+    );
+
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/proj" });
+
+    expect(await queryEventCount(conn, workspaceId)).toBe(1);
+  });
 });
 
 describe("readPersistedWorkspaceHeadSignature", () => {
