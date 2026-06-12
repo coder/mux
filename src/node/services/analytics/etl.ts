@@ -19,24 +19,34 @@ export const CHAT_FILE_NAME = "chat.jsonl";
  * usage/events would silently disappear after the first rotation.
  *
  * Returns null only when NEITHER file exists (no workspace history) — an
- * archive-only session must keep its analytics state. The reported mtime is
- * the max across both files so watermark staleness checks see archive-only
- * mutations too.
+ * archive-only session must keep its analytics state.
+ *
+ * - `mtimeMs` is the max across both files; use it for "which copy is newer"
+ *   recency comparisons (rebuild dedup winners).
+ * - `changeSignal` additionally folds in each file's size and presence, so the
+ *   watermark staleness check still fires when a file disappears even if the
+ *   surviving file's mtime equals the previously stored max (e.g. same-tick
+ *   writes followed by deleting chat.jsonl).
  */
-async function statSessionChatHistory(sessionDir: string): Promise<{ mtimeMs: number } | null> {
+async function statSessionChatHistory(
+  sessionDir: string
+): Promise<{ mtimeMs: number; changeSignal: number } | null> {
   let mtimeMs: number | null = null;
+  let changeSignal = 0;
   for (const fileName of [CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME]) {
     try {
       const stat = await fs.stat(path.join(sessionDir, fileName));
       mtimeMs = mtimeMs === null ? stat.mtimeMs : Math.max(mtimeMs, stat.mtimeMs);
+      changeSignal += stat.mtimeMs + stat.size;
     } catch (error) {
       if (!(isRecord(error) && error.code === "ENOENT")) {
         throw error;
       }
+      changeSignal -= 1; // presence marker: distinguishes a missing file
     }
   }
 
-  return mtimeMs === null ? null : { mtimeMs };
+  return mtimeMs === null ? null : { mtimeMs, changeSignal };
 }
 
 /**
@@ -315,7 +325,7 @@ interface ParsedWorkspaceData {
   workspaceId: string;
   sessionDir: string;
   events: IngestEvent[];
-  stat: { mtimeMs: number };
+  stat: { mtimeMs: number; changeSignal: number };
   workspaceMeta: WorkspaceMeta;
   delegationRollupRaw: DelegationRollupRaw;
   archivedTranscripts: ParsedWorkspaceData[];
@@ -1069,10 +1079,11 @@ export async function ingestWorkspace(
   // Keep delegation rollups fresh even when chat.jsonl is unchanged.
   await ingestDelegationRollups(conn, workspaceId, sessionDir, workspaceMeta);
 
-  // Skip only when the combined mtime is unchanged. An mtime *regression* means
-  // a file disappeared (e.g. chat.jsonl deleted leaving the older archive), and
-  // ingestion must re-run so the rebuild path can drop stale rows.
-  if (stat.mtimeMs === watermark.lastModified) {
+  // Skip only when the combined change signal (mtimes + sizes + presence) is
+  // unchanged. Any append/rewrite/rotation/file-deletion changes the signal, so
+  // ingestion re-runs and the rebuild path can drop stale rows — even when the
+  // surviving file's mtime equals the previously stored value.
+  if (stat.changeSignal === watermark.lastModified) {
     return;
   }
 
@@ -1145,7 +1156,7 @@ export async function ingestWorkspace(
 
     await writeWatermark(conn, workspaceId, {
       lastSequence: parsedMaxSequence ?? -1,
-      lastModified: stat.mtimeMs,
+      lastModified: stat.changeSignal,
     });
   } else {
     let maxSequence = watermark.lastSequence;
@@ -1166,7 +1177,7 @@ export async function ingestWorkspace(
 
     await writeWatermark(conn, workspaceId, {
       lastSequence: maxSequence,
-      lastModified: stat.mtimeMs,
+      lastModified: stat.changeSignal,
     });
   }
 
@@ -1538,7 +1549,7 @@ export async function parseWorkspaceFromDisk(
     workspaceId,
     sessionDir,
     events,
-    stat: { mtimeMs: stat.mtimeMs },
+    stat: { mtimeMs: stat.mtimeMs, changeSignal: stat.changeSignal },
     workspaceMeta,
     delegationRollupRaw,
     archivedTranscripts,
@@ -1684,7 +1695,9 @@ export async function rebuildAll(
           const maxSequence = getMaxSequence(workspace.events) ?? -1;
           await writeWatermark(conn, workspace.workspaceId, {
             lastSequence: maxSequence,
-            lastModified: workspace.stat.mtimeMs,
+            // Watermark staleness compares against the combined change signal,
+            // not the raw mtime (which is only used for dedup-winner recency).
+            lastModified: workspace.stat.changeSignal,
           });
 
           await writeDelegationRollupsFromParsed(
