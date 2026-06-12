@@ -239,6 +239,7 @@ export function MemoryBrowser(props: MemoryBrowserProps) {
       {props.workspaceId !== null && (
         <ConsolidationFooter
           workspaceId={props.workspaceId}
+          refreshTick={refreshTick}
           onConsolidated={() => setRefreshTick((tick) => tick + 1)}
         />
       )}
@@ -474,7 +475,18 @@ function MemoryFileRow(props: MemoryFileRowProps) {
  * "last consolidated" line + manual run button. Self-contained — fetches its
  * own status so the file list above never re-renders on status polls.
  */
-function ConsolidationFooter(props: { workspaceId: string; onConsolidated: () => void }) {
+function ConsolidationFooter(props: {
+  workspaceId: string;
+  /**
+   * Parent's memory-change tick: dream runs triggered outside this footer
+   * (/dream, compaction, archive) edit memory files, which bumps the tick via
+   * the onChange subscription — re-fetch the status line on each bump so
+   * "last consolidated" stays live (found via dogfooding: a /dream run left
+   * the footer on "Never consolidated").
+   */
+  refreshTick: number;
+  onConsolidated: () => void;
+}) {
   const { api } = useAPI();
   const enabled = useExperimentValue(EXPERIMENT_IDS.MEMORY_CONSOLIDATION);
   const [record, setRecord] = useState<MemoryConsolidationRecordPayload | null>(null);
@@ -495,7 +507,7 @@ function ConsolidationFooter(props: { workspaceId: string; onConsolidated: () =>
         // Status is decorative; failures stay silent.
       });
     return () => controller.abort();
-  }, [api, enabled, props.workspaceId, running]);
+  }, [api, enabled, props.workspaceId, props.refreshTick]);
 
   if (!enabled || !api) return null;
 
