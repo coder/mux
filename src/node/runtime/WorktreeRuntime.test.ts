@@ -73,10 +73,12 @@ describe("WorktreeRuntime workspacePath override", () => {
     const projectPath = path.join(rootDir, "repo");
 
     await fs.mkdir(projectPath, { recursive: true });
-    execSync("git init -b main && git commit --allow-empty -m init", {
-      cwd: projectPath,
-      stdio: "ignore",
-    });
+    execSync("git init -b main", { cwd: projectPath, stdio: "ignore" });
+    // CI runners have no global git identity/signing config.
+    execSync('git config user.email "test@example.com"', { cwd: projectPath, stdio: "ignore" });
+    execSync('git config user.name "test"', { cwd: projectPath, stdio: "ignore" });
+    execSync("git config commit.gpgsign false", { cwd: projectPath, stdio: "ignore" });
+    execSync("git commit --allow-empty -m init", { cwd: projectPath, stdio: "ignore" });
 
     const nullLogger = {
       logStep: () => undefined,
