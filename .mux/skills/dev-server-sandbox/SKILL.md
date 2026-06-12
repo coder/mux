@@ -28,13 +28,13 @@ make dev-server-sandbox
   - Each file is seeded independently from the first root that has it
     (`$MUX_ROOT`, then `~/.mux-dev`, then `~/.mux`), so a root with only
     `config.json` doesn't drop provider config
-- Provider credential env vars (API keys, `*_BASE_URL`, etc.) are stripped from
-  the server's env when they could silently override or mismatch the intended
-  setup: all of them with `--clean-providers` (including Bedrock's `AWS_REGION`
-  and `AWS_BEARER_TOKEN_BEDROCK`; shared AWS credentials like `AWS_PROFILE` are
-  kept), and those belonging to providers configured in the seeded
-  `providers.jsonc` otherwise (so the seeded config is the single source of
-  truth; env vars for unconfigured providers are kept)
+- Provider credential env vars are stripped from the server's env when they
+  could silently override or mismatch the intended setup: all of them with
+  `--clean-providers` (including Bedrock's `AWS_REGION` and
+  `AWS_BEARER_TOKEN_BEDROCK`; shared AWS credentials like `AWS_PROFILE` are
+  kept); otherwise only `*_BASE_URL` env vars that would shadow a seeded
+  `providers.jsonc` entry that has an `apiKey` but no explicit `baseUrl`
+  (API key env vars are always kept so env-key fallback still works)
 - Picks free ports (`BACKEND_PORT`, `VITE_PORT`)
 - Disables tutorials by default inside the sandbox (`MUX_ENABLE_TUTORIALS_IN_SANDBOX=1` opts back in)
 - Allows all hosts (`VITE_ALLOWED_HOSTS=all`) so it works behind port-forwarding domains

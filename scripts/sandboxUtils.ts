@@ -92,14 +92,10 @@ export function chooseSeedSources(): SeedSources {
  * shared with unrelated AWS tooling, and Bedrock has no key+baseUrl pairing
  * mismatch risk. They are stripped only in --clean-providers mode (see
  * BEDROCK_CLEAN_ENV_VARS).
- *
- * @param providers - when given, only env vars belonging to these providers
- *   (Azure vars count as "openai"); when omitted, all known provider vars.
  */
-function providerCredentialEnvVarNames(providers?: ReadonlySet<string>): string[] {
+function providerCredentialEnvVarNames(): string[] {
   const names = new Set<string>();
-  for (const [provider, mapping] of Object.entries(PROVIDER_ENV_VARS)) {
-    if (providers && !providers.has(provider)) continue;
+  for (const mapping of Object.values(PROVIDER_ENV_VARS)) {
     for (const key of [
       ...(mapping.apiKey ?? []),
       ...(mapping.baseUrl ?? []),
@@ -108,10 +104,8 @@ function providerCredentialEnvVarNames(providers?: ReadonlySet<string>): string[
       names.add(key);
     }
   }
-  if (!providers || providers.has("openai")) {
-    for (const key of Object.values(AZURE_OPENAI_ENV_VARS)) {
-      names.add(key);
-    }
+  for (const key of Object.values(AZURE_OPENAI_ENV_VARS)) {
+    names.add(key);
   }
   return [...names];
 }
@@ -129,19 +123,51 @@ const BEDROCK_CLEAN_ENV_VARS: string[] = [
   BEDROCK_AUTH_ENV_VARS.bearerToken,
 ];
 
-/** Provider names configured in a providers.jsonc file (empty set on parse failure). */
-function readConfiguredProviderNames(providersJsoncPath: string): Set<string> {
+/**
+ * Base-URL env vars shadowed by a seeded providers.jsonc.
+ *
+ * mux resolves apiKey and baseUrl independently (config -> file -> env each),
+ * so the dangerous combination is: the seeded config supplies the key while a
+ * *_BASE_URL env var supplies the URL (e.g. a Coder AI-bridge proxy that the
+ * config key cannot authenticate against). Only that combination is stripped:
+ * - entry has apiKey/apiKeyFile but no baseUrl -> strip that provider's
+ *   base-URL env vars so the key pairs with the provider default.
+ * - entry without a key keeps all env vars (env-key fallback for option-only
+ *   stubs like `{ "openai": { "models": [...] } }` is a supported pattern).
+ * - entry with an explicit baseUrl needs nothing (config wins both axes).
+ */
+function shadowedBaseUrlEnvVarNames(providersJsoncPath: string): string[] {
+  let parsed: unknown;
   try {
-    const raw = fs.readFileSync(providersJsoncPath, "utf-8");
-    const parsed: unknown = jsonc.parse(raw);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return new Set();
-    }
-    return new Set(Object.keys(parsed));
+    parsed = jsonc.parse(fs.readFileSync(providersJsoncPath, "utf-8"));
   } catch (err) {
     console.warn(`Failed to read providers.jsonc at ${providersJsoncPath}:`, err);
-    return new Set();
+    return [];
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return [];
+  }
+
+  const hasString = (entry: Record<string, unknown>, key: string): boolean => {
+    const value = entry[key];
+    return typeof value === "string" && value.trim() !== "";
+  };
+
+  const names = new Set<string>();
+  for (const [provider, mapping] of Object.entries(PROVIDER_ENV_VARS)) {
+    if (!mapping.baseUrl) continue;
+    const entry = (parsed as Record<string, unknown>)[provider];
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
+    const record = entry as Record<string, unknown>;
+    const hasKey = hasString(record, "apiKey") || hasString(record, "apiKeyFile");
+    const hasBaseUrl = hasString(record, "baseUrl") || hasString(record, "baseURL");
+    if (hasKey && !hasBaseUrl) {
+      for (const name of mapping.baseUrl) {
+        names.add(name);
+      }
+    }
+  }
+  return [...names];
 }
 
 /**
@@ -153,11 +179,9 @@ function readConfiguredProviderNames(providersJsoncPath: string): Set<string> {
  *
  * - `--clean-providers`: strip all provider credential env vars so the sandbox
  *   is actually clean (no silent env fallback).
- * - providers.jsonc seeded: strip env vars for the providers it configures,
- *   making the seeded config the single source of truth for them (otherwise a
- *   config entry with an apiKey but no baseUrl still inherits *_BASE_URL from
- *   env). Env vars for providers *not* in the file are kept so env-only
- *   provider setups keep working.
+ * - providers.jsonc seeded: strip only the base-URL env vars that would shadow
+ *   a config-supplied key (see shadowedBaseUrlEnvVarNames). API key env vars
+ *   are always kept so option-only config stubs still resolve env keys.
  * - providers.jsonc not seeded (none found): keep env vars (env-only setups
  *   are legitimate) but warn loudly about the fallback + base-URL pairing risk.
  */
@@ -182,13 +206,14 @@ export function sanitizeSandboxProviderEnv(options: {
   }
 
   if (options.seededProvidersPath !== null) {
-    const configuredProviders = readConfiguredProviderNames(options.seededProvidersPath);
-    const present = presentVars(providerCredentialEnvVarNames(configuredProviders));
+    const present = presentVars(shadowedBaseUrlEnvVarNames(options.seededProvidersPath));
     for (const name of present) {
       delete env[name];
     }
     if (present.length > 0) {
-      console.log(`  Stripped env vars shadowed by seeded providers.jsonc: ${present.join(", ")}`);
+      console.log(
+        `  Stripped base-URL env vars shadowing seeded providers.jsonc keys: ${present.join(", ")}`
+      );
     }
     return env;
   }
