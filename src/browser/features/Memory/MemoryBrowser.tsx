@@ -183,7 +183,9 @@ export function MemoryBrowser(props: MemoryBrowserProps) {
   const visibleScopes = scopes.filter((scope) => files?.some((file) => file.scope === scope));
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    // h-full fills block parents (sidebar tabpanel); flex-1 fills flex parents
+    // (Settings → Memory). Each is inert in the other context.
+    <div className="flex h-full min-h-0 flex-1 flex-col">
       {error !== null && (
         <div className="text-error px-3 py-2 text-xs" role="alert">
           {error}
@@ -199,17 +201,33 @@ export function MemoryBrowser(props: MemoryBrowserProps) {
           </div>
         )}
         <div className="flex flex-col gap-3">
-          {visibleScopes.map((scope) => (
-            <ScopeSection
-              key={scope}
-              title={SCOPE_LABELS[scope]}
-              files={(files ?? []).filter((file) => file.scope === scope)}
-              agentEditedPaths={agentEditedPaths}
-              onOpen={openFile}
-              onTogglePin={(file) => void handleTogglePin(file)}
-              onRequestDelete={setDeleteTarget}
-            />
-          ))}
+          {visibleScopes.map((scope) => {
+            const scopeFiles = (files ?? []).filter((file) => file.scope === scope);
+            // With a single configured scope (Settings → Memory) the page
+            // heading already names it, so the collapsible scope card would
+            // just double the chrome — render the file tree directly.
+            return scopes.length === 1 ? (
+              <div key={scope} className="flex flex-col gap-px">
+                <TreeNodes
+                  dir={buildTree(scopeFiles)}
+                  agentEditedPaths={agentEditedPaths}
+                  onOpen={openFile}
+                  onTogglePin={(file) => void handleTogglePin(file)}
+                  onRequestDelete={setDeleteTarget}
+                />
+              </div>
+            ) : (
+              <ScopeSection
+                key={scope}
+                title={SCOPE_LABELS[scope]}
+                files={scopeFiles}
+                agentEditedPaths={agentEditedPaths}
+                onOpen={openFile}
+                onTogglePin={(file) => void handleTogglePin(file)}
+                onRequestDelete={setDeleteTarget}
+              />
+            );
+          })}
         </div>
       </div>
       {deleteTarget !== null && (

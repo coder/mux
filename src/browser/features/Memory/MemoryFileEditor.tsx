@@ -89,7 +89,9 @@ export function MemoryFileEditor(props: MemoryFileEditorProps) {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    // h-full fills block parents (sidebar tabpanel); flex-1 fills flex parents
+    // (Settings → Memory). Each is inert in the other context.
+    <div className="flex h-full min-h-0 flex-1 flex-col">
       <div className="border-border-light flex items-center gap-2 border-b px-2 py-2">
         <RowActionButton aria-label="Back to memory list" onClick={props.onBack}>
           <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
@@ -131,8 +133,8 @@ export function MemoryFileEditor(props: MemoryFileEditorProps) {
       ) : (
         <textarea
           ref={textareaRef}
-          // min-h floor keeps the editor usable when the parent has no fixed
-          // height (Settings → Memory); flex-1 fills the sidebar tab.
+          // flex-1 fills the available height; the min-h floor keeps the
+          // editor usable on very short viewports.
           className="min-h-48 flex-1 resize-none bg-transparent p-3 font-mono text-xs outline-none"
           aria-label="Memory file content"
           value={draft}

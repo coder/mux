@@ -311,8 +311,10 @@ export function SettingsPage(props: SettingsPageProps) {
             </Button>
           </div>
           <div className="flex-1 overflow-y-auto p-4 md:p-6">
-            {/* Keep settings content width bounded so long forms remain readable on wide screens. */}
-            <div className="w-full max-w-4xl">
+            {/* Keep settings content width bounded so long forms remain readable on wide screens.
+                min-h-full + flex-col lets full-height sections (Settings → Memory editor) grow to
+                the bottom via flex-1 while content-sized sections keep their natural height. */}
+            <div className="flex min-h-full w-full max-w-4xl flex-col">
               {onboardingPause.paused && (
                 <div className="bg-accent/10 border-accent/30 text-foreground mb-3 flex items-center justify-between rounded-md border px-3 py-2 text-sm">
                   <span>Setup is paused while you configure providers.</span>

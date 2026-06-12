@@ -8,7 +8,9 @@ import { MemoryBrowser } from "@/browser/features/Memory/MemoryBrowser";
  */
 export function MemorySection() {
   return (
-    <div className="flex flex-col gap-4">
+    // flex-1/min-h-0 lets the file editor (and the browser list) fill the
+    // remaining settings-page height instead of collapsing to its min-height.
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
       <div>
         <h3 className="text-foreground mb-1 text-sm font-medium">Global Memories</h3>
         <p className="text-muted text-xs">
@@ -16,7 +18,11 @@ export function MemorySection() {
           memories live in the Memory tab of each workspace.
         </p>
       </div>
-      <MemoryBrowser workspaceId={null} scopes={["global"]} />
+      {/* Bordered panel so the editable area is visually distinct from the
+          settings page background (the sidebar Memory tab has its own chrome). */}
+      <div className="border-border-light flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border">
+        <MemoryBrowser workspaceId={null} scopes={["global"]} />
+      </div>
     </div>
   );
 }
