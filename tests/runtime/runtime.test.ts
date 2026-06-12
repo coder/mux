@@ -1413,6 +1413,66 @@ describeIntegration("Runtime integration tests", () => {
       }
     }, 60000);
 
+    test("deleteWorkspace leaves an unmanaged source checkout's HEAD untouched", async () => {
+      const runtime = createSSHRuntime();
+      const projectName = `wt-del-unmanaged-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const projectPath = `/some/path/${projectName}`;
+      const layout = getLayout(projectPath);
+      const sourceCheckoutPath = `${layout.projectRoot}/unmanaged-src`;
+      const workspaceName = "doomed-wt";
+      const workspacePath = getRemoteWorkspacePath(layout, workspaceName);
+
+      try {
+        // A real (non-Mux) checkout whose worktree happens to live at the
+        // canonical workspace path. resolveWorktreeBaseRepoPath() resolves the
+        // workspace's git-common-dir to this checkout's .git, so deletion
+        // cleanup must not rewrite the checkout's HEAD.
+        await execSSH(
+          runtime,
+          [
+            `mkdir -p "${sourceCheckoutPath}"`,
+            `cd "${sourceCheckoutPath}"`,
+            `git init -b main`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "x" > x.txt && git add x.txt && git commit -m "init"`,
+            `git worktree add "${workspacePath}" -b ${workspaceName}`,
+          ].join(" && ")
+        );
+
+        const headCommitBefore = await execSSH(
+          runtime,
+          `git -C "${sourceCheckoutPath}" rev-parse HEAD`
+        );
+
+        const deleteResult = await runtime.deleteWorkspace(projectPath, workspaceName, true);
+        expect(deleteResult.success).toBe(true);
+
+        const afterCheck = await execSSH(
+          runtime,
+          `test -d "${workspacePath}" && echo "exists" || echo "missing"`
+        );
+        expect(afterCheck.stdout.trim()).toBe("missing");
+
+        // The source checkout must still be on its own branch with a
+        // resolvable HEAD — not stranded on Mux's unborn internal branch.
+        const headRefAfter = await execSSH(
+          runtime,
+          `git -C "${sourceCheckoutPath}" symbolic-ref HEAD`
+        );
+        expect(headRefAfter.stdout.trim()).toBe("refs/heads/main");
+
+        const headCommitAfter = await execSSH(
+          runtime,
+          `git -C "${sourceCheckoutPath}" rev-parse --verify HEAD`
+        );
+        expect(headCommitAfter.exitCode).toBe(0);
+        expect(headCommitAfter.stdout.trim()).toBe(headCommitBefore.stdout.trim());
+      } finally {
+        await execSSH(runtime, `rm -rf "${layout.projectRoot}"`);
+      }
+    }, 60000);
+
     test("deleteWorkspace still works for legacy full-clone workspaces", async () => {
       const runtime = createSSHRuntime();
       const projectName = `wt-del-legacy-${Date.now()}-${Math.random().toString(36).substring(7)}`;

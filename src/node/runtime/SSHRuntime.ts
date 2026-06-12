@@ -58,6 +58,7 @@ import {
 import {
   buildRemoteProjectLayout,
   getRemoteWorkspacePath,
+  REMOTE_BASE_REPO_DIR,
   type RemoteProjectLayout,
 } from "./remoteProjectLayout";
 import { streamToString, shescape } from "./streamUtils";
@@ -3314,9 +3315,12 @@ export class SSHRuntime extends RemoteRuntime {
       if (isWorktree) {
         // Worktree: use `git worktree remove` against the actual common git dir for this
         // workspace so upgraded legacy SSH worktrees keep their original base repo metadata.
-        const baseRepoPathArg = expandTildeForSSH(
-          await this.resolveWorktreeBaseRepoPath(projectPath, deletedPath, abortSignal)
+        const baseRepoPath = await this.resolveWorktreeBaseRepoPath(
+          projectPath,
+          deletedPath,
+          abortSignal
         );
+        const baseRepoPathArg = expandTildeForSSH(baseRepoPath);
         const removeCmd = force
           ? `${nhp}git -C ${baseRepoPathArg} worktree remove --force ${this.quoteForRemote(deletedPath)}`
           : `${nhp}git -C ${baseRepoPathArg} worktree remove ${this.quoteForRemote(deletedPath)}`;
@@ -3356,10 +3360,25 @@ export class SSHRuntime extends RemoteRuntime {
         // Skip protected trunk branch names to avoid accidental deletion.
         const PROTECTED_BRANCHES = ["main", "master", "trunk", "develop", "default"];
         if (branchToDelete && !PROTECTED_BRANCHES.includes(branchToDelete)) {
+          // HEAD neutralization migrates legacy *Mux-owned* base repos whose
+          // HEAD still points at a user branch (the Graphite-poisoning state)
+          // so `branch -D` keeps Git's native checked-out-branch guard instead
+          // of refusing because the bare repo "has the branch checked out".
+          // The resolved common git dir is workspace-derived, though: a
+          // hand-crafted or legacy worktree can resolve to a real checkout's
+          // `.git`, and rewriting that repo's HEAD would strand the user's
+          // checkout on the unborn internal branch. Managed base repos
+          // (canonical and legacy hashed layouts alike) are always named
+          // `.mux-base.git`, so scope the HEAD rewrite to them.
+          const isManagedBaseRepo = path.posix.basename(baseRepoPath) === REMOTE_BASE_REPO_DIR;
           await execBuffered(
             this,
             [
-              `git --git-dir=${baseRepoPathArg} symbolic-ref HEAD ${shescape.quote(BASE_REPO_UNBORN_HEAD_REF)} 2>/dev/null || true`,
+              ...(isManagedBaseRepo
+                ? [
+                    `git --git-dir=${baseRepoPathArg} symbolic-ref HEAD ${shescape.quote(BASE_REPO_UNBORN_HEAD_REF)} 2>/dev/null || true`,
+                  ]
+                : []),
               `${nhp}git -C ${baseRepoPathArg} branch -D ${shescape.quote(branchToDelete)} 2>/dev/null || true`,
             ].join("\n"),
             { cwd: "/tmp", timeout: 10 }
