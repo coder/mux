@@ -67,6 +67,14 @@ import { streamToString, shescape } from "./streamUtils";
  *  refs/heads/* so they don't collide with branches checked out in worktrees. */
 const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
 /**
+ * Canonical message thrown when an SSH operation is aborted. Several call sites
+ * compare against this exact value (e.g. `errorMsg === OPERATION_ABORTED_ERROR`),
+ * so the thrown and compared strings must stay identical — keep them as one const.
+ * Mirrors SSH_OPERATION_ABORTED_ERROR / SSH2_OPERATION_ABORTED_ERROR in the
+ * sibling connection-pool modules.
+ */
+const OPERATION_ABORTED_ERROR = "Operation aborted";
+/**
  * The shared SSH base repo is a bare common git dir, not a checkout. Keep its
  * HEAD branch-shaped but unborn until a real base commit is available, then
  * detach HEAD at that commit. In both states, `git worktree list --porcelain`
@@ -178,7 +186,7 @@ async function enqueueProjectSync(
     ? Promise.race([
         waitForPrevious,
         new Promise<never>((_, reject) => {
-          onAbort = () => reject(new Error("Operation aborted"));
+          onAbort = () => reject(new Error(OPERATION_ABORTED_ERROR));
           if (abortSignal.aborted) {
             onAbort();
             return;
@@ -191,7 +199,7 @@ async function enqueueProjectSync(
   try {
     await waitForTurn;
     if (abortSignal?.aborted) {
-      throw new Error("Operation aborted");
+      throw new Error(OPERATION_ABORTED_ERROR);
     }
     await fn();
   } finally {
@@ -658,7 +666,7 @@ export class SSHRuntime extends RemoteRuntime {
     abortSignal?: AbortSignal
   ): Promise<void> {
     if (abortSignal?.aborted) {
-      throw new Error("Operation aborted");
+      throw new Error(OPERATION_ABORTED_ERROR);
     }
 
     // `git config --unset-all` exits 0 (removed) or 5 (key/section absent);
@@ -699,7 +707,7 @@ export class SSHRuntime extends RemoteRuntime {
     options: { waitForGc?: boolean } = {}
   ): Promise<void> {
     if (abortSignal?.aborted) {
-      throw new Error("Operation aborted");
+      throw new Error(OPERATION_ABORTED_ERROR);
     }
 
     log.info(repairContext);
@@ -820,7 +828,7 @@ export class SSHRuntime extends RemoteRuntime {
     abortSignal?: AbortSignal
   ): Promise<void> {
     if (abortSignal?.aborted) {
-      throw new Error("Operation aborted");
+      throw new Error(OPERATION_ABORTED_ERROR);
     }
 
     try {
@@ -840,7 +848,7 @@ export class SSHRuntime extends RemoteRuntime {
       );
     } catch (healthError) {
       const healthErrorMsg = getErrorMessage(healthError);
-      if (abortSignal?.aborted || healthErrorMsg === "Operation aborted") {
+      if (abortSignal?.aborted || healthErrorMsg === OPERATION_ABORTED_ERROR) {
         throw healthError instanceof Error ? healthError : new Error(healthErrorMsg);
       }
       log.warn(`Shared base repository maintenance preflight failed: ${healthErrorMsg}`);
@@ -909,7 +917,7 @@ export class SSHRuntime extends RemoteRuntime {
     abortSignal?: AbortSignal
   ): Promise<void> {
     if (abortSignal?.aborted) {
-      throw new Error("Operation aborted");
+      throw new Error(OPERATION_ABORTED_ERROR);
     }
 
     await this.transport.acquireConnection({
@@ -918,7 +926,7 @@ export class SSHRuntime extends RemoteRuntime {
     });
 
     if (abortSignal?.aborted) {
-      throw new Error("Operation aborted");
+      throw new Error(OPERATION_ABORTED_ERROR);
     }
 
     initLogger.logStep("Repairing shared base repository object cache...");
@@ -975,7 +983,7 @@ export class SSHRuntime extends RemoteRuntime {
       }
 
       if (abortSignal?.aborted) {
-        throw new Error("Operation aborted");
+        throw new Error(OPERATION_ABORTED_ERROR);
       }
 
       if (gitExitCode !== 0) {
@@ -1053,7 +1061,7 @@ export class SSHRuntime extends RemoteRuntime {
     abortSignal?: AbortSignal
   ): Promise<void> {
     if (abortSignal?.aborted) {
-      throw new Error("Operation aborted");
+      throw new Error(OPERATION_ABORTED_ERROR);
     }
 
     try {
@@ -1065,7 +1073,7 @@ export class SSHRuntime extends RemoteRuntime {
       );
     } catch (cleanupError) {
       const cleanupErrorMsg = getErrorMessage(cleanupError);
-      if (abortSignal?.aborted || cleanupErrorMsg === "Operation aborted") {
+      if (abortSignal?.aborted || cleanupErrorMsg === OPERATION_ABORTED_ERROR) {
         throw cleanupError instanceof Error ? cleanupError : new Error(cleanupErrorMsg);
       }
       log.warn(`Remote sync retry cleanup failed: ${cleanupErrorMsg}`);
@@ -2247,7 +2255,7 @@ export class SSHRuntime extends RemoteRuntime {
     abortSignal?: AbortSignal
   ): Promise<void> {
     if (abortSignal?.aborted) {
-      throw new Error("Operation aborted");
+      throw new Error(OPERATION_ABORTED_ERROR);
     }
 
     const layout = this.getProjectLayout(projectPath);
@@ -2264,7 +2272,7 @@ export class SSHRuntime extends RemoteRuntime {
       let forceNoThinNextAttempt = false;
       for (let attempt = 1; attempt <= PROJECT_SYNC_MAX_ATTEMPTS; attempt++) {
         if (abortSignal?.aborted) {
-          throw new Error("Operation aborted");
+          throw new Error(OPERATION_ABORTED_ERROR);
         }
 
         try {
@@ -2274,7 +2282,7 @@ export class SSHRuntime extends RemoteRuntime {
           return;
         } catch (error) {
           const errorMsg = getErrorMessage(error);
-          if (abortSignal?.aborted || errorMsg === "Operation aborted") {
+          if (abortSignal?.aborted || errorMsg === OPERATION_ABORTED_ERROR) {
             throw error instanceof Error ? error : new Error(errorMsg);
           }
           if (
@@ -2298,7 +2306,7 @@ export class SSHRuntime extends RemoteRuntime {
             abortSignal
           );
           if (abortSignal?.aborted) {
-            throw new Error("Operation aborted");
+            throw new Error(OPERATION_ABORTED_ERROR);
           }
           initLogger.logStep(
             `Sync failed, retrying (attempt ${attempt + 1}/${PROJECT_SYNC_MAX_ATTEMPTS})...`
@@ -2317,7 +2325,7 @@ export class SSHRuntime extends RemoteRuntime {
     options: { forceNoThin?: boolean } = {}
   ): Promise<void> {
     if (abortSignal?.aborted) {
-      throw new Error("Operation aborted");
+      throw new Error(OPERATION_ABORTED_ERROR);
     }
 
     const currentSnapshotPath = layout.currentSnapshotPath;
