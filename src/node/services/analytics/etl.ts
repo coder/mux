@@ -1069,7 +1069,10 @@ export async function ingestWorkspace(
   // Keep delegation rollups fresh even when chat.jsonl is unchanged.
   await ingestDelegationRollups(conn, workspaceId, sessionDir, workspaceMeta);
 
-  if (stat.mtimeMs <= watermark.lastModified) {
+  // Skip only when the combined mtime is unchanged. An mtime *regression* means
+  // a file disappeared (e.g. chat.jsonl deleted leaving the older archive), and
+  // ingestion must re-run so the rebuild path can drop stale rows.
+  if (stat.mtimeMs === watermark.lastModified) {
     return;
   }
 
