@@ -8,6 +8,7 @@ import { hashWorkflowActionSource, WorkflowActionRegistry } from "./WorkflowActi
 import {
   buildWorkspaceHostActionStubSources,
   createWorkspaceHostActions,
+  deriveEnsureBranchName,
   WORK_ITEM_TAG_KEY,
   type WorkspaceHostActionServices,
 } from "./workspaceHostActions";
@@ -39,12 +40,20 @@ interface FakeServiceOptions {
   workspaces?: FrontendWorkspaceMetadata[];
   history?: MuxMessage[];
   runtimeState?: { isBusy: boolean; hasQueuedMessages: boolean; isInitializing: boolean };
+  /** Project trust for "/proj" (default true; ensure refuses untrusted projects). */
+  projectTrusted?: boolean;
+  /** Artificial delay inside create() to widen race windows in tests. */
+  createDelayMs?: number;
 }
 
 function fakeServices(options: FakeServiceOptions = {}) {
+  // Stateful: create() appends, so concurrent-ensure tests observe the
+  // workspace created by an earlier (serialized) ensure.
+  const knownWorkspaces: FrontendWorkspaceMetadata[] = [...(options.workspaces ?? [])];
+  let createSequence = 0;
   const calls = {
     create: mock(
-      (
+      async (
         _projectPath: string,
         branchName: string | undefined,
         _trunkBranch: string | undefined,
@@ -53,17 +62,26 @@ function fakeServices(options: FakeServiceOptions = {}) {
         _subProjectPath?: string,
         _pendingAutoTitle?: boolean,
         tags?: Record<string, string>
-      ) =>
-        Promise.resolve(
-          Ok({ metadata: workspaceMeta({ id: "created-ws", name: branchName ?? "x", tags }) })
-        )
+      ) => {
+        if (options.createDelayMs != null) {
+          await new Promise((resolve) => setTimeout(resolve, options.createDelayMs));
+        }
+        createSequence += 1;
+        const metadata = workspaceMeta({
+          id: `created-ws${createSequence > 1 ? `-${createSequence}` : ""}`,
+          name: branchName ?? "x",
+          tags,
+        });
+        knownWorkspaces.push(metadata);
+        return Ok({ metadata });
+      }
     ),
     sendMessage: mock(() => Promise.resolve(Ok(undefined))),
     archive: mock(() => Promise.resolve(Ok({ archived: true }))),
   };
   const services: WorkspaceHostActionServices = {
     workspaceService: {
-      list: () => Promise.resolve(options.workspaces ?? []),
+      list: () => Promise.resolve(knownWorkspaces),
       create: calls.create as unknown as WorkspaceHostActionServices["workspaceService"]["create"],
       sendMessage:
         calls.sendMessage as unknown as WorkspaceHostActionServices["workspaceService"]["sendMessage"],
@@ -83,11 +101,12 @@ function fakeServices(options: FakeServiceOptions = {}) {
     },
     config: {
       loadConfigOrDefault: () => ({
-        projects: new Map(),
+        projects: new Map([["/proj", { workspaces: [], trusted: options.projectTrusted ?? true }]]),
         defaultModel: "test:default-model",
       }),
+      getAllWorkspaceMetadata: () => Promise.resolve(knownWorkspaces),
       findWorkspace: (workspaceId: string) =>
-        (options.workspaces ?? []).some((w) => w.id === workspaceId)
+        knownWorkspaces.some((w) => w.id === workspaceId)
           ? {
               workspacePath: "/x",
               projectPath: "/proj",
@@ -98,6 +117,7 @@ function fakeServices(options: FakeServiceOptions = {}) {
             }
           : null,
     },
+    awaitIdlePollMs: 10,
   };
   return { services, calls };
 }
@@ -191,6 +211,109 @@ describe("WorkflowActionRunner host dispatch", () => {
     );
   });
 
+  /** Host map with workspace.list's metadata but a custom execute, for lifecycle tests. */
+  function customHostMap(execute: HostWorkflowAction["execute"]) {
+    const { services } = fakeServices();
+    const real = getAction(createWorkspaceHostActions(services), "workspace.list");
+    return new Map<string, HostWorkflowAction>([
+      ["workspace.list", { metadata: real.metadata, execute }],
+    ]);
+  }
+
+  async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+    const startedAt = Date.now();
+    while (!predicate()) {
+      if (Date.now() - startedAt > timeoutMs) throw new Error("waitFor timed out");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+
+  test("step timeout fails the step and the composed signal stops in-action loops", async () => {
+    using artifactDir = new DisposableTempDir("wha-artifacts");
+    let sawAbort = false;
+    const runner = new WorkflowActionRunner({
+      hostActions: customHostMap(async (_input, hostCtx) => {
+        while (hostCtx.abortSignal?.aborted !== true) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        sawAbort = true;
+        return {};
+      }),
+    });
+    await expectRejects(
+      runner.execute(stubResolvedAction("workspace.list", "built-in"), {
+        artifactDir: artifactDir.path,
+        cwd: "/tmp",
+        input: {},
+        timeoutMs: 40,
+      }),
+      /timed out after 40ms/
+    );
+    // Without composing the timeout into ctx.abortSignal, this loop would
+    // keep polling long after the step was recorded as failed.
+    await waitFor(() => sawAbort);
+  });
+
+  test("aborting the run fails the step instead of recording a durable success", async () => {
+    using artifactDir = new DisposableTempDir("wha-artifacts");
+    const controller = new AbortController();
+    const runner = new WorkflowActionRunner({
+      hostActions: customHostMap(async (_input, hostCtx) => {
+        while (hostCtx.abortSignal?.aborted !== true) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        return { idle: false };
+      }),
+    });
+    setTimeout(() => controller.abort(), 20);
+    await expectRejects(
+      runner.execute(stubResolvedAction("workspace.list", "built-in"), {
+        artifactDir: artifactDir.path,
+        cwd: "/tmp",
+        input: {},
+        timeoutMs: 30_000,
+        abortSignal: controller.signal,
+      }),
+      /aborted/
+    );
+  });
+
+  test("a pre-aborted signal fails fast without invoking the action", async () => {
+    using artifactDir = new DisposableTempDir("wha-artifacts");
+    const execute = mock(() => Promise.resolve({}));
+    const runner = new WorkflowActionRunner({ hostActions: customHostMap(execute) });
+    const controller = new AbortController();
+    controller.abort();
+    await expectRejects(
+      runner.execute(stubResolvedAction("workspace.list", "built-in"), {
+        artifactDir: artifactDir.path,
+        cwd: "/tmp",
+        input: {},
+        timeoutMs: 30_000,
+        abortSignal: controller.signal,
+      }),
+      /aborted/
+    );
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("oversized output is measured in bytes, not UTF-16 code units", async () => {
+    using artifactDir = new DisposableTempDir("wha-artifacts");
+    // 700k chars < 1Mi UTF-16 units, but ~1.4MB utf8 — must exceed the limit.
+    const runner = new WorkflowActionRunner({
+      hostActions: customHostMap(() => Promise.resolve({ s: "é".repeat(700_000) })),
+    });
+    await expectRejects(
+      runner.execute(stubResolvedAction("workspace.list", "built-in"), {
+        artifactDir: artifactDir.path,
+        cwd: "/tmp",
+        input: {},
+        timeoutMs: 30_000,
+      }),
+      /result size limit/
+    );
+  });
+
   test("non-built-in scope is not intercepted even when names collide", async () => {
     using artifactDir = new DisposableTempDir("wha-artifacts");
     const { services } = fakeServices({ workspaces: [workspaceMeta({ id: "a" })] });
@@ -248,6 +371,75 @@ describe("workspace.ensure", () => {
     const ensure = getAction(createWorkspaceHostActions(services), "workspace.ensure");
     expect(ensure.reconcile).toBe(ensure.execute);
   });
+
+  test("serializes concurrent ensures for the same key: exactly one create", async () => {
+    // Without the keyed mutex, both ensures miss the predicate during the slow
+    // create and produce duplicate workspaces tagged with the same key.
+    const { services, calls } = fakeServices({ createDelayMs: 25 });
+    const ensure = getAction(createWorkspaceHostActions(services), "workspace.ensure");
+    const input = { projectPath: "/proj", key: "issue-9-implement", trunkBranch: "main" };
+    const [first, second] = (await Promise.all([
+      ensure.execute(input, ctx),
+      ensure.execute(input, ctx),
+    ])) as Array<{ created: boolean; workspaceId: string }>;
+    expect(calls.create).toHaveBeenCalledTimes(1);
+    expect(first.workspaceId).toBe(second.workspaceId);
+    expect([first.created, second.created].sort()).toEqual([false, true]);
+  });
+
+  test("refuses untrusted projects before touching git", async () => {
+    const { services, calls } = fakeServices({ projectTrusted: false });
+    const ensure = getAction(createWorkspaceHostActions(services), "workspace.ensure");
+    await expectRejects(
+      ensure.execute({ projectPath: "/proj", key: "issue-1", trunkBranch: "main" }, ctx),
+      /not registered and trusted/
+    );
+    expect(calls.create).not.toHaveBeenCalled();
+  });
+
+  test("sanitizes work-item keys into valid workspace branch names", async () => {
+    const { services, calls } = fakeServices();
+    const ensure = getAction(createWorkspaceHostActions(services), "workspace.ensure");
+    await ensure.execute({ projectPath: "/proj", key: "PROJ-123.v2", trunkBranch: "main" }, ctx);
+    expect(calls.create.mock.calls[0]?.[1]).toBe("proj-123-v2");
+  });
+
+  test("rejects when aborted before any mutation", async () => {
+    const { services, calls } = fakeServices();
+    const ensure = getAction(createWorkspaceHostActions(services), "workspace.ensure");
+    const controller = new AbortController();
+    controller.abort();
+    await expectRejects(
+      ensure.execute(
+        { projectPath: "/proj", key: "issue-1", trunkBranch: "main" },
+        { cwd: "/tmp", abortSignal: controller.signal }
+      ),
+      /aborted/
+    );
+    expect(calls.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("deriveEnsureBranchName", () => {
+  test("normalizes to validateWorkspaceName's charset", () => {
+    expect(deriveEnsureBranchName("PROJ-123")).toBe("proj-123");
+    expect(deriveEnsureBranchName("release/v1.2")).toBe("release-v1-2");
+    expect(deriveEnsureBranchName("fix: crash -- on   save")).toBe("fix-crash-on-save");
+  });
+
+  test("truncates long keys to 64 chars with a stable disambiguating hash", () => {
+    const long = `issue-${"a".repeat(80)}`;
+    const branch = deriveEnsureBranchName(long);
+    expect(branch.length).toBeLessThanOrEqual(64);
+    expect(branch).toMatch(/^[a-z0-9_-]+$/);
+    expect(branch).toBe(deriveEnsureBranchName(long));
+    // Distinct long keys sharing a 55-char prefix must not collide.
+    expect(branch).not.toBe(deriveEnsureBranchName(`${long}-different`));
+  });
+
+  test("falls back to a hash-only name when nothing survives sanitizing", () => {
+    expect(deriveEnsureBranchName("###")).toMatch(/^work-item-[0-9a-f]{8}$/);
+  });
 });
 
 describe("workspace.list", () => {
@@ -278,6 +470,12 @@ describe("workspace.list", () => {
       workspaces: Array<{ workspaceId: string }>;
     };
     expect(exact.workspaces.map((w) => w.workspaceId)).toEqual(["other-tag"]);
+  });
+
+  test("rejects tagValue without tagKey instead of silently returning everything", async () => {
+    const { services } = fakeServices({ workspaces });
+    const list = getAction(createWorkspaceHostActions(services), "workspace.list");
+    await expectRejects(list.execute({ tagValue: "a" }, ctx), /tagValue requires tagKey/);
   });
 });
 
@@ -316,6 +514,35 @@ describe("workspace.sendMessage", () => {
       /workspace.sendMessage failed/
     );
   });
+
+  test("defaults to the workspace's persisted agent instead of overwriting it with exec", async () => {
+    const { services } = fakeServices({
+      workspaces: [
+        workspaceMeta({ id: "explorer", agentId: "explore" }),
+        workspaceMeta({ id: "planner", agentId: "plan" }),
+      ],
+    });
+    const send = getAction(createWorkspaceHostActions(services), "workspace.sendMessage");
+
+    // Persisted agent wins over the exec default…
+    const persisted = (await send.execute({ workspaceId: "explorer", message: "hi" }, ctx)) as {
+      agentId: string;
+    };
+    expect(persisted.agentId).toBe("explore");
+
+    // …but plan/compact are UI modes, not send targets: normalize to exec.
+    const planFallback = (await send.execute({ workspaceId: "planner", message: "hi" }, ctx)) as {
+      agentId: string;
+    };
+    expect(planFallback.agentId).toBe("exec");
+
+    // Explicit input always wins.
+    const explicit = (await send.execute(
+      { workspaceId: "explorer", message: "hi", agentId: "exec" },
+      ctx
+    )) as { agentId: string };
+    expect(explicit.agentId).toBe("exec");
+  });
 });
 
 describe("workspace.awaitIdle", () => {
@@ -332,12 +559,29 @@ describe("workspace.awaitIdle", () => {
       runtimeState: { isBusy: true, hasQueuedMessages: false, isInitializing: false },
     });
     const awaitIdle = getAction(createWorkspaceHostActions(services), "workspace.awaitIdle");
-    const output = (await awaitIdle.execute({ workspaceId: "ws-1", timeoutMs: 700 }, ctx)) as {
+    const output = (await awaitIdle.execute({ workspaceId: "ws-1", timeoutMs: 200 }, ctx)) as {
       idle: boolean;
       waitedMs: number;
     };
     expect(output.idle).toBe(false);
-    expect(output.waitedMs).toBeGreaterThanOrEqual(700);
+    expect(output.waitedMs).toBeGreaterThanOrEqual(200);
+  });
+
+  test("throws on abort instead of returning a durable idle=false result", async () => {
+    const { services } = fakeServices({
+      workspaces: [workspaceMeta({ id: "ws-1" })],
+      runtimeState: { isBusy: true, hasQueuedMessages: false, isInitializing: false },
+    });
+    const awaitIdle = getAction(createWorkspaceHostActions(services), "workspace.awaitIdle");
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 30);
+    await expectRejects(
+      awaitIdle.execute(
+        { workspaceId: "ws-1", timeoutMs: 60_000 },
+        { cwd: "/tmp", abortSignal: controller.signal }
+      ),
+      /aborted/
+    );
   });
 });
 

@@ -1035,6 +1035,13 @@ export const memory = {
   },
 };
 
+/**
+ * Programmatic workspace tag keys must be non-blank. Enforced at the schema
+ * boundary so callers get a structured validation error instead of the
+ * service-level assert surfacing as an opaque INTERNAL_SERVER_ERROR.
+ */
+const WorkspaceTagKeySchema = z.string().regex(/\S/, "Workspace tag keys must be non-empty");
+
 export const workspace = {
   list: {
     input: z
@@ -1070,7 +1077,7 @@ export const workspace = {
        * Programmatic key/value tags persisted atomically with creation (not
        * rendered in the UI). Used by orchestration callers for stable identity.
        */
-      tags: z.record(z.string(), z.string()).optional(),
+      tags: z.record(WorkspaceTagKeySchema, z.string()).optional(),
     }),
     output: z.discriminatedUnion("success", [
       z.object({ success: z.literal(true), metadata: FrontendWorkspaceMetadataSchema }),
@@ -1108,7 +1115,11 @@ export const workspace = {
     /** Merge tag updates into a workspace; a null value deletes that key. */
     input: z.object({
       workspaceId: z.string(),
-      tags: z.record(z.string(), z.string().nullable()),
+      tags: z
+        .record(WorkspaceTagKeySchema, z.string().nullable())
+        .refine((tags) => Object.keys(tags).length > 0, {
+          message: "updateTags requires at least one tag update",
+        }),
     }),
     output: ResultSchema(z.object({ tags: z.record(z.string(), z.string()) }), z.string()),
   },

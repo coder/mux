@@ -96,4 +96,20 @@ describe("WorkspaceService.updateTags", () => {
     expect(result.success).toBe(false);
     expect(storedTags()).toBeUndefined();
   });
+
+  test("fails instead of silently succeeding when no config entry matches the id", async () => {
+    // findWorkspace can match legacy entries via metadata fallback while the
+    // config entry lacks the id; updateTags must report the miss, not Ok({}).
+    const project = currentProjectsConfig.projects.get(TEST_PROJECT_PATH);
+    if (!project) throw new Error("test project missing");
+    const legacyEntry: Workspace = { ...project.workspaces[0], id: "different-id" };
+    project.workspaces[0] = legacyEntry;
+
+    const result = await service.updateTags(TEST_WORKSPACE_ID, { workItemKey: "x" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toMatch(/not found/i);
+    }
+    expect(storedTags()).toBeUndefined();
+  });
 });

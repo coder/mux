@@ -27,6 +27,7 @@
  * - `archive` is a reconciliation outcome (source says done), idempotent.
  */
 
+import { createHash } from "crypto";
 import assert from "@/common/utils/assert";
 import { z } from "zod";
 import type { Config } from "@/node/config";
@@ -34,6 +35,9 @@ import { detectDefaultTrunkBranch } from "@/node/git";
 import type { HistoryService } from "@/node/services/historyService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { normalizeAgentId } from "@/common/utils/agentIds";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import {
   validateWorkflowActionMetadata,
   type HostWorkflowAction,
@@ -55,12 +59,21 @@ export interface WorkspaceHostActionServices {
     "list" | "create" | "sendMessage" | "archive" | "getGoalContinuationRuntimeState"
   >;
   historyService: Pick<HistoryService, "getHistoryFromLatestBoundary">;
-  config: Pick<Config, "loadConfigOrDefault" | "findWorkspace">;
+  config: Pick<Config, "loadConfigOrDefault" | "findWorkspace" | "getAllWorkspaceMetadata">;
+  /** Test hook: poll interval for awaitIdle (default 500ms). */
+  awaitIdlePollMs?: number;
 }
 
 const AWAIT_IDLE_DEFAULT_TIMEOUT_MS = 2 * 60 * 1000;
 const AWAIT_IDLE_MAX_TIMEOUT_MS = 10 * 60 * 1000;
 const AWAIT_IDLE_POLL_MS = 500;
+
+/** Fail fast when the workflow run was aborted before/while mutating state. */
+function throwIfAborted(ctx: HostWorkflowActionContext, actionName: string): void {
+  if (ctx.abortSignal?.aborted === true) {
+    throw new Error(`${actionName} aborted: workflow run was interrupted`);
+  }
+}
 
 interface WorkspaceHostActionDefinition {
   metadata: WorkflowActionMetadata;
@@ -70,11 +83,16 @@ interface WorkspaceHostActionDefinition {
   ) => (input: unknown, ctx: HostWorkflowActionContext) => Promise<unknown>;
 }
 
-const ListInputSchema = z.object({
-  tagKey: z.string().min(1).nullish(),
-  tagValue: z.string().nullish(),
-  includeArchived: z.boolean().nullish(),
-});
+const ListInputSchema = z
+  .object({
+    tagKey: z.string().min(1).nullish(),
+    tagValue: z.string().nullish(),
+    includeArchived: z.boolean().nullish(),
+  })
+  // tagValue without tagKey would silently return everything; reject instead.
+  .refine((input) => input.tagValue == null || input.tagKey != null, {
+    message: "tagValue requires tagKey",
+  });
 
 const EnsureInputSchema = z.object({
   projectPath: z.string().min(1),
@@ -121,9 +139,68 @@ function listedWorkspace(metadata: {
   };
 }
 
+/**
+ * Idempotency predicate for workspace.ensure. Reads config metadata directly
+ * instead of WorkspaceService.list(): list() swallows read errors into [] and
+ * filters hidden workspaces — both would make a transient failure look like
+ * "no workspace exists" and trigger a duplicate create.
+ */
 async function findWorkspaceByWorkItemKey(services: WorkspaceHostActionServices, key: string) {
-  const all = await services.workspaceService.list();
+  const all = await services.config.getAllWorkspaceMetadata();
   return all.find((metadata) => metadata.tags?.[WORK_ITEM_TAG_KEY] === key);
+}
+
+/**
+ * Work-item keys (e.g. "PROJ-123", "release/v1.2") rarely satisfy
+ * validateWorkspaceName ([a-z0-9_-], max 64 chars), which would make
+ * workspace.create reject the ensure permanently. Normalize like fork naming
+ * does and append a short hash of the original key when truncation could
+ * collapse distinct keys onto the same branch name.
+ */
+export function deriveEnsureBranchName(raw: string): string {
+  assert(raw.length > 0, "deriveEnsureBranchName: key must be non-empty");
+  const sanitized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (sanitized.length > 0 && sanitized.length <= 64) {
+    return sanitized;
+  }
+  const hash = createHash("sha256").update(raw).digest("hex").slice(0, 8);
+  if (sanitized.length === 0) {
+    return `work-item-${hash}`;
+  }
+  // 64-char budget: 55 prefix + "-" + 8 hash.
+  return `${sanitized.slice(0, 55).replace(/-+$/, "")}-${hash}`;
+}
+
+/**
+ * Serialize async work per string key. workspace.ensure's check-then-create is
+ * not atomic (worktree creation takes seconds); without this, overlapping
+ * reconcile ticks both miss the predicate and create duplicate workspaces
+ * tagged with the same work-item key.
+ */
+class KeyedMutex {
+  private readonly tails = new Map<string, Promise<void>>();
+
+  async run<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.tails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.tails.set(key, gate);
+    await previous;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (this.tails.get(key) === gate) {
+        this.tails.delete(key);
+      }
+    }
+  }
 }
 
 const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefinition> = {
@@ -186,40 +263,63 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
       timeoutMs: 120_000,
     },
     hasReconcile: true,
-    createExecute: (services) => async (rawInput) => {
-      const input = EnsureInputSchema.parse(rawInput);
+    createExecute: (services) => {
+      // Per-wiring mutex: all runners share one host-action map (built once in
+      // coreServices), so this serializes every ensure for a given key.
+      const ensureMutex = new KeyedMutex();
+      return (rawInput, ctx) => {
+        const input = EnsureInputSchema.parse(rawInput);
+        return ensureMutex.run(input.key, async () => {
+          throwIfAborted(ctx, "workspace.ensure");
 
-      const existing = await findWorkspaceByWorkItemKey(services, input.key);
-      if (existing) {
-        return {
-          created: false,
-          workspaceId: existing.id,
-          archived: isWorkspaceArchived(existing.archivedAt, existing.unarchivedAt),
-        };
-      }
+          const existing = await findWorkspaceByWorkItemKey(services, input.key);
+          if (existing) {
+            return {
+              created: false,
+              workspaceId: existing.id,
+              archived: isWorkspaceArchived(existing.archivedAt, existing.unarchivedAt),
+            };
+          }
 
-      // Worktree/SSH runtimes require an explicit trunk; mirror the desktop
-      // UI's auto-detection so callers don't have to know repo internals.
-      const trunkBranch = input.trunkBranch ?? (await detectDefaultTrunkBranch(input.projectPath));
-      const branchName = (input.branchName ?? input.key).replace(/[^A-Za-z0-9._/-]+/gu, "-");
+          // Trust gate BEFORE running git on the caller-provided path:
+          // workspace.create re-checks trust, but trunk detection below already
+          // executes git against the path, which untrusted projects must not get.
+          const configSnapshot = services.config.loadConfigOrDefault();
+          const requestedProjectPath = stripTrailingSlashes(input.projectPath);
+          const requestedProject = configSnapshot.projects.get(requestedProjectPath);
+          const owningProjectPath = requestedProject?.parentProjectPath ?? requestedProjectPath;
+          if (configSnapshot.projects.get(owningProjectPath)?.trusted !== true) {
+            throw new Error(
+              `workspace.ensure: project is not registered and trusted: ${input.projectPath}`
+            );
+          }
 
-      const createResult = await services.workspaceService.create(
-        input.projectPath,
-        branchName,
-        trunkBranch,
-        input.title ?? input.key,
-        undefined,
-        undefined,
-        undefined,
-        { [WORK_ITEM_TAG_KEY]: input.key }
-      );
-      if (!createResult.success) {
-        throw new Error(`workspace.ensure failed to create workspace: ${createResult.error}`);
-      }
-      return {
-        created: true,
-        workspaceId: createResult.data.metadata.id,
-        archived: false,
+          // Worktree/SSH runtimes require an explicit trunk; mirror the desktop
+          // UI's auto-detection so callers don't have to know repo internals.
+          const trunkBranch =
+            input.trunkBranch ?? (await detectDefaultTrunkBranch(input.projectPath));
+          const branchName = deriveEnsureBranchName(input.branchName ?? input.key);
+
+          throwIfAborted(ctx, "workspace.ensure");
+          const createResult = await services.workspaceService.create(
+            input.projectPath,
+            branchName,
+            trunkBranch,
+            input.title ?? input.key,
+            undefined,
+            undefined,
+            undefined,
+            { [WORK_ITEM_TAG_KEY]: input.key }
+          );
+          if (!createResult.success) {
+            throw new Error(`workspace.ensure failed to create workspace: ${createResult.error}`);
+          }
+          return {
+            created: true,
+            workspaceId: createResult.data.metadata.id,
+            archived: false,
+          };
+        });
       };
     },
   },
@@ -244,15 +344,28 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
       timeoutMs: 60_000,
     },
     hasReconcile: false,
-    createExecute: (services) => async (rawInput) => {
+    createExecute: (services) => async (rawInput, ctx) => {
       const input = SendMessageInputSchema.parse(rawInput);
-      const agentId = input.agentId ?? "exec";
+      throwIfAborted(ctx, "workspace.sendMessage");
+
+      const all = await services.workspaceService.list();
+      const metadata = all.find((entry) => entry.id === input.workspaceId);
+
+      // Agent fallback: explicit input → workspace's persisted selected agent →
+      // exec. sendMessage persists the selected agent, so defaulting to "exec"
+      // blindly would durably overwrite e.g. an "explore" workspace's agent.
+      // Plan/compact are UI modes, not message-send targets (mirrors the goal
+      // kickoff normalization in WorkspaceService).
+      const persistedAgentId = normalizeAgentId(metadata?.agentId, WORKSPACE_DEFAULTS.agentId);
+      const agentId =
+        input.agentId ??
+        (persistedAgentId === "plan" || persistedAgentId === "compact"
+          ? WORKSPACE_DEFAULTS.agentId
+          : persistedAgentId);
 
       // Model fallback: explicit input → workspace AI settings → global default.
       let model = input.model ?? undefined;
       if (model == null) {
-        const all = await services.workspaceService.list();
-        const metadata = all.find((entry) => entry.id === input.workspaceId);
         model = metadata?.aiSettingsByAgent?.[agentId]?.model ?? metadata?.aiSettings?.model;
         model ??= services.config.loadConfigOrDefault().defaultModel;
       }
@@ -262,6 +375,7 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
         );
       }
 
+      throwIfAborted(ctx, "workspace.sendMessage");
       const sendResult = await services.workspaceService.sendMessage(
         input.workspaceId,
         input.message,
@@ -301,19 +415,24 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
         `workspace.awaitIdle: workspace not found: ${input.workspaceId}`
       );
       const timeoutMs = input.timeoutMs ?? AWAIT_IDLE_DEFAULT_TIMEOUT_MS;
+      const pollMs = services.awaitIdlePollMs ?? AWAIT_IDLE_POLL_MS;
       const startedAt = Date.now();
 
       for (;;) {
+        // Abort must THROW, not return {idle:false}: a returned value would be
+        // durably recorded as a successful step result and replayed on resume,
+        // permanently feeding the workflow a wrong, premature idle status.
+        throwIfAborted(ctx, "workspace.awaitIdle");
         const state = services.workspaceService.getGoalContinuationRuntimeState(input.workspaceId);
         const idle = !state.isBusy && !state.hasQueuedMessages && !state.isInitializing;
         const waitedMs = Date.now() - startedAt;
         if (idle) {
           return { idle: true, waitedMs };
         }
-        if (waitedMs >= timeoutMs || ctx.abortSignal?.aborted === true) {
+        if (waitedMs >= timeoutMs) {
           return { idle: false, waitedMs };
         }
-        await new Promise((resolve) => setTimeout(resolve, AWAIT_IDLE_POLL_MS));
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
       }
     },
   },
@@ -379,8 +498,9 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
       timeoutMs: 120_000,
     },
     hasReconcile: true,
-    createExecute: (services) => async (rawInput) => {
+    createExecute: (services) => async (rawInput, ctx) => {
       const input = WorkspaceIdInputSchema.parse(rawInput);
+      throwIfAborted(ctx, "workspace.archive");
       const all = await services.workspaceService.list();
       const existing = all.find((metadata) => metadata.id === input.workspaceId);
       if (!existing) {
@@ -389,6 +509,7 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
       if (isWorkspaceArchived(existing.archivedAt, existing.unarchivedAt)) {
         return { archived: true, alreadyArchived: true };
       }
+      throwIfAborted(ctx, "workspace.archive");
       const archiveResult = await services.workspaceService.archive(input.workspaceId);
       if (!archiveResult.success) {
         throw new Error(`workspace.archive failed: ${archiveResult.error}`);

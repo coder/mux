@@ -51,6 +51,14 @@ export interface CoreServicesOptions {
   sessionTimingService?: SessionTimingService;
   opResolver?: ExternalSecretResolver;
   devToolsService?: DevToolsService;
+  /**
+   * Set by CLI commands (`mux run`, `mux workflow`) whose Config lives in a
+   * temp dir deleted on exit. Gates workspace.* workflow host actions: a
+   * workspace.ensure on an ephemeral root would create a real git worktree
+   * whose identifying tag evaporates with the temp config — orphaning the
+   * branch/worktree and breaking ensure idempotency on the next run.
+   */
+  ephemeralConfigRoot?: boolean;
 }
 
 export interface CoreServices {
@@ -190,9 +198,13 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   // workspace.* workflow host actions: built once here (the scope that owns
   // WorkspaceService + HistoryService + Config) and shared via AIService with
   // every workflow runner (workflow tools and the ORPC workflow router).
-  aiService.setWorkflowHostActions(
-    createWorkspaceHostActions({ workspaceService, historyService, config })
-  );
+  // Skipped on ephemeral config roots (see CoreServicesOptions.ephemeralConfigRoot);
+  // there the actions fail fast via their generated stubs instead.
+  if (opts.ephemeralConfigRoot !== true) {
+    aiService.setWorkflowHostActions(
+      createWorkspaceHostActions({ workspaceService, historyService, config })
+    );
+  }
 
   // Goal continuation bridge lives at the core scope so every codepath that
   // uses createCoreServices (mux run, mux server via ServiceContainer, tests)

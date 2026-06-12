@@ -90,6 +90,30 @@ describe("Config", () => {
     });
   });
 
+  describe("workspace tags", () => {
+    it("persists programmatic tags through save/load and metadata mapping", async () => {
+      await config.editConfig((cfg) => {
+        cfg.projects.set("/repo", {
+          workspaces: [
+            {
+              path: "/repo/tagged",
+              id: "tagged-ws-1",
+              name: "tagged",
+              tags: { workItemKey: "issue-1-investigate" },
+            },
+          ],
+        });
+        return cfg;
+      });
+
+      // Fresh instance: prove tags survive the disk round-trip (config
+      // serialization + workspace schema + metadata mapping), not just memory.
+      const metadata = await new Config(tempDir).getAllWorkspaceMetadata();
+      const tagged = metadata.find((m) => m.id === "tagged-ws-1");
+      expect(tagged?.tags).toEqual({ workItemKey: "issue-1-investigate" });
+    });
+  });
+
   describe("userPreferences", () => {
     it("loads and saves user preferences", async () => {
       await config.editConfig((cfg) => ({

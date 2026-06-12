@@ -188,9 +188,13 @@ export class WorkflowActionExecutionError extends Error {
 export class WorkflowActionRunner {
   /**
    * In-process implementations for built-in host actions (workspace.*).
-   * Optional: when absent (CLI contexts without backend services, tests),
-   * these actions fall through to their generated stub source, which throws
-   * a descriptive "requires the mux host process" error in the child.
+   * Optional: when absent, these actions fall through to their generated stub
+   * source, which throws a descriptive "requires the mux host process" error
+   * in the child. CLI commands (`mux run`, `mux workflow`) DO have backend
+   * services, but they run on an ephemeral config root that is deleted on
+   * exit; wiring host actions there would create real git worktrees whose
+   * identifying tags evaporate with the temp config (orphaned branches), so
+   * those contexts deliberately leave the map unset.
    */
   private readonly hostActions?: ReadonlyMap<string, HostWorkflowAction>;
 
@@ -271,23 +275,39 @@ export class WorkflowActionRunner {
       throw failure(`Host action does not support ${mode}`);
     }
 
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(
-        () => reject(new Error(`Host action timed out after ${options.timeoutMs}ms`)),
-        options.timeoutMs
-      );
+    // Compose run-abort + step-timeout into ONE signal handed to the action.
+    // This mirrors child-action semantics (which SIGKILL the child): an abort
+    // or timeout must FAIL the step — never produce a durable success — and
+    // the composed signal also terminates in-action poll loops so they can't
+    // keep running after the step has been decided.
+    if (options.abortSignal?.aborted === true) {
+      throw failure("Host action aborted: workflow run was interrupted");
+    }
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(
+      () => controller.abort(new Error(`Host action timed out after ${options.timeoutMs}ms`)),
+      options.timeoutMs
+    );
+    const onExternalAbort = () =>
+      controller.abort(new Error("Host action aborted: workflow run was interrupted"));
+    options.abortSignal?.addEventListener("abort", onExternalAbort, { once: true });
+    const abortPromise = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener("abort", () => reject(controller.signal.reason as Error), {
+        once: true,
+      });
     });
     try {
       const ctx: HostWorkflowActionContext = {
         cwd: options.cwd,
-        abortSignal: options.abortSignal,
+        abortSignal: controller.signal,
       };
-      const output = await Promise.race([fn(options.input, ctx), timeoutPromise]);
+      const output = await Promise.race([fn(options.input, ctx), abortPromise]);
       // Mirror the child-result bound so host actions can't blow up run storage.
+      // Use byte length (not UTF-16 code units) for parity with the child path.
       const serialized = JSON.stringify(output ?? null);
       assert(
-        serialized != null && serialized.length <= WORKFLOW_ACTION_RESULT_LIMIT_BYTES,
+        serialized != null &&
+          Buffer.byteLength(serialized, "utf8") <= WORKFLOW_ACTION_RESULT_LIMIT_BYTES,
         "Host action output must be JSON-serializable and within the result size limit"
       );
       // Round-trip through JSON so host outputs match child-action semantics
@@ -311,6 +331,7 @@ export class WorkflowActionRunner {
       throw failure(getErrorMessage(error));
     } finally {
       clearTimeout(timeoutHandle);
+      options.abortSignal?.removeEventListener("abort", onExternalAbort);
     }
   }
 

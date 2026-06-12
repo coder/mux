@@ -2709,6 +2709,13 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  /**
+   * Scope note: unlike create(), this does not accept creation-time `tags` —
+   * multi-project workspaces currently can't be tagged atomically (callers
+   * would need a follow-up updateTags, reintroducing a crash-window gap).
+   * Thread tags through here if orchestration loops ever target multi-project
+   * workspaces.
+   */
   async createMultiProject(
     projects: ProjectRef[],
     branchName: string,
@@ -4496,6 +4503,10 @@ export class WorkspaceService extends EventEmitter {
       }
 
       let finalTags: Record<string, string> = {};
+      // findWorkspace above can match via metadata fallback (legacy entries
+      // without an id) or race a concurrent removal; track whether the edit
+      // actually landed so callers never get a silent-success no-op.
+      let applied = false;
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(workspace.projectPath);
         const workspaceEntry = projectConfig?.workspaces.find((entry) => entry.id === workspaceId);
@@ -4516,8 +4527,12 @@ export class WorkspaceService extends EventEmitter {
           delete workspaceEntry.tags;
         }
         finalTags = merged;
+        applied = true;
         return config;
       });
+      if (!applied) {
+        return Err("Workspace not found");
+      }
 
       await this.emitCurrentWorkspaceMetadata(workspaceId);
       return Ok({ tags: finalTags });
