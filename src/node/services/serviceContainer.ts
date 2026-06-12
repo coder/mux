@@ -285,6 +285,12 @@ export class ServiceContainer {
           workspaceId: input.workspaceId,
           projectTrusted,
           args: input.args,
+          // The scheduler's startWorkflow contract requires resolving only on
+          // a TERMINAL status: the runner's default (background on queued
+          // agent message, returning status "backgrounded" mid-run) would free
+          // the activeDispatches slot early and let the next tick double-
+          // dispatch, breaking skip-if-running.
+          backgroundOnMessageQueued: false,
         });
       },
     });
