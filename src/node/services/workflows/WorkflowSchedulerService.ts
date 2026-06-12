@@ -132,7 +132,7 @@ export class WorkflowSchedulerService {
       // Persist the dispatch time BEFORE starting: if the process crashes
       // mid-run, the next startup waits a full interval instead of re-running
       // immediately (the orphaned run may still be resumable).
-      await this.persistLastRunStartedAt(workspaceId, new Date().toISOString());
+      await this.persistLastRunStartedAt(workspaceId, schedule, new Date().toISOString());
       const result = await this.options.startWorkflow({
         workspaceId,
         name: schedule.workflowName,
@@ -155,16 +155,40 @@ export class WorkflowSchedulerService {
     }
   }
 
-  private async persistLastRunStartedAt(workspaceId: string, timestamp: string): Promise<void> {
+  private async persistLastRunStartedAt(
+    workspaceId: string,
+    dispatched: WorkspaceWorkflowSchedule,
+    timestamp: string
+  ): Promise<void> {
     await this.options.config.editConfig((config) => {
       for (const projectConfig of config.projects.values()) {
         const entry = projectConfig.workspaces.find((workspace) => workspace.id === workspaceId);
-        if (entry?.workflowSchedule != null) {
-          entry.workflowSchedule = { ...entry.workflowSchedule, lastRunStartedAt: timestamp };
-          break;
+        if (entry == null) {
+          continue;
         }
+        // Guard against a setWorkflowSchedule racing this write: a freshly
+        // (re)set schedule is documented to be immediately due, so a stale
+        // dispatch must not stamp it (that would silently delay the new
+        // schedule by a full interval). Only stamp the exact schedule this
+        // dispatch observed; on mismatch the stale run still proceeds but the
+        // new schedule keeps its due-now state.
+        if (entry.workflowSchedule != null && schedulesEqual(entry.workflowSchedule, dispatched)) {
+          entry.workflowSchedule = { ...entry.workflowSchedule, lastRunStartedAt: timestamp };
+        }
+        break;
       }
       return config;
     });
   }
+}
+
+/** Field-wise schedule identity (config objects are re-parsed per load, so reference equality is meaningless). */
+function schedulesEqual(a: WorkspaceWorkflowSchedule, b: WorkspaceWorkflowSchedule): boolean {
+  return (
+    a.enabled === b.enabled &&
+    a.workflowName === b.workflowName &&
+    a.intervalMs === b.intervalMs &&
+    a.lastRunStartedAt === b.lastRunStartedAt &&
+    JSON.stringify(a.args ?? null) === JSON.stringify(b.args ?? null)
+  );
 }

@@ -3,9 +3,11 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
+import type { ProjectsConfig, Workspace } from "@/common/types/project";
 import type { WorkspaceWorkflowSchedule } from "@/common/types/workspace";
 import {
   WorkflowSchedulerService,
+  type WorkflowSchedulerOptions,
   type WorkflowScheduleStartInput,
 } from "./WorkflowSchedulerService";
 
@@ -160,6 +162,58 @@ describe("WorkflowSchedulerService", () => {
     const gated = makeScheduler({ enabled: false });
     gated.scheduler.tick();
     expect(gated.startWorkflow).not.toHaveBeenCalled();
+  });
+
+  test("a stale dispatch does not stamp lastRunStartedAt onto a freshly reset schedule", async () => {
+    // Race: setWorkflowSchedule replaces the schedule between the tick's
+    // config read and the dispatch's stamp write. The reset schedule is
+    // documented to be immediately due — the stale dispatch must not delay it.
+    const original: WorkspaceWorkflowSchedule = {
+      enabled: true,
+      workflowName: "reconcile",
+      intervalMs: 60_000,
+    };
+    const replacement: WorkspaceWorkflowSchedule = {
+      enabled: true,
+      workflowName: "reconcile-v2",
+      intervalMs: 120_000,
+    };
+    let workspace: Workspace = { path: "/repo/sched", id: WORKSPACE_ID, name: "sched" };
+    workspace.workflowSchedule = { ...original };
+    let projects: ProjectsConfig = { projects: new Map([["/repo", { workspaces: [workspace] }]]) };
+
+    // editConfig defers its callback behind a gate so the test can swap the
+    // schedule in the dispatch's persist window.
+    let releaseEdit!: () => void;
+    const editGate = new Promise<void>((resolve) => {
+      releaseEdit = resolve;
+    });
+    const fakeConfig: WorkflowSchedulerOptions["config"] = {
+      loadConfigOrDefault: () => projects,
+      editConfig: async (fn) => {
+        await editGate;
+        projects = fn(projects);
+      },
+    };
+    const startWorkflow = mock(() => Promise.resolve({ runId: "run-1", status: "completed" }));
+    const scheduler = new WorkflowSchedulerService({
+      config: fakeConfig,
+      isEnabled: () => true,
+      startWorkflow,
+      checkIntervalMs: 50,
+    });
+
+    scheduler.tick(); // observes `original`, blocks on the edit gate
+    workspace = { ...workspace, workflowSchedule: { ...replacement } }; // user reset mid-dispatch
+    projects = { projects: new Map([["/repo", { workspaces: [workspace] }]]) };
+    releaseEdit();
+    await scheduler.awaitActiveDispatches();
+
+    // Stale run still proceeded, but the reset schedule kept its due-now state.
+    expect(startWorkflow).toHaveBeenCalledTimes(1);
+    const persisted = projects.projects.get("/repo")?.workspaces.at(0)?.workflowSchedule;
+    expect(persisted?.workflowName).toBe("reconcile-v2");
+    expect(persisted?.lastRunStartedAt).toBeUndefined();
   });
 
   test("a failing run is contained and retried only after the next interval", async () => {
