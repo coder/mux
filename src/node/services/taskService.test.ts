@@ -1337,6 +1337,91 @@ describe("TaskService", () => {
     }
   }, 20_000);
 
+  test("dequeued isolation: none task reuses the parent checkout without forking or init", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = await createTestProject(rootDir);
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+    const parentPath = runtime.getWorkspacePath(projectPath, parentName);
+
+    const parentId = "1111111111";
+    const queuedTaskId = "task-shared-queued";
+    const queuedWorkspaceName = "agent_explore_task-shared-queued";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: parentPath,
+          id: parentId,
+          name: parentName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+        {
+          // Shared queued tasks persist the parent's checkout path (see TaskService.create).
+          path: parentPath,
+          id: queuedTaskId,
+          name: queuedWorkspaceName,
+          title: "Shared queued task",
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+          parentWorkspaceId: parentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "queued",
+          taskPrompt: "queued shared analysis",
+          taskModelString: defaultModel,
+          taskTrunkBranch: parentName,
+          taskIsolation: "none",
+        },
+      ],
+      testTaskSettings()
+    );
+
+    const forkSpy = spyOn(forkOrchestrator, "orchestrateFork");
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+    try {
+      const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+      const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+      await taskService.initialize();
+      await waitForWorkspaceTaskStatus(config, queuedTaskId, "running");
+
+      // Dequeue must reuse the existing shared checkout: no fork, no init.
+      expect(forkSpy).not.toHaveBeenCalled();
+      expect(runBackgroundInitSpy).not.toHaveBeenCalled();
+
+      const entry = findWorkspaceInConfig(config, queuedTaskId);
+      assert(entry, "Expected queued shared task to remain persisted");
+      expect(entry.path).toBe(parentPath);
+      expect(entry.taskIsolation).toBe("none");
+
+      expect(sendMessage).toHaveBeenCalledWith(
+        queuedTaskId,
+        "queued shared analysis",
+        expect.anything(),
+        expect.objectContaining({ agentInitiated: true })
+      );
+    } finally {
+      runBackgroundInitSpy.mockRestore();
+      forkSpy.mockRestore();
+    }
+  }, 20_000);
+
   test("interrupts queued tasks when the primary project loses trust before dequeue", async () => {
     const config = await createTestConfig(rootDir);
 
