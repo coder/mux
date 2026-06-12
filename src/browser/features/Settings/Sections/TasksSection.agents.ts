@@ -102,17 +102,24 @@ function compareAgentsByName(a: AgentDefinitionDescriptor, b: AgentDefinitionDes
   return a.name.localeCompare(b.name);
 }
 
+// Experiment-gated agents are dead weight in Settings while their experiment
+// is off (they never run), so hide their cards; their overrides stay "known"
+// via knownAgentIds below.
 function shouldShowAgentInTasksSettings(
   agent: AgentDefinitionDescriptor,
-  portableDesktopEnabled: boolean
+  params: { portableDesktopEnabled: boolean; memoryConsolidationEnabled: boolean }
 ): boolean {
-  return portableDesktopEnabled || agent.id !== "desktop";
+  if (agent.id === "desktop") return params.portableDesktopEnabled;
+  if (agent.id === "dream") return params.memoryConsolidationEnabled;
+  return true;
 }
 
 export function deriveTasksSectionAgentGroups(params: {
   listedAgents: AgentDefinitionDescriptor[];
   agentAiDefaults: AgentAiDefaults;
   portableDesktopEnabled: boolean;
+  /** True only when both Agent Memory and Memory Consolidation experiments are on (mirrors the runtime gate in memoryConsolidationService). */
+  memoryConsolidationEnabled: boolean;
 }): {
   uiAgents: AgentDefinitionDescriptor[];
   subagents: AgentDefinitionDescriptor[];
@@ -120,7 +127,7 @@ export function deriveTasksSectionAgentGroups(params: {
   unknownAgentIds: string[];
 } {
   const visible = params.listedAgents.filter((agent) =>
-    shouldShowAgentInTasksSettings(agent, params.portableDesktopEnabled)
+    shouldShowAgentInTasksSettings(agent, params)
   );
   const knownAgentIds = new Set(params.listedAgents.map((agent) => agent.id));
 

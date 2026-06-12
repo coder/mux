@@ -494,6 +494,11 @@ export function TasksSection() {
   const newWorkspaceDefaultAgentId = coerceAgentId(globalDefaultAgentIdRaw);
   const portableDesktopEnabled = useExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP);
   const advisorToolEnabled = useExperimentValue(EXPERIMENT_IDS.ADVISOR_TOOL);
+  // Dream only runs when both flags are on (see memoryConsolidationService);
+  // mirror that gate for its Settings card.
+  const memoryEnabled = useExperimentValue(EXPERIMENT_IDS.MEMORY);
+  const memoryConsolidationFlag = useExperimentValue(EXPERIMENT_IDS.MEMORY_CONSOLIDATION);
+  const memoryConsolidationEnabled = memoryEnabled && memoryConsolidationFlag;
 
   // Resolve the workspace's active model so that when a sub-agent's model is
   // "Inherit", we show thinking levels for the workspace model (falling back to
@@ -851,8 +856,9 @@ export function TasksSection() {
         listedAgents,
         agentAiDefaults,
         portableDesktopEnabled,
+        memoryConsolidationEnabled,
       }),
-    [agentAiDefaults, listedAgents, portableDesktopEnabled]
+    [agentAiDefaults, listedAgents, portableDesktopEnabled, memoryConsolidationEnabled]
   );
   const execSubagentAgent = listedAgents.find(
     (agent) => agent.id === "exec" && agent.subagentRunnable && agent.uiSelectable

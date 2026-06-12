@@ -27,6 +27,7 @@ describe("deriveTasksSectionAgentGroups", () => {
       listedAgents: FALLBACK_AGENTS,
       agentAiDefaults,
       portableDesktopEnabled: false,
+      memoryConsolidationEnabled: false,
     });
 
     expect(groups.subagents.map((agent) => agent.id)).toEqual(["explore"]);
@@ -38,8 +39,37 @@ describe("deriveTasksSectionAgentGroups", () => {
       listedAgents: FALLBACK_AGENTS,
       agentAiDefaults: {},
       portableDesktopEnabled: true,
+      memoryConsolidationEnabled: false,
     });
 
     expect(groups.subagents.map((agent) => agent.id)).toEqual(["desktop", "explore"]);
+  });
+
+  test("hides Dream from Settings while keeping its overrides known when Memory Consolidation is off", () => {
+    const agentAiDefaults: AgentAiDefaults = {
+      dream: { modelString: "anthropic:claude-haiku-4-5" },
+    };
+
+    const groups = deriveTasksSectionAgentGroups({
+      listedAgents: FALLBACK_AGENTS,
+      agentAiDefaults,
+      portableDesktopEnabled: false,
+      memoryConsolidationEnabled: false,
+    });
+
+    expect(groups.internalAgents.map((agent) => agent.id)).not.toContain("dream");
+    // The saved override must stay "known", not surface under Unknown agents.
+    expect(groups.unknownAgentIds).toEqual([]);
+  });
+
+  test("shows Dream under Internal when Memory Consolidation is on", () => {
+    const groups = deriveTasksSectionAgentGroups({
+      listedAgents: FALLBACK_AGENTS,
+      agentAiDefaults: {},
+      portableDesktopEnabled: false,
+      memoryConsolidationEnabled: true,
+    });
+
+    expect(groups.internalAgents.map((agent) => agent.id)).toContain("dream");
   });
 });
