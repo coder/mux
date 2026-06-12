@@ -56,6 +56,12 @@ function getCurlMaxTime(command: string): number {
 }
 
 afterEach(() => {
+  // Restore all spies (including the Date.now spy in the shared-timeout-budget
+  // test) so they never leak across test files: a frozen Date.now leaks
+  // process-wide and breaks downstream suites in the same `bun test` run, e.g.
+  // WorkflowService's crash-recovery retry test, whose retry delay never
+  // reaches 0 when time stands still. Do not remove this without restoring
+  // each global spy individually.
   mock.restore();
 });
 
