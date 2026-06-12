@@ -266,6 +266,14 @@ export class MemoryConsolidationService {
       // lock forever (and stall the sequential launch sweep behind it).
       abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
     });
+    // A stream failure (provider error or the run timeout) means the pass did
+    // NOT cover the memory state: skip the journal record so the debounce and
+    // launch sweep retry later instead of reporting a successful consolidation
+    // that never happened.
+    if (result.streamError !== undefined) {
+      return Err(`consolidation stream failed: ${result.streamError}`);
+    }
+
     const record: MemoryConsolidationRecord = {
       lastRunAt: Date.now(),
       trigger,

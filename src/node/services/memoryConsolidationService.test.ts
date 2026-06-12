@@ -46,6 +46,24 @@ function scriptedModel(): MockLanguageModelV3 {
   });
 }
 
+/**
+ * Simulates a provider failure or timeout abort: the stream itself errors
+ * mid-flight (an `error` chunk part alone would not reach consumeStream's
+ * onError — real connection failures reject the stream).
+ */
+function failingScriptedModel(): MockLanguageModelV3 {
+  return new MockLanguageModelV3({
+    doStream: () =>
+      Promise.resolve({
+        stream: new ReadableStream<LanguageModelV3StreamPart>({
+          pull(controller) {
+            controller.error(new Error("provider exploded"));
+          },
+        }),
+      }),
+  });
+}
+
 interface Fixture extends Disposable {
   muxHome: string;
   config: Config;
@@ -53,6 +71,8 @@ interface Fixture extends Disposable {
   metaService: MemoryMetaService;
   modelCalls: number[];
   setEnabled: (enabled: boolean) => void;
+  /** When true, scripted runs emit a fatal stream error instead of finishing. */
+  setStreamFailing: (failing: boolean) => void;
   addWorkspace: (id: string, opts?: { archivedAt?: string }) => Promise<void>;
 }
 
@@ -77,6 +97,7 @@ async function createFixture(options?: {
   const memoryService = new MemoryService(config, metaService);
 
   let enabled = true;
+  let streamFailing = false;
   const modelCalls: number[] = [];
   const service = new MemoryConsolidationService(
     config,
@@ -86,7 +107,7 @@ async function createFixture(options?: {
       createModel: async () => {
         modelCalls.push(Date.now());
         if (options?.modelGate) await options.modelGate;
-        return Ok(scriptedModel());
+        return Ok(streamFailing ? failingScriptedModel() : scriptedModel());
       },
     },
     {
@@ -103,6 +124,9 @@ async function createFixture(options?: {
     modelCalls,
     setEnabled: (value) => {
       enabled = value;
+    },
+    setStreamFailing: (value) => {
+      streamFailing = value;
     },
     addWorkspace: async (id, opts) => {
       await config.editConfig((cfg) => {
@@ -198,6 +222,23 @@ describe("MemoryConsolidationService", () => {
     const archiveResult = await archive;
     expect(archiveResult.success).toBe(true);
     if (archiveResult.success) expect(archiveResult.data.trigger).toBe("archive");
+    expect(fixture.modelCalls).toHaveLength(2);
+  });
+
+  it("does not journal or debounce a run whose stream failed", async () => {
+    using fixture = await createFixture();
+    fixture.setStreamFailing(true);
+    const failed = await fixture.service.maybeRun("ws-dream", "compaction");
+    expect(failed.success).toBe(false);
+    if (!failed.success) expect(failed.error).toContain("stream failed");
+    // No record: the Memory tab must not report a consolidation that never
+    // completed.
+    expect(await fixture.service.getRecord("ws-dream")).toBeNull();
+
+    // And no debounce anchor: the next automatic trigger retries immediately.
+    fixture.setStreamFailing(false);
+    const retry = await fixture.service.maybeRun("ws-dream", "compaction");
+    expect(retry.success).toBe(true);
     expect(fixture.modelCalls).toHaveLength(2);
   });
 

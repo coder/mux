@@ -52,6 +52,12 @@ export interface MemoryConsolidationResult {
   budgetExhausted: boolean;
   /** Token cost of the run; undefined when the provider reported none. */
   usage?: { inputTokens: number; outputTokens: number };
+  /**
+   * Fatal stream error (provider failure or abort/timeout). When set, the
+   * pass did NOT complete — callers must not treat the memory state as
+   * consolidated (no journal record, no debounce anchor).
+   */
+  streamError?: string;
 }
 
 interface MutationTarget {
@@ -238,17 +244,20 @@ export async function runMemoryConsolidation(args: {
     streamErrors.length === 0 ? (await stream.text).trim() : `stream error: ${streamErrors[0]}`;
 
   // Cost telemetry: headless runs bypass the chat cost pipeline, so the
-  // journal record is the only place token usage is visible. Best-effort —
-  // totalUsage rejects when the stream errored mid-flight.
+  // journal record is the only place token usage is visible. Only awaited on
+  // clean streams — after a mid-flight error, totalUsage can stay pending
+  // forever (streamManager guards the same promise with withTimeout).
   let usage: MemoryConsolidationResult["usage"];
-  try {
-    const totalUsage = await stream.totalUsage;
-    usage = {
-      inputTokens: totalUsage.inputTokens ?? 0,
-      outputTokens: totalUsage.outputTokens ?? 0,
-    };
-  } catch {
-    usage = undefined;
+  if (streamErrors.length === 0) {
+    try {
+      const totalUsage = await stream.totalUsage;
+      usage = {
+        inputTokens: totalUsage.inputTokens ?? 0,
+        outputTokens: totalUsage.outputTokens ?? 0,
+      };
+    } catch {
+      usage = undefined;
+    }
   }
 
   return {
@@ -258,5 +267,6 @@ export async function runMemoryConsolidation(args: {
     // rejections must not report a budget the run never spent (MEM-RPT-01).
     budgetExhausted: getMutationCount() >= MEMORY_CONSOLIDATION_OP_BUDGET,
     usage,
+    streamError: streamErrors[0],
   };
 }
