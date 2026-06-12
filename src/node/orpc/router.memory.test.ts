@@ -368,7 +368,7 @@ describe("router memory routes", () => {
     const consumer = (async () => {
       for await (const event of iterator) {
         received.push(event);
-        if (received.length >= 3) break;
+        if (received.length >= 4) break;
       }
     })();
     // The route attaches its service listener lazily (on first pull).
@@ -390,6 +390,15 @@ describe("router memory routes", () => {
     emit({
       scope: "project",
       path: "/memories/project/notes.md",
+      actor: "agent",
+      workspaceId: "ws-other",
+      projectPath: "/somewhere/else",
+    });
+    // Dropped: another project's project-local file (host-local stores are
+    // separate per project; same virtual path, different physical file).
+    emit({
+      scope: "project-local",
+      path: "/memories/project-local/notes.md",
       actor: "agent",
       workspaceId: "ws-other",
       projectPath: "/somewhere/else",
@@ -419,12 +428,22 @@ describe("router memory routes", () => {
       workspaceId: "ws-other",
       projectPath,
     });
+    // Delivered: same project's project-local file (shared across the
+    // project's workspaces, host-local).
+    emit({
+      scope: "project-local",
+      path: "/memories/project-local/notes.md",
+      actor: "agent",
+      workspaceId: "ws-other",
+      projectPath,
+    });
 
     await consumer;
     expect(received.map((e) => [e.scope, e.workspaceId])).toEqual([
       ["global", "ws-other"],
       ["workspace", "ws-mem"],
       ["project", "ws-other"],
+      ["project-local", "ws-other"],
     ]);
   });
 });

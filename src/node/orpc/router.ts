@@ -3808,7 +3808,14 @@ export const router = (authToken?: string) => {
           // Global events are always forwarded (shared across everything).
           const onChange = (event: MemoryChangeEvent) => {
             if (event.scope === "workspace" && event.workspaceId !== boundWorkspaceId) return;
-            if (event.scope === "project" && event.projectPath !== boundProjectPath) return;
+            // project AND project-local are both keyed by project identity:
+            // the same virtual path in another project is a different file.
+            if (
+              (event.scope === "project" || event.scope === "project-local") &&
+              event.projectPath !== boundProjectPath
+            ) {
+              return;
+            }
             queue.push(event);
           };
           context.memoryService.on("change", onChange);
