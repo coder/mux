@@ -1928,7 +1928,13 @@ export default function workflow({ args, agent }) {
       now: "2026-05-29T00:00:00.000Z",
     });
     await runStore.appendStatus("wfr_project_trust_retry", "running", "2026-05-29T00:00:01.000Z");
-    await runStore.acquireLease("wfr_project_trust_retry", "crashed-runner", Date.now());
+    // Use an injectable clock so the lease is deterministically still fresh when
+    // resumeCrashedRuns checks it. With real time, the 25ms freshness window can
+    // elapse between acquireLease and the service's getLeaseRetryDelayMs check on a
+    // loaded CI machine, making the service resume immediately (with the already
+    // resolved trusted=true) instead of scheduling the delayed retry under test.
+    let fakeNowMs = 1_000_000;
+    await runStore.acquireLease("wfr_project_trust_retry", "crashed-runner", fakeNowMs);
     const taskCalls: string[] = [];
     let currentProjectTrusted = true;
     let trustChecks = 0;
@@ -1951,12 +1957,18 @@ export default function workflow({ args, agent }) {
         return currentProjectTrusted;
       },
       runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:02.000Z",
+        nowMs: () => fakeNowMs,
+      },
     });
 
     await expect(
       service.resumeCrashedRuns({ workspaceId: "workspace-1", projectTrusted: true })
     ).resolves.toEqual(["wfr_project_trust_retry"]);
     currentProjectTrusted = false;
+    // Make the lease stale for the delayed retry so it proceeds to the trust gate.
+    fakeNowMs += 10_000;
 
     await waitForCondition(
       "delayed crash recovery retry to re-check project trust",
