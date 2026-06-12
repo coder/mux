@@ -131,6 +131,75 @@ describe("applyToolOutputRedaction", () => {
     });
   });
 
+  it("strips the embedded workflow run record from workflow_run/workflow_resume outputs", () => {
+    const runRecord = {
+      id: "wfr_demo",
+      definitionSource: "export default function workflow() {}\n",
+      events: [{ sequence: 1, type: "log", at: "2026-01-01T00:00:00.000Z", message: "noisy" }],
+    };
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "tool-1",
+            toolName: "workflow_run",
+            input: { name: "demo" },
+            state: "output-available",
+            output: { status: "running", runId: "wfr_demo", result: null, run: runRecord },
+          },
+          {
+            type: "dynamic-tool",
+            toolCallId: "tool-2",
+            toolName: "workflow_resume",
+            input: { run_id: "wfr_demo" },
+            state: "output-available",
+            output: {
+              type: "json",
+              value: {
+                status: "completed",
+                runId: "wfr_demo",
+                result: { ok: true },
+                run: runRecord,
+              },
+            },
+          },
+          {
+            // Only workflow tools are affected: other tools may legitimately output a `run` key.
+            type: "dynamic-tool",
+            toolCallId: "tool-3",
+            toolName: "bash",
+            input: {},
+            state: "output-available",
+            output: { success: true, run: "value preserved" },
+          },
+        ],
+      },
+    ];
+
+    const result = applyToolOutputRedaction(messages);
+    const [runPart, resumePart, bashPart] = result[0]?.parts ?? [];
+    if (
+      runPart?.type !== "dynamic-tool" ||
+      resumePart?.type !== "dynamic-tool" ||
+      bashPart?.type !== "dynamic-tool" ||
+      runPart.state !== "output-available" ||
+      resumePart.state !== "output-available" ||
+      bashPart.state !== "output-available"
+    ) {
+      throw new Error("Expected dynamic tool outputs");
+    }
+
+    expect(runPart.output).toEqual({ status: "running", runId: "wfr_demo", result: null });
+    expect(resumePart.output).toEqual({
+      type: "json",
+      value: { status: "completed", runId: "wfr_demo", result: { ok: true } },
+    });
+    expect(bashPart.output).toEqual({ success: true, run: "value preserved" });
+  });
+
   it("sanitizes binary-like provider output strings for top-level and nested tools", () => {
     const messages: MuxMessage[] = [
       {

@@ -133,6 +133,22 @@ function getWorkflowRunError(run: WorkflowRunRecord): string {
   return message;
 }
 
+// Failure is the one case where workflow state helps the model decide between
+// workflow_resume (retry_from_checkpoint) and a fresh workflow_run. Per-step outcomes are
+// enough: completed steps keep their taskId so their durable reports stay re-fetchable via
+// task_await without re-running anything.
+function buildWorkflowFailureState(run: WorkflowRunRecord) {
+  return {
+    name: run.definition.name,
+    steps: run.steps.map((step) => ({
+      stepId: step.stepId,
+      status: step.status,
+      ...(step.taskId != null ? { taskId: step.taskId } : {}),
+      ...(step.error != null ? { error: step.error } : {}),
+    })),
+  };
+}
+
 function buildWorkflowAwaitResult(run: WorkflowRunRecord) {
   // Deliberately omit the full run record (definition source, event log, step snapshots):
   // it is huge and model-facing only. In-progress events may never materialize in the final
@@ -161,6 +177,7 @@ function buildWorkflowAwaitResult(run: WorkflowRunRecord) {
         status: "error" as const,
         ...base,
         error: getWorkflowRunError(run),
+        workflow: buildWorkflowFailureState(run),
       };
     case "interrupted":
       return {
