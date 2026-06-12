@@ -6,7 +6,7 @@ advertise: false
 
 # Orchestrate
 
-Use this skill when the user invokes `/orchestrate` (or asks you to coordinate, orchestrate, or delegate a multi-step implementation). It teaches the **delegate-first** playbook that the former Orchestrator agent used: spawn sub-agents to do the work, integrate their patches, verify, and report.
+Use this skill when the user invokes `/orchestrate` (or asks you to coordinate, orchestrate, or delegate a multi-step implementation). It teaches the **delegate-first** playbook: spawn sub-agents to do the work, integrate their patches, verify, and report.
 
 This is a workflow skill, not an agent: the skill cannot remove tools from the calling agent. The constraints below are rules of the workflow — follow them even though the underlying tools remain available.
 
@@ -22,6 +22,18 @@ Coordinate implementation by delegating investigation + coding to sub-agents, th
 - **`bash` is for orchestration only:** `git` / `gh` repo coordination, targeted post-apply verification, and waiting on PR review/CI. Do not use `bash` for file reads/writes, manual code editing, or broad repo exploration. If a direct verification check fails due to a code issue, delegate the fix to `exec` instead of patching it yourself.
 - **Never read or scan session storage** (`~/.mux/sessions/**`, `~/.mux/sessions/subagent-patches/**`). Treat session storage as internal. Access patches only through `task_apply_git_patch`.
 - **Do not call `propose_plan`** from this workflow. If a complex subtask needs more shape before implementation, decompose it with one or more `explore` tasks and write a richer brief for `exec`, rather than spawning a `plan` sub-agent (plan is not runnable as a sub-agent).
+
+## Long-horizon work: prefer a durable workflow
+
+If the `workflow_run` / `workflow_list` tools are unavailable in this session, skip this section and use the interactive task loop below.
+
+For long-horizon orchestration — many phases, a dependency DAG known up front, or repeated implement → gate → fixup → re-gate loops — encode the orchestration as a durable workflow instead of driving it turn-by-turn from the transcript:
+
+- Read the built-in `workflow-authoring` skill first (`agent_skill_read({ name: "workflow-authoring" })`).
+- Author a scratch workflow at `.mux/workflows/.scratch/<name>.js` that encodes the DAG in code: `agent(...)` for sub-agent steps, `applyPatch(...)` for patch integration (the host dry-runs automatically and returns structured conflict results), `phase`/`log` for progress, and plain control flow for gate/fixup loops.
+- Run it with `workflow_run`; resume interrupted runs with `workflow_resume`. Durable runs survive restarts and context compaction — completed steps are never re-executed.
+
+Stay with the interactive task loop below when the work is exploratory, the user wants to steer between batches, or the batch is small (a handful of tasks) — there, workflow authoring overhead outweighs the durability benefit.
 
 ## When a plan is present
 
@@ -103,10 +115,22 @@ Example dependency chain (schema download → generation):
      1. Restore a clean working tree before delegating: run `git am --abort` via `bash` only when a git-am session is in progress; if abort reports no operation in progress, continue.
      2. Then follow the same delegated reconciliation flow above.
 5. Verify + review:
-   - Run focused verification directly with `bash` when practical (targeted tests or the repo's standard full-validation command), or delegate verification to `explore`/`exec` when investigation/fixes are likely.
+   - Run the gate loop (next section) against the integrated state.
    - Use `git`/`gh` directly for PR orchestration when a PR already exists (pushes, review-request comments, replies to review remarks, and CI/check-status waiting loops). Create a new PR only when the user explicitly asks.
    - PASS: summary-only (no long logs).
    - FAIL: include the failing command + key error lines; then delegate a fix to `exec` and re-verify.
+
+## Gate loop (verification)
+
+The same loop applies whether you orchestrate interactively or from a workflow:
+
+1. **Discover gates once, up front.** Spawn an `explore` task to identify the repo's general gates (lint, format check, typecheck, targeted tests, full-validation command) as a concrete command list. Add change-specific gates per subtask from the plan/brief acceptance criteria.
+2. **Verify with a dedicated verifier, never the implementer.** After integrating a batch, run cheap gates directly via `bash`, or spawn a verify-only sub-agent whose brief is: run these gates, fix nothing, report structured pass/fail with key error lines per failing gate.
+3. **Route failures to a fixup `exec`.** Feed the failing gates + key errors into a fixup brief, apply its patch, re-run the verifier. Repeat until pass; bound the loop and escalate to the user if the same gate keeps failing.
+
+Implementation sub-agents may _suggest_ additional gates in their reports (they know what they touched), but the orchestrator owns the gate list and suggestions are only ever additive — an implementer must not narrow its own acceptance criteria. A self-reported "tests pass" from an implementer is evidence, not a gate result.
+
+In a workflow, the verifier becomes `agent({ outputSchema, onRefusal: "fail" })` returning a structured verdict the conductor branches on, and the fix/gate loop is a bounded `while` in code.
 
 ## Sequential protocol (only for dependency chains)
 

@@ -235,7 +235,7 @@ Returns structured status instead of throwing on ordinary patch conflicts:
 }
 ```
 
-Conflict resolution should follow the old Orchestrator pattern: spawn a dedicated `exec` resolver, include the failing `taskId`, tell it to call `task_apply_git_patch` in its own workspace, resolve `git am` conflicts, commit the resolved result, report, and then call `applyPatch` on the resolver result.
+On conflict, spawn a dedicated `exec` resolver: include the failing `taskId`, tell it to call `task_apply_git_patch` in its own workspace, resolve `git am` conflicts, commit the resolved result, and report; then call `applyPatch` on the resolver result.
 
 ```js
 const implementation = agent({
