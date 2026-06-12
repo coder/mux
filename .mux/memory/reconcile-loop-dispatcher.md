@@ -74,5 +74,26 @@ Deep-review hardening pass (commit b5e48f7d4) fixed 12 findings:
 - updateTags Errs when no entry matched; oRPC tag key schemas non-blank;
   host output limit = Buffer.byteLength utf8.
 
-V2 next: WorkflowSchedulerService (wall-clock, at-least-once, skip-if-running).
-V3: agent teams (spawn_peer_workspace / send_to_workspace→turnId / await_reply).
+## V2 shipped (commit 2b8d4e229)
+
+WorkflowSchedulerService (src/node/services/workflows/WorkflowSchedulerService.ts):
+- Config: WorkspaceConfigSchema.workflowSchedule { enabled, workflowName,
+  args?, intervalMs (1min–24h), lastRunStartedAt? } + metadata exposure;
+  mapped at the same 4 config.ts sites as tags/heartbeat.
+- ORPC workspace.setWorkflowSchedule (null clears; re-set drops
+  lastRunStartedAt → immediately due). Gated assertDynamicWorkflowsEnabled.
+- Scheduler owned by ServiceContainer (start/stop next to HeartbeatService);
+  30s tick scans config; due = intervalMs elapsed since lastRunStartedAt;
+  skip-if-running via in-memory Map<workspaceId, Promise>; lastRunStartedAt
+  persisted BEFORE dispatch (failures retry next interval, no hot-loop).
+- Dispatch goes through resolveWorkflowContext (now EXPORTED from
+  src/node/orpc/router.ts) so scheduled runs share run store/trust/host
+  actions with workflows.* routes; ServiceContainer uses toORPCContext().
+- Dogfood gotchas: trpc-cli can't pass `--schedule null` (coerces to true);
+  use raw ORPC HTTP `POST /orpc/workspace/setWorkflowSchedule` with
+  `{"json":{...,"schedule":null}}`. Nested JSON works as flag:
+  `--schedule '{"enabled":true,...}'`. Global workflows live at
+  <MUX_ROOT>/workflows/<name>.js — good for sandbox dogfooding (no
+  project-commit dance).
+
+V3 next: agent teams (spawn_peer_workspace / send_to_workspace→turnId / await_reply).
