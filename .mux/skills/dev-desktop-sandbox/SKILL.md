@@ -21,6 +21,13 @@ make dev-desktop-sandbox
 - Copies these files into the sandbox if present (unless disabled by flags):
   - `providers.jsonc` (provider config)
   - `config.json` (project list)
+  - Each file is seeded independently from the first root that has it
+    (`$MUX_ROOT`, then `~/.mux-dev`, then `~/.mux`), so a root with only
+    `config.json` doesn't drop provider config
+- With `--clean-providers`, provider credential env vars (API keys, `*_BASE_URL`,
+  etc.) are stripped from the child processes' env so the app can't silently
+  fall back to env credentials (which may pair a real key with a proxy/AI-bridge
+  base URL)
 - Picks free ports:
   - Vite devserver port (used by the renderer)
   - Electron remote debugging port (optional)
@@ -48,7 +55,7 @@ make dev-desktop-sandbox DEV_DESKTOP_SANDBOX_ARGS="--clean-providers"
 # Clear projects from config.json (preserves other config)
 make dev-desktop-sandbox DEV_DESKTOP_SANDBOX_ARGS="--clean-projects"
 
-# Use a specific root to seed from (defaults to $MUX_ROOT then ~/.mux-dev then ~/.mux)
+# Use a specific root to seed from (default: per-file from $MUX_ROOT, ~/.mux-dev, ~/.mux)
 SEED_MUX_ROOT=~/.mux-dev make dev-desktop-sandbox
 
 # Keep the sandbox root directory after exit (useful for debugging)

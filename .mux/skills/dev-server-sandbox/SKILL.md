@@ -25,6 +25,12 @@ make dev-server-sandbox
 - Copies these files into the sandbox if present (unless disabled by flags):
   - `providers.jsonc` (provider config)
   - `config.json` (project list)
+  - Each file is seeded independently from the first root that has it
+    (`$MUX_ROOT`, then `~/.mux-dev`, then `~/.mux`), so a root with only
+    `config.json` doesn't drop provider config
+- With `--clean-providers`, provider credential env vars (API keys, `*_BASE_URL`,
+  etc.) are stripped from the server's env so it can't silently fall back to
+  env credentials (which may pair a real key with a proxy/AI-bridge base URL)
 - Picks free ports (`BACKEND_PORT`, `VITE_PORT`)
 - Disables tutorials by default inside the sandbox (`MUX_ENABLE_TUTORIALS_IN_SANDBOX=1` opts back in)
 - Allows all hosts (`VITE_ALLOWED_HOSTS=all`) so it works behind port-forwarding domains
@@ -42,7 +48,7 @@ make dev-server-sandbox DEV_SERVER_SANDBOX_ARGS="--clean-providers"
 # Clear projects from config.json (preserves other config)
 make dev-server-sandbox DEV_SERVER_SANDBOX_ARGS="--clean-projects"
 
-# Use a specific root to seed from (defaults to ~/.mux-dev then ~/.mux)
+# Use a specific root to seed from (default: per-file from $MUX_ROOT, ~/.mux-dev, ~/.mux)
 SEED_MUX_ROOT=~/.mux-dev make dev-server-sandbox
 
 # Keep the sandbox root directory after exit (useful for debugging)
