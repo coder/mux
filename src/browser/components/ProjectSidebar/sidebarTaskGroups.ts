@@ -44,6 +44,16 @@ export function shortenWorkflowRunId(runId: string): string {
   return runId.length > 12 ? `${runId.slice(0, 12)}…` : runId;
 }
 
+/**
+ * Build the namespaced storage key for a workflow-run group (D7:
+ * `workflow:<parent>:<runId>`). Constructed from two call sites that must
+ * agree byte-for-byte because they key the same group maps - keep the format
+ * in one helper so the two never drift apart.
+ */
+function workflowGroupStorageKey(parentWorkspaceId: string, runId: string): string {
+  return `workflow:${parentWorkspaceId}:${runId}`;
+}
+
 export interface SidebarTaskGroupModel {
   /**
    * Persisted-expansion key, namespaced per D7: task:<parent>:<groupId> or
@@ -122,7 +132,7 @@ function getGroupDescriptor(
       id: workflowRunId,
       kind: "workflow",
       parentWorkspaceId,
-      storageKey: `workflow:${parentWorkspaceId}:${workflowRunId}`,
+      storageKey: workflowGroupStorageKey(parentWorkspaceId, workflowRunId),
     };
   }
 
@@ -141,7 +151,7 @@ export function getWorkflowGroupStorageKey(workspace: FrontendWorkspaceMetadata)
   if (!parentWorkspaceId || !runId || workspace.bestOf?.groupId) {
     return null;
   }
-  return `workflow:${parentWorkspaceId}:${runId}`;
+  return workflowGroupStorageKey(parentWorkspaceId, runId);
 }
 
 /**
