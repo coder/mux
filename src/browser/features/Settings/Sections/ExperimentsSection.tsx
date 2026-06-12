@@ -9,6 +9,7 @@ import {
   getExperimentList,
   getExperimentPlatformRestrictionLabel,
   EXPERIMENT_IDS,
+  EXPERIMENTS,
   isExperimentSupportedOnPlatform,
   type ExperimentId,
 } from "@/common/constants/experiments";
@@ -31,6 +32,13 @@ import { AdvisorToolExperimentConfig } from "./AdvisorToolExperimentConfig";
 import { HeartbeatDefaultsControls } from "./HeartbeatSection";
 
 const PORTABLE_DESKTOP_INSTALL_URL = "https://github.com/coder/portabledesktop";
+
+// Sub-experiments of Agent Memory: hidden from the flat list and rendered in a
+// nested panel under the parent toggle, since they are no-ops while memory is off.
+const MEMORY_SUB_EXPERIMENT_IDS: readonly ExperimentId[] = [
+  EXPERIMENT_IDS.MEMORY_HOT_SET,
+  EXPERIMENT_IDS.MEMORY_CONSOLIDATION,
+];
 
 type SettingsConfig = Awaited<ReturnType<APIClient["config"]["getConfig"]>>;
 
@@ -664,6 +672,7 @@ export function ExperimentsSection() {
   const { api } = useAPI();
   const advisorToolEnabled = useExperimentValue(EXPERIMENT_IDS.ADVISOR_TOOL);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
+  const memoryEnabled = useExperimentValue(EXPERIMENT_IDS.MEMORY);
   const settingsConfigRequestRef = useRef<{
     api: APIClient;
     request: Promise<SettingsConfig>;
@@ -700,10 +709,16 @@ export function ExperimentsSection() {
     return request;
   }, [api]);
 
-  // Only show user-overridable experiments (non-overridable ones are hidden since users can't change them)
+  // Only show user-overridable experiments (non-overridable ones are hidden since users can't
+  // change them). Memory sub-experiments render nested under the Agent Memory row instead.
   const experiments = useMemo(
     () =>
-      allExperiments.filter((exp) => exp.showInSettings !== false && exp.userOverridable === true),
+      allExperiments.filter(
+        (exp) =>
+          exp.showInSettings !== false &&
+          exp.userOverridable === true &&
+          !MEMORY_SUB_EXPERIMENT_IDS.includes(exp.id)
+      ),
     [allExperiments]
   );
 
@@ -756,6 +771,23 @@ export function ExperimentsSection() {
                   <HeartbeatDefaultsControls
                     loadConfig={api ? loadExperimentSettingsConfig : undefined}
                   />
+                </ExperimentSettingsPanel>
+              )}
+              {exp.id === EXPERIMENT_IDS.MEMORY && memoryEnabled && (
+                <ExperimentSettingsPanel>
+                  <div className="divide-border-light divide-y">
+                    {MEMORY_SUB_EXPERIMENT_IDS.map((subId) => {
+                      const subExp = EXPERIMENTS[subId];
+                      return (
+                        <ExperimentRow
+                          key={subId}
+                          experimentId={subId}
+                          name={subExp.name}
+                          description={subExp.description}
+                        />
+                      );
+                    })}
+                  </div>
                 </ExperimentSettingsPanel>
               )}
               {exp.id === EXPERIMENT_IDS.PORTABLE_DESKTOP && <PortableDesktopExperimentWarning />}
