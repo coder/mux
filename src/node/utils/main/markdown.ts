@@ -63,6 +63,15 @@ function extractSectionsByHeading(markdown: string, headingMatcher: HeadingMatch
     .filter((slice) => slice.length > 0);
 }
 
+/**
+ * Collapse extracted section bodies into a single block (joined in source order),
+ * or null when nothing matched. Shared by the extract* helpers so their
+ * "no match -> null, otherwise join" tail stays in one place.
+ */
+function joinMatchedSections(matches: string[]): string | null {
+  return matches.length > 0 ? matches.join("\n\n") : null;
+}
+
 function removeSectionsByHeading(markdown: string, headingMatcher: HeadingMatcher): string {
   if (!markdown) return markdown;
 
@@ -107,7 +116,7 @@ export function extractModeSection(markdown: string, mode: string): string | nul
     markdown,
     (headingText) => headingText.toLowerCase() === expectedHeading
   );
-  return matches.length > 0 ? matches.join("\n\n") : null;
+  return joinMatchedSections(matches);
 }
 
 /**
@@ -153,7 +162,7 @@ export function extractModelSection(markdown: string, modelId: string): string |
     const regex = compileRegex(match[1] ?? "");
     return Boolean(regex?.test(modelId));
   });
-  return matches.length > 0 ? matches.join("\n\n") : null;
+  return joinMatchedSections(matches);
 }
 
 /**
@@ -168,7 +177,7 @@ export function extractToolSection(markdown: string, toolName: string): string |
     markdown,
     (headingText) => headingText.toLowerCase() === expectedHeading
   );
-  return matches.length > 0 ? matches.join("\n\n") : null;
+  return joinMatchedSections(matches);
 }
 
 /**
