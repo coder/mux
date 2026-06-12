@@ -179,20 +179,28 @@ function runDeepReviewPass(context) {
     agentId: context.reasoningAgentId,
     prompt:
       context.readOnlyReviewPrompt +
-      "Deduplicate and triage these candidate code review findings. Merge duplicates, drop vague or non-actionable items, normalize severity, and preserve concrete evidence.\n\n" +
+      "Deduplicate and consolidate these candidate code review findings. Merge duplicates across lanes (combining their evidence), normalize severity, and drop only clearly non-actionable items; keep borderline findings so adversarial verification can make the validity call. Order the issues by severity and impact, most severe first — only the first " +
+      maxCandidates +
+      " survive the candidate budget.\n\n" +
       "Review target:\n" +
       renderReviewInput(input) +
       "\n\nCandidate issues:\n" +
       JSON.stringify(laneIssues, null, 2),
     outputSchema: issueListSchema(),
   });
-  const candidates = (triage.structuredOutput.issues || []).slice(0, maxCandidates);
+  // Triage is prompted to emit issues most-severe-first, but re-sort defensively so a
+  // high-severity finding emitted past the budget cutoff is never silently dropped.
+  const rankedIssues = sortIssuesBySeverity(triage.structuredOutput.issues || []);
+  const candidates = rankedIssues.slice(0, maxCandidates);
   context.log(
     "Triaged candidate issues",
     withLoopIteration(
       {
-        candidateCount: triage.structuredOutput.issues.length,
+        candidateCount: rankedIssues.length,
         selectedCount: candidates.length,
+        droppedByBudget: rankedIssues.slice(candidates.length).map(function (issue, index) {
+          return stableIssueId(issue, candidates.length + index);
+        }),
       },
       context.iteration
     )
@@ -322,6 +330,29 @@ function workflowStepId(baseId, suffix) {
 function withLoopIteration(details, iteration) {
   if (iteration) details.iteration = iteration;
   return details;
+}
+
+// Stable sort: P0 first, unknown/invalid severity last, ties keep triage emit order.
+function sortIssuesBySeverity(issues) {
+  return issues
+    .map(function (issue, index) {
+      return { issue: issue, index: index };
+    })
+    .sort(function (a, b) {
+      const rankDelta = issueSeverityRank(a.issue) - issueSeverityRank(b.issue);
+      return rankDelta !== 0 ? rankDelta : a.index - b.index;
+    })
+    .map(function (entry) {
+      return entry.issue;
+    });
+}
+
+function issueSeverityRank(issue) {
+  const match =
+    isObject(issue) && typeof issue.severity === "string"
+      ? /^P([0-4])$/.exec(issue.severity)
+      : null;
+  return match ? Number(match[1]) : 5;
 }
 
 function hasVerifiedIssues(final) {

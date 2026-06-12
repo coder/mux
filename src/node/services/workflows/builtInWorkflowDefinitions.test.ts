@@ -2425,6 +2425,134 @@ describe("built-in deep-review-workflow", () => {
     });
   }, 10_000);
 
+  test("ranks triaged issues by severity before applying the candidate budget", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-triage-rank");
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
+    await runStore.createRun({
+      id: "wfr_deep_review_triage_rank",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: {
+        input: "PR #123",
+        files: ["src/service.ts"],
+        maxCandidates: 2,
+      },
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const makeIssue = (id: string, severity: "P0" | "P2" | "P3") => ({
+      id,
+      severity,
+      category: "correctness",
+      title: `Issue ${id}`,
+      rationale: "rationale",
+      evidence: "evidence",
+      filePaths: ["src/service.ts"],
+      confidence: "medium",
+    });
+    // Triage emits the P0 issue last, past the maxCandidates=2 cutoff.
+    const triageIssues = [
+      makeIssue("p2-issue", "P2"),
+      makeIssue("p3-issue", "P3"),
+      makeIssue("p0-issue", "P0"),
+    ];
+
+    const verifyCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          if (spec.id === "scope-review-surface") {
+            return {
+              taskId: "task_scope",
+              reportMarkdown: "Scoped.",
+              structuredOutput: {
+                summary: "PR touches service code.",
+                files: ["src/service.ts"],
+                riskAreas: [],
+                lanes: ["correctness"],
+              },
+            };
+          }
+          if (spec.id.startsWith("review-")) {
+            return {
+              taskId: `task_${spec.id}`,
+              reportMarkdown: "Lane review.",
+              structuredOutput: { issues: spec.id === "review-correctness" ? triageIssues : [] },
+            };
+          }
+          if (spec.id === "triage-candidate-issues") {
+            return {
+              taskId: "task_triage",
+              reportMarkdown: "Triaged.",
+              structuredOutput: { issues: triageIssues },
+            };
+          }
+          if (spec.id.startsWith("verify-issue-")) {
+            verifyCalls.push(spec);
+            return {
+              taskId: `task_${spec.id}`,
+              reportMarkdown: "Verified.",
+              structuredOutput: {
+                issueId: "p0-issue",
+                verdict: "valid",
+                confidence: "high",
+                rationale: "Holds up.",
+              },
+            };
+          }
+          if (spec.id === "synthesize-review") {
+            return {
+              taskId: "task_final",
+              reportMarkdown: "# Deep Review",
+              structuredOutput: {
+                verifiedIssueCount: 1,
+                verifiedIssueIds: ["p0-issue"],
+                risk: "medium",
+                validationPlan: [],
+                discardedIssueCount: 1,
+              },
+            };
+          }
+          throw new Error(`Unexpected deep-review triage-rank step: ${spec.id}`);
+        },
+      },
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_triage_rank");
+
+    // The late P0 is re-ranked into the budget; the P3 issue is the one dropped.
+    expect(result).toMatchObject({
+      structuredOutput: {
+        triagedIssues: [
+          expect.objectContaining({ id: "p0-issue" }),
+          expect.objectContaining({ id: "p2-issue" }),
+        ],
+      },
+    });
+    expect(verifyCalls).toHaveLength(2);
+    expect(verifyCalls[0]?.prompt).toContain('"id": "p0-issue"');
+    expect(verifyCalls[1]?.prompt).toContain('"id": "p2-issue"');
+  }, 10_000);
+
   test("captures parent Git action context before spawning review agents", async () => {
     if (!deepReviewWorkflow) {
       throw new Error("Expected built-in deep-review-workflow workflow");
