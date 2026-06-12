@@ -1262,12 +1262,13 @@ describe("MemoryService", () => {
       expect((await fixture.metaService.getEntries()).get("global:a.md")?.accessCount).toBe(3);
     });
 
-    it("records UI reads and saves", async () => {
+    it("records UI saves but not UI reads (stats track agent usage, not human browsing)", async () => {
       using fixture = await createFixture();
       await fixture.service.saveFile(fixture.ctx, "/memories/global/ui.md", "draft", null, "user");
       await fixture.service.readFileWithSha(fixture.ctx, "/memories/global/ui.md");
       const entry = (await fixture.metaService.getEntries()).get("global:ui.md");
-      expect(entry?.accessCount).toBe(2);
+      // Only the save counted; opening the file in the Memory tab did not.
+      expect(entry?.accessCount).toBe(1);
       expect(entry?.lastWriteAt).not.toBeNull();
     });
 

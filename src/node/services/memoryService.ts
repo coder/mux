@@ -697,8 +697,9 @@ export class MemoryService extends EventEmitter {
 
   // -------------------------------------------------------------------------
   // Usage stats (sidecar): recorded here — the single chokepoint every agent
-  // command and UI read/write funnels through. Best-effort: stats failures
-  // must never break a memory command.
+  // command and UI write funnels through. UI reads (readFileWithSha) are
+  // intentionally not counted: stats track agent usage, not human browsing.
+  // Best-effort: stats failures must never break a memory command.
   // -------------------------------------------------------------------------
 
   /** Logical sidecar key, or null when the scope has no stable identity. */
@@ -1175,7 +1176,10 @@ export class MemoryService extends EventEmitter {
       const scope = this.requireFilePath(parsed, virtualPath);
       const store = await this.resolveStore(ctx, scope, parsed.relPath);
       const content = await this.readTextFileForEdit(store, parsed.relPath, virtualPath);
-      await this.recordUsage(ctx, scope, parsed.relPath, { write: false });
+      // Deliberately NOT recorded as a use: this is a human browsing the
+      // Memory tab/settings, and usage stats must reflect agent reads only so
+      // UI browsing never inflates hot-set ranking. (UI saves still count —
+      // an edit is an explicit signal the file matters, like pinning.)
       return { success: true, data: { content, sha256: sha256Hex(content) } };
     } catch (error) {
       if (error instanceof MemoryCommandError) {

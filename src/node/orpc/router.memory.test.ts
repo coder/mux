@@ -180,7 +180,7 @@ describe("router memory routes", () => {
     expect(await memoryMetaService.getPinnedKeys()).toEqual(new Set(["global:prefs.md"]));
   });
 
-  test("list exposes usage stats accumulated through reads and writes", async () => {
+  test("list exposes usage stats; UI reads do not count as uses", async () => {
     const client = createClient({ enabled: true });
     await client.memory.save({
       workspaceId: "ws-mem",
@@ -188,6 +188,7 @@ describe("router memory routes", () => {
       content: "tea",
       expectedSha256: null,
     });
+    // Opening a file in the Memory tab is human browsing, not agent usage.
     await client.memory.read({ workspaceId: "ws-mem", path: "/memories/global/prefs.md" });
 
     const list = await client.memory.list({ workspaceId: "ws-mem" });
@@ -196,7 +197,7 @@ describe("router memory routes", () => {
     expect(list.data.files).toEqual([
       expect.objectContaining({
         path: "/memories/global/prefs.md",
-        accessCount: 2,
+        accessCount: 1,
         lastAccessedAt: expect.any(Number),
       }),
     ]);
