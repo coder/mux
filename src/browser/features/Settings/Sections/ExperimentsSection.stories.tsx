@@ -17,10 +17,50 @@ type Story = StoryObj<typeof meta>;
 
 export const Experiments: Story = {
   render: () => (
-    <SettingsSectionStory setup={() => setupSettingsStory({})}>
+    <SettingsSectionStory
+      setup={() =>
+        setupSettingsStory({
+          // Explicit off-override: experiment localStorage keys leak between
+          // stories in the same browser session, so seed the parent off to keep
+          // the "sub-experiments hidden" assertion order-independent.
+          experiments: { [EXPERIMENT_IDS.MEMORY]: false },
+        })
+      }
+    >
       <ExperimentsSection />
     </SettingsSectionStory>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Memory sub-experiments are nested under Agent Memory, so with the parent
+    // off they must not appear anywhere in the list.
+    await canvas.findByLabelText("Toggle Agent Memory");
+    await expect(canvas.queryByLabelText("Toggle Memory Hot Set")).toBeNull();
+    await expect(canvas.queryByLabelText("Toggle Memory Consolidation")).toBeNull();
+  },
+};
+
+export const MemorySettingsEnabled: Story = {
+  render: () => (
+    <SettingsSectionStory
+      setup={() =>
+        setupSettingsStory({
+          experiments: { [EXPERIMENT_IDS.MEMORY]: true },
+        })
+      }
+    >
+      <ExperimentsSection />
+    </SettingsSectionStory>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // With Agent Memory enabled, the sub-experiment toggles render in the
+    // nested panel under the parent row.
+    await canvas.findByLabelText("Toggle Memory Hot Set");
+    await canvas.findByLabelText("Toggle Memory Consolidation");
+  },
 };
 
 export const ExperimentsToggleOn: Story = {
