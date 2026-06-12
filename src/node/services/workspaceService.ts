@@ -45,6 +45,7 @@ import {
 import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { ensurePrivateDir, isErrnoWithCode } from "@/node/utils/fs";
+import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { generateGitStatusScript, parseGitStatusScriptOutput } from "@/common/utils/git/gitStatus";
@@ -893,6 +894,48 @@ async function copyFileBestEffort(params: {
   }
 }
 
+/**
+ * Concatenate source files (skipping missing ones) into destPath.
+ * Returns false when no source exists or on write failure.
+ */
+async function concatFilesBestEffort(params: {
+  srcPaths: string[];
+  destPath: string;
+  logContext: Record<string, unknown>;
+}): Promise<boolean> {
+  const chunks: Buffer[] = [];
+  for (const srcPath of params.srcPaths) {
+    try {
+      chunks.push(await fsPromises.readFile(srcPath));
+    } catch (error: unknown) {
+      if (!isErrnoWithCode(error, "ENOENT")) {
+        log.error("Failed to read session artifact file for concatenation", {
+          ...params.logContext,
+          srcPath,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+  }
+
+  if (chunks.length === 0) {
+    return false;
+  }
+
+  try {
+    await fsPromises.mkdir(path.dirname(params.destPath), { recursive: true });
+    await fsPromises.writeFile(params.destPath, Buffer.concat(chunks));
+    return true;
+  } catch (error: unknown) {
+    log.error("Failed to write concatenated session artifact file", {
+      ...params.logContext,
+      destPath: params.destPath,
+      error: getErrorMessage(error),
+    });
+    return false;
+  }
+}
+
 async function copyDirIfMissingBestEffort(params: {
   srcDir: string;
   destDir: string;
@@ -982,7 +1025,8 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
   // 1) Archive the child session transcript (chat.jsonl + partial.json) into the parent session dir
   // BEFORE deleting ~/.mux/sessions/<childWorkspaceId>.
   try {
-    const childChatPath = path.join(params.childSessionDir, "chat.jsonl");
+    const childChatPath = path.join(params.childSessionDir, CHAT_FILE_NAME);
+    const childChatArchivePath = path.join(params.childSessionDir, CHAT_ARCHIVE_FILE_NAME);
     const childPartialPath = path.join(params.childSessionDir, "partial.json");
 
     const archivedChatPath = getSubagentTranscriptChatPath(
@@ -1003,8 +1047,12 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
         archivedChatPath,
       });
     } else {
-      const didCopyChat = await copyFileBestEffort({
-        srcPath: childChatPath,
+      // Sub-agent sessions can auto-compact, which rotates sealed history into
+      // chat-archive.jsonl. The archived transcript is a one-time snapshot of a
+      // dead workspace, so concatenate archive + active file into a single
+      // chat.jsonl for the transcript reader.
+      const didCopyChat = await concatFilesBestEffort({
+        srcPaths: [childChatArchivePath, childChatPath],
         destPath: archivedChatPath,
         logContext: {
           parentWorkspaceId: params.parentWorkspaceId,
@@ -5794,7 +5842,10 @@ export class WorkspaceService extends EventEmitter {
         await ensurePrivateDir(newSessionDir);
 
         const sessionFiles = [
-          "chat.jsonl",
+          CHAT_FILE_NAME,
+          // Sealed pre-boundary history must travel with chat.jsonl so the fork
+          // keeps full Load More/paging access to older epochs.
+          CHAT_ARCHIVE_FILE_NAME,
           "session-timing.json",
           ADDITIONAL_SYSTEM_CONTEXT_FILENAME,
           // Preserve the enabled/disabled toggle when forking so the fork

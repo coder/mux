@@ -6,6 +6,20 @@ const LEGACY_MUX_DIR_NAME = ".cmux";
 const MUX_DIR_NAME = ".mux";
 
 /**
+ * Session-dir file holding the active chat history epoch (latest compaction
+ * boundary onward). Example: ~/.mux/sessions/<workspace>/chat.jsonl
+ */
+export const CHAT_FILE_NAME = "chat.jsonl";
+
+/**
+ * Session-dir file holding sealed pre-boundary chat history. HistoryService
+ * rotates everything before the latest durable context boundary out of
+ * chat.jsonl into this append-only archive so per-turn reads/rewrites stay
+ * O(active epoch) instead of O(lifetime history).
+ */
+export const CHAT_ARCHIVE_FILE_NAME = "chat-archive.jsonl";
+
+/**
  * Migrate from the legacy ~/.cmux directory into ~/.mux for rebranded installs.
  * Called on startup to preserve data created by earlier releases.
  *

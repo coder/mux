@@ -1375,4 +1375,247 @@ describe("HistoryService", () => {
       expect(collected[0].id).toBe("valid-1");
     });
   });
+
+  describe("sealed history rotation", () => {
+    const wsId = "ws-rotation";
+
+    function boundaryMessage(id: string, epoch: number): MuxMessage {
+      return createMuxMessage(id, "assistant", `Summary ${epoch}`, {
+        compactionBoundary: true,
+        compacted: "user",
+        compactionEpoch: epoch,
+      });
+    }
+
+    async function readJsonlFile(filePath: string): Promise<MuxMessage[]> {
+      const data = await fs.readFile(filePath, "utf-8");
+      return data
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line) as MuxMessage);
+    }
+
+    function chatPath(workspaceId: string): string {
+      return path.join(config.getSessionDir(workspaceId), "chat.jsonl");
+    }
+
+    function archivePath(workspaceId: string): string {
+      return path.join(config.getSessionDir(workspaceId), "chat-archive.jsonl");
+    }
+
+    it("rotates the sealed prefix into the archive when a boundary is appended", async () => {
+      await appendNumberedMessages(service, wsId, 3); // seq 0..2
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after")); // seq 4
+
+      // Active file holds only the latest epoch; sealed rows moved to the archive.
+      const chatRows = await readJsonlFile(chatPath(wsId));
+      expect(chatRows.map((m) => m.id)).toEqual(["boundary-1", "post-0"]);
+      const archiveRows = await readJsonlFile(archivePath(wsId));
+      expect(archiveRows.map((m) => m.id)).toEqual(["msg-0", "msg-1", "msg-2"]);
+
+      // Hot-path read returns the active epoch.
+      const latest = await service.getHistoryFromLatestBoundary(wsId);
+      expect(latest.success).toBe(true);
+      if (latest.success) {
+        expect(latest.data.map((m) => m.id)).toEqual(["boundary-1", "post-0"]);
+      }
+
+      // Full iteration still sees everything in order.
+      const full = await collectFullHistory(service, wsId);
+      expect(full.map((m) => m.id)).toEqual(["msg-0", "msg-1", "msg-2", "boundary-1", "post-0"]);
+
+      // Paging into the sealed window still works.
+      const window = await service.getHistoryBoundaryWindow(wsId, 3);
+      expect(window.success).toBe(true);
+      if (window.success) {
+        expect(window.data.messages.map((m) => m.id)).toEqual(["msg-0", "msg-1", "msg-2"]);
+        expect(window.data.hasOlder).toBe(false);
+      }
+    });
+
+    it("lazily rotates legacy files with a mid-file boundary on first read", async () => {
+      const lines = [
+        messageLine(wsId, createMuxMessage("old-0", "user", "old", { historySequence: 0 })),
+        messageLine(wsId, {
+          ...boundaryMessage("boundary-1", 1),
+          metadata: { ...boundaryMessage("boundary-1", 1).metadata, historySequence: 1 },
+        }),
+        messageLine(wsId, createMuxMessage("post-0", "user", "after", { historySequence: 2 })),
+      ];
+      await writeHistoryLines(config, wsId, lines);
+
+      const latest = await service.getHistoryFromLatestBoundary(wsId);
+      expect(latest.success).toBe(true);
+      if (latest.success) {
+        expect(latest.data.map((m) => m.id)).toEqual(["boundary-1", "post-0"]);
+      }
+
+      // The read migrated the sealed prefix out of chat.jsonl.
+      const chatRows = await readJsonlFile(chatPath(wsId));
+      expect(chatRows.map((m) => m.id)).toEqual(["boundary-1", "post-0"]);
+      const archiveRows = await readJsonlFile(archivePath(wsId));
+      expect(archiveRows.map((m) => m.id)).toEqual(["old-0"]);
+    });
+
+    it("reads boundary windows across the archive seam (skip + paging)", async () => {
+      await service.appendToHistory(wsId, createMuxMessage("e1-user", "user", "msg")); // seq 0
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 1
+      await service.appendToHistory(wsId, createMuxMessage("e2-user", "user", "msg")); // seq 2
+      await service.appendToHistory(wsId, boundaryMessage("boundary-2", 2)); // seq 3
+      await service.appendToHistory(wsId, createMuxMessage("post", "user", "after")); // seq 4
+
+      // Both sealed epochs live in the archive now.
+      const archiveRows = await readJsonlFile(archivePath(wsId));
+      expect(archiveRows.map((m) => m.id)).toEqual(["e1-user", "boundary-1", "e2-user"]);
+
+      // skip=1 spans archive tail + entire active file.
+      const penultimate = await service.getHistoryFromLatestBoundary(wsId, 1);
+      expect(penultimate.success).toBe(true);
+      if (penultimate.success) {
+        expect(penultimate.data.map((m) => m.id)).toEqual([
+          "boundary-1",
+          "e2-user",
+          "boundary-2",
+          "post",
+        ]);
+      }
+
+      // Page one: the boundary-1 window from the archive.
+      const page1 = await service.getHistoryBoundaryWindow(wsId, 3);
+      expect(page1.success).toBe(true);
+      if (page1.success) {
+        expect(page1.data.messages.map((m) => m.id)).toEqual(["boundary-1", "e2-user"]);
+        expect(page1.data.hasOlder).toBe(true);
+      }
+
+      // Page two: pre-boundary rows, no older history.
+      const page2 = await service.getHistoryBoundaryWindow(wsId, 1);
+      expect(page2.success).toBe(true);
+      if (page2.success) {
+        expect(page2.data.messages.map((m) => m.id)).toEqual(["e1-user"]);
+        expect(page2.data.hasOlder).toBe(false);
+      }
+    });
+
+    it("initializes the sequence counter from the archive when chat.jsonl is missing", async () => {
+      await appendNumberedMessages(service, wsId, 3); // seq 0..2
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
+
+      // Simulate hand-deletion of the active file; archived sequences must not be reused.
+      await fs.rm(chatPath(wsId));
+
+      const restarted = new HistoryService(config);
+      const msg = createMuxMessage("new-msg", "user", "fresh");
+      const appendResult = await restarted.appendToHistory(wsId, msg);
+      expect(appendResult.success).toBe(true);
+      expect(msg.metadata?.historySequence).toBe(3);
+    });
+
+    it("deduplicates rows when a crash replays the sealed prefix", async () => {
+      await appendNumberedMessages(service, wsId, 3); // seq 0..2 → archived after boundary
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after")); // seq 4
+
+      // Simulate a crash between the archive append and the chat.jsonl rewrite:
+      // the sealed prefix reappears at the head of chat.jsonl while the archive
+      // already contains it.
+      const archived = await fs.readFile(archivePath(wsId), "utf-8");
+      const active = await fs.readFile(chatPath(wsId), "utf-8");
+      await fs.writeFile(chatPath(wsId), archived + active);
+
+      // A fresh process triggers the lazy rotation check on first read.
+      const restarted = new HistoryService(config);
+      const latest = await restarted.getHistoryFromLatestBoundary(wsId);
+      expect(latest.success).toBe(true);
+
+      const archiveRows = await readJsonlFile(archivePath(wsId));
+      expect(archiveRows.map((m) => m.id)).toEqual(["msg-0", "msg-1", "msg-2"]);
+
+      const full = await collectFullHistory(restarted, wsId);
+      expect(full.map((m) => m.id)).toEqual(["msg-0", "msg-1", "msg-2", "boundary-1", "post-0"]);
+    });
+
+    it("returns the tail across the archive seam from getLastMessages", async () => {
+      await appendNumberedMessages(service, wsId, 3); // seq 0..2
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after")); // seq 4
+
+      const result = await service.getLastMessages(wsId, 4);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // chat.jsonl only has 2 rows; the older two must come from the archive.
+        expect(result.data.map((m) => m.id)).toEqual(["msg-1", "msg-2", "boundary-1", "post-0"]);
+      }
+    });
+
+    it("truncates after an archived message and collapses the archive", async () => {
+      await appendNumberedMessages(service, wsId, 3); // msg-0..2, seq 0..2
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after")); // seq 4
+
+      const truncateResult = await service.truncateAfterMessage(wsId, "msg-1", {
+        keepTargetMessage: true,
+      });
+      expect(truncateResult.success).toBe(true);
+
+      const full = await collectFullHistory(service, wsId);
+      expect(full.map((m) => m.id)).toEqual(["msg-0", "msg-1"]);
+
+      // The archive was collapsed back into chat.jsonl.
+      expect(
+        await fs.stat(archivePath(wsId)).then(
+          () => true,
+          () => false
+        )
+      ).toBe(false);
+
+      // The sequence counter continues from the cut point.
+      const msg = createMuxMessage("new-msg", "user", "fresh");
+      await service.appendToHistory(wsId, msg);
+      expect(msg.metadata?.historySequence).toBe(2);
+    });
+
+    it("deletes archived rows via deleteMessage", async () => {
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+
+      const deleteResult = await service.deleteMessage(wsId, "msg-1");
+      expect(deleteResult.success).toBe(true);
+
+      const archiveRows = await readJsonlFile(archivePath(wsId));
+      expect(archiveRows.map((m) => m.id)).toEqual(["msg-0", "msg-2"]);
+
+      const full = await collectFullHistory(service, wsId);
+      expect(full.map((m) => m.id)).toEqual(["msg-0", "msg-2", "boundary-1"]);
+    });
+
+    it("clearHistory removes the archive too", async () => {
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+
+      const clearResult = await service.clearHistory(wsId);
+      expect(clearResult.success).toBe(true);
+      if (clearResult.success) {
+        // All rows (archived + active) are reported as deleted.
+        expect(clearResult.data).toEqual([0, 1, 2, 3]);
+      }
+
+      expect(await service.hasHistory(wsId)).toBe(false);
+      expect(
+        await fs.stat(archivePath(wsId)).then(
+          () => true,
+          () => false
+        )
+      ).toBe(false);
+    });
+
+    it("hasHistory sees archive-only workspaces", async () => {
+      await appendNumberedMessages(service, wsId, 1);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await fs.rm(chatPath(wsId));
+
+      expect(await service.hasHistory(wsId)).toBe(true);
+    });
+  });
 });
