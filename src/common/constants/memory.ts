@@ -66,3 +66,12 @@ export const MEMORY_HOT_SET_MAX_ITEM_BYTES = 16 * 1024;
 export const MEMORY_HOT_SET_MAX_TOTAL_BYTES = 48 * 1024;
 /** Half-life of the recency decay applied to access counts when ranking auto-hot files. */
 export const MEMORY_HOT_SET_DECAY_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Memory consolidation ("dream" agent, issue #3534): maximum mutating memory
+ * commands per consolidation run. Reads are unlimited; the budget bounds churn
+ * from a misbehaving model.
+ */
+export const MEMORY_CONSOLIDATION_OP_BUDGET = 8;
+/** Generous step ceiling for the consolidation stream (reads + budgeted mutations). */
+export const MEMORY_CONSOLIDATION_MAX_STEPS = 32;

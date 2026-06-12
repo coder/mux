@@ -4,6 +4,7 @@ import { parseArgs } from "util";
 import { listWorkspacesCommand } from "./list-workspaces";
 import { costsCommand } from "./costs";
 import { sendMessageCommand } from "./send-message";
+import { consolidateMemoryCommand } from "./consolidate-memory";
 
 const { positionals, values } = parseArgs({
   args: process.argv.slice(2),
@@ -14,6 +15,7 @@ const { positionals, values } = parseArgs({
     all: { type: "boolean", short: "a" },
     edit: { type: "string", short: "e" },
     message: { type: "string", short: "m" },
+    "dry-run": { type: "boolean" },
   },
   allowPositionals: true,
 });
@@ -48,10 +50,21 @@ switch (command) {
     sendMessageCommand(workspaceId, values.edit, values.message);
     break;
   }
+  case "consolidate-memory": {
+    const workspaceId = positionals[1];
+    if (!workspaceId) {
+      console.error("Error: workspace ID required");
+      console.log("Usage: bun debug consolidate-memory <workspace-id> [--dry-run]");
+      process.exit(1);
+    }
+    await consolidateMemoryCommand(workspaceId, { dryRun: values["dry-run"] ?? false });
+    break;
+  }
   default:
     console.log("Usage:");
     console.log("  bun debug list-workspaces");
     console.log("  bun debug costs <workspace-id>");
     console.log("  bun debug send-message <workspace-id> [--edit <message-id>] [--message <text>]");
+    console.log("  bun debug consolidate-memory <workspace-id> [--dry-run]");
     process.exit(1);
 }
