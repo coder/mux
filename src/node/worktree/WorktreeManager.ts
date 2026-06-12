@@ -885,11 +885,22 @@ export class WorktreeManager {
     return MISSING_WORKTREE_ERROR_PATTERNS.some((pattern) => normalizedError.includes(pattern));
   }
 
-  async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
+  async forkWorkspace(
+    params: WorkspaceForkParams,
+    options?: {
+      /**
+       * Explicit source checkout path. Overrides the name-derived path for sources whose
+       * persisted path diverges from their name (e.g. isolation: "none" tasks sharing a parent
+       * checkout). See WorktreeRuntime.forkWorkspace.
+       */
+      sourceWorkspacePath?: string;
+    }
+  ): Promise<WorkspaceForkResult> {
     const { projectPath, sourceWorkspaceName, newWorkspaceName, initLogger } = params;
 
     // Get source workspace path
-    const sourceWorkspacePath = this.getWorkspacePath(projectPath, sourceWorkspaceName);
+    const sourceWorkspacePath =
+      options?.sourceWorkspacePath ?? this.getWorkspacePath(projectPath, sourceWorkspaceName);
 
     // Get current branch from source workspace
     try {

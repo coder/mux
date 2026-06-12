@@ -1753,10 +1753,13 @@ export class TaskService {
 
       const parentRuntimeConfig = parentMeta.runtimeConfig;
       const taskRuntimeConfig: RuntimeConfig = parentRuntimeConfig;
+      // Supply the parent's persisted path so override-aware runtimes (worktree/SSH) resolve the
+      // parent's REAL checkout when the parent is itself an isolation: "none" task (see create()).
       const runtime = createRuntimeForWorkspace({
         runtimeConfig: taskRuntimeConfig,
         projectPath: parentMeta.projectPath,
         name: parentMeta.name,
+        namedWorkspacePath: coerceNonEmptyString(parentEntry?.workspace.path),
       });
       // Prefer the parent's persisted checkout path over the name-derived one: when the parent is
       // itself an isolation: "none" task, its name is synthetic and the derived path does not
@@ -2163,10 +2166,17 @@ export class TaskService {
       : undefined;
 
     const initLogger = this.startWorkspaceInit(plan.taskId, plan.parentMeta.projectPath);
+    // Supply the parent's persisted path so override-aware runtimes (worktree/SSH) fork from the
+    // parent's REAL checkout when the parent is itself an isolation: "none" task (see create()).
+    const parentEntryForLaunch = findWorkspaceEntry(
+      this.config.loadConfigOrDefault(),
+      plan.parentWorkspaceId
+    );
     const runtime = createRuntimeForWorkspace({
       runtimeConfig: plan.taskRuntimeConfig,
       projectPath: plan.parentMeta.projectPath,
       name: plan.parentMeta.name,
+      namedWorkspacePath: coerceNonEmptyString(parentEntryForLaunch?.workspace.path),
     });
 
     let materialized: MaterializedTaskLaunch | null;
@@ -2464,10 +2474,14 @@ export class TaskService {
     const parentRuntimeConfig = parentMeta.runtimeConfig;
     const taskRuntimeConfig: RuntimeConfig = parentRuntimeConfig;
 
+    // Supply the parent's persisted path so override-aware runtimes (worktree/SSH) resolve the
+    // parent's REAL checkout — critical when the parent is itself an isolation: "none" task whose
+    // synthetic name has no derived checkout (agent discovery + fork source both depend on it).
     const runtime = createRuntimeForWorkspace({
       runtimeConfig: taskRuntimeConfig,
       projectPath: parentMeta.projectPath,
       name: parentMeta.name,
+      namedWorkspacePath: coerceNonEmptyString(parentEntry?.workspace.path),
     });
 
     // Validate the agent definition exists and is runnable as a sub-agent.

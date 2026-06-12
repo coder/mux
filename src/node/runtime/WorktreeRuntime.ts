@@ -151,6 +151,11 @@ export class WorktreeRuntime extends LocalBaseRuntime {
   }
 
   async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
-    return this.worktreeManager.forkWorkspace(params);
+    // Resolve the source path through this runtime's override-aware getWorkspacePath so forks
+    // FROM a workspace with a persisted path override (e.g. an isolation: "none" task sharing
+    // its parent's checkout) read the real source checkout, not a name-derived path.
+    return this.worktreeManager.forkWorkspace(params, {
+      sourceWorkspacePath: this.getWorkspacePath(params.projectPath, params.sourceWorkspaceName),
+    });
   }
 }
