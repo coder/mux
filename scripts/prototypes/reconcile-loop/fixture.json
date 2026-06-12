@@ -1,5 +1,0 @@
-[
-  { "number": 1, "title": "Crash when opening empty project", "labels": [], "state": "OPEN" },
-  { "number": 2, "title": "Add --json flag to list command", "labels": ["ready-for-agent"], "state": "OPEN" },
-  { "number": 3, "title": "Typo in settings tooltip", "labels": ["triage:done"], "state": "OPEN" }
-]
