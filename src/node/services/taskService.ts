@@ -1758,10 +1758,14 @@ export class TaskService {
         projectPath: parentMeta.projectPath,
         name: parentMeta.name,
       });
+      // Prefer the parent's persisted checkout path over the name-derived one: when the parent is
+      // itself an isolation: "none" task, its name is synthetic and the derived path does not
+      // exist — its real checkout is the persisted (shared) path.
       const isInPlace = parentMeta.projectPath === parentMeta.name;
       const parentWorkspacePath = isInPlace
         ? parentMeta.projectPath
-        : runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name);
+        : (coerceNonEmptyString(parentEntry?.workspace.path) ??
+          runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name));
 
       // isolation: "none" — same gating as create(): only worktree/SSH single-project parents
       // share the parent checkout; everything else falls back to the normal fork path.
@@ -1771,9 +1775,7 @@ export class TaskService {
         args.isolation === "none" &&
         runtimeModeSupportsSharedTaskWorkspace(taskRuntimeMode) &&
         !parentIsMultiProject;
-      const sharedWorkspacePath = useSharedWorkspace
-        ? (coerceNonEmptyString(parentEntry?.workspace.path) ?? parentWorkspacePath)
-        : undefined;
+      const sharedWorkspacePath = useSharedWorkspace ? parentWorkspacePath : undefined;
       if (args.isolation === "none" && !useSharedWorkspace) {
         log.debug("Task.createMany: isolation=none not honored; falling back to fork", {
           taskId,
@@ -2469,10 +2471,15 @@ export class TaskService {
     });
 
     // Validate the agent definition exists and is runnable as a sub-agent.
+    // Prefer the parent's persisted checkout path over the name-derived one: when the parent is
+    // itself an isolation: "none" task, its name is synthetic and the derived path does not exist —
+    // its real checkout is the persisted (shared) path. Persisted paths are canonical elsewhere too
+    // (see runtimeHelpers.resolveWorkspaceRootPath).
     const isInPlace = parentMeta.projectPath === parentMeta.name;
     const parentWorkspacePath = isInPlace
       ? parentMeta.projectPath
-      : runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name);
+      : (coerceNonEmptyString(parentEntry?.workspace.path) ??
+        runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name));
 
     // isolation: "none" — run the sub-agent directly in the parent workspace's checkout instead of
     // forking a new one. Only honored on runtimes where the fork creates a separate checkout we can
@@ -2483,9 +2490,6 @@ export class TaskService {
       args.isolation === "none" &&
       runtimeModeSupportsSharedTaskWorkspace(taskRuntimeMode) &&
       !parentIsMultiProject;
-    // Prefer the parent's persisted checkout path; fall back to the reconstructed path.
-    const sharedWorkspacePath =
-      coerceNonEmptyString(parentEntry?.workspace.path) ?? parentWorkspacePath;
     if (args.isolation === "none" && !useSharedWorkspace) {
       log.debug("Task.create: isolation=none not honored; falling back to fork", {
         taskId,
@@ -2593,7 +2597,7 @@ export class TaskService {
       // Shared-workspace (isolation: "none") tasks point at the parent's existing checkout, so the
       // dequeue path sees the directory already exists and skips fork + init.
       const workspacePath = useSharedWorkspace
-        ? sharedWorkspacePath
+        ? parentWorkspacePath
         : runtime.getWorkspacePath(parentMeta.projectPath, workspaceName);
 
       taskQueueDebug("TaskService.create queued (persist-only)", {
@@ -2672,7 +2676,7 @@ export class TaskService {
       // name (runtime.deleteWorkspace(projectPath, name)), so removing this task never deletes the
       // shared parent checkout. workspaceService.remove additionally skips physical deletion for
       // tasks persisted with taskIsolation === "none".
-      workspacePath = sharedWorkspacePath;
+      workspacePath = parentWorkspacePath;
       trunkBranch = coerceNonEmptyString(parentMeta.name) ?? "main";
       forkedRuntimeConfig = parentRuntimeConfig;
       forkedFromSource = false;
@@ -2685,7 +2689,7 @@ export class TaskService {
         runtimeConfig: parentRuntimeConfig,
         projectPath: parentMeta.projectPath,
         name: workspaceName,
-        namedWorkspacePath: sharedWorkspacePath,
+        namedWorkspacePath: parentWorkspacePath,
       });
       initLogger.logStep("Sharing parent workspace (isolation: none) — skipping fork and init");
       initLogger.logComplete(0);
