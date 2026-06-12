@@ -53,6 +53,25 @@ export function useAutoResizeTextarea(
     if (!el) return;
 
     const max = window.innerHeight * (maxHeightVh / 100);
+
+    // Fast path: an empty textarea needs no inline height at all — consumers size the
+    // empty state via CSS (rows={1} + min-height). Measuring it through the
+    // `auto` + scrollHeight dance below forces a synchronous reflow of every dirty
+    // node, and this effect runs inside React's commit phase. On workspace switch the
+    // entire transcript has just mounted, so that reflow lays out the whole document
+    // (~50k nodes in large chats) before first paint — profiled as the single hottest
+    // frame during chat switching. Drafts are empty in the common case, so skip
+    // measurement entirely and clear any stale inline height (e.g. after send).
+    if (value === "") {
+      if (el.style.height !== "") {
+        el.style.height = "";
+      }
+      appliedHeightRef.current = null;
+      previousValueRef.current = value;
+      previousMaxRef.current = max;
+      return;
+    }
+
     const previousValue = previousValueRef.current;
     const previousMax = previousMaxRef.current;
     const canOnlyGrow =

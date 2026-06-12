@@ -278,6 +278,9 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
               onChange(e.target.value, e.target.selectionStart ?? e.target.value.length)
             }
             onKeyDown={handleKeyDownInternal}
+            // Keep the empty natural height at one line (textareas default to rows=2) so
+            // useAutoResizeTextarea can leave empty drafts to CSS sizing without measuring.
+            rows={1}
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="none"

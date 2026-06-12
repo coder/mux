@@ -1178,8 +1178,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const cursor = element.value.length;
       element.selectionStart = cursor;
       element.selectionEnd = cursor;
-      element.style.height = "auto";
-      element.style.height = Math.min(element.scrollHeight, window.innerHeight * 0.5) + "px";
+      // Skip the resize dance when empty: reading scrollHeight after a height write
+      // forces a synchronous reflow, and this rAF fires right after a workspace
+      // switch while the freshly mounted transcript is still dirty — laying out the
+      // whole document before first paint. Empty composers are sized by CSS alone
+      // (rows=1 + min-height; see useAutoResizeTextarea).
+      if (element.value !== "") {
+        element.style.height = "auto";
+        element.style.height = Math.min(element.scrollHeight, window.innerHeight * 0.5) + "px";
+      }
     });
   }, []);
 

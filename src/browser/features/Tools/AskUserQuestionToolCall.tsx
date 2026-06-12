@@ -192,6 +192,9 @@ function AutoResizeTextarea(props: {
   return (
     <textarea
       ref={textareaRef}
+      // Keep the empty natural height at one line (textareas default to rows=2) so
+      // useAutoResizeTextarea can leave empty drafts to CSS sizing without measuring.
+      rows={1}
       placeholder={props.placeholder}
       value={props.value}
       onChange={(e) => props.onChange(e.target.value)}

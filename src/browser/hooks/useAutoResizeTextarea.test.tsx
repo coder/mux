@@ -9,9 +9,11 @@ function createFakeTextarea(initialScrollHeight: number): {
   assignments: string[];
   setScrollHeight: (value: number) => void;
   setInlineHeight: (value: string) => void;
+  scrollHeightReads: () => number;
 } {
   let height = "";
   let scrollHeight = initialScrollHeight;
+  let scrollHeightReads = 0;
   const assignments: string[] = [];
   const style = {
     get height() {
@@ -26,6 +28,7 @@ function createFakeTextarea(initialScrollHeight: number): {
   const textarea = {
     style,
     get scrollHeight() {
+      scrollHeightReads += 1;
       return scrollHeight;
     },
   } as unknown as HTMLTextAreaElement;
@@ -39,6 +42,7 @@ function createFakeTextarea(initialScrollHeight: number): {
     setInlineHeight: (value) => {
       height = value;
     },
+    scrollHeightReads: () => scrollHeightReads,
   };
 }
 
@@ -59,18 +63,48 @@ describe("useAutoResizeTextarea", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
+  it("skips measurement entirely while the value is empty", () => {
+    const textarea = createFakeTextarea(40);
+    renderHook(({ value }) => useAutoResizeTextarea(textarea.ref, value, 50), {
+      initialProps: { value: "" },
+    });
+
+    // This is the hot path for switching to a workspace with an empty draft: reading
+    // scrollHeight inside the commit phase would force a synchronous reflow of the
+    // freshly mounted transcript, so the hook must not measure or write any height.
+    expect(textarea.assignments).toEqual([]);
+    expect(textarea.scrollHeightReads()).toBe(0);
+  });
+
+  it("clears the inline height when the draft becomes empty", () => {
+    const textarea = createFakeTextarea(800);
+    const { rerender } = renderHook(({ value }) => useAutoResizeTextarea(textarea.ref, value, 50), {
+      initialProps: { value: "line one\nline two" },
+    });
+    expect(textarea.assignments).toEqual(["auto", "500px"]);
+    textarea.assignments.length = 0;
+
+    rerender({ value: "" });
+
+    // Empty drafts (e.g. after send) fall back to CSS sizing without measuring.
+    expect(textarea.assignments).toEqual([""]);
+  });
+
   it("does not reset height to auto for pure typing that does not change composer height", () => {
     const textarea = createFakeTextarea(40);
     const { rerender } = renderHook(({ value }) => useAutoResizeTextarea(textarea.ref, value, 50), {
       initialProps: { value: "" },
     });
 
-    expect(textarea.assignments).toEqual(["auto", "40px"]);
+    // First keystroke after the unmeasured empty state grows from scrollHeight
+    // without the shrink-to-auto reset.
+    rerender({ value: "a" });
+    expect(textarea.assignments).toEqual(["40px"]);
     textarea.assignments.length = 0;
 
     // This is the hot path for typing in a large chat: keep the existing height when
     // scrollHeight is unchanged so the transcript flex sibling does not get re-laid out.
-    rerender({ value: "a" });
+    rerender({ value: "ab" });
 
     expect(textarea.assignments).toEqual([]);
   });
