@@ -15,6 +15,7 @@ import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubsetSchema } from "@/common/utils/jsonSchemaSubset";
 import { forceCloseStdio, killProcessTree } from "@/node/utils/disposableExec";
+import { log } from "@/node/services/log";
 import type { ResolvedWorkflowAction } from "./WorkflowActionRegistry";
 
 export type WorkflowActionEffect = z.infer<typeof WorkflowActionEffectSchema>;
@@ -50,6 +51,23 @@ export interface WorkflowActionRunnerOptions {
   timeoutMs: number;
 }
 
+/** Context passed to in-process host actions (see workspaceHostActions.ts). */
+export interface HostWorkflowActionContext {
+  cwd: string;
+  abortSignal?: AbortSignal;
+}
+
+/**
+ * A built-in action implemented in the mux host process with access to backend
+ * services. The registry still serves a generated stub source for metadata
+ * parsing and replay hashing; execute/reconcile are dispatched here in-process.
+ */
+export interface HostWorkflowAction {
+  metadata: WorkflowActionMetadata;
+  execute: (input: unknown, ctx: HostWorkflowActionContext) => Promise<unknown>;
+  reconcile?: (input: unknown, ctx: HostWorkflowActionContext) => Promise<unknown>;
+}
+
 interface WorkflowActionRunnerPayload {
   attemptId: string;
   mode: "describe" | "execute" | "reconcile";
@@ -66,6 +84,35 @@ interface WorkflowActionRunnerPayload {
 
 const WORKFLOW_ACTION_STDIO_LIMIT_BYTES = 64 * 1024;
 const WORKFLOW_ACTION_RESULT_LIMIT_BYTES = 1024 * 1024;
+/**
+ * How long an aborted/timed-out host action gets to observe ctx.abortSignal
+ * and settle cooperatively before its in-flight work is abandoned. Generous on
+ * purpose: workspace.ensure's worktree creation can take seconds and should
+ * finish (it is tagged atomically, so the next reconcile finds it) rather than
+ * race the failed step's bookkeeping.
+ */
+const HOST_ACTION_ABORT_SETTLE_GRACE_MS = 30_000;
+
+/** True when the promise settles (either way) within the grace window. */
+async function awaitSettlementBounded(
+  promise: Promise<unknown>,
+  graceMs: number
+): Promise<boolean> {
+  let graceHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(
+        () => true,
+        () => true
+      ),
+      new Promise<boolean>((resolve) => {
+        graceHandle = setTimeout(() => resolve(false), graceMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(graceHandle);
+  }
+}
 const WORKFLOW_ACTION_EXEC_PID_LIMIT_BYTES = 16 * 1024;
 const WORKFLOW_ACTION_EXEC_PID_FILENAME = ".mux-action-exec-pids.json";
 const WORKFLOW_ACTION_RESULT_FILENAME = ".mux-action-result.json";
@@ -169,6 +216,22 @@ export class WorkflowActionExecutionError extends Error {
 }
 
 export class WorkflowActionRunner {
+  /**
+   * In-process implementations for built-in host actions (workspace.*).
+   * Optional: when absent, these actions fall through to their generated stub
+   * source, which throws a descriptive "requires the mux host process" error
+   * in the child. CLI commands (`mux run`, `mux workflow`) DO have backend
+   * services, but they run on an ephemeral config root that is deleted on
+   * exit; wiring host actions there would create real git worktrees whose
+   * identifying tags evaporate with the temp config (orphaned branches), so
+   * those contexts deliberately leave the map unset.
+   */
+  private readonly hostActions?: ReadonlyMap<string, HostWorkflowAction>;
+
+  constructor(options?: { hostActions?: ReadonlyMap<string, HostWorkflowAction> }) {
+    this.hostActions = options?.hostActions;
+  }
+
   describe(action: ResolvedWorkflowAction): Promise<WorkflowActionDescription> {
     try {
       assert(action.name.length > 0, "WorkflowActionRunner.describe: action name is required");
@@ -190,6 +253,10 @@ export class WorkflowActionRunner {
     action: ResolvedWorkflowAction,
     options: WorkflowActionRunnerOptions
   ): Promise<WorkflowActionExecutionResult> {
+    const hostAction = this.resolveHostAction(action);
+    if (hostAction != null) {
+      return await this.runHostAction("execute", hostAction, options);
+    }
     return await this.runExecutableChild("execute", action, options);
   }
 
@@ -197,7 +264,129 @@ export class WorkflowActionRunner {
     action: ResolvedWorkflowAction,
     options: WorkflowActionRunnerOptions
   ): Promise<WorkflowActionExecutionResult> {
+    const hostAction = this.resolveHostAction(action);
+    if (hostAction != null) {
+      return await this.runHostAction("reconcile", hostAction, options);
+    }
     return await this.runExecutableChild("reconcile", action, options);
+  }
+
+  /**
+   * Host actions only apply to built-in scope: a trusted project/global action
+   * shadowing the same name keeps standard child execution semantics.
+   */
+  private resolveHostAction(action: ResolvedWorkflowAction): HostWorkflowAction | undefined {
+    if (action.scope !== "built-in") {
+      return undefined;
+    }
+    return this.hostActions?.get(action.name);
+  }
+
+  private async runHostAction(
+    mode: "execute" | "reconcile",
+    hostAction: HostWorkflowAction,
+    options: WorkflowActionRunnerOptions
+  ): Promise<WorkflowActionExecutionResult> {
+    assert(options.timeoutMs > 0, "WorkflowActionRunner.runHostAction: timeoutMs must be positive");
+    const fn = mode === "reconcile" ? hostAction.reconcile : hostAction.execute;
+    const startedAt = Date.now();
+    const failure = (message: string) =>
+      new WorkflowActionExecutionError(message, {
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+        signal: null,
+        durationMs: Date.now() - startedAt,
+        artifacts: [],
+        metadata: hostAction.metadata,
+      });
+
+    if (fn == null) {
+      throw failure(`Host action does not support ${mode}`);
+    }
+
+    // Compose run-abort + step-timeout into ONE signal handed to the action.
+    // This mirrors child-action semantics (which SIGKILL the child): an abort
+    // or timeout must FAIL the step — never produce a durable success — and
+    // the composed signal also terminates in-action poll loops so they can't
+    // keep running after the step has been decided.
+    if (options.abortSignal?.aborted === true) {
+      throw failure("Host action aborted: workflow run was interrupted");
+    }
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(
+      () => controller.abort(new Error(`Host action timed out after ${options.timeoutMs}ms`)),
+      options.timeoutMs
+    );
+    const onExternalAbort = () =>
+      controller.abort(new Error("Host action aborted: workflow run was interrupted"));
+    options.abortSignal?.addEventListener("abort", onExternalAbort, { once: true });
+    const abortPromise = new Promise<never>((_, reject) => {
+      controller.signal.addEventListener("abort", () => reject(controller.signal.reason as Error), {
+        once: true,
+      });
+    });
+    try {
+      const ctx: HostWorkflowActionContext = {
+        cwd: options.cwd,
+        abortSignal: controller.signal,
+      };
+      const fnPromise = Promise.resolve().then(() => fn(options.input, ctx));
+      let output: unknown;
+      try {
+        output = await Promise.race([fnPromise, abortPromise]);
+      } catch (raceError) {
+        // Host actions can't be SIGKILLed like child actions. On abort/timeout
+        // the composed ctx.abortSignal is already aborted, so wait (bounded)
+        // for the action to observe it and settle cooperatively — otherwise a
+        // mutating action (sendMessage/ensure) could land its side effect
+        // AFTER the step is recorded failed. A bounded grace keeps a signal-
+        // ignoring action from hanging the step forever; abandoning is the
+        // logged last resort.
+        if (controller.signal.aborted) {
+          const settled = await awaitSettlementBounded(
+            fnPromise,
+            HOST_ACTION_ABORT_SETTLE_GRACE_MS
+          );
+          if (!settled) {
+            log.error("Host action ignored abort signal; abandoning in-flight work", {
+              timeoutMs: options.timeoutMs,
+            });
+          }
+        }
+        throw raceError;
+      }
+      // Mirror the child-result bound so host actions can't blow up run storage.
+      // Use byte length (not UTF-16 code units) for parity with the child path.
+      const serialized = JSON.stringify(output ?? null);
+      assert(
+        serialized != null &&
+          Buffer.byteLength(serialized, "utf8") <= WORKFLOW_ACTION_RESULT_LIMIT_BYTES,
+        "Host action output must be JSON-serializable and within the result size limit"
+      );
+      // Round-trip through JSON so host outputs match child-action semantics
+      // (child results cross a JSON file): drops `undefined` properties that
+      // would otherwise fail strict JSON-value validation downstream.
+      const normalizedOutput: unknown = JSON.parse(serialized);
+      return {
+        output: normalizedOutput,
+        metadata: hostAction.metadata,
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+        durationMs: Date.now() - startedAt,
+        artifacts: [],
+      };
+    } catch (error) {
+      if (error instanceof WorkflowActionExecutionError) {
+        throw error;
+      }
+      throw failure(getErrorMessage(error));
+    } finally {
+      clearTimeout(timeoutHandle);
+      options.abortSignal?.removeEventListener("abort", onExternalAbort);
+    }
   }
 
   private async runExecutableChild(

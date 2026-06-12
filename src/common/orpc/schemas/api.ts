@@ -69,6 +69,7 @@ import {
   WorkspaceActivitySnapshotSchema,
   WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
+  WorkspaceWorkflowScheduleSchema,
 } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import {
@@ -1035,6 +1036,13 @@ export const memory = {
   },
 };
 
+/**
+ * Programmatic workspace tag keys must be non-blank. Enforced at the schema
+ * boundary so callers get a structured validation error instead of the
+ * service-level assert surfacing as an opaque INTERNAL_SERVER_ERROR.
+ */
+const WorkspaceTagKeySchema = z.string().regex(/\S/, "Workspace tag keys must be non-empty");
+
 export const workspace = {
   list: {
     input: z
@@ -1066,6 +1074,11 @@ export const workspace = {
        * message triggers an LLM-generated title (mirrors the /fork flow).
        */
       pendingAutoTitle: z.boolean().optional(),
+      /**
+       * Programmatic key/value tags persisted atomically with creation (not
+       * rendered in the UI). Used by orchestration callers for stable identity.
+       */
+      tags: z.record(WorkspaceTagKeySchema, z.string()).optional(),
     }),
     output: z.discriminatedUnion("success", [
       z.object({ success: z.literal(true), metadata: FrontendWorkspaceMetadataSchema }),
@@ -1097,6 +1110,30 @@ export const workspace = {
   },
   updateTitle: {
     input: z.object({ workspaceId: z.string(), title: z.string() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  updateTags: {
+    /** Merge tag updates into a workspace; a null value deletes that key. */
+    input: z.object({
+      workspaceId: z.string(),
+      tags: z
+        .record(WorkspaceTagKeySchema, z.string().nullable())
+        .refine((tags) => Object.keys(tags).length > 0, {
+          message: "updateTags requires at least one tag update",
+        }),
+    }),
+    output: ResultSchema(z.object({ tags: z.record(z.string(), z.string()) }), z.string()),
+  },
+  setWorkflowSchedule: {
+    /**
+     * Set (or clear, with null) the workspace's scheduled workflow run.
+     * lastRunStartedAt is scheduler-owned state and not settable by callers;
+     * (re)setting a schedule makes it immediately due.
+     */
+    input: z.object({
+      workspaceId: z.string(),
+      schedule: WorkspaceWorkflowScheduleSchema.omit({ lastRunStartedAt: true }).nullable(),
+    }),
     output: ResultSchema(z.void(), z.string()),
   },
   regenerateTitle: {

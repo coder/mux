@@ -107,6 +107,7 @@ import {
 } from "@/node/services/subagentTranscriptArtifacts";
 import { getErrorMessage } from "@/common/utils/errors";
 import { WorkflowActionRegistry } from "@/node/services/workflows/WorkflowActionRegistry";
+import { WorkflowActionRunner } from "@/node/services/workflows/WorkflowActionRunner";
 import {
   shouldDisableHostWorkflowActions,
   shouldUseRuntimeWorkflowProjectIO,
@@ -326,7 +327,12 @@ async function resolveMemoryScopeContext(
   };
 }
 
-async function resolveWorkflowContext(
+/**
+ * Build a fully-wired WorkflowService for one workspace. Exported so the
+ * WorkflowSchedulerService (ServiceContainer) dispatches scheduled runs
+ * through exactly the same construction as the workflows.* routes.
+ */
+export async function resolveWorkflowContext(
   context: ORPCContext,
   workspaceId: string,
   options: {
@@ -376,6 +382,12 @@ async function resolveWorkflowContext(
         // action execution exists.
         projectRuntime: disableHostWorkflowActions ? runtime : undefined,
         projectCwd: disableHostWorkflowActions ? workspacePath : undefined,
+      }),
+      // workspace.* built-ins run in-process with backend services (host actions).
+      // The map is built once in coreServices (which owns all three services)
+      // and shared through AIService alongside the setTaskService injection.
+      actionRunner: new WorkflowActionRunner({
+        hostActions: context.aiService.getWorkflowHostActions(),
       }),
       defaultActionCwd: workspacePath,
       runStore: new WorkflowRunStore({ sessionDir: context.config.getSessionDir(workspaceId) }),
@@ -3893,7 +3905,8 @@ export const router = (authToken?: string) => {
             input.title,
             input.runtimeConfig,
             input.subProjectPath,
-            input.pendingAutoTitle
+            input.pendingAutoTitle,
+            input.tags
           );
           if (!result.success) {
             return { success: false, error: result.error };
@@ -4015,6 +4028,21 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.updateTitle.output)
         .handler(async ({ context, input }) => {
           return context.workspaceService.updateTitle(input.workspaceId, input.title);
+        }),
+      updateTags: t
+        .input(schemas.workspace.updateTags.input)
+        .output(schemas.workspace.updateTags.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.updateTags(input.workspaceId, input.tags);
+        }),
+      setWorkflowSchedule: t
+        .input(schemas.workspace.setWorkflowSchedule.input)
+        .output(schemas.workspace.setWorkflowSchedule.output)
+        .handler(async ({ context, input }) => {
+          // Scheduled runs only dispatch under the dynamic-workflows experiment;
+          // reject configuration up-front instead of persisting a dormant schedule.
+          assertDynamicWorkflowsEnabled(context);
+          return context.workspaceService.setWorkflowSchedule(input.workspaceId, input.schedule);
         }),
       regenerateTitle: t
         .input(schemas.workspace.regenerateTitle.input)

@@ -353,6 +353,9 @@ async function createWorkflowContext(options: {
     services = createCoreServices({
       config,
       extensionMetadataPath: path.join(tempDir.path, "extensionMetadata.json"),
+      // Session config lives in tempDir (deleted on exit) — disable workspace.*
+      // host actions so workflows can't create worktrees whose tags evaporate.
+      ephemeralConfigRoot: true,
       mcpConfig: realConfig,
     });
     codexOauthService = new CodexOauthService(config, services.providerService);
@@ -421,6 +424,11 @@ function createWorkflowService(input: {
       projectRoot: projectActionRoot,
       globalRoot: globalActionRoot,
     }),
+    // No actionRunner override: the default runner has no workspace.* host
+    // action map, so those built-ins fail fast via their generated stubs.
+    // Deliberate — this CLI runs on an ephemeral config root (see
+    // CoreServicesOptions.ephemeralConfigRoot) where created workspaces would
+    // lose their identifying tags on exit.
     runStore: new WorkflowRunStore({ sessionDir: workspaceSessionDir }),
     runtimeFactory: new QuickJSRuntimeFactory(),
     taskAdapterFactory: (runId) =>

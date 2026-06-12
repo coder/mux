@@ -6,6 +6,7 @@ import {
   WorkflowTaskMetadataSchema,
   WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
+  WorkspaceWorkflowScheduleSchema,
 } from "@/common/orpc/schemas/workspace";
 import {
   WorkspaceAISettingsByAgentSchema,
@@ -96,6 +97,9 @@ export const WorkspaceConfigSchema = z.object({
   heartbeat: WorkspaceHeartbeatSettingsSchema.optional().meta({
     description: "Persisted heartbeat settings for this workspace.",
   }),
+  workflowSchedule: WorkspaceWorkflowScheduleSchema.optional().meta({
+    description: "Persisted scheduled workflow run for this workspace.",
+  }),
   goalDefaults: WorkspaceGoalDefaultsOverrideSchema.optional().meta({
     description:
       "Per-workspace overrides for goal creation defaults. Sparse; each null field follows the global `goalDefaults`.",
@@ -111,6 +115,14 @@ export const WorkspaceConfigSchema = z.object({
     description:
       'If set, selects an agent definition for this workspace (e.g., "explore" or "exec").',
   }),
+  tags: z
+    .record(z.string(), z.string())
+    .optional()
+    .meta({
+      description:
+        "Programmatic key/value tags (e.g. workItemKey) set via API/CLI/workflow actions; " +
+        "not rendered in the UI. Stable identity for orchestration loops, unlike title/name.",
+    }),
   workflowTask: WorkflowTaskMetadataSchema.optional().meta({
     description: "Workflow run/step metadata for workflow-spawned child tasks.",
   }),

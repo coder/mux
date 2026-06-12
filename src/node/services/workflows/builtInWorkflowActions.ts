@@ -1,3 +1,6 @@
+import assert from "@/common/utils/assert";
+import { buildWorkspaceHostActionStubSources } from "./workspaceHostActions";
+
 const GIT_SHARED_HELPERS = String.raw`
 function inputObject(input) {
   return input != null && typeof input === "object" && !Array.isArray(input) ? input : {};
@@ -878,7 +881,7 @@ module.exports.execute = async function (rawInput, ctx) {
 module.exports.reconcile = module.exports.execute;
 `;
 
-export const BUILT_IN_WORKFLOW_ACTION_SOURCES = {
+const STATIC_BUILT_IN_WORKFLOW_ACTION_SOURCES: Record<string, string> = {
   "git.status": GIT_STATUS_SOURCE,
   "git.commitsBetween": GIT_COMMITS_BETWEEN_SOURCE,
   "git.diff": GIT_DIFF_SOURCE,
@@ -890,4 +893,22 @@ export const BUILT_IN_WORKFLOW_ACTION_SOURCES = {
   "security.writeThreatModel": SECURITY_WRITE_THREAT_MODEL_SOURCE,
   "security.writeEvidenceBundle": SECURITY_WRITE_EVIDENCE_BUNDLE_SOURCE,
   "security.writeState": SECURITY_WRITE_STATE_SOURCE,
-} as const;
+};
+
+// workspace.* host actions: generated stubs carrying real metadata; the
+// implementations run in-process via WorkflowActionRunner host dispatch.
+const HOST_ACTION_STUB_SOURCES = buildWorkspaceHostActionStubSources();
+
+// Startup check: a misnamed host-action stub must never silently shadow a
+// static built-in action source (the spread below would mask it).
+for (const name of Object.keys(HOST_ACTION_STUB_SOURCES)) {
+  assert(
+    !Object.prototype.hasOwnProperty.call(STATIC_BUILT_IN_WORKFLOW_ACTION_SOURCES, name),
+    `Host action stub "${name}" collides with a static built-in workflow action`
+  );
+}
+
+export const BUILT_IN_WORKFLOW_ACTION_SOURCES: Record<string, string> = {
+  ...STATIC_BUILT_IN_WORKFLOW_ACTION_SOURCES,
+  ...HOST_ACTION_STUB_SOURCES,
+};

@@ -2411,8 +2411,15 @@ export class WorkspaceService extends EventEmitter {
     title?: string,
     runtimeConfig?: RuntimeConfig,
     subProjectPath?: string,
-    pendingAutoTitle?: boolean
+    pendingAutoTitle?: boolean,
+    tags?: Record<string, string>
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
+    if (tags != null) {
+      for (const [tagKey, tagValue] of Object.entries(tags)) {
+        assert(tagKey.trim().length > 0, "Workspace tag keys must be non-empty");
+        assert(typeof tagValue === "string", "Workspace tag values must be strings");
+      }
+    }
     const configSnapshot = this.config.loadConfigOrDefault();
     const requestedProjectPath = stripTrailingSlashes(projectPath);
     const requestedProjectConfig = configSnapshot.projects.get(requestedProjectPath);
@@ -2639,6 +2646,10 @@ export class WorkspaceService extends EventEmitter {
           createdAt: metadata.createdAt,
           runtimeConfig: finalRuntimeConfig,
           subProjectPath: effectiveSubProjectPath,
+          // Persist tags atomically with creation so orchestration loops that
+          // look workspaces up by tag (e.g. workspace.ensure) never observe a
+          // created-but-untagged window after a crash.
+          ...(tags != null && Object.keys(tags).length > 0 ? { tags } : {}),
           // Mirror /fork: when /new is invoked with a start message, defer title
           // selection until the first message can drive LLM-based generation.
           ...(pendingAutoTitle === true ? { pendingAutoTitle: true } : {}),
@@ -2698,6 +2709,13 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  /**
+   * Scope note: unlike create(), this does not accept creation-time `tags` —
+   * multi-project workspaces currently can't be tagged atomically (callers
+   * would need a follow-up updateTags, reintroducing a crash-window gap).
+   * Thread tags through here if orchestration loops ever target multi-project
+   * workspaces.
+   */
   async createMultiProject(
     projects: ProjectRef[],
     branchName: string,
@@ -3773,6 +3791,64 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Set (or clear, with null) the workspace's scheduled workflow run.
+   * Input shape/bounds are enforced at the oRPC schema boundary
+   * (WorkspaceWorkflowScheduleSchema); this persists and emits metadata.
+   * Setting a schedule resets lastRunStartedAt so the new schedule is
+   * immediately due (at-least-once bootstrap).
+   */
+  async setWorkflowSchedule(
+    workspaceId: string,
+    schedule: {
+      enabled: boolean;
+      workflowName: string;
+      args?: Record<string, unknown>;
+      intervalMs: number;
+    } | null
+  ): Promise<Result<void, string>> {
+    try {
+      const normalizedWorkspaceId = workspaceId.trim();
+      assert(
+        normalizedWorkspaceId.length > 0,
+        "setWorkflowSchedule requires a non-empty workspaceId"
+      );
+
+      let applied = false;
+      await this.config.editConfig((config) => {
+        for (const projectConfig of config.projects.values()) {
+          const workspaceEntry = projectConfig.workspaces.find(
+            (entry) => entry.id === normalizedWorkspaceId
+          );
+          if (!workspaceEntry) {
+            continue;
+          }
+          if (schedule == null) {
+            delete workspaceEntry.workflowSchedule;
+          } else {
+            workspaceEntry.workflowSchedule = {
+              enabled: schedule.enabled,
+              workflowName: schedule.workflowName,
+              ...(schedule.args != null ? { args: schedule.args } : {}),
+              intervalMs: schedule.intervalMs,
+            };
+          }
+          applied = true;
+          break;
+        }
+        return config;
+      });
+      if (!applied) {
+        return Err("Workspace not found");
+      }
+
+      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to set workflow schedule: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
    * Read the per-workspace goal-defaults override.
    *
    * Returns `null` when this workspace has no override (callers should fall
@@ -4462,6 +4538,64 @@ export class WorkspaceService extends EventEmitter {
         workspaceId,
         error: clearPendingResult.error,
       });
+    }
+  }
+
+  /**
+   * Merge programmatic tag updates into a workspace (null value deletes a key).
+   * Tags are not rendered in the UI; they exist for API/CLI/workflow-action
+   * callers that need stable workspace identity (e.g. reconcile loops).
+   */
+  async updateTags(
+    workspaceId: string,
+    updates: Record<string, string | null>
+  ): Promise<Result<{ tags: Record<string, string> }>> {
+    assert(Object.keys(updates).length > 0, "updateTags requires at least one tag update");
+    for (const tagKey of Object.keys(updates)) {
+      assert(tagKey.trim().length > 0, "Workspace tag keys must be non-empty");
+    }
+    try {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Workspace not found");
+      }
+
+      let finalTags: Record<string, string> = {};
+      // findWorkspace above can match via metadata fallback (legacy entries
+      // without an id) or race a concurrent removal; track whether the edit
+      // actually landed so callers never get a silent-success no-op.
+      let applied = false;
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(workspace.projectPath);
+        const workspaceEntry = projectConfig?.workspaces.find((entry) => entry.id === workspaceId);
+        if (!workspaceEntry) {
+          return config;
+        }
+        const merged = { ...workspaceEntry.tags };
+        for (const [tagKey, tagValue] of Object.entries(updates)) {
+          if (tagValue === null) {
+            delete merged[tagKey];
+          } else {
+            merged[tagKey] = tagValue;
+          }
+        }
+        if (Object.keys(merged).length > 0) {
+          workspaceEntry.tags = merged;
+        } else {
+          delete workspaceEntry.tags;
+        }
+        finalTags = merged;
+        applied = true;
+        return config;
+      });
+      if (!applied) {
+        return Err("Workspace not found");
+      }
+
+      await this.emitCurrentWorkspaceMetadata(workspaceId);
+      return Ok({ tags: finalTags });
+    } catch (error) {
+      return Err(`Failed to update workspace tags: ${getErrorMessage(error)}`);
     }
   }
 

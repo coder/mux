@@ -44,6 +44,9 @@ import { ExperimentsService } from "@/node/services/experimentsService";
 import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { McpOauthService } from "@/node/services/mcpOauthService";
 import { HeartbeatService } from "@/node/services/heartbeatService";
+import { WorkflowSchedulerService } from "@/node/services/workflows/WorkflowSchedulerService";
+import { resolveWorkflowContext } from "@/node/orpc/router";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { AgentStatusService } from "@/node/services/agentStatusService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import type { IdleDispatcher } from "@/node/services/idleDispatcher";
@@ -138,6 +141,7 @@ export class ServiceContainer {
   public readonly idleCompactionService: IdleCompactionService;
   public readonly idleDispatcher: IdleDispatcher;
   public readonly heartbeatService: HeartbeatService;
+  public readonly workflowSchedulerService: WorkflowSchedulerService;
   public readonly agentStatusService: AgentStatusService;
 
   constructor(config: Config) {
@@ -262,6 +266,34 @@ export class ServiceContainer {
       this.taskService,
       this.idleDispatcher
     );
+    // Wall-clock scheduler for per-workspace `workflowSchedule` entries.
+    // Deliberately NOT heartbeat/IdleDispatcher based: reconciliation loops
+    // need deterministic wall-clock dispatch (see WorkflowSchedulerService).
+    this.workflowSchedulerService = new WorkflowSchedulerService({
+      config,
+      isEnabled: () =>
+        this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS),
+      startWorkflow: async (input) => {
+        // Same construction as the workflows.* ORPC routes so scheduled runs
+        // behave identically to manual ones (run store, trust, host actions).
+        const { service, projectTrusted } = await resolveWorkflowContext(
+          this.toORPCContext(),
+          input.workspaceId
+        );
+        return service.startNamedWorkflow({
+          name: input.name,
+          workspaceId: input.workspaceId,
+          projectTrusted,
+          args: input.args,
+          // The scheduler's startWorkflow contract requires resolving only on
+          // a TERMINAL status: the runner's default (background on queued
+          // agent message, returning status "backgrounded" mid-run) would free
+          // the activeDispatches slot early and let the next tick double-
+          // dispatch, breaking skip-if-running.
+          backgroundOnMessageQueued: false,
+        });
+      },
+    });
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(
       config,
@@ -467,6 +499,10 @@ export class ServiceContainer {
     this.heartbeatService.start();
     stepDurationsMs["heartbeatService.start"] = Date.now() - heartbeatStartedAt;
 
+    const workflowSchedulerStartedAt = Date.now();
+    this.workflowSchedulerService.start();
+    stepDurationsMs["workflowSchedulerService.start"] = Date.now() - workflowSchedulerStartedAt;
+
     const agentStatusStartedAt = Date.now();
     this.agentStatusService.start();
     stepDurationsMs["agentStatusService.start"] = Date.now() - agentStatusStartedAt;
@@ -570,6 +606,7 @@ export class ServiceContainer {
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
     this.heartbeatService.stop();
+    this.workflowSchedulerService.stop();
     this.agentStatusService.stop();
     this.idleCompactionService.stop();
     await this.browserBridgeServer.stop();
