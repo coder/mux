@@ -131,12 +131,14 @@ export function deriveTasksSectionAgentGroups(params: {
   );
   const knownAgentIds = new Set(params.listedAgents.map((agent) => agent.id));
 
+  // `visible.filter(...)` already returns a fresh array, so the subsequent
+  // `.sort()` mutates that copy rather than `visible` — no defensive spread needed.
   return {
-    uiAgents: [...visible].filter((agent) => agent.uiSelectable).sort(compareAgentsByName),
-    subagents: [...visible]
+    uiAgents: visible.filter((agent) => agent.uiSelectable).sort(compareAgentsByName),
+    subagents: visible
       .filter((agent) => agent.subagentRunnable && !agent.uiSelectable)
       .sort(compareAgentsByName),
-    internalAgents: [...visible]
+    internalAgents: visible
       .filter((agent) => !agent.uiSelectable && !agent.subagentRunnable)
       .sort(compareAgentsByName),
     // Keep hidden agents such as Desktop known here so disabling their Settings visibility
