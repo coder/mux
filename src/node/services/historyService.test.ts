@@ -1640,6 +1640,25 @@ describe("HistoryService", () => {
       expect(msg.metadata?.historySequence).toBe(3);
     });
 
+    it("seeds the counter from the archive when renaming an archive-only session", async () => {
+      await appendNumberedMessages(service, wsId, 3); // seq 0..2 → archived
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
+      // Archive-only session: the active file is gone but sealed rows remain.
+      await fs.rm(chatPath(wsId));
+
+      const newWsId = "ws-rotation-renamed";
+      await fs.rename(config.getSessionDir(wsId), config.getSessionDir(newWsId));
+
+      // Fresh process: no cached counter for either workspace ID.
+      const restarted = new HistoryService(config);
+      const migrateResult = await restarted.migrateWorkspaceId(wsId, newWsId);
+      expect(migrateResult.success).toBe(true);
+
+      const msg = createMuxMessage("new-msg", "user", "fresh");
+      await restarted.appendToHistory(newWsId, msg);
+      expect(msg.metadata?.historySequence).toBe(3);
+    });
+
     it("keeps the archive intact on a no-op percentage truncation", async () => {
       await appendNumberedMessages(service, wsId, 3);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));

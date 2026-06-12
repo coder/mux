@@ -1949,9 +1949,13 @@ export class HistoryService {
         // Structural rewrite requires full file content.
         const messages = await this.readChatHistory(newWorkspaceId);
         if (messages.length === 0) {
-          // No messages to migrate, just transfer sequence counter
+          // No active messages to migrate, just transfer the sequence counter.
+          // Floor it with the archive max: an archive-only session (active file
+          // deleted/truncated) renamed in a fresh process has no cached counter,
+          // and seeding 0 would reuse archived historySequence values.
           const oldCounter = this.sequenceCounters.get(oldWorkspaceId) ?? 0;
-          this.sequenceCounters.set(newWorkspaceId, oldCounter);
+          const archiveFloor = (await this.getArchiveTailMaxSequence(newWorkspaceId)) + 1;
+          this.sequenceCounters.set(newWorkspaceId, Math.max(oldCounter, archiveFloor));
           this.sequenceCounters.delete(oldWorkspaceId);
           return Ok(undefined);
         }
