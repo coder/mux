@@ -153,6 +153,58 @@ export const NestedTaskGroupConnectors: AppStory = {
   },
 };
 
+// Best-of group rendering contract: collapsed header reads "Best of 3 · <title>";
+// expanded members drop the repeated title and render as "Candidate A/B/C".
+export const BestOfGroup: AppStory = {
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const projectName = "my-app";
+        const candidate = (index: number, taskStatus: "running" | "queued") =>
+          createWorkspace({
+            id: `cand-${index}`,
+            name: `task/cand-${index}`,
+            projectName,
+            title: "Compare implementation options",
+            parentWorkspaceId: "ws-parent",
+            taskStatus,
+            bestOf: { groupId: "bo-1", index, total: 3 },
+          });
+        const workspaces = [
+          createWorkspace({
+            id: "ws-parent",
+            name: "feature/compare",
+            projectName,
+            title: "Pick the best approach",
+          }),
+          candidate(0, "running"),
+          candidate(1, "running"),
+          candidate(2, "queued"),
+        ];
+        expandProjects([PROJECT_PATH]);
+        localStorage.setItem("expandedTaskGroups", JSON.stringify({ "task:ws-parent:bo-1": true }));
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await waitFor(() => {
+      if (!canvasElement.querySelector('[data-testid="task-group-bo-1"]')) {
+        throw new Error("Best-of group header not found");
+      }
+      if (!canvasElement.querySelector('[aria-label="Select workspace Candidate A"]')) {
+        throw new Error("Expected label-only candidate rows");
+      }
+    });
+  },
+};
+
 // Phase 2 visual contract: two concurrent workflow runs form separate collapsible
 // groups (one with a stamped name, one falling back to the run id), active runs
 // default to expanded, and a variants group coexists under the same workspace.

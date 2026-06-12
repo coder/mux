@@ -1407,6 +1407,49 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(view.getByTestId(agentItemTestId("run-1"))).toBeTruthy();
   });
 
+  test("keeps the workflow group mounted across step gaps where all members are terminal", () => {
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    });
+
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const parentWorkspace = {
+      ...createWorkspace("parent", { title: "Parent workspace" }),
+      projects: singleProjectRefs,
+    };
+    const step = (taskStatus: FrontendWorkspaceMetadata["taskStatus"]) => ({
+      ...createWorkspace("step-1", {
+        parentWorkspaceId: "parent",
+        taskStatus,
+        title: "Extract claims",
+        workflowTask: { runId: "wfr_alpha", stepId: "claims", workflowName: "review-pipeline" },
+      }),
+      projects: singleProjectRefs,
+    });
+
+    const renderProps = (child: FrontendWorkspaceMetadata) =>
+      ({
+        collapsed: false,
+        onToggleCollapsed: () => undefined,
+        sortedWorkspacesByProject: new Map([["/projects/demo-project", [parentWorkspace, child]]]),
+        workspaceRecency: { parent: Date.now(), "step-1": Date.now() },
+      }) as const;
+
+    const view = render(<ProjectSidebar {...renderProps(step("running"))} />);
+    expect(view.getByTestId("task-group-wfr_alpha")).toBeTruthy();
+
+    // Step gap: the only member finished, the next step hasn't spawned yet.
+    // The group must stay mounted (no flash-out) with its member visible.
+    view.rerender(<ProjectSidebar {...renderProps(step("reported"))} />);
+    expect(view.getByTestId("task-group-wfr_alpha")).toBeTruthy();
+    expect(view.getByTestId(agentItemTestId("step-1"))).toBeTruthy();
+  });
+
   test("renders a completed-only workflow group when a hidden member is selected and reveals it on expand", async () => {
     window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
     projectContextValue = createProjectContextValue({

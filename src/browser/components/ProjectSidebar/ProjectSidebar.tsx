@@ -85,8 +85,10 @@ import {
 } from "../sidebarItemLayout";
 import { TaskGroupListItem } from "./TaskGroupListItem";
 import {
+  collectActiveWorkflowGroupKeys,
   computeSidebarTaskGroups,
   computeTaskGroupMemberRowMeta,
+  ensureWorkflowGroupMembersVisible,
   type SidebarTaskGroupsResult,
 } from "./sidebarTaskGroups";
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
@@ -2117,10 +2119,24 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               }));
                               const depthByWorkspaceId =
                                 computeWorkspaceDepthMap(projectWorkspaces);
-                              const visibleWorkspacesForNormalRendering = filterVisibleAgentRows(
+                              // Track runs that are (or were, this session) active so their
+                              // groups stay mounted across step gaps where every member is
+                              // momentarily terminal (no flash-out between sequential steps).
+                              for (const key of collectActiveWorkflowGroupKeys(
                                 workspacesForNormalRendering,
-                                expandedCompletedParentIds
-                              );
+                                { isWorkspaceLiveActive }
+                              )) {
+                                sessionActiveTaskGroupKeysRef.current.add(key);
+                              }
+                              const visibleWorkspacesForNormalRendering =
+                                ensureWorkflowGroupMembersVisible({
+                                  allRows: workspacesForNormalRendering,
+                                  visibleRows: filterVisibleAgentRows(
+                                    workspacesForNormalRendering,
+                                    expandedCompletedParentIds
+                                  ),
+                                  sessionActiveGroupKeys: sessionActiveTaskGroupKeysRef.current,
+                                });
                               const baseRowMetaByWorkspaceId = computeAgentRowRenderMeta(
                                 workspacesForNormalRendering,
                                 depthByWorkspaceId,

@@ -4,8 +4,10 @@ import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import {
+  collectActiveWorkflowGroupKeys,
   computeSidebarTaskGroups,
   computeTaskGroupMemberRowMeta,
+  ensureWorkflowGroupMembersVisible,
   shortenWorkflowRunId,
 } from "./sidebarTaskGroups";
 
@@ -173,6 +175,68 @@ describe("computeSidebarTaskGroups", () => {
 
     expect(group?.queuedCount).toBe(1);
     expect(group?.hasActiveMember).toBe(true);
+  });
+});
+
+describe("workflow group session stickiness", () => {
+  test("collectActiveWorkflowGroupKeys reports runs with non-terminal members only", () => {
+    const running = workflowChild("running", "wfr_alpha", { taskStatus: "running" });
+    const done = workflowChild("done", "wfr_beta", { taskStatus: "reported" });
+    const queued = workflowChild("queued", "wfr_gamma", { taskStatus: "queued" });
+
+    const keys = collectActiveWorkflowGroupKeys([parent, running, done, queued]);
+
+    expect(keys.has("workflow:parent:wfr_alpha")).toBe(true);
+    expect(keys.has("workflow:parent:wfr_beta")).toBe(false);
+    expect(keys.has("workflow:parent:wfr_gamma")).toBe(true);
+  });
+
+  test("re-includes hidden members of session-active runs so the group never unmounts", () => {
+    // Step gap: the only member is terminal and hidden by completed-sub-agent
+    // filtering, but the run was active earlier this session.
+    const done = workflowChild("done", "wfr_alpha", { taskStatus: "reported" });
+    const other = createWorkspace("other", { parentWorkspaceId: "parent" });
+    const allRows = [parent, done, other];
+    const visibleRows = [parent, other];
+
+    const result = ensureWorkflowGroupMembersVisible({
+      allRows,
+      visibleRows,
+      sessionActiveGroupKeys: new Set(["workflow:parent:wfr_alpha"]),
+    });
+
+    // Original order preserved.
+    expect(result.map((w) => w.id)).toEqual(["parent", "done", "other"]);
+
+    // Non-sticky runs stay hidden.
+    const untouched = ensureWorkflowGroupMembersVisible({
+      allRows,
+      visibleRows,
+      sessionActiveGroupKeys: new Set(["workflow:parent:wfr_other"]),
+    });
+    expect(untouched.map((w) => w.id)).toEqual(["parent", "other"]);
+  });
+
+  test("never resurrects members whose parent is hidden or that have their own subtree", () => {
+    const done = workflowChild("done", "wfr_alpha", { taskStatus: "reported" });
+    const grandchild = createWorkspace("grandchild", { parentWorkspaceId: "done" });
+    const sticky = new Set(["workflow:parent:wfr_alpha"]);
+
+    // Member has children (leaf-only rule) => not re-included.
+    const withSubtree = ensureWorkflowGroupMembersVisible({
+      allRows: [parent, done, grandchild],
+      visibleRows: [parent],
+      sessionActiveGroupKeys: sticky,
+    });
+    expect(withSubtree.map((w) => w.id)).toEqual(["parent"]);
+
+    // Parent itself hidden => member stays hidden.
+    const parentHidden = ensureWorkflowGroupMembersVisible({
+      allRows: [parent, done],
+      visibleRows: [],
+      sessionActiveGroupKeys: sticky,
+    });
+    expect(parentHidden).toEqual([]);
   });
 });
 

@@ -74,6 +74,8 @@ interface WorkflowTaskServiceLike {
     workspaceId: string,
     options?: { workflowRunId?: string }
   ): Promise<string[]>;
+  markWorkflowRunActive?(workflowRunId: string): void;
+  markWorkflowRunEnded?(workflowRunId: string): Promise<void>;
 }
 
 type WorkflowPatchArtifactApplier = (
@@ -208,6 +210,16 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     await this.taskService.terminateAllDescendantAgentTasks?.(this.parentWorkspaceId, {
       workflowRunId: this.workflowRunId,
     });
+  }
+
+  // Completed child workspaces are held (not auto-deleted) while the run is
+  // active so the sidebar shows the run's tasks for its entire duration.
+  onRunStarted(): void {
+    this.taskService.markWorkflowRunActive?.(this.workflowRunId);
+  }
+
+  async onRunEnded(): Promise<void> {
+    await this.taskService.markWorkflowRunEnded?.(this.workflowRunId);
   }
 
   async createAgentTasks(

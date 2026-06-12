@@ -79,6 +79,75 @@ function createDeferred() {
 }
 
 describe("WorkflowRunner", () => {
+  test("brackets runs with onRunStarted/onRunEnded so child-workspace cleanup holds match run lifetime", async () => {
+    using tmp = new DisposableTempDir("workflow-runner");
+    const store = await createRunStore(tmp.path);
+    const lifecycle: string[] = [];
+    const runner = createRunner(store, {
+      async runAgent() {
+        lifecycle.push("agent");
+        return { taskId: "task_1", reportMarkdown: "summary" };
+      },
+      onRunStarted() {
+        lifecycle.push("started");
+      },
+      onRunEnded() {
+        lifecycle.push("ended");
+      },
+    });
+
+    await runner.run("wfr_123");
+
+    expect(lifecycle).toEqual(["started", "agent", "ended"]);
+  });
+
+  test("releases the run hold when the workflow fails", async () => {
+    using tmp = new DisposableTempDir("workflow-runner");
+    const store = await createRunStore(tmp.path);
+    const lifecycle: string[] = [];
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("agent exploded");
+      },
+      onRunStarted() {
+        lifecycle.push("started");
+      },
+      onRunEnded() {
+        lifecycle.push("ended");
+      },
+    });
+
+    await expect(runner.run("wfr_123")).rejects.toThrow("agent exploded");
+
+    expect(lifecycle).toEqual(["started", "ended"]);
+  });
+
+  test("keeps the run hold when the lease belongs to another runner", async () => {
+    using tmp = new DisposableTempDir("workflow-runner");
+    const store = await createRunStore(tmp.path);
+    // Simulate a concurrent runner owning a fresh (non-stale) lease at the
+    // same clock instant the runner under test will see (nowMs = 1000).
+    expect(await store.acquireLease("wfr_123", "runner-other", 1_000)).toBe(true);
+
+    const lifecycle: string[] = [];
+    const runner = createRunner(store, {
+      async runAgent() {
+        return { taskId: "task_1", reportMarkdown: "summary" };
+      },
+      onRunStarted() {
+        lifecycle.push("started");
+      },
+      onRunEnded() {
+        lifecycle.push("ended");
+      },
+    });
+
+    await expect(runner.run("wfr_123")).rejects.toThrow("Workflow run is already active");
+
+    // The lease owner is responsible for releasing the hold; this runner must not.
+    expect(lifecycle).toEqual(["started"]);
+  });
+
   test("executes conductor primitives and persists run events/results", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
     const store = await createRunStore(tmp.path);

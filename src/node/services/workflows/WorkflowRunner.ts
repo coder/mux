@@ -129,6 +129,19 @@ export interface WorkflowTaskAdapter {
     options?: { abortSignal?: AbortSignal }
   ): Promise<unknown>;
   interruptRun?(): Promise<void>;
+  /**
+   * Called when the runner begins executing the run (including resumes and
+   * background continuations). Adapters use this to hold completed child-task
+   * workspaces alive so the sidebar shows the run's tasks for its whole
+   * duration instead of flashing between sequential steps.
+   */
+  onRunStarted?(): Promise<void> | void;
+  /**
+   * Called when the run reaches a terminal state. Not called when the run is
+   * backgrounded (the background continuation re-enters run()) or when the
+   * lease was held by another runner.
+   */
+  onRunEnded?(): Promise<void> | void;
 }
 
 export interface WorkflowRunnerRunOptions {
@@ -297,6 +310,31 @@ export class WorkflowRunner {
 
   async run(runId: string, options?: WorkflowRunnerRunOptions): Promise<WorkflowResult> {
     assert(runId.length > 0, "WorkflowRunner.run: runId is required");
+    // Hold workflow-owned child workspaces for the run's whole duration so the
+    // sidebar keeps showing the run's tasks between sequential steps.
+    await this.taskAdapter.onRunStarted?.();
+    try {
+      const result = await this.runWithLease(runId, options);
+      await this.taskAdapter.onRunEnded?.();
+      return result;
+    } catch (error) {
+      // Backgrounding is not terminal (the background continuation re-enters
+      // run()), and a lease-acquisition loss means another runner owns the run
+      // and will release the hold itself when it finishes.
+      const keepsHold =
+        error instanceof WorkflowRunBackgroundedError ||
+        (error instanceof Error && error.message === `Workflow run is already active: ${runId}`);
+      if (!keepsHold) {
+        await this.taskAdapter.onRunEnded?.();
+      }
+      throw error;
+    }
+  }
+
+  private async runWithLease(
+    runId: string,
+    options?: WorkflowRunnerRunOptions
+  ): Promise<WorkflowResult> {
     const leaseAcquired = await this.runStore.acquireLease(
       runId,
       this.runnerId,
