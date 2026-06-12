@@ -329,7 +329,9 @@ export class MemoryConsolidationService {
     const sidecar = await this.load();
     // Newest completed run anywhere = last time global scope was covered
     // (every run consolidates global). Derived, so no sidecar schema change.
-    const globalLastRunAt = Math.max(
+    // Advanced after each successful run below: a global-only write needs ONE
+    // covering pass, not one per idle workspace in the same sweep.
+    let globalLastRunAt = Math.max(
       0,
       ...Object.values(sidecar.workspaces).map((record) => record.lastRunAt)
     );
@@ -382,7 +384,11 @@ export class MemoryConsolidationService {
           workspaceId,
           reason: result.error,
         });
+        continue;
       }
+      // This run covered global scope; later candidates in this sweep only
+      // qualify via their own workspace writes or genuinely newer global ones.
+      globalLastRunAt = Math.max(globalLastRunAt, result.data.lastRunAt);
     }
   }
 }

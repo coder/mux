@@ -110,6 +110,16 @@ describe("consolidation memory tool rails", () => {
     if (!mutation.success) expect(mutation.error).toContain("only /memories/workspace/");
     expect(fixture.journal[0]?.applied).toBe(false);
 
+    // Scope restriction is a whitelist: project-local (project-private,
+    // host-local state from #3533) is just as out of bounds as project.
+    const projectLocal = await execute(fixture.tool, {
+      command: "create",
+      path: "/memories/project-local/note.md",
+      file_text: "x\n",
+    });
+    expect(projectLocal.success).toBe(false);
+    if (!projectLocal.success) expect(projectLocal.error).toContain("only /memories/workspace/");
+
     // Reads are unguarded: project-scope view fails inside MemoryService
     // (scope disabled in this ctx) — not via the consolidation guard.
     const read = await execute(fixture.tool, { command: "view", path: "/memories/global/" });

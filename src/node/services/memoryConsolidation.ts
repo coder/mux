@@ -93,12 +93,15 @@ export function createConsolidationMemoryTool(args: {
   let mutationCount = 0;
 
   const guard = async (target: MutationTarget): Promise<string | null> => {
-    // v1 scope restriction: project memories are git-tracked and need a live
-    // checkout + diff-visibility story; defer to phase 1.1 (PRD #3534).
+    // v1 scope restriction — whitelist, not blacklist, so scopes added later
+    // (e.g. project-local from #3533) stay out of bounds by default. Project
+    // memories are git-tracked and need a live checkout + diff-visibility
+    // story; project-local is project-private state this background pass has
+    // no business rewriting. Defer both to phase 1.1 (PRD #3534).
     for (const virtualPath of [target.path, target.newPath]) {
       if (virtualPath == null) continue;
       const { scope } = parseMemoryPath(virtualPath);
-      if (scope === null || scope === "project") {
+      if (scope !== "workspace" && scope !== "global") {
         return `Consolidation may not modify ${virtualPath}: only /memories/workspace/... and /memories/global/... are in scope for this run.`;
       }
     }
@@ -108,7 +111,7 @@ export function createConsolidationMemoryTool(args: {
     // pinned — otherwise `delete dir/` would silently destroy dir/pinned.md.
     if (target.command === "delete" || target.command === "rename") {
       const { scope, relPath } = parseMemoryPath(target.path);
-      assert(scope !== null && scope !== "project", "guard scope check must run first");
+      assert(scope === "workspace" || scope === "global", "guard scope check must run first");
       const entries = await metaService.getEntries();
       const key = memoryLogicalKey(scope, relPath, {
         projectPath: ctx.projectPath,

@@ -14,7 +14,7 @@ import {
   resolveDreamAgentBody,
   resolveDreamModelString,
 } from "./memoryConsolidationService";
-import { MemoryMetaService } from "./memoryMeta";
+import { memoryLogicalKey, MemoryMetaService } from "./memoryMeta";
 import { MemoryService } from "./memoryService";
 import { TestTempDir } from "./tools/testHelpers";
 
@@ -270,15 +270,21 @@ describe("MemoryConsolidationService", () => {
   it("launch sweep skips archived workspaces and caps runs per launch", async () => {
     using fixture = await createFixture();
     const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
+    const writeFor = (workspaceId: string) =>
+      fixture.metaService.recordAccess(
+        memoryLogicalKey("workspace", "lesson.md", { projectPath: "", workspaceId }),
+        { write: true }
+      );
     await fixture.addWorkspace("ws-archived", { archivedAt: new Date().toISOString() });
+    await writeFor("ws-archived");
     const extraIds: string[] = [];
     for (let i = 0; i < MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP + 1; i++) {
       const id = `ws-extra-${i}`;
       extraIds.push(id);
       await fixture.addWorkspace(id);
+      // Each workspace qualifies via its own workspace-scope write.
+      await writeFor(id);
     }
-    // A fresh global write qualifies every idle workspace at once...
-    await fixture.metaService.recordAccess("global:lesson.md", { write: true });
 
     const recency = new Map<string, number>([
       ["ws-archived", dayAgo],
@@ -286,13 +292,31 @@ describe("MemoryConsolidationService", () => {
     ]);
     await fixture.service.runLaunchSweep(recency);
 
-    // ...but archived workspaces never run (they got their final pass at
-    // archive time) and the cap bounds the rest.
+    // Archived workspaces never run (they got their final pass at archive
+    // time) and the cap bounds the rest.
     expect(fixture.modelCalls).toHaveLength(MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP);
     expect(await fixture.service.getRecord("ws-archived")).toBeNull();
     expect(
       await fixture.service.getRecord(`ws-extra-${MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP}`)
     ).toBeNull();
+  });
+
+  it("a global-only write qualifies a single covering run per sweep, not one per workspace", async () => {
+    using fixture = await createFixture();
+    await fixture.addWorkspace("ws-other");
+    const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
+    await fixture.metaService.recordAccess("global:lesson.md", { write: true });
+
+    // Both workspaces are idle with no workspace-scope writes; the shared
+    // global write needs exactly one covering pass, not duplicate provider
+    // calls up to the sweep cap.
+    await fixture.service.runLaunchSweep(
+      new Map([
+        ["ws-dream", dayAgo],
+        ["ws-other", dayAgo],
+      ])
+    );
+    expect(fixture.modelCalls).toHaveLength(1);
   });
 
   it("launch sweep does not re-qualify other workspaces from a global write already covered by a newer run", async () => {
