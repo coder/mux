@@ -6,7 +6,11 @@ import * as path from "path";
 
 import * as jsonc from "jsonc-parser";
 
-import { AZURE_OPENAI_ENV_VARS, PROVIDER_ENV_VARS } from "../src/node/utils/providerRequirements";
+import {
+  AZURE_OPENAI_ENV_VARS,
+  BEDROCK_AUTH_ENV_VARS,
+  PROVIDER_ENV_VARS,
+} from "../src/node/utils/providerRequirements";
 
 function dirExists(dirPath: string): boolean {
   try {
@@ -84,9 +88,10 @@ export function chooseSeedSources(): SeedSources {
  * Env vars that mux's provider-credential resolution reads as fallback
  * (API keys / auth tokens, base URLs, org IDs, Azure OpenAI vars).
  *
- * Intentionally excludes shared AWS env vars (AWS_REGION etc.): stripping
- * those would break unrelated AWS tooling spawned inside the sandbox, and
- * Bedrock auth goes through the AWS SDK chain rather than key+baseUrl pairing.
+ * Intentionally excludes Bedrock's region vars (AWS_REGION etc.): those are
+ * shared with unrelated AWS tooling, and Bedrock has no key+baseUrl pairing
+ * mismatch risk. They are stripped only in --clean-providers mode (see
+ * BEDROCK_CLEAN_ENV_VARS).
  *
  * @param providers - when given, only env vars belonging to these providers
  *   (Azure vars count as "openai"); when omitted, all known provider vars.
@@ -110,6 +115,19 @@ function providerCredentialEnvVarNames(providers?: ReadonlySet<string>): string[
   }
   return [...names];
 }
+
+/**
+ * Extra env vars stripped only with --clean-providers: Bedrock counts as
+ * "configured" from a region env var alone (credentials flow via the AWS SDK
+ * chain), so a truly clean sandbox must drop the region + bedrock bearer
+ * token too. Shared AWS credentials (AWS_PROFILE, AWS_ACCESS_KEY_ID, ...)
+ * are kept so unrelated AWS tooling inside the sandbox keeps working —
+ * without a region, mux reports Bedrock unconfigured regardless.
+ */
+const BEDROCK_CLEAN_ENV_VARS: string[] = [
+  ...(PROVIDER_ENV_VARS.bedrock?.region ?? []),
+  BEDROCK_AUTH_ENV_VARS.bearerToken,
+];
 
 /** Provider names configured in a providers.jsonc file (empty set on parse failure). */
 function readConfiguredProviderNames(providersJsoncPath: string): Set<string> {
@@ -153,7 +171,7 @@ export function sanitizeSandboxProviderEnv(options: {
     names.filter((name) => (env[name] ?? "").trim() !== "").sort();
 
   if (options.cleanProviders) {
-    const present = presentVars(providerCredentialEnvVarNames());
+    const present = presentVars([...providerCredentialEnvVarNames(), ...BEDROCK_CLEAN_ENV_VARS]);
     for (const name of present) {
       delete env[name];
     }

@@ -81,7 +81,9 @@ export const AZURE_OPENAI_ENV_VARS = {
   apiVersion: "AZURE_OPENAI_API_VERSION",
 };
 
-const BEDROCK_AUTH_ENV_VARS = {
+// Exported for sandbox env sanitization (scripts/sandboxUtils.ts), which needs
+// the bedrock-specific bearer token name without duplicating it.
+export const BEDROCK_AUTH_ENV_VARS = {
   accessKeyId: "AWS_ACCESS_KEY_ID",
   secretAccessKey: "AWS_SECRET_ACCESS_KEY",
   bearerToken: "AWS_BEARER_TOKEN_BEDROCK",

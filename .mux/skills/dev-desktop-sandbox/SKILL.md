@@ -26,10 +26,11 @@ make dev-desktop-sandbox
     `config.json` doesn't drop provider config
 - Provider credential env vars (API keys, `*_BASE_URL`, etc.) are stripped from
   the child processes' env when they could silently override or mismatch the
-  intended setup: all of them with `--clean-providers`, and those belonging to
-  providers configured in the seeded `providers.jsonc` otherwise (so the seeded
-  config is the single source of truth; env vars for unconfigured providers are
-  kept)
+  intended setup: all of them with `--clean-providers` (including Bedrock's
+  `AWS_REGION` and `AWS_BEARER_TOKEN_BEDROCK`; shared AWS credentials like
+  `AWS_PROFILE` are kept), and those belonging to providers configured in the
+  seeded `providers.jsonc` otherwise (so the seeded config is the single source
+  of truth; env vars for unconfigured providers are kept)
 - Picks free ports:
   - Vite devserver port (used by the renderer)
   - Electron remote debugging port (optional)

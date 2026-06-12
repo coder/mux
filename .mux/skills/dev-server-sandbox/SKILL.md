@@ -30,9 +30,11 @@ make dev-server-sandbox
     `config.json` doesn't drop provider config
 - Provider credential env vars (API keys, `*_BASE_URL`, etc.) are stripped from
   the server's env when they could silently override or mismatch the intended
-  setup: all of them with `--clean-providers`, and those belonging to providers
-  configured in the seeded `providers.jsonc` otherwise (so the seeded config is
-  the single source of truth; env vars for unconfigured providers are kept)
+  setup: all of them with `--clean-providers` (including Bedrock's `AWS_REGION`
+  and `AWS_BEARER_TOKEN_BEDROCK`; shared AWS credentials like `AWS_PROFILE` are
+  kept), and those belonging to providers configured in the seeded
+  `providers.jsonc` otherwise (so the seeded config is the single source of
+  truth; env vars for unconfigured providers are kept)
 - Picks free ports (`BACKEND_PORT`, `VITE_PORT`)
 - Disables tutorials by default inside the sandbox (`MUX_ENABLE_TUTORIALS_IN_SANDBOX=1` opts back in)
 - Allows all hosts (`VITE_ALLOWED_HOSTS=all`) so it works behind port-forwarding domains
