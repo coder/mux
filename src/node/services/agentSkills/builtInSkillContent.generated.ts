@@ -6722,8 +6722,6 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "",
       "# Orchestrate",
       "",
-      "Use this skill when the user invokes `/orchestrate` (or asks you to coordinate, orchestrate, or delegate a multi-step implementation). It teaches the **delegate-first** playbook: spawn sub-agents to do the work, integrate their patches, verify, and report.",
-      "",
       "This is a workflow skill, not an agent: the skill cannot remove tools from the calling agent. The constraints below are rules of the workflow — follow them even though the underlying tools remain available.",
       "",
       "## Mission",
