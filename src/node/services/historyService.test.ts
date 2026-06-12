@@ -1625,6 +1625,24 @@ describe("HistoryService", () => {
       ).toBe(false);
     });
 
+    it("keeps the archive intact on a no-op percentage truncation", async () => {
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+
+      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
+      const archiveBefore = await fs.readFile(archivePath(wsId), "utf-8");
+
+      const truncateResult = await service.truncateHistory(wsId, 0);
+      expect(truncateResult.success).toBe(true);
+      if (truncateResult.success) {
+        expect(truncateResult.data).toEqual([]);
+      }
+
+      // No-op truncation must not collapse the archive back into chat.jsonl.
+      expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
+      expect(await fs.readFile(archivePath(wsId), "utf-8")).toBe(archiveBefore);
+    });
+
     it("hasHistory sees archive-only workspaces", async () => {
       await appendNumberedMessages(service, wsId, 1);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));

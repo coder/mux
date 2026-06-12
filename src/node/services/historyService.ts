@@ -1842,6 +1842,13 @@ export class HistoryService {
           removeCount++;
         }
 
+        // No-op truncation (percentage 0 or rounding to zero tokens) must not
+        // rewrite anything — collapsing the archive back into chat.jsonl would
+        // undo rotation and put lifetime history back on the hot path.
+        if (removeCount === 0) {
+          return Ok([]);
+        }
+
         // If we're removing all messages, use fast path
         if (removeCount >= messages.length) {
           await fs.rm(historyPath, { force: true });
