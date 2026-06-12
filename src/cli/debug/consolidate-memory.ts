@@ -1,6 +1,8 @@
 import { defaultConfig } from "@/node/config";
-import { resolveDreamModelString } from "@/node/services/memoryConsolidationService";
-import { getBuiltInAgentDefinitions } from "@/node/services/agentDefinitions/builtInAgentDefinitions";
+import {
+  resolveDreamAgentBody,
+  resolveDreamModelString,
+} from "@/node/services/memoryConsolidationService";
 import { MemoryMetaService } from "@/node/services/memoryMeta";
 import { MemoryService, type MemoryScopeContext } from "@/node/services/memoryService";
 import { runMemoryConsolidation } from "@/node/services/memoryConsolidation";
@@ -30,9 +32,10 @@ export async function consolidateMemoryCommand(
   // with MemoryConsolidationService so CLI and app runs always agree.
   const modelString = resolveDreamModelString(defaultConfig, workspaceId);
 
-  const dream = getBuiltInAgentDefinitions().find((definition) => definition.id === "dream");
-  if (!dream) {
-    console.error("❌ Built-in dream agent definition is missing");
+  // Built-in body, shadowed by ~/.mux/agents/dream.md like any global agent.
+  const agentBody = await resolveDreamAgentBody();
+  if (agentBody === null) {
+    console.error("❌ Dream agent definition is missing");
     process.exitCode = 1;
     return;
   }
@@ -68,7 +71,7 @@ export async function consolidateMemoryCommand(
 
   const result = await runMemoryConsolidation({
     model: modelResult.data,
-    agentBody: dream.body,
+    agentBody,
     memoryService,
     metaService,
     ctx,

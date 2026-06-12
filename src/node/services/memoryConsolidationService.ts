@@ -11,6 +11,7 @@
  * stream, compaction, archival, or app launch.
  */
 import * as fsPromises from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import writeFileAtomic from "write-file-atomic";
 import type { LanguageModel } from "ai";
@@ -26,6 +27,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { Err, Ok } from "@/common/types/result";
 import type { Config } from "@/node/config";
 import { getBuiltInAgentDefinitions } from "@/node/services/agentDefinitions/builtInAgentDefinitions";
+import { parseAgentDefinitionMarkdown } from "@/node/services/agentDefinitions/parseAgentDefinitionMarkdown";
 import { log } from "@/node/services/log";
 import {
   runMemoryConsolidation,
@@ -78,6 +80,30 @@ export function resolveDreamModelString(config: Config, workspaceId: string): st
     workspaceEntry?.aiSettings?.model ??
     defaultModel
   );
+}
+
+/**
+ * Resolve the dream agent prompt body: a user override at ~/.mux/agents/dream.md
+ * (global agent scope) shadows the built-in definition, like any other agent.
+ * Host-side read only — dream runs are runtime-independent in v1, so project
+ * scope overrides (which need a live checkout) are deferred with project
+ * memories. Shared with the debug CLI.
+ */
+export async function resolveDreamAgentBody(): Promise<string | null> {
+  try {
+    const overridePath = path.join(os.homedir(), ".mux", "agents", "dream.md");
+    const content = await fsPromises.readFile(overridePath, "utf-8");
+    const parsed = parseAgentDefinitionMarkdown({
+      content,
+      byteSize: Buffer.byteLength(content, "utf8"),
+    });
+    const body = parsed.body.trim();
+    if (body.length > 0) return body;
+  } catch {
+    // Missing or malformed override — fall back to the built-in.
+  }
+  const dream = getBuiltInAgentDefinitions().find((definition) => definition.id === "dream");
+  return dream?.body ?? null;
 }
 
 export class MemoryConsolidationService {
@@ -157,8 +183,8 @@ export class MemoryConsolidationService {
     const workspace = this.config.findWorkspace(workspaceId);
     if (!workspace) return Err(`workspace not found: ${workspaceId}`);
 
-    const dream = getBuiltInAgentDefinitions().find((definition) => definition.id === "dream");
-    if (!dream) return Err("built-in dream agent definition is missing");
+    const agentBody = await resolveDreamAgentBody();
+    if (agentBody === null) return Err("dream agent definition is missing");
 
     const modelString = resolveDreamModelString(this.config, workspaceId);
     const modelResult = await this.modelFactory.createModel(modelString, undefined, {
@@ -183,7 +209,7 @@ export class MemoryConsolidationService {
     try {
       const result = await runMemoryConsolidation({
         model: modelResult.data,
-        agentBody: dream.body,
+        agentBody,
         memoryService: this.memoryService,
         metaService: this.metaService,
         ctx,
