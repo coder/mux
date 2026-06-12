@@ -130,10 +130,12 @@ export class MemoryConsolidationService {
   /** Serializes sidecar read-modify-write cycles (journal persistence only). */
   private readonly locks = new MutexMap<string>();
   /**
-   * Per-workspace run lock. Reserved SYNCHRONOUSLY in maybeRun before any
-   * await so two near-simultaneous triggers can never both start a run.
+   * Per-workspace run lock holding the active run's promise. Reserved
+   * SYNCHRONOUSLY in maybeRun before any await so two near-simultaneous
+   * triggers can never both start a run; archive triggers queue behind the
+   * active run via the stored promise.
    */
-  private readonly inFlight = new Set<string>();
+  private readonly inFlight = new Map<string, Promise<Result<MemoryConsolidationRecord, string>>>();
 
   constructor(
     private readonly config: Config,
@@ -186,81 +188,101 @@ export class MemoryConsolidationService {
     trigger: MemoryConsolidationTrigger
   ): Promise<Result<MemoryConsolidationRecord, string>> {
     if (!this.enabled()) return Err("memory-consolidation experiment is disabled");
-    if (this.inFlight.has(workspaceId)) return Err("a consolidation run is already in flight");
+    const active = this.inFlight.get(workspaceId);
+    if (active !== undefined) {
+      // Archive is the workspace's one-shot final pass (workspace→global
+      // promotion) and its caller never retries — queue it behind the active
+      // run instead of dropping it. Other triggers are repetitive
+      // housekeeping and may be dropped.
+      if (trigger !== "archive") return Err("a consolidation run is already in flight");
+      await active.catch(() => undefined);
+      return this.maybeRun(workspaceId, trigger);
+    }
     // Reserve the run lock in the same synchronous frame as the check above:
-    // the awaits below (sidecar read, agent body, model creation) are a wide
-    // window where a racing trigger would otherwise also pass the check and
-    // start a second concurrent run over the same directories.
-    this.inFlight.add(workspaceId);
+    // the awaits in runLocked (sidecar read, agent body, model creation) are
+    // a wide window where a racing trigger would otherwise also pass the
+    // check and start a second concurrent run over the same directories.
+    // runLocked executes synchronously up to its first await, so the map is
+    // populated before any other caller can observe it.
+    const run = this.runLocked(workspaceId, trigger);
+    this.inFlight.set(workspaceId, run);
     try {
-      // Manual runs bypass debounce (an explicit /dream is explicit intent).
-      // Archive too: it is the workspace's one-shot final pass — the only
-      // chance to promote durable lessons to global scope — and archival
-      // typically follows a compaction-triggered run within the window.
-      if (trigger !== "manual" && trigger !== "archive") {
-        const record = await this.getRecord(workspaceId);
-        if (record !== null && Date.now() - record.lastRunAt < MEMORY_CONSOLIDATION_DEBOUNCE_MS) {
-          return Err("debounced: a recent consolidation run already covered this workspace");
-        }
-      }
-
-      const workspace = this.config.findWorkspace(workspaceId);
-      if (!workspace) return Err(`workspace not found: ${workspaceId}`);
-
-      const agentBody = await resolveDreamAgentBody(this.config.rootDir);
-      if (agentBody === null) return Err("dream agent definition is missing");
-
-      const modelString = resolveDreamModelString(this.config, workspaceId);
-      const modelResult = await this.modelFactory.createModel(modelString, undefined, {
-        agentInitiated: true,
-        workspaceId,
-      });
-      if (!modelResult.success) {
-        return Err(`could not create model ${modelString}: ${modelResult.error.type}`);
-      }
-
-      // v1 scopes are host-local (workspace + global): runtime stays null and
-      // the project scope is structurally disabled, so stopped Docker/SSH
-      // workspaces consolidate fine (PRD #3534).
-      const ctx: MemoryScopeContext = {
-        runtime: null,
-        checkoutCwd: "",
-        workspaceId,
-        projectPath: workspace.projectPath,
-      };
-
-      const result = await runMemoryConsolidation({
-        model: modelResult.data,
-        agentBody,
-        memoryService: this.memoryService,
-        metaService: this.metaService,
-        ctx,
-        dryRun: false,
-        finalPass: trigger === "archive",
-        // Hard timeout: a wedged provider stream must not hold the in-flight
-        // lock forever (and stall the sequential launch sweep behind it).
-        abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
-      });
-      const record: MemoryConsolidationRecord = {
-        lastRunAt: Date.now(),
-        trigger,
-        summary: result.summary,
-        ops: result.ops,
-        usage: result.usage,
-      };
-      await this.saveRecord(workspaceId, record);
-      log.debug("[MemoryConsolidation] run complete", {
-        workspaceId,
-        trigger,
-        ops: result.ops.length,
-        applied: result.ops.filter((op) => op.applied).length,
-        globalWrites: result.ops.filter((op) => op.path.startsWith("/memories/global/")).length,
-        usage: result.usage,
-      });
-      return Ok(record);
+      return await run;
     } finally {
       this.inFlight.delete(workspaceId);
     }
+  }
+
+  /** The actual run; only ever invoked by maybeRun while holding the lock. */
+  private async runLocked(
+    workspaceId: string,
+    trigger: MemoryConsolidationTrigger
+  ): Promise<Result<MemoryConsolidationRecord, string>> {
+    // Manual runs bypass debounce (an explicit /dream is explicit intent).
+    // Archive too: it is the workspace's one-shot final pass — the only
+    // chance to promote durable lessons to global scope — and archival
+    // typically follows a compaction-triggered run within the window.
+    if (trigger !== "manual" && trigger !== "archive") {
+      const record = await this.getRecord(workspaceId);
+      if (record !== null && Date.now() - record.lastRunAt < MEMORY_CONSOLIDATION_DEBOUNCE_MS) {
+        return Err("debounced: a recent consolidation run already covered this workspace");
+      }
+    }
+
+    const workspace = this.config.findWorkspace(workspaceId);
+    if (!workspace) return Err(`workspace not found: ${workspaceId}`);
+
+    const agentBody = await resolveDreamAgentBody(this.config.rootDir);
+    if (agentBody === null) return Err("dream agent definition is missing");
+
+    const modelString = resolveDreamModelString(this.config, workspaceId);
+    const modelResult = await this.modelFactory.createModel(modelString, undefined, {
+      agentInitiated: true,
+      workspaceId,
+    });
+    if (!modelResult.success) {
+      return Err(`could not create model ${modelString}: ${modelResult.error.type}`);
+    }
+
+    // v1 scopes are host-local (workspace + global): runtime stays null and
+    // the project scope is structurally disabled, so stopped Docker/SSH
+    // workspaces consolidate fine (PRD #3534).
+    const ctx: MemoryScopeContext = {
+      runtime: null,
+      checkoutCwd: "",
+      workspaceId,
+      projectPath: workspace.projectPath,
+    };
+
+    const result = await runMemoryConsolidation({
+      model: modelResult.data,
+      agentBody,
+      memoryService: this.memoryService,
+      metaService: this.metaService,
+      ctx,
+      dryRun: false,
+      finalPass: trigger === "archive",
+      // Hard timeout: a wedged provider stream must not hold the in-flight
+      // lock forever (and stall the sequential launch sweep behind it).
+      abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
+    });
+    const record: MemoryConsolidationRecord = {
+      lastRunAt: Date.now(),
+      trigger,
+      summary: result.summary,
+      ops: result.ops,
+      usage: result.usage,
+    };
+    await this.saveRecord(workspaceId, record);
+    log.debug("[MemoryConsolidation] run complete", {
+      workspaceId,
+      trigger,
+      ops: result.ops.length,
+      applied: result.ops.filter((op) => op.applied).length,
+      globalWrites: result.ops.filter((op) => op.path.startsWith("/memories/global/")).length,
+      usage: result.usage,
+    });
+    return Ok(record);
   }
 
   /** Fire-and-forget wrapper for trigger sites; never throws. */

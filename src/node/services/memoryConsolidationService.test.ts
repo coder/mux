@@ -179,6 +179,28 @@ describe("MemoryConsolidationService", () => {
     expect(fixture.modelCalls).toHaveLength(1);
   });
 
+  it("queues an archive trigger behind an in-flight run instead of dropping it", async () => {
+    let releaseModel!: () => void;
+    const modelGate = new Promise<void>((resolve) => {
+      releaseModel = resolve;
+    });
+    using fixture = await createFixture({ modelGate });
+
+    const first = fixture.service.maybeRun("ws-dream", "compaction");
+    // The archive caller never retries and only archive sets finalPass, so
+    // dropping it here would silently skip workspace→global promotion.
+    const archive = fixture.service.maybeRun("ws-dream", "archive");
+    const dropped = await fixture.service.maybeRun("ws-dream", "manual");
+    expect(dropped.success).toBe(false);
+
+    releaseModel();
+    expect((await first).success).toBe(true);
+    const archiveResult = await archive;
+    expect(archiveResult.success).toBe(true);
+    if (archiveResult.success) expect(archiveResult.data.trigger).toBe("archive");
+    expect(fixture.modelCalls).toHaveLength(2);
+  });
+
   it("self-heals a corrupt sidecar instead of failing every later read", async () => {
     using fixture = await createFixture();
     const sidecarPath = path.join(fixture.muxHome, "memory-consolidation.json");
