@@ -6745,6 +6745,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "",
       "For long-horizon orchestration — many phases, a dependency DAG known up front, or repeated implement → gate → fixup → re-gate loops — encode the orchestration as a durable workflow instead of driving it turn-by-turn from the transcript:",
       "",
+      "- Reuse existing workflows before authoring one: run `workflow_list` and invoke a fitting workflow with `workflow_run`. For example, when a subtask needs deep multi-source investigation before implementation briefs can be written, run the built-in `deep-research` workflow instead of hand-rolling parallel `explore` fan-out.",
       '- Read the built-in `workflow-authoring` skill first (`agent_skill_read({ name: "workflow-authoring" })`).',
       "- Author a scratch workflow at `.mux/workflows/.scratch/<name>.js` that encodes the DAG in code: `agent(...)` for sub-agent steps, `applyPatch(...)` for patch integration (the host dry-runs automatically and returns structured conflict results), `phase`/`log` for progress, and plain control flow for gate/fixup loops.",
       "- Run it with `workflow_run`; resume interrupted runs with `workflow_resume`. Durable runs survive restarts and context compaction — completed steps are never re-executed.",
