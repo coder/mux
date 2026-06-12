@@ -59,5 +59,20 @@ Key gotchas learned in dogfooding:
   mangled banner (`frommodule`); rebuild manually with proper quoting
   (pre-existing bug, worth a separate fix).
 
+Deep-review hardening pass (commit b5e48f7d4) fixed 12 findings:
+- ensure: KeyedMutex per work-item key (check-then-create not atomic);
+  predicate reads config.getAllWorkspaceMetadata() (list() swallows errors →
+  duplicate creates); deriveEnsureBranchName (lowercase [a-z0-9_-], 64 cap,
+  sha256-8 suffix on truncation); trust gate before detectDefaultTrunkBranch.
+- runHostAction composes run-abort + step-timeout into ONE AbortController
+  signal → ctx.abortSignal; abort/timeout throw WorkflowActionExecutionError
+  (never durable success); awaitIdle throws on abort; poll interval injectable
+  via services.awaitIdlePollMs.
+- CoreServicesOptions.ephemeralConfigRoot=true in mux run/mux workflow skips
+  setWorkflowHostActions (temp config would orphan tagged worktrees).
+- sendMessage agent default = persisted workspace agentId (plan/compact→exec).
+- updateTags Errs when no entry matched; oRPC tag key schemas non-blank;
+  host output limit = Buffer.byteLength utf8.
+
 V2 next: WorkflowSchedulerService (wall-clock, at-least-once, skip-if-running).
 V3: agent teams (spawn_peer_workspace / send_to_workspace→turnId / await_reply).

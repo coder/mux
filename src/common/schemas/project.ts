@@ -6,6 +6,7 @@ import {
   WorkflowTaskMetadataSchema,
   WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
+  WorkspaceWorkflowScheduleSchema,
 } from "@/common/orpc/schemas/workspace";
 import {
   WorkspaceAISettingsByAgentSchema,
@@ -95,6 +96,9 @@ export const WorkspaceConfigSchema = z.object({
   }),
   heartbeat: WorkspaceHeartbeatSettingsSchema.optional().meta({
     description: "Persisted heartbeat settings for this workspace.",
+  }),
+  workflowSchedule: WorkspaceWorkflowScheduleSchema.optional().meta({
+    description: "Persisted scheduled workflow run for this workspace.",
   }),
   goalDefaults: WorkspaceGoalDefaultsOverrideSchema.optional().meta({
     description:

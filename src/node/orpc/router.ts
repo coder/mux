@@ -327,7 +327,12 @@ async function resolveMemoryScopeContext(
   };
 }
 
-async function resolveWorkflowContext(
+/**
+ * Build a fully-wired WorkflowService for one workspace. Exported so the
+ * WorkflowSchedulerService (ServiceContainer) dispatches scheduled runs
+ * through exactly the same construction as the workflows.* routes.
+ */
+export async function resolveWorkflowContext(
   context: ORPCContext,
   workspaceId: string,
   options: {
@@ -4029,6 +4034,15 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.updateTags.output)
         .handler(async ({ context, input }) => {
           return context.workspaceService.updateTags(input.workspaceId, input.tags);
+        }),
+      setWorkflowSchedule: t
+        .input(schemas.workspace.setWorkflowSchedule.input)
+        .output(schemas.workspace.setWorkflowSchedule.output)
+        .handler(async ({ context, input }) => {
+          // Scheduled runs only dispatch under the dynamic-workflows experiment;
+          // reject configuration up-front instead of persisting a dormant schedule.
+          assertDynamicWorkflowsEnabled(context);
+          return context.workspaceService.setWorkflowSchedule(input.workspaceId, input.schedule);
         }),
       regenerateTitle: t
         .input(schemas.workspace.regenerateTitle.input)

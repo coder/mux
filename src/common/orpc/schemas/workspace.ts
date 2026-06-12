@@ -9,6 +9,10 @@ import {
   HEARTBEAT_MAX_INTERVAL_MS,
   HEARTBEAT_MIN_INTERVAL_MS,
 } from "@/constants/heartbeat";
+import {
+  WORKFLOW_SCHEDULE_MAX_INTERVAL_MS,
+  WORKFLOW_SCHEDULE_MIN_INTERVAL_MS,
+} from "@/constants/workflowSchedule";
 
 export const ProjectRefSchema = z.object({
   projectPath: z.string().meta({ description: "Absolute path to the project's main git repo" }),
@@ -86,6 +90,40 @@ export const WorkspaceHeartbeatSettingsSchema = z.object({
   }),
 });
 
+/**
+ * Per-workspace scheduled workflow run (single source of truth for persisted
+ * config entries and workspace metadata IPC). Wall-clock semantics: the
+ * WorkflowSchedulerService dispatches `workflowName` in this workspace
+ * whenever `intervalMs` has elapsed since `lastRunStartedAt` (at-least-once;
+ * overdue schedules fire on startup), skipping while a previous run is active.
+ */
+export const WorkspaceWorkflowScheduleSchema = z.object({
+  enabled: z.boolean().meta({
+    description: "Whether the scheduled workflow run is active for this workspace.",
+  }),
+  workflowName: z.string().min(1).meta({
+    description: "Named workflow definition to run (resolved like workflows.start).",
+  }),
+  args: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .meta({ description: "JSON args passed to the workflow run." }),
+  intervalMs: z
+    .number()
+    .int()
+    .min(WORKFLOW_SCHEDULE_MIN_INTERVAL_MS)
+    .max(WORKFLOW_SCHEDULE_MAX_INTERVAL_MS)
+    .meta({ description: "Wall-clock interval between dispatched runs." }),
+  lastRunStartedAt: z
+    .string()
+    .optional()
+    .meta({
+      description:
+        "ISO timestamp of the last dispatched run (persisted before dispatch so restarts retry " +
+        "at most once per interval).",
+    }),
+});
+
 // Single source of truth for workflow task metadata on both persisted config
 // entries (src/common/schemas/project.ts) and workspace metadata IPC. The runId
 // stays a loose non-empty string (not WorkflowRunIdSchema) so a malformed
@@ -143,6 +181,9 @@ export const WorkspaceMetadataSchema = z.object({
   }),
   heartbeat: WorkspaceHeartbeatSettingsSchema.optional().meta({
     description: "Persisted heartbeat settings for this workspace.",
+  }),
+  workflowSchedule: WorkspaceWorkflowScheduleSchema.optional().meta({
+    description: "Persisted scheduled workflow run for this workspace.",
   }),
   goalDefaults: WorkspaceGoalDefaultsOverrideSchema.optional().meta({
     description:

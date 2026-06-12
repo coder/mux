@@ -69,6 +69,7 @@ import {
   WorkspaceActivitySnapshotSchema,
   WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
+  WorkspaceWorkflowScheduleSchema,
 } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import {
@@ -1122,6 +1123,18 @@ export const workspace = {
         }),
     }),
     output: ResultSchema(z.object({ tags: z.record(z.string(), z.string()) }), z.string()),
+  },
+  setWorkflowSchedule: {
+    /**
+     * Set (or clear, with null) the workspace's scheduled workflow run.
+     * lastRunStartedAt is scheduler-owned state and not settable by callers;
+     * (re)setting a schedule makes it immediately due.
+     */
+    input: z.object({
+      workspaceId: z.string(),
+      schedule: WorkspaceWorkflowScheduleSchema.omit({ lastRunStartedAt: true }).nullable(),
+    }),
+    output: ResultSchema(z.void(), z.string()),
   },
   regenerateTitle: {
     input: z.object({ workspaceId: z.string() }),

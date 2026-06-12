@@ -3791,6 +3791,64 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Set (or clear, with null) the workspace's scheduled workflow run.
+   * Input shape/bounds are enforced at the oRPC schema boundary
+   * (WorkspaceWorkflowScheduleSchema); this persists and emits metadata.
+   * Setting a schedule resets lastRunStartedAt so the new schedule is
+   * immediately due (at-least-once bootstrap).
+   */
+  async setWorkflowSchedule(
+    workspaceId: string,
+    schedule: {
+      enabled: boolean;
+      workflowName: string;
+      args?: Record<string, unknown>;
+      intervalMs: number;
+    } | null
+  ): Promise<Result<void, string>> {
+    try {
+      const normalizedWorkspaceId = workspaceId.trim();
+      assert(
+        normalizedWorkspaceId.length > 0,
+        "setWorkflowSchedule requires a non-empty workspaceId"
+      );
+
+      let applied = false;
+      await this.config.editConfig((config) => {
+        for (const projectConfig of config.projects.values()) {
+          const workspaceEntry = projectConfig.workspaces.find(
+            (entry) => entry.id === normalizedWorkspaceId
+          );
+          if (!workspaceEntry) {
+            continue;
+          }
+          if (schedule == null) {
+            delete workspaceEntry.workflowSchedule;
+          } else {
+            workspaceEntry.workflowSchedule = {
+              enabled: schedule.enabled,
+              workflowName: schedule.workflowName,
+              ...(schedule.args != null ? { args: schedule.args } : {}),
+              intervalMs: schedule.intervalMs,
+            };
+          }
+          applied = true;
+          break;
+        }
+        return config;
+      });
+      if (!applied) {
+        return Err("Workspace not found");
+      }
+
+      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to set workflow schedule: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
    * Read the per-workspace goal-defaults override.
    *
    * Returns `null` when this workspace has no override (callers should fall
