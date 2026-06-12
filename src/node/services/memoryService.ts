@@ -40,6 +40,7 @@ import { shellQuote } from "@/common/utils/shell";
 import { PlatformPaths } from "@/common/utils/paths";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { Config } from "@/node/config";
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -762,6 +763,15 @@ export class MemoryService extends EventEmitter {
         if (ctx.projectPath === "") {
           throw new MemoryCommandError(
             "Project-local memory is unavailable: no project is associated with this session"
+          );
+        }
+        // Multi-project workspaces share the synthetic "_multi" config key as
+        // their projectPath — not a real project identity. Resolving a store
+        // from it would make every multi-project workspace share (and be able
+        // to overwrite) one private-notes root, so the scope is disabled.
+        if (ctx.projectPath === MULTI_PROJECT_CONFIG_KEY) {
+          throw new MemoryCommandError(
+            "Project-local memory is unavailable: multi-project workspaces have no single project identity"
           );
         }
         // Host-local private notes about the project: keyed by stable project

@@ -156,6 +156,24 @@ describe("MemoryService", () => {
       });
     });
 
+    it("disables project-local for multi-project workspaces (synthetic '_multi' identity)", async () => {
+      using fixture = await createFixture();
+      // All multi-project workspaces share the "_multi" config key; resolving
+      // a store from it would collide their private notes into one root.
+      const result = await fixture.service.create(
+        { ...fixture.ctx, projectPath: "_multi" },
+        "/memories/project-local/notes.md",
+        "leaked",
+        "agent"
+      );
+      expect(result).toEqual({
+        success: false,
+        error:
+          "Project-local memory is unavailable: multi-project workspaces have no single project identity",
+      });
+      expect(await pathExists(path.join(fixture.muxHome, "project-memory"))).toBe(false);
+    });
+
     it("supports nested paths, creating parent directories", async () => {
       using fixture = await createFixture();
       const created = await fixture.service.create(
