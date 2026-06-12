@@ -5639,6 +5639,16 @@ describe("TaskService", () => {
     if (waitError instanceof Error) {
       expect(waitError.message).toBe("Timed out waiting for agent_report");
     }
+
+    // waitForAgentReport schedules the completion reminder as a fire-and-forget task under
+    // workspaceEventLocks. The short timeout above can reject before that background work
+    // finishes, so acquire the same lock (which only resolves after the holder releases)
+    // before asserting on sendMessage to avoid a race under load.
+    const internal = taskService as unknown as {
+      workspaceEventLocks: { withLock(key: string, fn: () => Promise<void>): Promise<void> };
+    };
+    await internal.workspaceEventLocks.withLock(childId, async () => {});
+
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(
       childId,
