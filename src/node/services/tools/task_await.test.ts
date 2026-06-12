@@ -704,7 +704,6 @@ describe("task_await tool", () => {
           structuredOutput: { ok: true },
           title: "demo",
           elapsed_ms: 5000,
-          run: completedRun,
           note: COMPLETED_REPORT_REFETCH_NOTE,
         },
       ],
@@ -765,7 +764,6 @@ describe("task_await tool", () => {
       status: "error",
       taskId: "wfr_demo",
       elapsed_ms: 5000,
-      run: failedRun,
     });
     expect(workflowResult.results[0]?.error).toContain(WORKFLOW_CHECKPOINT_RETRY_ERROR_MESSAGE);
     expect(workflowResult.results[0]?.error).toContain("workflow_resume");
@@ -823,7 +821,6 @@ describe("task_await tool", () => {
           taskId: "wfr_demo",
           error: "boom",
           elapsed_ms: 5000,
-          run: failedRun,
         },
       ],
     });
@@ -882,8 +879,7 @@ describe("task_await tool", () => {
           status: "backgrounded",
           taskId: "wfr_backgrounded",
           elapsed_ms: workflowResult.results[0]?.elapsed_ms,
-          note: "Workflow run is backgrounded. Use task_await to monitor progress.",
-          run: backgroundedRun,
+          note: "Workflow demo is backgrounded. Use task_await to monitor progress.",
         },
       ],
     });
@@ -945,7 +941,6 @@ describe("task_await tool", () => {
           reportMarkdown: "poll complete",
           title: "demo",
           elapsed_ms: 5000,
-          run: completedRun,
           note: COMPLETED_REPORT_REFETCH_NOTE,
         },
       ],
@@ -998,7 +993,6 @@ describe("task_await tool", () => {
     expect(interruptedResult.results[0]).toMatchObject({
       status: "interrupted",
       taskId: "wfr_demo",
-      run: interruptedRun,
     });
     expect(interruptedResult.results[0]?.note).toContain("workflow_resume");
   });

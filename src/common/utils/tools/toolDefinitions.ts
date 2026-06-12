@@ -570,7 +570,6 @@ export const TaskAwaitToolCompletedResultSchema = z
     elapsed_ms: z.number().optional(),
     exitCode: z.number().optional(),
     note: z.string().optional(),
-    run: WorkflowRunRecordSchema.optional(),
     artifacts: TaskAwaitToolArtifactsSchema.optional(),
   })
   .strict();
@@ -589,7 +588,6 @@ export const TaskAwaitToolActiveResultSchema = z
     output: z.string().optional(),
     elapsed_ms: z.number().optional(),
     note: z.string().optional(),
-    run: WorkflowRunRecordSchema.optional(),
   })
   .strict();
 
@@ -615,7 +613,6 @@ export const TaskAwaitToolErrorResultSchema = z
     taskId: z.string(),
     error: z.string(),
     elapsed_ms: z.number().optional(),
-    run: WorkflowRunRecordSchema.optional(),
   })
   .strict();
 
