@@ -25,6 +25,7 @@ description: Agent instructions for AI assistants working on the Mux codebase
 
 - No free-floating Markdown. User docs live in `docs/` (read `docs/README.md`, add pages to `docs.json` navigation, use standard Markdown + mermaid). Developer notes belong inline as comments.
   - Exception: the `rfc` folder contains human-written RFCs for implementation planning.
+  - Exception: `.mux/memory/` holds agent project-scope memory files, written by the memory tool and git-tracked by design (see `src/node/services/memoryService.ts`).
 - For planning artifacts, use the `propose_plan` tool or inline comments instead of ad-hoc docs.
 - Do not add new root-level docs without explicit request; during feature work rely on code + tests + inline comments.
 - External API docs already live inside `/tmp/ai-sdk-docs/**.mdx`; never browse `https://sdk.vercel.ai/docs/ai-sdk-core` directly.

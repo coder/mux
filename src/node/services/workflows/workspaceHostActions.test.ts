@@ -278,6 +278,38 @@ describe("WorkflowActionRunner host dispatch", () => {
     );
   });
 
+  test("on abort the runner waits for cooperative settlement before failing the step", async () => {
+    using artifactDir = new DisposableTempDir("wha-artifacts");
+    const controller = new AbortController();
+    // Simulates a mutating action mid-flight: it notices the abort, finishes
+    // its in-flight side effect, then settles. The step failure must not be
+    // recorded until that side effect has landed.
+    let sideEffectLanded = false;
+    const runner = new WorkflowActionRunner({
+      hostActions: customHostMap(async (_input, hostCtx) => {
+        while (hostCtx.abortSignal?.aborted !== true) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        sideEffectLanded = true;
+        return {};
+      }),
+    });
+    setTimeout(() => controller.abort(), 10);
+    await expectRejects(
+      runner.execute(stubResolvedAction("workspace.list", "built-in"), {
+        artifactDir: artifactDir.path,
+        cwd: "/tmp",
+        input: {},
+        timeoutMs: 30_000,
+        abortSignal: controller.signal,
+      }),
+      /aborted/
+    );
+    // The reject above must have waited for the action's settlement.
+    expect(sideEffectLanded).toBe(true);
+  });
+
   test("a pre-aborted signal fails fast without invoking the action", async () => {
     using artifactDir = new DisposableTempDir("wha-artifacts");
     const execute = mock(() => Promise.resolve({}));
@@ -417,6 +449,37 @@ describe("workspace.ensure", () => {
       /aborted/
     );
     expect(calls.create).not.toHaveBeenCalled();
+  });
+
+  test("idempotency is scoped per project: the same key in another project does not match", async () => {
+    // Work-item keys are only unique per source; a tagged workspace in a
+    // DIFFERENT project must not satisfy this project's ensure.
+    const { services, calls } = fakeServices({
+      workspaces: [
+        workspaceMeta({
+          id: "other-project-ws",
+          projectPath: "/other",
+          tags: { [WORK_ITEM_TAG_KEY]: "issue-1" },
+        }),
+      ],
+    });
+    const ensure = getAction(createWorkspaceHostActions(services), "workspace.ensure");
+
+    const output = (await ensure.execute(
+      { projectPath: "/proj", key: "issue-1", trunkBranch: "main" },
+      ctx
+    )) as { created: boolean; workspaceId: string };
+    expect(output.created).toBe(true);
+    expect(output.workspaceId).not.toBe("other-project-ws");
+    expect(calls.create).toHaveBeenCalledTimes(1);
+
+    // Same project + same key now matches the newly created workspace.
+    const second = (await ensure.execute(
+      { projectPath: "/proj", key: "issue-1", trunkBranch: "main" },
+      ctx
+    )) as { created: boolean };
+    expect(second.created).toBe(false);
+    expect(calls.create).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -15,6 +15,7 @@ import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubsetSchema } from "@/common/utils/jsonSchemaSubset";
 import { forceCloseStdio, killProcessTree } from "@/node/utils/disposableExec";
+import { log } from "@/node/services/log";
 import type { ResolvedWorkflowAction } from "./WorkflowActionRegistry";
 
 export type WorkflowActionEffect = z.infer<typeof WorkflowActionEffectSchema>;
@@ -83,6 +84,35 @@ interface WorkflowActionRunnerPayload {
 
 const WORKFLOW_ACTION_STDIO_LIMIT_BYTES = 64 * 1024;
 const WORKFLOW_ACTION_RESULT_LIMIT_BYTES = 1024 * 1024;
+/**
+ * How long an aborted/timed-out host action gets to observe ctx.abortSignal
+ * and settle cooperatively before its in-flight work is abandoned. Generous on
+ * purpose: workspace.ensure's worktree creation can take seconds and should
+ * finish (it is tagged atomically, so the next reconcile finds it) rather than
+ * race the failed step's bookkeeping.
+ */
+const HOST_ACTION_ABORT_SETTLE_GRACE_MS = 30_000;
+
+/** True when the promise settles (either way) within the grace window. */
+async function awaitSettlementBounded(
+  promise: Promise<unknown>,
+  graceMs: number
+): Promise<boolean> {
+  let graceHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(
+        () => true,
+        () => true
+      ),
+      new Promise<boolean>((resolve) => {
+        graceHandle = setTimeout(() => resolve(false), graceMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(graceHandle);
+  }
+}
 const WORKFLOW_ACTION_EXEC_PID_LIMIT_BYTES = 16 * 1024;
 const WORKFLOW_ACTION_EXEC_PID_FILENAME = ".mux-action-exec-pids.json";
 const WORKFLOW_ACTION_RESULT_FILENAME = ".mux-action-result.json";
@@ -301,7 +331,31 @@ export class WorkflowActionRunner {
         cwd: options.cwd,
         abortSignal: controller.signal,
       };
-      const output = await Promise.race([fn(options.input, ctx), abortPromise]);
+      const fnPromise = Promise.resolve().then(() => fn(options.input, ctx));
+      let output: unknown;
+      try {
+        output = await Promise.race([fnPromise, abortPromise]);
+      } catch (raceError) {
+        // Host actions can't be SIGKILLed like child actions. On abort/timeout
+        // the composed ctx.abortSignal is already aborted, so wait (bounded)
+        // for the action to observe it and settle cooperatively — otherwise a
+        // mutating action (sendMessage/ensure) could land its side effect
+        // AFTER the step is recorded failed. A bounded grace keeps a signal-
+        // ignoring action from hanging the step forever; abandoning is the
+        // logged last resort.
+        if (controller.signal.aborted) {
+          const settled = await awaitSettlementBounded(
+            fnPromise,
+            HOST_ACTION_ABORT_SETTLE_GRACE_MS
+          );
+          if (!settled) {
+            log.error("Host action ignored abort signal; abandoning in-flight work", {
+              timeoutMs: options.timeoutMs,
+            });
+          }
+        }
+        throw raceError;
+      }
       // Mirror the child-result bound so host actions can't blow up run storage.
       // Use byte length (not UTF-16 code units) for parity with the child path.
       const serialized = JSON.stringify(output ?? null);

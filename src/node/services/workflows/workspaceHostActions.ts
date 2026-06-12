@@ -144,10 +144,22 @@ function listedWorkspace(metadata: {
  * instead of WorkspaceService.list(): list() swallows read errors into [] and
  * filters hidden workspaces — both would make a transient failure look like
  * "no workspace exists" and trigger a duplicate create.
+ *
+ * Scoped to the requested/owning project: work-item keys are only unique per
+ * source, so two projects may legitimately reuse a key (e.g. "issue-1"); a
+ * global match would resolve ensure to a workspace in the wrong repo.
  */
-async function findWorkspaceByWorkItemKey(services: WorkspaceHostActionServices, key: string) {
+async function findWorkspaceByWorkItemKey(
+  services: WorkspaceHostActionServices,
+  key: string,
+  projectPaths: ReadonlySet<string>
+) {
   const all = await services.config.getAllWorkspaceMetadata();
-  return all.find((metadata) => metadata.tags?.[WORK_ITEM_TAG_KEY] === key);
+  return all.find(
+    (metadata) =>
+      metadata.tags?.[WORK_ITEM_TAG_KEY] === key &&
+      projectPaths.has(stripTrailingSlashes(metadata.projectPath))
+  );
 }
 
 /**
@@ -269,29 +281,37 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
       const ensureMutex = new KeyedMutex();
       return (rawInput, ctx) => {
         const input = EnsureInputSchema.parse(rawInput);
-        return ensureMutex.run(input.key, async () => {
+        const requestedProjectPath = stripTrailingSlashes(input.projectPath);
+        // Mutex key includes the project: the same work-item key in two
+        // projects is two independent ensures (matching the scoped predicate).
+        return ensureMutex.run(`${requestedProjectPath}\u0000${input.key}`, async () => {
           throwIfAborted(ctx, "workspace.ensure");
-
-          const existing = await findWorkspaceByWorkItemKey(services, input.key);
-          if (existing) {
-            return {
-              created: false,
-              workspaceId: existing.id,
-              archived: isWorkspaceArchived(existing.archivedAt, existing.unarchivedAt),
-            };
-          }
 
           // Trust gate BEFORE running git on the caller-provided path:
           // workspace.create re-checks trust, but trunk detection below already
           // executes git against the path, which untrusted projects must not get.
           const configSnapshot = services.config.loadConfigOrDefault();
-          const requestedProjectPath = stripTrailingSlashes(input.projectPath);
           const requestedProject = configSnapshot.projects.get(requestedProjectPath);
           const owningProjectPath = requestedProject?.parentProjectPath ?? requestedProjectPath;
           if (configSnapshot.projects.get(owningProjectPath)?.trusted !== true) {
             throw new Error(
               `workspace.ensure: project is not registered and trusted: ${input.projectPath}`
             );
+          }
+
+          // Sub-project workspaces are bucketed under the owning parent, so a
+          // tagged workspace may surface under either path.
+          const existing = await findWorkspaceByWorkItemKey(
+            services,
+            input.key,
+            new Set([requestedProjectPath, owningProjectPath])
+          );
+          if (existing) {
+            return {
+              created: false,
+              workspaceId: existing.id,
+              archived: isWorkspaceArchived(existing.archivedAt, existing.unarchivedAt),
+            };
           }
 
           // Worktree/SSH runtimes require an explicit trunk; mirror the desktop
