@@ -96,4 +96,22 @@ WorkflowSchedulerService (src/node/services/workflows/WorkflowSchedulerService.t
   <MUX_ROOT>/workflows/<name>.js — good for sandbox dogfooding (no
   project-commit dance).
 
+## PR #3539 (merged-pending; Codex approved, all checks green)
+
+Codex review rounds surfaced 4 real fixes (all landed on the branch):
+- scheduler dispatch must pass `backgroundOnMessageQueued: false` to
+  startNamedWorkflow — default true returns "backgrounded" mid-run, freeing
+  the activeDispatches slot early (breaks skip-if-running).
+- persistLastRunStartedAt guards with field-wise schedulesEqual against the
+  dispatched snapshot — a setWorkflowSchedule reset racing the stamp must
+  keep its due-now state.
+- ensure idempotency predicate + mutex key are PROJECT-scoped
+  ({requested,owning} paths) — work-item keys are only unique per source.
+- runHostAction waits (30s grace) for cooperative settlement after
+  abort/timeout so mutations can't land after the step records failure.
+Also: AGENTS.md now lists `.mux/memory/` as a sanctioned Markdown exception
+(Codex kept flagging it; AGENTS.md edits require `make fmt` to regenerate
+builtInSkillContent.generated.ts). router.test.ts fake aiService needs
+`getWorkflowHostActions: mock(() => undefined)`.
+
 V3 next: agent teams (spawn_peer_workspace / send_to_workspace→turnId / await_reply).
