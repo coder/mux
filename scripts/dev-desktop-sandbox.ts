@@ -227,9 +227,13 @@ async function main(): Promise<number> {
       console.log("  KEEP_SANDBOX=1 (temp root will not be deleted)");
     }
 
-    // Strip provider env vars when --clean-providers, warn when the sandbox
-    // has no providers.jsonc and would silently fall back to env credentials.
-    const childEnv = sanitizeSandboxProviderEnv({ cleanProviders, copiedProviders });
+    // Guard against provider env-var fallback: strip all provider env vars on
+    // --clean-providers, strip the seeded providers' env vars when a
+    // providers.jsonc was copied, and warn when env fallback would apply.
+    const childEnv = sanitizeSandboxProviderEnv({
+      cleanProviders,
+      seededProvidersPath: copiedProviders ? sandboxProvidersPath : null,
+    });
 
     devProc = spawn(makeCmd, ["dev"], {
       stdio: "inherit",

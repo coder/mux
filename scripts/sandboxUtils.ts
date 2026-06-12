@@ -4,6 +4,8 @@ import * as net from "net";
 import * as os from "os";
 import * as path from "path";
 
+import * as jsonc from "jsonc-parser";
+
 import { AZURE_OPENAI_ENV_VARS, PROVIDER_ENV_VARS } from "../src/node/utils/providerRequirements";
 
 function dirExists(dirPath: string): boolean {
@@ -85,10 +87,14 @@ export function chooseSeedSources(): SeedSources {
  * Intentionally excludes shared AWS env vars (AWS_REGION etc.): stripping
  * those would break unrelated AWS tooling spawned inside the sandbox, and
  * Bedrock auth goes through the AWS SDK chain rather than key+baseUrl pairing.
+ *
+ * @param providers - when given, only env vars belonging to these providers
+ *   (Azure vars count as "openai"); when omitted, all known provider vars.
  */
-function providerCredentialEnvVarNames(): string[] {
+function providerCredentialEnvVarNames(providers?: ReadonlySet<string>): string[] {
   const names = new Set<string>();
-  for (const mapping of Object.values(PROVIDER_ENV_VARS)) {
+  for (const [provider, mapping] of Object.entries(PROVIDER_ENV_VARS)) {
+    if (providers && !providers.has(provider)) continue;
     for (const key of [
       ...(mapping.apiKey ?? []),
       ...(mapping.baseUrl ?? []),
@@ -97,32 +103,57 @@ function providerCredentialEnvVarNames(): string[] {
       names.add(key);
     }
   }
-  for (const key of Object.values(AZURE_OPENAI_ENV_VARS)) {
-    names.add(key);
+  if (!providers || providers.has("openai")) {
+    for (const key of Object.values(AZURE_OPENAI_ENV_VARS)) {
+      names.add(key);
+    }
   }
   return [...names];
 }
 
+/** Provider names configured in a providers.jsonc file (empty set on parse failure). */
+function readConfiguredProviderNames(providersJsoncPath: string): Set<string> {
+  try {
+    const raw = fs.readFileSync(providersJsoncPath, "utf-8");
+    const parsed: unknown = jsonc.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return new Set();
+    }
+    return new Set(Object.keys(parsed));
+  } catch (err) {
+    console.warn(`Failed to read providers.jsonc at ${providersJsoncPath}:`, err);
+    return new Set();
+  }
+}
+
 /**
  * Build the child env for a sandboxed mux instance, guarding against provider
- * env-var fallback surprises:
+ * env-var fallback surprises. mux resolves apiKey and baseUrl *independently*
+ * (config -> file -> env each), so a *_BASE_URL env var pointing at a proxy
+ * (e.g. Coder AI bridge) can get paired with an unrelated API key and fail
+ * auth. Guards:
  *
  * - `--clean-providers`: strip all provider credential env vars so the sandbox
- *   is actually clean (otherwise the server silently falls back to env keys,
- *   and a *_BASE_URL pointing at a proxy/AI-bridge can mismatch the env key).
+ *   is actually clean (no silent env fallback).
+ * - providers.jsonc seeded: strip env vars for the providers it configures,
+ *   making the seeded config the single source of truth for them (otherwise a
+ *   config entry with an apiKey but no baseUrl still inherits *_BASE_URL from
+ *   env). Env vars for providers *not* in the file are kept so env-only
+ *   provider setups keep working.
  * - providers.jsonc not seeded (none found): keep env vars (env-only setups
  *   are legitimate) but warn loudly about the fallback + base-URL pairing risk.
  */
 export function sanitizeSandboxProviderEnv(options: {
   cleanProviders: boolean;
-  copiedProviders: boolean;
+  /** Path of the seeded sandbox providers.jsonc, or null when not seeded. */
+  seededProvidersPath: string | null;
 }): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  const present = providerCredentialEnvVarNames()
-    .filter((name) => (env[name] ?? "").trim() !== "")
-    .sort();
+  const presentVars = (names: string[]): string[] =>
+    names.filter((name) => (env[name] ?? "").trim() !== "").sort();
 
   if (options.cleanProviders) {
+    const present = presentVars(providerCredentialEnvVarNames());
     for (const name of present) {
       delete env[name];
     }
@@ -132,7 +163,20 @@ export function sanitizeSandboxProviderEnv(options: {
     return env;
   }
 
-  if (!options.copiedProviders && present.length > 0) {
+  if (options.seededProvidersPath !== null) {
+    const configuredProviders = readConfiguredProviderNames(options.seededProvidersPath);
+    const present = presentVars(providerCredentialEnvVarNames(configuredProviders));
+    for (const name of present) {
+      delete env[name];
+    }
+    if (present.length > 0) {
+      console.log(`  Stripped env vars shadowed by seeded providers.jsonc: ${present.join(", ")}`);
+    }
+    return env;
+  }
+
+  const present = presentVars(providerCredentialEnvVarNames());
+  if (present.length > 0) {
     console.warn(
       `\nWARNING: no providers.jsonc was seeded into the sandbox; the server will fall back to provider env vars: ${present.join(", ")}.\n` +
         "If a *_BASE_URL env var points at a proxy (e.g. Coder AI bridge), the env API key may not match it and provider auth will fail.\n"

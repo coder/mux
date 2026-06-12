@@ -28,9 +28,11 @@ make dev-server-sandbox
   - Each file is seeded independently from the first root that has it
     (`$MUX_ROOT`, then `~/.mux-dev`, then `~/.mux`), so a root with only
     `config.json` doesn't drop provider config
-- With `--clean-providers`, provider credential env vars (API keys, `*_BASE_URL`,
-  etc.) are stripped from the server's env so it can't silently fall back to
-  env credentials (which may pair a real key with a proxy/AI-bridge base URL)
+- Provider credential env vars (API keys, `*_BASE_URL`, etc.) are stripped from
+  the server's env when they could silently override or mismatch the intended
+  setup: all of them with `--clean-providers`, and those belonging to providers
+  configured in the seeded `providers.jsonc` otherwise (so the seeded config is
+  the single source of truth; env vars for unconfigured providers are kept)
 - Picks free ports (`BACKEND_PORT`, `VITE_PORT`)
 - Disables tutorials by default inside the sandbox (`MUX_ENABLE_TUTORIALS_IN_SANDBOX=1` opts back in)
 - Allows all hosts (`VITE_ALLOWED_HOSTS=all`) so it works behind port-forwarding domains
