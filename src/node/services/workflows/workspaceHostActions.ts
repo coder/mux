@@ -163,6 +163,17 @@ async function findWorkspaceByWorkItemKey(
 }
 
 /**
+ * Look up a workspace by id from the live WorkspaceService.list(). Shared by the
+ * id-targeted host actions (sendMessage/archive), which receive an explicit
+ * workspaceId. Distinct from findWorkspaceByWorkItemKey, which reads config
+ * directly to avoid list()'s hidden-workspace filtering and error swallowing.
+ */
+async function findWorkspaceById(services: WorkspaceHostActionServices, workspaceId: string) {
+  const all = await services.workspaceService.list();
+  return all.find((metadata) => metadata.id === workspaceId);
+}
+
+/**
  * Work-item keys (e.g. "PROJ-123", "release/v1.2") rarely satisfy
  * validateWorkspaceName ([a-z0-9_-], max 64 chars), which would make
  * workspace.create reject the ensure permanently. Normalize like fork naming
@@ -368,8 +379,7 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
       const input = SendMessageInputSchema.parse(rawInput);
       throwIfAborted(ctx, "workspace.sendMessage");
 
-      const all = await services.workspaceService.list();
-      const metadata = all.find((entry) => entry.id === input.workspaceId);
+      const metadata = await findWorkspaceById(services, input.workspaceId);
 
       // Agent fallback: explicit input → workspace's persisted selected agent →
       // exec. sendMessage persists the selected agent, so defaulting to "exec"
@@ -521,8 +531,7 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
     createExecute: (services) => async (rawInput, ctx) => {
       const input = WorkspaceIdInputSchema.parse(rawInput);
       throwIfAborted(ctx, "workspace.archive");
-      const all = await services.workspaceService.list();
-      const existing = all.find((metadata) => metadata.id === input.workspaceId);
+      const existing = await findWorkspaceById(services, input.workspaceId);
       if (!existing) {
         throw new Error(`workspace.archive: workspace not found: ${input.workspaceId}`);
       }
