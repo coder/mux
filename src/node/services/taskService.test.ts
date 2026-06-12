@@ -5647,7 +5647,7 @@ describe("TaskService", () => {
     const internal = taskService as unknown as {
       workspaceEventLocks: { withLock(key: string, fn: () => Promise<void>): Promise<void> };
     };
-    await internal.workspaceEventLocks.withLock(childId, async () => {});
+    await internal.workspaceEventLocks.withLock(childId, () => Promise.resolve());
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(

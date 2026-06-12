@@ -595,28 +595,33 @@ describe("SSHConnectionPool", () => {
         }
       );
 
-      const firstAcquire = pool.acquireConnection(config, {
-        controlPath: "/tmp/mux-control-a",
-        timeoutMs: 30,
-        maxWaitMs: 30,
-      });
-      await firstProbeStarted;
+      // try/finally: a leaked Date.now spy freezes time process-wide and breaks
+      // downstream suites (e.g. WorkflowService crash-recovery retries).
+      try {
+        const firstAcquire = pool.acquireConnection(config, {
+          controlPath: "/tmp/mux-control-a",
+          timeoutMs: 30,
+          maxWaitMs: 30,
+        });
+        await firstProbeStarted;
 
-      const secondAcquire = pool.acquireConnection(config, {
-        controlPath: "/tmp/mux-control-b",
-        timeoutMs: 30,
-        maxWaitMs: 30,
-      });
-      releaseFirstProbe();
+        const secondAcquire = pool.acquireConnection(config, {
+          controlPath: "/tmp/mux-control-b",
+          timeoutMs: 30,
+          maxWaitMs: 30,
+        });
+        releaseFirstProbe();
 
-      await Promise.all([firstAcquire, secondAcquire]);
+        await Promise.all([firstAcquire, secondAcquire]);
 
-      expect(probeCalls).toEqual([
-        { controlPath: "/tmp/mux-control-a", timeoutMs: 30 },
-        { controlPath: "/tmp/mux-control-b", timeoutMs: 5 },
-      ]);
-      probeSpy.mockRestore();
-      nowSpy.mockRestore();
+        expect(probeCalls).toEqual([
+          { controlPath: "/tmp/mux-control-a", timeoutMs: 30 },
+          { controlPath: "/tmp/mux-control-b", timeoutMs: 5 },
+        ]);
+      } finally {
+        probeSpy.mockRestore();
+        nowSpy.mockRestore();
+      }
     });
 
     test("callers waking from backoff share single probe (herd only released on success)", async () => {

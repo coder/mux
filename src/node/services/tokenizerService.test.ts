@@ -74,28 +74,32 @@ describe("TokenizerService", () => {
       );
       const nowSpy = spyOn(Date, "now").mockReturnValue(1234);
 
-      const result = await service.calculateStats("test-workspace", messages, "gpt-4");
-      expect(result).toBe(mockResult);
-      expect(statsSpy).toHaveBeenCalledWith(messages, "gpt-4", null, {
-        enableAgentReport: false,
-        enableReviewPane: true,
-      });
-      expect(persistSpy).toHaveBeenCalledWith(
-        "test-workspace",
-        expect.objectContaining({
-          version: 1,
-          computedAt: 1234,
-          model: "gpt-4",
-          tokenizerName: "cl100k",
-          totalTokens: 100,
-          consumers: mockResult.consumers,
-          history: { messageCount: 2, maxHistorySequence: 2 },
-        })
-      );
-
-      nowSpy.mockRestore();
-      statsSpy.mockRestore();
-      persistSpy.mockRestore();
+      // try/finally: a leaked Date.now spy freezes time process-wide and breaks
+      // downstream suites (e.g. WorkflowService crash-recovery retries).
+      try {
+        const result = await service.calculateStats("test-workspace", messages, "gpt-4");
+        expect(result).toBe(mockResult);
+        expect(statsSpy).toHaveBeenCalledWith(messages, "gpt-4", null, {
+          enableAgentReport: false,
+          enableReviewPane: true,
+        });
+        expect(persistSpy).toHaveBeenCalledWith(
+          "test-workspace",
+          expect.objectContaining({
+            version: 1,
+            computedAt: 1234,
+            model: "gpt-4",
+            tokenizerName: "cl100k",
+            totalTokens: 100,
+            consumers: mockResult.consumers,
+            history: { messageCount: 2, maxHistorySequence: 2 },
+          })
+        );
+      } finally {
+        nowSpy.mockRestore();
+        statsSpy.mockRestore();
+        persistSpy.mockRestore();
+      }
     });
 
     test("excludes a leading reset boundary from token stats", async () => {
