@@ -9,8 +9,56 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { log } from "@/node/services/log";
 import { toUtcDateString } from "@/node/services/analytics/dateUtils";
+import { CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
 
 export const CHAT_FILE_NAME = "chat.jsonl";
+
+/**
+ * Sealed pre-boundary history rotates from chat.jsonl into chat-archive.jsonl
+ * (see HistoryService). Analytics must consider both files or pre-compaction
+ * usage/events would silently disappear after the first rotation.
+ *
+ * Returns null when chat.jsonl does not exist (no workspace history). The
+ * reported mtime is the max across both files so watermark staleness checks
+ * see archive-only mutations too.
+ */
+async function statSessionChatHistory(sessionDir: string): Promise<{ mtimeMs: number } | null> {
+  let mtimeMs: number;
+  try {
+    mtimeMs = (await fs.stat(path.join(sessionDir, CHAT_FILE_NAME))).mtimeMs;
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+
+  try {
+    const archiveStat = await fs.stat(path.join(sessionDir, CHAT_ARCHIVE_FILE_NAME));
+    mtimeMs = Math.max(mtimeMs, archiveStat.mtimeMs);
+  } catch (error) {
+    if (!(isRecord(error) && error.code === "ENOENT")) {
+      throw error;
+    }
+  }
+
+  return { mtimeMs };
+}
+
+/** Read full workspace history: sealed archive (older) followed by chat.jsonl. */
+async function readSessionChatHistoryContents(sessionDir: string): Promise<string> {
+  let archived = "";
+  try {
+    archived = await fs.readFile(path.join(sessionDir, CHAT_ARCHIVE_FILE_NAME), "utf-8");
+  } catch (error) {
+    if (!(isRecord(error) && error.code === "ENOENT")) {
+      throw error;
+    }
+  }
+
+  const active = await fs.readFile(path.join(sessionDir, CHAT_FILE_NAME), "utf-8");
+  return archived + active;
+}
 const METADATA_FILE_NAME = "metadata.json";
 const SUBAGENT_TRANSCRIPTS_DIR_NAME = "subagent-transcripts";
 const SESSION_USAGE_FILE_NAME = "session-usage.json";
@@ -1009,19 +1057,11 @@ export async function ingestWorkspace(
   assert(workspaceId.trim().length > 0, "ingestWorkspace: workspaceId is required");
   assert(sessionDir.trim().length > 0, "ingestWorkspace: sessionDir is required");
 
-  const chatPath = path.join(sessionDir, CHAT_FILE_NAME);
-
-  let stat: Awaited<ReturnType<typeof fs.stat>>;
-  try {
-    stat = await fs.stat(chatPath);
-  } catch (error) {
-    if (isRecord(error) && error.code === "ENOENT") {
-      // Remove stale analytics state when the workspace history file no longer exists.
-      await clearWorkspaceAnalyticsState(conn, workspaceId);
-      return;
-    }
-
-    throw error;
+  const stat = await statSessionChatHistory(sessionDir);
+  if (stat === null) {
+    // Remove stale analytics state when the workspace history file no longer exists.
+    await clearWorkspaceAnalyticsState(conn, workspaceId);
+    return;
   }
 
   const watermark = await readWatermark(conn, workspaceId);
@@ -1035,7 +1075,7 @@ export async function ingestWorkspace(
     return;
   }
 
-  const chatContents = await fs.readFile(chatPath, "utf-8");
+  const chatContents = await readSessionChatHistoryContents(sessionDir);
   const lines = chatContents.split("\n").filter((line) => line.trim().length > 0);
 
   let responseIndex = 0;
@@ -1450,22 +1490,15 @@ export async function parseWorkspaceFromDisk(
   assert(workspaceId.trim().length > 0, "parseWorkspaceFromDisk: workspaceId is required");
   assert(sessionDir.trim().length > 0, "parseWorkspaceFromDisk: sessionDir is required");
 
-  const chatPath = path.join(sessionDir, CHAT_FILE_NAME);
-
-  let stat: Awaited<ReturnType<typeof fs.stat>>;
-  try {
-    stat = await fs.stat(chatPath);
-  } catch (error) {
-    if (isRecord(error) && error.code === "ENOENT") {
-      return null;
-    }
-    throw error;
+  const stat = await statSessionChatHistory(sessionDir);
+  if (stat === null) {
+    return null;
   }
 
   const persistedMeta = await readWorkspaceMetaFromDisk(sessionDir);
   const workspaceMeta = mergeWorkspaceMeta(persistedMeta, suppliedMeta);
 
-  const chatContents = await fs.readFile(chatPath, "utf-8");
+  const chatContents = await readSessionChatHistoryContents(sessionDir);
   const lines = chatContents.split("\n").filter((line) => line.trim().length > 0);
 
   let responseIndex = 0;

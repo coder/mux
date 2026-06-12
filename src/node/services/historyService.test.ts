@@ -1576,6 +1576,21 @@ describe("HistoryService", () => {
       expect(msg.metadata?.historySequence).toBe(2);
     });
 
+    it("never reuses archived sequences after truncating the whole active epoch", async () => {
+      await appendNumberedMessages(service, wsId, 3); // msg-0..2, seq 0..2 → archived
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after")); // seq 4
+
+      // Truncate at the boundary itself (without keeping it) — the active file
+      // becomes empty while the archive still holds seq 0..2.
+      const truncateResult = await service.truncateAfterMessage(wsId, "boundary-1");
+      expect(truncateResult.success).toBe(true);
+
+      const msg = createMuxMessage("new-msg", "user", "fresh");
+      await service.appendToHistory(wsId, msg);
+      expect(msg.metadata?.historySequence).toBe(3);
+    });
+
     it("deletes archived rows via deleteMessage", async () => {
       await appendNumberedMessages(service, wsId, 3);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));

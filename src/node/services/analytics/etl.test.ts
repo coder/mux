@@ -867,6 +867,33 @@ describe("ingestWorkspace", () => {
     expect(refreshedHeadRows[0].tool_name).toBe("bash");
     expect(Number(refreshedHeadRows[0].total_cost_usd)).toBeCloseTo(originalHeadTotalCostUsd, 12);
   });
+
+  test("ingests sealed pre-boundary rows from chat-archive.jsonl", async () => {
+    const conn = await createTestConn();
+    const sessionDir = await createTempSessionDir();
+    const workspaceId = "ws-with-archive";
+
+    // HistoryService rotation moves pre-boundary rows into chat-archive.jsonl;
+    // analytics must read both files or pre-compaction usage disappears.
+    await fs.writeFile(
+      path.join(sessionDir, "chat-archive.jsonl"),
+      [makeUserLine(), makeAssistantLine({ sequence: 1, inputTokens: 11 })].join("\n") + "\n"
+    );
+    await writeChatJsonl(sessionDir, [
+      makeUserLine(),
+      makeAssistantLine({ sequence: 3, inputTokens: 33 }),
+    ]);
+
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/proj" });
+
+    expect(await queryEventCount(conn, workspaceId)).toBe(2);
+    const rows = await queryRows(
+      conn,
+      "SELECT input_tokens FROM events WHERE workspace_id = ? ORDER BY input_tokens",
+      [workspaceId]
+    );
+    expect(rows.map((row) => Number(row.input_tokens))).toEqual([11, 33]);
+  });
 });
 
 describe("readPersistedWorkspaceHeadSignature", () => {

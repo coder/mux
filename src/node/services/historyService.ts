@@ -735,8 +735,18 @@ export class HistoryService {
     });
 
     // The archive holds strictly-older sequences than chat.jsonl, so it only
-    // decides the counter when chat.jsonl is missing/hand-edited. Scan its tail
-    // until a sequenced row is found instead of parsing the whole archive.
+    // decides the counter when chat.jsonl is missing/hand-edited.
+    const archiveMax = await this.getArchiveTailMaxSequence(workspaceId);
+
+    return Math.max(maxSequence, archiveMax);
+  }
+
+  /**
+   * Newest sequenced row in the sealed archive, or -1 when none. Scans the
+   * archive tail until a sequenced row is found instead of parsing the whole
+   * file (archived appends are sequence-ordered).
+   */
+  private async getArchiveTailMaxSequence(workspaceId: string): Promise<number> {
     let archiveMax = -1;
     await this.iterateBackward(this.getChatArchivePath(workspaceId), (messages) => {
       const newest = this.getNewestHistorySequence(messages);
@@ -745,8 +755,7 @@ export class HistoryService {
       }
       return archiveMax === -1; // keep scanning until any sequence is found
     });
-
-    return Math.max(maxSequence, archiveMax);
+    return archiveMax;
   }
 
   async hasHistoryBeforeSequence(
@@ -995,14 +1004,7 @@ export class HistoryService {
     const activeTail = fileBuffer.subarray(boundaryOffset);
 
     // Crash-replay dedupe: find the newest sequence already archived.
-    let archivedMaxSequence = -1;
-    await this.iterateBackward(archivePath, (messages) => {
-      const newest = this.getNewestHistorySequence(messages);
-      if (newest !== undefined && newest > archivedMaxSequence) {
-        archivedMaxSequence = newest;
-      }
-      return archivedMaxSequence === -1; // scan until a sequenced row is found
-    });
+    const archivedMaxSequence = await this.getArchiveTailMaxSequence(workspaceId);
 
     const linesToArchive: string[] = [];
     for (const line of sealedPrefix.split("\n")) {
@@ -1680,7 +1682,12 @@ export class HistoryService {
 
           return seq > max ? seq : max;
         }, -1);
-        const nextSeq = maxTruncatedSeq + 1;
+        // Sealed archive rows keep their sequences across an active-epoch
+        // truncation. When the truncation empties the active file, floor the
+        // counter with the archive max so new appends can never reuse archived
+        // sequence numbers.
+        const archiveMaxSeq = await this.getArchiveTailMaxSequence(workspaceId);
+        const nextSeq = Math.max(maxTruncatedSeq, archiveMaxSeq) + 1;
         assert(
           isNonNegativeInteger(nextSeq),
           "next history sequence counter after truncation must be a non-negative integer"
