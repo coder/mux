@@ -245,13 +245,16 @@ export class MemoryConsolidationService {
     }
 
     // v1 scopes are host-local (workspace + global): runtime stays null and
-    // the project scope is structurally disabled, so stopped Docker/SSH
-    // workspaces consolidate fine (PRD #3534).
+    // checkoutCwd/projectPath stay "" so BOTH repo-backed project memory and
+    // host-local project-local memory are structurally disabled — including
+    // for reads, which bypass the tool's mutation guard. A dream pass must
+    // never ship project-private notes to the provider (PRD #3534). The
+    // stopped-runtime case also works: no live checkout is needed.
     const ctx: MemoryScopeContext = {
       runtime: null,
       checkoutCwd: "",
       workspaceId,
-      projectPath: workspace.projectPath,
+      projectPath: "",
     };
 
     const result = await runMemoryConsolidation({
