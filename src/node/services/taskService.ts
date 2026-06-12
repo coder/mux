@@ -1643,14 +1643,8 @@ export class TaskService {
 
     // sharedWorkspacePath is set for honored isolation: "none" plans; the entry is persisted
     // pointing at the parent's checkout and startReservedAgentTask reuses it without fork/init.
-    // parentBranchName is the branch actually checked out in the parent's checkout (differs from
-    // parentMeta.name when the parent is itself a shared task with a synthetic name).
     const plans: Array<
-      TaskLaunchPlan & {
-        status: "queued" | "starting";
-        sharedWorkspacePath?: string;
-        parentBranchName?: string;
-      }
+      TaskLaunchPlan & { status: "queued" | "starting"; sharedWorkspacePath?: string }
     > = [];
     const results: TaskCreateResult[] = [];
 
@@ -1786,11 +1780,11 @@ export class TaskService {
         !parentIsMultiProject;
       const sharedWorkspacePath = useSharedWorkspace ? parentWorkspacePath : undefined;
       // Branch actually checked out in the parent's checkout (see create() for rationale).
-      const parentBranchName =
-        parentEntry?.workspace.taskIsolation === "none"
-          ? (coerceNonEmptyString(parentEntry.workspace.taskTrunkBranch) ??
-            coerceNonEmptyString(parentMeta.name))
-          : coerceNonEmptyString(parentMeta.name);
+      const parentIsSharedTask = parentEntry?.workspace.taskIsolation === "none";
+      const parentBranchName = parentIsSharedTask
+        ? (coerceNonEmptyString(parentEntry?.workspace.taskTrunkBranch) ??
+          coerceNonEmptyString(parentMeta.name))
+        : coerceNonEmptyString(parentMeta.name);
       if (args.isolation === "none" && !useSharedWorkspace) {
         log.debug("Task.createMany: isolation=none not honored; falling back to fork", {
           taskId,
@@ -1880,7 +1874,13 @@ export class TaskService {
         onRefusal: args.onRefusal,
         status,
         ...(sharedWorkspacePath != null ? { sharedWorkspacePath } : {}),
-        ...(parentBranchName != null ? { parentBranchName } : {}),
+        // Real branch checked out in the parent's checkout: persisted as taskTrunkBranch and used
+        // by orchestrateFork's create-fallback when the fork cannot detect a source branch
+        // (a shared parent's synthetic name never names a real branch). Gated to shared parents
+        // to keep the existing branch-discovery fallback otherwise.
+        ...(parentIsSharedTask && parentBranchName != null
+          ? { preferredTrunkBranch: parentBranchName }
+          : {}),
       });
       results.push({ taskId, kind: "agent", status });
     }
@@ -1902,7 +1902,9 @@ export class TaskService {
         const workspacePath =
           plan.sharedWorkspacePath ??
           runtime.getWorkspacePath(plan.parentMeta.projectPath, plan.workspaceName);
-        const trunkBranch = plan.parentBranchName ?? coerceNonEmptyString(plan.parentMeta.name);
+        const trunkBranch =
+          coerceNonEmptyString(plan.preferredTrunkBranch) ??
+          coerceNonEmptyString(plan.parentMeta.name);
         if (!trunkBranch) {
           throw new Error("Task.createMany: parent workspace name missing");
         }
@@ -2521,11 +2523,11 @@ export class TaskService {
     // isolation: "none" task, parentMeta.name is a synthetic agent workspace name with no real
     // branch — the shared checkout sits on the parent's own persisted taskTrunkBranch. Persisting
     // the real branch keeps dequeue fork-fallbacks (preferredTrunkBranch) on an existing base.
-    const parentBranchName =
-      parentEntry?.workspace.taskIsolation === "none"
-        ? (coerceNonEmptyString(parentEntry.workspace.taskTrunkBranch) ??
-          coerceNonEmptyString(parentMeta.name))
-        : coerceNonEmptyString(parentMeta.name);
+    const parentIsSharedTask = parentEntry?.workspace.taskIsolation === "none";
+    const parentBranchName = parentIsSharedTask
+      ? (coerceNonEmptyString(parentEntry?.workspace.taskTrunkBranch) ??
+        coerceNonEmptyString(parentMeta.name))
+      : coerceNonEmptyString(parentMeta.name);
     if (args.isolation === "none" && !useSharedWorkspace) {
       log.debug("Task.create: isolation=none not honored; falling back to fork", {
         taskId,
@@ -2743,6 +2745,12 @@ export class TaskService {
         sourceRuntimeConfig: parentRuntimeConfig,
         parentMetadata: parentMeta,
         allowCreateFallback: true,
+        // Create-fallback base when the fork cannot detect a source branch — a shared parent's
+        // synthetic name never names a real branch, so supply the actual checked-out branch.
+        // Gated to shared parents to keep the existing branch-discovery fallback otherwise.
+        ...(parentIsSharedTask && parentBranchName != null
+          ? { preferredTrunkBranch: parentBranchName }
+          : {}),
         trusted:
           this.config
             .loadConfigOrDefault()
