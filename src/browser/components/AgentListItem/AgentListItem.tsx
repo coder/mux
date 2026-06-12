@@ -31,7 +31,7 @@ import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { SubAgentListItem } from "./SubAgentListItem";
 
-import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipIfPresent } from "../Tooltip/Tooltip";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "../Popover/Popover";
 import { PositionedMenu, PositionedMenuItem } from "../PositionedMenu/PositionedMenu";
 import {
@@ -531,6 +531,26 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
       : undefined;
   const displayTitle = groupLabel ? `${groupLabel} · ${workspaceTitle}` : workspaceTitle;
   const isEditing = editingWorkspaceId === workspaceId;
+
+  // Track whether the title span is actually clipped by `truncate` so we only
+  // attach a hover tooltip when the user can't already read the full name.
+  // Callback ref instead of useRef so we re-measure when the span mounts/unmounts
+  // (e.g. when toggling in/out of the rename input branch).
+  const [titleEl, setTitleEl] = useState<HTMLSpanElement | null>(null);
+  const [isTitleTruncated, setIsTitleTruncated] = useState(false);
+  useEffect(() => {
+    if (!titleEl) {
+      setIsTitleTruncated(false);
+      return;
+    }
+    const check = () => {
+      setIsTitleTruncated(titleEl.scrollWidth > titleEl.clientWidth);
+    };
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(titleEl);
+    return () => observer.disconnect();
+  }, [titleEl, displayTitle]);
 
   const linkSharingEnabled = useLinkSharingEnabled();
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
@@ -1095,16 +1115,23 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                 {groupLabel && (
                   <span className="text-muted shrink-0 text-[12px] leading-6">{groupLabel}</span>
                 )}
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate text-left text-[14px] leading-6 transition-colors duration-200",
-                    !isDisabled && "cursor-pointer",
-                    (isGeneratingTitle || isPendingAutoTitle) && "italic",
-                    titleColorClass
-                  )}
+                <TooltipIfPresent
+                  tooltip={isTitleTruncated ? displayTitle : undefined}
+                  side="right"
+                  align="center"
                 >
-                  {workspaceTitle}
-                </span>
+                  <span
+                    ref={setTitleEl}
+                    className={cn(
+                      "min-w-0 flex-1 truncate text-left text-[14px] leading-6 transition-colors duration-200",
+                      !isDisabled && "cursor-pointer",
+                      (isGeneratingTitle || isPendingAutoTitle) && "italic",
+                      titleColorClass
+                    )}
+                  >
+                    {workspaceTitle}
+                  </span>
+                </TooltipIfPresent>
               </div>
             )}
 
