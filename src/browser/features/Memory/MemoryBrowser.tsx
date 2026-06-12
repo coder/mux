@@ -22,6 +22,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { MemoryFileEditor } from "./MemoryFileEditor";
 
 const SCOPE_LABELS: Record<MemoryScope, string> = {
+  "project-local": "Project (local)",
   global: "Global",
   project: "Project",
   workspace: "Workspace",

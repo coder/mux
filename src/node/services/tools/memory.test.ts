@@ -43,6 +43,7 @@ async function createFixture(options?: {
   config.memoryAccess = options?.memoryAccess ?? {
     global: "readwrite",
     project: "readwrite",
+    "project-local": "readwrite",
     workspace: "readwrite",
   };
   return {
@@ -270,16 +271,19 @@ describe("memory tool", () => {
       expect(resolveMemoryAccessPolicy({ planLike: false, editingCapable: true })).toEqual({
         global: "readwrite",
         project: "readwrite",
+        "project-local": "readwrite",
         workspace: "readwrite",
       });
       expect(resolveMemoryAccessPolicy({ planLike: true, editingCapable: true })).toEqual({
         global: "readwrite",
         project: "read",
+        "project-local": "readwrite",
         workspace: "readwrite",
       });
       expect(resolveMemoryAccessPolicy({ planLike: false, editingCapable: false })).toEqual({
         global: "read",
         project: "read",
+        "project-local": "read",
         workspace: "read",
       });
     });

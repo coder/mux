@@ -37,6 +37,7 @@ import {
   type MemoryScope,
 } from "@/common/constants/memory";
 import { shellQuote } from "@/common/utils/shell";
+import { PlatformPaths } from "@/common/utils/paths";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -212,6 +213,23 @@ export function parseMemoryPath(virtualPath: string): ParsedMemoryPath {
     `memory path validation must guarantee containment: '${virtualPath}'`
   );
   return { scope, relPath };
+}
+
+/**
+ * Filesystem-safe directory name for a project's host-local memory root
+ * (<muxHome>/project-memory/<dirName>). The sanitized basename keeps the dir
+ * human-recognizable; the path hash guarantees uniqueness across same-named
+ * projects in different parent directories.
+ */
+export function projectMemoryDirName(projectPath: string): string {
+  assert(projectPath !== "", "projectMemoryDirName requires a project identity");
+  const hash = createHash("sha256").update(projectPath).digest("hex").slice(0, 12);
+  // getProjectName falls back to "unknown" and sanitization maps (never
+  // drops) disallowed chars, so base is always non-empty.
+  const base = PlatformPaths.getProjectName(projectPath)
+    .replace(/[^A-Za-z0-9._-]/g, "_")
+    .slice(0, 40);
+  return `${base}-${hash}`;
 }
 
 function toVirtualPath(scope: MemoryScope, relPath: string): string {
@@ -671,7 +689,7 @@ export class MemoryService extends EventEmitter {
 
   /** Logical sidecar key, or null when the scope has no stable identity. */
   private logicalKeyFor(ctx: MemoryScopeContext, scope: MemoryScope, relPath: string) {
-    if (scope === "project" && ctx.projectPath === "") return null;
+    if ((scope === "project" || scope === "project-local") && ctx.projectPath === "") return null;
     return memoryLogicalKey(scope, relPath, {
       projectPath: ctx.projectPath,
       workspaceId: ctx.workspaceId,
@@ -740,6 +758,19 @@ export class MemoryService extends EventEmitter {
     switch (scope) {
       case "global":
         return new LocalMemoryStore(path.join(this.config.rootDir, "memory"));
+      case "project-local": {
+        if (ctx.projectPath === "") {
+          throw new MemoryCommandError(
+            "Project-local memory is unavailable: no project is associated with this session"
+          );
+        }
+        // Host-local private notes about the project: keyed by stable project
+        // identity (never the per-workspace checkout), so they survive
+        // re-checkouts and never appear in the repo.
+        return new LocalMemoryStore(
+          path.join(this.config.rootDir, "project-memory", projectMemoryDirName(ctx.projectPath))
+        );
+      }
       case "workspace": {
         if (!ctx.workspaceId) {
           throw new MemoryCommandError(

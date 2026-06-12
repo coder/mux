@@ -4,15 +4,17 @@
  * Models only ever see virtual paths under the virtual root (e.g.
  * /memories/global/preferences.md). The MemoryService maps each scope to a
  * physical root:
- * - global    -> <muxHome>/memory/ (host-local, permanent, shared across projects)
- * - project   -> <workspace checkout>/.mux/memory/ (via Runtime, git-tracked)
- * - workspace -> <sessionDir>/memory/ (host-local, deleted with the workspace)
+ * - global        -> <muxHome>/memory/ (host-local, permanent, shared across projects)
+ * - project       -> <workspace checkout>/.mux/memory/ (via Runtime, git-tracked)
+ * - project-local -> <muxHome>/project-memory/<project dir>/ (host-local, private
+ *                    per-project notes; never committed, survives workspaces)
+ * - workspace     -> <sessionDir>/memory/ (host-local, deleted with the workspace)
  */
 
 /** Virtual root prefix all memory paths are expressed under. */
 export const MEMORY_VIRTUAL_ROOT = "/memories";
 
-export const MEMORY_SCOPES = ["global", "project", "workspace"] as const;
+export const MEMORY_SCOPES = ["global", "project", "project-local", "workspace"] as const;
 export type MemoryScope = (typeof MEMORY_SCOPES)[number];
 
 export type MemoryAccessLevel = "read" | "readwrite";
@@ -21,7 +23,8 @@ export type MemoryAccessLevel = "read" | "readwrite";
  * Per-scope write policy for the memory tool, derived from the agent class:
  * - Exec-like (editing-capable): all scopes read-write.
  * - Plan-like: project scope read-only (project memories are git-tracked files
- *   in the checkout; plan agents must not mutate the repo).
+ *   in the checkout; plan agents must not mutate the repo). project-local stays
+ *   read-write: it is host-local and never touches the checkout.
  * - Explore/read-only: all scopes read-only (view only).
  */
 export type MemoryScopeAccess = Record<MemoryScope, MemoryAccessLevel>;

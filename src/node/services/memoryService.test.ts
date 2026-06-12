@@ -11,6 +11,7 @@ import {
   extractMemoryDescription,
   formatMemoryIndexBlock,
   MemoryService,
+  projectMemoryDirName,
   resolveMemoryProjectAnchor,
   type MemoryScopeContext,
 } from "./memoryService";
@@ -120,6 +121,41 @@ describe("MemoryService", () => {
       expect(await fsPromises.readFile(physical, "utf-8")).toBe("branch context");
     });
 
+    it("creates a project-local memory file under <muxHome>/project-memory, never the checkout", async () => {
+      using fixture = await createFixture();
+      const created = await fixture.service.create(
+        fixture.ctx,
+        "/memories/project-local/notes.md",
+        "private repo notes",
+        "agent"
+      );
+      expect(created.success).toBe(true);
+
+      const physical = path.join(
+        fixture.muxHome,
+        "project-memory",
+        projectMemoryDirName(FIXTURE_PROJECT_PATH),
+        "notes.md"
+      );
+      expect(await fsPromises.readFile(physical, "utf-8")).toBe("private repo notes");
+      // Private notes must never touch the repo checkout.
+      expect(await pathExists(path.join(fixture.checkout, ".mux"))).toBe(false);
+    });
+
+    it("fails project-local writes with a recoverable error when no project identity exists", async () => {
+      using fixture = await createFixture();
+      const result = await fixture.service.create(
+        { ...fixture.ctx, projectPath: "" },
+        "/memories/project-local/notes.md",
+        "orphan",
+        "agent"
+      );
+      expect(result).toEqual({
+        success: false,
+        error: "Project-local memory is unavailable: no project is associated with this session",
+      });
+    });
+
     it("supports nested paths, creating parent directories", async () => {
       using fixture = await createFixture();
       const created = await fixture.service.create(
@@ -149,6 +185,22 @@ describe("MemoryService", () => {
       // Original content untouched.
       const physical = path.join(fixture.muxHome, "memory", "a.md");
       expect(await fsPromises.readFile(physical, "utf-8")).toBe("v1");
+    });
+  });
+
+  describe("projectMemoryDirName", () => {
+    it("disambiguates same-named projects in different parent directories", () => {
+      const a = projectMemoryDirName("/home/alice/mux");
+      const b = projectMemoryDirName("/home/bob/mux");
+      expect(a).not.toBe(b);
+      // Both stay human-recognizable via the shared basename.
+      expect(a).toStartWith("mux-");
+      expect(b).toStartWith("mux-");
+    });
+
+    it("sanitizes path-hostile basenames into filesystem-safe names", () => {
+      const name = projectMemoryDirName("/tmp/we ird:proj");
+      expect(name).toMatch(/^[A-Za-z0-9._-]+$/);
     });
   });
 
@@ -205,13 +257,14 @@ describe("MemoryService", () => {
       }
     });
 
-    it("lists the three scopes when viewing the virtual root", async () => {
+    it("lists every scope when viewing the virtual root", async () => {
       using fixture = await createFixture();
       const viewed = await fixture.service.view(fixture.ctx, "/memories");
       expect(viewed.success).toBe(true);
       if (viewed.success) {
         expect(viewed.output).toContain("global/");
         expect(viewed.output).toContain("project/");
+        expect(viewed.output).toContain("project-local/");
         expect(viewed.output).toContain("workspace/");
       }
     });

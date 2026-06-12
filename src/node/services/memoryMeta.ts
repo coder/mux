@@ -33,6 +33,7 @@ function encodeKeyComponent(value: string): string {
  * Logical identity of a memory file, independent of physical location:
  * - global:<relPath>
  * - project:<projectId>:<relPath>
+ * - project-local:<projectId>:<relPath>
  * - workspace:<workspaceId>:<relPath>
  *
  * Components are escaped so embedded ':' cannot alias another memory's key
@@ -52,6 +53,8 @@ export function memoryLogicalKey(
       return `global:${encodeKeyComponent(relPath)}`;
     case "project":
       return `project:${encodeKeyComponent(ids.projectPath)}:${encodeKeyComponent(relPath)}`;
+    case "project-local":
+      return `project-local:${encodeKeyComponent(ids.projectPath)}:${encodeKeyComponent(relPath)}`;
     case "workspace":
       return `workspace:${encodeKeyComponent(ids.workspaceId)}:${encodeKeyComponent(relPath)}`;
   }
