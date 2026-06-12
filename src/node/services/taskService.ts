@@ -1641,7 +1641,11 @@ export class TaskService {
       return Ok([]);
     }
 
-    const plans: Array<TaskLaunchPlan & { status: "queued" | "starting" }> = [];
+    // sharedWorkspacePath is set for honored isolation: "none" plans; the entry is persisted
+    // pointing at the parent's checkout and startReservedAgentTask reuses it without fork/init.
+    const plans: Array<
+      TaskLaunchPlan & { status: "queued" | "starting"; sharedWorkspacePath?: string }
+    > = [];
     const results: TaskCreateResult[] = [];
 
     await using _lock = await this.mutex.acquire();
@@ -1759,6 +1763,25 @@ export class TaskService {
         ? parentMeta.projectPath
         : runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name);
 
+      // isolation: "none" — same gating as create(): only worktree/SSH single-project parents
+      // share the parent checkout; everything else falls back to the normal fork path.
+      const taskRuntimeMode = getRuntimeType(taskRuntimeConfig);
+      const parentIsMultiProject = (parentMeta.projects?.length ?? 0) > 1;
+      const useSharedWorkspace =
+        args.isolation === "none" &&
+        runtimeModeSupportsSharedTaskWorkspace(taskRuntimeMode) &&
+        !parentIsMultiProject;
+      const sharedWorkspacePath = useSharedWorkspace
+        ? (coerceNonEmptyString(parentEntry?.workspace.path) ?? parentWorkspacePath)
+        : undefined;
+      if (args.isolation === "none" && !useSharedWorkspace) {
+        log.debug("Task.createMany: isolation=none not honored; falling back to fork", {
+          taskId,
+          runtimeMode: taskRuntimeMode,
+          parentIsMultiProject,
+        });
+      }
+
       const getRunnableHint = async (): Promise<string> => {
         try {
           const allAgents = await discoverAgentDefinitions(runtime, parentWorkspacePath);
@@ -1839,6 +1862,7 @@ export class TaskService {
         experiments: args.experiments,
         onRefusal: args.onRefusal,
         status,
+        ...(sharedWorkspacePath != null ? { sharedWorkspacePath } : {}),
       });
       results.push({ taskId, kind: "agent", status });
     }
@@ -1857,10 +1881,9 @@ export class TaskService {
           projectPath: plan.parentMeta.projectPath,
           name: plan.parentMeta.name,
         });
-        const workspacePath = runtime.getWorkspacePath(
-          plan.parentMeta.projectPath,
-          plan.workspaceName
-        );
+        const workspacePath =
+          plan.sharedWorkspacePath ??
+          runtime.getWorkspacePath(plan.parentMeta.projectPath, plan.workspaceName);
         const trunkBranch = coerceNonEmptyString(plan.parentMeta.name);
         if (!trunkBranch) {
           throw new Error("Task.createMany: parent workspace name missing");
@@ -1893,6 +1916,7 @@ export class TaskService {
           taskThinkingLevel: plan.effectiveThinkingLevel,
           taskOnRefusal: plan.onRefusal,
           taskExperiments: plan.experiments,
+          taskIsolation: plan.sharedWorkspacePath != null ? "none" : undefined,
           projects: plan.parentMeta.projects,
         });
       }

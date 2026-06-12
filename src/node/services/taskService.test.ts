@@ -1422,6 +1422,88 @@ describe("TaskService", () => {
     }
   }, 20_000);
 
+  test("createMany honors isolation: none by reusing the parent checkout", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = await createTestProject(rootDir);
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+    const parentPath = runtime.getWorkspacePath(projectPath, parentName);
+
+    const parentId = "1111111111";
+    const childTaskId = "3333333333";
+    stubStableIds(config, [childTaskId]);
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: parentPath,
+          id: parentId,
+          name: parentName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+      ],
+      testTaskSettings()
+    );
+
+    const forkSpy = spyOn(forkOrchestrator, "orchestrateFork");
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+    try {
+      const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+      const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+      const result = await taskService.createMany([
+        {
+          parentWorkspaceId: parentId,
+          kind: "agent" as const,
+          agentId: "explore",
+          prompt: "batched shared analysis",
+          title: "Batched shared task",
+          isolation: "none" as const,
+        },
+      ]);
+
+      expect(result.success).toBe(true);
+      assert(result.success, "Expected createMany to succeed");
+      expect(result.data[0]?.status).toBe("starting");
+
+      // The reserved entry must point at the parent's checkout and carry the shared flag so
+      // the reservation launch path reuses it (no fork, no init) and removal preserves it.
+      const entry = findWorkspaceInConfig(config, childTaskId);
+      assert(entry, "Expected batched shared task to be persisted");
+      expect(entry.path).toBe(parentPath);
+      expect(entry.taskIsolation).toBe("none");
+
+      await waitForWorkspaceTaskStatus(config, childTaskId, "running");
+      expect(forkSpy).not.toHaveBeenCalled();
+      expect(runBackgroundInitSpy).not.toHaveBeenCalled();
+      expect(sendMessage).toHaveBeenCalledWith(
+        childTaskId,
+        "batched shared analysis",
+        expect.anything(),
+        expect.objectContaining({ agentInitiated: true })
+      );
+    } finally {
+      runBackgroundInitSpy.mockRestore();
+      forkSpy.mockRestore();
+    }
+  }, 20_000);
+
   test("interrupts queued tasks when the primary project loses trust before dequeue", async () => {
     const config = await createTestConfig(rootDir);
 
