@@ -1,10 +1,24 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
+// Importing browser code from node tests is allowed (only browser->node value
+// imports are banned); TasksSection.agents is a pure data module.
+import { FALLBACK_AGENTS } from "@/browser/features/Settings/Sections/TasksSection.agents";
 import { clearBuiltInAgentCache, getBuiltInAgentDefinitions } from "./builtInAgentDefinitions";
 
 describe("built-in agent definitions", () => {
   beforeEach(() => {
     clearBuiltInAgentCache();
+  });
+
+  test("Settings fallback inventory mirrors built-ins, including hidden agents", () => {
+    // FALLBACK_AGENTS must cover every built-in (hidden ones too) so saved
+    // overrides are not mislabeled as unknown when discovery is unavailable.
+    const builtInIds = getBuiltInAgentDefinitions()
+      .map((pkg) => pkg.id)
+      .sort();
+    const fallbackIds = FALLBACK_AGENTS.map((agent) => agent.id).sort();
+
+    expect(fallbackIds).toEqual(builtInIds);
   });
 
   test("does not include a built-in auto agent", () => {

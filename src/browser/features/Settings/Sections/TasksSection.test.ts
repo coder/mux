@@ -2,12 +2,17 @@ import { describe, expect, test } from "bun:test";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { FALLBACK_AGENTS, deriveTasksSectionAgentGroups } from "./TasksSection.agents";
 
+// NOTE: the invariant that FALLBACK_AGENTS mirrors the built-in agent inventory
+// lives in src/node/services/agentDefinitions/builtInAgentDefinitions.test.ts,
+// since browser/ cannot value-import from node/.
+
 describe("FALLBACK_AGENTS", () => {
   test("keeps hidden built-ins in the fallback inventory", () => {
     const fallbackAgentIds = FALLBACK_AGENTS.map((agent) => agent.id);
 
     expect(fallbackAgentIds).toContain("desktop");
     expect(fallbackAgentIds).toContain("name_workspace");
+    expect(fallbackAgentIds).toContain("dream");
   });
 });
 

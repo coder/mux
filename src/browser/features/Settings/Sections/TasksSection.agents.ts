@@ -85,6 +85,17 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
       require: ["propose_name"],
     },
   },
+  {
+    id: "dream",
+    scope: "built-in",
+    name: "Dream",
+    description: "Background memory consolidation (internal)",
+    uiSelectable: false,
+    subagentRunnable: false,
+    tools: {
+      require: ["memory"],
+    },
+  },
 ];
 
 function compareAgentsByName(a: AgentDefinitionDescriptor, b: AgentDefinitionDescriptor): number {
