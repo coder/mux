@@ -320,7 +320,21 @@ describeIntegration("Plan Commands Integration", () => {
 
       expect(appendResult.success).toBe(true);
 
-      const data = await fs.readFile(chatHistoryPath, "utf-8");
+      // Appending a durable boundary rotates the sealed prefix (legacy summary +
+      // malformed boundary) into chat-archive.jsonl; full history spans both files.
+      const archivePath = path.join(env.config.getSessionDir(workspaceId), "chat-archive.jsonl");
+      const archiveData = await fs.readFile(archivePath, "utf-8");
+      const activeData = await fs.readFile(chatHistoryPath, "utf-8");
+
+      // The active file holds only the new durable boundary onward.
+      const activeEntries = activeData
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as { id: string });
+      expect(activeEntries.map((entry) => entry.id)).toEqual([appendSummary.id]);
+
+      const data = archiveData + activeData;
       const entries = data
         .split("\n")
         .map((line) => line.trim())
