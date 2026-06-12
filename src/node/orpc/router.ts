@@ -106,6 +106,7 @@ import {
   type SubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
 import { getErrorMessage } from "@/common/utils/errors";
+import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
 import { WorkflowActionRegistry } from "@/node/services/workflows/WorkflowActionRegistry";
 import {
   shouldDisableHostWorkflowActions,
@@ -4332,6 +4333,8 @@ export const router = (authToken?: string) => {
           const readTranscriptFromPaths = async (params: {
             workspaceId: string;
             chatPath?: string;
+            /** Sealed pre-boundary history (chat-archive.jsonl) for live sessions. */
+            chatArchivePath?: string;
             partialPath?: string;
             logLabel: string;
           }): Promise<MuxMessage[]> => {
@@ -4341,12 +4344,26 @@ export const router = (authToken?: string) => {
             if (params.chatPath && !isPathInsideDir(workspaceSessionDir, params.chatPath)) {
               throw new Error("Refusing to read transcript outside workspace session dir");
             }
+            if (
+              params.chatArchivePath &&
+              !isPathInsideDir(workspaceSessionDir, params.chatArchivePath)
+            ) {
+              throw new Error("Refusing to read transcript archive outside workspace session dir");
+            }
             if (params.partialPath && !isPathInsideDir(workspaceSessionDir, params.partialPath)) {
               throw new Error("Refusing to read partial outside workspace session dir");
             }
 
             const partial = params.partialPath
               ? await readPartialJsonBestEffort(params.partialPath)
+              : null;
+            // Live sessions may have rotated sealed history into chat-archive.jsonl
+            // (older rows), which precedes chat.jsonl (active epoch).
+            const archivedMessages = params.chatArchivePath
+              ? await readChatJsonlAllowMissing({
+                  chatPath: params.chatArchivePath,
+                  logLabel: `${params.logLabel} (archive)`,
+                })
               : null;
             const messages = params.chatPath
               ? await readChatJsonlAllowMissing({
@@ -4356,11 +4373,14 @@ export const router = (authToken?: string) => {
               : null;
 
             // If we only archived partial.json (e.g. interrupted stream), still allow viewing.
-            if (!messages && !partial) {
+            if (!messages && !archivedMessages && !partial) {
               throw new Error(`Transcript not found (missing ${params.logLabel})`);
             }
 
-            return mergePartialIntoHistory(messages ?? [], partial);
+            return mergePartialIntoHistory(
+              [...(archivedMessages ?? []), ...(messages ?? [])],
+              partial
+            );
           };
 
           let resolved: {
@@ -4391,7 +4411,8 @@ export const router = (authToken?: string) => {
               const taskSessionDir = context.config.getSessionDir(taskId);
               const messages = await readTranscriptFromPaths({
                 workspaceId: taskId,
-                chatPath: path.join(taskSessionDir, "chat.jsonl"),
+                chatPath: path.join(taskSessionDir, CHAT_FILE_NAME),
+                chatArchivePath: path.join(taskSessionDir, CHAT_ARCHIVE_FILE_NAME),
                 partialPath: path.join(taskSessionDir, "partial.json"),
                 logLabel: `${taskId}/chat.jsonl`,
               });

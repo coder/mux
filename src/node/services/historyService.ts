@@ -1597,7 +1597,12 @@ export class HistoryService {
 
           return seq > max ? seq : max;
         }, -1);
-        const nextSeq = maxSeq + 1;
+        // Sealed archive rows keep their sequences across active-file deletes.
+        // Without this floor, deleting the last sequenced active row in a fresh
+        // process would cache a counter below archived rows and reuse their
+        // historySequence values on the next append.
+        const archiveMaxSeq = await this.getArchiveTailMaxSequence(workspaceId);
+        const nextSeq = Math.max(maxSeq, archiveMaxSeq) + 1;
         assert(
           isNonNegativeInteger(nextSeq),
           "next history sequence counter after delete must be a non-negative integer"

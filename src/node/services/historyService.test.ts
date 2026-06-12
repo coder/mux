@@ -1625,6 +1625,21 @@ describe("HistoryService", () => {
       ).toBe(false);
     });
 
+    it("never reuses archived sequences after deleting the whole active epoch in a fresh process", async () => {
+      await appendNumberedMessages(service, wsId, 3); // seq 0..2 → archived
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
+
+      // Fresh process: no cached sequence counter. Deleting the lone active row
+      // must not cache a counter below the archived rows.
+      const restarted = new HistoryService(config);
+      const deleteResult = await restarted.deleteMessage(wsId, "boundary-1");
+      expect(deleteResult.success).toBe(true);
+
+      const msg = createMuxMessage("new-msg", "user", "fresh");
+      await restarted.appendToHistory(wsId, msg);
+      expect(msg.metadata?.historySequence).toBe(3);
+    });
+
     it("keeps the archive intact on a no-op percentage truncation", async () => {
       await appendNumberedMessages(service, wsId, 3);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
