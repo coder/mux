@@ -5,6 +5,8 @@ import { expandProjects } from "@/browser/stories/helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 
+const PROJECT_PATH = "/home/user/projects/my-app";
+
 const meta = {
   ...appMeta,
   title: "Components/ProjectSidebar",
@@ -73,5 +75,173 @@ export const ProjectRemovalDisabled: AppStory = {
       },
       { timeout: 2000 }
     );
+  },
+};
+
+// Phase 1 visual contract: a variant group nested inside a sub-agent tree must
+// keep continuous connector rails through the group header (no gap above/below),
+// and expanded members render label-only rows ("frontend", "backend").
+export const NestedTaskGroupConnectors: AppStory = {
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const projectName = "my-app";
+        const workspaces = [
+          createWorkspace({
+            id: "ws-parent",
+            name: "feature/orchestrator",
+            projectName,
+            title: "Orchestrate feature work",
+          }),
+          createWorkspace({
+            id: "sub-backend",
+            name: "task/backend",
+            projectName,
+            title: "Implement backend",
+            parentWorkspaceId: "ws-parent",
+            taskStatus: "running",
+          }),
+          createWorkspace({
+            id: "variant-frontend",
+            name: "task/variant-frontend",
+            projectName,
+            title: "Compare designs",
+            parentWorkspaceId: "sub-backend",
+            taskStatus: "running",
+            bestOf: { groupId: "vg-1", index: 0, total: 2, kind: "variants", label: "frontend" },
+          }),
+          createWorkspace({
+            id: "variant-backend",
+            name: "task/variant-backend",
+            projectName,
+            title: "Compare designs",
+            parentWorkspaceId: "sub-backend",
+            taskStatus: "queued",
+            bestOf: { groupId: "vg-1", index: 1, total: 2, kind: "variants", label: "backend" },
+          }),
+          // Lower sibling: the parent trunk must continue through the group header.
+          createWorkspace({
+            id: "sub-docs",
+            name: "task/docs",
+            projectName,
+            title: "Write docs",
+            parentWorkspaceId: "ws-parent",
+            taskStatus: "running",
+          }),
+        ];
+        expandProjects([PROJECT_PATH]);
+        localStorage.setItem(
+          "expandedTaskGroups",
+          JSON.stringify({ "task:sub-backend:vg-1": true })
+        );
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await waitFor(() => {
+      if (!canvasElement.querySelector('[data-testid="task-group-vg-1"]')) {
+        throw new Error("Variant group header not found");
+      }
+    });
+  },
+};
+
+// Phase 2 visual contract: two concurrent workflow runs form separate collapsible
+// groups (one with a stamped name, one falling back to the run id), active runs
+// default to expanded, and a variants group coexists under the same workspace.
+export const WorkflowRunGroups: AppStory = {
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const projectName = "my-app";
+        const reviewRun = (
+          id: string,
+          stepId: string,
+          opts: Partial<Parameters<typeof createWorkspace>[0]>
+        ) =>
+          createWorkspace({
+            id,
+            name: `task/${id}`,
+            projectName,
+            parentWorkspaceId: "ws-main",
+            workflowTask: { runId: "wfr_review1234", stepId, workflowName: "review-pipeline" },
+            ...opts,
+          } as Parameters<typeof createWorkspace>[0]);
+        const workspaces = [
+          createWorkspace({
+            id: "ws-main",
+            name: "feature/payments",
+            projectName,
+            title: "Payments integration",
+          }),
+          reviewRun("wf-claims", "claims", {
+            title: "Extract claims",
+            taskStatus: "reported",
+            createdAt: new Date(Date.now() - 8 * 60_000).toISOString(),
+          }),
+          createWorkspace({
+            id: "wf-tests",
+            name: "task/wf-tests",
+            projectName,
+            title: "Run test matrix",
+            parentWorkspaceId: "ws-main",
+            taskStatus: "running",
+            createdAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+            workflowTask: { runId: "wfr_legacy567890", stepId: "tests" },
+          }),
+          reviewRun("wf-verify", "verify", {
+            title: "Verify claims",
+            taskStatus: "running",
+            createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+          }),
+          createWorkspace({
+            id: "var-a",
+            name: "task/var-a",
+            projectName,
+            title: "Split review",
+            parentWorkspaceId: "ws-main",
+            taskStatus: "queued",
+            bestOf: { groupId: "vg-2", index: 0, total: 2, kind: "variants", label: "frontend" },
+          }),
+          createWorkspace({
+            id: "var-b",
+            name: "task/var-b",
+            projectName,
+            title: "Split review",
+            parentWorkspaceId: "ws-main",
+            taskStatus: "queued",
+            bestOf: { groupId: "vg-2", index: 1, total: 2, kind: "variants", label: "backend" },
+          }),
+        ];
+        expandProjects([PROJECT_PATH]);
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await waitFor(() => {
+      const named = canvasElement.querySelector('[data-testid="task-group-wfr_review1234"]');
+      const fallback = canvasElement.querySelector('[data-testid="task-group-wfr_legacy567890"]');
+      if (!named || !fallback) {
+        throw new Error("Expected two workflow run group headers");
+      }
+      // Active runs default to expanded: the completed claims task stays visible.
+      if (!canvasElement.querySelector('[aria-label="Select workspace Extract claims"]')) {
+        throw new Error("Expected expanded workflow run to show its completed member");
+      }
+    });
   },
 };

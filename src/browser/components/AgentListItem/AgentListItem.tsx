@@ -30,6 +30,14 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { SubAgentListItem } from "./SubAgentListItem";
+import {
+  LEADING_SLOT_CONTAINER_CLASSES,
+  LEADING_SLOT_CONTAINER_STYLE,
+  STATUS_DOT_SLOT_CONTAINER_CLASSES,
+  StatusDot,
+  isStatusDotVisible,
+  type VisualState,
+} from "./StatusDot";
 
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "../Popover/Popover";
@@ -39,7 +47,6 @@ import {
   getSidebarItemPaddingLeft,
   getSubAgentChildStatusCenterX,
   getSubAgentParentRailX,
-  SIDEBAR_LEADING_SLOT_SIZE_PX,
   type SubAgentConnectorLayout,
 } from "../sidebarItemLayout";
 import {
@@ -102,6 +109,11 @@ export interface AgentListItemProps extends AgentListItemBaseProps {
   metadata: FrontendWorkspaceMetadata;
   projectName: string;
   subAgentConnectorLayout?: SubAgentConnectorLayout;
+  /**
+   * Title of the enclosing task-group header when rendered as an expanded
+   * group member. Used to suppress titles that just repeat the header (D8).
+   */
+  taskGroupHeaderTitle?: string;
   isArchiving?: boolean;
   /** True when deletion is in-flight (optimistic UI while backend removes). */
   isRemoving?: boolean;
@@ -141,13 +153,6 @@ const HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH =
 const SHOW_INLINE_ACTIONS_ON_WIDE_TOUCH =
   "[@media(min-width:769px)_and_(hover:none)_and_(pointer:coarse)]:opacity-100";
 
-const LEADING_SLOT_CONTAINER_STYLE = {
-  width: SIDEBAR_LEADING_SLOT_SIZE_PX,
-  height: SIDEBAR_LEADING_SLOT_SIZE_PX,
-} as const;
-
-type VisualState = "active" | "idle" | "seen" | "hidden" | "error" | "question";
-
 function getVisualState(opts: {
   awaitingUserQuestion: boolean;
   isInitializing: boolean;
@@ -181,76 +186,9 @@ function getVisualState(opts: {
   return opts.isUnread ? "idle" : "seen";
 }
 
-function isStatusDotVisible(state: VisualState, isDraft?: boolean, isSubAgent?: boolean): boolean {
-  if (isDraft) {
-    return true;
-  }
-  if (state === "hidden") {
-    return false;
-  }
-  if (state === "seen") {
-    return isSubAgent === true;
-  }
-  return true;
-}
-
-const LEADING_SLOT_CONTAINER_CLASSES =
-  "relative z-1 flex shrink-0 items-center justify-center self-center";
-const STATUS_DOT_SLOT_CONTAINER_CLASSES =
-  "relative z-20 flex shrink-0 items-center justify-center self-center";
-
 function HeartbeatFallbackIcon() {
   return (
     <HeartPulse aria-hidden="true" className="text-muted h-4 w-4" data-testid="heartbeat-icon" />
-  );
-}
-
-function StatusDot(props: {
-  state: VisualState;
-  isDraft?: boolean;
-  isSubAgent?: boolean;
-  overlay?: React.ReactNode;
-}) {
-  const hasVisibleDot = isStatusDotVisible(props.state, props.isDraft, props.isSubAgent);
-  const usesSubAgentConnectorDot =
-    props.isSubAgent === true && (props.state === "idle" || props.state === "seen");
-  const dot = props.isDraft ? (
-    <span className="border-border-subtle block h-3 w-3 rounded-full border border-dashed" />
-  ) : !hasVisibleDot ? (
-    <span className="block h-3 w-3 opacity-0" />
-  ) : (
-    <span
-      className={cn(
-        "block h-3 w-3",
-        props.state === "active" &&
-          "bg-content-success border-surface-green workspace-status-dot-active",
-        usesSubAgentConnectorDot && "bg-border-light border-border-light h-2 w-2",
-        props.state === "idle" &&
-          props.isSubAgent !== true &&
-          "bg-surface-invert-secondary border-surface-tertiary",
-        props.state === "error" && "bg-content-destructive border-surface-destructive",
-        props.state === "question" && "bg-border-pending border-surface-sky",
-        "rounded-full border-[3.5px]"
-      )}
-    />
-  );
-
-  return (
-    // Keep the dot centered relative to the full row height so multi-line rows
-    // (for example while streaming) do not pin the icon to the title line.
-    <div
-      // Keep the status dot above sub-agent connector overlays so branch lines do
-      // not draw across the dot when rows are nested.
-      className={STATUS_DOT_SLOT_CONTAINER_CLASSES}
-      style={LEADING_SLOT_CONTAINER_STYLE}
-    >
-      {dot}
-      {props.overlay && (
-        <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          {props.overlay}
-        </span>
-      )}
-    </div>
   );
 }
 
@@ -523,13 +461,29 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const workspaceTitle = metadata.title ?? metadata.name;
   // Derive a short group label for grouped task children: explicit label for variants,
   // alphabetical letter (A, B, C…) for best-of-n candidates.
+  const isBestOfCandidate =
+    metadata.bestOf != null &&
+    getTaskGroupKindFromMetadata(metadata.bestOf) !== TASK_GROUP_KIND.VARIANTS;
   const groupLabel =
     metadata.bestOf != null
-      ? getTaskGroupKindFromMetadata(metadata.bestOf) === TASK_GROUP_KIND.VARIANTS
-        ? normalizeTaskGroupLabel(metadata.bestOf.label)
-        : String.fromCharCode(65 + (metadata.bestOf.index ?? 0))
+      ? isBestOfCandidate
+        ? String.fromCharCode(65 + (metadata.bestOf.index ?? 0))
+        : normalizeTaskGroupLabel(metadata.bestOf.label)
       : undefined;
-  const displayTitle = groupLabel ? `${groupLabel} · ${workspaceTitle}` : workspaceTitle;
+  // D8: expanded group members drop a title that merely repeats the group
+  // header; the remaining label must stay readable on its own, so bare best-of
+  // letters render as "Candidate A". Custom titles still show (self-healing).
+  const suppressGroupMemberTitle =
+    props.taskGroupHeaderTitle !== undefined &&
+    props.taskGroupHeaderTitle === workspaceTitle &&
+    groupLabel !== undefined;
+  const memberOnlyLabel =
+    isBestOfCandidate && groupLabel !== undefined ? `Candidate ${groupLabel}` : groupLabel;
+  const displayTitle = suppressGroupMemberTitle
+    ? (memberOnlyLabel ?? workspaceTitle)
+    : groupLabel
+      ? `${groupLabel} · ${workspaceTitle}`
+      : workspaceTitle;
   const isEditing = editingWorkspaceId === workspaceId;
 
   const linkSharingEnabled = useLinkSharingEnabled();
@@ -1092,7 +1046,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     badge so it stays visible even when the sidebar is narrow.
                     items-baseline keeps the 12px label on the same text baseline as the
                     14px title so they look naturally aligned despite the size difference. */}
-                {groupLabel && (
+                {groupLabel && !suppressGroupMemberTitle && (
                   <span className="text-muted shrink-0 text-[12px] leading-6">{groupLabel}</span>
                 )}
                 <span
@@ -1103,7 +1057,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     titleColorClass
                   )}
                 >
-                  {workspaceTitle}
+                  {suppressGroupMemberTitle ? memberOnlyLabel : workspaceTitle}
                 </span>
               </div>
             )}

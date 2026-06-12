@@ -7,7 +7,10 @@ import {
   computeWorkspaceDepthMap,
   computeAgentRowRenderMeta,
   computeDelegatedActivityByWorkspaceId,
+  computeRowMetaForVisibleNodes,
   filterVisibleAgentRows,
+  type AgentRowRenderMeta,
+  type SidebarVisibleRowNode,
 } from "./workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/common/types/project";
@@ -1083,5 +1086,63 @@ describe("sub-agent row render metadata", () => {
     expect(expandedMeta.get("reported-1")?.connectorPosition).toBe("middle");
     expect(expandedMeta.get("active-2")?.connectorPosition).toBe("middle");
     expect(expandedMeta.get("reported-2")?.connectorPosition).toBe("last");
+  });
+});
+
+describe("computeRowMetaForVisibleNodes", () => {
+  const baseMeta = (depth: number): AgentRowRenderMeta => ({
+    depth,
+    rowKind: "subagent",
+    connectorPosition: "single",
+    connectorStartsAtParent: false,
+    sharedTrunkActiveThroughRow: false,
+    sharedTrunkActiveBelowRow: false,
+    ancestorTrunks: [],
+    hasHiddenCompletedChildren: false,
+    visibleCompletedChildrenCount: 0,
+  });
+
+  const node = (
+    id: string,
+    parentId: string | undefined,
+    depth: number,
+    isRunning = false
+  ): SidebarVisibleRowNode => ({ id, parentId, depth, isRunning, baseMeta: baseMeta(depth) });
+
+  it("treats synthetic group-header nodes as ordinary siblings for connector geometry", () => {
+    const meta = computeRowMetaForVisibleNodes([
+      node("root", undefined, 0),
+      node("child-a", "root", 1, true),
+      // Synthetic header node sits between two workspace siblings.
+      node("workflow:root:wfr_x", "root", 1, true),
+      node("child-b", "root", 1),
+      node("grandchild", "child-b", 2),
+    ]);
+
+    const header = meta.get("workflow:root:wfr_x");
+    expect(header?.connectorPosition).toBe("middle");
+    expect(header?.connectorStartsAtParent).toBe(false);
+    // The shared trunk animates down to the lowest running sibling (the header).
+    expect(header?.sharedTrunkActiveThroughRow).toBe(true);
+    expect(header?.sharedTrunkActiveBelowRow).toBe(false);
+    expect(meta.get("child-a")?.sharedTrunkActiveBelowRow).toBe(true);
+    expect(meta.get("child-b")?.connectorPosition).toBe("last");
+
+    // Descendants of a middle sibling receive its continuing trunk.
+    const grandchild = meta.get("grandchild");
+    expect(grandchild?.connectorPosition).toBe("single");
+    expect(grandchild?.ancestorTrunks).toEqual([]);
+  });
+
+  it("gives descendants of middle siblings an ancestor trunk at the sibling depth", () => {
+    const meta = computeRowMetaForVisibleNodes([
+      node("root", undefined, 0),
+      node("child-a", "root", 1),
+      node("nested", "child-a", 2),
+      node("child-b", "root", 1, true),
+    ]);
+
+    expect(meta.get("child-a")?.connectorPosition).toBe("middle");
+    expect(meta.get("nested")?.ancestorTrunks).toEqual([{ depth: 1, active: true }]);
   });
 });

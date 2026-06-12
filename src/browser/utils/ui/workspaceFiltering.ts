@@ -489,6 +489,107 @@ export function computeAgentRowRenderMeta(
 }
 
 /**
+ * One renderable sidebar row in final visual order: either a workspace row or
+ * a synthetic task-group header. Connector geometry must be derived from this
+ * final order (after group coalescing pulled member rows together), otherwise
+ * trunks/elbows go stale around group headers.
+ */
+export interface SidebarVisibleRowNode {
+  id: string;
+  parentId: string | undefined;
+  depth: number;
+  /** Drives the shared-trunk animation through this row's sibling run. */
+  isRunning: boolean;
+  /** Base meta whose non-connector fields (rowKind, completed-children info) are preserved. */
+  baseMeta: AgentRowRenderMeta;
+}
+
+/**
+ * Recompute connector geometry for the final, visible row order. Mirrors the
+ * sibling/trunk rules of computeAgentRowRenderMeta but works on generic nodes
+ * so synthetic group-header rows participate in the same geometry as
+ * workspace rows.
+ */
+export function computeRowMetaForVisibleNodes(
+  nodes: readonly SidebarVisibleRowNode[]
+): Map<string, AgentRowRenderMeta> {
+  const nodesById = new Map(nodes.map((node) => [node.id, node] as const));
+  const childrenByParentId = new Map<string, SidebarVisibleRowNode[]>();
+  for (const node of nodes) {
+    if (node.parentId == null) {
+      continue;
+    }
+    const siblings = childrenByParentId.get(node.parentId) ?? [];
+    siblings.push(node);
+    childrenByParentId.set(node.parentId, siblings);
+  }
+
+  const metaById = new Map<string, AgentRowRenderMeta>();
+  for (const node of nodes) {
+    if (node.parentId == null) {
+      metaById.set(node.id, { ...node.baseMeta, ancestorTrunks: [] });
+      continue;
+    }
+
+    const siblings = childrenByParentId.get(node.parentId) ?? [];
+    const siblingIndex = siblings.findIndex((sibling) => sibling.id === node.id);
+    let connectorPosition: AgentRowRenderMeta["connectorPosition"] = "single";
+    if (siblings.length > 1) {
+      connectorPosition = siblings[siblings.length - 1]?.id === node.id ? "last" : "middle";
+    }
+
+    let lastRunningSiblingIndex = -1;
+    for (let index = siblings.length - 1; index >= 0; index -= 1) {
+      if (siblings[index]?.isRunning) {
+        lastRunningSiblingIndex = index;
+        break;
+      }
+    }
+
+    const connectorStartsAtParent = siblingIndex === 0;
+    const sharedTrunkActiveThroughRow =
+      siblingIndex >= 0 && lastRunningSiblingIndex >= 0 && siblingIndex <= lastRunningSiblingIndex;
+    const sharedTrunkActiveBelowRow =
+      siblingIndex >= 0 && lastRunningSiblingIndex >= 0 && siblingIndex < lastRunningSiblingIndex;
+
+    const ancestorTrunks: Array<{ depth: number; active: boolean }> = [];
+    const visitedAncestorIds = new Set<string>();
+    let ancestorId: string | undefined = node.parentId;
+    while (ancestorId && !visitedAncestorIds.has(ancestorId)) {
+      visitedAncestorIds.add(ancestorId);
+
+      const ancestorNode = nodesById.get(ancestorId);
+      if (!ancestorNode) {
+        break;
+      }
+
+      const ancestorMeta = metaById.get(ancestorId);
+      if (ancestorNode.depth > 0 && ancestorMeta?.connectorPosition === "middle") {
+        ancestorTrunks.push({
+          depth: ancestorNode.depth,
+          active: ancestorMeta.sharedTrunkActiveBelowRow,
+        });
+      }
+
+      ancestorId = ancestorNode.parentId;
+    }
+    ancestorTrunks.sort((left, right) => left.depth - right.depth);
+
+    metaById.set(node.id, {
+      ...node.baseMeta,
+      depth: node.depth,
+      connectorPosition,
+      connectorStartsAtParent,
+      sharedTrunkActiveThroughRow,
+      sharedTrunkActiveBelowRow,
+      ancestorTrunks,
+    });
+  }
+
+  return metaById;
+}
+
+/**
  * Age thresholds for workspace filtering, in ascending order.
  * Each tier hides workspaces older than the specified duration.
  */

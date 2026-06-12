@@ -376,11 +376,12 @@ async function resolveWorkflowContext(
       defaultActionCwd: workspacePath,
       runStore: new WorkflowRunStore({ sessionDir: context.config.getSessionDir(workspaceId) }),
       runtimeFactory: context.workflowRuntimeFactory,
-      taskAdapterFactory: (runId) =>
+      taskAdapterFactory: (runId, workflowName) =>
         new WorkflowTaskServiceAdapter({
           taskService: context.taskService,
           parentWorkspaceId: workspaceId,
           workflowRunId: runId,
+          workflowName,
           defaultAgentId: "explore",
           patchToolConfig: {
             workspaceId,

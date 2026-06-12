@@ -52,7 +52,6 @@ import {
   AGE_THRESHOLDS_DAYS,
   computeWorkspaceDepthMap,
   computeDelegatedActivityByWorkspaceId,
-  isWorkspaceDelegatedActivityActive,
   filterVisibleAgentRows,
   computeAgentRowRenderMeta,
   findNextNonEmptyTier,
@@ -61,7 +60,9 @@ import {
   getSectionTierKey,
   resolveEffectiveSectionId,
   isRunningOrStartingTaskStatus,
+  computeRowMetaForVisibleNodes,
   type AgentRowRenderMeta,
+  type SidebarVisibleRowNode,
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { SidebarCollapseButton } from "../SidebarCollapseButton/SidebarCollapseButton";
@@ -75,8 +76,19 @@ import { useSettings } from "@/browser/contexts/SettingsContext";
 import { normalizeTaskSettings } from "@/common/types/tasks";
 
 import { AgentListItem, type WorkspaceSelection } from "../AgentListItem/AgentListItem";
-import { getTaskGroupMemberDepth } from "../sidebarItemLayout";
+import { SubAgentListItem } from "../AgentListItem/SubAgentListItem";
+import {
+  getAncestorRailX,
+  getSubAgentChildStatusCenterX,
+  getSubAgentParentRailX,
+  getTaskGroupMemberDepth,
+} from "../sidebarItemLayout";
 import { TaskGroupListItem } from "./TaskGroupListItem";
+import {
+  computeSidebarTaskGroups,
+  computeTaskGroupMemberRowMeta,
+  type SidebarTaskGroupsResult,
+} from "./sidebarTaskGroups";
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { useConfirmDialog } from "@/browser/contexts/ConfirmDialogContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
@@ -112,8 +124,6 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
-import { getTaskGroupKindFromMetadata } from "@/common/utils/tools/taskGroups";
-import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { HexColorPicker } from "react-colorful";
@@ -880,11 +890,20 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     }
   }
 
-  const [expandedTaskGroups, setExpandedTaskGroups] = useState<Record<string, boolean>>({});
-  const toggleTaskGroupExpansion = (groupId: string) => {
+  // Task-group expansion survives reloads (D7). Keys are namespaced per group
+  // kind: task:<parentWorkspaceId>:<groupId> / workflow:<parentWorkspaceId>:<runId>.
+  const [expandedTaskGroups, setExpandedTaskGroups] = usePersistedState<Record<string, boolean>>(
+    "expandedTaskGroups",
+    {}
+  );
+  // D6: a workflow group that is (or was, this session) active defaults to
+  // expanded and must not auto-collapse when its members finish mid-session.
+  // The render-time ref keeps that default sticky; an explicit toggle wins.
+  const sessionActiveTaskGroupKeysRef = useRef<Set<string>>(new Set());
+  const toggleTaskGroupExpansion = (storageKey: string, isCurrentlyExpanded: boolean) => {
     setExpandedTaskGroups((prev) => ({
       ...prev,
-      [groupId]: !prev[groupId],
+      [storageKey]: !isCurrentlyExpanded,
     }));
   };
 
@@ -2159,7 +2178,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 rowRenderMetaOverride?: AgentRowRenderMeta | null,
                                 depthOverride?: number,
                                 keyOverride?: string,
-                                subAgentConnectorLayout?: "default" | "task-group-member"
+                                subAgentConnectorLayout?: "default" | "task-group-member",
+                                taskGroupHeaderTitle?: string
                               ) => {
                                 const rowRenderMeta =
                                   rowRenderMetaOverride === undefined
@@ -2192,6 +2212,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     sectionId={sectionId}
                                     rowRenderMeta={rowRenderMeta}
                                     subAgentConnectorLayout={subAgentConnectorLayout}
+                                    taskGroupHeaderTitle={taskGroupHeaderTitle}
                                     delegatedActivity={delegatedActivityByWorkspaceId.get(
                                       metadata.id
                                     )}
@@ -2205,108 +2226,27 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                               const renderWorkspaceRowsWithTaskGroupCoalescing = ({
                                 rows,
-                                allRows,
                                 sectionId,
                                 rowMetaByWorkspaceId,
+                                taskGroups,
+                                memberMetaByWorkspaceId,
                               }: {
                                 rows: FrontendWorkspaceMetadata[];
-                                allRows: FrontendWorkspaceMetadata[];
                                 sectionId?: string;
                                 rowMetaByWorkspaceId: ReadonlyMap<string, AgentRowRenderMeta>;
+                                taskGroups: SidebarTaskGroupsResult;
+                                memberMetaByWorkspaceId: ReadonlyMap<string, AgentRowRenderMeta>;
                               }): React.ReactNode[] => {
-                                if (rows.length === 0) {
-                                  return [];
-                                }
-
-                                const childrenByParentId = new Map<
-                                  string,
-                                  FrontendWorkspaceMetadata[]
-                                >();
-                                for (const workspace of allRows) {
-                                  const parentId = workspace.parentWorkspaceId;
-                                  if (!parentId) {
-                                    continue;
-                                  }
-                                  const children = childrenByParentId.get(parentId) ?? [];
-                                  children.push(workspace);
-                                  childrenByParentId.set(parentId, children);
-                                }
-
-                                const getTaskGroupId = (
-                                  workspace: FrontendWorkspaceMetadata
-                                ): string | null => {
-                                  const groupId = workspace.bestOf?.groupId;
-                                  if (!groupId || !workspace.parentWorkspaceId) {
-                                    return null;
-                                  }
-                                  if ((workspace.bestOf?.total ?? 1) < 2) {
-                                    return null;
-                                  }
-                                  const hasChildren = childrenByParentId.has(workspace.id);
-                                  return hasChildren ? null : groupId;
-                                };
-
-                                const allMembersByGroupId = new Map<
-                                  string,
-                                  FrontendWorkspaceMetadata[]
-                                >();
-                                for (const workspace of allRows) {
-                                  const groupId = getTaskGroupId(workspace);
-                                  if (!groupId) {
-                                    continue;
-                                  }
-                                  const group = allMembersByGroupId.get(groupId) ?? [];
-                                  group.push(workspace);
-                                  allMembersByGroupId.set(groupId, group);
-                                }
-
-                                const visibleMembersByGroupId = new Map<
-                                  string,
-                                  FrontendWorkspaceMetadata[]
-                                >();
-                                for (const workspace of rows) {
-                                  const groupId = getTaskGroupId(workspace);
-                                  if (!groupId) {
-                                    continue;
-                                  }
-                                  const group = visibleMembersByGroupId.get(groupId) ?? [];
-                                  group.push(workspace);
-                                  visibleMembersByGroupId.set(groupId, group);
-                                }
-
-                                const indexByWorkspaceId = new Map(
-                                  rows.map((workspace, index) => [workspace.id, index] as const)
-                                );
-                                const validGroupIds = new Set<string>();
-                                for (const [groupId, visibleMembers] of visibleMembersByGroupId) {
-                                  const allMembers = allMembersByGroupId.get(groupId) ?? [];
-                                  if (visibleMembers.length < 2 || allMembers.length < 2) {
-                                    continue;
-                                  }
-                                  const indices = visibleMembers
-                                    .map((workspace) => indexByWorkspaceId.get(workspace.id))
-                                    .filter((index): index is number => index != null);
-                                  if (indices.length !== visibleMembers.length) {
-                                    continue;
-                                  }
-                                  const firstIndex = Math.min(...indices);
-                                  const lastIndex = Math.max(...indices);
-                                  if (lastIndex - firstIndex + 1 !== visibleMembers.length) {
-                                    continue;
-                                  }
-                                  validGroupIds.add(groupId);
-                                }
-
-                                const skippedWorkspaceIds = new Set<string>();
                                 const renderedRows: React.ReactNode[] = [];
 
                                 for (const workspace of rows) {
-                                  if (skippedWorkspaceIds.has(workspace.id)) {
-                                    continue;
-                                  }
-
-                                  const taskGroupId = getTaskGroupId(workspace);
-                                  if (!taskGroupId || !validGroupIds.has(taskGroupId)) {
+                                  const groupKey =
+                                    taskGroups.memberGroupStorageKeyByWorkspaceId.get(workspace.id);
+                                  const group =
+                                    groupKey != null
+                                      ? taskGroups.groupsByStorageKey.get(groupKey)
+                                      : undefined;
+                                  if (group == null) {
                                     renderedRows.push(
                                       renderWorkspace(
                                         workspace,
@@ -2317,105 +2257,101 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     continue;
                                   }
 
-                                  const visibleMembers =
-                                    visibleMembersByGroupId.get(taskGroupId) ?? [];
-                                  if (visibleMembers[0]?.id !== workspace.id) {
+                                  if (group.anchorId !== workspace.id) {
+                                    // Non-anchor members render under the group header at the
+                                    // anchor's position (D5), so suppress them here.
                                     continue;
                                   }
 
-                                  for (const member of visibleMembers) {
-                                    skippedWorkspaceIds.add(member.id);
-                                  }
+                                  const headerMeta = rowMetaByWorkspaceId.get(group.storageKey);
+                                  const headerDepth =
+                                    headerMeta?.depth ?? depthByWorkspaceId[workspace.id] ?? 0;
 
-                                  const sortTaskGroupMembers = (
-                                    members: FrontendWorkspaceMetadata[]
-                                  ): FrontendWorkspaceMetadata[] => {
-                                    return [...members].sort(
-                                      (left, right) =>
-                                        (left.bestOf?.index ?? Number.MAX_SAFE_INTEGER) -
-                                          (right.bestOf?.index ?? Number.MAX_SAFE_INTEGER) ||
-                                        left.id.localeCompare(right.id)
-                                    );
-                                  };
-                                  const allMembers = sortTaskGroupMembers(
-                                    allMembersByGroupId.get(taskGroupId) ?? visibleMembers
-                                  );
-                                  const sortedVisibleMembers = sortTaskGroupMembers(visibleMembers);
-                                  const depth =
-                                    rowMetaByWorkspaceId.get(workspace.id)?.depth ??
-                                    depthByWorkspaceId[workspace.id] ??
-                                    0;
-                                  const totalCount = Math.max(
-                                    allMembers[0]?.bestOf?.total ?? allMembers.length,
-                                    allMembers.length
-                                  );
-                                  const groupKind = getTaskGroupKindFromMetadata(
-                                    allMembers[0]?.bestOf
-                                  );
-                                  let completedCount = 0;
-                                  let runningCount = 0;
-                                  let queuedCount = 0;
-                                  let interruptedCount = 0;
-                                  for (const member of allMembers) {
-                                    const hasCompletedReport = hasCompletedAgentReport(member);
-                                    if (hasCompletedReport) {
-                                      completedCount += 1;
-                                      continue;
-                                    }
-                                    if (
-                                      isWorkspaceDelegatedActivityActive(member, {
-                                        isWorkspaceLiveActive,
-                                      })
-                                    ) {
-                                      runningCount += 1;
-                                      continue;
-                                    }
-                                    if (member.taskStatus === "queued") {
-                                      queuedCount += 1;
-                                      continue;
-                                    }
-                                    if (member.taskStatus === "interrupted") {
-                                      interruptedCount += 1;
-                                    }
+                                  // D6: groups seen active this session keep defaulting to
+                                  // expanded - no live auto-collapse on completion. An explicit
+                                  // (persisted) user toggle always wins.
+                                  if (group.kind === "workflow" && group.hasActiveMember) {
+                                    sessionActiveTaskGroupKeysRef.current.add(group.storageKey);
                                   }
-                                  const groupTitle =
-                                    allMembers[0]?.title ?? allMembers[0]?.name ?? "Task group";
-                                  const isExpanded = expandedTaskGroups[taskGroupId] ?? false;
+                                  const defaultExpanded =
+                                    group.kind === "workflow" &&
+                                    (group.hasActiveMember ||
+                                      sessionActiveTaskGroupKeysRef.current.has(group.storageKey));
+                                  const isExpanded =
+                                    expandedTaskGroups[group.storageKey] ?? defaultExpanded;
+                                  const isGroupSelected = group.allMembers.some(
+                                    (member) => member.id === selectedWorkspace?.workspaceId
+                                  );
 
-                                  renderedRows.push(
+                                  const headerRow = (
                                     <TaskGroupListItem
-                                      key={`task-group:${taskGroupId}`}
-                                      groupId={taskGroupId}
-                                      title={groupTitle}
-                                      kind={groupKind}
+                                      groupId={group.id}
+                                      title={group.title}
+                                      kind={group.kind}
                                       sectionId={sectionId}
-                                      depth={depth}
-                                      totalCount={totalCount}
-                                      visibleCount={sortedVisibleMembers.length}
-                                      completedCount={completedCount}
-                                      runningCount={runningCount}
-                                      queuedCount={queuedCount}
-                                      interruptedCount={interruptedCount}
+                                      depth={headerDepth}
+                                      totalCount={group.totalCount}
+                                      visibleCount={group.displayMembers.length}
+                                      completedCount={group.completedCount}
+                                      runningCount={group.runningCount}
+                                      queuedCount={group.queuedCount}
+                                      interruptedCount={group.interruptedCount}
                                       isExpanded={isExpanded}
-                                      isSelected={allMembers.some(
-                                        (member) => member.id === selectedWorkspace?.workspaceId
-                                      )}
+                                      isSelected={isGroupSelected}
                                       onToggle={() => {
-                                        toggleTaskGroupExpansion(taskGroupId);
+                                        toggleTaskGroupExpansion(group.storageKey, isExpanded);
                                       }}
                                     />
                                   );
 
+                                  // Wrap the header in the same connector rail used by agent
+                                  // rows so trunks continue through the group header.
+                                  renderedRows.push(
+                                    headerMeta != null ? (
+                                      <SubAgentListItem
+                                        key={`task-group:${group.storageKey}`}
+                                        connectorPosition={headerMeta.connectorPosition}
+                                        connectorStartsAtParent={headerMeta.connectorStartsAtParent}
+                                        sharedTrunkActiveThroughRow={
+                                          headerMeta.sharedTrunkActiveThroughRow
+                                        }
+                                        sharedTrunkActiveBelowRow={
+                                          headerMeta.sharedTrunkActiveBelowRow
+                                        }
+                                        ancestorTrunks={headerMeta.ancestorTrunks.map((trunk) => ({
+                                          left: getAncestorRailX(trunk.depth, "default"),
+                                          active: trunk.active,
+                                        }))}
+                                        connectorRailX={getSubAgentParentRailX(
+                                          headerDepth,
+                                          "default"
+                                        )}
+                                        childStatusCenterX={getSubAgentChildStatusCenterX(
+                                          headerDepth
+                                        )}
+                                        isSelected={isGroupSelected}
+                                        isElbowActive={group.runningCount > 0}
+                                      >
+                                        {headerRow}
+                                      </SubAgentListItem>
+                                    ) : (
+                                      <React.Fragment key={`task-group:${group.storageKey}`}>
+                                        {headerRow}
+                                      </React.Fragment>
+                                    )
+                                  );
+
                                   if (isExpanded) {
-                                    for (const member of sortedVisibleMembers) {
+                                    for (const member of group.displayMembers) {
                                       renderedRows.push(
                                         renderWorkspace(
                                           member,
                                           sectionId,
-                                          rowMetaByWorkspaceId.get(member.id) ?? null,
-                                          getTaskGroupMemberDepth(depth),
-                                          `task-group-member:${taskGroupId}:${member.id}`,
-                                          "task-group-member"
+                                          memberMetaByWorkspaceId.get(member.id) ?? null,
+                                          getTaskGroupMemberDepth(headerDepth),
+                                          `task-group-member:${group.storageKey}:${member.id}`,
+                                          "task-group-member",
+                                          group.title
                                         )
                                       );
                                     }
@@ -2536,116 +2472,92 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 const visibleRows = workspaces.filter((workspace) =>
                                   visibleRowIds.has(workspace.id)
                                 );
-                                const visibleRowsById = new Map(
-                                  visibleRows.map((workspace) => [workspace.id, workspace])
-                                );
-                                const visibleChildrenByParent = new Map<
-                                  string,
-                                  FrontendWorkspaceMetadata[]
-                                >();
+                                // Coalesce grouped task rows (variants/best-of + workflow runs)
+                                // before deriving connector geometry: headers join the row model
+                                // as synthetic nodes so trunks/elbows stay continuous (D5).
+                                const taskGroups = computeSidebarTaskGroups({
+                                  rows: visibleRows,
+                                  allRows: allRowsForTaskGroupCoalescing,
+                                  selectedWorkspaceId: selectedWorkspace?.workspaceId,
+                                  isWorkspaceLiveActive,
+                                });
+
+                                const rowNodes: SidebarVisibleRowNode[] = [];
+                                const seenGroupKeys = new Set<string>();
                                 for (const workspace of visibleRows) {
-                                  const parentId = workspace.parentWorkspaceId;
-                                  if (!parentId) {
-                                    continue;
-                                  }
-
-                                  const siblings = visibleChildrenByParent.get(parentId) ?? [];
-                                  siblings.push(workspace);
-                                  visibleChildrenByParent.set(parentId, siblings);
-                                }
-
-                                const rowMetaByVisibleWorkspaceId = new Map<
-                                  string,
-                                  AgentRowRenderMeta
-                                >();
-                                for (const workspace of visibleRows) {
-                                  const baseRowMeta = baseRowMetaByWorkspaceId.get(workspace.id);
-                                  if (!baseRowMeta) {
-                                    continue;
-                                  }
-
-                                  const parentId = workspace.parentWorkspaceId;
-                                  if (!parentId) {
-                                    rowMetaByVisibleWorkspaceId.set(workspace.id, {
-                                      ...baseRowMeta,
-                                      ancestorTrunks: [],
+                                  const groupKey =
+                                    taskGroups.memberGroupStorageKeyByWorkspaceId.get(workspace.id);
+                                  const group =
+                                    groupKey != null
+                                      ? taskGroups.groupsByStorageKey.get(groupKey)
+                                      : undefined;
+                                  if (group != null) {
+                                    if (seenGroupKeys.has(group.storageKey)) {
+                                      continue;
+                                    }
+                                    seenGroupKeys.add(group.storageKey);
+                                    const headerDepth =
+                                      baseRowMetaByWorkspaceId.get(workspace.id)?.depth ??
+                                      depthByWorkspaceId[workspace.id] ??
+                                      0;
+                                    rowNodes.push({
+                                      id: group.storageKey,
+                                      parentId: group.parentWorkspaceId,
+                                      depth: headerDepth,
+                                      isRunning: group.runningCount > 0,
+                                      baseMeta: {
+                                        depth: headerDepth,
+                                        rowKind: "subagent",
+                                        connectorPosition: "single",
+                                        connectorStartsAtParent: false,
+                                        sharedTrunkActiveThroughRow: false,
+                                        sharedTrunkActiveBelowRow: false,
+                                        ancestorTrunks: [],
+                                        hasHiddenCompletedChildren: false,
+                                        visibleCompletedChildrenCount: 0,
+                                      },
                                     });
                                     continue;
                                   }
 
-                                  const siblings = visibleChildrenByParent.get(parentId) ?? [];
-                                  const siblingIndex = siblings.findIndex(
-                                    (sibling) => sibling.id === workspace.id
-                                  );
-                                  let connectorPosition: AgentRowRenderMeta["connectorPosition"] =
-                                    "single";
-                                  if (siblings.length > 1) {
-                                    connectorPosition =
-                                      siblings[siblings.length - 1]?.id === workspace.id
-                                        ? "last"
-                                        : "middle";
+                                  const baseRowMeta = baseRowMetaByWorkspaceId.get(workspace.id);
+                                  if (!baseRowMeta) {
+                                    continue;
                                   }
-
-                                  let lastRunningSiblingIndex = -1;
-                                  for (let index = siblings.length - 1; index >= 0; index -= 1) {
-                                    if (
-                                      isRunningOrStartingTaskStatus(siblings[index]?.taskStatus)
-                                    ) {
-                                      lastRunningSiblingIndex = index;
-                                      break;
-                                    }
-                                  }
-
-                                  const connectorStartsAtParent = siblingIndex === 0;
-                                  const sharedTrunkActiveThroughRow =
-                                    siblingIndex >= 0 &&
-                                    lastRunningSiblingIndex >= 0 &&
-                                    siblingIndex <= lastRunningSiblingIndex;
-                                  const sharedTrunkActiveBelowRow =
-                                    siblingIndex >= 0 &&
-                                    lastRunningSiblingIndex >= 0 &&
-                                    siblingIndex < lastRunningSiblingIndex;
-
-                                  const ancestorTrunks: Array<{
-                                    depth: number;
-                                    active: boolean;
-                                  }> = [];
-                                  const visitedAncestorIds = new Set<string>();
-                                  let ancestorId: string | undefined = parentId;
-                                  while (ancestorId && !visitedAncestorIds.has(ancestorId)) {
-                                    visitedAncestorIds.add(ancestorId);
-
-                                    const ancestorWorkspace = visibleRowsById.get(ancestorId);
-                                    if (!ancestorWorkspace) {
-                                      break;
-                                    }
-
-                                    const ancestorMeta =
-                                      rowMetaByVisibleWorkspaceId.get(ancestorId) ??
-                                      baseRowMetaByWorkspaceId.get(ancestorId);
-                                    const ancestorDepth = depthByWorkspaceId[ancestorId] ?? 0;
-                                    if (
-                                      ancestorDepth > 0 &&
-                                      ancestorMeta?.connectorPosition === "middle"
-                                    ) {
-                                      ancestorTrunks.push({
-                                        depth: ancestorDepth,
-                                        active: ancestorMeta.sharedTrunkActiveBelowRow,
-                                      });
-                                    }
-
-                                    ancestorId = ancestorWorkspace.parentWorkspaceId;
-                                  }
-                                  ancestorTrunks.sort((left, right) => left.depth - right.depth);
-
-                                  rowMetaByVisibleWorkspaceId.set(workspace.id, {
-                                    ...baseRowMeta,
-                                    connectorPosition,
-                                    connectorStartsAtParent,
-                                    sharedTrunkActiveThroughRow,
-                                    sharedTrunkActiveBelowRow,
-                                    ancestorTrunks,
+                                  rowNodes.push({
+                                    id: workspace.id,
+                                    parentId: workspace.parentWorkspaceId,
+                                    depth: baseRowMeta.depth,
+                                    isRunning: isRunningOrStartingTaskStatus(workspace.taskStatus),
+                                    baseMeta: baseRowMeta,
                                   });
+                                }
+                                const rowMetaByVisibleWorkspaceId =
+                                  computeRowMetaForVisibleNodes(rowNodes);
+
+                                // Expanded members hang off their header row, so their connector
+                                // meta derives from the header's computed geometry.
+                                const memberMetaByWorkspaceId = new Map<
+                                  string,
+                                  AgentRowRenderMeta
+                                >();
+                                for (const group of taskGroups.groupsByStorageKey.values()) {
+                                  const headerMeta = rowMetaByVisibleWorkspaceId.get(
+                                    group.storageKey
+                                  );
+                                  if (headerMeta == null) {
+                                    continue;
+                                  }
+                                  for (const [
+                                    memberId,
+                                    memberMeta,
+                                  ] of computeTaskGroupMemberRowMeta({
+                                    group,
+                                    headerMeta,
+                                    headerDepth: headerMeta.depth,
+                                  })) {
+                                    memberMetaByWorkspaceId.set(memberId, memberMeta);
+                                  }
                                 }
 
                                 const renderTier = (tierIndex: number): React.ReactNode => {
@@ -2702,9 +2614,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         <>
                                           {renderWorkspaceRowsWithTaskGroupCoalescing({
                                             rows: bucket,
-                                            allRows: allRowsForTaskGroupCoalescing,
                                             sectionId,
                                             rowMetaByWorkspaceId: rowMetaByVisibleWorkspaceId,
+                                            taskGroups,
+                                            memberMetaByWorkspaceId,
                                           })}
                                           {(() => {
                                             const nextTier = findNextNonEmptyTier(
@@ -2723,9 +2636,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   <>
                                     {renderWorkspaceRowsWithTaskGroupCoalescing({
                                       rows: topVisibleRows,
-                                      allRows: allRowsForTaskGroupCoalescing,
                                       sectionId,
                                       rowMetaByWorkspaceId: rowMetaByVisibleWorkspaceId,
+                                      taskGroups,
+                                      memberMetaByWorkspaceId,
                                     })}
                                     {firstTier !== -1 && renderTier(firstTier)}
                                   </>

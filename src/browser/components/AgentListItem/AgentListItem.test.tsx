@@ -244,6 +244,7 @@ function renderWorkspaceItem(
     depth?: number;
     rowRenderMeta?: AgentRowRenderMeta;
     subAgentConnectorLayout?: "default" | "task-group-member";
+    taskGroupHeaderTitle?: string;
     delegatedActivity?: WorkspaceDelegatedActivity;
     completedChildrenExpanded?: boolean;
     onToggleCompletedChildren?: (workspaceId: string) => void;
@@ -261,6 +262,7 @@ function renderWorkspaceItem(
       depth={options.depth ?? options.rowRenderMeta?.depth}
       rowRenderMeta={options.rowRenderMeta}
       subAgentConnectorLayout={options.subAgentConnectorLayout}
+      taskGroupHeaderTitle={options.taskGroupHeaderTitle}
       delegatedActivity={options.delegatedActivity}
       completedChildrenExpanded={options.completedChildrenExpanded}
       onToggleCompletedChildren={options.onToggleCompletedChildren}
@@ -274,9 +276,13 @@ function renderWorkspaceItem(
   return {
     metadata,
     view,
-    row: view.getByRole("button", {
-      name: `${options.isArchiving ? "Archiving" : "Select"} workspace ${metadata.title ?? metadata.name}`,
-    }),
+    // Lazy: D8 title suppression changes the accessible name for group-member
+    // rows, so only resolve the default lookup when a test actually uses it.
+    get row() {
+      return view.getByRole("button", {
+        name: `${options.isArchiving ? "Archiving" : "Select"} workspace ${metadata.title ?? metadata.name}`,
+      });
+    },
   };
 }
 
@@ -301,6 +307,52 @@ describe("AgentListItem", () => {
     cleanupDom?.();
     cleanupDom = null;
     mock.restore();
+  });
+
+  test("suppresses group-member titles that repeat the group header (D8)", () => {
+    // Variant member: label-only row keeps the variant label as the title text.
+    const variant = renderWorkspaceItem({
+      metadata: createMetadata({
+        title: "Split review",
+        parentWorkspaceId: "parent",
+        bestOf: { groupId: "g1", index: 0, total: 2, kind: "variants", label: "frontend" },
+      }),
+      subAgentConnectorLayout: "task-group-member",
+      taskGroupHeaderTitle: "Split review",
+    });
+    expect(variant.view.getByRole("button", { name: "Select workspace frontend" })).toBeTruthy();
+    expect(variant.view.queryByText("Split review")).toBeNull();
+    cleanup();
+
+    // Best-of member: bare letters become "Candidate A" so the row stays readable.
+    const candidate = renderWorkspaceItem({
+      metadata: createMetadata({
+        title: "Split review",
+        parentWorkspaceId: "parent",
+        bestOf: { groupId: "g1", index: 0, total: 2 },
+      }),
+      subAgentConnectorLayout: "task-group-member",
+      taskGroupHeaderTitle: "Split review",
+    });
+    expect(
+      candidate.view.getByRole("button", { name: "Select workspace Candidate A" })
+    ).toBeTruthy();
+    cleanup();
+
+    // A custom (differing) title still renders alongside the label.
+    const customTitle = renderWorkspaceItem({
+      metadata: createMetadata({
+        title: "My renamed run",
+        parentWorkspaceId: "parent",
+        bestOf: { groupId: "g1", index: 1, total: 2, kind: "variants", label: "backend" },
+      }),
+      subAgentConnectorLayout: "task-group-member",
+      taskGroupHeaderTitle: "Split review",
+    });
+    expect(
+      customTitle.view.getByRole("button", { name: "Select workspace backend · My renamed run" })
+    ).toBeTruthy();
+    expect(customTitle.view.getByText("My renamed run")).toBeTruthy();
   });
 
   test("shows active delegated workflow work on idle workspace rows", () => {

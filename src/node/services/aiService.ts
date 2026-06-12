@@ -1674,11 +1674,12 @@ export class AIService extends EventEmitter {
                 sessionDir: this.config.getSessionDir(workspaceId),
               }),
               runtimeFactory: new QuickJSRuntimeFactory(),
-              taskAdapterFactory: (runId) =>
+              taskAdapterFactory: (runId, workflowName) =>
                 new WorkflowTaskServiceAdapter({
                   taskService: this.taskService!,
                   parentWorkspaceId: workspaceId,
                   workflowRunId: runId,
+                  workflowName,
                   defaultAgentId: "explore",
                   patchToolConfig: {
                     workspaceId,

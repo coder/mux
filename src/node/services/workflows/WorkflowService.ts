@@ -42,7 +42,8 @@ export interface WorkflowServiceOptions {
   defaultActionCwd?: string;
   runtimeFactory: IJSRuntimeFactory;
   taskAdapter?: WorkflowTaskAdapter;
-  taskAdapterFactory?: (runId: string) => WorkflowTaskAdapter;
+  /** workflowName is the human-readable definition name, used to label spawned tasks. */
+  taskAdapterFactory?: (runId: string, workflowName?: string) => WorkflowTaskAdapter;
   onBackgroundRunTerminal?: (event: WorkflowBackgroundRunTerminalEvent) => Promise<void> | void;
   generateRunId?: () => string;
   // Delayed crash-recovery retries must use current trust, not the value captured when scheduled.
@@ -112,7 +113,10 @@ export class WorkflowService {
   private readonly defaultActionCwd?: string;
   private readonly runtimeFactory: IJSRuntimeFactory;
   private readonly taskAdapter?: WorkflowTaskAdapter;
-  private readonly taskAdapterFactory?: (runId: string) => WorkflowTaskAdapter;
+  private readonly taskAdapterFactory?: (
+    runId: string,
+    workflowName?: string
+  ) => WorkflowTaskAdapter;
   private readonly onBackgroundRunTerminal?: (
     event: WorkflowBackgroundRunTerminalEvent
   ) => Promise<void> | void;
@@ -349,7 +353,7 @@ export class WorkflowService {
       runnerAbortController
     );
     try {
-      const runner = this.createRunner(input.runId, input.projectTrusted);
+      const runner = await this.createRunner(input.runId, input.projectTrusted);
       const result = await runner.run(input.runId, {
         abortSignal: runnerAbortController.signal,
         onLeaseAcquired: () => {
@@ -468,7 +472,7 @@ export class WorkflowService {
       runnerAbortController
     );
     try {
-      const runner = this.createRunner(runId, input.projectTrusted);
+      const runner = await this.createRunner(runId, input.projectTrusted);
       const result = await runner.run(runId, {
         abortSignal: runnerAbortController.signal,
         ...(input.backgroundOnMessageQueued !== undefined
@@ -666,7 +670,7 @@ export class WorkflowService {
     return runId;
   }
 
-  private runInBackground(
+  private async runInBackground(
     runId: string,
     failureMessage: string,
     runnerOptions: Pick<
@@ -676,7 +680,7 @@ export class WorkflowService {
       projectTrusted: boolean;
     }
   ): Promise<void> {
-    const runner = this.createRunner(runId, runnerOptions.projectTrusted);
+    const runner = await this.createRunner(runId, runnerOptions.projectTrusted);
     const runnerAbortController = new AbortController();
     let unregisterRunnerAbort: () => void = () => undefined;
     let startedSettled = false;
@@ -759,11 +763,17 @@ export class WorkflowService {
     }
   }
 
-  private createRunner(runId: string, projectTrusted: boolean): WorkflowRunner {
+  private async createRunner(runId: string, projectTrusted: boolean): Promise<WorkflowRunner> {
+    // The run record always exists by the time a runner is created (create/resume/retry
+    // paths persist it first), so resolve the definition name for task labeling here.
+    const workflowName =
+      this.taskAdapterFactory != null
+        ? (await this.runStore.getRun(runId)).definition.name
+        : undefined;
     return new WorkflowRunner({
       runStore: this.runStore,
       runtimeFactory: this.runtimeFactory,
-      taskAdapter: this.taskAdapterFactory?.(runId) ?? this.requireTaskAdapter(),
+      taskAdapter: this.taskAdapterFactory?.(runId, workflowName) ?? this.requireTaskAdapter(),
       actionRegistry: this.actionRegistry,
       actionRunner: this.actionRunner,
       getProjectTrusted: () => this.resolveCurrentProjectTrust(projectTrusted),

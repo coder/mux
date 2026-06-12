@@ -3,6 +3,7 @@ import { WorkspaceMCPOverridesSchema } from "@/common/orpc/schemas/mcp";
 import {
   BestOfGroupSchema,
   ProjectRefSchema,
+  WorkflowTaskMetadataSchema,
   WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
 } from "@/common/orpc/schemas/workspace";
@@ -54,13 +55,8 @@ export const WorktreeArchiveSnapshotSchema = z.object({
   }),
 });
 
-export const WorkflowTaskMetadataSchema = z.object({
-  runId: z.string().min(1).meta({ description: "Workflow run that spawned this task." }),
-  stepId: z.string().min(1).meta({ description: "Workflow step that spawned this task." }),
-  outputSchema: z.unknown().optional().meta({
-    description: "Optional JSON Schema subset required for this task's structured output.",
-  }),
-});
+// Shared with workspace metadata IPC; see src/common/orpc/schemas/workspace.ts.
+export { WorkflowTaskMetadataSchema };
 
 export const WorkspaceConfigSchema = z.object({
   path: z.string().meta({

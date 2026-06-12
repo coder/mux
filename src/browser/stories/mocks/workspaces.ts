@@ -20,7 +20,10 @@ export interface WorkspaceFixture {
   projectName: string;
   runtimeConfig?: RuntimeConfig;
   createdAt?: string;
+  parentWorkspaceId?: string;
+  taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
   bestOf?: FrontendWorkspaceMetadata["bestOf"];
+  workflowTask?: FrontendWorkspaceMetadata["workflowTask"];
   title?: string;
   transcriptOnly?: boolean;
 }
@@ -41,7 +44,10 @@ export function createWorkspace(
     // Default to current time so workspaces aren't filtered as "old" by age-based UI
     createdAt: opts.createdAt ?? new Date().toISOString(),
     title: opts.title,
+    parentWorkspaceId: opts.parentWorkspaceId,
+    taskStatus: opts.taskStatus,
     bestOf: opts.bestOf,
+    workflowTask: opts.workflowTask,
     transcriptOnly: opts.transcriptOnly,
   };
 }

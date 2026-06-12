@@ -63,4 +63,18 @@ describe("TaskGroupListItem", () => {
     );
     expect(groupRow.textContent).toContain("1 queued");
   });
+
+  test("aggregates member state into the shared status-dot language", () => {
+    // Running wins over interrupted: the group is still making progress.
+    const running = renderTaskGroup({ runningCount: 1, interruptedCount: 1 });
+    expect(running.getByTestId("task-group-best-of-demo").dataset.aggregateState).toBe("active");
+    cleanup();
+
+    const interrupted = renderTaskGroup({ interruptedCount: 1, completedCount: 2 });
+    expect(interrupted.getByTestId("task-group-best-of-demo").dataset.aggregateState).toBe("error");
+    cleanup();
+
+    const completed = renderTaskGroup({ completedCount: 3 });
+    expect(completed.getByTestId("task-group-best-of-demo").dataset.aggregateState).toBe("idle");
+  });
 });

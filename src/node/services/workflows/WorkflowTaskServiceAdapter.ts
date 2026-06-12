@@ -35,6 +35,7 @@ interface WorkflowTaskServiceLike {
     workflowTask: {
       runId: string;
       stepId: string;
+      workflowName?: string;
       outputSchema?: unknown;
     };
     experiments?: WorkflowTaskExperiments;
@@ -51,6 +52,7 @@ interface WorkflowTaskServiceLike {
       workflowTask: {
         runId: string;
         stepId: string;
+        workflowName?: string;
         outputSchema?: unknown;
       };
       experiments?: WorkflowTaskExperiments;
@@ -83,6 +85,12 @@ export interface WorkflowTaskServiceAdapterOptions {
   taskService: WorkflowTaskServiceLike;
   parentWorkspaceId: string;
   workflowRunId: string;
+  /**
+   * Human-readable workflow definition name, stamped onto spawned tasks so the
+   * sidebar can label workflow run groups. Optional: interrupt-only adapters
+   * and legacy call sites may not know the name.
+   */
+  workflowName?: string;
   defaultAgentId: string;
   experiments?: WorkflowTaskExperiments;
   modelString?: string;
@@ -96,6 +104,7 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
   private readonly taskService: WorkflowTaskServiceLike;
   private readonly parentWorkspaceId: string;
   private readonly workflowRunId: string;
+  private readonly workflowName?: string;
   private readonly defaultAgentId: string;
   private readonly patchToolConfig?: TaskApplyGitPatchConfiguration;
   private readonly applyPatchArtifact?: WorkflowPatchArtifactApplier;
@@ -121,6 +130,7 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     this.taskService = options.taskService;
     this.parentWorkspaceId = options.parentWorkspaceId;
     this.workflowRunId = options.workflowRunId;
+    this.workflowName = options.workflowName;
     this.defaultAgentId = options.defaultAgentId;
     this.patchToolConfig = options.patchToolConfig;
     this.applyPatchArtifact = options.applyPatchArtifact;
@@ -249,10 +259,18 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     assert(spec.id.length > 0, "WorkflowTaskServiceAdapter: spec.id is required");
     assert(spec.prompt.length > 0, "WorkflowTaskServiceAdapter: spec.prompt is required");
 
-    const workflowTask: { runId: string; stepId: string; outputSchema?: unknown } = {
+    const workflowTask: {
+      runId: string;
+      stepId: string;
+      workflowName?: string;
+      outputSchema?: unknown;
+    } = {
       runId: this.workflowRunId,
       stepId: spec.id,
     };
+    if (this.workflowName !== undefined) {
+      workflowTask.workflowName = this.workflowName;
+    }
     if (spec.outputSchema !== undefined) {
       workflowTask.outputSchema = spec.outputSchema;
     }

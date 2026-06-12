@@ -23,5 +23,8 @@ export function getWorkspaceSidebarKey(meta: FrontendWorkspaceMetadata): string 
     meta.taskStatus ?? "", // Task lifecycle label/state for sub-agent rows
     meta.agentType ?? "", // Agent preset badge/label (future)
     meta.subProjectPath ?? "", // Sub-project grouping and cwd context for sidebar organization
+    meta.workflowTask?.runId ?? "", // Workflow run grouping in the sidebar
+    meta.workflowTask?.stepId ?? "", // Workflow step identity for grouped rows
+    meta.workflowTask?.workflowName ?? "", // Workflow group header label
   ].join("|");
 }

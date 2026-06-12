@@ -171,6 +171,7 @@ export interface TaskCreateArgs {
   workflowTask?: {
     runId: string;
     stepId: string;
+    workflowName?: string;
     outputSchema?: unknown;
   };
   /** Experiments to inherit to subagent */

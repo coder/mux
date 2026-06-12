@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { ThinkingLevelSchema } from "../../types/thinking";
 import { RuntimeConfigSchema } from "./runtime";
-import { WorkflowRunIdSchema } from "./workflow";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 import { TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
 import { GoalSnapshotSchema } from "./goal";
@@ -87,9 +86,17 @@ export const WorkspaceHeartbeatSettingsSchema = z.object({
   }),
 });
 
+// Single source of truth for workflow task metadata on both persisted config
+// entries (src/common/schemas/project.ts) and workspace metadata IPC. The runId
+// stays a loose non-empty string (not WorkflowRunIdSchema) so a malformed
+// persisted entry can never brick config/metadata parsing (self-healing rule).
 export const WorkflowTaskMetadataSchema = z.object({
-  runId: WorkflowRunIdSchema.meta({ description: "Workflow run that spawned this task." }),
+  runId: z.string().min(1).meta({ description: "Workflow run that spawned this task." }),
   stepId: z.string().min(1).meta({ description: "Workflow step that spawned this task." }),
+  workflowName: z.string().min(1).optional().meta({
+    description:
+      "Human-readable workflow definition name stamped at spawn time for sidebar grouping. Optional: absent on tasks created before this field existed.",
+  }),
   outputSchema: z.unknown().optional().meta({
     description: "Optional JSON Schema subset required for this task's structured output.",
   }),

@@ -262,6 +262,39 @@ describe("WorkflowTaskServiceAdapter", () => {
     );
   });
 
+  test("stamps the workflow name onto spawned tasks when known", async () => {
+    const create = mock(async (_args: unknown) =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    const createMany = mock(async (args: unknown[]) =>
+      Ok(
+        args.map((_, index) => ({
+          taskId: `task_${index}`,
+          kind: "agent" as const,
+          status: "queued" as const,
+        }))
+      )
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, createMany, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      workflowName: "sidebar-demo",
+      defaultAgentId: "explore",
+    });
+
+    await adapter.runAgent({ id: "claims", prompt: "Extract claims", title: "Claim extractor" });
+    await adapter.createAgentTasks([{ id: "first", prompt: "Do first", title: "First" }]);
+
+    expect(create.mock.calls[0]?.[0]).toMatchObject({
+      workflowTask: { runId: "wfr_123", stepId: "claims", workflowName: "sidebar-demo" },
+    });
+    expect(createMany.mock.calls[0]?.[0]).toMatchObject([
+      { workflowTask: { runId: "wfr_123", stepId: "first", workflowName: "sidebar-demo" } },
+    ]);
+  });
+
   test("passes workflow wait options into report waits", async () => {
     const abortController = new AbortController();
     const create = mock(async () =>
