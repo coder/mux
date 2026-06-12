@@ -1422,6 +1422,90 @@ describe("TaskService", () => {
     }
   }, 20_000);
 
+  test("nested isolation: none task inherits the shared parent's real branch and checkout", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = await createTestProject(rootDir);
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath });
+    const initLogger = createNullInitLogger();
+
+    const grandparentName = "parent";
+    await runtime.createWorkspace({
+      projectPath,
+      branchName: grandparentName,
+      trunkBranch: "main",
+      directoryName: grandparentName,
+      initLogger,
+    });
+    const checkoutPath = runtime.getWorkspacePath(projectPath, grandparentName);
+
+    const grandparentId = "1111111111";
+    const sharedParentId = "2222222222";
+    const nestedChildId = "4444444444";
+    stubStableIds(config, [nestedChildId]);
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: checkoutPath,
+          id: grandparentId,
+          name: grandparentName,
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+        },
+        {
+          // The parent is itself a shared task: synthetic name, path = grandparent's checkout,
+          // and taskTrunkBranch names the real branch checked out there.
+          path: checkoutPath,
+          id: sharedParentId,
+          name: "agent_explore_shared-parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig,
+          parentWorkspaceId: grandparentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: defaultModel,
+          taskTrunkBranch: grandparentName,
+          taskIsolation: "none",
+        },
+      ],
+      testTaskSettings()
+    );
+
+    const forkSpy = spyOn(forkOrchestrator, "orchestrateFork");
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
+      () => undefined
+    );
+    try {
+      const { workspaceService } = createWorkspaceServiceMocks();
+      const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+      const result = await createAgentTask(taskService, sharedParentId, "nested analysis", {
+        isolation: "none",
+      });
+
+      expect(result.success).toBe(true);
+      assert(result.success, "Expected nested shared task to be created");
+      expect(forkSpy).not.toHaveBeenCalled();
+
+      const childEntry = findWorkspaceInConfig(config, nestedChildId);
+      assert(childEntry, "Expected nested shared task to be persisted");
+      // Path resolves through the parent's persisted (shared) checkout, not its synthetic name.
+      expect(childEntry.path).toBe(checkoutPath);
+      // The persisted trunk branch is the REAL branch in the shared checkout (the grandparent's),
+      // not the parent's synthetic agent workspace name — fork fallbacks depend on it existing.
+      expect(childEntry.taskTrunkBranch).toBe(grandparentName);
+      expect(childEntry.taskIsolation).toBe("none");
+    } finally {
+      runBackgroundInitSpy.mockRestore();
+      forkSpy.mockRestore();
+    }
+  }, 20_000);
+
   test("createMany honors isolation: none by reusing the parent checkout", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = await createTestProject(rootDir);
