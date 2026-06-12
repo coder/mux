@@ -1,5 +1,5 @@
 import { defaultConfig } from "@/node/config";
-import { defaultModel } from "@/common/utils/ai/models";
+import { resolveDreamModelString } from "@/node/services/memoryConsolidationService";
 import { getBuiltInAgentDefinitions } from "@/node/services/agentDefinitions/builtInAgentDefinitions";
 import { MemoryMetaService } from "@/node/services/memoryMeta";
 import { MemoryService, type MemoryScopeContext } from "@/node/services/memoryService";
@@ -26,18 +26,9 @@ export async function consolidateMemoryCommand(
     return;
   }
 
-  const cfg = defaultConfig.loadConfigOrDefault();
-  const workspaceEntry = cfg.projects
-    .get(workspace.projectPath)
-    ?.workspaces.find((entry) => entry.id === workspaceId);
-  // Model cascade (PRD #3534: inherit, uniform with other agents):
-  // per-workspace dream override -> global dream default -> workspace session
-  // model -> app default. Thinking level is deferred to the phase-2 app path.
-  const modelString =
-    workspaceEntry?.aiSettingsByAgent?.dream?.model ??
-    cfg.agentAiDefaults?.dream?.modelString ??
-    workspaceEntry?.aiSettings?.model ??
-    defaultModel;
+  // Model cascade (PRD #3534: inherit, uniform with other agents) — shared
+  // with MemoryConsolidationService so CLI and app runs always agree.
+  const modelString = resolveDreamModelString(defaultConfig, workspaceId);
 
   const dream = getBuiltInAgentDefinitions().find((definition) => definition.id === "dream");
   if (!dream) {

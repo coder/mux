@@ -48,3 +48,21 @@ export const MemorySaveErrorSchema = z.object({
   message: z.string(),
 });
 export type MemorySaveError = z.infer<typeof MemorySaveErrorSchema>;
+
+/** One journaled mutating command from a consolidation ("dream") run. */
+export const MemoryConsolidationOpSchema = z.object({
+  command: z.enum(["create", "str_replace", "insert", "delete", "rename"]),
+  path: z.string(),
+  newPath: z.string().optional(),
+  applied: z.boolean(),
+  note: z.string().optional(),
+});
+
+/** Persisted record of the latest consolidation run for a workspace. */
+export const MemoryConsolidationRecordSchema = z.object({
+  lastRunAt: z.number(),
+  trigger: z.enum(["compaction", "launch", "archive", "manual"]),
+  summary: z.string(),
+  ops: z.array(MemoryConsolidationOpSchema),
+});
+export type MemoryConsolidationRecordPayload = z.infer<typeof MemoryConsolidationRecordSchema>;

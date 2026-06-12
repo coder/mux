@@ -22,6 +22,7 @@ import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import type { McpOauthService } from "@/node/services/mcpOauthService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { MemoryService } from "@/node/services/memoryService";
+import type { MemoryConsolidationService } from "@/node/services/memoryConsolidationService";
 import type { MemoryMetaService } from "@/node/services/memoryMeta";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
@@ -76,6 +77,7 @@ export interface ORPCContext {
   experimentsService: ExperimentsService;
   memoryService: MemoryService;
   memoryMetaService: MemoryMetaService;
+  memoryConsolidationService: MemoryConsolidationService;
   sessionUsageService: SessionUsageService;
   instructionsService: InstructionsService;
   workspaceGoalService: WorkspaceGoalService;

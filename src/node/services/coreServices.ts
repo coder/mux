@@ -28,6 +28,7 @@ import type { PolicyService } from "@/node/services/policyService";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import { MemoryService } from "@/node/services/memoryService";
+import { MemoryConsolidationService } from "@/node/services/memoryConsolidationService";
 import { MemoryMetaService } from "@/node/services/memoryMeta";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
@@ -72,6 +73,7 @@ export interface CoreServices {
   taskService: TaskService;
   memoryService: MemoryService;
   memoryMetaService: MemoryMetaService;
+  memoryConsolidationService: MemoryConsolidationService;
 }
 
 export function createCoreServices(opts: CoreServicesOptions): CoreServices {
@@ -115,6 +117,16 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   const memoryService = new MemoryService(config, memoryMetaService);
   aiService.setMemoryService(memoryService);
 
+  // Background dream consolidation (memory-consolidation experiment). Without
+  // an ExperimentsService (CLI/test contexts) the service stays inert.
+  const memoryConsolidationService = new MemoryConsolidationService(
+    config,
+    memoryService,
+    memoryMetaService,
+    aiService,
+    opts.experimentsService ?? { isExperimentEnabled: () => false }
+  );
+
   // MCP: allow callers to override which Config provides server definitions
   const mcpConfigService = new MCPConfigService(opts.mcpConfig ?? config);
   const mcpServerManager = new MCPServerManager(
@@ -139,6 +151,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.opResolver
   );
   aiService.setWorkflowResultContinuationSender(workspaceService);
+  workspaceService.setMemoryConsolidationService(memoryConsolidationService);
   workspaceService.setMCPServerManager(mcpServerManager);
   workspaceService.setWorkspaceGoalService(workspaceGoalService);
   workspaceGoalService.setOnActivityChange((workspaceId, snapshot) => {
@@ -205,5 +218,6 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     taskService,
     memoryService,
     memoryMetaService,
+    memoryConsolidationService,
   };
 }

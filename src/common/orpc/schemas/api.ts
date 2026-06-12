@@ -30,7 +30,12 @@ import {
   GoalSetInputSchema,
 } from "./goal";
 import { ProjectConfigSchema } from "./project";
-import { MemoryChangeEventSchema, MemoryFileInfoSchema, MemorySaveErrorSchema } from "./memory";
+import {
+  MemoryChangeEventSchema,
+  MemoryConsolidationRecordSchema,
+  MemoryFileInfoSchema,
+  MemorySaveErrorSchema,
+} from "./memory";
 import { ResultSchema } from "./result";
 import { SshPromptEventSchema, SshPromptResponseInputSchema } from "./ssh";
 import {
@@ -1017,6 +1022,16 @@ export const memory = {
   onChange: {
     input: z.object({ workspaceId: z.string().nullish() }),
     output: eventIterator(MemoryChangeEventSchema),
+  },
+  /** Latest consolidation ("dream") record for the Memory tab; null = never ran. */
+  consolidationStatus: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(MemoryConsolidationRecordSchema.nullable(), z.string()),
+  },
+  /** Manual consolidation run (/dream, Memory tab button); bypasses debounce. */
+  consolidate: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(MemoryConsolidationRecordSchema, z.string()),
   },
 };
 

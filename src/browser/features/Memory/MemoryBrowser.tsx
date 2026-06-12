@@ -17,7 +17,12 @@ import { isAbortError } from "@/browser/utils/isAbortError";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import { cn } from "@/common/lib/utils";
 import { MEMORY_SCOPES, MEMORY_VIRTUAL_ROOT, type MemoryScope } from "@/common/constants/memory";
-import type { MemoryFileInfo } from "@/common/orpc/schemas/memory";
+import type {
+  MemoryConsolidationRecordPayload,
+  MemoryFileInfo,
+} from "@/common/orpc/schemas/memory";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { getErrorMessage } from "@/common/utils/errors";
 import { MemoryFileEditor } from "./MemoryFileEditor";
 
@@ -231,6 +236,12 @@ export function MemoryBrowser(props: MemoryBrowserProps) {
           })}
         </div>
       </div>
+      {props.workspaceId !== null && (
+        <ConsolidationFooter
+          workspaceId={props.workspaceId}
+          onConsolidated={() => setRefreshTick((tick) => tick + 1)}
+        />
+      )}
       {deleteTarget !== null && (
         <ConfirmationModal
           isOpen
@@ -454,6 +465,74 @@ function MemoryFileRow(props: MemoryFileRowProps) {
           Used {props.file.accessCount}× · {formatRelativeTime(props.file.lastAccessedAt)}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Dream consolidation surface (memory-consolidation experiment, PRD #3534):
+ * "last consolidated" line + manual run button. Self-contained — fetches its
+ * own status so the file list above never re-renders on status polls.
+ */
+function ConsolidationFooter(props: { workspaceId: string; onConsolidated: () => void }) {
+  const { api } = useAPI();
+  const enabled = useExperimentValue(EXPERIMENT_IDS.MEMORY_CONSOLIDATION);
+  const [record, setRecord] = useState<MemoryConsolidationRecordPayload | null>(null);
+  const [running, setRunning] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!api || !enabled) return;
+    const controller = new AbortController();
+    api.memory
+      .consolidationStatus({ workspaceId: props.workspaceId }, { signal: controller.signal })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        if (result.success) setRecord(result.data);
+      })
+      .catch((err: unknown) => {
+        if (isAbortError(err) || controller.signal.aborted) return;
+        // Status is decorative; failures stay silent.
+      });
+    return () => controller.abort();
+  }, [api, enabled, props.workspaceId, running]);
+
+  if (!enabled || !api) return null;
+
+  const handleConsolidate = async () => {
+    setRunning(true);
+    setRunError(null);
+    try {
+      const result = await api.memory.consolidate({ workspaceId: props.workspaceId });
+      if (result.success) {
+        setRecord(result.data);
+        props.onConsolidated();
+      } else {
+        setRunError(result.error);
+      }
+    } catch (err: unknown) {
+      setRunError(getErrorMessage(err));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="border-border-light flex items-center justify-between gap-2 border-t px-3 py-2 text-xs">
+      <span className="text-muted truncate" title={record?.summary}>
+        {record === null
+          ? "Never consolidated"
+          : `Last consolidated ${formatRelativeTime(record.lastRunAt)} (${record.trigger}, ${record.ops.length} change${record.ops.length === 1 ? "" : "s"})`}
+        {runError !== null && <span className="text-error"> — {runError}</span>}
+      </span>
+      <button
+        type="button"
+        className="border-border-light text-foreground hover:bg-hover shrink-0 rounded border px-2 py-0.5 disabled:opacity-50"
+        onClick={() => void handleConsolidate()}
+        disabled={running}
+      >
+        {running ? "Consolidating…" : "Consolidate now"}
+      </button>
     </div>
   );
 }

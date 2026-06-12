@@ -20,6 +20,7 @@ export const EXPERIMENT_IDS = {
   SUBAGENT_FILE_REPORTS: "subagent-file-reports",
   MEMORY: "memory",
   MEMORY_HOT_SET: "memory-hot-set",
+  MEMORY_CONSOLIDATION: "memory-consolidation",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -170,6 +171,18 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Memory Hot Set",
     description:
       "Preload pinned and frequently used memory files into the system prompt (requires Agent Memory)",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  // Sub-experiment of Agent Memory (flat flag, gated on the parent at call
+  // sites): background "dream" consolidation passes that merge, prune, and
+  // promote memory files (issue #3534).
+  [EXPERIMENT_IDS.MEMORY_CONSOLIDATION]: {
+    id: EXPERIMENT_IDS.MEMORY_CONSOLIDATION,
+    name: "Memory Consolidation",
+    description:
+      "Background dream agent that consolidates memory files after compaction, on idle, and at archive (requires Agent Memory)",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

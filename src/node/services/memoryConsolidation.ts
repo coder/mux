@@ -184,6 +184,11 @@ export async function runMemoryConsolidation(args: {
   metaService: MemoryMetaService;
   ctx: MemoryScopeContext;
   dryRun: boolean;
+  /**
+   * Archive trigger: instructs the agent that this is the workspace's final
+   * pass, unlocking workspace→global promotion of durable lessons (PRD #3534).
+   */
+  finalPass?: boolean;
   abortSignal?: AbortSignal;
 }): Promise<MemoryConsolidationResult> {
   assert(args.agentBody.trim().length > 0, "dream agent body must not be empty");
@@ -200,7 +205,10 @@ export async function runMemoryConsolidation(args: {
     model: args.model,
     system: args.agentBody,
     prompt:
-      "Run a memory-consolidation pass now. Survey the memory directories, then apply the highest-value cleanups within budget.",
+      "Run a memory-consolidation pass now. Survey the memory directories, then apply the highest-value cleanups within budget." +
+      (args.finalPass === true
+        ? " This is the FINAL pass for an archived workspace: promote durable lessons from /memories/workspace/... to /memories/global/... before they are lost."
+        : ""),
     tools: { memory: memoryTool },
     stopWhen: stepCountIs(MEMORY_CONSOLIDATION_MAX_STEPS),
     abortSignal: args.abortSignal,

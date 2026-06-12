@@ -3795,6 +3795,27 @@ export const router = (authToken?: string) => {
           );
           return { success: true as const, data: undefined };
         }),
+      consolidationStatus: t
+        .input(schemas.memory.consolidationStatus.input)
+        .output(schemas.memory.consolidationStatus.output)
+        .handler(async ({ context, input }) => {
+          assertMemoryEnabled(context);
+          const record = await context.memoryConsolidationService.getRecord(input.workspaceId);
+          return { success: true as const, data: record };
+        }),
+      consolidate: t
+        .input(schemas.memory.consolidate.input)
+        .output(schemas.memory.consolidate.output)
+        .handler(async ({ context, input }) => {
+          assertMemoryEnabled(context);
+          const result = await context.memoryConsolidationService.maybeRun(
+            input.workspaceId,
+            "manual"
+          );
+          return result.success
+            ? { success: true as const, data: result.data }
+            : { success: false as const, error: result.error };
+        }),
       onChange: t
         .input(schemas.memory.onChange.input)
         .output(schemas.memory.onChange.output)

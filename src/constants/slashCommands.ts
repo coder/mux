@@ -9,6 +9,7 @@
 export const WORKSPACE_ONLY_COMMAND_KEYS: ReadonlySet<string> = new Set([
   "clear",
   "compact",
+  "dream",
   "fork",
   "new",
   "plan",
@@ -22,6 +23,7 @@ export const WORKSPACE_ONLY_COMMAND_KEYS: ReadonlySet<string> = new Set([
 export const WORKSPACE_ONLY_COMMAND_TYPES: ReadonlySet<string> = new Set([
   "clear",
   "compact",
+  "dream",
   "fork",
   "new",
   "plan-show",

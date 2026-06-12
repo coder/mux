@@ -75,3 +75,7 @@ export const MEMORY_HOT_SET_DECAY_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
 export const MEMORY_CONSOLIDATION_OP_BUDGET = 8;
 /** Generous step ceiling for the consolidation stream (reads + budgeted mutations). */
 export const MEMORY_CONSOLIDATION_MAX_STEPS = 32;
+/** Minimum gap between consolidation runs for one workspace (debounce across triggers). */
+export const MEMORY_CONSOLIDATION_DEBOUNCE_MS = 6 * 60 * 60 * 1000;
+/** Launch sweep: a workspace qualifies after this much user inactivity. */
+export const MEMORY_CONSOLIDATION_IDLE_MS = 24 * 60 * 60 * 1000;

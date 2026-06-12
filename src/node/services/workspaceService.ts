@@ -1470,6 +1470,9 @@ export class WorkspaceService extends EventEmitter {
   private desktopSessionManager?: DesktopSessionManager;
   private readonly sessionTimingService?: SessionTimingService;
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
+  private memoryConsolidationService?: {
+    triggerInBackground(workspaceId: string, trigger: "compaction" | "archive"): void;
+  };
   private worktreeArchiveSnapshotService?: WorktreeArchiveSnapshotLifecycleService;
   private taskService?: TaskService;
   private workspaceGoalService?: WorkspaceGoalService;
@@ -1508,6 +1511,13 @@ export class WorkspaceService extends EventEmitter {
         `Failed to close desktop session during ${reason} for workspace ${workspaceId}: ${getErrorMessage(error)}`
       );
     }
+  }
+
+  /** Background dream consolidation (memory-consolidation experiment); wired by coreServices. */
+  setMemoryConsolidationService(service: {
+    triggerInBackground(workspaceId: string, trigger: "compaction" | "archive"): void;
+  }): void {
+    this.memoryConsolidationService = service;
   }
 
   setWorkspaceLifecycleHooks(hooks: WorkspaceLifecycleHooks): void {
@@ -2085,6 +2095,9 @@ export class WorkspaceService extends EventEmitter {
       backgroundProcessManager: this.backgroundProcessManager,
       onCompactionComplete: () => {
         this.schedulePostCompactionMetadataRefresh(workspaceId);
+        // Dream trigger (PRD #3534): compaction marks a long session with
+        // accumulated learnings; fire-and-forget, debounced in the service.
+        this.memoryConsolidationService?.triggerInBackground(workspaceId, "compaction");
       },
       onPostCompactionStateChange: () => {
         this.schedulePostCompactionMetadataRefresh(workspaceId);
@@ -4807,6 +4820,11 @@ export class WorkspaceService extends EventEmitter {
       } catch (error) {
         log.error("Failed to cleanup reported descendants after archive", { workspaceId, error });
       }
+
+      // Dream trigger (PRD #3534): final consolidation pass — last chance to
+      // promote durable workspace-scope lessons to global before the
+      // workspace's memory dies with it. Fire-and-forget; never blocks archive.
+      this.memoryConsolidationService?.triggerInBackground(workspaceId, "archive");
 
       return Ok({ kind: "archived" as const });
     } catch (error) {

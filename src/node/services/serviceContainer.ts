@@ -94,6 +94,7 @@ export class ServiceContainer {
   public readonly workspaceGoalService: CoreServices["workspaceGoalService"];
   public readonly memoryService: CoreServices["memoryService"];
   public readonly memoryMetaService: CoreServices["memoryMetaService"];
+  public readonly memoryConsolidationService: CoreServices["memoryConsolidationService"];
   private readonly extensionMetadata: CoreServices["extensionMetadata"];
   private readonly backgroundProcessManager: CoreServices["backgroundProcessManager"];
   // Desktop-only services
@@ -224,6 +225,7 @@ export class ServiceContainer {
     this.workspaceGoalService = core.workspaceGoalService;
     this.memoryService = core.memoryService;
     this.memoryMetaService = core.memoryMetaService;
+    this.memoryConsolidationService = core.memoryConsolidationService;
     this.extensionMetadata = core.extensionMetadata;
     this.backgroundProcessManager = core.backgroundProcessManager;
 
@@ -469,6 +471,22 @@ export class ServiceContainer {
     this.agentStatusService.start();
     stepDurationsMs["agentStatusService.start"] = Date.now() - agentStatusStartedAt;
 
+    // Dream launch sweep (PRD #3534): consolidate memory for workspaces idle
+    // ≥24h with writes since their last run. Fire-and-forget after the await
+    // chain — startup must never block or crash on background housekeeping.
+    void this.extensionMetadata
+      .getAllSnapshots()
+      .then((snapshots) => {
+        const recencyByWorkspace = new Map<string, number>();
+        for (const [workspaceId, snapshot] of snapshots) {
+          recencyByWorkspace.set(workspaceId, snapshot.recency);
+        }
+        return this.memoryConsolidationService.runLaunchSweep(recencyByWorkspace);
+      })
+      .catch((error: unknown) => {
+        log.warn("[MemoryConsolidation] launch sweep failed", { error });
+      });
+
     // Refresh mux-owned Coder SSH config in background (handles binary path changes on restart)
     // Skip getCoderInfo() to avoid caching "unavailable" if coder isn't installed yet
     void this.coderService.ensureMuxCoderSSHConfig().catch((error: unknown) => {
@@ -525,6 +543,7 @@ export class ServiceContainer {
       workspaceGoalService: this.workspaceGoalService,
       memoryService: this.memoryService,
       memoryMetaService: this.memoryMetaService,
+      memoryConsolidationService: this.memoryConsolidationService,
       devToolsService: this.devToolsService,
       browserSessionDiscoveryService: this.browserSessionDiscoveryService,
       browserBridgeTokenManager: this.browserBridgeTokenManager,

@@ -736,6 +736,49 @@ export async function processSlashCommand(
           api: client,
           workspaceId: context.workspaceId,
         } as CommandHandlerContext);
+      case "dream": {
+        if (!context.workspaceId) throw new Error("Workspace ID required");
+        const dreamClient = requireClient();
+        if (!dreamClient) {
+          return { clearInput: false, toastShown: true };
+        }
+        // Fire-and-forget by design (PRD #3534): the dream run is background
+        // housekeeping; results surface in the Memory tab, not the chat.
+        const dreamWorkspaceId = context.workspaceId;
+        void dreamClient.memory
+          .consolidate({ workspaceId: dreamWorkspaceId })
+          .then((result) => {
+            context.setToast(
+              result.success
+                ? {
+                    id: Date.now().toString(),
+                    type: "success",
+                    message:
+                      result.data.ops.length === 0
+                        ? "Memory consolidation: no changes needed"
+                        : `Memory consolidated: ${result.data.ops.length} change(s)`,
+                  }
+                : {
+                    id: Date.now().toString(),
+                    type: "error",
+                    message: `Memory consolidation failed: ${result.error}`,
+                  }
+            );
+          })
+          .catch((error: unknown) => {
+            context.setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: `Memory consolidation failed: ${String(error)}`,
+            });
+          });
+        context.setToast({
+          id: Date.now().toString(),
+          type: "success",
+          message: "Memory consolidation started…",
+        });
+        return { clearInput: true, toastShown: true };
+      }
       case "fork":
         if (!requireClient()) {
           return { clearInput: false, toastShown: true };
