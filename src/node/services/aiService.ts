@@ -91,6 +91,7 @@ import {
   resolveMemoryProjectAnchor,
   resolveMemoryProjectIdentity,
   type MemoryService,
+  type MemorySessionContext,
 } from "@/node/services/memoryService";
 import { formatHotMemoriesBlock } from "@/node/services/memoryHotSet";
 import { resolveMemoryAccessPolicy } from "@/node/services/tools/memory";
@@ -229,14 +230,15 @@ export interface StreamMessageOptions {
   changedFileAttachments?: EditedFileAttachment[];
   postCompactionAttachments?: PostCompactionAttachment[] | null;
   /**
-   * Resolver for the hot-memories block (memory experiment). AgentSession
-   * caches the rendered block per session segment so its bytes stay
-   * prompt-cache-stable. A callback (not a pre-rendered string) because the
-   * block must be computed after runtime.ensureReady(): project-scope
-   * listing on a stopped Docker/remote workspace would otherwise cache an
-   * empty/partial block for the whole segment.
+   * Resolver for the session-segment memory context (memory experiment):
+   * index snapshot for the memory tool description + hot-memories block.
+   * AgentSession caches the result per session segment so its bytes stay
+   * prompt-cache-stable. A callback (not a pre-resolved value) because it
+   * must be computed after runtime.ensureReady(): project-scope listing on a
+   * stopped Docker/remote workspace would otherwise cache an empty/partial
+   * context for the whole segment.
    */
-  resolveHotMemoriesBlock?: () => Promise<string | undefined>;
+  resolveMemoryContext?: () => Promise<MemorySessionContext | undefined>;
   experiments?: SendMessageOptions["experiments"];
   workspaceGoalService?: WorkspaceGoalService;
   disableWorkspaceAgents?: boolean;
@@ -501,15 +503,18 @@ export class AIService extends EventEmitter {
   }
 
   /**
-   * Render the hot-memories context block (pinned + frequently used memory
-   * files) for a workspace. Returns null when the memory experiment is off or
-   * nothing qualifies.
+   * Build the session-segment memory context: the index snapshot advertised
+   * in the memory tool description, plus the hot-memories block (pinned +
+   * frequently used memory files; memory-hot-set sub-experiment). Returns
+   * null when the memory experiment is off.
    *
    * Callers (AgentSession) cache the result and recompute it only at session
    * start and compaction boundaries — never per turn — so the injected bytes
-   * stay prompt-cache-stable within a session segment.
+   * stay prompt-cache-stable within a session segment. Memories written
+   * mid-segment surface in the next segment's index (the writing agent
+   * already has its own tool calls in context, and `view` lists live state).
    */
-  async buildHotMemoriesBlock(workspaceId: string): Promise<string | null> {
+  async buildMemorySessionContext(workspaceId: string): Promise<MemorySessionContext | null> {
     if (!this.memoryService) return null;
     if (this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY) !== true) {
       return null;
@@ -519,17 +524,27 @@ export class AIService extends EventEmitter {
       if (!metadataResult.success) return null;
       const metadata = metadataResult.data;
       const runtime = createRuntimeForWorkspace(metadata);
-      const items = await this.memoryService.listHotMemories({
+      const ctx = {
         runtime,
         // "" disables the project scope (multi-project / unresolvable root).
         checkoutCwd: resolveMemoryProjectAnchor(metadata, runtime) ?? "",
         workspaceId,
+        // Stable per-project identity (handles multi-project workspaces),
+        // from #3533's project-local memory scope.
         projectPath: resolveMemoryProjectIdentity(metadata),
-      });
-      return items.length === 0 ? null : formatHotMemoriesBlock(items);
+      };
+      const indexEntries = await this.memoryService.listIndexEntries(ctx);
+      // Hot preloading is a sub-experiment: without it, memories stay
+      // pull-based like skills (index only, contents fetched on demand).
+      let hotMemoriesBlock: string | null = null;
+      if (this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY_HOT_SET) === true) {
+        const items = await this.memoryService.listHotMemories(ctx);
+        hotMemoriesBlock = items.length === 0 ? null : formatHotMemoriesBlock(items);
+      }
+      return { indexEntries, hotMemoriesBlock };
     } catch (error) {
-      // Self-healing: hot memories are best-effort context, never a stream blocker.
-      log.warn("Failed to build hot memories block", { workspaceId, error });
+      // Self-healing: memory context is best-effort, never a stream blocker.
+      log.warn("Failed to build memory session context", { workspaceId, error });
       return null;
     }
   }
@@ -904,7 +919,7 @@ export class AIService extends EventEmitter {
       recordFileState,
       changedFileAttachments,
       postCompactionAttachments,
-      resolveHotMemoriesBlock,
+      resolveMemoryContext,
       experiments,
       workspaceGoalService,
       disableWorkspaceAgents,
@@ -1251,13 +1266,11 @@ export class AIService extends EventEmitter {
         });
       }
 
-      // Hot memories (memory experiment): resolved only after ensureReady so
+      // Memory context (memory experiment): resolved only after ensureReady so
       // project-scope listing sees a running runtime (a stopped Docker/remote
-      // workspace would yield an empty/partial block, and AgentSession caches
+      // workspace would yield an empty/partial context, and AgentSession caches
       // the result for the whole session segment).
-      const hotMemoriesBlock = resolveHotMemoriesBlock
-        ? await resolveHotMemoriesBlock()
-        : undefined;
+      const memoryContext = resolveMemoryContext ? await resolveMemoryContext() : undefined;
 
       // Resolve agent definition, compute effective mode & tool policy.
       const cfg = this.config.loadConfigOrDefault();
@@ -1448,9 +1461,8 @@ export class AIService extends EventEmitter {
           muxScope,
           loadDesktopCapability,
           advisorToolAvailable: toolset.advisorToolAvailable,
-          memoryService: this.memoryService,
-          memoryIndexEnabled: toolset.memoryToolAvailable,
-          hotMemoriesBlock,
+          memoryToolAvailable: toolset.memoryToolAvailable,
+          hotMemoriesBlock: memoryContext?.hotMemoriesBlock ?? undefined,
         });
 
       // Build provisional agent context before tool policy finalizes the toolset.
@@ -1981,6 +1993,9 @@ export class AIService extends EventEmitter {
         // Dynamic context for tool descriptions (moved from system prompt for better model attention)
         availableSubagents: agentDefinitions,
         availableSkills,
+        // Session-segment memory index advertised in the memory tool
+        // description (same disclosure mechanic as skills).
+        memoryIndexEntries: memoryContext?.indexEntries,
         // Trust gating: only run hooks/scripts when the full shared workspace runtime is trusted.
         trusted: sharedExecutionTrusted,
       };

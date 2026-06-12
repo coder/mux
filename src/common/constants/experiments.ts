@@ -19,6 +19,7 @@ export const EXPERIMENT_IDS = {
   DYNAMIC_WORKFLOWS: "dynamic-workflows",
   SUBAGENT_FILE_REPORTS: "subagent-file-reports",
   MEMORY: "memory",
+  MEMORY_HOT_SET: "memory-hot-set",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -156,6 +157,19 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Agent Memory",
     description:
       "Enable the agent memory tool and memory index (global / project / workspace scopes)",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  // Sub-experiment of Agent Memory (PTC Exclusive precedent: flat flag, gated
+  // on the parent at the call site). Without it, memories stay pull-based like
+  // skills: index advertised in the memory tool description, contents fetched
+  // on demand.
+  [EXPERIMENT_IDS.MEMORY_HOT_SET]: {
+    id: EXPERIMENT_IDS.MEMORY_HOT_SET,
+    name: "Memory Hot Set",
+    description:
+      "Preload pinned and frequently used memory files into the system prompt (requires Agent Memory)",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

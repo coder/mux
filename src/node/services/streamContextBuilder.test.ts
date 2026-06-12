@@ -10,10 +10,7 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectsConfig } from "@/common/types/project";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import { getPlanFilePath } from "@/common/utils/planStorage";
-import { Config } from "@/node/config";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
-import { MemoryMetaService } from "@/node/services/memoryMeta";
-import { MemoryService } from "@/node/services/memoryService";
 import { DisposableTempDir } from "@/node/services/tempDir";
 
 import { buildPlanInstructions, buildStreamSystemContext } from "./streamContextBuilder";
@@ -84,6 +81,7 @@ async function buildSystemContextForTest(args: {
   isSubagentWorkspace: boolean;
   effectiveAdditionalInstructions?: string;
   planFilePath?: string;
+  memoryToolAvailable?: boolean;
 }) {
   return buildStreamSystemContext({
     runtime: args.runtime,
@@ -101,6 +99,7 @@ async function buildSystemContextForTest(args: {
     cfg: args.cfg,
     providersConfig: null,
     mcpServers: {},
+    memoryToolAvailable: args.memoryToolAvailable,
   });
 }
 
@@ -263,59 +262,42 @@ class RestrictedTestRuntime extends TestRuntime {
 }
 
 describe("buildStreamSystemContext", () => {
-  test("builds the memory index from the checkout root on sub-project workspaces", async () => {
-    using tempRoot = new DisposableTempDir("stream-system-context-memory-root");
+  test("includes proactive memory guidance only when the memory tool is available", async () => {
+    using tempRoot = new DisposableTempDir("stream-system-context-memory-guidance");
 
-    const checkoutRoot = path.join(tempRoot.path, "checkout");
-    const subProjectCwd = path.join(checkoutRoot, "packages", "app");
+    const projectPath = path.join(tempRoot.path, "project");
     const muxHome = path.join(tempRoot.path, "mux-home");
-    await fs.mkdir(subProjectCwd, { recursive: true });
+    await fs.mkdir(projectPath, { recursive: true });
     await fs.mkdir(muxHome, { recursive: true });
-    // Project memory lives at the checkout ROOT; the agent's memory tool and
-    // the Memory tab resolve this root, so the index must enumerate it even
-    // when the workspace executes inside a sub-project directory.
-    await fs.mkdir(path.join(checkoutRoot, ".mux", "memory"), { recursive: true });
-    await fs.writeFile(path.join(checkoutRoot, ".mux", "memory", "root-note.md"), "root fact\n");
 
-    // namedWorkspacePath is the persisted checkout root consumed by
-    // resolveWorkspaceRootPath (WorkspaceMetadataForRuntime extension).
-    const metadata: WorkspaceMetadata & { namedWorkspacePath: string } = {
-      id: "ws-mem-root",
-      name: "workspace-mem",
-      projectName: "project-mem",
-      projectPath: path.join(tempRoot.path, "project"),
-      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-      namedWorkspacePath: checkoutRoot,
-      subProjectPath: "packages/app",
+    const metadata = createWorkspaceMetadata({
+      id: "memory-guidance-ws",
+      name: "memory-guidance-workspace",
+      projectName: "project",
+      projectPath,
+    });
+    const cfg = createProjectsConfig({
+      projectPath,
+      workspaces: [{ id: metadata.id, name: metadata.name }],
+    });
+    const buildArgs = {
+      runtime: new TestRuntime(projectPath, muxHome),
+      metadata,
+      workspacePath: projectPath,
+      cfg,
+      isSubagentWorkspace: false,
     };
 
-    const runtime = new TestRuntime(checkoutRoot, muxHome);
-    const memoryService = new MemoryService(new Config(muxHome), new MemoryMetaService(muxHome));
-
-    const result = await buildStreamSystemContext({
-      runtime,
-      metadata,
-      // Execution cwd includes the sub-project segment.
-      workspacePath: subProjectCwd,
-      workspaceId: metadata.id,
-      agentDefinition: { id: "exec", scope: "built-in" },
-      effectiveMode: "exec",
-      agentDiscoveryRuntime: runtime,
-      agentDiscoveryPath: subProjectCwd,
-      isSubagentWorkspace: false,
-      effectiveAdditionalInstructions: undefined,
-      modelString: "openai:gpt-5.2",
-      cfg: createProjectsConfig({
-        projectPath: metadata.projectPath,
-        workspaces: [{ id: metadata.id, name: metadata.name }],
-      }),
-      providersConfig: null,
-      mcpServers: {},
-      memoryService,
-      memoryIndexEnabled: true,
+    const withMemory = await buildSystemContextForTest({
+      ...buildArgs,
+      memoryToolAvailable: true,
     });
+    expect(withMemory.systemMessage).toContain("<memory-tool-guidance>");
 
-    expect(result.systemMessage).toContain("/memories/project/root-note.md");
+    // Guidance must stay in lockstep with tool availability: a prompt must
+    // not steer the agent toward a tool the toolset does not have.
+    const withoutMemory = await buildSystemContextForTest(buildArgs);
+    expect(withoutMemory.systemMessage).not.toContain("<memory-tool-guidance>");
   });
 
   test("uses the resolved agent discovery runtime for parent-only subagent prompts", async () => {

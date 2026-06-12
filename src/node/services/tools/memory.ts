@@ -5,7 +5,11 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { getErrorMessage } from "@/common/utils/errors";
 import { type MemoryScope, type MemoryScopeAccess } from "@/common/constants/memory";
-import { parseMemoryPath, type MemoryScopeContext } from "@/node/services/memoryService";
+import {
+  formatMemoryIndexForToolDescription,
+  parseMemoryPath,
+  type MemoryScopeContext,
+} from "@/node/services/memoryService";
 
 /** Safe default: without an explicit policy, every scope is read-only. */
 const READ_ONLY_ACCESS: MemoryScopeAccess = {
@@ -44,6 +48,20 @@ export function resolveMemoryAccessPolicy(options: {
     };
   }
   return READ_ONLY_ACCESS;
+}
+
+/**
+ * Build the dynamic memory tool description: the base description plus the
+ * session-segment memory index (same disclosure mechanic as skills — index
+ * advertised next to the tool schema, contents fetched on demand). Falls back
+ * to the base description when no snapshot was resolved.
+ */
+function buildMemoryDescription(config: ToolConfiguration): string {
+  const baseDescription = TOOL_DEFINITIONS.memory.description;
+  if (config.memoryIndexEntries == null) {
+    return baseDescription;
+  }
+  return `${baseDescription}\n\n${formatMemoryIndexForToolDescription(config.memoryIndexEntries)}`;
 }
 
 /**
@@ -98,7 +116,7 @@ export const createMemoryTool: ToolFactory = (config: ToolConfiguration) => {
   }
 
   return tool({
-    description: TOOL_DEFINITIONS.memory.description,
+    description: buildMemoryDescription(config),
     inputSchema: TOOL_DEFINITIONS.memory.schema,
     execute: async (input): Promise<MemoryToolResult> => {
       try {

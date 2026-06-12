@@ -6,6 +6,7 @@ import * as path from "node:path";
 import type { Config } from "@/node/config";
 
 import type { AIService } from "./aiService";
+import type { MemorySessionContext } from "./memoryService";
 import { AgentSession } from "./agentSession";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { HistoryService } from "./historyService";
@@ -14,15 +15,16 @@ import { DisposableTempDir } from "./tempDir";
 import { createTestHistoryService } from "./testHistoryService";
 
 /**
- * Behavior under test: the hot-memories block is computed once at session
- * start and recomputed only at compaction boundaries — never per turn — so
- * the injected bytes stay prompt-cache-stable within a session segment.
+ * Behavior under test: the memory session context (index snapshot +
+ * hot-memories block) is computed once at session start and recomputed only
+ * at compaction boundaries — never per turn — so the injected bytes stay
+ * prompt-cache-stable within a session segment.
  */
 
 function createSession(args: {
   historyService: HistoryService;
   sessionDir: string;
-  buildHotMemoriesBlock: AIService["buildHotMemoriesBlock"];
+  buildMemorySessionContext: AIService["buildMemorySessionContext"];
 }): AgentSession {
   const aiEmitter = new EventEmitter();
   const aiService: AIService = {
@@ -38,7 +40,7 @@ function createSession(args: {
       Promise.resolve({ success: false as const, error: "metadata unavailable" })
     ),
     stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
-    buildHotMemoriesBlock: args.buildHotMemoriesBlock,
+    buildMemorySessionContext: args.buildMemorySessionContext,
   } as unknown as AIService;
 
   const initStateManager: InitStateManager = {
@@ -71,7 +73,7 @@ function createSession(args: {
 }
 
 interface PrivateSessionAccess {
-  resolveHotMemoriesBlock: () => Promise<string | undefined>;
+  resolveMemoryContext: () => Promise<MemorySessionContext | undefined>;
   getPostCompactionAttachmentsIfNeeded: () => Promise<unknown>;
 }
 
@@ -82,82 +84,93 @@ async function writePendingPostCompactionState(sessionDir: string): Promise<void
   );
 }
 
-describe("AgentSession hot memories", () => {
+describe("AgentSession memory context", () => {
   let historyCleanup: (() => Promise<void>) | undefined;
   afterEach(async () => {
     await historyCleanup?.();
   });
 
-  test("computes the block once at session start and reuses it across turns", async () => {
-    using sessionDir = new DisposableTempDir("agent-session-hot-memories");
+  test("computes the context once at session start and reuses it across turns", async () => {
+    using sessionDir = new DisposableTempDir("agent-session-memory-context");
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
 
-    const buildHotMemoriesBlock = mock(() => Promise.resolve("<hot_memories>v1</hot_memories>"));
+    const context: MemorySessionContext = {
+      indexEntries: [{ path: "/memories/global/a.md", description: "desc a" }],
+      hotMemoriesBlock: "<hot_memories>v1</hot_memories>",
+    };
+    const buildMemorySessionContext = mock(() => Promise.resolve(context));
     const session = createSession({
       historyService,
       sessionDir: sessionDir.path,
-      buildHotMemoriesBlock,
+      buildMemorySessionContext,
     });
     const priv = session as unknown as PrivateSessionAccess;
 
     try {
-      expect(await priv.resolveHotMemoriesBlock()).toBe("<hot_memories>v1</hot_memories>");
-      expect(await priv.resolveHotMemoriesBlock()).toBe("<hot_memories>v1</hot_memories>");
-      expect(buildHotMemoriesBlock).toHaveBeenCalledTimes(1);
+      expect(await priv.resolveMemoryContext()).toEqual(context);
+      expect(await priv.resolveMemoryContext()).toEqual(context);
+      expect(buildMemorySessionContext).toHaveBeenCalledTimes(1);
     } finally {
       session.dispose();
     }
   });
 
-  test("caches the absence of hot memories without re-querying per turn", async () => {
-    using sessionDir = new DisposableTempDir("agent-session-hot-memories-null");
+  test("caches the absence of memory context without re-querying per turn", async () => {
+    using sessionDir = new DisposableTempDir("agent-session-memory-context-null");
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
 
-    const buildHotMemoriesBlock = mock(() => Promise.resolve(null));
+    const buildMemorySessionContext = mock(() => Promise.resolve(null));
     const session = createSession({
       historyService,
       sessionDir: sessionDir.path,
-      buildHotMemoriesBlock,
+      buildMemorySessionContext,
     });
     const priv = session as unknown as PrivateSessionAccess;
 
     try {
-      expect(await priv.resolveHotMemoriesBlock()).toBeUndefined();
-      expect(await priv.resolveHotMemoriesBlock()).toBeUndefined();
-      expect(buildHotMemoriesBlock).toHaveBeenCalledTimes(1);
+      expect(await priv.resolveMemoryContext()).toBeUndefined();
+      expect(await priv.resolveMemoryContext()).toBeUndefined();
+      expect(buildMemorySessionContext).toHaveBeenCalledTimes(1);
     } finally {
       session.dispose();
     }
   });
 
-  test("recomputes the block after a compaction boundary is consumed", async () => {
-    using sessionDir = new DisposableTempDir("agent-session-hot-memories-compaction");
+  test("recomputes the context after a compaction boundary is consumed", async () => {
+    using sessionDir = new DisposableTempDir("agent-session-memory-context-compaction");
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
 
     let version = 1;
-    const buildHotMemoriesBlock = mock(() =>
-      Promise.resolve(`<hot_memories>v${version}</hot_memories>`)
+    const buildMemorySessionContext = mock(() =>
+      Promise.resolve({
+        indexEntries: [],
+        hotMemoriesBlock: `<hot_memories>v${version}</hot_memories>`,
+      })
     );
     const session = createSession({
       historyService,
       sessionDir: sessionDir.path,
-      buildHotMemoriesBlock,
+      buildMemorySessionContext,
     });
     const priv = session as unknown as PrivateSessionAccess;
 
     try {
-      expect(await priv.resolveHotMemoriesBlock()).toBe("<hot_memories>v1</hot_memories>");
+      expect((await priv.resolveMemoryContext())?.hotMemoriesBlock).toBe(
+        "<hot_memories>v1</hot_memories>"
+      );
 
       // Consume a pending compaction boundary (first stream after compaction).
       version = 2;
       await writePendingPostCompactionState(sessionDir.path);
       await priv.getPostCompactionAttachmentsIfNeeded();
 
-      expect(await priv.resolveHotMemoriesBlock()).toBe("<hot_memories>v2</hot_memories>");
-      expect(buildHotMemoriesBlock).toHaveBeenCalledTimes(2);
+      expect((await priv.resolveMemoryContext())?.hotMemoriesBlock).toBe(
+        "<hot_memories>v2</hot_memories>"
+      );
+      expect(buildMemorySessionContext).toHaveBeenCalledTimes(2);
     } finally {
       session.dispose();
     }

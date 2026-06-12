@@ -315,6 +315,27 @@ describe("memory tool", () => {
     });
   });
 
+  describe("dynamic description", () => {
+    it("advertises the session-segment index in the tool description", async () => {
+      using fixture = await createFixture();
+      fixture.config.memoryIndexEntries = [
+        { path: "/memories/global/lesson.md", description: "a lesson" },
+        { path: "/memories/project/note.md", description: "" },
+      ];
+      const tool = createMemoryTool(fixture.config);
+      expect(tool.description).toContain('- /memories/global/lesson.md — "a lesson"');
+      expect(tool.description).toContain("- /memories/project/note.md");
+      // The base description (protocol, scopes, commands) must stay intact.
+      expect(tool.description).toContain(TOOL_DEFINITIONS.memory.description);
+    });
+
+    it("falls back to the base description when no index snapshot was resolved", async () => {
+      using fixture = await createFixture();
+      expect(fixture.config.memoryIndexEntries).toBeUndefined();
+      expect(fixture.tool.description).toBe(TOOL_DEFINITIONS.memory.description);
+    });
+  });
+
   describe("experiment gating", () => {
     async function getRegisteredTools(options: {
       memoryService?: MemoryService;

@@ -131,6 +131,7 @@ import {
   stringifyAgentSkillFrontmatter,
 } from "@/node/services/agentSkills/loadedSkillSnapshots";
 import { renderAgentSkillSnapshotText } from "@/common/utils/agentSkills/skillSnapshot";
+import type { MemorySessionContext } from "@/node/services/memoryService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
 import { getErrorMessage } from "@/common/utils/errors";
 import { CompactionMonitor, type CompactionStatusEvent } from "./compactionMonitor";
@@ -404,12 +405,13 @@ export class AgentSession {
   private ackPendingPostCompactionStateOnStreamEnd = false;
 
   /**
-   * Cached hot-memories block (memory experiment). `undefined` means "not yet
-   * computed for this session segment"; `null` means "computed, nothing to
-   * inject". Recomputed only at session start and compaction boundaries —
+   * Cached memory session context (memory experiment): index snapshot for
+   * the memory tool description + hot-memories block. `undefined` means "not
+   * yet computed for this session segment"; `null` means "computed, nothing
+   * to inject". Recomputed only at session start and compaction boundaries —
    * never per turn — so the injected bytes stay prompt-cache-stable.
    */
-  private hotMemoriesBlock: string | null | undefined = undefined;
+  private memoryContext: MemorySessionContext | null | undefined = undefined;
   /**
    * Cache the last-known experiment state so we don't spam metadata refresh
    * when post-compaction context is disabled.
@@ -3548,8 +3550,8 @@ export class AgentSession {
       // Invoked by AIService after runtime.ensureReady() (project-scope
       // listing needs a running runtime). Still ordered after the
       // post-compaction check above: a just-consumed compaction boundary has
-      // already reset the segment cache, so this stream recomputes the block.
-      resolveHotMemoriesBlock: () => this.resolveHotMemoriesBlock(),
+      // already reset the segment cache, so this stream recomputes the context.
+      resolveMemoryContext: () => this.resolveMemoryContext(),
       workspaceGoalService: this.workspaceGoalService,
       experiments: options?.experiments,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
@@ -5327,7 +5329,8 @@ export class AgentSession {
   }
 
   /**
-   * Resolve the hot-memories block for the current session segment.
+   * Resolve the memory session context (index snapshot + hot-memories block)
+   * for the current session segment.
    *
    * Computed lazily on the first stream (session start) and re-fetched only
    * after getPostCompactionAttachmentsIfNeeded consumes a compaction boundary
@@ -5335,17 +5338,17 @@ export class AgentSession {
    * byte-identical within a segment (prompt-cache-stable). Invoked by
    * AIService.streamMessage after runtime.ensureReady(): caching before the
    * runtime is started (stopped Docker/remote workspace) would pin an
-   * empty/partial block for the whole segment.
+   * empty/partial context for the whole segment.
    */
-  private async resolveHotMemoriesBlock(): Promise<string | undefined> {
-    if (this.hotMemoriesBlock === undefined) {
-      // Guard for test mocks that may not implement buildHotMemoriesBlock.
-      this.hotMemoriesBlock =
-        typeof this.aiService.buildHotMemoriesBlock === "function"
-          ? await this.aiService.buildHotMemoriesBlock(this.workspaceId)
+  private async resolveMemoryContext(): Promise<MemorySessionContext | undefined> {
+    if (this.memoryContext === undefined) {
+      // Guard for test mocks that may not implement buildMemorySessionContext.
+      this.memoryContext =
+        typeof this.aiService.buildMemorySessionContext === "function"
+          ? await this.aiService.buildMemorySessionContext(this.workspaceId)
           : null;
     }
-    return this.hotMemoriesBlock ?? undefined;
+    return this.memoryContext ?? undefined;
   }
 
   /**
@@ -5365,9 +5368,10 @@ export class AgentSession {
       this.compactionOccurred = true;
       this.turnsSinceLastAttachment = 0;
       this.postCompactionLoadedSkills = pendingState.loadedSkills;
-      // Compaction boundary: invalidate the session-cached hot-memories block
-      // so the next stream recomputes it from current pins/usage stats.
-      this.hotMemoriesBlock = undefined;
+      // Compaction boundary: invalidate the session-cached memory context so
+      // the next stream recomputes the index and hot set from current
+      // files/pins/usage stats.
+      this.memoryContext = undefined;
       // Clear file state cache since history context is gone
       this.fileChangeTracker.clear();
 
