@@ -1,0 +1,58 @@
+import type { AssistantModelMessage, ModelMessage, ToolModelMessage, ToolResultPart } from "ai";
+import { stripWorkflowRunRecordForModel } from "@/common/utils/workflowRunMessages";
+
+type ToolResultOutput = ToolResultPart["output"];
+
+function stripToolResultPart<P extends { type: string }>(part: P, onChange: () => void): P {
+  if (part.type !== "tool-result") {
+    return part;
+  }
+  const toolResult = part as P & ToolResultPart;
+  const strippedOutput = stripWorkflowRunRecordForModel(toolResult.toolName, toolResult.output);
+  if (strippedOutput === toolResult.output) {
+    return part;
+  }
+  onChange();
+  return { ...part, output: strippedOutput as ToolResultOutput };
+}
+
+/**
+ * Request-only rewrite for *internal* streamText steps.
+ *
+ * applyToolOutputRedaction strips workflow run records when building a request from persisted
+ * history, but within a single streamText turn the SDK feeds tool results straight back into
+ * the next step. Without this, the model step immediately after a workflow_run/workflow_resume
+ * call still sees the full run record (definition source + event log) this redaction exists to
+ * keep out of context.
+ *
+ * Returns the original array when nothing changed so prepareStep can skip the rewrite.
+ */
+export function stripWorkflowRunRecordsFromModelMessages(messages: ModelMessage[]): ModelMessage[] {
+  let didChange = false;
+
+  const result = messages.map((message): ModelMessage => {
+    let changedMessage = false;
+    const onChange = () => {
+      didChange = true;
+      changedMessage = true;
+    };
+
+    // Tool results normally arrive in `tool` messages; assistant content can also carry
+    // tool-result parts after some transforms, so handle both.
+    if (message.role === "tool") {
+      const newContent: ToolModelMessage["content"] = message.content.map((part) =>
+        stripToolResultPart(part, onChange)
+      );
+      return changedMessage ? { ...message, content: newContent } : message;
+    }
+    if (message.role === "assistant" && Array.isArray(message.content)) {
+      const newContent: Exclude<AssistantModelMessage["content"], string> = message.content.map(
+        (part) => stripToolResultPart(part, onChange)
+      );
+      return changedMessage ? { ...message, content: newContent } : message;
+    }
+    return message;
+  });
+
+  return didChange ? result : messages;
+}

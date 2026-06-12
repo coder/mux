@@ -5,7 +5,7 @@
 import type { MuxMessage } from "@/common/types/message";
 import { sanitizeUnknownForProviderOutput } from "@/common/utils/providerOutputSanitization";
 import { stripToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
-import { isWorkflowRunEmittingToolName } from "@/common/utils/workflowRunMessages";
+import { stripWorkflowRunRecordForModel } from "@/common/utils/workflowRunMessages";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -63,27 +63,6 @@ function stripLegacyImageToolOutputForModel(output: unknown): unknown {
       isLegacyImageToolSuccess && key === "images"
         ? value
         : stripLegacyImageToolOutputForModel(value);
-  }
-  return stripped;
-}
-
-// workflow_run / workflow_resume outputs embed the full run record (definition source, event
-// log, step snapshots) solely for the UI run card. The model only needs status/runId/result —
-// in-progress events may never materialize in the final outcome — so drop the record from
-// provider-bound history while persisted history keeps rendering the card.
-function stripWorkflowRunRecordForModel(toolName: string, output: unknown): unknown {
-  if (!isWorkflowRunEmittingToolName(toolName) || !isRecord(output)) {
-    return output;
-  }
-  // Some persisted outputs are wrapped in a { type: "json", value } container.
-  if (output.type === "json" && "value" in output) {
-    return { ...output, value: stripWorkflowRunRecordForModel(toolName, output.value) };
-  }
-  const stripped: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(output)) {
-    if (key !== "run") {
-      stripped[key] = value;
-    }
   }
   return stripped;
 }

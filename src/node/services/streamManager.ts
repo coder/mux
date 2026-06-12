@@ -53,6 +53,7 @@ import {
 import type { SessionUsageService } from "./sessionUsageService";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/messages/extractToolMediaAsUserMessagesFromModelMessages";
+import { stripWorkflowRunRecordsFromModelMessages } from "@/node/utils/messages/stripWorkflowRunRecordsFromModelMessages";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats, getModelStatsResolved } from "@/common/utils/tokens/modelStats";
@@ -1415,8 +1416,12 @@ export class StreamManager extends EventEmitter {
       abortSignal: abortController.signal,
       prepareStep: async ({ messages: stepMessages }) => {
         // streamText runs multiple internal LLM calls (steps) when tools are enabled.
-        // Extract supported attachments out of tool-result JSON so providers don't treat them as text.
-        const rewritten = await extractToolMediaAsUserMessagesFromModelMessages(stepMessages);
+        // Strip workflow run records from same-turn tool results (history-level redaction in
+        // applyToolOutputRedaction can't see these), then extract supported attachments out of
+        // tool-result JSON so providers don't treat them as text.
+        const withoutWorkflowRunRecords = stripWorkflowRunRecordsFromModelMessages(stepMessages);
+        const rewritten =
+          await extractToolMediaAsUserMessagesFromModelMessages(withoutWorkflowRunRecords);
         const effectiveMessages = rewritten === stepMessages ? stepMessages : rewritten;
         if (stepTracker) {
           stepTracker.latestMessages = effectiveMessages;

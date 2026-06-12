@@ -21,6 +21,39 @@ export function isWorkflowRunEmittingToolName(toolName: string): boolean {
   return WORKFLOW_RUN_EMITTING_TOOL_NAMES.has(toolName);
 }
 
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * workflow_run / workflow_resume outputs embed the full run record (definition source, event
+ * log, step snapshots) solely for the UI run card. The model only needs status/runId/result —
+ * in-progress events may never materialize in the final outcome — so drop the record from
+ * model-bound copies (persisted-history requests and internal stream steps alike) while the
+ * persisted output keeps rendering the card.
+ */
+export function stripWorkflowRunRecordForModel(toolName: string, output: unknown): unknown {
+  if (!isWorkflowRunEmittingToolName(toolName) || !isRecordValue(output)) {
+    return output;
+  }
+  // Tool outputs may be wrapped in a { type: "json", value } container (UI parts and
+  // SDK ToolResultPart outputs share this shape).
+  if (output.type === "json" && "value" in output) {
+    const strippedValue = stripWorkflowRunRecordForModel(toolName, output.value);
+    return strippedValue === output.value ? output : { ...output, value: strippedValue };
+  }
+  if (!("run" in output)) {
+    return output;
+  }
+  const stripped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(output)) {
+    if (key !== "run") {
+      stripped[key] = value;
+    }
+  }
+  return stripped;
+}
+
 export const WORKFLOW_RESULT_XML_TAG = "mux_workflow_result";
 
 function getWorkflowResultValue(result: unknown, run: WorkflowRunRecord | null): unknown {
