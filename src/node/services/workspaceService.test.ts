@@ -4961,6 +4961,29 @@ describe("WorkspaceService remove shared-workspace guard", () => {
     }
   });
 
+  test("deletes a parent checkout when its shared child is only queued (fails fast at dequeue like forked tasks)", async () => {
+    const deleteWorkspace = mock(() =>
+      Promise.resolve({ success: true as const, deletedPath: sharedPath })
+    );
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
+      deleteWorkspace,
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
+    try {
+      const workspaceService = createWorkspaceServiceForTest({
+        config: buildParentConfig("queued"),
+        aiService: buildParentAiService(),
+      });
+
+      const result = await workspaceService.remove("parent-ws-id", true);
+      expect(result.success).toBe(true);
+      // Queued children require the parent config entry to launch regardless of isolation, so
+      // they fail fast at dequeue either way — preserving the checkout would only leak it.
+      expect(deleteWorkspace).toHaveBeenCalledTimes(1);
+    } finally {
+      createRuntimeSpy.mockRestore();
+    }
+  });
+
   test("deletes a parent checkout when its shared child already reported", async () => {
     const deleteWorkspace = mock(() =>
       Promise.resolve({ success: true as const, deletedPath: sharedPath })

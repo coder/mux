@@ -3214,15 +3214,13 @@ export class WorkspaceService extends EventEmitter {
 
         // Inverse direction: this workspace's checkout may be shared by live isolation: "none"
         // descendants (their persisted path points at it). Deleting it would yank the cwd out
-        // from under their running/queued streams, so preserve the directory and only clean up
-        // this workspace's config/session state. Terminated/reported shared tasks don't block
-        // deletion (their config entries are either gone or no longer using the checkout).
-        const activeSharedTaskStatuses = new Set([
-          "queued",
-          "starting",
-          "running",
-          "awaiting_report",
-        ]);
+        // from under their started streams, so preserve the directory and only clean up this
+        // workspace's config/session state. Reported/interrupted shared tasks don't block
+        // deletion, and neither do "queued" ones: dequeue requires the parent config entry
+        // regardless of isolation, so a queued child of a removed parent fails fast at launch
+        // ("Queued task parent not found") exactly like a queued forked task — preserving its
+        // checkout would only leak the directory.
+        const activeSharedTaskStatuses = new Set(["starting", "running", "awaiting_report"]);
         const checkoutSharedByActiveTask =
           persistedWorkspacePath != null &&
           Array.from(configSnapshot.projects.values()).some((project) =>
