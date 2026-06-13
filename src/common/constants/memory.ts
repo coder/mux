@@ -64,10 +64,12 @@ export const MEMORY_VIEW_MAX_DEPTH = 2;
 export const MEMORY_HOT_SET_MAX_ITEM_BYTES = 16 * 1024;
 /** Maximum total bytes of selected hot-memory file content. */
 export const MEMORY_HOT_SET_MAX_TOTAL_BYTES = 48 * 1024;
-/** Maximum tokens consumed by rendered hot-memory file blocks. */
+/** Maximum tokens consumed by the rendered <hot_memories> block. */
 export const MEMORY_HOT_SET_MAX_TOTAL_TOKENS = 12_000;
 /** Maximum number of memory files preloaded into the system prompt. */
 export const MEMORY_HOT_SET_MAX_ITEMS = 8;
+/** Maximum ranked candidates to read/tokenize while filling the hot set. */
+export const MEMORY_HOT_SET_MAX_SELECTION_ATTEMPTS = 64;
 /** Half-life of the recency decay applied to access counts when ranking auto-hot files. */
 export const MEMORY_HOT_SET_DECAY_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
 

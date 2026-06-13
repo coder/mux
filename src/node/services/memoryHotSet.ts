@@ -13,6 +13,7 @@ import {
   MEMORY_HOT_SET_DECAY_HALF_LIFE_MS,
   MEMORY_HOT_SET_MAX_ITEM_BYTES,
   MEMORY_HOT_SET_MAX_ITEMS,
+  MEMORY_HOT_SET_MAX_SELECTION_ATTEMPTS,
   MEMORY_HOT_SET_MAX_TOTAL_BYTES,
   MEMORY_HOT_SET_MAX_TOTAL_TOKENS,
 } from "@/common/constants/memory";
@@ -105,19 +106,21 @@ export async function selectHotMemories(args: {
   candidates: MemoryHotSetCandidate[];
   /** Read a memory file by virtual path; may reject for missing/unreadable files. */
   readFile: (virtualPath: string) => Promise<string>;
-  /** Count tokens for the exact rendered <memory_file> block using the active model. */
+  /** Count tokens for the exact rendered hot-memory block using the active model. */
   countTokens: (text: string) => Promise<number>;
   now?: number;
   maxItemBytes?: number;
   maxTotalBytes?: number;
   maxTotalTokens?: number;
   maxItems?: number;
+  maxSelectionAttempts?: number;
 }): Promise<MemoryHotSetItem[]> {
   const now = args.now ?? Date.now();
   const maxItemBytes = args.maxItemBytes ?? MEMORY_HOT_SET_MAX_ITEM_BYTES;
   const maxTotalBytes = args.maxTotalBytes ?? MEMORY_HOT_SET_MAX_TOTAL_BYTES;
   const maxTotalTokens = args.maxTotalTokens ?? MEMORY_HOT_SET_MAX_TOTAL_TOKENS;
   const maxItems = args.maxItems ?? MEMORY_HOT_SET_MAX_ITEMS;
+  const maxSelectionAttempts = args.maxSelectionAttempts ?? MEMORY_HOT_SET_MAX_SELECTION_ATTEMPTS;
   assert(
     Number.isInteger(maxItemBytes) && maxItemBytes > 0,
     "selectHotMemories requires a positive per-item byte budget"
@@ -134,12 +137,19 @@ export async function selectHotMemories(args: {
     Number.isInteger(maxItems) && maxItems > 0,
     "selectHotMemories requires a positive item cap"
   );
+  assert(
+    Number.isInteger(maxSelectionAttempts) && maxSelectionAttempts > 0,
+    "selectHotMemories requires a positive selection attempt cap"
+  );
 
   const items: MemoryHotSetItem[] = [];
   let remainingBytes = maxTotalBytes;
-  let remainingTokens = maxTotalTokens;
+  let selectedTokens = 0;
+  let attempts = 0;
   for (const candidate of rankHotSetCandidates(args.candidates, now)) {
-    if (remainingBytes <= 0 || remainingTokens <= 0 || items.length >= maxItems) break;
+    if (remainingBytes <= 0 || selectedTokens >= maxTotalTokens || items.length >= maxItems) break;
+    if (attempts >= maxSelectionAttempts) break;
+    attempts += 1;
     let content: string;
     try {
       content = await args.readFile(candidate.path);
@@ -155,7 +165,10 @@ export async function selectHotMemories(args: {
     const item = { path: candidate.path, pinned: candidate.pinned, truncated, content: text };
     let tokens: number;
     try {
-      tokens = await args.countTokens(formatHotMemoryFileBlock(item));
+      // The configured cap applies to the exact injected <hot_memories> block,
+      // not just the sum of file fragments, so wrapper/guidance overhead cannot
+      // silently exceed the budget near the boundary.
+      tokens = await args.countTokens(formatHotMemoriesBlock([...items, item]));
     } catch {
       continue;
     }
@@ -163,10 +176,10 @@ export async function selectHotMemories(args: {
       Number.isInteger(tokens) && tokens >= 0,
       "selectHotMemories token counter returned an invalid count"
     );
-    if (tokens > remainingTokens) continue;
+    if (tokens > maxTotalTokens) continue;
 
     remainingBytes -= bytes;
-    remainingTokens -= tokens;
+    selectedTokens = tokens;
     items.push(item);
   }
   return items;

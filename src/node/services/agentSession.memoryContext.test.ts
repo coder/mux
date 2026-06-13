@@ -73,7 +73,10 @@ function createSession(args: {
 }
 
 interface PrivateSessionAccess {
-  resolveMemoryContext: (modelString: string) => Promise<MemorySessionContext | undefined>;
+  resolveMemoryContext: (
+    modelString: string,
+    options?: { includeHotMemories?: boolean }
+  ) => Promise<MemorySessionContext | undefined>;
   getPostCompactionAttachmentsIfNeeded: () => Promise<unknown>;
 }
 
@@ -111,6 +114,45 @@ describe("AgentSession memory context", () => {
       expect(await priv.resolveMemoryContext("test-model")).toEqual(context);
       expect(await priv.resolveMemoryContext("test-model")).toEqual(context);
       expect(buildMemorySessionContext).toHaveBeenCalledTimes(1);
+    } finally {
+      session.dispose();
+    }
+  });
+
+  test("upgrades an index-only memory context when hot memories are requested", async () => {
+    using sessionDir = new DisposableTempDir("agent-session-memory-context-upgrade");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const buildMemorySessionContext = mock(
+      (_workspaceId: string, modelString: string, options?: { includeHotMemories?: boolean }) =>
+        Promise.resolve({
+          indexEntries: [],
+          hotMemoriesBlock:
+            options?.includeHotMemories === false
+              ? null
+              : `<hot_memories>${modelString}</hot_memories>`,
+        })
+    );
+    const session = createSession({
+      historyService,
+      sessionDir: sessionDir.path,
+      buildMemorySessionContext,
+    });
+    const priv = session as unknown as PrivateSessionAccess;
+
+    try {
+      expect(
+        (await priv.resolveMemoryContext("model-a", { includeHotMemories: false }))
+          ?.hotMemoriesBlock
+      ).toBeNull();
+      expect((await priv.resolveMemoryContext("model-a"))?.hotMemoriesBlock).toBe(
+        "<hot_memories>model-a</hot_memories>"
+      );
+      expect((await priv.resolveMemoryContext("model-a"))?.hotMemoriesBlock).toBe(
+        "<hot_memories>model-a</hot_memories>"
+      );
+      expect(buildMemorySessionContext).toHaveBeenCalledTimes(2);
     } finally {
       session.dispose();
     }
