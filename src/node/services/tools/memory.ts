@@ -20,31 +20,27 @@ const READ_ONLY_ACCESS: MemoryScopeAccess = {
   workspace: "read",
 };
 
+/** Full write access to every scope, shared by plan-like and exec-like agents. */
+const READ_WRITE_ACCESS: MemoryScopeAccess = {
+  global: "readwrite",
+  project: "readwrite",
+  workspace: "readwrite",
+};
+
 /**
  * Map an agent class onto the per-scope memory write matrix
  * (see MemoryScopeAccess in src/common/constants/memory.ts):
- * - Plan-like agents get read-write memory access; project memory is host-local
- *   and never mutates the repo checkout.
- * - Editing-capable (exec-like) agents get read-write everywhere.
+ * - Plan-like and editing-capable (exec-like) agents get read-write everywhere;
+ *   project memory is host-local and never mutates the repo checkout, so even
+ *   plan agents may write it.
  * - Everything else (explore/read-only agents) is view-only.
  */
 export function resolveMemoryAccessPolicy(options: {
   planLike: boolean;
   editingCapable: boolean;
 }): MemoryScopeAccess {
-  if (options.planLike) {
-    return {
-      global: "readwrite",
-      project: "readwrite",
-      workspace: "readwrite",
-    };
-  }
-  if (options.editingCapable) {
-    return {
-      global: "readwrite",
-      project: "readwrite",
-      workspace: "readwrite",
-    };
+  if (options.planLike || options.editingCapable) {
+    return READ_WRITE_ACCESS;
   }
   return READ_ONLY_ACCESS;
 }
