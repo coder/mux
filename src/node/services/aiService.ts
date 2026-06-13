@@ -1335,6 +1335,21 @@ export class AIService extends EventEmitter {
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY) === true;
       const memoryHotSetExperimentEnabled =
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY_HOT_SET) === true;
+      // Once final tool policy keeps the memory tool, upgrade the index-only
+      // memory context (resolved pre-policy with includeHotMemories: false) to
+      // the token-budgeted hot block for the model that will actually stream.
+      // Returns the unchanged pre-policy `memoryContext` reference when hot
+      // preloading is off or the memory tool was stripped, so callers can use
+      // identity comparison to decide whether the system prompt must be rebuilt.
+      const upgradeMemoryContextForModel = async (
+        memoryToolAvailableForModel: boolean,
+        modelStringForContext: string
+      ): Promise<MemorySessionContext | undefined> =>
+        memoryToolAvailableForModel &&
+        memoryHotSetExperimentEnabled &&
+        resolveMemoryContext !== undefined
+          ? await resolveMemoryContext(modelStringForContext, { includeHotMemories: true })
+          : memoryContext;
       emitStartupBreadcrumb("loading_workspace_context");
       const resolveAgentForStreamStartedAt = Date.now();
       const agentResult = await resolveAgentForStream({
@@ -2089,11 +2104,10 @@ export class AIService extends EventEmitter {
 
       const advisorToolAvailable = tools.advisor !== undefined;
       const memoryToolAvailable = tools.memory !== undefined;
-      const shouldUpgradeMemoryContext =
-        memoryToolAvailable && memoryHotSetExperimentEnabled && resolveMemoryContext !== undefined;
-      const finalMemoryContext = shouldUpgradeMemoryContext
-        ? await resolveMemoryContext(modelString, { includeHotMemories: true })
-        : memoryContext;
+      const finalMemoryContext = await upgradeMemoryContextForModel(
+        memoryToolAvailable,
+        modelString
+      );
       const finalStreamSystemContext =
         advisorToolAvailable === advisorToolEligible &&
         memoryToolAvailable === memoryToolEligible &&
@@ -2473,15 +2487,10 @@ export class AIService extends EventEmitter {
                   });
                   const nextToolNamesForSentinel = Object.keys(nextTools).sort();
                   const nextMemoryToolAvailable = nextTools.memory !== undefined;
-                  const shouldUpgradeNextMemoryContext =
-                    nextMemoryToolAvailable &&
-                    memoryHotSetExperimentEnabled &&
-                    resolveMemoryContext !== undefined;
-                  const nextMemoryContext = shouldUpgradeNextMemoryContext
-                    ? await resolveMemoryContext(next.canonicalModelString, {
-                        includeHotMemories: true,
-                      })
-                    : memoryContext;
+                  const nextMemoryContext = await upgradeMemoryContextForModel(
+                    nextMemoryToolAvailable,
+                    next.canonicalModelString
+                  );
 
                   // Rebuild the system prompt for the fallback model (tool
                   // instructions and "Model:" sections are model-keyed), keeping
