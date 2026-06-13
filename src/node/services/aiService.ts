@@ -236,13 +236,14 @@ export interface StreamMessageOptions {
   /**
    * Resolver for the session-segment memory context (memory experiment):
    * index snapshot for the memory tool description + hot-memories block.
-   * AgentSession caches the result per session segment so its bytes stay
-   * prompt-cache-stable. A callback (not a pre-resolved value) because it
-   * must be computed after runtime.ensureReady(): project-scope listing on a
+   * AgentSession caches the result per model/session segment because hot-memory
+   * selection is token-budgeted with the active model tokenizer. A callback
+   * (not a pre-resolved value) because it must be computed after
+   * runtime.ensureReady(): project-scope listing on a
    * stopped Docker/remote workspace would otherwise cache an empty/partial
    * context for the whole segment.
    */
-  resolveMemoryContext?: () => Promise<MemorySessionContext | undefined>;
+  resolveMemoryContext?: (modelString: string) => Promise<MemorySessionContext | undefined>;
   experiments?: SendMessageOptions["experiments"];
   workspaceGoalService?: WorkspaceGoalService;
   disableWorkspaceAgents?: boolean;
@@ -527,13 +528,17 @@ export class AIService extends EventEmitter {
    * frequently used memory files; memory-hot-set sub-experiment). Returns
    * null when the memory experiment is off.
    *
-   * Callers (AgentSession) cache the result and recompute it only at session
-   * start and compaction boundaries — never per turn — so the injected bytes
-   * stay prompt-cache-stable within a session segment. Memories written
-   * mid-segment surface in the next segment's index (the writing agent
-   * already has its own tool calls in context, and `view` lists live state).
+   * Callers (AgentSession) cache the result per model and recompute it only
+   * on the first use of a model in a session segment, or at compaction
+   * boundaries, so repeated turns keep prompt-cache-stable bytes. Memories
+   * written mid-segment surface in the next segment's index for cached models
+   * (the writing agent already has its own tool calls in context, and `view`
+   * lists live state).
    */
-  async buildMemorySessionContext(workspaceId: string): Promise<MemorySessionContext | null> {
+  async buildMemorySessionContext(
+    workspaceId: string,
+    modelString: string
+  ): Promise<MemorySessionContext | null> {
     if (!this.memoryService) return null;
     if (this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY) !== true) {
       return null;
@@ -557,7 +562,14 @@ export class AIService extends EventEmitter {
       // pull-based like skills (index only, contents fetched on demand).
       let hotMemoriesBlock: string | null = null;
       if (this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY_HOT_SET) === true) {
-        const items = await this.memoryService.listHotMemories(ctx);
+        const metadataModel = resolveModelForMetadata(
+          modelString,
+          this.providerService.getConfig()
+        );
+        const tokenizer = await getTokenizerForModel(modelString, metadataModel);
+        const items = await this.memoryService.listHotMemories(ctx, {
+          countTokens: (text) => tokenizer.countTokens(text),
+        });
         hotMemoriesBlock = items.length === 0 ? null : formatHotMemoriesBlock(items);
       }
       return { indexEntries, hotMemoriesBlock };
@@ -1288,8 +1300,10 @@ export class AIService extends EventEmitter {
       // Memory context (memory experiment): resolved only after ensureReady so
       // project-scope listing sees a running runtime (a stopped Docker/remote
       // workspace would yield an empty/partial context, and AgentSession caches
-      // the result for the whole session segment).
-      const memoryContext = resolveMemoryContext ? await resolveMemoryContext() : undefined;
+      // the result per model/session segment).
+      const memoryContext = resolveMemoryContext
+        ? await resolveMemoryContext(modelString)
+        : undefined;
 
       // Resolve agent definition, compute effective mode & tool policy.
       const cfg = this.config.loadConfigOrDefault();

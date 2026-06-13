@@ -406,12 +406,13 @@ export class AgentSession {
 
   /**
    * Cached memory session context (memory experiment): index snapshot for
-   * the memory tool description + hot-memories block. `undefined` means "not
-   * yet computed for this session segment"; `null` means "computed, nothing
-   * to inject". Recomputed only at session start and compaction boundaries —
-   * never per turn — so the injected bytes stay prompt-cache-stable.
+   * the memory tool description + hot-memories block, keyed by model because
+   * the hot set is token-budgeted with the active model's tokenizer. `null`
+   * means "computed, nothing to inject". Recomputed only once per model in a
+   * session segment, and cleared at compaction boundaries, so repeated turns
+   * keep prompt-cache-stable bytes.
    */
-  private memoryContext: MemorySessionContext | null | undefined = undefined;
+  private readonly memoryContextByModelString = new Map<string, MemorySessionContext | null>();
   /**
    * Cache the last-known experiment state so we don't spam metadata refresh
    * when post-compaction context is disabled.
@@ -3551,7 +3552,7 @@ export class AgentSession {
       // listing needs a running runtime). Still ordered after the
       // post-compaction check above: a just-consumed compaction boundary has
       // already reset the segment cache, so this stream recomputes the context.
-      resolveMemoryContext: () => this.resolveMemoryContext(),
+      resolveMemoryContext: (forModelString) => this.resolveMemoryContext(forModelString),
       workspaceGoalService: this.workspaceGoalService,
       experiments: options?.experiments,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
@@ -5332,23 +5333,27 @@ export class AgentSession {
    * Resolve the memory session context (index snapshot + hot-memories block)
    * for the current session segment.
    *
-   * Computed lazily on the first stream (session start) and re-fetched only
+   * Computed lazily on the first stream for each model and re-fetched only
    * after getPostCompactionAttachmentsIfNeeded consumes a compaction boundary
-   * (which resets the cache) — never per turn — so the injected bytes stay
-   * byte-identical within a segment (prompt-cache-stable). Invoked by
-   * AIService.streamMessage after runtime.ensureReady(): caching before the
-   * runtime is started (stopped Docker/remote workspace) would pin an
-   * empty/partial context for the whole segment.
+   * (which resets the cache) — never per repeated model turn — so injected
+   * bytes stay byte-identical for prompt caching. Invoked by AIService.streamMessage
+   * after runtime.ensureReady(): caching before the runtime is started
+   * (stopped Docker/remote workspace) would pin an empty/partial context for
+   * the whole segment.
    */
-  private async resolveMemoryContext(): Promise<MemorySessionContext | undefined> {
-    if (this.memoryContext === undefined) {
+  private async resolveMemoryContext(
+    modelString: string
+  ): Promise<MemorySessionContext | undefined> {
+    assert(modelString.length > 0, "resolveMemoryContext requires a model string");
+    if (!this.memoryContextByModelString.has(modelString)) {
       // Guard for test mocks that may not implement buildMemorySessionContext.
-      this.memoryContext =
+      const context =
         typeof this.aiService.buildMemorySessionContext === "function"
-          ? await this.aiService.buildMemorySessionContext(this.workspaceId)
+          ? await this.aiService.buildMemorySessionContext(this.workspaceId, modelString)
           : null;
+      this.memoryContextByModelString.set(modelString, context);
     }
-    return this.memoryContext ?? undefined;
+    return this.memoryContextByModelString.get(modelString) ?? undefined;
   }
 
   /**
@@ -5371,7 +5376,7 @@ export class AgentSession {
       // Compaction boundary: invalidate the session-cached memory context so
       // the next stream recomputes the index and hot set from current
       // files/pins/usage stats.
-      this.memoryContext = undefined;
+      this.memoryContextByModelString.clear();
       // Clear file state cache since history context is gone
       this.fileChangeTracker.clear();
 

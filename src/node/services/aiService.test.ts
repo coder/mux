@@ -1668,7 +1668,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       },
     ]);
 
-    const pullOnly = await service.buildMemorySessionContext(workspaceId);
+    const pullOnly = await service.buildMemorySessionContext(workspaceId, "openai:gpt-5.2");
     expect(pullOnly?.indexEntries.map((entry) => entry.path)).toEqual([
       "/memories/project/root-note.md",
     ]);
@@ -1677,7 +1677,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(listHotSpy).not.toHaveBeenCalled();
 
     hotSetEnabled = true;
-    const withHotSet = await service.buildMemorySessionContext(workspaceId);
+    const withHotSet = await service.buildMemorySessionContext(workspaceId, "openai:gpt-5.2");
     expect(withHotSet?.hotMemoriesBlock).toContain("root fact");
   });
 
@@ -1690,10 +1690,9 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
-    // Ordering is the contract under test: the resolver result is cached per
-    // session segment by AgentSession, so resolving before ensureReady on a
-    // stopped Docker/remote workspace would pin an empty/partial block for
-    // the whole segment.
+    // Ordering is the contract under test: AgentSession caches the resolver
+    // result per model/session segment, so resolving before ensureReady on a
+    // stopped Docker/remote workspace would pin an empty/partial block.
     const order: string[] = [];
     const realCreateRuntime = runtimeFactory.createRuntime;
     spyOn(runtimeFactory, "createRuntime").mockImplementation((runtimeConfig, options) => {

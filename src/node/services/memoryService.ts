@@ -1314,7 +1314,10 @@ export class MemoryService extends EventEmitter {
    * intentionally bypasses usage recording — preloading is not a use, only
    * explicit reads/writes are.
    */
-  async listHotMemories(ctx: MemoryScopeContext): Promise<MemoryHotSetItem[]> {
+  async listHotMemories(
+    ctx: MemoryScopeContext,
+    options: { countTokens: (text: string) => Promise<number> }
+  ): Promise<MemoryHotSetItem[]> {
     const entries = await this.listIndexEntries(ctx);
     const meta = await this.metaService.getEntries();
     const candidates = entries.map((entry) => {
@@ -1329,6 +1332,7 @@ export class MemoryService extends EventEmitter {
     });
     return selectHotMemories({
       candidates,
+      countTokens: options.countTokens,
       readFile: (virtualPath) => {
         const parsed = parseMemoryPath(virtualPath);
         const scope = this.requireFilePath(parsed, virtualPath);
@@ -1346,10 +1350,10 @@ export class MemoryService extends EventEmitter {
 }
 
 /**
- * Session-segment memory context (memory experiment). Computed once per
- * session segment (session start + compaction boundaries) and cached by
+ * Session-segment memory context (memory experiment). Computed once per model
+ * in a session segment (session start + compaction boundaries) and cached by
  * AgentSession so both the memory tool description (index) and the system
- * prompt (hot block) stay byte-identical within a segment
+ * prompt (token-budgeted hot block) stay byte-identical for repeated turns
  * (prompt-cache-stable).
  */
 export interface MemorySessionContext {

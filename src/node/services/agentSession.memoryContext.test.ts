@@ -16,9 +16,9 @@ import { createTestHistoryService } from "./testHistoryService";
 
 /**
  * Behavior under test: the memory session context (index snapshot +
- * hot-memories block) is computed once at session start and recomputed only
- * at compaction boundaries — never per turn — so the injected bytes stay
- * prompt-cache-stable within a session segment.
+ * hot-memories block) is computed once per model in a session segment and
+ * recomputed at compaction boundaries — never per repeated model turn — so the
+ * injected bytes stay prompt-cache-stable.
  */
 
 function createSession(args: {
@@ -73,7 +73,7 @@ function createSession(args: {
 }
 
 interface PrivateSessionAccess {
-  resolveMemoryContext: () => Promise<MemorySessionContext | undefined>;
+  resolveMemoryContext: (modelString: string) => Promise<MemorySessionContext | undefined>;
   getPostCompactionAttachmentsIfNeeded: () => Promise<unknown>;
 }
 
@@ -90,7 +90,7 @@ describe("AgentSession memory context", () => {
     await historyCleanup?.();
   });
 
-  test("computes the context once at session start and reuses it across turns", async () => {
+  test("computes the context once for a model and reuses it across turns", async () => {
     using sessionDir = new DisposableTempDir("agent-session-memory-context");
     const { historyService, cleanup } = await createTestHistoryService();
     historyCleanup = cleanup;
@@ -108,9 +108,43 @@ describe("AgentSession memory context", () => {
     const priv = session as unknown as PrivateSessionAccess;
 
     try {
-      expect(await priv.resolveMemoryContext()).toEqual(context);
-      expect(await priv.resolveMemoryContext()).toEqual(context);
+      expect(await priv.resolveMemoryContext("test-model")).toEqual(context);
+      expect(await priv.resolveMemoryContext("test-model")).toEqual(context);
       expect(buildMemorySessionContext).toHaveBeenCalledTimes(1);
+    } finally {
+      session.dispose();
+    }
+  });
+
+  test("caches memory context separately per model", async () => {
+    using sessionDir = new DisposableTempDir("agent-session-memory-context-model");
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const buildMemorySessionContext = mock((_workspaceId: string, modelString: string) =>
+      Promise.resolve({
+        indexEntries: [],
+        hotMemoriesBlock: `<hot_memories>${modelString}</hot_memories>`,
+      })
+    );
+    const session = createSession({
+      historyService,
+      sessionDir: sessionDir.path,
+      buildMemorySessionContext,
+    });
+    const priv = session as unknown as PrivateSessionAccess;
+
+    try {
+      expect((await priv.resolveMemoryContext("model-a"))?.hotMemoriesBlock).toBe(
+        "<hot_memories>model-a</hot_memories>"
+      );
+      expect((await priv.resolveMemoryContext("model-b"))?.hotMemoriesBlock).toBe(
+        "<hot_memories>model-b</hot_memories>"
+      );
+      expect((await priv.resolveMemoryContext("model-a"))?.hotMemoriesBlock).toBe(
+        "<hot_memories>model-a</hot_memories>"
+      );
+      expect(buildMemorySessionContext).toHaveBeenCalledTimes(2);
     } finally {
       session.dispose();
     }
@@ -130,8 +164,8 @@ describe("AgentSession memory context", () => {
     const priv = session as unknown as PrivateSessionAccess;
 
     try {
-      expect(await priv.resolveMemoryContext()).toBeUndefined();
-      expect(await priv.resolveMemoryContext()).toBeUndefined();
+      expect(await priv.resolveMemoryContext("test-model")).toBeUndefined();
+      expect(await priv.resolveMemoryContext("test-model")).toBeUndefined();
       expect(buildMemorySessionContext).toHaveBeenCalledTimes(1);
     } finally {
       session.dispose();
@@ -158,7 +192,7 @@ describe("AgentSession memory context", () => {
     const priv = session as unknown as PrivateSessionAccess;
 
     try {
-      expect((await priv.resolveMemoryContext())?.hotMemoriesBlock).toBe(
+      expect((await priv.resolveMemoryContext("test-model"))?.hotMemoriesBlock).toBe(
         "<hot_memories>v1</hot_memories>"
       );
 
@@ -167,7 +201,7 @@ describe("AgentSession memory context", () => {
       await writePendingPostCompactionState(sessionDir.path);
       await priv.getPostCompactionAttachmentsIfNeeded();
 
-      expect((await priv.resolveMemoryContext())?.hotMemoriesBlock).toBe(
+      expect((await priv.resolveMemoryContext("test-model"))?.hotMemoriesBlock).toBe(
         "<hot_memories>v2</hot_memories>"
       );
       expect(buildMemorySessionContext).toHaveBeenCalledTimes(2);
