@@ -1220,8 +1220,7 @@ export const TOOL_DEFINITIONS = {
       "MEMORY PROTOCOL: check relevant memories before acting on a task; record durable facts, preferences, and lessons as you learn them; update or delete memories that turn out to be wrong or stale.\n" +
       "Scopes (all paths are virtual):\n" +
       "- /memories/global/... — personal, permanent, shared across all projects\n" +
-      "- /memories/project/... — committed with the repository (git-tracked, reviewable); never store secrets here\n" +
-      "- /memories/project-local/... — private notes about this project; host-local, never committed, survives workspaces\n" +
+      "- /memories/project/... — private notes about this project; host-local, never committed, survives workspaces\n" +
       "- /memories/workspace/... — scratch state for this workspace; deleted with the workspace\n" +
       "Commands:\n" +
       "- view: list a directory (up to 2 levels, dotfiles excluded) or show a file with line numbers (offset/limit supported)\n" +

@@ -100,10 +100,9 @@ export function createConsolidationMemoryTool(args: {
 
   const guard = async (target: MutationTarget): Promise<string | null> => {
     // v1 scope restriction — whitelist, not blacklist, so scopes added later
-    // (e.g. project-local from #3533) stay out of bounds by default. Project
-    // memories are git-tracked and need a live checkout + diff-visibility
-    // story; project-local is project-private state this background pass has
-    // no business rewriting. Defer both to phase 1.1 (PRD #3534).
+    // stay out of bounds by default. Project memory is private project state
+    // this background pass has no business rewriting. Defer it to a later phase
+    // if product semantics call for it.
     for (const virtualPath of [target.path, target.newPath]) {
       if (virtualPath == null) continue;
       const { scope } = parseMemoryPath(virtualPath);

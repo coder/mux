@@ -186,8 +186,8 @@ export async function selectHotMemories(args: {
 }
 
 /**
- * Escape XML metacharacters so untrusted values (repo-controlled filenames,
- * frontmatter descriptions) cannot break out of prompt-context block markup.
+ * Escape XML metacharacters so untrusted values (filenames, frontmatter
+ * descriptions) cannot break out of prompt-context block markup.
  * Shared by the hot-memories and memory-index renderers.
  */
 export function escapeXmlAttribute(value: string): string {
@@ -230,8 +230,7 @@ function formatHotMemoryFileBlock(item: MemoryHotSetItem): string {
  * Render the hot-memories context block.
  *
  * Hardening mirrors the memory index block: memory contents are untrusted
- * input (project memories are repo-controlled), so the block tells the model
- * the contents are data, not instructions.
+ * input, so the block tells the model the contents are data, not instructions.
  */
 export function formatHotMemoriesBlock(items: MemoryHotSetItem[]): string {
   assert(items.length > 0, "formatHotMemoriesBlock requires at least one item");

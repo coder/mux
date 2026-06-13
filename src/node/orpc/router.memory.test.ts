@@ -30,7 +30,23 @@ describe("router memory routes", () => {
     await fsPromises.rm(tempDir, { recursive: true, force: true });
   });
 
-  function createContext(options: { enabled: boolean }): ORPCContext {
+  function workspaceInfo(projects?: Array<{ projectPath: string; projectName: string }>) {
+    return {
+      id: "ws-mem",
+      name: projectPath,
+      projectPath,
+      projectName: path.basename(projectPath),
+      namedWorkspacePath: projectPath,
+      runtimeConfig: { type: "local", srcBaseDir: tempDir },
+      projects,
+    };
+  }
+
+  function createContext(options: {
+    enabled: boolean;
+    workspaceInfo?: ReturnType<typeof workspaceInfo>;
+  }): ORPCContext {
+    const info = options.workspaceInfo ?? workspaceInfo();
     return {
       config,
       memoryService,
@@ -38,17 +54,7 @@ describe("router memory routes", () => {
       workspaceService: {
         // In-place workspace shape (projectPath === name) so the checkout cwd
         // resolves to projectPath itself without a worktree.
-        getInfo: mock(async (workspaceId: string) =>
-          workspaceId === "ws-mem"
-            ? {
-                id: "ws-mem",
-                name: projectPath,
-                projectPath,
-                namedWorkspacePath: projectPath,
-                runtimeConfig: { type: "local", srcBaseDir: tempDir },
-              }
-            : null
-        ),
+        getInfo: mock(async (workspaceId: string) => (workspaceId === "ws-mem" ? info : null)),
       },
       experimentsService: {
         isExperimentEnabled: mock(() => options.enabled),
@@ -56,7 +62,10 @@ describe("router memory routes", () => {
     } as unknown as ORPCContext;
   }
 
-  function createClient(options: { enabled: boolean }) {
+  function createClient(options: {
+    enabled: boolean;
+    workspaceInfo?: ReturnType<typeof workspaceInfo>;
+  }) {
     return createRouterClient(router(), { context: createContext(options) });
   }
 
@@ -352,6 +361,29 @@ describe("router memory routes", () => {
     });
   });
 
+  test("setPinned rejects project pins when project memory is unavailable", async () => {
+    const otherProjectPath = path.join(tempDir, "other-project");
+    await fsPromises.mkdir(otherProjectPath, { recursive: true });
+    const client = createClient({
+      enabled: true,
+      workspaceInfo: workspaceInfo([
+        { projectPath, projectName: path.basename(projectPath) },
+        { projectPath: otherProjectPath, projectName: path.basename(otherProjectPath) },
+      ]),
+    });
+
+    const projectPin = await client.memory.setPinned({
+      workspaceId: "ws-mem",
+      path: "/memories/project/conventions.md",
+      pinned: true,
+    });
+    expect(projectPin).toEqual({
+      success: false,
+      error: expect.stringContaining("Project memory is unavailable"),
+    });
+    expect(await memoryMetaService.getPinnedKeys()).toEqual(new Set());
+  });
+
   test("delete propagates service errors", async () => {
     const client = createClient({ enabled: true });
     const result = await client.memory.delete({
@@ -369,7 +401,7 @@ describe("router memory routes", () => {
     const consumer = (async () => {
       for await (const event of iterator) {
         received.push(event);
-        if (received.length >= 4) break;
+        if (received.length >= 3) break;
       }
     })();
     // The route attaches its service listener lazily (on first pull).
@@ -395,15 +427,6 @@ describe("router memory routes", () => {
       workspaceId: "ws-other",
       projectPath: "/somewhere/else",
     });
-    // Dropped: another project's project-local file (host-local stores are
-    // separate per project; same virtual path, different physical file).
-    emit({
-      scope: "project-local",
-      path: "/memories/project-local/notes.md",
-      actor: "agent",
-      workspaceId: "ws-other",
-      projectPath: "/somewhere/else",
-    });
     // Delivered: global is shared everywhere.
     emit({
       scope: "global",
@@ -420,8 +443,8 @@ describe("router memory routes", () => {
       workspaceId: "ws-mem",
       projectPath,
     });
-    // Delivered: same project, different workspace (project memories are
-    // shared per repository).
+    // Delivered: same project, different workspace (project memory is shared
+    // across that project's workspaces on this host).
     emit({
       scope: "project",
       path: "/memories/project/notes.md",
@@ -429,22 +452,11 @@ describe("router memory routes", () => {
       workspaceId: "ws-other",
       projectPath,
     });
-    // Delivered: same project's project-local file (shared across the
-    // project's workspaces, host-local).
-    emit({
-      scope: "project-local",
-      path: "/memories/project-local/notes.md",
-      actor: "agent",
-      workspaceId: "ws-other",
-      projectPath,
-    });
-
     await consumer;
     expect(received.map((e) => [e.scope, e.workspaceId])).toEqual([
       ["global", "ws-other"],
       ["workspace", "ws-mem"],
       ["project", "ws-other"],
-      ["project-local", "ws-other"],
     ]);
   });
 });

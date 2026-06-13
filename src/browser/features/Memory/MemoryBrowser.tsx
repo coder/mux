@@ -27,7 +27,6 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { MemoryFileEditor } from "./MemoryFileEditor";
 
 const SCOPE_LABELS: Record<MemoryScope, string> = {
-  "project-local": "Project (local)",
   global: "Global",
   project: "Project",
   workspace: "Workspace",
@@ -53,9 +52,8 @@ interface MemoryBrowserProps {
  * list + whole-file editor. Consumed by the right-sidebar Memory tab (all
  * scopes) and Settings → Memory (global scope only, no workspace).
  *
- * SECURITY: memory file contents and descriptions are attacker-influenceable
- * (project memories are repo-controlled), so everything renders as plain React
- * text — never through innerHTML-family sinks.
+ * SECURITY: memory file contents and descriptions are attacker-influenceable,
+ * so everything renders as plain React text — never through innerHTML-family sinks.
  */
 export function MemoryBrowser(props: MemoryBrowserProps) {
   const { api } = useAPI();

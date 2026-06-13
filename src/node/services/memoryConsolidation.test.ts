@@ -33,14 +33,13 @@ interface Fixture extends Disposable {
 async function createFixture(options?: { dryRun?: boolean }): Promise<Fixture> {
   const tempDir = new TestTempDir("test-memory-consolidation");
   const muxHome = path.join(tempDir.path, "mux-home");
-  const globalMemoryDir = path.join(muxHome, "memory");
+  const globalMemoryDir = path.join(muxHome, "memory", "global");
   await fsPromises.mkdir(globalMemoryDir, { recursive: true });
 
   const metaService = new MemoryMetaService(muxHome);
   const memoryService = new MemoryService(new Config(muxHome), metaService);
-  // runtime: null + checkoutCwd: "" + projectPath: "" → project and
-  // project-local scopes structurally disabled (reads included), mirroring
-  // the v1 consolidation context.
+  // projectPath: "" → project scope structurally disabled (reads included),
+  // mirroring the v1 consolidation context.
   const ctx: MemoryScopeContext = {
     runtime: null,
     checkoutCwd: "",
@@ -111,24 +110,13 @@ describe("consolidation memory tool rails", () => {
     if (!mutation.success) expect(mutation.error).toContain("only /memories/workspace/");
     expect(fixture.journal[0]?.applied).toBe(false);
 
-    // Scope restriction is a whitelist: project-local (project-private,
-    // host-local state from #3533) is just as out of bounds as project.
-    const projectLocal = await execute(fixture.tool, {
-      command: "create",
-      path: "/memories/project-local/note.md",
-      file_text: "x\n",
-    });
-    expect(projectLocal.success).toBe(false);
-    if (!projectLocal.success) expect(projectLocal.error).toContain("only /memories/workspace/");
-
     // Reads are unguarded by the tool, so out-of-scope privacy relies on the
-    // ctx: project and project-local are structurally disabled, while global
-    // reads pass through.
-    const projectLocalRead = await execute(fixture.tool, {
+    // ctx: project is structurally disabled, while global reads pass through.
+    const projectRead = await execute(fixture.tool, {
       command: "view",
-      path: "/memories/project-local/",
+      path: "/memories/project/",
     });
-    expect(projectLocalRead.success).toBe(false);
+    expect(projectRead.success).toBe(false);
     const read = await execute(fixture.tool, { command: "view", path: "/memories/global/" });
     expect(read.success).toBe(true);
   });

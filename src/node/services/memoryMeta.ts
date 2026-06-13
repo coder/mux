@@ -3,9 +3,8 @@
  * pins and usage stats ({lastAccessedAt, accessCount, lastWriteAt}).
  *
  * Lives at <muxHome>/memory-meta.json. Pins and stats NEVER live in the memory
- * files themselves: project memories are git-tracked and shared, while pinning
- * is a per-user UI action and usage is per-user signal, so the sidecar stays
- * host-local and never git-tracked.
+ * files themselves: pinning is a per-user UI action and usage is per-user
+ * signal, so the sidecar stays host-local and never git-tracked.
  *
  * Entries are keyed by LOGICAL memory identity (see memoryLogicalKey) so
  * metadata survives workspace re-checkouts and never references a physical
@@ -33,7 +32,6 @@ function encodeKeyComponent(value: string): string {
  * Logical identity of a memory file, independent of physical location:
  * - global:<relPath>
  * - project:<projectId>:<relPath>
- * - project-local:<projectId>:<relPath>
  * - workspace:<workspaceId>:<relPath>
  *
  * Components are escaped so embedded ':' cannot alias another memory's key
@@ -53,8 +51,6 @@ export function memoryLogicalKey(
       return `global:${encodeKeyComponent(relPath)}`;
     case "project":
       return `project:${encodeKeyComponent(ids.projectPath)}:${encodeKeyComponent(relPath)}`;
-    case "project-local":
-      return `project-local:${encodeKeyComponent(ids.projectPath)}:${encodeKeyComponent(relPath)}`;
     case "workspace":
       return `workspace:${encodeKeyComponent(ids.workspaceId)}:${encodeKeyComponent(relPath)}`;
   }

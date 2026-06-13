@@ -17,15 +17,14 @@ import {
 const READ_ONLY_ACCESS: MemoryScopeAccess = {
   global: "read",
   project: "read",
-  "project-local": "read",
   workspace: "read",
 };
 
 /**
  * Map an agent class onto the per-scope memory write matrix
  * (see MemoryScopeAccess in src/common/constants/memory.ts):
- * - Plan-like agents must not mutate the repo checkout, so project is read-only.
- *   project-local stays writable: it lives under muxHome, not the checkout.
+ * - Plan-like agents get read-write memory access; project memory is host-local
+ *   and never mutates the repo checkout.
  * - Editing-capable (exec-like) agents get read-write everywhere.
  * - Everything else (explore/read-only agents) is view-only.
  */
@@ -36,8 +35,7 @@ export function resolveMemoryAccessPolicy(options: {
   if (options.planLike) {
     return {
       global: "readwrite",
-      project: "read",
-      "project-local": "readwrite",
+      project: "readwrite",
       workspace: "readwrite",
     };
   }
@@ -45,7 +43,6 @@ export function resolveMemoryAccessPolicy(options: {
     return {
       global: "readwrite",
       project: "readwrite",
-      "project-local": "readwrite",
       workspace: "readwrite",
     };
   }
@@ -78,21 +75,14 @@ export const createMemoryTool: ToolFactory = (config: ToolConfiguration) => {
 
   const ctx: MemoryScopeContext = {
     runtime: config.runtime,
-    // Prefer the checkout root: on sub-project workspaces config.cwd includes
-    // the sub-project segment, which would split agent project memories from
-    // the UI/index/hot-set (they resolve the checkout root). null = project
-    // scope disabled ("" sentinel; recoverable error in MemoryService).
-    checkoutCwd:
-      config.workspaceCheckoutRootPath === null
-        ? ""
-        : (config.workspaceCheckoutRootPath ?? config.cwd),
+    // Storage is host-local; checkoutCwd is retained for the shared context shape only.
+    checkoutCwd: config.cwd,
     workspaceId: config.workspaceId ?? "",
-    // Stable project identity for sidecar logical keys (never the checkout
-    // cwd). Multi-project workspaces have no single identity — their
-    // workspaceProjectPath is the FIRST project's path, which must not become
-    // the project-local store key — so "" disables the project-keyed scopes
-    // (same resolution as resolveMemoryProjectIdentity; config.projects
-    // mirrors metadata.projects via getProjects).
+    // Stable project identity for the host-local project store and sidecar
+    // logical keys (never the checkout cwd). Multi-project workspaces have no
+    // single identity — their workspaceProjectPath is the FIRST project's path,
+    // so "" disables project-keyed memory (same resolution as
+    // resolveMemoryProjectIdentity; config.projects mirrors metadata.projects).
     projectPath: (config.projects?.length ?? 0) > 1 ? "" : (config.workspaceProjectPath ?? ""),
   };
 

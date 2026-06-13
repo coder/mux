@@ -46,9 +46,8 @@ function getDetailRows(args: MemoryToolArgs): Array<[string, string]> {
   return rows;
 }
 
-// SECURITY: memory content is attacker-influenceable (project memories are
-// repo-controlled). Render as plain text/React trees only — never through
-// innerHTML-family sinks.
+// SECURITY: memory content is attacker-influenceable. Render as plain
+// text/React trees only — never through innerHTML-family sinks.
 export const MemoryToolCall: React.FC<MemoryToolCallProps> = ({
   args,
   result,

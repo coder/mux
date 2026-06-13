@@ -9,14 +9,12 @@
  *   URL-encoded traversal, control chars), then resolved and containment-checked
  *   against the scope root.
  * - Symlink escapes are prevented via a realpath parent-walk: the deepest
- *   existing ancestor of the target must resolve inside the scope root
- *   (local scopes via fs.realpath; remote project scope via runtime exec).
- * - All local-disk writes go through write-file-atomic; remote writes go
- *   through RemoteRuntime.writeFile (temp + mv, atomic).
+ *   existing ancestor of the target must resolve inside the scope root.
+ * - All writes go through write-file-atomic.
  *
  * Concurrency: all mutating commands are serialized per physical root via
- * MutexMap. No filesystem locking in v1 — concurrent external writers
- * (e.g. git operations on project memory) are a documented limitation.
+ * MutexMap. No filesystem locking in v1 — concurrent external writers are a
+ * documented limitation.
  */
 import { EventEmitter } from "events";
 import { createHash } from "node:crypto";
@@ -36,7 +34,6 @@ import {
   MEMORY_VIRTUAL_ROOT,
   type MemoryScope,
 } from "@/common/constants/memory";
-import { shellQuote } from "@/common/utils/shell";
 import { PlatformPaths } from "@/common/utils/paths";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
@@ -44,9 +41,6 @@ import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { Config } from "@/node/config";
 import type { Runtime } from "@/node/runtime/Runtime";
-import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
-import { resolveWorkspaceRootPath } from "@/node/runtime/runtimeHelpers";
-import { execBuffered, writeFileString } from "@/node/utils/runtime/helpers";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import { memoryLogicalKey, type MemoryMetaService } from "@/node/services/memoryMeta";
 import {
@@ -58,21 +52,16 @@ import { log } from "@/node/services/log";
 
 /** Per-request context required to resolve scope roots. */
 export interface MemoryScopeContext {
-  /**
-   * Runtime of the workspace (project scope may be remote). null when the
-   * request is not associated with any workspace (Settings → Memory manages
-   * global files only); the project scope is then unavailable.
-   */
+  /** Runtime of the workspace. Storage is host-local, but callers already resolve it. */
   runtime: Runtime | null;
-  /** Workspace checkout cwd; project scope root is <checkoutCwd>/.mux/memory. */
+  /** Workspace checkout cwd. Kept in the context shape for existing callers; storage ignores it. */
   checkoutCwd: string;
   /** Workspace ID; workspace scope root is <sessionDir>/memory. */
   workspaceId: string;
   /**
    * Stable project identity from Mux config (the project root path, never the
-   * per-workspace checkout path). Used only for sidecar logical keys; empty
-   * when no project identity is available (usage stats are then skipped for
-   * the project scope).
+   * per-workspace checkout path). Used for the host-local project memory root
+   * and sidecar logical keys; empty when no project identity is available.
    */
   projectPath: string;
 }
@@ -199,8 +188,8 @@ export function parseMemoryPath(virtualPath: string): ParsedMemoryPath {
     // the <hot_memories> block): names containing XML metacharacters could
     // reassemble structure-breaking markup across segments (e.g. 'a<' +
     // 'hot_memories>').
-    // Windows also forbids these in filenames, and project memories are
-    // git-tracked, so rejecting them keeps repos checkout-able everywhere.
+    // Windows also forbids these in filenames, so rejecting them keeps
+    // host-local memory directories portable and prompt-safe.
     if (/[<>"]/.test(segment)) {
       throw new MemoryCommandError(
         `Invalid memory path '${virtualPath}': '<', '>' and '"' are not allowed in memory paths`
@@ -219,7 +208,7 @@ export function parseMemoryPath(virtualPath: string): ParsedMemoryPath {
 
 /**
  * Filesystem-safe directory name for a project's host-local memory root
- * (<muxHome>/project-memory/<dirName>). The sanitized basename keeps the dir
+ * (<muxHome>/memory/project/<dirName>). The sanitized basename keeps the dir
  * human-recognizable; the path hash guarantees uniqueness across same-named
  * projects in different parent directories.
  */
@@ -248,17 +237,14 @@ type MemoryEntryKind = "file" | "dir" | null;
 
 /**
  * Minimal filesystem surface the six memory commands are implemented against.
- * Two implementations: host-local disk (global/workspace scopes + project on
- * local runtimes) and via-Runtime exec (project scope on remote runtimes).
+ * Host-local disk for every active scope.
  */
 interface MemoryStore {
   /** Physical root; used as the mutex key. */
   readonly physicalRoot: string;
   /**
-   * Reject symlinked repo-controlled roots/ancestors without creating
-   * anything. Read paths use this instead of ensureRoot so that merely
-   * enumerating/viewing memories never leaves an untracked .mux/ directory
-   * in a clean checkout (project memories are git-tracked).
+   * Validate the root before use without creating it. Host-local roots currently
+   * need no root-level checks; path containment is enforced per target.
    */
   assertRootSafe(): Promise<void>;
   /** assertRootSafe + create the root if missing (write paths only). */
@@ -268,9 +254,9 @@ interface MemoryStore {
   kind(relPath: string): Promise<MemoryEntryKind>;
   /**
    * Read at most `maxBytes` from the head of the file. Index/hot-set builds
-   * use this so committed files that bypass MemoryService write caps cannot
-   * force unbounded reads on stream startup. May split a trailing multibyte
-   * code point; callers treat the result as a best-effort prefix.
+   * use this so files edited outside MemoryService cannot force unbounded reads
+   * on stream startup. May split a trailing multibyte code point; callers treat
+   * the result as a best-effort prefix.
    */
   readFilePrefix(relPath: string, maxBytes: number): Promise<string>;
   /** Atomic write; creates parent directories. */
@@ -296,105 +282,27 @@ function isPathWithinRoot(
 }
 
 /**
- * Resolve the project-scope anchor: the single project checkout root, or null
- * when project memories have no sensible home.
- * - Multi-project workspaces execute in a shared container dir that is not a
- *   git repository; writing ".mux/memory" there would be untracked and die
- *   with the container, so project scope is disabled instead.
- * - Self-healing: root resolution asserts on inconsistent persisted workspace
- *   paths; that must never break a stream, so failures also disable the scope.
- */
-export function resolveMemoryProjectAnchor(
-  metadata: WorkspaceMetadata & { namedWorkspacePath?: string },
-  runtime: Runtime
-): string | null {
-  if (isMultiProject(metadata)) return null;
-  try {
-    return resolveWorkspaceRootPath(metadata, runtime);
-  } catch (error) {
-    log.debug("[MemoryService] disabling project memory scope: root resolution failed", {
-      error: getErrorMessage(error),
-    });
-    return null;
-  }
-}
-
-/**
- * Stable project identity for memory scope contexts ("" disables the
- * project-keyed scopes and sidecar keys). Multi-project workspaces have no
+ * Stable project identity for memory scope contexts ("" disables project
+ * memory and project-keyed sidecar keys). Multi-project workspaces have no
  * single project identity — metadata.projectPath resolves to the FIRST
  * project's path (see Config.getAllWorkspaceMetadata), so passing it through
- * would silently bind project-local memories (and sidecar stats) to whichever
+ * would silently bind project memories (and sidecar stats) to whichever
  * project happens to be listed first.
  */
 export function resolveMemoryProjectIdentity(metadata: WorkspaceMetadata): string {
   return isMultiProject(metadata) ? "" : metadata.projectPath;
 }
 
-const SYMLINKED_MEMORY_ROOT_ERROR =
-  "Project memory is unavailable: .mux/memory (or a repo-controlled ancestor) is a symlink";
-
-/**
- * Paths of every repo-controlled component from the trusted base (exclusive)
- * down to the memory root (inclusive), e.g. <checkout>/.mux, <checkout>/.mux/memory.
- */
-function repoControlledComponents(
-  trustedBase: string,
-  root: string,
-  pathModule: path.PlatformPath
-): string[] {
-  const rel = pathModule.relative(trustedBase, root);
-  assert(
-    rel !== "" && !rel.startsWith("..") && !pathModule.isAbsolute(rel),
-    "memory root must live below its trusted base"
-  );
-  const components: string[] = [];
-  let current = trustedBase;
-  for (const segment of rel.split(pathModule.sep)) {
-    current = pathModule.join(current, segment);
-    components.push(current);
-  }
-  return components;
-}
-
 class LocalMemoryStore implements MemoryStore {
-  constructor(
-    readonly physicalRoot: string,
-    /**
-     * Trusted ancestor (the checkout root) for repo-controlled roots (project
-     * scope): every component below it (.mux, .mux/memory) is repo-controlled
-     * and must not be a symlink. Unset for host-owned roots.
-     */
-    private readonly repoControlledFrom?: string
-  ) {}
+  constructor(readonly physicalRoot: string) {}
 
   private abs(relPath: string): string {
     return relPath === "" ? this.physicalRoot : path.join(this.physicalRoot, ...relPath.split("/"));
   }
 
-  async assertRootSafe(): Promise<void> {
-    if (this.repoControlledFrom !== undefined) {
-      // A repo can commit the memory root — or any repo-controlled ancestor
-      // like .mux — as a symlink; realpath-based containment would then trust
-      // its target. Walk from the trusted checkout root down and reject any
-      // symlinked component before any use. Missing components are fine:
-      // reads treat them as empty and writes mkdir real directories.
-      for (const candidate of repoControlledComponents(
-        this.repoControlledFrom,
-        this.physicalRoot,
-        path
-      )) {
-        try {
-          const stats = await fsPromises.lstat(candidate);
-          if (stats.isSymbolicLink()) {
-            throw new MemoryCommandError(SYMLINKED_MEMORY_ROOT_ERROR);
-          }
-        } catch (error) {
-          if (error instanceof MemoryCommandError) throw error;
-          break; // Component missing: everything below is missing too.
-        }
-      }
-    }
+  assertRootSafe(): Promise<void> {
+    // Host-local roots are trusted; per-target symlink escape checks happen in assertContained().
+    return Promise.resolve();
   }
 
   async ensureRoot(): Promise<void> {
@@ -405,8 +313,8 @@ class LocalMemoryStore implements MemoryStore {
   async listFiles(): Promise<string[]> {
     const results: string[] = [];
     const walk = async (dirRel: string): Promise<void> => {
-      // Bounded walk: committed trees bypass write-time caps. +1 lets callers
-      // detect overflow (e.g. the index logs its truncation).
+      // Bounded walk: files may have been edited outside MemoryService. +1 lets
+      // callers detect overflow (e.g. the index logs its truncation).
       if (results.length > MEMORY_MAX_FILES_PER_SCOPE) return;
       let entries;
       try {
@@ -416,7 +324,7 @@ class LocalMemoryStore implements MemoryStore {
       }
       // Iterate in path-string order — directories key as "name/" so the DFS
       // emits exact global lexicographic order ("a.md" < "a/...", `.` < `/`).
-      // The capped subset then matches the remote `find | sort | head` path.
+      // The capped subset is deterministic across platforms.
       const sortKey = (entry: (typeof entries)[number]) =>
         entry.isDirectory() ? `${entry.name}/` : entry.name;
       entries.sort((a, b) => {
@@ -509,141 +417,6 @@ class LocalMemoryStore implements MemoryStore {
   }
 }
 
-/**
- * Project-scope store for remote runtimes. Every path is shell-quoted; the
- * root is ensureDir'd before use and containment is verified via a remote
- * realpath parent-walk before any mutation or listing.
- */
-class RuntimeMemoryStore implements MemoryStore {
-  constructor(
-    private readonly runtime: Runtime,
-    readonly physicalRoot: string,
-    /** Trusted ancestor (the remote checkout root); see LocalMemoryStore. */
-    private readonly repoControlledFrom: string
-  ) {}
-
-  private abs(relPath: string): string {
-    return relPath === "" ? this.physicalRoot : path.posix.join(this.physicalRoot, relPath);
-  }
-
-  private async exec(
-    command: string,
-    // "/" so commands work when the root itself does not exist yet (read
-    // paths never create it); embedded paths are absolute and shell-quoted.
-    cwd = "/"
-  ): Promise<{ stdout: string; exitCode: number }> {
-    const result = await execBuffered(this.runtime, command, {
-      cwd,
-      timeout: 15,
-    });
-    return { stdout: result.stdout, exitCode: result.exitCode };
-  }
-
-  async assertRootSafe(): Promise<void> {
-    // Remote project roots are always repo-controlled: reject a committed
-    // symlink at the root or any repo-controlled ancestor (.mux) before
-    // realpath-based containment would trust its target.
-    const checks = repoControlledComponents(this.repoControlledFrom, this.physicalRoot, path.posix)
-      .map((component) => `[ -L ${shellQuote(component)} ]`)
-      .join(" || ");
-    const { stdout } = await this.exec(`if ${checks}; then echo symlink; fi`);
-    if (stdout.trim() === "symlink") {
-      throw new MemoryCommandError(SYMLINKED_MEMORY_ROOT_ERROR);
-    }
-  }
-
-  async ensureRoot(): Promise<void> {
-    await this.assertRootSafe();
-    await this.runtime.ensureDir(this.physicalRoot);
-  }
-
-  async listFiles(): Promise<string[]> {
-    // Relative `find .` (after cd into the root) keeps the output independent
-    // of how the remote shell renders the absolute root path. The existence
-    // guard makes a missing root list as empty — read paths never create it.
-    // sort|head bounds the transfer for degenerate committed trees while
-    // keeping the kept subset deterministic (lexicographic first N; +1 lets
-    // callers detect overflow).
-    const quotedRoot = shellQuote(this.physicalRoot);
-    const { stdout, exitCode } = await this.exec(
-      `if [ ! -d ${quotedRoot} ]; then exit 0; fi; cd ${quotedRoot} && ` +
-        `find . -type f -not -path '*/.*' | sort | head -n ${MEMORY_MAX_FILES_PER_SCOPE + 1}`
-    );
-    if (exitCode !== 0) return [];
-    return stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith("./"))
-      .map((line) => line.slice(2))
-      .sort();
-  }
-
-  async kind(relPath: string): Promise<MemoryEntryKind> {
-    const quoted = shellQuote(this.abs(relPath));
-    const { stdout } = await this.exec(
-      `if [ -d ${quoted} ]; then echo dir; elif [ -e ${quoted} ]; then echo file; else echo none; fi`
-    );
-    const kind = stdout.trim();
-    return kind === "dir" ? "dir" : kind === "file" ? "file" : null;
-  }
-
-  async readFilePrefix(relPath: string, maxBytes: number): Promise<string> {
-    assert(Number.isInteger(maxBytes) && maxBytes > 0, "readFilePrefix requires a positive bound");
-    const { stdout, exitCode } = await this.exec(
-      `head -c ${maxBytes} -- ${shellQuote(this.abs(relPath))}`
-    );
-    if (exitCode !== 0) {
-      throw new MemoryCommandError(`Failed to read ${relPath}`);
-    }
-    return stdout;
-  }
-
-  async writeFile(relPath: string, content: string): Promise<void> {
-    // RemoteRuntime.writeFile is atomic (temp + mv) and creates parent dirs.
-    await writeFileString(this.runtime, this.abs(relPath), content);
-  }
-
-  async remove(relPath: string): Promise<void> {
-    const { exitCode } = await this.exec(`rm -rf -- ${shellQuote(this.abs(relPath))}`);
-    if (exitCode !== 0) {
-      throw new MemoryCommandError(`Failed to delete ${relPath}`);
-    }
-  }
-
-  async rename(oldRelPath: string, newRelPath: string): Promise<void> {
-    const newAbs = this.abs(newRelPath);
-    const command = `mkdir -p -- ${shellQuote(path.posix.dirname(newAbs))} && mv -- ${shellQuote(this.abs(oldRelPath))} ${shellQuote(newAbs)}`;
-    const { exitCode } = await this.exec(command);
-    if (exitCode !== 0) {
-      throw new MemoryCommandError(`Failed to rename ${oldRelPath} to ${newRelPath}`);
-    }
-  }
-
-  async assertContained(relPath: string): Promise<void> {
-    const quotedRoot = shellQuote(this.physicalRoot);
-    const quotedTarget = shellQuote(this.abs(relPath));
-    // POSIX parent-walk: realpath the deepest existing ancestor of the target.
-    // A missing root is fine on read paths (they never create it): nothing
-    // under it exists, so containment is trivial and lookups report "not found".
-    const command =
-      `if [ ! -e ${quotedRoot} ]; then echo missing-root; exit 0; fi; ` +
-      `root=$(realpath ${quotedRoot}) && p=${quotedTarget} && ` +
-      `while [ ! -e "$p" ]; do p=$(dirname "$p"); done && ` +
-      `printf '%s\\n%s\\n' "$root" "$(realpath "$p")"`;
-    const { stdout, exitCode } = await this.exec(command);
-    if (exitCode !== 0) {
-      throw new MemoryCommandError(`Failed to verify memory path containment for ${relPath}`);
-    }
-    if (stdout.trim() === "missing-root") return;
-    const [realRoot, realTarget] = stdout.split("\n").map((line) => line.trim());
-    if (!realRoot || !realTarget || !isPathWithinRoot(realRoot, realTarget, path.posix)) {
-      throw new MemoryCommandError(
-        `Path escapes the memory root (symlinks are not allowed to point outside)`
-      );
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Frontmatter description extraction (for the injected memory index)
 // ---------------------------------------------------------------------------
@@ -653,9 +426,8 @@ const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 /**
  * Extract a sanitized single-line description from optional YAML frontmatter.
  * Self-healing: malformed frontmatter yields an empty description.
- * Index hardening: memory content is untrusted input (project memories are
- * repo-controlled), so the description is flattened to one line, stripped of
- * control characters, and truncated.
+ * Index hardening: memory content is untrusted input, so the description is
+ * flattened to one line, stripped of control characters, and truncated.
  */
 export function extractMemoryDescription(content: string): string {
   const match = FRONTMATTER_PATTERN.exec(content);
@@ -686,7 +458,6 @@ export function extractMemoryDescription(content: string): string {
 export class MemoryService extends EventEmitter {
   /** Serializes mutating commands per physical root (agent tool + UI writes). */
   private readonly locks = new MutexMap<string>();
-
   constructor(
     private readonly config: Config,
     /** Host-local sidecar for pins + usage stats, recorded at this chokepoint. */
@@ -704,7 +475,7 @@ export class MemoryService extends EventEmitter {
 
   /** Logical sidecar key, or null when the scope has no stable identity. */
   private logicalKeyFor(ctx: MemoryScopeContext, scope: MemoryScope, relPath: string) {
-    if ((scope === "project" || scope === "project-local") && ctx.projectPath === "") return null;
+    if (scope === "project" && ctx.projectPath === "") return null;
     return memoryLogicalKey(scope, relPath, {
       projectPath: ctx.projectPath,
       workspaceId: ctx.workspaceId,
@@ -772,11 +543,11 @@ export class MemoryService extends EventEmitter {
   private getStore(ctx: MemoryScopeContext, scope: MemoryScope): MemoryStore {
     switch (scope) {
       case "global":
-        return new LocalMemoryStore(path.join(this.config.rootDir, "memory"));
-      case "project-local": {
+        return new LocalMemoryStore(path.join(this.config.rootDir, "memory", "global"));
+      case "project": {
         if (ctx.projectPath === "") {
           throw new MemoryCommandError(
-            "Project-local memory is unavailable: no project is associated with this session"
+            "Project memory is unavailable: no project is associated with this session"
           );
         }
         // Multi-project workspaces share the synthetic "_multi" config key as
@@ -785,14 +556,14 @@ export class MemoryService extends EventEmitter {
         // to overwrite) one private-notes root, so the scope is disabled.
         if (ctx.projectPath === MULTI_PROJECT_CONFIG_KEY) {
           throw new MemoryCommandError(
-            "Project-local memory is unavailable: multi-project workspaces have no single project identity"
+            "Project memory is unavailable: multi-project workspaces have no single project identity"
           );
         }
         // Host-local private notes about the project: keyed by stable project
         // identity (never the per-workspace checkout), so they survive
         // re-checkouts and never appear in the repo.
         return new LocalMemoryStore(
-          path.join(this.config.rootDir, "project-memory", projectMemoryDirName(ctx.projectPath))
+          path.join(this.config.rootDir, "memory", "project", projectMemoryDirName(ctx.projectPath))
         );
       }
       case "workspace": {
@@ -804,26 +575,6 @@ export class MemoryService extends EventEmitter {
         return new LocalMemoryStore(
           path.join(this.config.getSessionDir(ctx.workspaceId), "memory")
         );
-      }
-      case "project": {
-        if (ctx.runtime === null) {
-          throw new MemoryCommandError(
-            "Project memory is unavailable: no workspace is associated with this request"
-          );
-        }
-        if (ctx.checkoutCwd === "") {
-          // No project anchor (multi-project container or unresolvable root);
-          // see resolveMemoryProjectAnchor.
-          throw new MemoryCommandError(
-            "Project memory is unavailable: no single project checkout is associated with this session"
-          );
-        }
-        if (ctx.runtime instanceof RemoteRuntime) {
-          const root = path.posix.join(ctx.checkoutCwd, ".mux", "memory");
-          return new RuntimeMemoryStore(ctx.runtime, root, ctx.checkoutCwd);
-        }
-        // repoControlledFrom: a checkout can commit .mux or .mux/memory as a symlink.
-        return new LocalMemoryStore(path.join(ctx.checkoutCwd, ".mux", "memory"), ctx.checkoutCwd);
       }
     }
   }
@@ -844,9 +595,8 @@ export class MemoryService extends EventEmitter {
   /**
    * Resolve a parsed path to its store with containment verified.
    * createRoot is reserved for commands that can create files (create, UI
-   * save): everything else must not materialize scope roots — a read on a
-   * clean checkout would otherwise leave an untracked .mux/ directory in the
-   * user's repo. Missing roots simply make targets report "not found".
+   * save): everything else must not materialize scope roots. Missing roots
+   * simply make targets report "not found".
    */
   private async resolveStore(
     ctx: MemoryScopeContext,
@@ -1124,11 +874,11 @@ export class MemoryService extends EventEmitter {
 
   /**
    * Bounded full-file read for every whole-file path (view, edits, UI read,
-   * save compare). Committed project memories bypass MemoryService write
-   * caps, so an unbounded read of a degenerate repo file could hang the main
-   * process or blow up the stream context. Reads at most cap+1 bytes and
-   * rejects over-size files outright (offset/limit windows don't help: the
-   * window is line-based and the bytes must be read first).
+   * save compare). Memory files can be edited outside MemoryService write caps,
+   * so an unbounded read of a degenerate file could hang the main process or
+   * blow up the stream context. Reads at most cap+1 bytes and rejects over-size
+   * files outright (offset/limit windows don't help: the window is line-based
+   * and the bytes must be read first).
    */
   private async readBoundedTextFile(
     store: MemoryStore,
@@ -1138,7 +888,7 @@ export class MemoryService extends EventEmitter {
     const content = await store.readFilePrefix(relPath, MEMORY_MAX_FILE_BYTES + 1);
     if (Buffer.byteLength(content, "utf-8") > MEMORY_MAX_FILE_BYTES) {
       throw new MemoryCommandError(
-        `${virtualPath} exceeds the ${MEMORY_MAX_FILE_BYTES}-byte memory file cap (likely committed to the repo, bypassing write caps); shrink or delete it`
+        `${virtualPath} exceeds the ${MEMORY_MAX_FILE_BYTES}-byte memory file cap (likely edited outside Mux, bypassing write caps); shrink or delete it`
       );
     }
     return content;
@@ -1266,20 +1016,19 @@ export class MemoryService extends EventEmitter {
       try {
         const store = this.getStore(ctx, scope);
         // Read-only enumeration (stream startup, Memory tab) must not create
-        // scope roots: an untracked .mux/ dir would appear in clean checkouts
-        // before any memory is ever written. Missing roots list as empty.
+        // scope roots unnecessarily. Missing roots list as empty.
         await store.assertRootSafe();
         const files = await store.listFiles();
         if (files.length > MEMORY_MAX_FILES_PER_SCOPE) {
-          // Committed files bypass the write-time cap; honor it at enumeration
-          // so a degenerate repo cannot force thousands of per-file reads
-          // (each a remote command over SSH) on stream startup.
+          // Files can be edited outside MemoryService; honor the cap at
+          // enumeration so a degenerate directory cannot force thousands of
+          // per-file reads on stream startup.
           log.debug("[MemoryService] truncating memory index to the per-scope cap", { scope });
           files.length = MEMORY_MAX_FILES_PER_SCOPE;
         }
         for (const relPath of files) {
-          // Committed filenames are attacker-controlled: only index paths the
-          // memory tool itself would accept (rejects control chars, traversal,
+          // Filenames are attacker-controlled: only index paths the memory tool
+          // itself would accept (rejects control chars, traversal,
           // etc.), so a hostile name can never break out of its index line.
           try {
             parseMemoryPath(toVirtualPath(scope, relPath));
@@ -1291,8 +1040,8 @@ export class MemoryService extends EventEmitter {
           }
           let description = "";
           try {
-            // Bounded prefix read: committed files bypass service write caps,
-            // and this runs on every memory-enabled stream startup.
+            // Bounded prefix read: files can bypass service write caps when
+            // edited outside Mux, and this runs on every memory-enabled stream startup.
             description = extractMemoryDescription(
               await store.readFilePrefix(relPath, MEMORY_INDEX_DESCRIPTION_PREFIX_BYTES)
             );
@@ -1371,9 +1120,9 @@ export interface MemorySessionContext {
  * mechanic as skills: index advertised next to the tool schema, contents
  * fetched on demand via the view command).
  *
- * Index hardening: entries are data, not instructions — project memory
- * content is repo-controlled (untrusted), so the index explicitly tells the
- * model not to follow instructions found inside memory files, and each
+ * Index hardening: entries are data, not instructions — memory file content is
+ * untrusted, so the index explicitly tells the model not to follow instructions
+ * found inside memory files, and each
  * description is pre-sanitized to a single quoted line.
  */
 export function formatMemoryIndexForToolDescription(
@@ -1386,7 +1135,7 @@ export function formatMemoryIndexForToolDescription(
     lines.push("(no memory files yet)");
   } else {
     for (const entry of entries) {
-      // Descriptions are repo-controlled frontmatter: escape XML
+      // Descriptions are untrusted frontmatter: escape XML
       // metacharacters so they cannot fabricate prompt-context markup (e.g.
       // a fake </hot_memories> close) or escape their quotes (display-only,
       // so escaping has no tool round-trip cost; paths need no escaping —

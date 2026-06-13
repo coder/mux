@@ -46,7 +46,6 @@ import { createRuntimeForWorkspace, resolveWorkspaceRootPath } from "@/node/runt
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import {
   parseMemoryPath,
-  resolveMemoryProjectAnchor,
   resolveMemoryProjectIdentity,
   type MemoryChangeEvent,
   type MemoryScopeContext,
@@ -316,14 +315,12 @@ async function resolveMemoryScopeContext(
     return null;
   }
   const runtime = createRuntimeForWorkspace(metadata);
-  // "" disables the project scope (multi-project container / unresolvable root).
-  const checkoutCwd = resolveMemoryProjectAnchor(metadata, runtime) ?? "";
   // "" for multi-project workspaces: metadata.projectPath is the first
   // project's path, not a single stable identity.
   const projectPath = resolveMemoryProjectIdentity(metadata);
   return {
     projectPath,
-    scopeCtx: { runtime, checkoutCwd, workspaceId, projectPath },
+    scopeCtx: { runtime, checkoutCwd: "", workspaceId, projectPath },
   };
 }
 
@@ -3798,6 +3795,12 @@ export const router = (authToken?: string) => {
               error: `${scope === "project" ? "Project" : "Workspace"} memory is unavailable: no workspace is associated with this request`,
             };
           }
+          if (scope === "project" && resolved.projectPath === "") {
+            return {
+              success: false as const,
+              error: "Project memory is unavailable: no project is associated with this session",
+            };
+          }
           await context.memoryMetaService.setPinned(
             memoryLogicalKey(scope, relPath, {
               projectPath: resolved.projectPath,
@@ -3851,12 +3854,9 @@ export const router = (authToken?: string) => {
           // Global events are always forwarded (shared across everything).
           const onChange = (event: MemoryChangeEvent) => {
             if (event.scope === "workspace" && event.workspaceId !== boundWorkspaceId) return;
-            // project AND project-local are both keyed by project identity:
-            // the same virtual path in another project is a different file.
-            if (
-              (event.scope === "project" || event.scope === "project-local") &&
-              event.projectPath !== boundProjectPath
-            ) {
+            // Project memory is keyed by project identity: the same virtual
+            // path in another project is a different file.
+            if (event.scope === "project" && event.projectPath !== boundProjectPath) {
               return;
             }
             queue.push(event);
