@@ -667,6 +667,27 @@ function ExperimentSettingsPanel(props: ExperimentSettingsPanelProps) {
   return <div className="bg-background-secondary px-4 py-3">{props.children}</div>;
 }
 
+// Renders the Agent Memory sub-experiment toggles as a nested list. Extracted so
+// the nested-config call site mirrors its siblings (AdvisorToolExperimentConfig,
+// HeartbeatDefaultsControls) instead of inlining the map in the section render.
+function MemorySubExperimentRows() {
+  return (
+    <div className="divide-border-light divide-y">
+      {MEMORY_SUB_EXPERIMENT_IDS.map((subId) => {
+        const subExp = EXPERIMENTS[subId];
+        return (
+          <ExperimentRow
+            key={subId}
+            experimentId={subId}
+            name={subExp.name}
+            description={subExp.description}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 export function ExperimentsSection() {
   const allExperiments = getExperimentList();
   const { api } = useAPI();
@@ -775,19 +796,7 @@ export function ExperimentsSection() {
               )}
               {exp.id === EXPERIMENT_IDS.MEMORY && memoryEnabled && (
                 <ExperimentSettingsPanel>
-                  <div className="divide-border-light divide-y">
-                    {MEMORY_SUB_EXPERIMENT_IDS.map((subId) => {
-                      const subExp = EXPERIMENTS[subId];
-                      return (
-                        <ExperimentRow
-                          key={subId}
-                          experimentId={subId}
-                          name={subExp.name}
-                          description={subExp.description}
-                        />
-                      );
-                    })}
-                  </div>
+                  <MemorySubExperimentRows />
                 </ExperimentSettingsPanel>
               )}
               {exp.id === EXPERIMENT_IDS.PORTABLE_DESKTOP && <PortableDesktopExperimentWarning />}
