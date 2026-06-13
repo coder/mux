@@ -1191,12 +1191,14 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       canonicalProviderName?: ProviderName;
       canonicalModelId?: string;
       useRequestedModelString?: boolean;
+      experimentsService?: ExperimentsService;
     }
   ): StreamMessageHarness {
     const { config, historyService, initStateManager, service } = createBasicAIService(
       muxHomePath,
       {
         sessionUsageService: options?.sessionUsageService,
+        experimentsService: options?.experimentsService,
       }
     );
     const planPayloadMessageIds: string[][] = [];
@@ -1453,11 +1455,20 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const experimentsService = new ExperimentsService({
+      telemetryService: new TelemetryService(muxHome.path),
+      muxHome: muxHome.path,
+    });
+    spyOn(experimentsService, "isExperimentEnabled").mockImplementation(
+      (experimentId) =>
+        experimentId === EXPERIMENT_IDS.MEMORY || experimentId === EXPERIMENT_IDS.MEMORY_HOT_SET
+    );
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for memory availability gating
     const stubTool: Tool = {} as never;
     const harness = createHarness(muxHome.path, metadata, {
       allTools: { memory: stubTool },
       useRequestedModelString: true,
+      experimentsService,
     });
     harness.service.setMemoryService(
       new MemoryService(harness.config, new MemoryMetaService(muxHome.path))
@@ -1711,6 +1722,40 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     expect(result.success).toBe(true);
     expect(harness.streamSystemContextMemoryToolFlags).toEqual([true, false]);
+    expect(memoryCalls).toEqual([{ includeHotMemories: false }]);
+  });
+
+  it("does not upgrade memory context when the hot-set sub-experiment is disabled", async () => {
+    using muxHome = new DisposableTempDir("ai-service-memory-hot-set-disabled");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-memory-hot-set-disabled";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for memory availability gating
+    const stubTool: Tool = {} as never;
+    const harness = createHarness(muxHome.path, metadata, {
+      allTools: { memory: stubTool },
+    });
+    harness.service.setMemoryService(
+      new MemoryService(harness.config, new MemoryMetaService(muxHome.path))
+    );
+    const memoryCalls: Array<{ includeHotMemories: boolean }> = [];
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+      experiments: { memory: true },
+      resolveMemoryContext: (_modelString, options) => {
+        memoryCalls.push({ includeHotMemories: options?.includeHotMemories !== false });
+        return Promise.resolve({ indexEntries: [], hotMemoriesBlock: null });
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.streamSystemContextMemoryToolFlags).toEqual([true]);
     expect(memoryCalls).toEqual([{ includeHotMemories: false }]);
   });
 
