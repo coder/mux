@@ -264,9 +264,9 @@ export interface BuildStreamSystemContextOptions {
   memoryToolAvailable?: boolean;
   /**
    * Pre-rendered hot-memories block (pinned + frequently used memory files;
-   * memory-hot-set sub-experiment). Computed and cached by AgentSession at
-   * session start / compaction boundaries — never per turn — so it stays
-   * byte-identical within a session segment (prompt-cache-stable).
+   * memory-hot-set sub-experiment). Computed and cached by AgentSession per
+   * model/session segment because selection is token-budgeted with the active
+   * tokenizer, so repeated turns stay byte-identical (prompt-cache-stable).
    */
   hotMemoriesBlock?: string;
 }

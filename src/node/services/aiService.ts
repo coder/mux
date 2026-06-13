@@ -236,13 +236,17 @@ export interface StreamMessageOptions {
   /**
    * Resolver for the session-segment memory context (memory experiment):
    * index snapshot for the memory tool description + hot-memories block.
-   * AgentSession caches the result per session segment so its bytes stay
-   * prompt-cache-stable. A callback (not a pre-resolved value) because it
-   * must be computed after runtime.ensureReady(): project-scope listing on a
+   * AgentSession caches the result per model/session segment because hot-memory
+   * selection is token-budgeted with the active model tokenizer. A callback
+   * (not a pre-resolved value) because it must be computed after
+   * runtime.ensureReady(): project-scope listing on a
    * stopped Docker/remote workspace would otherwise cache an empty/partial
    * context for the whole segment.
    */
-  resolveMemoryContext?: () => Promise<MemorySessionContext | undefined>;
+  resolveMemoryContext?: (
+    modelString: string,
+    options?: { includeHotMemories?: boolean }
+  ) => Promise<MemorySessionContext | undefined>;
   experiments?: SendMessageOptions["experiments"];
   workspaceGoalService?: WorkspaceGoalService;
   disableWorkspaceAgents?: boolean;
@@ -527,13 +531,18 @@ export class AIService extends EventEmitter {
    * frequently used memory files; memory-hot-set sub-experiment). Returns
    * null when the memory experiment is off.
    *
-   * Callers (AgentSession) cache the result and recompute it only at session
-   * start and compaction boundaries — never per turn — so the injected bytes
-   * stay prompt-cache-stable within a session segment. Memories written
-   * mid-segment surface in the next segment's index (the writing agent
-   * already has its own tool calls in context, and `view` lists live state).
+   * Callers (AgentSession) cache the result per model and recompute it only
+   * on the first use of a model in a session segment, or at compaction
+   * boundaries, so repeated turns keep prompt-cache-stable bytes. Memories
+   * written mid-segment surface in the next segment's index for cached models
+   * (the writing agent already has its own tool calls in context, and `view`
+   * lists live state).
    */
-  async buildMemorySessionContext(workspaceId: string): Promise<MemorySessionContext | null> {
+  async buildMemorySessionContext(
+    workspaceId: string,
+    modelString: string,
+    options?: { includeHotMemories?: boolean }
+  ): Promise<MemorySessionContext | null> {
     if (!this.memoryService) return null;
     if (this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY) !== true) {
       return null;
@@ -556,9 +565,28 @@ export class AIService extends EventEmitter {
       // Hot preloading is a sub-experiment: without it, memories stay
       // pull-based like skills (index only, contents fetched on demand).
       let hotMemoriesBlock: string | null = null;
-      if (this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY_HOT_SET) === true) {
-        const items = await this.memoryService.listHotMemories(ctx);
-        hotMemoriesBlock = items.length === 0 ? null : formatHotMemoriesBlock(items);
+      if (
+        options?.includeHotMemories !== false &&
+        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY_HOT_SET) === true
+      ) {
+        try {
+          const metadataModel = resolveModelForMetadata(
+            modelString,
+            this.providerService.getConfig()
+          );
+          const tokenizer = await getTokenizerForModel(modelString, metadataModel);
+          const items = await this.memoryService.listHotMemories(ctx, {
+            countTokens: (text) => tokenizer.countTokens(text),
+          });
+          hotMemoriesBlock = items.length === 0 ? null : formatHotMemoriesBlock(items);
+        } catch (error) {
+          // Hot preloading is best-effort context. Preserve the pull-based
+          // memory index when tokenizer setup or ranked selection fails.
+          log.warn("Failed to build hot memories; continuing with memory index only", {
+            workspaceId,
+            error,
+          });
+        }
       }
       return { indexEntries, hotMemoriesBlock };
     } catch (error) {
@@ -1288,8 +1316,10 @@ export class AIService extends EventEmitter {
       // Memory context (memory experiment): resolved only after ensureReady so
       // project-scope listing sees a running runtime (a stopped Docker/remote
       // workspace would yield an empty/partial context, and AgentSession caches
-      // the result for the whole session segment).
-      const memoryContext = resolveMemoryContext ? await resolveMemoryContext() : undefined;
+      // the result per model/session segment).
+      const memoryContext = resolveMemoryContext
+        ? await resolveMemoryContext(modelString, { includeHotMemories: false })
+        : undefined;
 
       // Resolve agent definition, compute effective mode & tool policy.
       const cfg = this.config.loadConfigOrDefault();
@@ -1305,6 +1335,8 @@ export class AIService extends EventEmitter {
       const memoryExperimentEnabled =
         experiments?.memory ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY) === true;
+      const memoryHotSetExperimentEnabled =
+        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY_HOT_SET) === true;
       emitStartupBreadcrumb("loading_workspace_context");
       const resolveAgentForStreamStartedAt = Date.now();
       const agentResult = await resolveAgentForStream({
@@ -1459,7 +1491,8 @@ export class AIService extends EventEmitter {
       const memoryToolEligible = memoryExperimentEnabled && this.memoryService !== undefined;
       const buildStreamSystemContextForToolset = (
         toolset: { advisorToolAvailable: boolean; memoryToolAvailable: boolean },
-        modelStringForSystem: string = modelString
+        modelStringForSystem: string = modelString,
+        contextForModel: MemorySessionContext | undefined = memoryContext
       ) =>
         buildStreamSystemContext({
           runtime,
@@ -1481,7 +1514,7 @@ export class AIService extends EventEmitter {
           loadDesktopCapability,
           advisorToolAvailable: toolset.advisorToolAvailable,
           memoryToolAvailable: toolset.memoryToolAvailable,
-          hotMemoriesBlock: memoryContext?.hotMemoriesBlock ?? undefined,
+          hotMemoriesBlock: contextForModel?.hotMemoriesBlock ?? undefined,
         });
 
       // Build provisional agent context before tool policy finalizes the toolset.
@@ -2062,19 +2095,31 @@ export class AIService extends EventEmitter {
 
       const advisorToolAvailable = tools.advisor !== undefined;
       const memoryToolAvailable = tools.memory !== undefined;
+      const shouldUpgradeMemoryContext =
+        memoryToolAvailable && memoryHotSetExperimentEnabled && resolveMemoryContext !== undefined;
+      const finalMemoryContext = shouldUpgradeMemoryContext
+        ? await resolveMemoryContext(modelString, { includeHotMemories: true })
+        : memoryContext;
       const finalStreamSystemContext =
-        advisorToolAvailable === advisorToolEligible && memoryToolAvailable === memoryToolEligible
+        advisorToolAvailable === advisorToolEligible &&
+        memoryToolAvailable === memoryToolEligible &&
+        finalMemoryContext === memoryContext
           ? prePolicyStreamSystemContext
           : await (async () => {
-              // Rebuild only when policy/experiments changed advisor or memory tool
+              // Rebuild when policy/experiments changed advisor or memory tool
               // availability (stale advisor guidance / memory index must not advertise
-              // absent tools). On SSH this context build scans agents, skills, and
-              // instruction files over many small remote ops.
+              // absent tools), or when the post-policy memory tool enables the
+              // token-budgeted hot block. On SSH this context build scans agents,
+              // skills, and instruction files over many small remote ops.
               const rebuildStreamSystemContextStartedAt = Date.now();
-              const rebuiltContext = await buildStreamSystemContextForToolset({
-                advisorToolAvailable,
-                memoryToolAvailable,
-              });
+              const rebuiltContext = await buildStreamSystemContextForToolset(
+                {
+                  advisorToolAvailable,
+                  memoryToolAvailable,
+                },
+                modelString,
+                finalMemoryContext
+              );
               recordStartupPhaseTiming(
                 "rebuildStreamSystemContextMs",
                 rebuildStreamSystemContextStartedAt
@@ -2433,6 +2478,16 @@ export class AIService extends EventEmitter {
                     emitNestedToolEvent: emitNestedPtcToolEvent,
                   });
                   const nextToolNamesForSentinel = Object.keys(nextTools).sort();
+                  const nextMemoryToolAvailable = nextTools.memory !== undefined;
+                  const shouldUpgradeNextMemoryContext =
+                    nextMemoryToolAvailable &&
+                    memoryHotSetExperimentEnabled &&
+                    resolveMemoryContext !== undefined;
+                  const nextMemoryContext = shouldUpgradeNextMemoryContext
+                    ? await resolveMemoryContext(next.canonicalModelString, {
+                        includeHotMemories: true,
+                      })
+                    : memoryContext;
 
                   // Rebuild the system prompt for the fallback model (tool
                   // instructions and "Model:" sections are model-keyed), keeping
@@ -2440,9 +2495,10 @@ export class AIService extends EventEmitter {
                   const nextSystemContext = await buildStreamSystemContextForToolset(
                     {
                       advisorToolAvailable: nextTools.advisor !== undefined,
-                      memoryToolAvailable: nextTools.memory !== undefined,
+                      memoryToolAvailable: nextMemoryToolAvailable,
                     },
-                    next.canonicalModelString
+                    next.canonicalModelString,
+                    nextMemoryContext
                   );
                   let nextSystem = nextSystemContext.systemMessage;
                   let nextSystemTokens = nextSystemContext.systemMessageTokens;

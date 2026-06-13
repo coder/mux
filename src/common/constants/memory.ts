@@ -56,14 +56,20 @@ export const MEMORY_VIEW_MAX_DEPTH = 2;
 /**
  * Hot-set budgets: user-pinned + frequently-used memory files are preloaded
  * into context (the second tier between the always-present index and
- * tool-call cold reads). The hot set is recomputed only at session start and
- * compaction boundaries so its bytes stay prompt-cache-stable within a
- * session segment.
+ * tool-call cold reads). The hot set is recomputed on first use of a model in
+ * a session segment and at compaction boundaries so repeated turns keep
+ * prompt-cache-stable bytes.
  */
 /** Maximum bytes of a single preloaded memory file (longer files are truncated). */
 export const MEMORY_HOT_SET_MAX_ITEM_BYTES = 16 * 1024;
-/** Maximum total bytes of preloaded memory content per session segment. */
+/** Maximum total bytes of selected hot-memory file content. */
 export const MEMORY_HOT_SET_MAX_TOTAL_BYTES = 48 * 1024;
+/** Maximum tokens consumed by the rendered <hot_memories> block. */
+export const MEMORY_HOT_SET_MAX_TOTAL_TOKENS = 12_000;
+/** Maximum number of memory files preloaded into the system prompt. */
+export const MEMORY_HOT_SET_MAX_ITEMS = 8;
+/** Maximum ranked candidates to read/tokenize while filling the hot set. */
+export const MEMORY_HOT_SET_MAX_SELECTION_ATTEMPTS = 64;
 /** Half-life of the recency decay applied to access counts when ranking auto-hot files. */
 export const MEMORY_HOT_SET_DECAY_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
 

@@ -3,7 +3,10 @@ import { describe, it, expect } from "bun:test";
 import {
   MEMORY_HOT_SET_DECAY_HALF_LIFE_MS,
   MEMORY_HOT_SET_MAX_ITEM_BYTES,
+  MEMORY_HOT_SET_MAX_ITEMS,
+  MEMORY_HOT_SET_MAX_SELECTION_ATTEMPTS,
   MEMORY_HOT_SET_MAX_TOTAL_BYTES,
+  MEMORY_HOT_SET_MAX_TOTAL_TOKENS,
 } from "@/common/constants/memory";
 import {
   formatHotMemoriesBlock,
@@ -81,6 +84,7 @@ describe("selectHotMemories", () => {
         candidate({ path: "/memories/global/b.md", accessCount: 2, lastAccessedAt: NOW }),
       ],
       readFile: (path) => Promise.resolve(`content of ${path}`),
+      countTokens: () => Promise.resolve(1),
       now: NOW,
     });
     expect(items.map((item) => item.path)).toEqual([
@@ -96,6 +100,7 @@ describe("selectHotMemories", () => {
     const items = await selectHotMemories({
       candidates: [candidate({ path: "/memories/global/big.md", pinned: true })],
       readFile: () => Promise.resolve("x".repeat(MEMORY_HOT_SET_MAX_ITEM_BYTES + 100)),
+      countTokens: () => Promise.resolve(1),
       now: NOW,
     });
     expect(items).toHaveLength(1);
@@ -127,6 +132,7 @@ describe("selectHotMemories", () => {
     const items = await selectHotMemories({
       candidates,
       readFile: (path) => Promise.resolve(path.includes("tiny") ? small : big),
+      countTokens: () => Promise.resolve(1),
       now: NOW,
     });
 
@@ -139,6 +145,109 @@ describe("selectHotMemories", () => {
     );
   });
 
+  it("enforces the rendered token budget but still fits smaller lower-ranked items", async () => {
+    const largeTokenCost = Math.floor(MEMORY_HOT_SET_MAX_TOTAL_TOKENS / 2) + 1;
+    const tinyTokenCost = MEMORY_HOT_SET_MAX_TOTAL_TOKENS - largeTokenCost;
+    const candidates = [
+      candidate({ path: "/memories/global/large-0.md", accessCount: 10, lastAccessedAt: NOW }),
+      candidate({ path: "/memories/global/large-1.md", accessCount: 9, lastAccessedAt: NOW }),
+      candidate({ path: "/memories/global/tiny.md", accessCount: 1, lastAccessedAt: NOW }),
+    ];
+
+    const items = await selectHotMemories({
+      candidates,
+      readFile: () => Promise.resolve("facts"),
+      countTokens: (renderedBlock) => {
+        if (renderedBlock.includes("large-1.md")) {
+          return Promise.resolve(MEMORY_HOT_SET_MAX_TOTAL_TOKENS + 1);
+        }
+        return Promise.resolve(renderedBlock.includes("tiny.md") ? tinyTokenCost : largeTokenCost);
+      },
+      now: NOW,
+    });
+
+    expect(items.map((item) => item.path)).toEqual([
+      "/memories/global/large-0.md",
+      "/memories/global/tiny.md",
+    ]);
+  });
+
+  it("counts the full rendered hot-memory block against the token budget", async () => {
+    const countedBlocks: string[] = [];
+    const items = await selectHotMemories({
+      candidates: [candidate({ path: "/memories/global/a.md", pinned: true })],
+      readFile: () => Promise.resolve("facts"),
+      countTokens: (renderedBlock) => {
+        countedBlocks.push(renderedBlock);
+        return Promise.resolve(11);
+      },
+      maxTotalTokens: 10,
+      now: NOW,
+    });
+
+    expect(items).toEqual([]);
+    expect(countedBlocks).toHaveLength(1);
+    expect(countedBlocks[0]).toContain("<hot_memories>");
+    expect(countedBlocks[0]).toContain("Preloaded memory files");
+  });
+
+  it("bounds selection attempts separately from accepted items", async () => {
+    let readCount = 0;
+    let tokenCount = 0;
+    const maxSelectionAttempts = Math.min(3, MEMORY_HOT_SET_MAX_SELECTION_ATTEMPTS);
+    const candidates = Array.from({ length: maxSelectionAttempts + 5 }, (_, i) =>
+      candidate({
+        path: `/memories/global/oversized-${i}.md`,
+        accessCount: maxSelectionAttempts + 5 - i,
+        lastAccessedAt: NOW,
+      })
+    );
+
+    const items = await selectHotMemories({
+      candidates,
+      readFile: () => {
+        readCount += 1;
+        return Promise.resolve("facts");
+      },
+      countTokens: () => {
+        tokenCount += 1;
+        return Promise.resolve(2);
+      },
+      maxTotalTokens: 1,
+      maxSelectionAttempts,
+      now: NOW,
+    });
+
+    expect(items).toEqual([]);
+    expect(readCount).toBe(maxSelectionAttempts);
+    expect(tokenCount).toBe(maxSelectionAttempts);
+  });
+
+  it("caps the number of preloaded files", async () => {
+    const candidates = Array.from({ length: MEMORY_HOT_SET_MAX_ITEMS + 2 }, (_, i) =>
+      candidate({
+        path: `/memories/global/${String(i).padStart(2, "0")}.md`,
+        accessCount: MEMORY_HOT_SET_MAX_ITEMS + 2 - i,
+        lastAccessedAt: NOW,
+      })
+    );
+
+    const items = await selectHotMemories({
+      candidates,
+      readFile: () => Promise.resolve("facts"),
+      countTokens: () => Promise.resolve(1),
+      now: NOW,
+    });
+
+    expect(items).toHaveLength(MEMORY_HOT_SET_MAX_ITEMS);
+    expect(items.map((item) => item.path)).toEqual(
+      Array.from(
+        { length: MEMORY_HOT_SET_MAX_ITEMS },
+        (_, i) => `/memories/global/${String(i).padStart(2, "0")}.md`
+      )
+    );
+  });
+
   it("skips unreadable files instead of failing", async () => {
     const items = await selectHotMemories({
       candidates: [
@@ -147,6 +256,7 @@ describe("selectHotMemories", () => {
       ],
       readFile: (path) =>
         path.includes("gone") ? Promise.reject(new Error("ENOENT")) : Promise.resolve("fine"),
+      countTokens: () => Promise.resolve(1),
       now: NOW,
     });
     expect(items.map((item) => item.path)).toEqual(["/memories/global/ok.md"]);

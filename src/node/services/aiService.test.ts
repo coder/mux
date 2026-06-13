@@ -273,6 +273,14 @@ function resolvedAgentResultFor(
   };
 }
 
+function providerNameFromModelString(modelString: string): ProviderName {
+  return modelString.startsWith("anthropic:") ? "anthropic" : "openai";
+}
+
+function modelIdFromModelString(modelString: string): string {
+  return modelString.includes(":") ? (modelString.split(":").at(1) ?? modelString) : modelString;
+}
+
 function stubCommonStreamMessageDependencies(args: {
   service: AIService;
   config: Config;
@@ -287,6 +295,7 @@ function stubCommonStreamMessageDependencies(args: {
   effectiveModelString?: string;
   canonicalProviderName?: ProviderName;
   canonicalModelId?: string;
+  useRequestedModelString?: boolean;
   onPlanPayloadMessageIds?: (messageIds: string[]) => void;
   onBuildStreamSystemContext?: (
     args: Parameters<typeof streamContextBuilder.buildStreamSystemContext>[0]
@@ -336,18 +345,26 @@ function stubCommonStreamMessageDependencies(args: {
   if (!providerModelFactory) {
     throw new Error("Expected AIService.providerModelFactory in streamMessage test harness");
   }
-  spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue({
-    success: true,
-    data: {
-      model: Object.create(null) as LanguageModel,
-      effectiveModelString: args.effectiveModelString ?? "openai:gpt-5.2",
-      canonicalModelString: args.effectiveModelString ?? "openai:gpt-5.2",
-      canonicalProviderName: args.canonicalProviderName ?? "openai",
-      canonicalModelId: args.canonicalModelId ?? "gpt-5.2",
-      routedThroughGateway: false,
-      ...(args.routeProvider != null ? { routeProvider: args.routeProvider } : {}),
-    },
-  });
+  spyOn(providerModelFactory, "resolveAndCreateModel").mockImplementation(
+    (requestedModelString) => {
+      const canonicalModelString = args.useRequestedModelString
+        ? requestedModelString
+        : (args.effectiveModelString ?? "openai:gpt-5.2");
+      return Promise.resolve({
+        success: true,
+        data: {
+          model: Object.create(null) as LanguageModel,
+          effectiveModelString: canonicalModelString,
+          canonicalModelString,
+          canonicalProviderName:
+            args.canonicalProviderName ?? providerNameFromModelString(canonicalModelString),
+          canonicalModelId: args.canonicalModelId ?? modelIdFromModelString(canonicalModelString),
+          routedThroughGateway: false,
+          ...(args.routeProvider != null ? { routeProvider: args.routeProvider } : {}),
+        },
+      });
+    }
+  );
   spyOn(args.service, "getWorkspaceMetadata").mockResolvedValue({
     success: true,
     data: args.metadata,
@@ -1173,12 +1190,15 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       effectiveModelString?: string;
       canonicalProviderName?: ProviderName;
       canonicalModelId?: string;
+      useRequestedModelString?: boolean;
+      experimentsService?: ExperimentsService;
     }
   ): StreamMessageHarness {
     const { config, historyService, initStateManager, service } = createBasicAIService(
       muxHomePath,
       {
         sessionUsageService: options?.sessionUsageService,
+        experimentsService: options?.experimentsService,
       }
     );
     const planPayloadMessageIds: string[][] = [];
@@ -1202,6 +1222,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       effectiveModelString: options?.effectiveModelString,
       canonicalProviderName: options?.canonicalProviderName,
       canonicalModelId: options?.canonicalModelId,
+      useRequestedModelString: options?.useRequestedModelString,
       onPlanPayloadMessageIds: (messageIds) => planPayloadMessageIds.push(messageIds),
       onBuildStreamSystemContext: (contextArgs) => {
         if (!contextArgs.muxScope) {
@@ -1419,6 +1440,82 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     ).toHaveLength(1);
   });
 
+  it("prepares fallback system context with the fallback model's hot memories", async () => {
+    using muxHome = new DisposableTempDir("ai-service-fallback-hot-memories");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-fallback-hot-memories";
+    const sourceModel = KNOWN_MODELS.SONNET.id;
+    const fallbackModel = KNOWN_MODELS.GPT.id;
+    await writeMainConfig(muxHome.path, {
+      modelFallbacks: {
+        [sourceModel]: { models: [fallbackModel] },
+      },
+    });
+
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const experimentsService = new ExperimentsService({
+      telemetryService: new TelemetryService(muxHome.path),
+      muxHome: muxHome.path,
+    });
+    spyOn(experimentsService, "isExperimentEnabled").mockImplementation(
+      (experimentId) =>
+        experimentId === EXPERIMENT_IDS.MEMORY || experimentId === EXPERIMENT_IDS.MEMORY_HOT_SET
+    );
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for memory availability gating
+    const stubTool: Tool = {} as never;
+    const harness = createHarness(muxHome.path, metadata, {
+      allTools: { memory: stubTool },
+      useRequestedModelString: true,
+      experimentsService,
+    });
+    harness.service.setMemoryService(
+      new MemoryService(harness.config, new MemoryMetaService(muxHome.path))
+    );
+
+    const memoryCalls: Array<{ modelString: string; includeHotMemories: boolean }> = [];
+    const resolveMemoryContext = mock(
+      (modelString: string, options?: { includeHotMemories?: boolean }) => {
+        const includeHotMemories = options?.includeHotMemories !== false;
+        memoryCalls.push({ modelString, includeHotMemories });
+        return Promise.resolve({
+          indexEntries: [],
+          hotMemoriesBlock: includeHotMemories
+            ? `<hot_memories>${modelString}</hot_memories>`
+            : null,
+        });
+      }
+    );
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      workspaceId,
+      modelString: sourceModel,
+      thinkingLevel: "off",
+      experiments: { memory: true },
+      resolveMemoryContext,
+    });
+    expect(result.success).toBe(true);
+
+    const modelFallback = harness.startStreamCalls[0]?.[START_STREAM_MODEL_FALLBACK_INDEX] as
+      | ModelFallbackOptions
+      | undefined;
+    expect(modelFallback).toBeDefined();
+    if (!modelFallback) {
+      throw new Error("Expected modelFallback options on startStream");
+    }
+
+    const prepared = await modelFallback.prepare(fallbackModel);
+    expect(prepared.success).toBe(true);
+    expect(memoryCalls).toContainEqual({ modelString: sourceModel, includeHotMemories: false });
+    expect(memoryCalls).toContainEqual({ modelString: sourceModel, includeHotMemories: true });
+    expect(memoryCalls).toContainEqual({ modelString: fallbackModel, includeHotMemories: true });
+    expect(harness.streamSystemContextHotMemoriesBlocks).toContain(
+      `<hot_memories>${fallbackModel}</hot_memories>`
+    );
+  });
+
   it("drops reasoning-only continuations before adding interrupted sentinels for non-Anthropic fallbacks", () => {
     const continuationAssistant: MuxMessage = {
       id: "assistant-reasoning-only",
@@ -1609,6 +1706,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     harness.service.setMemoryService(
       new MemoryService(harness.config, new MemoryMetaService(muxHome.path))
     );
+    const memoryCalls: Array<{ includeHotMemories: boolean }> = [];
 
     const result = await harness.service.streamMessage({
       messages: [createMuxMessage("latest-user", "user", "hello")],
@@ -1616,10 +1714,49 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       modelString: "openai:gpt-5.2",
       thinkingLevel: "off",
       experiments: { memory: true },
+      resolveMemoryContext: (_modelString, options) => {
+        memoryCalls.push({ includeHotMemories: options?.includeHotMemories !== false });
+        return Promise.resolve({ indexEntries: [], hotMemoriesBlock: null });
+      },
     });
 
     expect(result.success).toBe(true);
     expect(harness.streamSystemContextMemoryToolFlags).toEqual([true, false]);
+    expect(memoryCalls).toEqual([{ includeHotMemories: false }]);
+  });
+
+  it("does not upgrade memory context when the hot-set sub-experiment is disabled", async () => {
+    using muxHome = new DisposableTempDir("ai-service-memory-hot-set-disabled");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-memory-hot-set-disabled";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for memory availability gating
+    const stubTool: Tool = {} as never;
+    const harness = createHarness(muxHome.path, metadata, {
+      allTools: { memory: stubTool },
+    });
+    harness.service.setMemoryService(
+      new MemoryService(harness.config, new MemoryMetaService(muxHome.path))
+    );
+    const memoryCalls: Array<{ includeHotMemories: boolean }> = [];
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+      experiments: { memory: true },
+      resolveMemoryContext: (_modelString, options) => {
+        memoryCalls.push({ includeHotMemories: options?.includeHotMemories !== false });
+        return Promise.resolve({ indexEntries: [], hotMemoriesBlock: null });
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.streamSystemContextMemoryToolFlags).toEqual([true]);
+    expect(memoryCalls).toEqual([{ includeHotMemories: false }]);
   });
 
   it("anchors the memory index at the checkout root and gates hot preloading on the memory-hot-set experiment", async () => {
@@ -1668,7 +1805,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       },
     ]);
 
-    const pullOnly = await service.buildMemorySessionContext(workspaceId);
+    const pullOnly = await service.buildMemorySessionContext(workspaceId, "openai:gpt-5.2");
     expect(pullOnly?.indexEntries.map((entry) => entry.path)).toEqual([
       "/memories/project/root-note.md",
     ]);
@@ -1677,8 +1814,43 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(listHotSpy).not.toHaveBeenCalled();
 
     hotSetEnabled = true;
-    const withHotSet = await service.buildMemorySessionContext(workspaceId);
+    const withHotSet = await service.buildMemorySessionContext(workspaceId, "openai:gpt-5.2");
     expect(withHotSet?.hotMemoriesBlock).toContain("root fact");
+  });
+
+  it("preserves the memory index when hot-memory selection fails", async () => {
+    using muxHome = new DisposableTempDir("ai-service-memory-hot-failure");
+    const checkoutRoot = path.join(muxHome.path, "checkout");
+    await fs.mkdir(path.join(checkoutRoot, ".mux", "memory"), { recursive: true });
+    await fs.writeFile(path.join(checkoutRoot, ".mux", "memory", "root-note.md"), "root fact\n");
+
+    const experimentsService = new ExperimentsService({
+      telemetryService: new TelemetryService(muxHome.path),
+      muxHome: muxHome.path,
+    });
+    spyOn(experimentsService, "isExperimentEnabled").mockImplementation(
+      (experimentId) =>
+        experimentId === EXPERIMENT_IDS.MEMORY || experimentId === EXPERIMENT_IDS.MEMORY_HOT_SET
+    );
+    const { config, service } = createBasicAIService(muxHome.path, { experimentsService });
+    const memoryService = new MemoryService(config, new MemoryMetaService(muxHome.path));
+    service.setMemoryService(memoryService);
+
+    const workspaceId = "workspace-memory-hot-failure";
+    const metadata: WorkspaceMetadata & { namedWorkspacePath: string } = {
+      ...createLocalWorkspaceMetadata(workspaceId, path.join(muxHome.path, "project")),
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+      namedWorkspacePath: checkoutRoot,
+    };
+    spyOn(service, "getWorkspaceMetadata").mockResolvedValue({ success: true, data: metadata });
+    spyOn(memoryService, "listHotMemories").mockRejectedValue(new Error("tokenizer failed"));
+
+    const context = await service.buildMemorySessionContext(workspaceId, "openai:gpt-5.2");
+
+    expect(context?.indexEntries.map((entry) => entry.path)).toEqual([
+      "/memories/project/root-note.md",
+    ]);
+    expect(context?.hotMemoriesBlock).toBeNull();
   });
 
   it("resolves the memory context only after the runtime is ready", async () => {
@@ -1690,10 +1862,9 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata);
 
-    // Ordering is the contract under test: the resolver result is cached per
-    // session segment by AgentSession, so resolving before ensureReady on a
-    // stopped Docker/remote workspace would pin an empty/partial block for
-    // the whole segment.
+    // Ordering is the contract under test: AgentSession caches the resolver
+    // result per model/session segment, so resolving before ensureReady on a
+    // stopped Docker/remote workspace would pin an empty/partial block.
     const order: string[] = [];
     const realCreateRuntime = runtimeFactory.createRuntime;
     spyOn(runtimeFactory, "createRuntime").mockImplementation((runtimeConfig, options) => {

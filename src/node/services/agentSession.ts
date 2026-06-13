@@ -329,6 +329,11 @@ enum TurnPhase {
 
 type StartupAutoRetryCheckOutcome = "completed" | "deferred";
 
+interface CachedMemoryContext {
+  context: MemorySessionContext | null;
+  includesHotMemories: boolean;
+}
+
 export class AgentSession {
   private readonly workspaceId: string;
   private readonly config: Config;
@@ -406,12 +411,13 @@ export class AgentSession {
 
   /**
    * Cached memory session context (memory experiment): index snapshot for
-   * the memory tool description + hot-memories block. `undefined` means "not
-   * yet computed for this session segment"; `null` means "computed, nothing
-   * to inject". Recomputed only at session start and compaction boundaries —
-   * never per turn — so the injected bytes stay prompt-cache-stable.
+   * the memory tool description plus an optional hot-memories block, keyed by
+   * model because the hot set is token-budgeted with the active model's
+   * tokenizer. Index-only entries can be upgraded once final tool policy keeps
+   * the memory tool; compaction clears the map so repeated turns keep
+   * prompt-cache-stable bytes without preserving stale files forever.
    */
-  private memoryContext: MemorySessionContext | null | undefined = undefined;
+  private readonly memoryContextByModelString = new Map<string, CachedMemoryContext>();
   /**
    * Cache the last-known experiment state so we don't spam metadata refresh
    * when post-compaction context is disabled.
@@ -3551,7 +3557,8 @@ export class AgentSession {
       // listing needs a running runtime). Still ordered after the
       // post-compaction check above: a just-consumed compaction boundary has
       // already reset the segment cache, so this stream recomputes the context.
-      resolveMemoryContext: () => this.resolveMemoryContext(),
+      resolveMemoryContext: (forModelString, memoryOptions) =>
+        this.resolveMemoryContext(forModelString, memoryOptions),
       workspaceGoalService: this.workspaceGoalService,
       experiments: options?.experiments,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
@@ -5329,26 +5336,40 @@ export class AgentSession {
   }
 
   /**
-   * Resolve the memory session context (index snapshot + hot-memories block)
+   * Resolve the memory session context (index snapshot + optional hot block)
    * for the current session segment.
    *
-   * Computed lazily on the first stream (session start) and re-fetched only
-   * after getPostCompactionAttachmentsIfNeeded consumes a compaction boundary
-   * (which resets the cache) — never per turn — so the injected bytes stay
-   * byte-identical within a segment (prompt-cache-stable). Invoked by
+   * Computed lazily on the first stream for each model. The first pass is
+   * index-only so final tool policy can strip memory without paying hot-set
+   * tokenization cost; if memory survives policy, the cache is upgraded with
+   * the token-budgeted hot block. Compaction clears the cache. Invoked by
    * AIService.streamMessage after runtime.ensureReady(): caching before the
    * runtime is started (stopped Docker/remote workspace) would pin an
    * empty/partial context for the whole segment.
    */
-  private async resolveMemoryContext(): Promise<MemorySessionContext | undefined> {
-    if (this.memoryContext === undefined) {
-      // Guard for test mocks that may not implement buildMemorySessionContext.
-      this.memoryContext =
-        typeof this.aiService.buildMemorySessionContext === "function"
-          ? await this.aiService.buildMemorySessionContext(this.workspaceId)
-          : null;
+  private async resolveMemoryContext(
+    modelString: string,
+    options?: { includeHotMemories?: boolean }
+  ): Promise<MemorySessionContext | undefined> {
+    assert(modelString.length > 0, "resolveMemoryContext requires a model string");
+    const includeHotMemories = options?.includeHotMemories !== false;
+    const cached = this.memoryContextByModelString.get(modelString);
+    if (cached && (cached.includesHotMemories || !includeHotMemories)) {
+      return cached.context ?? undefined;
     }
-    return this.memoryContext ?? undefined;
+
+    // Guard for test mocks that may not implement buildMemorySessionContext.
+    const context =
+      typeof this.aiService.buildMemorySessionContext === "function"
+        ? await this.aiService.buildMemorySessionContext(this.workspaceId, modelString, {
+            includeHotMemories,
+          })
+        : null;
+    this.memoryContextByModelString.set(modelString, {
+      context,
+      includesHotMemories: includeHotMemories,
+    });
+    return context ?? undefined;
   }
 
   /**
@@ -5371,7 +5392,7 @@ export class AgentSession {
       // Compaction boundary: invalidate the session-cached memory context so
       // the next stream recomputes the index and hot set from current
       // files/pins/usage stats.
-      this.memoryContext = undefined;
+      this.memoryContextByModelString.clear();
       // Clear file state cache since history context is gone
       this.fileChangeTracker.clear();
 

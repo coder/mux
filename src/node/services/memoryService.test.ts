@@ -1337,7 +1337,9 @@ describe("MemoryService", () => {
       await fsPromises.writeFile(path.join(fixture.muxHome, "memory", "pinned.md"), "pinned facts");
       await fixture.metaService.setPinned("global:pinned.md", true);
 
-      const items = await fixture.service.listHotMemories(fixture.ctx);
+      const items = await fixture.service.listHotMemories(fixture.ctx, {
+        countTokens: () => Promise.resolve(1),
+      });
       const paths = items.map((item) => item.path);
       expect(paths[0]).toBe("/memories/global/pinned.md");
       expect(paths).toContain("/memories/global/used.md");
@@ -1351,7 +1353,7 @@ describe("MemoryService", () => {
     it("preloading hot memories does not itself count as a use", async () => {
       using fixture = await createFixture();
       await fixture.service.create(fixture.ctx, "/memories/global/a.md", "v1", "agent");
-      await fixture.service.listHotMemories(fixture.ctx);
+      await fixture.service.listHotMemories(fixture.ctx, { countTokens: () => Promise.resolve(1) });
       expect((await fixture.metaService.getEntries()).get("global:a.md")?.accessCount).toBe(1);
     });
   });
