@@ -816,10 +816,6 @@ export class TaskService {
   // Serialize stream-end processing per workspace to avoid races when
   // finalizing reported tasks and cleanup state transitions.
   private readonly workspaceEventLocks = new MutexMap<string>();
-  // Workflow runs whose completed child workspaces must not be auto-deleted yet
-  // (see markWorkflowRunActive). In-memory by design: lost holds self-heal via
-  // the startup completed-report recheck.
-  private readonly activeWorkflowRunIds = new Set<string>();
   // Separate parent-scoped lock for deferred best-of fallback/finalization. This path can run
   // concurrently from multiple child stream-end handlers for the same parent, and it must remain
   // safe even when the parent stream-end already holds workspaceEventLocks for the parent itself.
@@ -2785,25 +2781,12 @@ export class TaskService {
     return Ok({ terminatedTaskIds });
   }
 
-  /**
-   * Defer auto-cleanup of a workflow run's completed child workspaces while
-   * the run is active. Without the hold, sequential steps flash in the sidebar:
-   * step N's workspace is deleted the moment its report is consumed, leaving
-   * the run with zero workspaces until step N+1 spawns. The hold is in-memory
-   * only - after a crash/restart the regular startup recheck sweeps leftovers.
-   */
-  markWorkflowRunActive(workflowRunId: string): void {
-    assert(workflowRunId.length > 0, "markWorkflowRunActive: workflowRunId must be non-empty");
-    this.activeWorkflowRunIds.add(workflowRunId);
-  }
-
-  /** Release the cleanup hold for a terminal run and sweep its deferred children. */
+  /** Best-effort final recheck for any completed workflow children still deferred by cleanup gates. */
   async markWorkflowRunEnded(workflowRunId: string): Promise<void> {
     assert(workflowRunId.length > 0, "markWorkflowRunEnded: workflowRunId must be non-empty");
-    this.activeWorkflowRunIds.delete(workflowRunId);
 
     const cfg = this.config.loadConfigOrDefault();
-    const heldTaskIds: string[] = [];
+    const completedTaskIds: string[] = [];
     for (const project of cfg.projects.values()) {
       for (const workspace of project.workspaces) {
         if (
@@ -2811,11 +2794,11 @@ export class TaskService {
           workspace.workflowTask?.runId === workflowRunId &&
           hasCompletedAgentReport(workspace)
         ) {
-          heldTaskIds.push(workspace.id);
+          completedTaskIds.push(workspace.id);
         }
       }
     }
-    for (const taskId of heldTaskIds) {
+    for (const taskId of completedTaskIds) {
       await this.cleanupReportedLeafTask(taskId);
     }
   }
@@ -3516,7 +3499,9 @@ export class TaskService {
     const index = this.buildAgentTaskIndex(cfg);
     const completedDescendants = this.listCompletedDescendantAgentTaskIds(index, workspaceId);
     return completedDescendants.some(
-      (descendantId) => !this.hasArchivedAncestor(index, cfg, descendantId)
+      (descendantId) =>
+        !this.isWorkflowOwnedTaskUsingIndex(index, descendantId) &&
+        !this.hasArchivedAncestor(index, cfg, descendantId)
     );
   }
 
@@ -3939,6 +3924,26 @@ export class TaskService {
         isWorkspaceArchived(entry.workspace.archivedAt, entry.workspace.unarchivedAt)
       );
     });
+  }
+
+  private isWorkflowOwnedTaskUsingIndex(index: AgentTaskIndex, taskId: string): boolean {
+    assert(taskId.length > 0, "isWorkflowOwnedTaskUsingIndex: taskId must be non-empty");
+
+    let current: string | undefined = taskId;
+    for (let depth = 0; current != null && depth < 32; depth++) {
+      const entry = index.byId.get(current);
+      if (entry?.workflowTask != null) {
+        return true;
+      }
+      current = index.parentById.get(current);
+    }
+
+    if (current != null) {
+      throw new Error(
+        `isWorkflowOwnedTaskUsingIndex: possible parentWorkspaceId cycle starting at ${taskId}`
+      );
+    }
+    return false;
   }
 
   private countActiveAgentTasks(config: ReturnType<Config["loadConfigOrDefault"]>): number {
@@ -6563,13 +6568,6 @@ export class TaskService {
       return { ok: false, reason: "task_not_reported" };
     }
 
-    // Workflow-owned children stay visible in the sidebar for the run's whole
-    // duration; markWorkflowRunEnded sweeps them once the run is terminal.
-    const workflowRunId = entry.workspace.workflowTask?.runId;
-    if (workflowRunId != null && this.activeWorkflowRunIds.has(workflowRunId)) {
-      return { ok: false, reason: "workflow_run_active" };
-    }
-
     if (entry.workspace.bestOf?.total != null && entry.workspace.bestOf.total > 1) {
       if (
         await this.shouldDeferBestOfFallback({
@@ -6594,6 +6592,7 @@ export class TaskService {
     // (has no child agent tasks in config). This stays status-agnostic so ancestor deletion
     // never orphans descendants that have not been pruned yet.
     const index = this.buildAgentTaskIndex(config);
+    const isWorkflowOwnedTask = this.isWorkflowOwnedTaskUsingIndex(index, workspaceId);
     if (this.hasChildAgentTasks(index, workspaceId)) {
       return { ok: false, reason: "has_child_tasks" };
     }
@@ -6608,8 +6607,12 @@ export class TaskService {
       return { ok: false, reason: "patch_pending" };
     }
 
+    // Workflow task results are persisted in the workflow run/report artifacts before cleanup,
+    // so the user-level "preserve subagents until archive" setting should not keep those
+    // transient worktrees around indefinitely.
     const taskSettings = normalizeTaskSettings(config.taskSettings);
     if (
+      !isWorkflowOwnedTask &&
       taskSettings.preserveSubagentsUntilArchive &&
       !this.hasArchivedAncestor(index, config, workspaceId)
     ) {

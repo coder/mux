@@ -11160,6 +11160,7 @@ describe("TaskService", () => {
       agentType: string;
       taskStatus?: "reported" | "interrupted";
       reportedAt?: string;
+      workflowTask?: WorkspaceConfigEntry["workflowTask"];
     }
 
     type TaskCleanupEligibility =
@@ -11232,6 +11233,7 @@ describe("TaskService", () => {
           agentType: task.agentType,
           taskStatus: task.taskStatus ?? "reported",
           reportedAt: task.reportedAt,
+          ...(task.workflowTask !== undefined ? { workflowTask: task.workflowTask } : {}),
         });
         parentWorkspaceId = task.id;
       }
@@ -11278,6 +11280,46 @@ describe("TaskService", () => {
 
       expect(remove).not.toHaveBeenCalled();
       expect(findWorkspaceInConfig(config, childTaskId)).toBeTruthy();
+    });
+
+    test("workflow-owned completed descendants bypass preserve-until-archive cleanup", async () => {
+      const workflowTaskId = "workflow-222";
+      const childTaskId = "child-333";
+      const { config, taskService, remove, rootWorkspaceId, internal } =
+        await setupReportedTaskChain({
+          taskChain: [
+            {
+              id: workflowTaskId,
+              directoryName: "workflow-task",
+              name: "agent_explore_workflow",
+              agentType: "explore",
+              taskStatus: "reported",
+              workflowTask: { runId: "wfr_cleanup", stepId: "review" },
+            },
+            {
+              id: childTaskId,
+              directoryName: "child-task",
+              name: "agent_exec_child",
+              agentType: "exec",
+              taskStatus: "reported",
+            },
+          ],
+        });
+
+      expect(await internal.canCleanupReportedTask(childTaskId)).toEqual({
+        ok: true,
+        parentWorkspaceId: workflowTaskId,
+      });
+      expect(taskService.hasPreservedCompletedDescendants(rootWorkspaceId)).toBe(false);
+
+      await internal.cleanupReportedLeafTask(childTaskId);
+
+      expect(remove.mock.calls).toEqual([
+        [childTaskId, true],
+        [workflowTaskId, true],
+      ]);
+      expect(findWorkspaceInConfig(config, childTaskId)).toBeUndefined();
+      expect(findWorkspaceInConfig(config, workflowTaskId)).toBeUndefined();
     });
 
     test("startup recovery leaves preserved descendants alone before archive", async () => {

@@ -295,8 +295,7 @@ describe("WorkflowTaskServiceAdapter", () => {
     ]);
   });
 
-  test("forwards run lifecycle hooks to the task service cleanup hold", async () => {
-    const markWorkflowRunActive = mock((_runId: string) => undefined);
+  test("forwards run-end lifecycle hooks to the task service", async () => {
     const markWorkflowRunEnded = mock(async (_runId: string) => undefined);
     const adapter = new WorkflowTaskServiceAdapter({
       taskService: {
@@ -304,7 +303,6 @@ describe("WorkflowTaskServiceAdapter", () => {
           Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
         ),
         waitForAgentReport: mock(async () => ({ reportMarkdown: "unused" })),
-        markWorkflowRunActive,
         markWorkflowRunEnded,
       },
       parentWorkspaceId: "parent_1",
@@ -312,10 +310,8 @@ describe("WorkflowTaskServiceAdapter", () => {
       defaultAgentId: "explore",
     });
 
-    adapter.onRunStarted();
     await adapter.onRunEnded();
 
-    expect(markWorkflowRunActive).toHaveBeenCalledWith("wfr_123");
     expect(markWorkflowRunEnded).toHaveBeenCalledWith("wfr_123");
   });
 
