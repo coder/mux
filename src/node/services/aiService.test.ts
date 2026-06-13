@@ -63,7 +63,7 @@ import * as agentResolution from "./agentResolution";
 import * as streamContextBuilder from "./streamContextBuilder";
 import * as messagePipeline from "./messagePipeline";
 import { MemoryMetaService } from "@/node/services/memoryMeta";
-import { MemoryService } from "@/node/services/memoryService";
+import { MemoryService, projectMemoryDirName } from "@/node/services/memoryService";
 import * as toolAssembly from "./toolAssembly";
 import type { ToolModelUsageEvent } from "@/common/utils/tools/tools";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
@@ -1759,16 +1759,23 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(memoryCalls).toEqual([{ includeHotMemories: false }]);
   });
 
-  it("anchors the memory index at the checkout root and gates hot preloading on the memory-hot-set experiment", async () => {
+  it("anchors the memory index by project identity and gates hot preloading on the memory-hot-set experiment", async () => {
     using muxHome = new DisposableTempDir("ai-service-memory-session-context");
+    const projectPath = path.join(muxHome.path, "project");
     const checkoutRoot = path.join(muxHome.path, "checkout");
     const subProjectCwd = path.join(checkoutRoot, "packages", "app");
     await fs.mkdir(subProjectCwd, { recursive: true });
-    // Project memory lives at the checkout ROOT; the memory tool and the
-    // Memory tab resolve this root, so the advertised index must enumerate it
-    // even when the workspace executes inside a sub-project directory.
-    await fs.mkdir(path.join(checkoutRoot, ".mux", "memory"), { recursive: true });
-    await fs.writeFile(path.join(checkoutRoot, ".mux", "memory", "root-note.md"), "root fact\n");
+    // Project memory lives in a host-local root keyed by the stable project
+    // identity, so the advertised index must enumerate it even when the
+    // workspace executes inside a sub-project checkout directory.
+    const projectMemoryRoot = path.join(
+      muxHome.path,
+      "memory",
+      "project",
+      projectMemoryDirName(projectPath)
+    );
+    await fs.mkdir(projectMemoryRoot, { recursive: true });
+    await fs.writeFile(path.join(projectMemoryRoot, "root-note.md"), "root fact\n");
 
     let hotSetEnabled = false;
     const experimentsService = new ExperimentsService({
@@ -1788,7 +1795,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     // namedWorkspacePath is the persisted checkout root consumed by
     // resolveWorkspaceRootPath (WorkspaceMetadataForRuntime extension).
     const metadata: WorkspaceMetadata & { namedWorkspacePath: string } = {
-      ...createLocalWorkspaceMetadata(workspaceId, path.join(muxHome.path, "project")),
+      ...createLocalWorkspaceMetadata(workspaceId, projectPath),
       runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       namedWorkspacePath: checkoutRoot,
       subProjectPath: "packages/app",
@@ -1820,9 +1827,16 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
   it("preserves the memory index when hot-memory selection fails", async () => {
     using muxHome = new DisposableTempDir("ai-service-memory-hot-failure");
+    const projectPath = path.join(muxHome.path, "project");
     const checkoutRoot = path.join(muxHome.path, "checkout");
-    await fs.mkdir(path.join(checkoutRoot, ".mux", "memory"), { recursive: true });
-    await fs.writeFile(path.join(checkoutRoot, ".mux", "memory", "root-note.md"), "root fact\n");
+    const projectMemoryRoot = path.join(
+      muxHome.path,
+      "memory",
+      "project",
+      projectMemoryDirName(projectPath)
+    );
+    await fs.mkdir(projectMemoryRoot, { recursive: true });
+    await fs.writeFile(path.join(projectMemoryRoot, "root-note.md"), "root fact\n");
 
     const experimentsService = new ExperimentsService({
       telemetryService: new TelemetryService(muxHome.path),
@@ -1838,12 +1852,14 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     const workspaceId = "workspace-memory-hot-failure";
     const metadata: WorkspaceMetadata & { namedWorkspacePath: string } = {
-      ...createLocalWorkspaceMetadata(workspaceId, path.join(muxHome.path, "project")),
+      ...createLocalWorkspaceMetadata(workspaceId, projectPath),
       runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       namedWorkspacePath: checkoutRoot,
     };
     spyOn(service, "getWorkspaceMetadata").mockResolvedValue({ success: true, data: metadata });
-    spyOn(memoryService, "listHotMemories").mockRejectedValue(new Error("tokenizer failed"));
+    spyOn(memoryService, "listHotMemories").mockImplementation(() => {
+      throw new Error("tokenizer failed");
+    });
 
     const context = await service.buildMemorySessionContext(workspaceId, "openai:gpt-5.2");
 

@@ -6,7 +6,7 @@ import type { Tool } from "ai";
 import { Config } from "@/node/config";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import type { InitStateManager } from "@/node/services/initStateManager";
-import { MemoryService } from "@/node/services/memoryService";
+import { MemoryService, projectMemoryDirName } from "@/node/services/memoryService";
 import { MemoryMetaService } from "@/node/services/memoryMeta";
 import { createMemoryTool, resolveMemoryAccessPolicy } from "./memory";
 import { TestTempDir, createTestToolConfig, mockToolCallOptions } from "./testHelpers";
@@ -29,6 +29,18 @@ interface MemoryToolFixture extends Disposable {
   tool: Tool;
 }
 
+const FIXTURE_PROJECT_PATH = "/stable/project-id";
+
+function projectMemoryPath(muxHome: string, relPath: string): string {
+  return path.join(
+    muxHome,
+    "memory",
+    "project",
+    projectMemoryDirName(FIXTURE_PROJECT_PATH),
+    relPath
+  );
+}
+
 async function createFixture(options?: {
   memoryAccess?: MemoryScopeAccess;
 }): Promise<MemoryToolFixture> {
@@ -38,12 +50,12 @@ async function createFixture(options?: {
   await fsPromises.mkdir(muxHome, { recursive: true });
   await fsPromises.mkdir(checkout, { recursive: true });
   const config = createTestToolConfig(checkout, { workspaceId: "ws-tool" });
+  config.workspaceProjectPath = FIXTURE_PROJECT_PATH;
   config.runtime = new LocalRuntime(checkout);
   config.memoryService = new MemoryService(new Config(muxHome), new MemoryMetaService(muxHome));
   config.memoryAccess = options?.memoryAccess ?? {
     global: "readwrite",
     project: "readwrite",
-    "project-local": "readwrite",
     workspace: "readwrite",
   };
   return {
@@ -58,15 +70,14 @@ async function createFixture(options?: {
 }
 
 describe("memory tool sub-project workspaces", () => {
-  it("resolves project memory from the checkout root, not the execution cwd", async () => {
+  it("resolves project memory from the project identity, not the execution cwd", async () => {
     using fixture = await createFixture();
-    // Simulate a sub-project workspace: tools execute in <checkout>/packages/app
-    // while the checkout root is <checkout>. Project memories must live at the
-    // checkout root so the Memory tab / hot-set (which resolve the root) see them.
+    // Simulate a sub-project workspace: tools execute in <checkout>/packages/app.
+    // Project memories must live in the host-local project store, not under any
+    // checkout path.
     const subProjectCwd = path.join(fixture.checkout, "packages", "app");
     await fsPromises.mkdir(subProjectCwd, { recursive: true });
     fixture.config.cwd = subProjectCwd;
-    fixture.config.workspaceCheckoutRootPath = fixture.checkout;
     const tool = createMemoryTool(fixture.config);
 
     const result = await run(tool, {
@@ -75,13 +86,14 @@ describe("memory tool sub-project workspaces", () => {
       file_text: "root-anchored",
     });
     expect(result.success).toBe(true);
-    expect(await pathExists(path.join(fixture.checkout, ".mux", "memory", "facts.md"))).toBe(true);
+    expect(await pathExists(projectMemoryPath(fixture.muxHome, "facts.md"))).toBe(true);
+    expect(await pathExists(path.join(fixture.checkout, ".mux", "memory", "facts.md"))).toBe(false);
     expect(await pathExists(path.join(subProjectCwd, ".mux", "memory", "facts.md"))).toBe(false);
   });
 });
 
 describe("memory tool multi-project workspaces", () => {
-  it("disables project-local (no single project identity, even though workspaceProjectPath is set)", async () => {
+  it("disables project memory when there is no single project identity", async () => {
     using fixture = await createFixture();
     // Multi-project tool configs carry the FIRST project's path in
     // workspaceProjectPath; binding stores to it would expose one project's
@@ -95,14 +107,14 @@ describe("memory tool multi-project workspaces", () => {
 
     const result = await run(tool, {
       command: "create",
-      path: "/memories/project-local/notes.md",
+      path: "/memories/project/notes.md",
       file_text: "leaked",
     });
     expect(result).toEqual({
       success: false,
-      error: "Project-local memory is unavailable: no project is associated with this session",
+      error: "Project memory is unavailable: no project is associated with this session",
     });
-    expect(await pathExists(path.join(fixture.muxHome, "project-memory"))).toBe(false);
+    expect(await pathExists(path.join(fixture.muxHome, "memory", "project"))).toBe(false);
   });
 });
 
@@ -122,7 +134,9 @@ describe("memory tool", () => {
         file_text: "line one",
       });
       expect(created.success).toBe(true);
-      expect(await pathExists(path.join(fixture.muxHome, "memory", "notes.md"))).toBe(true);
+      expect(await pathExists(path.join(fixture.muxHome, "memory", "global", "notes.md"))).toBe(
+        true
+      );
 
       const inserted = await run(fixture.tool, {
         command: "insert",
@@ -158,7 +172,9 @@ describe("memory tool", () => {
         path: "/memories/global/renamed.md",
       });
       expect(deleted.success).toBe(true);
-      expect(await pathExists(path.join(fixture.muxHome, "memory", "renamed.md"))).toBe(false);
+      expect(await pathExists(path.join(fixture.muxHome, "memory", "global", "renamed.md"))).toBe(
+        false
+      );
     });
 
     it("returns recoverable errors for missing required fields", async () => {
@@ -297,19 +313,16 @@ describe("memory tool", () => {
       expect(resolveMemoryAccessPolicy({ planLike: false, editingCapable: true })).toEqual({
         global: "readwrite",
         project: "readwrite",
-        "project-local": "readwrite",
         workspace: "readwrite",
       });
       expect(resolveMemoryAccessPolicy({ planLike: true, editingCapable: true })).toEqual({
         global: "readwrite",
-        project: "read",
-        "project-local": "readwrite",
+        project: "readwrite",
         workspace: "readwrite",
       });
       expect(resolveMemoryAccessPolicy({ planLike: false, editingCapable: false })).toEqual({
         global: "read",
         project: "read",
-        "project-local": "read",
         workspace: "read",
       });
     });

@@ -54,9 +54,8 @@ export async function consolidateMemoryCommand(
 
   const metaService = new MemoryMetaService(defaultConfig.rootDir);
   const memoryService = new MemoryService(defaultConfig, metaService);
-  // runtime: null + checkoutCwd: "" + projectPath: "" structurally disable
-  // the project AND project-local scopes — the v1 scope restriction by
-  // construction, covering reads too so project-private notes never reach the
+  // projectPath: "" structurally disables project memory — the v1 scope
+  // restriction by construction, covering reads too so project-private notes never reach the
   // provider (the runner's guard also rejects mutations explicitly for a
   // clearer model-facing error).
   const ctx: MemoryScopeContext = {

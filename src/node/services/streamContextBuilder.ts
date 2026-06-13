@@ -472,7 +472,7 @@ function buildAdvisorGuidanceSection(): string {
  * selectivity rules: memory should accumulate quietly during normal work and
  * stay high-signal — noise is the classic failure mode of agent memory.
  * Complements the static <memory> prelude section, which routes explicit
- * user "remember this" requests to AGENTS.md / code comments.
+ * user "remember this" requests to AGENTS.md / code comments or the memory tool.
  */
 function buildMemoryGuidanceSection(): string {
   return [
@@ -482,7 +482,7 @@ function buildMemoryGuidanceSection(): string {
     "- Record durable lessons the moment you learn them: user corrections and confirmed judgment calls, hard-won debugging insights, environment quirks, facts not discoverable from the code.",
     "- Be selective — memory must stay high-signal. Skip one-off task details, anything obvious from the codebase or instruction files, and secrets.",
     "- Maintain as you go: update or delete memories that prove wrong or stale, prefer extending an existing file over creating near-duplicates, and give new files a one-line frontmatter `description:` so the index stays useful.",
-    "- Explicit user requests to remember codebase rules still belong in AGENTS.md or code comments (see <memory>); your memory directory is for what you learn on your own.",
+    "- For explicit user requests to remember something, follow <memory>: use AGENTS.md/code comments for repo-visible guidance, and use the memory tool for private facts, preferences, or working notes.",
     "</memory-tool-guidance>",
   ].join("\n");
 }

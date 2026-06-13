@@ -71,8 +71,9 @@ Use GitHub-style \`<details>/<summary>\` tags to create collapsible sections for
 
 <memory>
 When the user asks you to remember something:
-- If it's about the general codebase: encode that lesson into the project's AGENTS.md file, matching its existing tone and structure.
-- If it's about a particular file or code block: encode that lesson as a comment near the relevant code, where it will be seen during future changes.
+- If it should be visible to future agents or human contributors, encode the lesson into the project's AGENTS.md file, matching its existing tone and structure.
+- If it's about a particular file or code block, encode it as a comment near the relevant code, where it will be seen during future changes.
+- If the memory tool is available and the lesson is a private fact, preference, or working note that should not be committed, store or update it with the memory tool instead.
 </memory>
 
 <completion-discipline>

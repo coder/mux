@@ -290,8 +290,8 @@ describe("formatHotMemoriesBlock", () => {
     expect(block).toContain('path="/memories/project/a&quot; injected=&quot;x&lt;b&gt;.md"');
   });
 
-  it("neutralizes block-closing delimiters in repo-controlled content", () => {
-    // A committed memory file could close the wrapper elements and smuggle
+  it("neutralizes block-closing delimiters in untrusted content", () => {
+    // A memory file could close the wrapper elements and smuggle
     // text outside the untrusted-data envelope — including via whitespace or
     // case variants a model may read as equivalent closers.
     const block = formatHotMemoriesBlock([

@@ -88,7 +88,6 @@ import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpSer
 import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 import type { TaskService } from "@/node/services/taskService";
 import {
-  resolveMemoryProjectAnchor,
   resolveMemoryProjectIdentity,
   type MemoryService,
   type MemorySessionContext,
@@ -554,11 +553,10 @@ export class AIService extends EventEmitter {
       const runtime = createRuntimeForWorkspace(metadata);
       const ctx = {
         runtime,
-        // "" disables the project scope (multi-project / unresolvable root).
-        checkoutCwd: resolveMemoryProjectAnchor(metadata, runtime) ?? "",
+        checkoutCwd: "",
         workspaceId,
-        // Stable per-project identity (handles multi-project workspaces),
-        // from #3533's project-local memory scope.
+        // Stable per-project identity (handles multi-project workspaces); ""
+        // disables project memory when no single project identity exists.
         projectPath: resolveMemoryProjectIdentity(metadata),
       };
       const indexEntries = await this.memoryService.listIndexEntries(ctx);
@@ -2028,12 +2026,8 @@ export class AIService extends EventEmitter {
         analyticsService: this.analyticsService,
         desktopSessionManager: this.desktopSessionManager,
         // Agent memory (memory experiment): per-scope write policy derived from
-        // the agent class (exec-like / plan-like / read-only). Project memories
-        // anchor at the single project checkout root (not the sub-project or
-        // multi-project container execution cwd) so the tool, index, hot-set,
-        // and Memory tab all agree on one git-tracked location; null disables
-        // the project scope (recoverable tool error).
-        workspaceCheckoutRootPath: resolveMemoryProjectAnchor(metadataWithPath, runtime),
+        // the agent class (exec-like / plan-like / read-only). Project memory is
+        // host-local under muxHome, keyed by the stable project identity.
         memoryService: this.memoryService,
         memoryAccess: resolveMemoryAccessPolicy({
           planLike: agentIsPlanLike,

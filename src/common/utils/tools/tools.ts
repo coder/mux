@@ -143,16 +143,6 @@ export interface ToolConfiguration {
   workspaceId?: string;
   /** Pre-resolved mux-managed resource scope (global ~/.mux vs project root). */
   muxScope?: MuxToolScope;
-  /**
-   * Workspace checkout root for the memory tool's project scope. On sub-project
-   * workspaces `cwd` is the execution directory (root + subProjectPath), but
-   * project memories must anchor at the checkout root so the Memory tab,
-   * index, and hot-set (which resolve the root) see the same files.
-   * `null` disables the project scope entirely (multi-project workspaces run
-   * in a shared container dir that is not a git repository); `undefined`
-   * falls back to `cwd` (single-project tool factories/tests).
-   */
-  workspaceCheckoutRootPath?: string | null;
   /** Memory service for the memory tool (present only when the memory experiment is enabled). */
   memoryService?: MemoryService;
   /** Per-scope memory write policy for the current agent (defaults to read-only). */

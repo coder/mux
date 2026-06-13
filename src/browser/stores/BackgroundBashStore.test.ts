@@ -116,8 +116,16 @@ describe("BackgroundBashStore state-known signal", () => {
       },
     } as unknown as APIClient);
 
-    store.subscribeStateKnown("ws-1", () => undefined);
-    await waitUntil(() => store.isStateKnown("ws-1"));
-    expect(store.getProcesses("ws-1")).toEqual([]);
+    // The retrying self-heal path should be cleaned up like a real component
+    // unmount; otherwise the test leaves a retry timer logging failures into
+    // unrelated files for the rest of the unit suite.
+    const unsubscribe = store.subscribeStateKnown("ws-1", () => undefined);
+    try {
+      await waitUntil(() => store.isStateKnown("ws-1"));
+      expect(store.getProcesses("ws-1")).toEqual([]);
+    } finally {
+      unsubscribe();
+      store.setClient(null);
+    }
   });
 });

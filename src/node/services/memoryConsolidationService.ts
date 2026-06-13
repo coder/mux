@@ -244,12 +244,11 @@ export class MemoryConsolidationService {
       return Err(`could not create model ${modelString}: ${modelResult.error.type}`);
     }
 
-    // v1 scopes are host-local (workspace + global): runtime stays null and
-    // checkoutCwd/projectPath stay "" so BOTH repo-backed project memory and
-    // host-local project-local memory are structurally disabled — including
-    // for reads, which bypass the tool's mutation guard. A dream pass must
-    // never ship project-private notes to the provider (PRD #3534). The
-    // stopped-runtime case also works: no live checkout is needed.
+    // v1 consolidation scopes are workspace + global: projectPath stays "" so
+    // project memory is structurally disabled — including for reads, which
+    // bypass the tool's mutation guard. A dream pass must never ship
+    // project-private notes to the provider (PRD #3534). The stopped-runtime
+    // case also works: no live checkout is needed.
     const ctx: MemoryScopeContext = {
       runtime: null,
       checkoutCwd: "",
