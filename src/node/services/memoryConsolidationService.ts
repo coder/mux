@@ -157,6 +157,20 @@ export function resolveConsolidationProjectPath(workspace: {
   );
 }
 
+/**
+ * Newest completed run across all workspaces, or null when none have run.
+ * Every run consolidates global scope, so the newest run anywhere doubles as
+ * the last time global memory was covered.
+ */
+function findNewestWorkspaceRecord(
+  workspaces: Record<string, MemoryConsolidationRecord>
+): MemoryConsolidationRecord | null {
+  return Object.values(workspaces).reduce<MemoryConsolidationRecord | null>(
+    (latest, record) => (latest === null || record.lastRunAt > latest.lastRunAt ? record : latest),
+    null
+  );
+}
+
 export class MemoryConsolidationService extends EventEmitter {
   private readonly sidecarPath: string;
   /** Serializes sidecar read-modify-write cycles (journal persistence only). */
@@ -209,11 +223,7 @@ export class MemoryConsolidationService extends EventEmitter {
     const file = await this.load();
     const workspace = this.config.findWorkspace(workspaceId);
     const projectPath = workspace == null ? "" : resolveConsolidationProjectPath(workspace);
-    const globalRecord = Object.values(file.workspaces).reduce<MemoryConsolidationRecord | null>(
-      (latest, record) =>
-        latest === null || record.lastRunAt > latest.lastRunAt ? record : latest,
-      null
-    );
+    const globalRecord = findNewestWorkspaceRecord(file.workspaces);
     return {
       workspaceRecord: file.workspaces[workspaceId] ?? null,
       projectRecord: projectPath === "" ? null : (file.projects[projectPath] ?? null),
@@ -409,10 +419,7 @@ export class MemoryConsolidationService extends EventEmitter {
     // (every run consolidates global). Derived, so no sidecar schema change.
     // Advanced after each successful run below: a global-only write needs ONE
     // covering pass, not one per idle workspace in the same sweep.
-    let globalLastRunAt = Math.max(
-      0,
-      ...Object.values(sidecar.workspaces).map((record) => record.lastRunAt)
-    );
+    let globalLastRunAt = findNewestWorkspaceRecord(sidecar.workspaces)?.lastRunAt ?? 0;
     const archivedById = new Map<string, boolean>();
     const projectPathByWorkspace = new Map<string, string>();
     for (const [configProjectPath, project] of this.config.loadConfigOrDefault().projects) {
