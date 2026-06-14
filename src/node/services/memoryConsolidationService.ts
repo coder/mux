@@ -63,6 +63,14 @@ interface ConsolidationSidecarFile {
   projects: Record<string, MemoryConsolidationRecord>;
 }
 
+interface MemoryConsolidationRunOptions {
+  /**
+   * Launch sweep sets this only after a scope-specific coverage check says the
+   * project sidecar record, not the workspace record, is the debounce anchor.
+   */
+  skipWorkspaceDebounce?: boolean;
+}
+
 interface ExperimentsCheck {
   isExperimentEnabled(experimentId: string): boolean;
 }
@@ -232,7 +240,8 @@ export class MemoryConsolidationService {
    */
   async maybeRun(
     workspaceId: string,
-    trigger: MemoryConsolidationTrigger
+    trigger: MemoryConsolidationTrigger,
+    options: MemoryConsolidationRunOptions = {}
   ): Promise<Result<MemoryConsolidationRecord, string>> {
     if (!this.enabled()) return Err("memory-consolidation experiment is disabled");
     const active = this.inFlight.get(workspaceId);
@@ -243,7 +252,7 @@ export class MemoryConsolidationService {
       // housekeeping and may be dropped.
       if (trigger !== "archive") return Err("a consolidation run is already in flight");
       await active.catch(() => undefined);
-      return this.maybeRun(workspaceId, trigger);
+      return this.maybeRun(workspaceId, trigger, options);
     }
     // Reserve the run lock in the same synchronous frame as the check above:
     // the awaits in runLocked (sidecar read, agent body, model creation) are
@@ -251,7 +260,7 @@ export class MemoryConsolidationService {
     // check and start a second concurrent run over the same directories.
     // runLocked executes synchronously up to its first await, so the map is
     // populated before any other caller can observe it.
-    const run = this.runLocked(workspaceId, trigger);
+    const run = this.runLocked(workspaceId, trigger, options);
     this.inFlight.set(workspaceId, run);
     try {
       return await run;
@@ -263,13 +272,14 @@ export class MemoryConsolidationService {
   /** The actual run; only ever invoked by maybeRun while holding the lock. */
   private async runLocked(
     workspaceId: string,
-    trigger: MemoryConsolidationTrigger
+    trigger: MemoryConsolidationTrigger,
+    options: MemoryConsolidationRunOptions
   ): Promise<Result<MemoryConsolidationRecord, string>> {
     // Manual runs bypass debounce (an explicit /dream is explicit intent).
     // Archive too: it is the workspace's one-shot final pass — the only
     // chance to promote durable lessons to global scope — and archival
     // typically follows a compaction-triggered run within the window.
-    if (trigger !== "manual" && trigger !== "archive") {
+    if (trigger !== "manual" && trigger !== "archive" && options.skipWorkspaceDebounce !== true) {
       const record = await this.getRecord(workspaceId);
       if (record !== null && Date.now() - record.lastRunAt < MEMORY_CONSOLIDATION_DEBOUNCE_MS) {
         return Err("debounced: a recent consolidation run already covered this workspace");
@@ -438,6 +448,7 @@ export class MemoryConsolidationService {
               workspaceId,
             });
       let hasNewWrites = false;
+      let projectWriteNeedsCoverage = false;
       for (const [key, entry] of meta) {
         if (entry.lastWriteAt === null) continue;
         if (key.startsWith(workspaceKeyPrefix) && entry.lastWriteAt > lastRunAt) {
@@ -450,6 +461,7 @@ export class MemoryConsolidationService {
           entry.lastWriteAt > projectRunAt
         ) {
           hasNewWrites = true;
+          projectWriteNeedsCoverage = true;
           break;
         }
         if (key.startsWith("global:") && entry.lastWriteAt > globalLastRunAt) {
@@ -458,12 +470,21 @@ export class MemoryConsolidationService {
         }
       }
       if (!hasNewWrites) continue;
+      // Project coverage is anchored separately from workspace coverage. Recent
+      // legacy workspace-only records must not debounce away the first project
+      // pass, and skipped debounce candidates must not spend the launch cap.
+      const projectDebounceAllowsRun =
+        projectWriteNeedsCoverage && now - projectRunAt >= MEMORY_CONSOLIDATION_DEBOUNCE_MS;
+      const workspaceDebounceWouldSkip =
+        lastRunAt !== 0 && now - lastRunAt < MEMORY_CONSOLIDATION_DEBOUNCE_MS;
+      const skipWorkspaceDebounce = workspaceDebounceWouldSkip && projectDebounceAllowsRun;
+      if (workspaceDebounceWouldSkip && !skipWorkspaceDebounce) continue;
       started++;
       // Sequential, not parallel: the sweep is background housekeeping and
       // must not stampede the provider on launch.
-      const result = await this.maybeRun(workspaceId, "launch").catch((error: unknown) =>
-        Err(getErrorMessage(error))
-      );
+      const result = await this.maybeRun(workspaceId, "launch", {
+        skipWorkspaceDebounce,
+      }).catch((error: unknown) => Err(getErrorMessage(error)));
       if (!result.success) {
         log.debug("[MemoryConsolidation] launch sweep skipped workspace", {
           workspaceId,

@@ -587,16 +587,18 @@ describe("MemoryConsolidationService", () => {
     expect(fixture.modelCalls).toHaveLength(0);
   });
 
-  it("older workspace-only records do not suppress project-only launch coverage", async () => {
+  it("recent legacy workspace-only records do not suppress first project launch coverage", async () => {
     using fixture = await createFixture();
-    const oldWorkspaceRunAt = Date.now() - MEMORY_CONSOLIDATION_DEBOUNCE_MS - 1_000;
-    const projectWriteAt = oldWorkspaceRunAt - 1_000;
+    const recentWorkspaceRunAt = Date.now() - 60_000;
+    // Pre-project-memory sidecars only proved workspace/global coverage. Even a
+    // project write older than that legacy run still needs one project pass.
+    const projectWriteAt = recentWorkspaceRunAt - 1_000;
     await fsPromises.writeFile(
       path.join(fixture.muxHome, "memory-consolidation.json"),
       JSON.stringify({
         workspaces: {
           "ws-dream": {
-            lastRunAt: oldWorkspaceRunAt,
+            lastRunAt: recentWorkspaceRunAt,
             trigger: "manual",
             summary: "pre-project-memory record",
             ops: [],
@@ -625,6 +627,52 @@ describe("MemoryConsolidationService", () => {
     await fixture.service.runLaunchSweep(new Map([["ws-dream", Date.now() - 25 * 60 * 60 * 1000]]));
 
     expect(fixture.modelCalls).toHaveLength(1);
+    const raw = JSON.parse(
+      await fsPromises.readFile(path.join(fixture.muxHome, "memory-consolidation.json"), "utf-8")
+    ) as { projects?: Record<string, unknown> };
+    expect(raw.projects?.["/projects/demo"]).toBeDefined();
+  });
+
+  it("does not spend the launch cap on candidates skipped by workspace debounce", async () => {
+    using fixture = await createFixture();
+    const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
+    const recentRunAt = Date.now() - MEMORY_CONSOLIDATION_DEBOUNCE_MS + 60_000;
+    const debouncedIds = Array.from(
+      { length: MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP },
+      (_, index) => `ws-debounced-${index}`
+    );
+    const sidecarWorkspaces: Record<string, unknown> = {};
+    const recency = new Map<string, number>();
+
+    for (const id of debouncedIds) {
+      await fixture.addWorkspace(id);
+      sidecarWorkspaces[id] = {
+        lastRunAt: recentRunAt,
+        trigger: "manual",
+        summary: "recent run",
+        ops: [],
+      };
+      await fixture.metaService.recordAccess(
+        memoryLogicalKey("workspace", "lesson.md", { projectPath: "", workspaceId: id }),
+        { write: true }
+      );
+      recency.set(id, dayAgo);
+    }
+    await fixture.addWorkspace("ws-eligible");
+    await fixture.metaService.recordAccess(
+      memoryLogicalKey("workspace", "lesson.md", { projectPath: "", workspaceId: "ws-eligible" }),
+      { write: true }
+    );
+    recency.set("ws-eligible", dayAgo);
+    await fsPromises.writeFile(
+      path.join(fixture.muxHome, "memory-consolidation.json"),
+      JSON.stringify({ workspaces: sidecarWorkspaces })
+    );
+
+    await fixture.service.runLaunchSweep(recency);
+
+    expect(fixture.modelCalls).toHaveLength(1);
+    expect((await fixture.service.getRecord("ws-eligible"))?.trigger).toBe("launch");
   });
 
   it("a global-only write qualifies a single covering run per sweep, not one per workspace", async () => {
