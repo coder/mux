@@ -1529,8 +1529,13 @@ describe("Config", () => {
         workspacePath,
         projectPath: MULTI_PROJECT_CONFIG_KEY,
         attributionProjectPath: primaryProjectPath,
+        projects: [
+          { projectName: "project-a", projectPath: primaryProjectPath },
+          { projectName: "project-b", projectPath: secondaryProjectPath },
+        ],
         workspaceName: "feature-branch",
         parentWorkspaceId: undefined,
+        pendingAutoTitle: undefined,
       });
     });
   });
