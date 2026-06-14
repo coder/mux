@@ -66,6 +66,7 @@ export function MemoryBrowser(props: MemoryBrowserProps) {
   // Virtual paths the agent touched since the user last opened them.
   const [agentEditedPaths, setAgentEditedPaths] = useState<ReadonlySet<string>>(new Set());
   const [refreshTick, setRefreshTick] = useState(0);
+  const [statusRefreshTick, setStatusRefreshTick] = useState(0);
 
   useEffect(() => {
     if (!api) return;
@@ -90,10 +91,11 @@ export function MemoryBrowser(props: MemoryBrowserProps) {
 
   // Live updates: any memory change (agent tool call or UI edit) in a
   // displayed scope refreshes the list; agent edits additionally badge the
-  // touched file. The scope filter keeps Settings → Memory (global only)
-  // from reacting to project/workspace traffic. The backend subscription
-  // already drops workspace/project-scope events from other workspaces/
-  // projects (the same virtual path elsewhere is a different file).
+  // touched file. Sidecar-only consolidation events refresh just the footer.
+  // The scope filter keeps Settings → Memory (global only) from reacting to
+  // project/workspace traffic. The backend subscription already drops
+  // workspace/project-scope events from other workspaces/projects (the same
+  // virtual path elsewhere is a different file).
   useEffect(() => {
     if (!api) return;
     const controller = new AbortController();
@@ -105,6 +107,10 @@ export function MemoryBrowser(props: MemoryBrowserProps) {
         );
         for await (const event of iterator) {
           if (controller.signal.aborted) break;
+          if (event.kind === "consolidation_status") {
+            setStatusRefreshTick((n) => n + 1);
+            continue;
+          }
           if (!scopes.includes(event.scope)) continue;
           if (event.actor === "agent") {
             setAgentEditedPaths((prev) => {
@@ -239,8 +245,11 @@ export function MemoryBrowser(props: MemoryBrowserProps) {
         <ConsolidationFooter
           key={props.workspaceId}
           workspaceId={props.workspaceId}
-          refreshTick={refreshTick}
-          onConsolidated={() => setRefreshTick((tick) => tick + 1)}
+          refreshTick={refreshTick + statusRefreshTick}
+          onConsolidated={() => {
+            setRefreshTick((tick) => tick + 1);
+            setStatusRefreshTick((tick) => tick + 1);
+          }}
         />
       )}
       {deleteTarget !== null && (
@@ -483,13 +492,7 @@ function formatConsolidationRecord(record: MemoryConsolidationRecordPayload | nu
  */
 function ConsolidationFooter(props: {
   workspaceId: string;
-  /**
-   * Parent's memory-change tick: dream runs triggered outside this footer
-   * (/dream, compaction, archive) edit memory files, which bumps the tick via
-   * the onChange subscription — re-fetch the status line on each bump so
-   * "last consolidated" stays live (found via dogfooding: a /dream run left
-   * the footer on "Never consolidated").
-   */
+  /** Parent invalidation tick for refetching decorative consolidation status. */
   refreshTick: number;
   onConsolidated: () => void;
 }) {

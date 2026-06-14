@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { MockLanguageModelV3, simulateReadableStream } from "ai/test";
 import type { LanguageModelV3CallOptions, LanguageModelV3StreamPart } from "@ai-sdk/provider";
 
+import type { MemoryConsolidationStatusChangeEventPayload } from "@/common/orpc/schemas/memory";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import {
@@ -257,6 +258,26 @@ describe("MemoryConsolidationService", () => {
       "utf-8"
     );
     expect(raw).toContain("ws-dream");
+  });
+
+  it("emits status invalidation for successful no-op runs", async () => {
+    using fixture = await createFixture();
+    const events: MemoryConsolidationStatusChangeEventPayload[] = [];
+    fixture.service.on("statusChange", (event: MemoryConsolidationStatusChangeEventPayload) => {
+      events.push(event);
+    });
+
+    const result = await fixture.service.maybeRun("ws-dream", "manual");
+
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.ops).toHaveLength(0);
+    expect(events).toEqual([
+      {
+        kind: "consolidation_status",
+        workspaceId: "ws-dream",
+        projectPath: "/projects/demo",
+      },
+    ]);
   });
 
   it("records project coverage for single-project workspace runs", async () => {

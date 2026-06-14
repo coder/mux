@@ -50,6 +50,10 @@ import {
   type MemoryChangeEvent,
   type MemoryScopeContext,
 } from "@/node/services/memoryService";
+import type {
+  MemoryChangeEventPayload,
+  MemoryConsolidationStatusChangeEventPayload,
+} from "@/common/orpc/schemas/memory";
 import { memoryLogicalKey } from "@/node/services/memoryMeta";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
@@ -3849,9 +3853,9 @@ export const router = (authToken?: string) => {
           const boundProjectPath = boundMetadata
             ? resolveMemoryProjectIdentity(boundMetadata)
             : null;
-          const queue = createAsyncEventQueue<MemoryChangeEvent>();
+          const queue = createAsyncEventQueue<MemoryChangeEventPayload>();
 
-          // Global events are always forwarded (shared across everything).
+          // Global file events are always forwarded (shared across everything).
           const onChange = (event: MemoryChangeEvent) => {
             if (event.scope === "workspace" && event.workspaceId !== boundWorkspaceId) return;
             // Project memory is keyed by project identity: the same virtual
@@ -3861,7 +3865,13 @@ export const router = (authToken?: string) => {
             }
             queue.push(event);
           };
+          // Consolidation status includes global coverage, so every open Memory
+          // tab should refetch when a run completes, even if it made no file changes.
+          const onStatusChange = (event: MemoryConsolidationStatusChangeEventPayload) => {
+            queue.push(event);
+          };
           context.memoryService.on("change", onChange);
+          context.memoryConsolidationService.on("statusChange", onStatusChange);
 
           const onAbort = () => queue.end();
           if (signal) {
@@ -3878,6 +3888,7 @@ export const router = (authToken?: string) => {
             queue.end();
             signal?.removeEventListener("abort", onAbort);
             context.memoryService.off("change", onChange);
+            context.memoryConsolidationService.off("statusChange", onStatusChange);
           }
         }),
     },

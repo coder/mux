@@ -10,6 +10,7 @@
  * failed run logs and waits for the next trigger. Nothing here may block a
  * stream, compaction, archival, or app launch.
  */
+import { EventEmitter } from "events";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 import writeFileAtomic from "write-file-atomic";
@@ -28,6 +29,7 @@ import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import {
   MemoryConsolidationRecordSchema,
   type MemoryConsolidationRecordPayload,
+  type MemoryConsolidationStatusChangeEventPayload,
   type MemoryConsolidationStatusPayload,
   type MemoryConsolidationTrigger,
 } from "@/common/orpc/schemas/memory";
@@ -155,7 +157,7 @@ export function resolveConsolidationProjectPath(workspace: {
   );
 }
 
-export class MemoryConsolidationService {
+export class MemoryConsolidationService extends EventEmitter {
   private readonly sidecarPath: string;
   /** Serializes sidecar read-modify-write cycles (journal persistence only). */
   private readonly locks = new MutexMap<string>();
@@ -174,6 +176,7 @@ export class MemoryConsolidationService {
     private readonly modelFactory: ModelFactoryLike,
     private readonly experiments: ExperimentsCheck
   ) {
+    super();
     this.sidecarPath = path.join(config.rootDir, "memory-consolidation.json");
   }
 
@@ -219,6 +222,15 @@ export class MemoryConsolidationService {
     };
   }
 
+  private emitStatusChange(workspaceId: string, projectPath: string): void {
+    const event: MemoryConsolidationStatusChangeEventPayload = {
+      kind: "consolidation_status",
+      workspaceId,
+      projectPath,
+    };
+    this.emit("statusChange", event);
+  }
+
   private async saveRecord(
     workspaceId: string,
     projectPath: string,
@@ -232,6 +244,9 @@ export class MemoryConsolidationService {
       }
       await writeFileAtomic(this.sidecarPath, JSON.stringify(file, null, 2));
     });
+    // The sidecar write does not touch memory files, so open Memory tabs need
+    // this explicit status invalidation even when a run made zero mutations.
+    this.emitStatusChange(workspaceId, projectPath);
   }
 
   /**

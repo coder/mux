@@ -27,8 +27,9 @@ export const MemoryFileInfoSchema = z.object({
 });
 export type MemoryFileInfo = z.infer<typeof MemoryFileInfoSchema>;
 
-/** Change event emitted by the MemoryService (agent tool + UI writes). */
-export const MemoryChangeEventSchema = z.object({
+/** File change emitted by the MemoryService (agent tool + UI writes). */
+export const MemoryFileChangeEventSchema = z.object({
+  kind: z.literal("file").optional(),
   scope: MemoryScopeSchema,
   /** Virtual path of the changed file or directory. */
   path: z.string(),
@@ -38,6 +39,25 @@ export const MemoryChangeEventSchema = z.object({
   /** Stable project identity of the emitting scope context. */
   projectPath: z.string(),
 });
+export type MemoryFileChangeEventPayload = z.infer<typeof MemoryFileChangeEventSchema>;
+
+/** Sidecar-only consolidation coverage changed; subscribers should refetch status. */
+export const MemoryConsolidationStatusChangeEventSchema = z.object({
+  kind: z.literal("consolidation_status"),
+  /** Workspace whose run advanced its workspace coverage record. */
+  workspaceId: z.string(),
+  /** Single-project identity covered by the run, or "" for multi-project workspaces. */
+  projectPath: z.string(),
+});
+export type MemoryConsolidationStatusChangeEventPayload = z.infer<
+  typeof MemoryConsolidationStatusChangeEventSchema
+>;
+
+export const MemoryChangeEventSchema = z.union([
+  MemoryFileChangeEventSchema,
+  MemoryConsolidationStatusChangeEventSchema,
+]);
+export type MemoryChangeEventPayload = z.infer<typeof MemoryChangeEventSchema>;
 
 /**
  * Save failures distinguish conflicts (sha precondition failed; the UI shows

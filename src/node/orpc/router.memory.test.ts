@@ -1,9 +1,14 @@
 /* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/require-await */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { createRouterClient } from "@orpc/server";
+import { EventEmitter } from "events";
 import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import type {
+  MemoryChangeEventPayload,
+  MemoryConsolidationStatusChangeEventPayload,
+} from "@/common/orpc/schemas/memory";
 import { Config } from "@/node/config";
 import { MemoryService, type MemoryChangeEvent } from "@/node/services/memoryService";
 import { MemoryMetaService } from "@/node/services/memoryMeta";
@@ -16,6 +21,7 @@ describe("router memory routes", () => {
   let projectPath: string;
   let memoryService: MemoryService;
   let memoryMetaService: MemoryMetaService;
+  let memoryConsolidationEvents: EventEmitter;
 
   beforeEach(async () => {
     tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-router-memory-test-"));
@@ -24,6 +30,7 @@ describe("router memory routes", () => {
     await fsPromises.mkdir(projectPath, { recursive: true });
     memoryMetaService = new MemoryMetaService(config.rootDir);
     memoryService = new MemoryService(config, memoryMetaService);
+    memoryConsolidationEvents = new EventEmitter();
   });
 
   afterEach(async () => {
@@ -51,6 +58,7 @@ describe("router memory routes", () => {
       config,
       memoryService,
       memoryMetaService,
+      memoryConsolidationService: memoryConsolidationEvents,
       workspaceService: {
         // In-place workspace shape (projectPath === name) so the checkout cwd
         // resolves to projectPath itself without a worktree.
@@ -397,7 +405,7 @@ describe("router memory routes", () => {
     const client = createClient({ enabled: true });
     const iterator = await client.memory.onChange({ workspaceId: "ws-mem" });
 
-    const received: MemoryChangeEvent[] = [];
+    const received: MemoryChangeEventPayload[] = [];
     const consumer = (async () => {
       for await (const event of iterator) {
         received.push(event);
@@ -453,10 +461,42 @@ describe("router memory routes", () => {
       projectPath,
     });
     await consumer;
-    expect(received.map((e) => [e.scope, e.workspaceId])).toEqual([
+    expect(
+      received.map((event) => {
+        if (event.kind === "consolidation_status") throw new Error("unexpected status event");
+        return [event.scope, event.workspaceId];
+      })
+    ).toEqual([
       ["global", "ws-other"],
       ["workspace", "ws-mem"],
       ["project", "ws-other"],
     ]);
+  });
+
+  test("onChange forwards consolidation status events", async () => {
+    const client = createClient({ enabled: true });
+    const iterator = await client.memory.onChange({ workspaceId: "ws-mem" });
+
+    const received: MemoryChangeEventPayload[] = [];
+    const consumer = (async () => {
+      for await (const event of iterator) {
+        received.push(event);
+        break;
+      }
+    })();
+    // The route attaches its status listener lazily (on first pull).
+    while (memoryConsolidationEvents.listenerCount("statusChange") === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    const event: MemoryConsolidationStatusChangeEventPayload = {
+      kind: "consolidation_status",
+      workspaceId: "ws-other",
+      projectPath: "/somewhere/else",
+    };
+    memoryConsolidationEvents.emit("statusChange", event);
+
+    await consumer;
+    expect(received).toEqual([event]);
   });
 });
