@@ -144,7 +144,7 @@ export async function resolveDreamAgentBody(muxRoot: string): Promise<string | n
 export function resolveConsolidationProjectPath(workspace: {
   projectPath: string;
   attributionProjectPath?: string;
-  projects?: readonly { projectPath: string }[];
+  projects?: ReadonlyArray<{ projectPath: string }>;
 }): string {
   // Task/fork multi-project workspaces can live under a real project bucket;
   // only the workspace's actual project refs prove a single stable identity.
