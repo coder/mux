@@ -591,6 +591,38 @@ describe("MemoryConsolidationService", () => {
     expect(fixture.modelCalls).toHaveLength(1);
   });
 
+  it("debounces project-only launch writes against recent project coverage", async () => {
+    using fixture = await createFixture();
+    await fixture.addWorkspace("ws-other");
+    const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
+    const recentProjectRunAt = Date.now() - 60_000;
+    await fsPromises.writeFile(
+      path.join(fixture.muxHome, "memory-consolidation.json"),
+      JSON.stringify({
+        workspaces: {},
+        projects: {
+          "/projects/demo": {
+            lastRunAt: recentProjectRunAt,
+            trigger: "launch",
+            summary: "recent project coverage",
+            ops: [],
+          },
+        },
+      })
+    );
+    await fixture.metaService.recordAccess(
+      memoryLogicalKey("project", "new.md", {
+        projectPath: "/projects/demo",
+        workspaceId: "ws-dream",
+      }),
+      { write: true }
+    );
+
+    await fixture.service.runLaunchSweep(new Map([["ws-other", dayAgo]]));
+
+    expect(fixture.modelCalls).toHaveLength(0);
+  });
+
   it("does not qualify real-bucket multi-project workspaces from project-only writes", async () => {
     using fixture = await createFixture();
     await fixture.addMultiProjectWorkspace("ws-task", { bucket: "/projects/demo" });

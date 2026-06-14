@@ -462,34 +462,41 @@ export class MemoryConsolidationService extends EventEmitter {
               projectPath,
               workspaceId,
             });
-      let hasNewWrites = false;
-      let projectWriteNeedsCoverage = false;
+      let hasWorkspaceWrites = false;
+      let hasProjectWrites = false;
+      let hasGlobalWrites = false;
       for (const [key, entry] of meta) {
         if (entry.lastWriteAt === null) continue;
         if (key.startsWith(workspaceKeyPrefix) && entry.lastWriteAt > lastRunAt) {
-          hasNewWrites = true;
-          break;
+          hasWorkspaceWrites = true;
+          continue;
         }
         if (
           projectKeyPrefix !== null &&
           key.startsWith(projectKeyPrefix) &&
           entry.lastWriteAt > projectRunAt
         ) {
-          hasNewWrites = true;
-          projectWriteNeedsCoverage = true;
-          break;
+          hasProjectWrites = true;
+          continue;
         }
         if (key.startsWith("global:") && entry.lastWriteAt > globalLastRunAt) {
-          hasNewWrites = true;
-          break;
+          hasGlobalWrites = true;
         }
       }
-      if (!hasNewWrites) continue;
+      if (!hasWorkspaceWrites && !hasProjectWrites && !hasGlobalWrites) continue;
       // Project coverage is anchored separately from workspace coverage. Recent
       // legacy workspace-only records must not debounce away the first project
-      // pass, and skipped debounce candidates must not spend the launch cap.
+      // pass, but once project coverage exists, project-only writes obey the
+      // project debounce anchor before another sibling spends a provider run.
       const projectDebounceAllowsRun =
-        projectWriteNeedsCoverage && now - projectRunAt >= MEMORY_CONSOLIDATION_DEBOUNCE_MS;
+        hasProjectWrites && now - projectRunAt >= MEMORY_CONSOLIDATION_DEBOUNCE_MS;
+      const projectDebounceWouldSkip =
+        hasProjectWrites &&
+        !hasWorkspaceWrites &&
+        !hasGlobalWrites &&
+        projectRunAt !== 0 &&
+        now - projectRunAt < MEMORY_CONSOLIDATION_DEBOUNCE_MS;
+      if (projectDebounceWouldSkip) continue;
       const workspaceDebounceWouldSkip =
         lastRunAt !== 0 && now - lastRunAt < MEMORY_CONSOLIDATION_DEBOUNCE_MS;
       const skipWorkspaceDebounce = workspaceDebounceWouldSkip && projectDebounceAllowsRun;
