@@ -7,8 +7,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { createContext, type ReactNode } from "react";
 import { installDom } from "../../../../../tests/ui/dom";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type {
   MemoryConsolidationRecordPayload,
   MemoryConsolidationStatusPayload,
@@ -184,6 +183,11 @@ void mock.module("@/browser/contexts/API", () => ({
   }),
 }));
 
+void mock.module("@/browser/hooks/useExperiments", () => ({
+  useExperimentValue: (experimentId: string) =>
+    experimentId === EXPERIMENT_IDS.MEMORY_CONSOLIDATION,
+}));
+
 // The delete flow confirms through ConfirmationModal, which renders via a
 // Radix Dialog portal that happy-dom cannot see. Mock the Dialog primitives
 // to render inline so the real confirm/cancel behavior stays under test.
@@ -249,7 +253,6 @@ describe("MemoryTab", () => {
   });
 
   test("manual consolidation does not invent project coverage when status is unavailable", async () => {
-    updatePersistedState(getExperimentKey(EXPERIMENT_IDS.MEMORY_CONSOLIDATION), true);
     fake = createFakeMemoryApi([], { consolidationStatusFailuresRemaining: 20 });
     const { findByRole, findByText, getByText } = render(<MemoryTab workspaceId="ws-1" />);
 
