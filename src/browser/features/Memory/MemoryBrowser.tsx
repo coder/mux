@@ -237,6 +237,7 @@ export function MemoryBrowser(props: MemoryBrowserProps) {
       </div>
       {props.workspaceId !== null && (
         <ConsolidationFooter
+          key={props.workspaceId}
           workspaceId={props.workspaceId}
           refreshTick={refreshTick}
           onConsolidated={() => setRefreshTick((tick) => tick + 1)}
@@ -522,12 +523,10 @@ function ConsolidationFooter(props: {
     try {
       const result = await api.memory.consolidate({ workspaceId: props.workspaceId });
       if (result.success) {
-        setStatus((prev) => ({
-          workspaceRecord: result.data,
-          projectRecord: prev?.projectAvailable === false ? null : result.data,
-          globalRecord: result.data,
-          projectAvailable: prev?.projectAvailable ?? true,
-        }));
+        // The manual run returns a bare run record; only consolidationStatus knows
+        // whether project memory is available for this workspace, so avoid
+        // inventing scope coverage while the authoritative refetch is pending.
+        setStatus(null);
         props.onConsolidated();
       } else {
         setRunError(result.error);

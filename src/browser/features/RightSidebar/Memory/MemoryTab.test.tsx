@@ -7,7 +7,13 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { createContext, type ReactNode } from "react";
 import { installDom } from "../../../../../tests/ui/dom";
-import type { MemoryFileInfo } from "@/common/orpc/schemas/memory";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
+import type {
+  MemoryConsolidationRecordPayload,
+  MemoryConsolidationStatusPayload,
+  MemoryFileInfo,
+} from "@/common/orpc/schemas/memory";
 
 interface MemoryChangeEvent {
   scope: "global" | "project" | "workspace";
@@ -17,17 +23,41 @@ interface MemoryChangeEvent {
   projectPath: string;
 }
 
+interface FakeMemoryApiOptions {
+  consolidationStatus?: MemoryConsolidationStatusPayload;
+  consolidationStatusFailuresRemaining?: number;
+  consolidateRecord?: MemoryConsolidationRecordPayload;
+}
+
+const DEFAULT_CONSOLIDATION_RECORD: MemoryConsolidationRecordPayload = {
+  lastRunAt: Date.now(),
+  trigger: "manual",
+  summary: "consolidated",
+  ops: [{ command: "create", path: "/memories/global/prefs.md", applied: true }],
+};
+
+const DEFAULT_CONSOLIDATION_STATUS: MemoryConsolidationStatusPayload = {
+  workspaceRecord: null,
+  projectRecord: null,
+  globalRecord: null,
+  projectAvailable: true,
+};
+
 /**
  * Minimal fake of the api.memory surface the tab consumes. Tests drive change
  * events through `emitChange` to exercise the live-refresh path.
  */
-function createFakeMemoryApi(initialFiles: MemoryFileInfo[]) {
+function createFakeMemoryApi(initialFiles: MemoryFileInfo[], options: FakeMemoryApiOptions = {}) {
   const state = {
     files: initialFiles,
     contents: new Map<string, { content: string; sha256: string }>(),
     saveCalls: [] as Array<{ path: string; content: string; expectedSha256: string | null }>,
     deleteCalls: [] as string[],
     pinCalls: [] as Array<{ path: string; pinned: boolean }>,
+    consolidateCalls: 0,
+    consolidationStatus: options.consolidationStatus ?? DEFAULT_CONSOLIDATION_STATUS,
+    consolidationStatusFailuresRemaining: options.consolidationStatusFailuresRemaining ?? 0,
+    consolidateRecord: options.consolidateRecord ?? DEFAULT_CONSOLIDATION_RECORD,
     nextSaveConflict: false,
     listeners: new Set<(event: MemoryChangeEvent) => void>(),
   };
@@ -82,6 +112,17 @@ function createFakeMemoryApi(initialFiles: MemoryFileInfo[]) {
           file.path === input.path ? { ...file, pinned: input.pinned } : file
         );
         return Promise.resolve({ success: true as const, data: undefined });
+      },
+      consolidationStatus: (_input: { workspaceId: string }, _opts?: { signal?: AbortSignal }) => {
+        if (state.consolidationStatusFailuresRemaining > 0) {
+          state.consolidationStatusFailuresRemaining -= 1;
+          return Promise.reject(new Error("status unavailable"));
+        }
+        return Promise.resolve({ success: true as const, data: state.consolidationStatus });
+      },
+      consolidate: (_input: { workspaceId: string }) => {
+        state.consolidateCalls += 1;
+        return Promise.resolve({ success: true as const, data: state.consolidateRecord });
       },
       onChange: (_input: { workspaceId: string }, opts?: { signal?: AbortSignal }) => {
         async function* iterate(): AsyncGenerator<MemoryChangeEvent> {
@@ -205,6 +246,23 @@ describe("MemoryTab", () => {
     fake = createFakeMemoryApi([]);
     const { findByText } = render(<MemoryTab workspaceId="ws-1" />);
     await findByText(/No memory files/);
+  });
+
+  test("manual consolidation does not invent project coverage when status is unavailable", async () => {
+    updatePersistedState(getExperimentKey(EXPERIMENT_IDS.MEMORY_CONSOLIDATION), true);
+    fake = createFakeMemoryApi([], { consolidationStatusFailuresRemaining: 20 });
+    const { findByRole, findByText, getByText } = render(<MemoryTab workspaceId="ws-1" />);
+
+    await findByText(/No memory files/);
+    expect(getByText(/^Project:/).textContent).not.toContain("manual");
+
+    fireEvent.click(await findByRole("button", { name: "Consolidate now" }));
+
+    await waitFor(() => {
+      expect(fake!.state.consolidateCalls).toBe(1);
+    });
+    await findByRole("button", { name: "Consolidate now" });
+    expect(getByText(/^Project:/).textContent).not.toContain("manual");
   });
 
   test("shows usage stats for used files and omits them for never-used files", async () => {
