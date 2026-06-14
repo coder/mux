@@ -1,10 +1,15 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { userEvent, within } from "@storybook/test";
 
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { APIProvider } from "@/browser/contexts/API";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import type { MemoryFileInfo } from "@/common/orpc/schemas/memory";
+import type {
+  MemoryConsolidationRecordPayload,
+  MemoryFileInfo,
+} from "@/common/orpc/schemas/memory";
 
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
 import { MemoryTab } from "./MemoryTab";
 
 const meta: Meta<typeof MemoryTab> = {
@@ -80,11 +85,29 @@ const MEMORY_FILES: MemoryFileInfo[] = [
   },
 ];
 
+const CONSOLIDATION_RECORD: MemoryConsolidationRecordPayload = {
+  lastRunAt: Date.now() - 30 * 60 * 1000,
+  trigger: "manual",
+  summary: "Merged duplicate project notes",
+  ops: [{ command: "delete", path: "/memories/project/duplicate.md", applied: true }],
+};
+
 // The Memory tab lives in the narrow right sidebar, so pin the story to a
 // sidebar-like width (also exercises the ~375px mobile layout contract).
 function renderTab(width: string) {
+  updatePersistedState(getExperimentKey(EXPERIMENT_IDS.MEMORY_CONSOLIDATION), true);
   return (
-    <APIProvider client={createMockORPCClient({ memoryFiles: MEMORY_FILES })}>
+    <APIProvider
+      client={createMockORPCClient({
+        memoryFiles: MEMORY_FILES,
+        memoryConsolidationStatus: {
+          workspaceRecord: null,
+          projectRecord: CONSOLIDATION_RECORD,
+          globalRecord: CONSOLIDATION_RECORD,
+          projectAvailable: true,
+        },
+      })}
+    >
       <div className="border-border-light h-[480px] border" style={{ width }}>
         <MemoryTab workspaceId={STORY_WORKSPACE_ID} />
       </div>
@@ -97,6 +120,7 @@ export const List: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await canvas.findByText("preferences.md");
+    await canvas.findByText(/Project:/);
     await canvas.findByText("scratch.md");
   },
 };

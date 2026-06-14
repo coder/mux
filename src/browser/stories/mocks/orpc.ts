@@ -5,7 +5,11 @@
  */
 import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults, type GoalDefaults } from "@/constants/goals";
 import type { GoalBoardSnapshot } from "@/common/types/goal";
-import type { MemoryFileInfo } from "@/common/orpc/schemas/memory";
+import type {
+  MemoryConsolidationRecordPayload,
+  MemoryConsolidationStatusPayload,
+  MemoryFileInfo,
+} from "@/common/orpc/schemas/memory";
 import type { APIClient } from "@/browser/contexts/API";
 import type {
   AgentDefinitionDescriptor,
@@ -161,6 +165,8 @@ export interface MockORPCClientOptions {
    * stories). read/save/delete/setPinned operate on this in-memory set.
    */
   memoryFiles?: MemoryFileInfo[];
+  /** Initial dream consolidation status for memory.consolidationStatus. */
+  memoryConsolidationStatus?: MemoryConsolidationStatusPayload;
   /** Optional file contents for memory.read keyed by virtual path. */
   memoryFileContents?: Map<string, string>;
   /** Initial route priority for config.getConfig */
@@ -389,6 +395,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     goalDefaults: initialGoalDefaults,
     goalBoardSnapshots = new Map<string, GoalBoardSnapshot>(),
     memoryFiles = [],
+    memoryConsolidationStatus,
     memoryFileContents = new Map<string, string>(),
     routePriority: initialRoutePriority = ["direct"],
     routeOverrides: initialRouteOverrides = {},
@@ -563,6 +570,19 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
   const globalMcpServersState: MockMcpServers = { ...globalMcpServers };
 
+  const defaultConsolidationRecord: MemoryConsolidationRecordPayload = {
+    lastRunAt: Date.now() - 30 * 60 * 1000,
+    trigger: "manual",
+    summary: "Mock consolidation completed",
+    ops: [],
+  };
+  let memoryConsolidationStatusState: MemoryConsolidationStatusPayload =
+    memoryConsolidationStatus ?? {
+      workspaceRecord: defaultConsolidationRecord,
+      projectRecord: defaultConsolidationRecord,
+      globalRecord: defaultConsolidationRecord,
+      projectAvailable: true,
+    };
   let memoryFilesState: MemoryFileInfo[] = memoryFiles.map((file) => ({ ...file }));
   const memoryContentsState = new Map<string, { content: string; sha256: string }>(
     [...memoryFileContents].map(([path, content]) => [path, { content, sha256: "mock-sha" }])
@@ -1908,6 +1928,26 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           file.path === input.path ? { ...file, pinned: input.pinned } : file
         );
         return Promise.resolve({ success: true as const, data: undefined });
+      },
+      consolidationStatus: () =>
+        Promise.resolve({
+          success: true as const,
+          data: memoryConsolidationStatusState,
+        }),
+      consolidate: () => {
+        const record: MemoryConsolidationRecordPayload = {
+          lastRunAt: Date.now(),
+          trigger: "manual",
+          summary: "Mock manual consolidation completed",
+          ops: [],
+        };
+        memoryConsolidationStatusState = {
+          workspaceRecord: record,
+          projectRecord: memoryConsolidationStatusState.projectAvailable ? record : null,
+          globalRecord: record,
+          projectAvailable: memoryConsolidationStatusState.projectAvailable,
+        };
+        return Promise.resolve({ success: true as const, data: record });
       },
       onChange: async function* () {
         yield* [];

@@ -19,6 +19,7 @@ import { cn } from "@/common/lib/utils";
 import { MEMORY_SCOPES, MEMORY_VIRTUAL_ROOT, type MemoryScope } from "@/common/constants/memory";
 import type {
   MemoryConsolidationRecordPayload,
+  MemoryConsolidationStatusPayload,
   MemoryFileInfo,
 } from "@/common/orpc/schemas/memory";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -468,6 +469,12 @@ function MemoryFileRow(props: MemoryFileRowProps) {
   );
 }
 
+function formatConsolidationRecord(record: MemoryConsolidationRecordPayload | null): string {
+  if (record === null) return "never";
+  const appliedCount = record.ops.filter((op) => op.applied).length;
+  return `${formatRelativeTime(record.lastRunAt)} · ${record.trigger} · ${appliedCount} change${appliedCount === 1 ? "" : "s"}`;
+}
+
 /**
  * Dream consolidation surface (memory-consolidation experiment, PRD #3534):
  * "last consolidated" line + manual run button. Self-contained — fetches its
@@ -487,7 +494,7 @@ function ConsolidationFooter(props: {
 }) {
   const { api } = useAPI();
   const enabled = useExperimentValue(EXPERIMENT_IDS.MEMORY_CONSOLIDATION);
-  const [record, setRecord] = useState<MemoryConsolidationRecordPayload | null>(null);
+  const [status, setStatus] = useState<MemoryConsolidationStatusPayload | null>(null);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
 
@@ -498,7 +505,7 @@ function ConsolidationFooter(props: {
       .consolidationStatus({ workspaceId: props.workspaceId }, { signal: controller.signal })
       .then((result) => {
         if (controller.signal.aborted) return;
-        if (result.success) setRecord(result.data);
+        if (result.success) setStatus(result.data);
       })
       .catch((err: unknown) => {
         if (isAbortError(err) || controller.signal.aborted) return;
@@ -515,7 +522,12 @@ function ConsolidationFooter(props: {
     try {
       const result = await api.memory.consolidate({ workspaceId: props.workspaceId });
       if (result.success) {
-        setRecord(result.data);
+        setStatus((prev) => ({
+          workspaceRecord: result.data,
+          projectRecord: prev?.projectAvailable === false ? null : result.data,
+          globalRecord: result.data,
+          projectAvailable: prev?.projectAvailable ?? true,
+        }));
         props.onConsolidated();
       } else {
         setRunError(result.error);
@@ -527,17 +539,30 @@ function ConsolidationFooter(props: {
     }
   };
 
-  // "Changes" counts applied ops only; the journal also records rejected and
-  // failed commands, which must not inflate the user-facing number.
-  const appliedCount = record?.ops.filter((op) => op.applied).length ?? 0;
+  const projectLabel =
+    status?.projectAvailable === false
+      ? "unavailable"
+      : formatConsolidationRecord(status?.projectRecord ?? null);
+  const summaryTitle = [
+    status?.workspaceRecord?.summary,
+    status?.projectRecord?.summary,
+    status?.globalRecord?.summary,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
   return (
     <div className="border-border-light flex items-center justify-between gap-2 border-t px-3 py-2 text-xs">
-      <span className="text-muted truncate" title={record?.summary}>
-        {record === null
-          ? "Never consolidated"
-          : `Last consolidated ${formatRelativeTime(record.lastRunAt)} (${record.trigger}, ${appliedCount} change${appliedCount === 1 ? "" : "s"})`}
-        {runError !== null && <span className="text-error"> — {runError}</span>}
-      </span>
+      <div className="text-muted min-w-0 flex-1 space-y-0.5" title={summaryTitle}>
+        <div className="counter-nums truncate">
+          Workspace: {formatConsolidationRecord(status?.workspaceRecord ?? null)}
+        </div>
+        <div className="counter-nums truncate">Project: {projectLabel}</div>
+        <div className="counter-nums truncate">
+          Global: {formatConsolidationRecord(status?.globalRecord ?? null)}
+        </div>
+        {runError !== null && <div className="text-error truncate">{runError}</div>}
+      </div>
       <button
         type="button"
         className="border-border-light text-foreground hover:bg-hover shrink-0 rounded border px-2 py-0.5 disabled:opacity-50"

@@ -74,4 +74,12 @@ export const MemoryConsolidationRecordSchema = z.object({
   usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }).optional(),
 });
 export type MemoryConsolidationRecordPayload = z.infer<typeof MemoryConsolidationRecordSchema>;
+
+export const MemoryConsolidationStatusSchema = z.object({
+  workspaceRecord: MemoryConsolidationRecordSchema.nullable(),
+  projectRecord: MemoryConsolidationRecordSchema.nullable(),
+  globalRecord: MemoryConsolidationRecordSchema.nullable(),
+  projectAvailable: z.boolean(),
+});
+export type MemoryConsolidationStatusPayload = z.infer<typeof MemoryConsolidationStatusSchema>;
 export type MemoryConsolidationTrigger = MemoryConsolidationRecordPayload["trigger"];

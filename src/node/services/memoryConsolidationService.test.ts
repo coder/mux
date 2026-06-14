@@ -5,8 +5,12 @@ import * as path from "node:path";
 import { MockLanguageModelV3, simulateReadableStream } from "ai/test";
 import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
 
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
-import { MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP } from "@/common/constants/memory";
+import {
+  MEMORY_CONSOLIDATION_DEBOUNCE_MS,
+  MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP,
+} from "@/common/constants/memory";
 import { Ok } from "@/common/types/result";
 import { Config } from "@/node/config";
 import {
@@ -74,6 +78,7 @@ interface Fixture extends Disposable {
   /** When true, scripted runs emit a fatal stream error instead of finishing. */
   setStreamFailing: (failing: boolean) => void;
   addWorkspace: (id: string, opts?: { archivedAt?: string }) => Promise<void>;
+  addMultiProjectWorkspace: (id: string) => Promise<void>;
 }
 
 async function createFixture(options?: {
@@ -139,6 +144,24 @@ async function createFixture(options?: {
         return cfg;
       });
     },
+    addMultiProjectWorkspace: async (id) => {
+      await config.editConfig((cfg) => {
+        cfg.projects.set(MULTI_PROJECT_CONFIG_KEY, {
+          workspaces: [
+            {
+              id,
+              name: id,
+              path: `/projects/multi/${id}`,
+              projects: [
+                { projectName: "demo", projectPath: "/projects/demo" },
+                { projectName: "other", projectPath: "/projects/other" },
+              ],
+            },
+          ],
+        });
+        return cfg;
+      });
+    },
     [Symbol.dispose]() {
       tempDir[Symbol.dispose]();
     },
@@ -163,6 +186,68 @@ describe("MemoryConsolidationService", () => {
       "utf-8"
     );
     expect(raw).toContain("ws-dream");
+  });
+
+  it("records project coverage for single-project workspace runs", async () => {
+    using fixture = await createFixture();
+
+    const result = await fixture.service.maybeRun("ws-dream", "manual");
+    expect(result.success).toBe(true);
+
+    const raw = JSON.parse(
+      await fsPromises.readFile(path.join(fixture.muxHome, "memory-consolidation.json"), "utf-8")
+    ) as { projects?: Record<string, unknown> };
+    expect(raw.projects?.["/projects/demo"]).toBeDefined();
+  });
+
+  it("does not record project coverage for multi-project workspace runs", async () => {
+    using fixture = await createFixture();
+    await fixture.addMultiProjectWorkspace("ws-multi");
+
+    const result = await fixture.service.maybeRun("ws-multi", "manual");
+    expect(result.success).toBe(true);
+
+    const raw = JSON.parse(
+      await fsPromises.readFile(path.join(fixture.muxHome, "memory-consolidation.json"), "utf-8")
+    ) as { projects?: Record<string, unknown>; workspaces?: Record<string, unknown> };
+    expect(raw.workspaces?.["ws-multi"]).toBeDefined();
+    expect(raw.projects?.["/projects/demo"]).toBeUndefined();
+    expect(raw.projects?.["/projects/other"]).toBeUndefined();
+  });
+
+  it("reports workspace, project, and global coverage separately", async () => {
+    using fixture = await createFixture();
+    await fixture.addWorkspace("ws-sibling");
+    expect((await fixture.service.maybeRun("ws-dream", "manual")).success).toBe(true);
+
+    const siblingStatus = await fixture.service.getStatus("ws-sibling");
+    expect(siblingStatus.workspaceRecord).toBeNull();
+    expect(siblingStatus.projectAvailable).toBe(true);
+    expect(siblingStatus.projectRecord?.trigger).toBe("manual");
+    expect(siblingStatus.globalRecord?.trigger).toBe("manual");
+  });
+
+  it("does not treat older workspace-only records as project coverage", async () => {
+    using fixture = await createFixture();
+    await fsPromises.writeFile(
+      path.join(fixture.muxHome, "memory-consolidation.json"),
+      JSON.stringify({
+        workspaces: {
+          "ws-dream": {
+            lastRunAt: Date.now(),
+            trigger: "manual",
+            summary: "old record",
+            ops: [],
+          },
+        },
+      })
+    );
+
+    const status = await fixture.service.getStatus("ws-dream");
+    expect(status.workspaceRecord?.summary).toBe("old record");
+    expect(status.projectAvailable).toBe(true);
+    expect(status.projectRecord).toBeNull();
+    expect(status.globalRecord?.summary).toBe("old record");
   });
 
   it("debounces automatic triggers but lets manual and archive runs through", async () => {
@@ -340,6 +425,68 @@ describe("MemoryConsolidationService", () => {
     expect(
       await fixture.service.getRecord(`ws-extra-${MEMORY_CONSOLIDATION_LAUNCH_SWEEP_CAP}`)
     ).toBeNull();
+  });
+
+  it("a project-only write qualifies one sibling workspace per sweep", async () => {
+    using fixture = await createFixture();
+    await fixture.addWorkspace("ws-other");
+    const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
+    await fixture.metaService.recordAccess(
+      memoryLogicalKey("project", "lesson.md", {
+        projectPath: "/projects/demo",
+        workspaceId: "ws-dream",
+      }),
+      { write: true }
+    );
+
+    await fixture.service.runLaunchSweep(
+      new Map([
+        ["ws-dream", dayAgo],
+        ["ws-other", dayAgo],
+      ])
+    );
+
+    expect(fixture.modelCalls).toHaveLength(1);
+  });
+
+  it("older workspace-only records do not suppress project-only launch coverage", async () => {
+    using fixture = await createFixture();
+    const oldWorkspaceRunAt = Date.now() - MEMORY_CONSOLIDATION_DEBOUNCE_MS - 1_000;
+    const projectWriteAt = oldWorkspaceRunAt - 1_000;
+    await fsPromises.writeFile(
+      path.join(fixture.muxHome, "memory-consolidation.json"),
+      JSON.stringify({
+        workspaces: {
+          "ws-dream": {
+            lastRunAt: oldWorkspaceRunAt,
+            trigger: "manual",
+            summary: "pre-project-memory record",
+            ops: [],
+          },
+        },
+      })
+    );
+    const logicalKey = memoryLogicalKey("project", "lesson.md", {
+      projectPath: "/projects/demo",
+      workspaceId: "ws-dream",
+    });
+    await fsPromises.writeFile(
+      path.join(fixture.muxHome, "memory-meta.json"),
+      JSON.stringify({
+        entries: {
+          [logicalKey]: {
+            pinned: false,
+            accessCount: 1,
+            lastAccessedAt: projectWriteAt,
+            lastWriteAt: projectWriteAt,
+          },
+        },
+      })
+    );
+
+    await fixture.service.runLaunchSweep(new Map([["ws-dream", Date.now() - 25 * 60 * 60 * 1000]]));
+
+    expect(fixture.modelCalls).toHaveLength(1);
   });
 
   it("a global-only write qualifies a single covering run per sweep, not one per workspace", async () => {

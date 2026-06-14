@@ -17,6 +17,7 @@ import { z } from "zod";
 import type { LanguageModel } from "ai";
 import type { Result } from "@/common/types/result";
 
+import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import {
   MEMORY_CONSOLIDATION_DEBOUNCE_MS,
   MEMORY_CONSOLIDATION_IDLE_MS,
@@ -27,6 +28,7 @@ import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import {
   MemoryConsolidationRecordSchema,
   type MemoryConsolidationRecordPayload,
+  type MemoryConsolidationStatusPayload,
   type MemoryConsolidationTrigger,
 } from "@/common/orpc/schemas/memory";
 import { defaultModel } from "@/common/utils/ai/models";
@@ -54,8 +56,12 @@ export type MemoryConsolidationRecord = MemoryConsolidationRecordPayload;
  */
 const ConsolidationSidecarFileSchema = z.object({
   workspaces: z.record(z.string(), MemoryConsolidationRecordSchema),
+  projects: z.record(z.string(), MemoryConsolidationRecordSchema).optional(),
 });
-type ConsolidationSidecarFile = z.infer<typeof ConsolidationSidecarFileSchema>;
+interface ConsolidationSidecarFile {
+  workspaces: Record<string, MemoryConsolidationRecord>;
+  projects: Record<string, MemoryConsolidationRecord>;
+}
 
 interface ExperimentsCheck {
   isExperimentEnabled(experimentId: string): boolean;
@@ -93,9 +99,9 @@ export function resolveDreamModelString(config: Config, workspaceId: string): st
  * (global agent scope) shadows the built-in definition, like any other agent.
  * `muxRoot` is Config.rootDir — NOT a hardcoded ~/.mux — so dev builds
  * (~/.mux-dev), MUX_ROOT sandboxes, and tests all stay isolated.
- * Host-side read only — dream runs are runtime-independent in v1, so project
- * scope overrides (which need a live checkout) are deferred with project
- * memories. Shared with the debug CLI.
+ * Host-side read only — dream runs are runtime-independent, so project-scope
+ * agent overrides (which need a live checkout) are intentionally not resolved.
+ * Shared with the debug CLI.
  */
 export async function resolveDreamAgentBody(muxRoot: string): Promise<string | null> {
   const overridePath = path.join(muxRoot, "agents", "dream.md");
@@ -123,6 +129,10 @@ export async function resolveDreamAgentBody(muxRoot: string): Promise<string | n
   }
   const dream = getBuiltInAgentDefinitions().find((definition) => definition.id === "dream");
   return dream?.body ?? null;
+}
+
+function resolveConsolidationProjectPath(workspace: { projectPath: string }): string {
+  return workspace.projectPath === MULTI_PROJECT_CONFIG_KEY ? "" : workspace.projectPath;
 }
 
 export class MemoryConsolidationService {
@@ -159,11 +169,12 @@ export class MemoryConsolidationService {
     try {
       const raw = await fsPromises.readFile(this.sidecarPath, "utf-8");
       const parsed = ConsolidationSidecarFileSchema.safeParse(JSON.parse(raw));
-      if (parsed.success) return parsed.data;
+      if (parsed.success)
+        return { workspaces: parsed.data.workspaces, projects: parsed.data.projects ?? {} };
     } catch {
       // Missing or corrupt — start fresh (the next save overwrites the file).
     }
-    return { workspaces: {} };
+    return { workspaces: {}, projects: {} };
   }
 
   async getRecord(workspaceId: string): Promise<MemoryConsolidationRecord | null> {
@@ -171,10 +182,34 @@ export class MemoryConsolidationService {
     return file.workspaces[workspaceId] ?? null;
   }
 
-  private async saveRecord(workspaceId: string, record: MemoryConsolidationRecord): Promise<void> {
+  async getStatus(workspaceId: string): Promise<MemoryConsolidationStatusPayload> {
+    const file = await this.load();
+    const workspace = this.config.findWorkspace(workspaceId);
+    const projectPath = workspace == null ? "" : resolveConsolidationProjectPath(workspace);
+    const globalRecord = Object.values(file.workspaces).reduce<MemoryConsolidationRecord | null>(
+      (latest, record) =>
+        latest === null || record.lastRunAt > latest.lastRunAt ? record : latest,
+      null
+    );
+    return {
+      workspaceRecord: file.workspaces[workspaceId] ?? null,
+      projectRecord: projectPath === "" ? null : (file.projects[projectPath] ?? null),
+      globalRecord,
+      projectAvailable: projectPath !== "",
+    };
+  }
+
+  private async saveRecord(
+    workspaceId: string,
+    projectPath: string,
+    record: MemoryConsolidationRecord
+  ): Promise<void> {
     await this.locks.withLock(this.sidecarPath, async () => {
       const file = await this.load();
       file.workspaces[workspaceId] = record;
+      if (projectPath !== "") {
+        file.projects[projectPath] = record;
+      }
       await writeFileAtomic(this.sidecarPath, JSON.stringify(file, null, 2));
     });
   }
@@ -244,16 +279,12 @@ export class MemoryConsolidationService {
       return Err(`could not create model ${modelString}: ${modelResult.error.type}`);
     }
 
-    // v1 consolidation scopes are workspace + global: projectPath stays "" so
-    // project memory is structurally disabled — including for reads, which
-    // bypass the tool's mutation guard. A dream pass must never ship
-    // project-private notes to the provider (PRD #3534). The stopped-runtime
-    // case also works: no live checkout is needed.
+    const projectPath = resolveConsolidationProjectPath(workspace);
     const ctx: MemoryScopeContext = {
       runtime: null,
       checkoutCwd: "",
       workspaceId,
-      projectPath: "",
+      projectPath,
     };
 
     const result = await runMemoryConsolidation({
@@ -283,7 +314,7 @@ export class MemoryConsolidationService {
       ops: result.ops,
       usage: result.usage,
     };
-    await this.saveRecord(workspaceId, record);
+    await this.saveRecord(workspaceId, projectPath, record);
     log.debug("[MemoryConsolidation] run complete", {
       workspaceId,
       trigger,
@@ -346,15 +377,24 @@ export class MemoryConsolidationService {
       ...Object.values(sidecar.workspaces).map((record) => record.lastRunAt)
     );
     const archivedById = new Map<string, boolean>();
-    for (const project of this.config.loadConfigOrDefault().projects.values()) {
+    const projectPathByWorkspace = new Map<string, string>();
+    for (const [configProjectPath, project] of this.config.loadConfigOrDefault().projects) {
+      const projectPath = configProjectPath === MULTI_PROJECT_CONFIG_KEY ? "" : configProjectPath;
       for (const workspace of project.workspaces) {
         if (workspace.id === undefined) continue;
         archivedById.set(
           workspace.id,
           isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt)
         );
+        projectPathByWorkspace.set(workspace.id, projectPath);
       }
     }
+    const projectLastRunAt = new Map<string, number>(
+      Object.entries(sidecar.projects).map(([projectPath, record]) => [
+        projectPath,
+        record.lastRunAt,
+      ])
+    );
 
     let started = 0;
     for (const [workspaceId, recency] of recencyByWorkspace) {
@@ -362,18 +402,36 @@ export class MemoryConsolidationService {
       if (now - recency < MEMORY_CONSOLIDATION_IDLE_MS) continue;
       if (archivedById.get(workspaceId) === true) continue;
       const lastRunAt = sidecar.workspaces[workspaceId]?.lastRunAt ?? 0;
-      // "Writes since last run": any workspace-scope entry for this workspace
-      // (or any global entry newer than the newest run anywhere) qualifies.
-      // Prefix is derived via memoryLogicalKey (relPath "" =>
-      // "workspace:<id>:") so the encoding always matches the meta key scheme.
+      const projectPath = projectPathByWorkspace.get(workspaceId) ?? "";
+      const projectRunAt = projectPath === "" ? 0 : (projectLastRunAt.get(projectPath) ?? 0);
+      // "Writes since last run": any workspace-scope entry for this workspace,
+      // project-scope entry for its single-project identity, or global entry
+      // newer than the newest run anywhere qualifies.
+      // Prefixes are derived via memoryLogicalKey (relPath "" =>
+      // "<scope>:<id>:") so the encoding always matches the meta key scheme.
       const workspaceKeyPrefix = memoryLogicalKey("workspace", "", {
         projectPath: "",
         workspaceId,
       });
+      const projectKeyPrefix =
+        projectPath === ""
+          ? null
+          : memoryLogicalKey("project", "", {
+              projectPath,
+              workspaceId,
+            });
       let hasNewWrites = false;
       for (const [key, entry] of meta) {
         if (entry.lastWriteAt === null) continue;
         if (key.startsWith(workspaceKeyPrefix) && entry.lastWriteAt > lastRunAt) {
+          hasNewWrites = true;
+          break;
+        }
+        if (
+          projectKeyPrefix !== null &&
+          key.startsWith(projectKeyPrefix) &&
+          entry.lastWriteAt > projectRunAt
+        ) {
           hasNewWrites = true;
           break;
         }
@@ -398,6 +456,9 @@ export class MemoryConsolidationService {
       }
       // This run covered global scope; later candidates in this sweep only
       // qualify via their own workspace writes or genuinely newer global ones.
+      if (projectPath !== "") {
+        projectLastRunAt.set(projectPath, result.data.lastRunAt);
+      }
       globalLastRunAt = Math.max(globalLastRunAt, result.data.lastRunAt);
     }
   }

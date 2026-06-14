@@ -9,7 +9,7 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { Config } from "@/node/config";
 import { createConsolidationMemoryTool, type MemoryConsolidationOp } from "./memoryConsolidation";
 import { memoryLogicalKey, MemoryMetaService } from "./memoryMeta";
-import { MemoryService, type MemoryScopeContext } from "./memoryService";
+import { MemoryService, projectMemoryDirName, type MemoryScopeContext } from "./memoryService";
 import { TestTempDir, mockToolCallOptions } from "./tools/testHelpers";
 
 /**
@@ -28,23 +28,29 @@ interface Fixture extends Disposable {
   tool: Tool;
   getMutationCount: () => number;
   globalMemoryDir: string;
+  projectMemoryDir: string;
 }
 
-async function createFixture(options?: { dryRun?: boolean }): Promise<Fixture> {
+async function createFixture(options?: {
+  dryRun?: boolean;
+  projectPath?: string;
+}): Promise<Fixture> {
   const tempDir = new TestTempDir("test-memory-consolidation");
   const muxHome = path.join(tempDir.path, "mux-home");
   const globalMemoryDir = path.join(muxHome, "memory", "global");
+  const projectMemoryDir =
+    options?.projectPath != null && options.projectPath !== ""
+      ? path.join(muxHome, "memory", "project", projectMemoryDirName(options.projectPath))
+      : "";
   await fsPromises.mkdir(globalMemoryDir, { recursive: true });
 
   const metaService = new MemoryMetaService(muxHome);
   const memoryService = new MemoryService(new Config(muxHome), metaService);
-  // projectPath: "" → project scope structurally disabled (reads included),
-  // mirroring the v1 consolidation context.
   const ctx: MemoryScopeContext = {
     runtime: null,
     checkoutCwd: "",
     workspaceId: "ws-consolidation",
-    projectPath: "",
+    projectPath: options?.projectPath ?? "",
   };
   const journal: MemoryConsolidationOp[] = [];
   const { tool, getMutationCount } = createConsolidationMemoryTool({
@@ -61,6 +67,7 @@ async function createFixture(options?: { dryRun?: boolean }): Promise<Fixture> {
     ctx,
     journal,
     globalMemoryDir,
+    projectMemoryDir,
     tool,
     getMutationCount,
     [Symbol.dispose]() {
@@ -100,6 +107,24 @@ describe("consolidation memory tool rails", () => {
     ]);
   });
 
+  it("applies project-scope mutations when the run has a single project identity", async () => {
+    using fixture = await createFixture({ projectPath: "/projects/demo" });
+
+    const result = await execute(fixture.tool, {
+      command: "create",
+      path: "/memories/project/lesson.md",
+      file_text: "repo-specific lesson\n",
+    });
+
+    expect(result.success).toBe(true);
+    expect(
+      await fsPromises.readFile(path.join(fixture.projectMemoryDir, "lesson.md"), "utf-8")
+    ).toBe("repo-specific lesson\n");
+    expect(fixture.journal).toEqual([
+      { command: "create", path: "/memories/project/lesson.md", applied: true, note: undefined },
+    ]);
+  });
+
   it("rejects project-scope mutations but allows reads to pass through", async () => {
     using fixture = await createFixture();
     const mutation = await execute(fixture.tool, {
@@ -107,7 +132,7 @@ describe("consolidation memory tool rails", () => {
       path: "/memories/project/note.md",
     });
     expect(mutation.success).toBe(false);
-    if (!mutation.success) expect(mutation.error).toContain("only /memories/workspace/");
+    if (!mutation.success) expect(mutation.error).toContain("single-project runs");
     expect(fixture.journal[0]?.applied).toBe(false);
 
     // Reads are unguarded by the tool, so out-of-scope privacy relies on the
@@ -188,6 +213,44 @@ describe("consolidation memory tool rails", () => {
     });
     expect(rename.success).toBe(false);
     expect(await pathExists(path.join(nestedDir, "pinned.md"))).toBe(true);
+  });
+
+  it("never deletes or renames pinned project files but allows editing them", async () => {
+    using fixture = await createFixture({ projectPath: "/projects/demo" });
+    await fsPromises.mkdir(fixture.projectMemoryDir, { recursive: true });
+    await fsPromises.writeFile(path.join(fixture.projectMemoryDir, "pinned.md"), "keep me\n");
+    await fixture.metaService.setPinned(
+      memoryLogicalKey("project", "pinned.md", {
+        projectPath: fixture.ctx.projectPath,
+        workspaceId: fixture.ctx.workspaceId,
+      }),
+      true
+    );
+
+    const deletion = await execute(fixture.tool, {
+      command: "delete",
+      path: "/memories/project/pinned.md",
+    });
+    expect(deletion.success).toBe(false);
+    if (!deletion.success) expect(deletion.error).toContain("pinned");
+
+    const rename = await execute(fixture.tool, {
+      command: "rename",
+      old_path: "/memories/project/pinned.md",
+      new_path: "/memories/project/moved.md",
+    });
+    expect(rename.success).toBe(false);
+
+    const edit = await execute(fixture.tool, {
+      command: "str_replace",
+      path: "/memories/project/pinned.md",
+      old_str: "keep me",
+      new_str: "keep me, polished",
+    });
+    expect(edit.success).toBe(true);
+    expect(
+      await fsPromises.readFile(path.join(fixture.projectMemoryDir, "pinned.md"), "utf-8")
+    ).toContain("polished");
   });
 
   it("never over-commits the budget when mutating tool calls run concurrently", async () => {

@@ -3815,8 +3815,8 @@ export const router = (authToken?: string) => {
         .output(schemas.memory.consolidationStatus.output)
         .handler(async ({ context, input }) => {
           assertMemoryEnabled(context);
-          const record = await context.memoryConsolidationService.getRecord(input.workspaceId);
-          return { success: true as const, data: record };
+          const status = await context.memoryConsolidationService.getStatus(input.workspaceId);
+          return { success: true as const, data: status };
         }),
       consolidate: t
         .input(schemas.memory.consolidate.input)

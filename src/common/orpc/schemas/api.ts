@@ -33,6 +33,7 @@ import { ProjectConfigSchema } from "./project";
 import {
   MemoryChangeEventSchema,
   MemoryConsolidationRecordSchema,
+  MemoryConsolidationStatusSchema,
   MemoryFileInfoSchema,
   MemorySaveErrorSchema,
 } from "./memory";
@@ -1024,10 +1025,10 @@ export const memory = {
     input: z.object({ workspaceId: z.string().nullish() }),
     output: eventIterator(MemoryChangeEventSchema),
   },
-  /** Latest consolidation ("dream") record for the Memory tab; null = never ran. */
+  /** Latest consolidation ("dream") coverage records for the Memory tab. */
   consolidationStatus: {
     input: z.object({ workspaceId: z.string() }),
-    output: ResultSchema(MemoryConsolidationRecordSchema.nullable(), z.string()),
+    output: ResultSchema(MemoryConsolidationStatusSchema, z.string()),
   },
   /** Manual consolidation run (/dream, Memory tab button); bypasses debounce. */
   consolidate: {
