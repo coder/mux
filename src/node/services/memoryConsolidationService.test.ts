@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 import { MockLanguageModelV3, simulateReadableStream } from "ai/test";
-import type { LanguageModelV3StreamPart } from "@ai-sdk/provider";
+import type { LanguageModelV3CallOptions, LanguageModelV3StreamPart } from "@ai-sdk/provider";
 
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -29,7 +29,18 @@ import { TestTempDir } from "./tools/testHelpers";
  * finishes without tool calls ("no changes needed" run).
  */
 
-function scriptedModel(): MockLanguageModelV3 {
+function userPromptText(options: LanguageModelV3CallOptions): string {
+  const parts: string[] = [];
+  for (const message of options.prompt) {
+    if (message.role !== "user") continue;
+    for (const part of message.content) {
+      if (part.type === "text") parts.push(part.text);
+    }
+  }
+  return parts.join("\n");
+}
+
+function scriptedModel(capturePrompt?: (prompt: string) => void): MockLanguageModelV3 {
   // Chunk list typed explicitly: simulateReadableStream's inferred union
   // otherwise collapses optional fields and fails LanguageModelV3 assignment.
   const chunks: LanguageModelV3StreamPart[] = [
@@ -46,7 +57,10 @@ function scriptedModel(): MockLanguageModelV3 {
     },
   ];
   return new MockLanguageModelV3({
-    doStream: () => Promise.resolve({ stream: simulateReadableStream({ chunks }) }),
+    doStream: (options) => {
+      capturePrompt?.(userPromptText(options));
+      return Promise.resolve({ stream: simulateReadableStream({ chunks }) });
+    },
   });
 }
 
@@ -55,16 +69,18 @@ function scriptedModel(): MockLanguageModelV3 {
  * mid-flight (an `error` chunk part alone would not reach consumeStream's
  * onError — real connection failures reject the stream).
  */
-function failingScriptedModel(): MockLanguageModelV3 {
+function failingScriptedModel(capturePrompt?: (prompt: string) => void): MockLanguageModelV3 {
   return new MockLanguageModelV3({
-    doStream: () =>
-      Promise.resolve({
+    doStream: (options) => {
+      capturePrompt?.(userPromptText(options));
+      return Promise.resolve({
         stream: new ReadableStream<LanguageModelV3StreamPart>({
           pull(controller) {
             controller.error(new Error("provider exploded"));
           },
         }),
-      }),
+      });
+    },
   });
 }
 
@@ -119,6 +135,7 @@ interface Fixture extends Disposable {
   service: MemoryConsolidationService;
   metaService: MemoryMetaService;
   modelCalls: number[];
+  modelPrompts: string[];
   setEnabled: (enabled: boolean) => void;
   /** When true, scripted runs emit a fatal stream error instead of finishing. */
   setStreamFailing: (failing: boolean) => void;
@@ -150,6 +167,8 @@ async function createFixture(options?: {
   let enabled = true;
   let streamFailing = false;
   const modelCalls: number[] = [];
+  const modelPrompts: string[] = [];
+  const capturePrompt = (prompt: string) => modelPrompts.push(prompt);
   const service = new MemoryConsolidationService(
     config,
     memoryService,
@@ -159,7 +178,8 @@ async function createFixture(options?: {
         modelCalls.push(Date.now());
         if (options?.modelGate) await options.modelGate;
         return Ok(
-          options?.modelFactory?.() ?? (streamFailing ? failingScriptedModel() : scriptedModel())
+          options?.modelFactory?.() ??
+            (streamFailing ? failingScriptedModel(capturePrompt) : scriptedModel(capturePrompt))
         );
       },
     },
@@ -175,6 +195,7 @@ async function createFixture(options?: {
     service,
     metaService,
     modelCalls,
+    modelPrompts,
     setEnabled: (value) => {
       enabled = value;
     },
@@ -332,14 +353,41 @@ describe("MemoryConsolidationService", () => {
     if (!debounced.success) expect(debounced.error).toContain("debounced");
 
     // Archive bypasses debounce: it is the workspace's one-shot final pass
-    // (workspace→global promotion) and typically lands right after a
-    // compaction-triggered run anchored the debounce window.
+    // for promoting durable lessons to the narrowest available scope and
+    // typically lands right after a compaction-triggered run anchored the debounce window.
     const archive = await fixture.service.maybeRun("ws-dream", "archive");
     expect(archive.success).toBe(true);
 
     const manual = await fixture.service.maybeRun("ws-dream", "manual");
     expect(manual.success).toBe(true);
     expect(fixture.modelCalls).toHaveLength(3);
+  });
+
+  it("routes project-specific archive final-pass promotions to project memory when available", async () => {
+    using fixture = await createFixture();
+
+    const result = await fixture.service.maybeRun("ws-dream", "archive");
+    expect(result.success).toBe(true);
+
+    const prompt = fixture.modelPrompts.at(-1) ?? "";
+    expect(prompt).toMatch(/repo-specific[\s\S]*\/memories\/project\//);
+    expect(prompt).toMatch(/cross-project[\s\S]*\/memories\/global\//);
+    expect(prompt).not.toMatch(
+      /durable lessons from \/memories\/workspace\/\.\.\. to \/memories\/global\//
+    );
+  });
+
+  it("does not advertise project-scope promotion in archive final-pass prompts when unavailable", async () => {
+    using fixture = await createFixture();
+    await fixture.addMultiProjectWorkspace("ws-multi");
+
+    const result = await fixture.service.maybeRun("ws-multi", "archive");
+    expect(result.success).toBe(true);
+
+    const prompt = fixture.modelPrompts.at(-1) ?? "";
+    expect(prompt).not.toContain("/memories/project/");
+    expect(prompt).toMatch(/cross-project[\s\S]*\/memories\/global\//);
+    expect(prompt).toMatch(/not promote[\s\S]*project-specific[\s\S]*global/);
   });
 
   it("rejects a second trigger while a run is still in flight", async () => {
@@ -370,7 +418,7 @@ describe("MemoryConsolidationService", () => {
 
     const first = fixture.service.maybeRun("ws-dream", "compaction");
     // The archive caller never retries and only archive sets finalPass, so
-    // dropping it here would silently skip workspace→global promotion.
+    // dropping it here would silently skip final-scope promotion.
     const archive = fixture.service.maybeRun("ws-dream", "archive");
     const dropped = await fixture.service.maybeRun("ws-dream", "manual");
     expect(dropped.success).toBe(false);

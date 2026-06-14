@@ -4956,8 +4956,8 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Dream trigger (PRD #3534): final consolidation pass — last chance to
-      // promote durable workspace-scope lessons to global before the
-      // workspace's memory dies with it. Fire-and-forget; never blocks archive.
+      // promote durable workspace-scope lessons to the narrowest available scope
+      // before the workspace's memory dies with it. Fire-and-forget; never blocks archive.
       this.memoryConsolidationService?.triggerInBackground(workspaceId, "archive");
 
       return Ok({ kind: "archived" as const });

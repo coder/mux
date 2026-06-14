@@ -202,7 +202,8 @@ export async function runMemoryConsolidation(args: {
   dryRun: boolean;
   /**
    * Archive trigger: instructs the agent that this is the workspace's final
-   * pass, unlocking workspace→global promotion of durable lessons (PRD #3534).
+   * pass, so durable lessons must be moved to the narrowest available scope
+   * before workspace memory is deleted (PRD #3534).
    */
   finalPass?: boolean;
   abortSignal?: AbortSignal;
@@ -217,14 +218,19 @@ export async function runMemoryConsolidation(args: {
     journal,
   });
 
+  const finalPassPrompt =
+    args.finalPass !== true
+      ? ""
+      : args.ctx.projectPath === ""
+        ? " This is the FINAL pass for an archived workspace: preserve only cross-project user preferences or environment facts in /memories/global/... before workspace memory is deleted. Project memory is unavailable for this run; do not promote project-specific lessons to global memory."
+        : " This is the FINAL pass for an archived workspace: promote durable workspace lessons before workspace memory is deleted. Move repo-specific lessons to /memories/project/... and only cross-project user preferences or environment facts to /memories/global/....";
+
   const stream = streamText({
     model: args.model,
     system: args.agentBody,
     prompt:
       "Run a memory-consolidation pass now. Survey the memory directories, then apply the highest-value cleanups within budget." +
-      (args.finalPass === true
-        ? " This is the FINAL pass for an archived workspace: promote durable lessons from /memories/workspace/... to /memories/global/... before they are lost."
-        : ""),
+      finalPassPrompt,
     tools: { memory: memoryTool },
     stopWhen: stepCountIs(MEMORY_CONSOLIDATION_MAX_STEPS),
     abortSignal: args.abortSignal,
