@@ -68,6 +68,51 @@ function failingScriptedModel(): MockLanguageModelV3 {
   });
 }
 
+function projectMutationModel(): MockLanguageModelV3 {
+  let streamCount = 0;
+  return new MockLanguageModelV3({
+    doStream: () => {
+      streamCount++;
+      const chunks: LanguageModelV3StreamPart[] =
+        streamCount === 1
+          ? [
+              {
+                type: "tool-call",
+                toolCallId: "project-write",
+                toolName: "memory",
+                input: JSON.stringify({
+                  command: "create",
+                  path: "/memories/project/should-not-exist.md",
+                  file_text: "must not be written\n",
+                }),
+              },
+              {
+                type: "finish",
+                finishReason: { unified: "tool-calls", raw: "tool-calls" },
+                usage: {
+                  inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+                  outputTokens: { total: 1, text: 0, reasoning: 0 },
+                },
+              },
+            ]
+          : [
+              { type: "text-start", id: "t1" },
+              { type: "text-delta", id: "t1", delta: "project write attempted" },
+              { type: "text-end", id: "t1" },
+              {
+                type: "finish",
+                finishReason: { unified: "stop", raw: "stop" },
+                usage: {
+                  inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+                  outputTokens: { total: 1, text: 1, reasoning: 0 },
+                },
+              },
+            ];
+      return Promise.resolve({ stream: simulateReadableStream({ chunks }) });
+    },
+  });
+}
+
 interface Fixture extends Disposable {
   muxHome: string;
   config: Config;
@@ -78,12 +123,13 @@ interface Fixture extends Disposable {
   /** When true, scripted runs emit a fatal stream error instead of finishing. */
   setStreamFailing: (failing: boolean) => void;
   addWorkspace: (id: string, opts?: { archivedAt?: string }) => Promise<void>;
-  addMultiProjectWorkspace: (id: string) => Promise<void>;
+  addMultiProjectWorkspace: (id: string, opts?: { bucket?: string }) => Promise<void>;
 }
 
 async function createFixture(options?: {
   /** Holds every model run open until resolved (for in-flight race tests). */
   modelGate?: Promise<void>;
+  modelFactory?: () => MockLanguageModelV3;
 }): Promise<Fixture> {
   const tempDir = new TestTempDir("test-memory-consolidation-service");
   const muxHome = path.join(tempDir.path, "mux-home");
@@ -112,7 +158,9 @@ async function createFixture(options?: {
       createModel: async () => {
         modelCalls.push(Date.now());
         if (options?.modelGate) await options.modelGate;
-        return Ok(streamFailing ? failingScriptedModel() : scriptedModel());
+        return Ok(
+          options?.modelFactory?.() ?? (streamFailing ? failingScriptedModel() : scriptedModel())
+        );
       },
     },
     {
@@ -144,19 +192,21 @@ async function createFixture(options?: {
         return cfg;
       });
     },
-    addMultiProjectWorkspace: async (id) => {
+    addMultiProjectWorkspace: async (id, opts) => {
       await config.editConfig((cfg) => {
-        cfg.projects.set(MULTI_PROJECT_CONFIG_KEY, {
-          workspaces: [
-            {
-              id,
-              name: id,
-              path: `/projects/multi/${id}`,
-              projects: [
-                { projectName: "demo", projectPath: "/projects/demo" },
-                { projectName: "other", projectPath: "/projects/other" },
-              ],
-            },
+        const bucket = opts?.bucket ?? MULTI_PROJECT_CONFIG_KEY;
+        let project = cfg.projects.get(bucket);
+        if (project === undefined) {
+          project = { workspaces: [] };
+          cfg.projects.set(bucket, project);
+        }
+        project.workspaces.push({
+          id,
+          name: id,
+          path: `/projects/multi/${id}`,
+          projects: [
+            { projectName: "demo", projectPath: "/projects/demo" },
+            { projectName: "other", projectPath: "/projects/other" },
           ],
         });
         return cfg;
@@ -213,6 +263,29 @@ describe("MemoryConsolidationService", () => {
     expect(raw.workspaces?.["ws-multi"]).toBeDefined();
     expect(raw.projects?.["/projects/demo"]).toBeUndefined();
     expect(raw.projects?.["/projects/other"]).toBeUndefined();
+  });
+
+  it("disables project memory for multi-project workspace runs stored under a project bucket", async () => {
+    using fixture = await createFixture({ modelFactory: projectMutationModel });
+    await fixture.addMultiProjectWorkspace("ws-task", { bucket: "/projects/demo" });
+
+    const result = await fixture.service.maybeRun("ws-task", "manual");
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.ops).toHaveLength(1);
+      expect(result.data.ops[0]?.applied).toBe(false);
+      expect(result.data.ops[0]?.note).toContain("single-project");
+    }
+
+    const raw = JSON.parse(
+      await fsPromises.readFile(path.join(fixture.muxHome, "memory-consolidation.json"), "utf-8")
+    ) as { projects?: Record<string, unknown>; workspaces?: Record<string, unknown> };
+    expect(raw.workspaces?.["ws-task"]).toBeDefined();
+    expect(raw.projects?.["/projects/demo"]).toBeUndefined();
+
+    const status = await fixture.service.getStatus("ws-task");
+    expect(status.projectAvailable).toBe(false);
+    expect(status.projectRecord).toBeNull();
   });
 
   it("reports workspace, project, and global coverage separately", async () => {
@@ -447,6 +520,23 @@ describe("MemoryConsolidationService", () => {
     );
 
     expect(fixture.modelCalls).toHaveLength(1);
+  });
+
+  it("does not qualify real-bucket multi-project workspaces from project-only writes", async () => {
+    using fixture = await createFixture();
+    await fixture.addMultiProjectWorkspace("ws-task", { bucket: "/projects/demo" });
+    const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
+    await fixture.metaService.recordAccess(
+      memoryLogicalKey("project", "lesson.md", {
+        projectPath: "/projects/demo",
+        workspaceId: "ws-task",
+      }),
+      { write: true }
+    );
+
+    await fixture.service.runLaunchSweep(new Map([["ws-task", dayAgo]]));
+
+    expect(fixture.modelCalls).toHaveLength(0);
   });
 
   it("older workspace-only records do not suppress project-only launch coverage", async () => {

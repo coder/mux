@@ -131,8 +131,20 @@ export async function resolveDreamAgentBody(muxRoot: string): Promise<string | n
   return dream?.body ?? null;
 }
 
-function resolveConsolidationProjectPath(workspace: { projectPath: string }): string {
-  return workspace.projectPath === MULTI_PROJECT_CONFIG_KEY ? "" : workspace.projectPath;
+export function resolveConsolidationProjectPath(workspace: {
+  projectPath: string;
+  attributionProjectPath?: string;
+  projects?: readonly { projectPath: string }[];
+}): string {
+  // Task/fork multi-project workspaces can live under a real project bucket;
+  // only the workspace's actual project refs prove a single stable identity.
+  if (workspace.projectPath === MULTI_PROJECT_CONFIG_KEY) return "";
+  if ((workspace.projects?.length ?? 0) > 1) return "";
+  return (
+    workspace.projects?.[0]?.projectPath ??
+    workspace.attributionProjectPath ??
+    workspace.projectPath
+  );
 }
 
 export class MemoryConsolidationService {
@@ -379,14 +391,19 @@ export class MemoryConsolidationService {
     const archivedById = new Map<string, boolean>();
     const projectPathByWorkspace = new Map<string, string>();
     for (const [configProjectPath, project] of this.config.loadConfigOrDefault().projects) {
-      const projectPath = configProjectPath === MULTI_PROJECT_CONFIG_KEY ? "" : configProjectPath;
       for (const workspace of project.workspaces) {
         if (workspace.id === undefined) continue;
         archivedById.set(
           workspace.id,
           isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt)
         );
-        projectPathByWorkspace.set(workspace.id, projectPath);
+        projectPathByWorkspace.set(
+          workspace.id,
+          resolveConsolidationProjectPath({
+            projectPath: configProjectPath,
+            projects: workspace.projects,
+          })
+        );
       }
     }
     const projectLastRunAt = new Map<string, number>(

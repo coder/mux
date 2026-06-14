@@ -1485,6 +1485,7 @@ export class Config {
     workspacePath: string;
     projectPath: string;
     attributionProjectPath?: string;
+    projects?: Workspace["projects"];
     workspaceName?: string;
     parentWorkspaceId?: string;
     pendingAutoTitle?: boolean;
@@ -1503,6 +1504,7 @@ export class Config {
             // config.projects.get(projectPath), even for multi-project workspaces under _multi.
             projectPath,
             attributionProjectPath,
+            projects: workspace.projects,
             workspaceName: workspace.name,
             parentWorkspaceId: workspace.parentWorkspaceId,
             pendingAutoTitle: workspace.pendingAutoTitle,
@@ -1526,6 +1528,7 @@ export class Config {
                   workspacePath: workspace.path,
                   projectPath,
                   attributionProjectPath,
+                  projects: metadata.projects ?? workspace.projects,
                   workspaceName: undefined,
                   parentWorkspaceId: undefined,
                 };
@@ -1542,6 +1545,7 @@ export class Config {
               workspacePath: workspace.path,
               projectPath,
               attributionProjectPath,
+              projects: workspace.projects,
               workspaceName: undefined,
               parentWorkspaceId: undefined,
             };

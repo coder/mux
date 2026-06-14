@@ -1,6 +1,6 @@
-import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { defaultConfig } from "@/node/config";
 import {
+  resolveConsolidationProjectPath,
   resolveDreamAgentBody,
   resolveDreamModelString,
 } from "@/node/services/memoryConsolidationService";
@@ -55,8 +55,7 @@ export async function consolidateMemoryCommand(
 
   const metaService = new MemoryMetaService(defaultConfig.rootDir);
   const memoryService = new MemoryService(defaultConfig, metaService);
-  const projectPath =
-    workspace.projectPath === MULTI_PROJECT_CONFIG_KEY ? "" : workspace.projectPath;
+  const projectPath = resolveConsolidationProjectPath(workspace);
   const ctx: MemoryScopeContext = {
     runtime: null,
     checkoutCwd: "",
