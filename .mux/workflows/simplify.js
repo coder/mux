@@ -541,7 +541,7 @@ function isRequestedHeadCurrent(status, input) {
 }
 
 function isGitCommitSha(value) {
-  return /^[0-9a-f]{7,40}$/i.test(value);
+  return /^[0-9a-f]{7,64}$/i.test(value);
 }
 
 function shouldSkipForUntrackedContent(input, gitContext) {
@@ -915,8 +915,9 @@ function tokenize(input) {
       escaped = false;
     } else if (quote && char === "\\") {
       const next = input[index + 1];
-      if (next === quote || next === "\\") escaped = true;
-      else current += char;
+      if (next === "\\" || (next === quote && !isClosingQuote(input, index + 1))) {
+        escaped = true;
+      } else current += char;
     } else if (quote) {
       if (char === quote) quote = "";
       else current += char;
@@ -931,6 +932,10 @@ function tokenize(input) {
   if (escaped) current += "\\";
   if (current) tokens.push(current);
   return { tokens: tokens, error: "" };
+}
+
+function isClosingQuote(input, quoteIndex) {
+  return quoteIndex + 1 >= input.length || /\s/.test(input[quoteIndex + 1]);
 }
 
 function reviewOnlyReport(input, markdown) {
