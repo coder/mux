@@ -540,6 +540,7 @@ function targetNeedsUntrackedContent(input, gitContext) {
   if (!input.target) return true;
   const target = normalizedPath(input.target);
   if (!target) return false;
+  if (target === ".") return true;
   return untrackedPaths(gitContext).some(function (path) {
     const untracked = normalizedPath(path);
     return untracked === target || untracked.startsWith(target + "/");
@@ -560,7 +561,9 @@ function filePath(value) {
 
 function normalizedPath(value) {
   if (typeof value !== "string") return "";
-  return value.trim().replace(/^\.\//, "").replace(/\/+$/, "");
+  const trimmed = value.trim();
+  if (trimmed === "." || trimmed === "./") return ".";
+  return trimmed.replace(/^\.\//, "").replace(/\/+$/, "");
 }
 
 function hasOnlyUntrackedChanges(gitContext) {
