@@ -485,6 +485,20 @@ function MemoryFileRow(props: MemoryFileRowProps) {
   );
 }
 
+function uniqueConsolidationSummaryLines(
+  summaries: ReadonlyArray<string | null | undefined>
+): string[] {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const summary of summaries) {
+    const line = summary?.trim();
+    if (!line || seen.has(line)) continue;
+    seen.add(line);
+    lines.push(line);
+  }
+  return lines;
+}
+
 function formatConsolidationRecord(record: MemoryConsolidationRecordPayload | null): string {
   if (record === null) return "never";
   const appliedCount = record.ops.filter((op) => op.applied).length;
@@ -556,14 +570,15 @@ function ConsolidationFooter(props: {
     : "never";
   const harvestError =
     status?.latestHarvestRecord?.status === "failed" ? status.latestHarvestRecord.error : undefined;
-  const summaryTitle = [
+  // One consolidation pass can cover workspace, project, and global memory at
+  // once, so those scope records often share the exact same summary. Keep the
+  // per-scope status lines below, but avoid repeating identical tooltip text.
+  const summaryTitle = uniqueConsolidationSummaryLines([
     status?.workspaceRecord?.summary,
     status?.projectRecord?.summary,
     status?.globalRecord?.summary,
     status?.latestHarvestRecord?.error,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ]).join("\n");
 
   return (
     <div className="border-border-light flex items-center justify-between gap-2 border-t px-3 py-2 text-xs">

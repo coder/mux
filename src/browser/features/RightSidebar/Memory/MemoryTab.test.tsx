@@ -269,6 +269,39 @@ describe("MemoryTab", () => {
     expect(getByText(/^Project:/).textContent).not.toContain("manual");
   });
 
+  test("deduplicates identical consolidation summaries in the tooltip", async () => {
+    const sharedRecord = {
+      ...DEFAULT_CONSOLIDATION_RECORD,
+      summary: "shared consolidation summary",
+    };
+    fake = createFakeMemoryApi([], {
+      consolidationStatus: {
+        workspaceRecord: sharedRecord,
+        projectRecord: sharedRecord,
+        globalRecord: sharedRecord,
+        latestHarvestRecord: null,
+        projectAvailable: true,
+      },
+    });
+    const { findByText } = render(<MemoryTab workspaceId="ws-1" />);
+
+    const workspaceLine = await findByText(/^Workspace: .*manual/);
+    const statusBlock = workspaceLine.parentElement;
+    expect(statusBlock).not.toBeNull();
+    fireEvent.pointerMove(statusBlock!);
+
+    await waitFor(() => {
+      const tooltipBlocks = Array.from(
+        document.querySelectorAll<HTMLElement>(".whitespace-pre-line")
+      );
+      expect(tooltipBlocks.length).toBeGreaterThan(0);
+      for (const block of tooltipBlocks) {
+        const matches = block.textContent?.match(/shared consolidation summary/g) ?? [];
+        expect(matches).toHaveLength(1);
+      }
+    });
+  });
+
   test("consolidation summary does not leave a native title tooltip", async () => {
     fake = createFakeMemoryApi([], {
       consolidationStatus: {

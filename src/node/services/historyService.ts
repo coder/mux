@@ -901,7 +901,7 @@ export class HistoryService {
       let summary: MuxMessage | undefined;
       const lowerBound = metadata.previousBoundaryHistorySequence;
 
-      await this.iterateForward(workspaceId, (chunk) => {
+      const iteration = await this.iterateFullHistory(workspaceId, "forward", (chunk) => {
         for (const message of chunk) {
           const sequence = message.metadata?.historySequence;
           if (!isNonNegativeInteger(sequence)) continue;
@@ -921,6 +921,9 @@ export class HistoryService {
           messages.push(message);
         }
       });
+      if (!iteration.success) {
+        return Err(`Failed to read compaction epoch messages: ${iteration.error}`);
+      }
 
       if (summary === undefined) {
         return Err(`Compaction summary not found: ${metadata.summaryMessageId}`);
