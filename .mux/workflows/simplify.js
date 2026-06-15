@@ -171,7 +171,7 @@ export default function simplifyWorkflow({
     diffCompactions: asArray(contexts.outputGitContext.diff?.workflowCompactions).length,
   });
 
-  if (hasOnlyUntrackedChanges(gitContext) && targetNeedsUntrackedContent(input, gitContext)) {
+  if (shouldSkipForUntrackedContent(input, gitContext)) {
     const reason = untrackedChangesSkipReason();
     return {
       reportMarkdown: "## Simplify workflow result\n\n" + reason,
@@ -527,6 +527,13 @@ function isRequestedHeadCurrent(status, input) {
 
 function isGitCommitSha(value) {
   return /^[0-9a-f]{7,40}$/i.test(value);
+}
+
+function shouldSkipForUntrackedContent(input, gitContext) {
+  if (!hasUntrackedChanges(gitContext)) return false;
+  return input.target
+    ? targetNeedsUntrackedContent(input, gitContext)
+    : hasOnlyUntrackedChanges(gitContext);
 }
 
 function targetNeedsUntrackedContent(input, gitContext) {
