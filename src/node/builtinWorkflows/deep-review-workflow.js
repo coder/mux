@@ -293,9 +293,9 @@ function runDeepReviewPass(context) {
     withLoopIteration({ count: verifications.length }, context.iteration)
   );
 
-  if (!hasValidVerification(verifications)) {
+  if (!hasActionableVerification(verifications)) {
     context.log(
-      "No verifier upheld a candidate issue; skipping final synthesis",
+      "No verifier upheld an actionable candidate issue; skipping final synthesis",
       withLoopIteration({ skippedPhases: ["final-synthesis"] }, context.iteration)
     );
     const reviewResult = buildNoVerifiedIssuesReviewResult({
@@ -385,9 +385,10 @@ function buildNoVerifiedIssuesReviewResult(options) {
   };
 }
 
-function hasValidVerification(verifications) {
+function hasActionableVerification(verifications) {
   for (const verification of verifications) {
-    if (verification && verification.verdict === "valid") return true;
+    if (!verification) continue;
+    if (verification.verdict === "valid" || verification.verdict === "overstated") return true;
   }
   return false;
 }

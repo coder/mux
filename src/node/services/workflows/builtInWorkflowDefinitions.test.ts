@@ -2606,6 +2606,144 @@ describe("built-in deep-review-workflow", () => {
     });
   }, 10_000);
 
+  test("keeps final synthesis when verification reports an overstated candidate", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-overstated-verification-synthesis");
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
+    await runStore.createRun({
+      id: "wfr_deep_review_overstated_verification_synthesis",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { input: "PR #123", files: ["src/service.ts"], maxCandidates: 1 },
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const issue = {
+      id: "overstated-candidate",
+      severity: "P1",
+      category: "correctness",
+      title: "Overstated candidate",
+      rationale: "The lane overstated the impact.",
+      evidence: "Verifier will downgrade this finding.",
+      filePaths: ["src/service.ts"],
+      suggestedFix: "Handle the downgraded issue.",
+      validation: "Run targeted tests.",
+      confidence: "medium",
+    };
+    const verification = {
+      issueId: "overstated-candidate",
+      verdict: "overstated",
+      confidence: "high",
+      rationale: "The issue is real but lower impact.",
+      evidence: "The affected path has a fallback.",
+      suggestedSeverity: "P3",
+    };
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-review-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped review target.",
+                structuredOutput: {
+                  summary: "Review target is scoped.",
+                  files: [],
+                  riskAreas: [],
+                  lanes: ["correctness"],
+                },
+              };
+            case "review-correctness":
+              return {
+                taskId: "task_review_correctness",
+                reportMarkdown: "One candidate.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "review-tests":
+            case "review-architecture":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "No findings.",
+                structuredOutput: { issues: [] },
+              };
+            case "triage-candidate-issues":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "Kept one candidate.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "verify-issue-0":
+              return {
+                taskId: "task_verify",
+                reportMarkdown: "Downgraded candidate.",
+                structuredOutput: verification,
+              };
+            case "synthesize-review":
+              return {
+                taskId: "task_final",
+                reportMarkdown: "# Deep Review\n\n- P3 Overstated candidate remains actionable.",
+                structuredOutput: {
+                  verifiedIssueCount: 1,
+                  verifiedIssueIds: ["overstated-candidate"],
+                  risk: "low",
+                  validationPlan: ["Run targeted tests."],
+                  discardedIssueCount: 0,
+                },
+              };
+            default:
+              throw new Error(`Unexpected overstated-verification deep-review step: ${spec.id}`);
+          }
+        },
+      },
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_overstated_verification_synthesis");
+    const run = await runStore.getRun("wfr_deep_review_overstated_verification_synthesis");
+
+    expect(taskCalls.map((call) => call.id)).toEqual([
+      "scope-review-surface",
+      "review-correctness",
+      "review-tests",
+      "review-architecture",
+      "triage-candidate-issues",
+      "verify-issue-0",
+      "synthesize-review",
+    ]);
+    expect(run.events.filter((event) => event.type === "phase").map((event) => event.name)).toEqual(
+      ["scope", "lane-review", "triage-dedupe", "adversarial-verification", "final-synthesis"]
+    );
+    expect(result).toMatchObject({
+      structuredOutput: {
+        triagedIssues: [issue],
+        verification: [verification],
+        final: {
+          verifiedIssueCount: 1,
+          verifiedIssueIds: ["overstated-candidate"],
+        },
+      },
+    });
+  }, 10_000);
+
   test("short-circuits final synthesis when verification rejects every candidate", async () => {
     if (!deepReviewWorkflow) {
       throw new Error("Expected built-in deep-review-workflow workflow");
