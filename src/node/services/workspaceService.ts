@@ -1996,11 +1996,9 @@ export class WorkspaceService extends EventEmitter {
     const generation = this.streamingGenerations.get(workspaceId) ?? 0;
     const isIdleCompaction = this.idleCompactingWorkspaces.has(workspaceId);
 
-    if (isIdleCompaction) {
-      // A clean stream end means compaction succeeded; clear the failure streak.
-      // Mid-stream failures arrive via the "error" event instead.
-      this.reportIdleCompactionOutcome(workspaceId, { success: true });
-    }
+    // Note: idle-compaction success/failure is reported from onIdleCompactionOutcome
+    // (after the summary is actually persisted), not here — a clean provider stream-end
+    // does not guarantee the post-stream history compaction succeeded.
 
     // Idle compaction is maintenance work, so preserve the pre-existing recency.
     // That keeps the workspace from jumping to the top of the sidebar and also
@@ -2175,6 +2173,16 @@ export class WorkspaceService extends EventEmitter {
         // Compaction marks a long session with accumulated learnings: harvest
         // the compacted epoch first, then let Dream sweep/merge the candidates.
         this.memoryConsolidationService?.triggerHarvestThenSweepInBackground(metadata);
+      },
+      onIdleCompactionOutcome: (success) => {
+        // Reports the *persisted* idle-compaction outcome (success only after the summary
+        // is written; failure on post-stream persistence errors). Reporting on actual
+        // persistence — not the provider stream-end — keeps the idle loop's failure streak
+        // accurate. A persistence failure is not a model error, so modelNotFound is false.
+        this.reportIdleCompactionOutcome(
+          workspaceId,
+          success ? { success: true } : { success: false, modelNotFound: false }
+        );
       },
       onPostCompactionStateChange: () => {
         this.schedulePostCompactionMetadataRefresh(workspaceId);

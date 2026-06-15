@@ -332,6 +332,13 @@ interface CompactionHandlerOptions {
   emitter: EventEmitter;
   /** Called when compaction completes successfully (e.g., to clear idle compaction pending state) */
   onCompactionComplete?: (metadata: CompactionCompletionMetadata) => void;
+  /**
+   * Called with the terminal outcome of an idle compaction (source === "idle-compaction"),
+   * after the summary is actually persisted (success) or a post-stream persistence failure
+   * (empty/invalid summary, history write error). Lets the idle loop stop re-attempting a
+   * workspace whose compaction keeps failing even though the provider stream ended cleanly.
+   */
+  onIdleCompactionOutcome?: (success: boolean) => void;
 }
 
 /**
@@ -353,6 +360,7 @@ export class CompactionHandler {
   private readonly processedCompactionRequestIds: Set<string> = new Set<string>();
 
   private readonly onCompactionComplete?: (metadata: CompactionCompletionMetadata) => void;
+  private readonly onIdleCompactionOutcome?: (success: boolean) => void;
 
   /** Flag indicating post-compaction attachments should be generated on next turn */
   private postCompactionAttachmentsPending = false;
@@ -376,6 +384,7 @@ export class CompactionHandler {
     this.telemetryService = options.telemetryService;
     this.emitter = options.emitter;
     this.onCompactionComplete = options.onCompactionComplete;
+    this.onIdleCompactionOutcome = options.onIdleCompactionOutcome;
   }
 
   private async loadPersistedPendingStateIfNeeded(): Promise<void> {
@@ -752,6 +761,11 @@ export class CompactionHandler {
       return false;
     }
 
+    // Determine idle-compaction (auto-triggered due to inactivity) up-front so the
+    // post-stream failure paths below can report a terminal outcome to the idle loop.
+    const isIdleCompaction =
+      muxMeta?.type === "compaction-request" && muxMeta.source === "idle-compaction";
+
     // Dedupe: If we've already processed this compaction-request, skip
     if (this.processedCompactionRequestIds.has(lastUserMsg.id)) {
       return true;
@@ -777,6 +791,7 @@ export class CompactionHandler {
         parts: partsSummary,
       });
       // Don't mark as processed so user can retry
+      if (isIdleCompaction) this.onIdleCompactionOutcome?.(false);
       return false;
     }
 
@@ -792,12 +807,9 @@ export class CompactionHandler {
         }
       );
       // Don't mark as processed so user can retry
+      if (isIdleCompaction) this.onIdleCompactionOutcome?.(false);
       return false;
     }
-
-    // Check if this was an idle-compaction (auto-triggered due to inactivity)
-    const isIdleCompaction =
-      muxMeta?.type === "compaction-request" && muxMeta.source === "idle-compaction";
 
     // Extract follow-up content to attach to summary for crash-safe dispatch
     const pendingFollowUp = getCompactionFollowUpContent(muxMeta);
@@ -825,6 +837,7 @@ export class CompactionHandler {
     );
     if (!result.success) {
       log.error("Compaction failed:", result.error);
+      if (isIdleCompaction) this.onIdleCompactionOutcome?.(false);
       return false;
     }
 
@@ -848,6 +861,10 @@ export class CompactionHandler {
 
     // Notify that compaction completed (clears idle compaction pending state)
     this.onCompactionComplete?.(result.data);
+
+    // Report the idle-compaction success only after the summary is actually persisted,
+    // so the idle loop's failure streak is reset on real success (not just stream end).
+    if (isIdleCompaction) this.onIdleCompactionOutcome?.(true);
 
     // Emit a sanitized stream-end so UI can close streaming state without
     // re-introducing stale provider metadata from the pre-compaction row.

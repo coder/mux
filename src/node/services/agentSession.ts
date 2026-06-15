@@ -317,6 +317,8 @@ interface AgentSessionOptions {
   keepBackgroundProcesses?: boolean;
   /** Called when compaction completes (e.g., to clear idle compaction pending state) */
   onCompactionComplete?: (metadata: CompactionCompletionMetadata) => void;
+  /** Called with the terminal outcome of an idle compaction (persisted success / post-stream failure) */
+  onIdleCompactionOutcome?: (success: boolean) => void;
   /** Called when post-compaction context state may have changed (plan/file edits) */
   onPostCompactionStateChange?: () => void;
 }
@@ -515,6 +517,7 @@ export class AgentSession {
       workspaceGoalService,
       keepBackgroundProcesses,
       onCompactionComplete,
+      onIdleCompactionOutcome,
       onPostCompactionStateChange,
     } = options;
 
@@ -539,6 +542,7 @@ export class AgentSession {
       telemetryService,
       emitter: this.emitter,
       onCompactionComplete,
+      onIdleCompactionOutcome,
     });
 
     this.compactionMonitor = new CompactionMonitor(

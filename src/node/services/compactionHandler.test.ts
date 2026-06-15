@@ -236,6 +236,74 @@ describe("CompactionHandler", () => {
       expect(metadata?.previousBoundaryHistorySequence).toBe(1);
     });
 
+    describe("onIdleCompactionOutcome", () => {
+      const createIdleCompactionRequest = (id = "idle-req"): MuxMessage =>
+        createMuxMessage(id, "user", "Please summarize the conversation", {
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: {},
+            source: "idle-compaction",
+          },
+        });
+
+      it("reports success only after the summary is persisted", async () => {
+        const onIdleCompactionOutcome = mock((_success: boolean) => undefined);
+        handler = new CompactionHandler({
+          workspaceId,
+          historyService,
+          sessionDir,
+          telemetryService,
+          emitter: mockEmitter,
+          onIdleCompactionOutcome,
+        });
+        await seedHistory(createIdleCompactionRequest());
+
+        const handled = await handler.handleCompletion(createStreamEndEvent("Summary"));
+
+        expect(handled).toBe(true);
+        expect(onIdleCompactionOutcome.mock.calls).toEqual([[true]]);
+      });
+
+      it("reports failure when the post-stream summary is empty", async () => {
+        const onIdleCompactionOutcome = mock((_success: boolean) => undefined);
+        handler = new CompactionHandler({
+          workspaceId,
+          historyService,
+          sessionDir,
+          telemetryService,
+          emitter: mockEmitter,
+          onIdleCompactionOutcome,
+        });
+        await seedHistory(createIdleCompactionRequest());
+
+        // An empty summary means the provider stream ended but produced no usable
+        // content, so compaction cannot be persisted.
+        const handled = await handler.handleCompletion(createStreamEndEvent("   "));
+
+        expect(handled).toBe(false);
+        expect(onIdleCompactionOutcome.mock.calls).toEqual([[false]]);
+      });
+
+      it("does not report for a non-idle (manual) compaction", async () => {
+        const onIdleCompactionOutcome = mock((_success: boolean) => undefined);
+        handler = new CompactionHandler({
+          workspaceId,
+          historyService,
+          sessionDir,
+          telemetryService,
+          emitter: mockEmitter,
+          onIdleCompactionOutcome,
+        });
+        await seedHistory(createCompactionRequest());
+
+        const handled = await handler.handleCompletion(createStreamEndEvent("Summary"));
+
+        expect(handled).toBe(true);
+        expect(onIdleCompactionOutcome).not.toHaveBeenCalled();
+      });
+    });
+
     it("should capture compaction_completed telemetry on successful compaction", async () => {
       const compactionReq = createCompactionRequest();
       await seedHistory(compactionReq);
