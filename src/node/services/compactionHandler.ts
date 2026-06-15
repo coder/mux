@@ -6,6 +6,7 @@ import * as path from "path";
 
 import type { HistoryService } from "./historyService";
 
+import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { StreamEndEvent } from "@/common/types/stream";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { LoadedSkillSnapshot } from "@/common/types/attachment";
@@ -248,6 +249,17 @@ function isCompactedSummaryMessage(message: MuxMessage): boolean {
   return isDurableCompactedMarker(message.metadata?.compacted);
 }
 
+function getLatestBoundaryHistorySequence(messages: readonly MuxMessage[]): number | undefined {
+  let latest: number | undefined;
+  for (const message of messages) {
+    if (message.metadata?.compactionBoundary !== true) continue;
+    const sequence = message.metadata.historySequence;
+    if (!isNonNegativeInteger(sequence)) continue;
+    if (latest === undefined || sequence > latest) latest = sequence;
+  }
+  return latest;
+}
+
 function getNextCompactionEpoch(messages: MuxMessage[]): number {
   let epochCursor = 0;
 
@@ -318,7 +330,7 @@ interface CompactionHandlerOptions {
   telemetryService?: TelemetryService;
   emitter: EventEmitter;
   /** Called when compaction completes successfully (e.g., to clear idle compaction pending state) */
-  onCompactionComplete?: () => void;
+  onCompactionComplete?: (metadata: CompactionCompletionMetadata) => void;
 }
 
 /**
@@ -339,7 +351,7 @@ export class CompactionHandler {
   private readonly emitter: EventEmitter;
   private readonly processedCompactionRequestIds: Set<string> = new Set<string>();
 
-  private readonly onCompactionComplete?: () => void;
+  private readonly onCompactionComplete?: (metadata: CompactionCompletionMetadata) => void;
 
   /** Flag indicating post-compaction attachments should be generated on next turn */
   private postCompactionAttachmentsPending = false;
@@ -806,6 +818,7 @@ export class CompactionHandler {
       event.metadata,
       messagesForCompaction,
       event.messageId,
+      lastUserMsg.id,
       isIdleCompaction,
       pendingFollowUp
     );
@@ -833,7 +846,7 @@ export class CompactionHandler {
     });
 
     // Notify that compaction completed (clears idle compaction pending state)
-    this.onCompactionComplete?.();
+    this.onCompactionComplete?.(result.data);
 
     // Emit a sanitized stream-end so UI can close streaming state without
     // re-introducing stale provider metadata from the pre-compaction row.
@@ -988,9 +1001,10 @@ export class CompactionHandler {
     },
     messages: MuxMessage[],
     streamedSummaryMessageId: string,
+    compactionRequestMessageId: string,
     isIdleCompaction = false,
     pendingFollowUp?: CompactionFollowUpRequest
-  ): Promise<Result<void, string>> {
+  ): Promise<Result<CompactionCompletionMetadata, string>> {
     assert(summary.trim().length > 0, "performCompaction requires a non-empty summary");
     assert(metadata.model.trim().length > 0, "Compaction summary requires a model");
     assert(
@@ -1019,6 +1033,7 @@ export class CompactionHandler {
     const nextCompactionEpoch = getNextCompactionEpoch(messages);
     assert(Number.isInteger(nextCompactionEpoch), "next compaction epoch must be an integer");
 
+    const previousBoundaryHistorySequence = getLatestBoundaryHistorySequence(messages);
     const maxExistingHistorySequence = this.getMaxExistingHistorySequence(messages);
 
     // For idle compaction, preserve the original recency timestamp so the workspace
@@ -1144,7 +1159,14 @@ export class CompactionHandler {
     // Emit summary message to frontend (add type: "message" for discriminated union)
     this.emitChatEvent({ ...summaryMessage, type: "message" });
 
-    return Ok(undefined);
+    return Ok({
+      workspaceId: this.workspaceId,
+      summaryMessageId: summaryMessage.id,
+      summaryHistorySequence: persistedSequence,
+      compactionEpoch: nextCompactionEpoch,
+      previousBoundaryHistorySequence,
+      compactionRequestMessageId,
+    });
   }
 
   /**

@@ -39,6 +39,7 @@ const DEFAULT_CONSOLIDATION_STATUS: MemoryConsolidationStatusPayload = {
   workspaceRecord: null,
   projectRecord: null,
   globalRecord: null,
+  latestHarvestRecord: null,
   projectAvailable: true,
 };
 
@@ -277,6 +278,7 @@ describe("MemoryTab", () => {
         },
         projectRecord: null,
         globalRecord: null,
+        latestHarvestRecord: null,
         projectAvailable: true,
       },
     });

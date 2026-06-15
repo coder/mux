@@ -581,6 +581,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       workspaceRecord: defaultConsolidationRecord,
       projectRecord: defaultConsolidationRecord,
       globalRecord: defaultConsolidationRecord,
+      latestHarvestRecord: null,
       projectAvailable: true,
     };
   let memoryFilesState: MemoryFileInfo[] = memoryFiles.map((file) => ({ ...file }));
@@ -1945,6 +1946,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           workspaceRecord: record,
           projectRecord: memoryConsolidationStatusState.projectAvailable ? record : null,
           globalRecord: record,
+          latestHarvestRecord: memoryConsolidationStatusState.latestHarvestRecord,
           projectAvailable: memoryConsolidationStatusState.projectAvailable,
         };
         return Promise.resolve({ success: true as const, data: record });

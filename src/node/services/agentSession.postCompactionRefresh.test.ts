@@ -5,14 +5,115 @@ import type { AIService } from "./aiService";
 import type { InitStateManager } from "./initStateManager";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import { createTestHistoryService } from "./testHistoryService";
+import type { CompactionCompletionMetadata } from "@/common/types/compaction";
+import { createMuxMessage } from "@/common/types/message";
+import type { StreamEndEvent } from "@/common/types/stream";
+import { createAgentSessionHarness } from "./agentSession.testHarness";
 
 // NOTE: These tests focus on the event wiring (tool-call-end -> callback).
 // The actual post-compaction state computation is covered elsewhere.
+
+async function waitForCondition(assertion: () => void): Promise<void> {
+  const deadline = Date.now() + 1000;
+  let lastError: unknown;
+
+  while (Date.now() < deadline) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  try {
+    assertion();
+  } catch (error) {
+    if (error instanceof Error) throw error;
+    throw new Error(String(error));
+  }
+
+  if (lastError instanceof Error) throw lastError;
+  if (lastError != null) throw new Error("condition failed with non-Error value");
+}
 
 describe("AgentSession post-compaction refresh trigger", () => {
   let historyCleanup: (() => Promise<void>) | undefined;
   afterEach(async () => {
     await historyCleanup?.();
+  });
+
+  test("calls compaction-complete callback once for a durable compaction boundary", async () => {
+    const workspaceId = "ws-compaction-once";
+    const onCompactionComplete = mock((_metadata: CompactionCompletionMetadata) => undefined);
+    const { session, historyService, aiEmitter, cleanup } = await createAgentSessionHarness({
+      workspaceId,
+      onCompactionComplete,
+    });
+    historyCleanup = cleanup;
+
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-before-compact", "user", "Remember that we prefer concise tests", {
+        timestamp: 1000,
+      })
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-before-compact", "assistant", "Noted.", {
+        timestamp: 1001,
+      })
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("compact-request", "user", "Please compact", {
+        timestamp: 1002,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      })
+    );
+
+    const streamEnd: StreamEndEvent = {
+      type: "stream-end",
+      workspaceId,
+      messageId: "compact-summary-stream",
+      parts: [{ type: "text", text: "The user prefers concise tests." }],
+      metadata: {
+        model: "openai:gpt-4o",
+        usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        duration: 100,
+      },
+    };
+
+    aiEmitter.emit("stream-end", streamEnd);
+
+    await waitForCondition(() => {
+      expect(onCompactionComplete).toHaveBeenCalledTimes(1);
+    });
+    const completionMetadata = onCompactionComplete.mock.calls[0]?.[0];
+    expect(completionMetadata).toBeDefined();
+    if (completionMetadata === undefined) throw new Error("missing compaction completion metadata");
+    expect(completionMetadata.workspaceId).toBe(workspaceId);
+    expect(typeof completionMetadata.summaryMessageId).toBe("string");
+    expect(typeof completionMetadata.summaryHistorySequence).toBe("number");
+    expect(completionMetadata.compactionEpoch).toBe(1);
+    expect(completionMetadata.compactionRequestMessageId).toBe("compact-request");
+
+    const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
+    expect(history.success).toBe(true);
+    if (!history.success) throw new Error(history.error);
+    expect(history.data).toHaveLength(1);
+    expect(history.data[0]?.metadata?.compactionBoundary).toBe(true);
+    expect(history.data[0]?.parts[0]).toMatchObject({
+      type: "text",
+      text: "The user prefers concise tests.",
+    });
+
+    aiEmitter.emit("stream-end", streamEnd);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(onCompactionComplete).toHaveBeenCalledTimes(1);
+
+    session.dispose();
   });
 
   test("triggers callback on file_edit_* tool-call-end", async () => {

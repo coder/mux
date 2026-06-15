@@ -132,6 +132,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     config,
     memoryService,
     memoryMetaService,
+    historyService,
     aiService,
     opts.experimentsService ?? { isExperimentEnabled: () => false }
   );

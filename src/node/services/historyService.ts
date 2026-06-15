@@ -2,6 +2,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import writeFileAtomic from "write-file-atomic";
 import assert from "node:assert";
+import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import {
@@ -790,6 +791,59 @@ export class HistoryService {
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to read history boundary window: ${message}`);
+    }
+  }
+
+  async getMessagesForCompactionEpoch(
+    workspaceId: string,
+    metadata: CompactionCompletionMetadata
+  ): Promise<Result<{ messages: MuxMessage[]; summary: MuxMessage }>> {
+    assert(
+      typeof workspaceId === "string" && workspaceId.trim().length > 0,
+      "workspaceId is required"
+    );
+    assert(
+      metadata.workspaceId === workspaceId,
+      "compaction metadata workspace must match request"
+    );
+    assert(
+      isNonNegativeInteger(metadata.summaryHistorySequence),
+      "summaryHistorySequence must be a non-negative integer"
+    );
+
+    try {
+      const messages: MuxMessage[] = [];
+      let summary: MuxMessage | undefined;
+      const lowerBound = metadata.previousBoundaryHistorySequence;
+
+      await this.iterateForward(workspaceId, (chunk) => {
+        for (const message of chunk) {
+          const sequence = message.metadata?.historySequence;
+          if (!isNonNegativeInteger(sequence)) continue;
+
+          if (
+            sequence === metadata.summaryHistorySequence &&
+            message.id === metadata.summaryMessageId
+          ) {
+            summary = message;
+            continue;
+          }
+
+          if (sequence >= metadata.summaryHistorySequence) continue;
+          if (lowerBound !== undefined && sequence <= lowerBound) continue;
+          if (message.id === metadata.compactionRequestMessageId) continue;
+          if (message.metadata?.compactionBoundary === true) continue;
+          messages.push(message);
+        }
+      });
+
+      if (summary === undefined) {
+        return Err(`Compaction summary not found: ${metadata.summaryMessageId}`);
+      }
+
+      return Ok({ messages, summary });
+    } catch (error) {
+      return Err(`Failed to read compaction epoch messages: ${getErrorMessage(error)}`);
     }
   }
 

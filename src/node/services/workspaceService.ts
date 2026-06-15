@@ -6,6 +6,7 @@ import { DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR } from "@/common/config/worktreeArchi
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
+import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -1472,6 +1473,7 @@ export class WorkspaceService extends EventEmitter {
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
   private memoryConsolidationService?: {
     triggerInBackground(workspaceId: string, trigger: "compaction" | "archive"): void;
+    triggerHarvestThenSweepInBackground(metadata: CompactionCompletionMetadata): void;
   };
   private worktreeArchiveSnapshotService?: WorktreeArchiveSnapshotLifecycleService;
   private taskService?: TaskService;
@@ -1516,6 +1518,7 @@ export class WorkspaceService extends EventEmitter {
   /** Background dream consolidation (memory-consolidation experiment); wired by coreServices. */
   setMemoryConsolidationService(service: {
     triggerInBackground(workspaceId: string, trigger: "compaction" | "archive"): void;
+    triggerHarvestThenSweepInBackground(metadata: CompactionCompletionMetadata): void;
   }): void {
     this.memoryConsolidationService = service;
   }
@@ -2093,11 +2096,11 @@ export class WorkspaceService extends EventEmitter {
       initStateManager: this.initStateManager,
       workspaceGoalService: this.workspaceGoalService,
       backgroundProcessManager: this.backgroundProcessManager,
-      onCompactionComplete: () => {
+      onCompactionComplete: (metadata) => {
         this.schedulePostCompactionMetadataRefresh(workspaceId);
-        // Dream trigger (PRD #3534): compaction marks a long session with
-        // accumulated learnings; fire-and-forget, debounced in the service.
-        this.memoryConsolidationService?.triggerInBackground(workspaceId, "compaction");
+        // Compaction marks a long session with accumulated learnings: harvest
+        // the compacted epoch first, then let Dream sweep/merge the candidates.
+        this.memoryConsolidationService?.triggerHarvestThenSweepInBackground(metadata);
       },
       onPostCompactionStateChange: () => {
         this.schedulePostCompactionMetadataRefresh(workspaceId);

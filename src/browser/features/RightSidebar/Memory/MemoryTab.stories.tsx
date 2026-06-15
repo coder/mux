@@ -104,6 +104,16 @@ function renderTab(width: string) {
           workspaceRecord: null,
           projectRecord: CONSOLIDATION_RECORD,
           globalRecord: CONSOLIDATION_RECORD,
+          latestHarvestRecord: {
+            status: "completed",
+            startedAt: Date.now() - 45 * 60 * 1000,
+            completedAt: Date.now() - 44 * 60 * 1000,
+            attemptCount: 1,
+            boundaryKey: "summary-story",
+            compactionEpoch: 3,
+            acceptedCandidates: 2,
+            skippedCandidates: 1,
+          },
           projectAvailable: true,
         },
       })}
@@ -121,6 +131,7 @@ export const List: Story = {
     const canvas = within(canvasElement);
     await canvas.findByText("preferences.md");
     await canvas.findByText(/Project:/);
+    await canvas.findByText(/Harvest: completed/);
     await canvas.findByText("scratch.md");
   },
 };

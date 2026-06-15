@@ -90,6 +90,7 @@ import {
 import type { GoalStreamOriginKind, WorkspaceGoalService } from "./workspaceGoalService";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { getTotalCost } from "@/common/utils/tokens/usageAggregator";
+import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import { CompactionHandler } from "./compactionHandler";
 import { RetryManager, type RetryFailureError, type RetryStatusEvent } from "./retryManager";
 import type { TelemetryService } from "./telemetryService";
@@ -315,7 +316,7 @@ interface AgentSessionOptions {
   /** When true, skip terminating background processes on dispose/compaction (for bench/CI) */
   keepBackgroundProcesses?: boolean;
   /** Called when compaction completes (e.g., to clear idle compaction pending state) */
-  onCompactionComplete?: () => void;
+  onCompactionComplete?: (metadata: CompactionCompletionMetadata) => void;
   /** Called when post-compaction context state may have changed (plan/file edits) */
   onPostCompactionStateChange?: () => void;
 }
@@ -343,7 +344,6 @@ export class AgentSession {
   private readonly backgroundProcessManager: BackgroundProcessManager;
   private readonly workspaceGoalService?: WorkspaceGoalService;
   private readonly keepBackgroundProcesses: boolean;
-  private readonly onCompactionComplete?: () => void;
   private readonly onPostCompactionStateChange?: () => void;
   private readonly emitter = new EventEmitter();
   private readonly aiListeners: Array<{ event: string; handler: (...args: unknown[]) => void }> =
@@ -530,7 +530,6 @@ export class AgentSession {
     this.backgroundProcessManager = backgroundProcessManager;
     this.workspaceGoalService = workspaceGoalService;
     this.keepBackgroundProcesses = keepBackgroundProcesses ?? false;
-    this.onCompactionComplete = onCompactionComplete;
     this.onPostCompactionStateChange = onPostCompactionStateChange;
 
     this.compactionHandler = new CompactionHandler({
@@ -4691,8 +4690,6 @@ export class AgentSession {
               newUsagePercent: 0,
             });
           }
-
-          this.onCompactionComplete?.();
         }
 
         // IMPORTANT: reset BEFORE anything that can start a new stream,

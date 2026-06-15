@@ -1093,6 +1093,62 @@ describe("HistoryService", () => {
     });
   });
 
+  describe("getMessagesForCompactionEpoch", () => {
+    it("returns evidence rows between the previous boundary and the new summary", async () => {
+      const workspaceId = "ws-compaction-epoch";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const lines = [
+        messageLine(
+          workspaceId,
+          createMuxMessage("old-boundary", "assistant", "old summary", {
+            historySequence: 0,
+            compactionBoundary: true,
+            compacted: "user",
+            compactionEpoch: 1,
+          })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("kept-user", "user", "durable preference", { historySequence: 1 })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("compact-request", "user", "Please compact", {
+            historySequence: 2,
+            muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+          })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("new-summary", "assistant", "new summary", {
+            historySequence: 3,
+            compactionBoundary: true,
+            compacted: "user",
+            compactionEpoch: 2,
+          })
+        ),
+      ];
+      await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), lines.join("\n") + "\n");
+
+      const result = await service.getMessagesForCompactionEpoch(workspaceId, {
+        workspaceId,
+        summaryMessageId: "new-summary",
+        summaryHistorySequence: 3,
+        compactionEpoch: 2,
+        previousBoundaryHistorySequence: 0,
+        compactionRequestMessageId: "compact-request",
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.messages.map((message) => message.id)).toEqual(["kept-user"]);
+        expect(result.data.summary.id).toBe("new-summary");
+      }
+    });
+  });
+
   describe("getLastMessages", () => {
     it("should return empty array when no history exists", async () => {
       const result = await service.getLastMessages("nonexistent", 5);

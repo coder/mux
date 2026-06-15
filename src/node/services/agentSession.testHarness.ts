@@ -7,6 +7,7 @@ import { Ok } from "@/common/types/result";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import { AgentSession } from "@/node/services/agentSession";
+import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { HistoryService } from "@/node/services/historyService";
 import type { InitStateManager } from "@/node/services/initStateManager";
@@ -64,6 +65,7 @@ export interface AgentSessionHarnessOptions {
   initStateManagerOverrides?: Partial<InitStateManager>;
   backgroundProcessManager?: BackgroundProcessManager;
   backgroundProcessManagerOverrides?: Partial<BackgroundProcessManager>;
+  onCompactionComplete?: (metadata: CompactionCompletionMetadata) => void;
   captureEvents?: boolean;
 }
 
@@ -105,6 +107,7 @@ export async function createAgentSessionHarness(
     aiService,
     initStateManager,
     backgroundProcessManager,
+    onCompactionComplete: options.onCompactionComplete,
   });
 
   const events: WorkspaceChatMessage[] = [];
