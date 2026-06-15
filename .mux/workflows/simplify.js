@@ -244,7 +244,7 @@ export default function simplifyWorkflow({
       synthesized
     );
   }
-  if (!isRequestedHeadCurrent(gitContext.status)) {
+  if (!isRequestedHeadCurrent(gitContext.status, input)) {
     return skipFixResult(
       synthesis.reportMarkdown,
       nonCurrentHeadSkipReason(),
@@ -365,7 +365,7 @@ function collectApplyPreflight(action, log, input, gitContext) {
     return failedApplyPreflight(stagedChangesSkipReason());
   }
 
-  if (!isRequestedHeadCurrent(status)) {
+  if (!isRequestedHeadCurrent(status, input)) {
     return failedApplyPreflight(nonCurrentHeadSkipReason());
   }
 
@@ -389,7 +389,7 @@ function failedApplyPreflight(reason) {
 }
 
 function nonCurrentHeadSkipReason() {
-  return "Auto-fix was skipped because the requested `--head` is not the current checkout. Check out that ref or rerun without `--head` before applying fixes.";
+  return "Auto-fix was skipped because the requested `--head` is not the current checkout. Check out that branch/ref or pass the current commit SHA before applying fixes.";
 }
 
 function stagedChangesSkipReason() {
@@ -485,12 +485,29 @@ function shouldReadDiffs(changedFiles) {
   );
 }
 
-function isRequestedHeadCurrent(status) {
+function isRequestedHeadCurrent(status, input) {
   if (!status || typeof status !== "object") return false;
   const currentHeadSha = typeof status.headSha === "string" ? status.headSha : "";
   const requestedHeadSha =
     typeof status.requestedHeadSha === "string" ? status.requestedHeadSha : currentHeadSha;
-  return Boolean(currentHeadSha && requestedHeadSha && currentHeadSha === requestedHeadSha);
+  if (!currentHeadSha || !requestedHeadSha || currentHeadSha !== requestedHeadSha) return false;
+
+  const requestedHead = input && input.headRef ? input.headRef : "";
+  if (!requestedHead || requestedHead === "HEAD") return true;
+
+  const currentBranch = typeof status.branch === "string" ? status.branch : "";
+  const currentBranchRef = currentBranch ? "refs/heads/" + currentBranch : "";
+  const requestedHeadRef =
+    typeof status.requestedHeadRef === "string" ? status.requestedHeadRef : "";
+  if (requestedHeadRef) return Boolean(currentBranchRef && requestedHeadRef === currentBranchRef);
+  if (currentBranch && (requestedHead === currentBranch || requestedHead === currentBranchRef)) {
+    return true;
+  }
+  return isGitCommitSha(requestedHead);
+}
+
+function isGitCommitSha(value) {
+  return /^[0-9a-f]{7,40}$/i.test(value);
 }
 
 function hasStagedChanges(gitContext) {
