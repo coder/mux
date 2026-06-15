@@ -68,6 +68,61 @@ describe("WorkflowRunStore", () => {
     ).rejects.toThrow(/runId must match/);
   });
 
+  test("createRunIfAbsent recovers an incomplete deterministic run directory", async () => {
+    using tmp = new DisposableTempDir("workflow-runs-partial-child");
+    const store = new WorkflowRunStore({ sessionDir: tmp.path });
+    await fs.mkdir(path.join(tmp.path, "workflows", "wfr_child_partial"), { recursive: true });
+
+    const run = await store.createRunIfAbsent({
+      id: "wfr_child_partial",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: source,
+      args: { topic: "nested" },
+      parentWorkflow: {
+        runId: "wfr_parent",
+        stepId: "child",
+        inputHash: "hash:child",
+        depth: 0,
+      },
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    expect(run.id).toBe("wfr_child_partial");
+    await expect(store.getRun("wfr_child_partial")).resolves.toMatchObject({
+      id: "wfr_child_partial",
+      parentWorkflow: { runId: "wfr_parent" },
+    });
+  });
+
+  test("createRunIfAbsent reuses a snapshotted child run after definition source changes", async () => {
+    using tmp = new DisposableTempDir("workflow-runs-child-source-change");
+    const store = new WorkflowRunStore({ sessionDir: tmp.path });
+    const input = {
+      id: "wfr_child_source_change",
+      workspaceId: "workspace-1",
+      definition,
+      args: { topic: "nested" },
+      parentWorkflow: {
+        runId: "wfr_parent",
+        stepId: "child",
+        inputHash: "hash:child",
+        depth: 0,
+      },
+      now: "2026-05-29T00:00:00.000Z",
+    };
+    const created = await store.createRunIfAbsent({ ...input, definitionSource: source });
+
+    const reused = await store.createRunIfAbsent({
+      ...input,
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'new' }; }\n",
+    });
+
+    expect(reused.id).toBe(created.id);
+    expect(reused.definitionSource).toBe(source);
+  });
+
   test("ignores malformed journal lines while preserving valid events and steps", async () => {
     using tmp = new DisposableTempDir("workflow-runs");
     const store = await createStore(tmp.path);

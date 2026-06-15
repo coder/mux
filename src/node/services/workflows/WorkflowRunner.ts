@@ -843,7 +843,15 @@ export class WorkflowRunner {
     });
     const existingStep = await this.runStore.getStep(runId, spec.id, inputHash);
     if (existingStep?.status === "completed" && existingStep.result?.structuredOutput != null) {
-      return normalizeWorkflowNestedResult(existingStep.result.structuredOutput);
+      const cached = normalizeWorkflowNestedResult(existingStep.result.structuredOutput);
+      await this.recordWorkflowTerminalEventIfMissing(runId, sequence, {
+        stepId: spec.id,
+        runId: cached.runId,
+        name: cached.name,
+        status: "completed",
+        details: cached,
+      });
+      return cached;
     }
 
     const run = await this.runStore.getRun(runId);
@@ -877,16 +885,29 @@ export class WorkflowRunner {
       status: "started",
     });
 
-    const child = await childRunAdapter.runChildWorkflowToTerminal({
-      parentRunId: runId,
-      stepId: spec.id,
-      inputHash,
-      childRunId,
-      name: childInput.name,
-      args: childInput.args,
-      backgroundOnMessageQueued: options.backgroundOnMessageQueued,
-      abortSignal: options.abortSignal,
-    });
+    let child: Awaited<ReturnType<WorkflowChildRunAdapter["runChildWorkflowToTerminal"]>>;
+    try {
+      child = await childRunAdapter.runChildWorkflowToTerminal({
+        parentRunId: runId,
+        stepId: spec.id,
+        inputHash,
+        childRunId,
+        name: childInput.name,
+        args: childInput.args,
+        backgroundOnMessageQueued: options.backgroundOnMessageQueued,
+        abortSignal: options.abortSignal,
+      });
+    } catch (error) {
+      await this.recordNestedWorkflowFailed(runId, sequence, {
+        stepId: spec.id,
+        inputHash,
+        childRunId,
+        name: childInput.name,
+        startedAt,
+        error,
+      });
+      throw error;
+    }
     if (child.status === "backgrounded" && options.backgroundOnMessageQueued !== false) {
       await this.appendEvent(runId, {
         sequence: sequence.next(),
@@ -955,6 +976,86 @@ export class WorkflowRunner {
       details: nestedResult,
     });
     return nestedResult;
+  }
+
+  private async recordNestedWorkflowFailed(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    input: {
+      stepId: string;
+      inputHash: string;
+      childRunId: string;
+      name: string;
+      startedAt: string;
+      error: unknown;
+    }
+  ): Promise<void> {
+    const message = getErrorMessage(input.error);
+    try {
+      await this.recordStepFailed(runId, {
+        stepId: input.stepId,
+        inputHash: input.inputHash,
+        taskId: input.childRunId,
+        error: message,
+        startedAt: input.startedAt,
+        completedAt: this.clock.nowIso(),
+      });
+      await this.recordWorkflowTerminalEventIfMissing(runId, sequence, {
+        stepId: input.stepId,
+        runId: input.childRunId,
+        name: input.name,
+        status: "failed",
+        details: { error: message },
+      });
+    } catch (recordError) {
+      const run = await this.runStore.getRun(runId);
+      if (run.status !== "interrupted") {
+        throw recordError;
+      }
+    }
+  }
+
+  private async recordWorkflowTerminalEventIfMissing(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    workflow: {
+      stepId: string;
+      runId: string;
+      name: string;
+      status: "completed" | "failed" | "interrupted";
+      details?: unknown;
+    }
+  ): Promise<void> {
+    assert(
+      runId.length > 0,
+      "WorkflowRunner.recordWorkflowTerminalEventIfMissing: runId is required"
+    );
+    assert(workflow.stepId.length > 0, "WorkflowRunner: workflow event stepId is required");
+    assert(workflow.runId.length > 0, "WorkflowRunner: workflow event runId is required");
+    assert(workflow.name.length > 0, "WorkflowRunner: workflow event name is required");
+
+    await using _lock = await this.taskEventMutex.acquire();
+    const run = await this.runStore.getRun(runId);
+    const alreadyRecorded = run.events.some(
+      (event) =>
+        event.type === "workflow" &&
+        event.stepId === workflow.stepId &&
+        event.runId === workflow.runId &&
+        event.status === workflow.status
+    );
+    if (alreadyRecorded) {
+      return;
+    }
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "workflow",
+      at: this.clock.nowIso(),
+      stepId: workflow.stepId,
+      runId: workflow.runId,
+      name: workflow.name,
+      status: workflow.status,
+      details: workflow.details,
+    });
   }
 
   private async getCachedWorkflowActionEffect(

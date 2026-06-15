@@ -74,7 +74,7 @@ export class WorkflowActionRegistry {
       if (builtInAction == null) {
         throw new Error(`Built-in workflow action not found: ${normalizedName}`);
       }
-      if (this.projectRuntime != null) {
+      if (this.projectRuntime != null && !isRunnerCoordinatedBuiltInAction(normalizedName)) {
         throw new Error("Workflow actions are not supported for runtime-backed workspaces yet");
       }
       return builtInAction;
@@ -101,7 +101,7 @@ export class WorkflowActionRegistry {
 
     const builtInAction = this.readBuiltInAction(normalizedName);
     if (builtInAction != null) {
-      if (this.projectRuntime != null) {
+      if (this.projectRuntime != null && !isRunnerCoordinatedBuiltInAction(normalizedName)) {
         throw new Error("Workflow actions are not supported for runtime-backed workspaces yet");
       }
       return builtInAction;
@@ -213,7 +213,11 @@ export class WorkflowActionRegistry {
   }
 }
 
-export function normalizeWorkflowActionName(name: string): string {
+function isRunnerCoordinatedBuiltInAction(name: string): boolean {
+  return name === "workflows.start";
+}
+
+function normalizeWorkflowActionName(name: string): string {
   assert(typeof name === "string", "Workflow action name must be a string");
   const normalized = name.trim();
   assert(normalized.length > 0, "Workflow action name is required");

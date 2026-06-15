@@ -369,6 +369,129 @@ export default function workflow({ args, agent }) {
     ).toHaveLength(1);
   });
 
+  test("records terminal parent step state when a nested child workflow fails", async () => {
+    using tmp = new DisposableTempDir("workflow-service-nested-failure");
+    const workspaceRoot = path.join(tmp.path, "project");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const actionProjectRoot = path.join(workspaceRoot, ".mux", "actions");
+    const actionGlobalRoot = path.join(tmp.path, "mux-home", "actions");
+    await writeWorkflow(
+      globalRoot,
+      "child-fails",
+      "// description: Child fails\nexport default function workflow() { throw new Error('child boom'); }\n"
+    );
+    await writeWorkflow(
+      globalRoot,
+      "parent-catches-child-failure",
+      `// description: Parent catches child failure
+export default function workflow({ action }) {
+  try {
+    action.workflows.start({
+      id: "child-fails",
+      input: { name: "child-fails", args: {} },
+    });
+  } catch (error) {
+    return { reportMarkdown: "caught " + error.message };
+  }
+  return { reportMarkdown: "unexpected" };
+}\n`
+    );
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: actionProjectRoot,
+        globalRoot: actionGlobalRoot,
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      generateRunId: () => "wfr_parent_catches_child_failure",
+      runnerId: "runner-a",
+    });
+
+    const result = await service.startNamedWorkflow({
+      name: "parent-catches-child-failure",
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: {},
+    });
+    const parentRun = await runStore.getRun("wfr_parent_catches_child_failure");
+    const childStep = parentRun.steps.find((step) => step.stepId === "child-fails");
+
+    expect(result.status).toBe("completed");
+    expect(childStep?.status).toBe("failed");
+    expect(parentRun.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "workflow",
+          stepId: "child-fails",
+          status: "failed",
+        }),
+      ])
+    );
+  });
+
+  test("applies current project trust before starting nested project workflows", async () => {
+    using tmp = new DisposableTempDir("workflow-service-nested-trust");
+    const workspaceRoot = path.join(tmp.path, "project");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const actionProjectRoot = path.join(workspaceRoot, ".mux", "actions");
+    const actionGlobalRoot = path.join(tmp.path, "mux-home", "actions");
+    await writeWorkflow(
+      projectRoot,
+      "child-project",
+      "// description: Project child\nexport default function workflow() { return { reportMarkdown: 'project child' }; }\n"
+    );
+    await writeWorkflow(
+      globalRoot,
+      "parent-project-child",
+      `// description: Parent project child
+export default function workflow({ action }) {
+  return action.workflows.start({
+    id: "child-project",
+    input: { name: "child-project", args: {} },
+  });
+}\n`
+    );
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: actionProjectRoot,
+        globalRoot: actionGlobalRoot,
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      getCurrentProjectTrusted: () => false,
+      generateRunId: () => "wfr_parent_project_child",
+      runnerId: "runner-a",
+    });
+
+    await expect(
+      service.startNamedWorkflow({
+        name: "parent-project-child",
+        workspaceId: "workspace-1",
+        projectTrusted: true,
+        args: {},
+      })
+    ).rejects.toThrow(/Project trust|Workflow definition not found/);
+    const parentRun = await runStore.getRun("wfr_parent_project_child");
+
+    expect(parentRun.steps.find((step) => step.stepId === "child-project")?.status).toBe("failed");
+  });
+
   test("runs workspace scratch workflow definitions authored as files", async () => {
     using tmp = new DisposableTempDir("workflow-service");
     const workspaceRoot = path.join(tmp.path, "project");

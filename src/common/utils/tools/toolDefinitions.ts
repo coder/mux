@@ -509,8 +509,8 @@ export const TaskAwaitToolArgsSchema = z
       .nullish()
       .describe(
         "List of task IDs or workflow run IDs to await — use only real IDs returned by prior task, bash, or workflow_run results; never fabricate an ID. " +
-          "task_list can rediscover sub-agent/background bash IDs, but workflow run rediscovery is done by omitting task_ids. " +
-          "When omitted, waits for active descendant tasks and workflow runs of the current workspace, excluding workflow-owned sub-agents and their background bash tasks because those results are consumed through workflow runs."
+          "task_list can rediscover sub-agent/background bash IDs, but top-level workflow run rediscovery is done by omitting task_ids. " +
+          "When omitted, waits for active descendant tasks and top-level workflow runs of the current workspace, excluding workflow-owned sub-agents/background bash tasks and nested child workflow runs because those results are consumed through parent workflow runs."
       ),
     filter: z
       .string()
@@ -1780,7 +1780,7 @@ export const TOOL_DEFINITIONS = {
       "\n\nIMPORTANT: Do not call task_await in the same parallel tool-call batch as task, bash, or workflow_run — " +
       "the taskId/runId is not available until the spawning tool returns. " +
       "Always wait for the task/bash/workflow_run tool result first, then call task_await in a subsequent step. " +
-      "When omitting task_ids to await active tasks/workflows, ensure at least one background task or workflow was already spawned in a prior step. Omitted task_ids exclude workflow-owned sub-agents and their background bash tasks because those results are consumed through workflow runs. " +
+      "When omitting task_ids to await active tasks/workflows, ensure at least one background task or workflow was already spawned in a prior step. Omitted task_ids discover top-level workflow runs only and exclude workflow-owned sub-agents/background bash tasks and nested child workflow runs because those results are consumed through parent workflow runs. " +
       "\n\nAgent tasks and workflow runs return reports when completed. " +
       "Completed reports are persisted on disk and survive context compaction: calling task_await on an already-completed task/workflow run ID (timeout_secs: 0 for non-blocking) re-fetches the full report instead of re-running the work. " +
       "Bash tasks return incremental output while running and a final reportMarkdown when they exit. " +
@@ -1807,7 +1807,7 @@ export const TOOL_DEFINITIONS = {
   task_list: {
     description:
       "List descendant tasks for the current workspace, including status + metadata. " +
-      "This includes sub-agent tasks, background bash tasks, and workflow runs, but omits workflow-owned sub-agents (and their background bash tasks) whose reports are consumed through their workflow run. " +
+      "This includes sub-agent tasks, background bash tasks, and top-level workflow runs, but omits workflow-owned sub-agents/background bash tasks and nested child workflow runs whose reports are consumed through parent workflow runs. " +
       "Use this after compaction, interruptions, or an app restart to rediscover active tasks and resumable workflow runs (statuses interrupted/failed; resume with workflow_resume). " +
       "This is a discovery tool, NOT a waiting mechanism. If the current request actually depends on a task's output, call task_await with the specific task IDs you need; do not await all active tasks just because they appear here.",
     schema: TaskListToolArgsSchema,

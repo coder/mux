@@ -225,6 +225,7 @@ Replay semantics:
 - Child workflow step IDs stay local to the child run; they do not collide with parent step IDs.
 - Parent replay/resume reuses the linked child run, even if the child workflow source has changed since the child run was created.
 - Child completion returns `{ runId, status, name, reportMarkdown, structuredOutput? }` to the parent.
+- Child runs are omitted from top-level `task_list` and omitted-ID `task_await` discovery because the parent consumes their result; explicitly awaiting a known child `runId` still works.
 - Child failure fails the parent step; parent interruption cascades to active child workflow runs.
 - V1 is same-workspace and wait-to-terminal only; fire-and-forget child workflows are intentionally rejected.
 

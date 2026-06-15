@@ -258,6 +258,20 @@ describe("WorkflowActionRegistry", () => {
     }
   });
 
+  test("allows runner-coordinated workflows.start in runtime-backed workspaces", async () => {
+    using tmp = new DisposableTempDir("workflow-actions-runtime-workflows-start");
+    const registry = new WorkflowActionRegistry({
+      projectRoot: "/runtime/project/.mux/actions",
+      globalRoot: path.join(tmp.path, "global-actions"),
+      projectRuntime: createRuntimeWithoutActions(),
+      projectCwd: "/runtime/project",
+    });
+
+    const action = await registry.resolveAction("workflows.start", { projectTrusted: true });
+
+    expect(action).toMatchObject({ name: "workflows.start", scope: "built-in" });
+  });
+
   test("blocks project-local actions without Project Trust while allowing global actions", async () => {
     using tmp = new DisposableTempDir("workflow-actions-trust");
     const projectRoot = path.join(tmp.path, "project-actions");

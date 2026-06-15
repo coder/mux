@@ -126,43 +126,60 @@ export class WorkflowRunStore {
 
     const runDir = this.runDir(input.id);
     await fs.mkdir(this.workflowsDir(), { recursive: true });
+    const lockDir = `${runDir}.create.lock`;
+    await acquireWorkflowMutationLock(
+      lockDir,
+      this.leaseMutationLockStaleMs(),
+      this.leaseMutationWaitTimeoutMs()
+    );
     try {
+      const existing = await this.getRunIfFullyCreated(input.id);
+      if (existing != null) {
+        assertSameWorkflowRunIdentity(existing, input);
+        return existing;
+      }
+
+      // A deterministic child run ID must be recoverable after a crash between mkdir and
+      // run.json. Treat an unreadable run directory as an incomplete create, not identity.
+      await fs.rm(runDir, { recursive: true, force: true });
       await fs.mkdir(runDir, { recursive: false });
-    } catch (error) {
-      if (!isAlreadyExistsError(error)) {
+      try {
+        await fs.writeFile(path.join(runDir, "definition.js"), input.definitionSource, "utf-8");
+        await fs.writeFile(path.join(runDir, "events.jsonl"), "", { flag: "a" });
+        await fs.writeFile(path.join(runDir, "steps.jsonl"), "", { flag: "a" });
+
+        const run = WorkflowRunRecordSchema.parse({
+          id: input.id,
+          workspaceId: input.workspaceId,
+          definition: input.definition,
+          definitionSource: input.definitionSource,
+          definitionHash: hashSource(input.definitionSource),
+          args: input.args,
+          ...(input.defaultActionCwd != null ? { defaultActionCwd: input.defaultActionCwd } : {}),
+          ...(input.parentWorkflow != null ? { parentWorkflow: input.parentWorkflow } : {}),
+          status: "pending",
+          createdAt: input.now,
+          updatedAt: input.now,
+          events: [],
+          steps: [],
+        });
+
+        await this.writeRunFile(input.id, run);
+        return run;
+      } catch (error) {
+        await fs.rm(runDir, { recursive: true, force: true });
         throw error;
       }
-      const existing = await this.getRun(input.id);
-      assertSameWorkflowRunIdentity(existing, input);
-      return existing;
+    } finally {
+      await fs.rm(lockDir, { recursive: true, force: true });
     }
+  }
 
+  private async getRunIfFullyCreated(runId: string): Promise<WorkflowRunRecord | null> {
     try {
-      await fs.writeFile(path.join(runDir, "definition.js"), input.definitionSource, "utf-8");
-      await fs.writeFile(path.join(runDir, "events.jsonl"), "", { flag: "a" });
-      await fs.writeFile(path.join(runDir, "steps.jsonl"), "", { flag: "a" });
-
-      const run = WorkflowRunRecordSchema.parse({
-        id: input.id,
-        workspaceId: input.workspaceId,
-        definition: input.definition,
-        definitionSource: input.definitionSource,
-        definitionHash: hashSource(input.definitionSource),
-        args: input.args,
-        ...(input.defaultActionCwd != null ? { defaultActionCwd: input.defaultActionCwd } : {}),
-        ...(input.parentWorkflow != null ? { parentWorkflow: input.parentWorkflow } : {}),
-        status: "pending",
-        createdAt: input.now,
-        updatedAt: input.now,
-        events: [],
-        steps: [],
-      });
-
-      await this.writeRunFile(input.id, run);
-      return run;
-    } catch (error) {
-      await fs.rm(runDir, { recursive: true, force: true });
-      throw error;
+      return await this.getRun(runId);
+    } catch {
+      return null;
     }
   }
 
@@ -908,21 +925,14 @@ function assertValidWorkflowRunId(runId: string): void {
   );
 }
 
-function isAlreadyExistsError(error: unknown): boolean {
-  return error instanceof Error && "code" in error && error.code === "EEXIST";
-}
-
 function assertSameWorkflowRunIdentity(
   run: WorkflowRunRecord,
   input: CreateWorkflowRunInput
 ): void {
-  const expectedDefinitionHash = hashSource(input.definitionSource);
   const sameIdentity =
     run.id === input.id &&
     run.workspaceId === input.workspaceId &&
     run.definition.name === input.definition.name &&
-    run.definition.scope === input.definition.scope &&
-    run.definitionHash === expectedDefinitionHash &&
     JSON.stringify(run.args) === JSON.stringify(input.args) &&
     JSON.stringify(run.parentWorkflow ?? null) === JSON.stringify(input.parentWorkflow ?? null);
   assert(
