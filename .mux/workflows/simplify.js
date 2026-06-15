@@ -380,6 +380,12 @@ function collectApplyPreflight(action, log, input, gitContext) {
     return failedApplyPreflight(nonCurrentHeadSkipReason());
   }
 
+  if (!isReviewedBranchCurrent(gitContext.status, status, input)) {
+    return failedApplyPreflight(
+      "Auto-fix was skipped because the current branch changed since review. Rerun `/workflow simplify --fix`."
+    );
+  }
+
   const reviewedHeadSha = gitContext.status && gitContext.status.headSha;
   if (typeof reviewedHeadSha !== "string" || !reviewedHeadSha) {
     return failedApplyPreflight(
@@ -500,6 +506,15 @@ function shouldReadDiffs(changedFiles) {
   );
 }
 
+function isReviewedBranchCurrent(reviewedStatus, currentStatus, input) {
+  if (input.headRef && isGitCommitSha(input.headRef)) return true;
+  const reviewedBranch =
+    reviewedStatus && typeof reviewedStatus.branch === "string" ? reviewedStatus.branch : "";
+  const currentBranch =
+    currentStatus && typeof currentStatus.branch === "string" ? currentStatus.branch : "";
+  return Boolean(reviewedBranch && currentBranch && reviewedBranch === currentBranch);
+}
+
 function isRequestedHeadCurrent(status, input) {
   if (!status || typeof status !== "object") return false;
   const currentHeadSha = typeof status.headSha === "string" ? status.headSha : "";
@@ -561,7 +576,7 @@ function filePath(value) {
 
 function normalizedPath(value) {
   if (typeof value !== "string") return "";
-  const trimmed = value.trim();
+  const trimmed = value.trim().replace(/\\/g, "/");
   if (trimmed === "." || trimmed === "./") return ".";
   return trimmed.replace(/^\.\//, "").replace(/\/+$/, "");
 }
