@@ -19,6 +19,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
 import {
   deleteWorkspaceStorage,
+  DRAFT_SCOPED_FIELDS,
   getAgentIdKey,
   getDraftScopeId,
   getInputAttachmentsKey,
@@ -29,7 +30,6 @@ import {
   getTerminalTitlesKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
-  getWorkspaceNameStateKey,
   migrateWorkspaceStorage,
   AGENT_AI_DEFAULTS_KEY,
   DEFAULT_MODEL_KEY,
@@ -353,22 +353,14 @@ function createWorkspaceDraftId(): string {
 function isDraftEmpty(projectPath: string, draftId: string): boolean {
   const scopeId = getDraftScopeId(projectPath, draftId);
 
-  // Check for input text
-  const inputText = readPersistedState<string>(getInputKey(scopeId), "");
-  if (inputText.trim().length > 0) {
-    return false;
-  }
-
-  // Check for attachments
-  const attachments = readPersistedState<unknown[]>(getInputAttachmentsKey(scopeId), []);
-  if (Array.isArray(attachments) && attachments.length > 0) {
-    return false;
-  }
-
-  // Check for workspace name state (auto-generated or manual)
-  const nameState = readPersistedState<unknown>(getWorkspaceNameStateKey(scopeId), null);
-  if (nameState !== null) {
-    return false;
+  // Derive emptiness from the shared draft-field registry so new draft-scoped fields
+  // automatically participate in reuse detection without editing this function.
+  for (const field of DRAFT_SCOPED_FIELDS) {
+    if (!field.keepsDraftAlive) continue;
+    const value = readPersistedState<unknown>(field.key(scopeId), null);
+    if (field.keepsDraftAlive(value)) {
+      return false;
+    }
   }
 
   return true;

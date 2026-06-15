@@ -8,6 +8,7 @@ import {
   type ParsedRuntime,
   type CoderWorkspaceConfig,
   buildRuntimeString,
+  ParsedRuntimeSchema,
   RUNTIME_MODE,
   CODER_RUNTIME_PLACEHOLDER,
 } from "@/common/types/runtime";
@@ -24,6 +25,7 @@ import {
   getAgentIdKey,
   getModelKey,
   getRuntimeKey,
+  getSelectedRuntimeKey,
   getTrunkBranchKey,
   getLastRuntimeConfigKey,
   getProjectScopeId,
@@ -206,12 +208,14 @@ const buildRuntimeFromChoice = (choice: RuntimeChoice): ParsedRuntime => {
  * @param projectPath - Path to the project (used as key prefix for localStorage)
  * @param branches - Available branches (used to set default trunk branch)
  * @param recommendedTrunk - Backend-recommended trunk branch
+ * @param selectedRuntimeScopeId - Optional draft/pending scope that owns the creation runtime selection
  * @returns Settings object and setters
  */
 export function useDraftWorkspaceSettings(
   projectPath: string,
   branches: string[],
-  recommendedTrunk: string | null
+  recommendedTrunk: string | null,
+  selectedRuntimeScopeId?: string | null
 ): {
   settings: DraftWorkspaceSettings;
   /** Restores prior Coder selections when re-entering Coder mode. */
@@ -474,15 +478,36 @@ export function useDraftWorkspaceSettings(
     lastDevcontainerShareCredentials
   );
 
-  // Currently selected runtime for this session (initialized from default)
+  const selectedRuntimeStorageKey = selectedRuntimeScopeId
+    ? getSelectedRuntimeKey(selectedRuntimeScopeId)
+    : null;
+  const [persistedSelectedRuntime, setPersistedSelectedRuntime] = usePersistedState<unknown>(
+    selectedRuntimeStorageKey ?? "__unused_selected_runtime__",
+    null,
+    { listener: true }
+  );
+  // Validate/normalize the persisted draft runtime via the schema (single source of truth),
+  // discarding corrupt values so a bad localStorage entry self-heals to the default.
+  const parsedPersistedRuntime = ParsedRuntimeSchema.safeParse(persistedSelectedRuntime);
+  const persistedRuntimeSelection = parsedPersistedRuntime.success
+    ? parsedPersistedRuntime.data
+    : null;
+  const hasPersistedRuntimeSelectionRef = useRef(persistedRuntimeSelection !== null);
+
+  // Currently selected runtime for this session (initialized from draft state, then default)
   // Uses discriminated union: SSH has host, Docker has image
-  const [selectedRuntime, setSelectedRuntimeState] = useState<ParsedRuntime>(() => defaultRuntime);
+  const [selectedRuntime, setSelectedRuntimeState] = useState<ParsedRuntime>(
+    () => persistedRuntimeSelection ?? defaultRuntime
+  );
 
   // Project changes remount ChatInput (key includes projectPath), so this effect only handles
   // live Settings updates to the default runtime while staying on the same project.
   const appliedDefaultRuntimeChoiceRef = useRef<RuntimeChoice>(settingsDefaultRuntime);
   useEffect(() => {
-    if (appliedDefaultRuntimeChoiceRef.current === settingsDefaultRuntime) {
+    if (
+      appliedDefaultRuntimeChoiceRef.current === settingsDefaultRuntime ||
+      hasPersistedRuntimeSelectionRef.current
+    ) {
       return;
     }
 
@@ -524,6 +549,13 @@ export function useDraftWorkspaceSettings(
     }
   }, [branches, recommendedTrunk, trunkBranch, setTrunkBranch]);
 
+  const persistRuntimeSelection = (runtime: ParsedRuntime) => {
+    hasPersistedRuntimeSelectionRef.current = true;
+    if (selectedRuntimeStorageKey) {
+      setPersistedSelectedRuntime(runtime);
+    }
+  };
+
   // Setter for selected runtime (also persists host/image/coder for future mode switches)
   const setSelectedRuntime = (runtime: ParsedRuntime) => {
     const mergedRuntime = mergeRememberedRuntimeConfig(
@@ -533,6 +565,7 @@ export function useDraftWorkspaceSettings(
     );
 
     setSelectedRuntimeState(mergedRuntime);
+    persistRuntimeSelection(mergedRuntime);
 
     // Persist host/image/coder so they're remembered when switching modes.
     // Avoid wiping the remembered value when the UI switches modes with an empty field.
@@ -595,8 +628,9 @@ export function useDraftWorkspaceSettings(
     );
     const newRuntimeString = buildRuntimeString(newRuntime);
     setDefaultRuntimeString(newRuntimeString);
-    // Also update selection to match new default
+    // Also update this draft's selection so navigating away and back keeps the user's choice.
     setSelectedRuntimeState(newRuntime);
+    persistRuntimeSelection(newRuntime);
   };
 
   // Helper to get runtime string for IPC calls

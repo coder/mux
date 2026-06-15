@@ -300,6 +300,15 @@ export function getDisableWorkspaceAgentsKey(scopeId: string): string {
   return `disableWorkspaceAgents:${scopeId}`;
 }
 /**
+ * Get the localStorage key for the currently selected creation runtime for a scope.
+ * Drafts use this to keep runtime selection with the rest of their chat draft state.
+ * Format: "selectedRuntime:{scopeId}"
+ */
+export function getSelectedRuntimeKey(scopeId: string): string {
+  return `selectedRuntime:${scopeId}`;
+}
+
+/**
  * Get the localStorage key for the default runtime for a project
  * Defaults to worktree if not set; can only be changed via the "Default for project" checkbox.
  * Format: "runtime:{projectPath}"
@@ -744,15 +753,74 @@ export function getAutoCompactionThresholdKey(model: string): string {
 }
 
 /**
- * List of workspace-scoped key functions that should be copied on fork and deleted on removal
+ * Single source of truth for chat-draft state stored at a scope (a draft scope,
+ * pending scope, or workspace id share the same scope-keyed helpers).
+ *
+ * Add new create-workspace draft state here ONCE and it automatically gets:
+ *  - copy-on-fork / delete-on-removal (via PERSISTENT_WORKSPACE_KEY_FUNCTIONS below)
+ *  - draft emptiness/reuse detection (via `keepsDraftAlive`, consumed by isDraftEmpty)
+ *
+ * This prevents the recurring class of bug where a new field is persisted but
+ * forgotten in one of these cross-cutting behaviors.
+ */
+export interface DraftScopedFieldSpec {
+  /** Stable identifier for debugging/telemetry. */
+  readonly id: string;
+  /** Builds the localStorage key for a given scope id. */
+  readonly key: (scopeId: string) => string;
+  /**
+   * "persistent" fields are copied when forking a workspace and removed on delete;
+   * "ephemeral" fields are only removed on delete (never copied).
+   */
+  readonly persistence: "persistent" | "ephemeral";
+  /**
+   * When present, a draft is treated as non-empty (and therefore not reusable as a
+   * blank "New Workspace" slot) if the stored value satisfies this predicate.
+   * Fields without a predicate never keep a draft alive on their own (e.g. a runtime
+   * selection is a cheap default that shouldn't block draft reuse).
+   */
+  readonly keepsDraftAlive?: (value: unknown) => boolean;
+}
+
+export const DRAFT_SCOPED_FIELDS: readonly DraftScopedFieldSpec[] = [
+  {
+    id: "input",
+    key: getInputKey,
+    persistence: "persistent",
+    keepsDraftAlive: (value: unknown) => typeof value === "string" && value.trim().length > 0,
+  },
+  {
+    id: "inputAttachments",
+    key: getInputAttachmentsKey,
+    persistence: "persistent",
+    keepsDraftAlive: (value: unknown) => Array.isArray(value) && value.length > 0,
+  },
+  {
+    id: "workspaceNameState",
+    key: getWorkspaceNameStateKey,
+    persistence: "persistent",
+    keepsDraftAlive: (value: unknown) => value != null,
+  },
+  {
+    id: "selectedRuntime",
+    key: getSelectedRuntimeKey,
+    persistence: "persistent",
+  },
+];
+
+/**
+ * List of workspace-scoped key functions that should be copied on fork and deleted on removal.
+ *
+ * Draft-scoped persistent fields are sourced from DRAFT_SCOPED_FIELDS so they can't drift
+ * out of sync; the remaining entries are workspace-only state (review/model/agent caches, etc).
  */
 const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
+  ...DRAFT_SCOPED_FIELDS.filter((field) => field.persistence === "persistent").map(
+    (field) => field.key
+  ),
   getWorkspaceAISettingsByAgentKey,
   getModelKey,
-  getInputKey,
   getAutoExpandPrefsKey,
-  getWorkspaceNameStateKey,
-  getInputAttachmentsKey,
   getAgentIdKey,
   getPinnedAgentIdKey,
   getThinkingLevelKey,
