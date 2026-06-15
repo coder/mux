@@ -204,7 +204,7 @@ export default function simplifyWorkflow({
   });
 
   const rawFindingCount = reviewOutputs.reduce(function (count, output) {
-    return count + asArray(output.findings).length;
+    return count + output.findings.length;
   }, 0);
 
   phase("synthesize", { rawFindingCount: rawFindingCount });
@@ -219,7 +219,7 @@ export default function simplifyWorkflow({
     synthesis.structuredOutput,
     "synthesis structured output is required"
   );
-  const actionableFindings = asArray(synthesized.actionableFindings);
+  const actionableFindings = synthesized.actionableFindings;
 
   if (!input.fix || !synthesized.shouldFix || actionableFindings.length === 0) {
     return {
@@ -298,6 +298,7 @@ function collectGitContext(action, input, log) {
     }).output;
   });
   const refs = refsWithResolvedBase(requestedRefs, changedFiles);
+  const readDiffs = shouldReadDiffs(changedFiles);
 
   return {
     target: input.target,
@@ -305,12 +306,17 @@ function collectGitContext(action, input, log) {
     failures: failures,
     status: status,
     changedFiles: changedFiles,
-    diffStat: gitSlice(log, failures, "diffStat", function () {
-      return action.git.diffStat({ id: "git-diff-stat", input: refs, builtInOnly: true }).output;
-    }),
-    diff: gitSlice(log, failures, "diff", function () {
-      return action.git.diff({ id: "git-diff", input: refs, builtInOnly: true }).output;
-    }),
+    diffStat: readDiffs
+      ? gitSlice(log, failures, "diffStat", function () {
+          return action.git.diffStat({ id: "git-diff-stat", input: refs, builtInOnly: true })
+            .output;
+        })
+      : null,
+    diff: readDiffs
+      ? gitSlice(log, failures, "diff", function () {
+          return action.git.diff({ id: "git-diff", input: refs, builtInOnly: true }).output;
+        })
+      : null,
   };
 }
 
@@ -336,14 +342,25 @@ function gitRefs(input) {
 }
 
 function refsWithResolvedBase(refs, changedFiles) {
-  if (refs.base || refs.trunk || !changedFiles || typeof changedFiles.base !== "string") {
-    return refs;
-  }
-  if (!changedFiles.base) return refs;
+  const base =
+    changedFiles && typeof changedFiles === "object" && typeof changedFiles.base === "string"
+      ? changedFiles.base
+      : "";
+  if (refs.base || refs.trunk || !base) return refs;
+  return { ...refs, base };
+}
 
-  const resolved = { base: changedFiles.base };
-  if (refs.head) resolved.head = refs.head;
-  return resolved;
+// The diff actions only return branch/staged/unstaged hunks; untracked-only contexts
+// are captured by changedFiles.
+function shouldReadDiffs(changedFiles) {
+  if (!changedFiles || typeof changedFiles !== "object" || Array.isArray(changedFiles)) {
+    return true;
+  }
+  return (
+    hasArrayItems(changedFiles.branch) ||
+    hasArrayItems(changedFiles.staged) ||
+    hasArrayItems(changedFiles.unstaged)
+  );
 }
 
 function hasReviewableContext(input, gitContext) {
@@ -351,9 +368,6 @@ function hasReviewableContext(input, gitContext) {
   if (asArray(gitContext.failures).length > 0) return true;
   if (!gitContext.status || gitContext.status.clean !== true) return true;
   return (
-    hasArrayItems(gitContext.status.staged) ||
-    hasArrayItems(gitContext.status.unstaged) ||
-    hasArrayItems(gitContext.status.untracked) ||
     hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.branch) ||
     hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.staged) ||
     hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.unstaged) ||
@@ -546,37 +560,36 @@ function fixPrompt(compactContext, synthesized) {
 }
 
 function compactReviewOutputs(reviewOutputs) {
-  return asArray(reviewOutputs).map(function (output) {
+  return reviewOutputs.map(function (output) {
     return {
-      summary: output && output.summary,
-      findings: asArray(output && output.findings).map(compactReviewFinding),
+      summary: output.summary,
+      findings: output.findings.map(compactReviewFinding),
     };
   });
 }
 
 function compactReviewFinding(finding) {
+  const evidence = finding.evidence;
   return {
-    id: finding && finding.id,
-    title: finding && finding.title,
-    severity: finding && finding.severity,
-    filePaths: asArray(finding && finding.filePaths),
-    rationale: finding && finding.rationale,
-    recommendation: finding && finding.recommendation,
-    evidenceCount: asArray(finding && finding.evidence).length,
-    evidenceSamples: asArray(finding && finding.evidence)
-      .slice(0, REVIEW_EVIDENCE_ITEM_BUDGET)
-      .map(function (evidence) {
-        return compactText(evidence, REVIEW_EVIDENCE_CHAR_BUDGET);
-      }),
+    id: finding.id,
+    title: finding.title,
+    severity: finding.severity,
+    filePaths: finding.filePaths,
+    rationale: finding.rationale,
+    recommendation: finding.recommendation,
+    evidenceCount: evidence.length,
+    evidenceSamples: evidence.slice(0, REVIEW_EVIDENCE_ITEM_BUDGET).map(function (evidenceItem) {
+      return compactText(evidenceItem, REVIEW_EVIDENCE_CHAR_BUDGET);
+    }),
   };
 }
 
 function fixerPayload(synthesized) {
   return {
-    summary: synthesized && synthesized.summary,
-    shouldFix: Boolean(synthesized && synthesized.shouldFix),
-    actionableFindings: asArray(synthesized && synthesized.actionableFindings),
-    validationPlan: asArray(synthesized && synthesized.validationPlan),
+    summary: synthesized.summary,
+    shouldFix: synthesized.shouldFix,
+    actionableFindings: synthesized.actionableFindings,
+    validationPlan: synthesized.validationPlan,
   };
 }
 
@@ -731,7 +744,7 @@ function text(value) {
 }
 
 function hasArrayItems(value) {
-  return asArray(value).length > 0;
+  return Array.isArray(value) && value.length > 0;
 }
 
 function hasText(value) {
