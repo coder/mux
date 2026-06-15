@@ -245,23 +245,30 @@ export default function simplifyWorkflow({
 }
 
 function collectGitContext(action, input) {
-  const refs = gitRefs(input);
+  const requestedRefs = gitRefs(input);
   const failures = [];
+  const status = gitSlice(failures, "status", function () {
+    return action.git.status({
+      id: "git-status",
+      input: { includeIgnored: false },
+      builtInOnly: true,
+    }).output;
+  });
+  const changedFiles = gitSlice(failures, "changedFiles", function () {
+    return action.git.changedFiles({
+      id: "git-changed-files",
+      input: requestedRefs,
+      builtInOnly: true,
+    }).output;
+  });
+  const refs = refsWithResolvedBase(requestedRefs, changedFiles);
+
   return {
     target: input.target,
     refs: refs,
     failures: failures,
-    status: gitSlice(failures, "status", function () {
-      return action.git.status({
-        id: "git-status",
-        input: { includeIgnored: false },
-        builtInOnly: true,
-      }).output;
-    }),
-    changedFiles: gitSlice(failures, "changedFiles", function () {
-      return action.git.changedFiles({ id: "git-changed-files", input: refs, builtInOnly: true })
-        .output;
-    }),
+    status: status,
+    changedFiles: changedFiles,
     diffStat: gitSlice(failures, "diffStat", function () {
       return action.git.diffStat({ id: "git-diff-stat", input: refs, builtInOnly: true }).output;
     }),
@@ -286,6 +293,17 @@ function gitRefs(input) {
   if (input.trunkRef) refs.trunk = input.trunkRef;
   if (input.headRef) refs.head = input.headRef;
   return refs;
+}
+
+function refsWithResolvedBase(refs, changedFiles) {
+  if (refs.base || refs.trunk || !changedFiles || typeof changedFiles.base !== "string") {
+    return refs;
+  }
+  if (!changedFiles.base) return refs;
+
+  const resolved = { base: changedFiles.base };
+  if (refs.head) resolved.head = refs.head;
+  return resolved;
 }
 
 function promptContexts(input, gitContext) {
@@ -373,7 +391,7 @@ function diffSummary(diff, compactedDiff) {
     mergeBase: diff.mergeBase,
     truncated: diff.truncated,
     workflowBudgetChars: compactedDiff && compactedDiff.workflowBudgetChars,
-    workflowCompactions: diffCompactions({ diff: compactedDiff }),
+    workflowCompactions: compactedDiff ? asArray(compactedDiff.workflowCompactions) : [],
     chars: {
       branch: stringLength(diff.branch),
       staged: stringLength(diff.staged),
