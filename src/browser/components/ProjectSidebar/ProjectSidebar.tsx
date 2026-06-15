@@ -35,6 +35,7 @@ import { PROJECT_ORDER_KEY } from "@/common/constants/storage";
 import {
   matchesKeybind,
   formatKeybind,
+  isDialogOpen,
   isEditableElement,
   KEYBINDS,
 } from "@/browser/utils/ui/keybinds";
@@ -101,6 +102,7 @@ import {
   PositionedMenuItem,
 } from "@/browser/components/PositionedMenu/PositionedMenu";
 import {
+  CalendarClock,
   ChevronRight,
   EllipsisVertical,
   Folder,
@@ -128,6 +130,7 @@ import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProjec
 import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { ProjectAutomationsModal } from "@/browser/components/ProjectAutomationsModal/ProjectAutomationsModal";
 import { HexColorPicker } from "react-colorful";
 import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
 
@@ -735,6 +738,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // Theme for logo variant
   const { theme } = useTheme();
   const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
+  const dynamicWorkflowsEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
 
   // Mobile breakpoint for auto-closing sidebar
@@ -958,6 +962,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   const projectContextMenu = useContextMenuPosition({ longPress: true });
   const [projectMenuTargetPath, setProjectMenuTargetPath] = useState<string | null>(null);
+  const [automationsProjectPath, setAutomationsProjectPath] = useState<string | null>(null);
   const [editingProjectPath, setEditingProjectPath] = useState<string | null>(null);
   const [editingProjectDisplayName, setEditingProjectDisplayName] = useState("");
   const [autoEditingSection, setAutoEditingSection] = useState<{
@@ -1520,6 +1525,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     closeProjectContextMenu();
   }, [closeProjectContextMenu, projectMenuTargetPath, userProjects]);
 
+  const handleProjectMenuAutomations = useCallback(() => {
+    if (!projectMenuTargetPath) {
+      return;
+    }
+
+    setAutomationsProjectPath(projectMenuTargetPath);
+    closeProjectContextMenu();
+  }, [closeProjectContextMenu, projectMenuTargetPath]);
+
   const handleProjectMenuManageSecrets = useCallback(() => {
     if (!projectMenuTargetPath) {
       return;
@@ -1704,9 +1718,47 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   const hasProjectMenuTarget = projectMenuTargetPath !== null;
 
+  const automationsProjectConfig = automationsProjectPath
+    ? (userProjects.get(automationsProjectPath) ?? null)
+    : null;
+
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (dynamicWorkflowsEnabled && matchesKeybind(e, KEYBINDS.CONFIGURE_PROJECT_AUTOMATIONS)) {
+        if (e.defaultPrevented || isDialogOpen() || isEditableElement(e.target)) {
+          return;
+        }
+
+        let selectedProjectPath: string | undefined;
+        if (selectedWorkspace != null) {
+          const parentProjectPath = selectedWorkspace.projectPath;
+          const projectWorkspaces = sortedWorkspacesByProject.get(parentProjectPath) ?? [];
+          const byId = new Map(projectWorkspaces.map((m) => [m.id, m]));
+          const meta = byId.get(selectedWorkspace.workspaceId);
+          const validSectionIds = new Set(
+            getSubProjectsForParent(parentProjectPath, userProjects).map(([subPath]) => subPath)
+          );
+          selectedProjectPath = meta
+            ? (resolveEffectiveSectionId(meta, byId, validSectionIds) ?? parentProjectPath)
+            : parentProjectPath;
+        }
+        const targetProjectPath =
+          selectedProjectPath != null && userProjects.has(selectedProjectPath)
+            ? selectedProjectPath
+            : userProjects.size === 1
+              ? Array.from(userProjects.keys())[0]
+              : undefined;
+        if (targetProjectPath == null) {
+          return;
+        }
+
+        e.preventDefault();
+        closeProjectContextMenu();
+        setAutomationsProjectPath(targetProjectPath);
+        return;
+      }
+
       // Sub-project workspaces share the parent worktree, so recover the child
       // target from the live sidebar metadata before opening a sibling draft.
       if (matchesKeybind(e, KEYBINDS.NEW_WORKSPACE) && selectedWorkspace) {
@@ -1738,6 +1790,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    closeProjectContextMenu,
+    dynamicWorkflowsEnabled,
     selectedWorkspace,
     handleAddWorkspace,
     handleArchiveWorkspace,
@@ -2879,6 +2933,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 handleProjectMenuAddSubFolder();
               }}
             />
+            {dynamicWorkflowsEnabled && (
+              <PositionedMenuItem
+                icon={<CalendarClock className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
+                label="Automations..."
+                shortcut={formatKeybind(KEYBINDS.CONFIGURE_PROJECT_AUTOMATIONS)}
+                disabled={!hasProjectMenuTarget}
+                onClick={() => {
+                  handleProjectMenuAutomations();
+                }}
+              />
+            )}
             <PositionedMenuItem
               icon={<KeyRound className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
               label="Manage secrets"
@@ -2956,6 +3021,20 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               }}
             />
           </PositionedMenu>
+
+          {dynamicWorkflowsEnabled && automationsProjectPath && automationsProjectConfig && (
+            <ProjectAutomationsModal
+              open={true}
+              projectPath={automationsProjectPath}
+              projectName={getProjectDisplayName(automationsProjectPath, automationsProjectConfig)}
+              projectConfig={automationsProjectConfig}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setAutomationsProjectPath(null);
+                }
+              }}
+            />
+          )}
 
           <ConfirmationModal
             isOpen={archiveConfirmation !== null}

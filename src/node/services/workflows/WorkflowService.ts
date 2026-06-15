@@ -47,12 +47,21 @@ export interface WorkflowServiceOptions {
   /** workflowName is the human-readable definition name, used to label spawned tasks. */
   taskAdapterFactory?: (runId: string, workflowName?: string) => WorkflowTaskAdapter;
   onBackgroundRunTerminal?: (event: WorkflowBackgroundRunTerminalEvent) => Promise<void> | void;
+  /** When true, background terminal notifications also fire for interrupted runs. */
+  notifyInterruptedBackgroundRunTerminal?: boolean;
   generateRunId?: () => string;
   // Delayed crash-recovery retries must use current trust, not the value captured when scheduled.
   getCurrentProjectTrusted?: () => boolean | Promise<boolean>;
   /** Stable prefix; WorkflowService appends run identity and a nonce for each lease owner. */
   runnerId: string;
   clock?: WorkflowRunnerClock;
+}
+
+export interface WorkflowRunCreatedEvent {
+  runId: string;
+  status: "pending";
+  result: null;
+  run: WorkflowRunRecord;
 }
 
 export interface WorkflowBackgroundRunCreatedEvent {
@@ -67,6 +76,8 @@ export interface StartNamedWorkflowInput {
   workspaceId: string;
   projectTrusted: boolean;
   args: unknown;
+  /** Called after the durable run record exists but before the foreground runner can block. */
+  onRunCreated?: (event: WorkflowRunCreatedEvent) => Promise<void> | void;
   onBackgroundRunCreated?: (event: WorkflowBackgroundRunCreatedEvent) => Promise<void> | void;
   abortSignal?: AbortSignal;
   backgroundOnMessageQueued?: boolean;
@@ -124,6 +135,7 @@ export class WorkflowService {
   private readonly onBackgroundRunTerminal?: (
     event: WorkflowBackgroundRunTerminalEvent
   ) => Promise<void> | void;
+  private readonly notifyInterruptedBackgroundRunTerminal: boolean;
   private readonly generateRunId: () => string;
   private readonly getCurrentProjectTrusted?: () => boolean | Promise<boolean>;
   private readonly runnerId: string;
@@ -146,6 +158,8 @@ export class WorkflowService {
     this.taskAdapter = options.taskAdapter;
     this.taskAdapterFactory = options.taskAdapterFactory;
     this.onBackgroundRunTerminal = options.onBackgroundRunTerminal;
+    this.notifyInterruptedBackgroundRunTerminal =
+      options.notifyInterruptedBackgroundRunTerminal === true;
     this.generateRunId = options.generateRunId ?? generateWorkflowRunId;
     this.getCurrentProjectTrusted = options.getCurrentProjectTrusted;
     this.runnerId = options.runnerId;
@@ -450,7 +464,9 @@ export class WorkflowService {
   async startNamedWorkflowInBackground(
     input: StartNamedWorkflowInput
   ): Promise<StartNamedWorkflowResult> {
-    const runId = await this.createNamedWorkflowRun(input);
+    const createdRun = await this.createNamedWorkflowRun(input);
+    const runId = createdRun.id;
+    await input.onRunCreated?.({ runId, status: "pending", result: null, run: createdRun });
     const run = await this.runStore.appendStatus(
       runId,
       "running",
@@ -464,7 +480,9 @@ export class WorkflowService {
   }
 
   async startNamedWorkflow(input: StartNamedWorkflowInput): Promise<StartNamedWorkflowResult> {
-    const runId = await this.createNamedWorkflowRun(input);
+    const createdRun = await this.createNamedWorkflowRun(input);
+    const runId = createdRun.id;
+    await input.onRunCreated?.({ runId, status: "pending", result: null, run: createdRun });
     if (isAbortSignalAborted(input.abortSignal)) {
       await this.interruptRun({ workspaceId: input.workspaceId, runId });
       throw new Error(`Workflow run interrupted: ${runId}`);
@@ -651,7 +669,7 @@ export class WorkflowService {
     };
   }
 
-  private async createNamedWorkflowRun(input: StartNamedWorkflowInput): Promise<string> {
+  private async createNamedWorkflowRun(input: StartNamedWorkflowInput): Promise<WorkflowRunRecord> {
     assert(
       input.workspaceId.length > 0,
       "WorkflowService.createNamedWorkflowRun: workspaceId is required"
@@ -665,7 +683,7 @@ export class WorkflowService {
       "WorkflowService.createNamedWorkflowRun: generated run id is required"
     );
 
-    await this.runStore.createRun({
+    return await this.runStore.createRun({
       id: runId,
       workspaceId: input.workspaceId,
       definition: definition.descriptor,
@@ -674,7 +692,6 @@ export class WorkflowService {
       ...(this.defaultActionCwd != null ? { defaultActionCwd: this.defaultActionCwd } : {}),
       now: this.clock?.nowIso() ?? new Date().toISOString(),
     });
-    return runId;
   }
 
   private async runInBackground(
@@ -759,7 +776,10 @@ export class WorkflowService {
       return;
     }
 
-    if (!WORKFLOW_BACKGROUND_CONTINUATION_STATUSES.has(run.status)) {
+    if (
+      !WORKFLOW_BACKGROUND_CONTINUATION_STATUSES.has(run.status) &&
+      !(this.notifyInterruptedBackgroundRunTerminal && run.status === "interrupted")
+    ) {
       return;
     }
 

@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { AgentListItem } from "@/browser/components/AgentListItem/AgentListItem";
 import { APIProvider } from "@/browser/contexts/API";
+import { ProjectProvider } from "@/browser/contexts/ProjectContext";
 import { TelemetryEnabledProvider } from "@/browser/contexts/TelemetryEnabledContext";
 import { TitleEditProvider } from "@/browser/contexts/WorkspaceTitleEditContext";
 import { DndProvider } from "react-dnd";
@@ -181,17 +182,19 @@ function StoryScaffold(props: {
 
   return (
     <APIProvider client={api}>
-      <TelemetryEnabledProvider>
-        <TitleEditProvider onUpdateTitle={() => Promise.resolve({ success: true })}>
-          <TooltipProvider>
-            <DndProvider backend={HTML5Backend}>
-              <div className="border-border bg-surface-primary w-[360px] rounded-md border p-2">
-                <div className={props.rowContainerClassName ?? "space-y-1"}>{props.children}</div>
-              </div>
-            </DndProvider>
-          </TooltipProvider>
-        </TitleEditProvider>
-      </TelemetryEnabledProvider>
+      <ProjectProvider>
+        <TelemetryEnabledProvider>
+          <TitleEditProvider onUpdateTitle={() => Promise.resolve({ success: true })}>
+            <TooltipProvider>
+              <DndProvider backend={HTML5Backend}>
+                <div className="border-border bg-surface-primary w-[360px] rounded-md border p-2">
+                  <div className={props.rowContainerClassName ?? "space-y-1"}>{props.children}</div>
+                </div>
+              </DndProvider>
+            </TooltipProvider>
+          </TitleEditProvider>
+        </TelemetryEnabledProvider>
+      </ProjectProvider>
     </APIProvider>
   );
 }

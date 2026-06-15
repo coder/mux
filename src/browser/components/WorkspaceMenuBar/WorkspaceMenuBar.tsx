@@ -15,11 +15,18 @@ import { MultiProjectGitStatusIndicator } from "../GitStatusIndicator/MultiProje
 import { RuntimeBadge } from "../RuntimeBadge/RuntimeBadge";
 import { BranchSelector } from "../BranchSelector/BranchSelector";
 import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
+import { AutomationModal } from "../AutomationModal";
 import { WorkspaceMCPModal } from "../WorkspaceMCPModal/WorkspaceMCPModal";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "../Popover/Popover";
 import { Checkbox } from "../Checkbox/Checkbox";
-import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import {
+  formatKeybind,
+  isDialogOpen,
+  isEditableElement,
+  KEYBINDS,
+  matchesKeybind,
+} from "@/browser/utils/ui/keybinds";
 import { getDevcontainerStatusChip } from "@/browser/utils/runtimeUi";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useRuntimeStatus, useRuntimeStatusStoreRaw } from "@/browser/stores/RuntimeStatusStore";
@@ -53,6 +60,7 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
+import { getExistingWorkspaceProjectWorkflowScheduleMatch } from "@/browser/utils/projectWorkflowSchedules";
 import { WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX } from "@/constants/layout";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
@@ -95,6 +103,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const { disableWorkspaceAgents } = useAgent();
   const { preflightArchiveWorkspace, archiveWorkspace } = useWorkspaceActions();
   const { workspaceMetadata } = useWorkspaceContext();
+  const dynamicWorkflowsEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const linkSharingEnabled = useLinkSharingEnabled();
   const openTerminalPopout = useOpenTerminal();
@@ -107,8 +116,20 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   // are owned by the top-most parent). When the workspace is scoped to a
   // sub-project we surface the hierarchy as "parent / child" so the menu bar
   // alone reveals the sub-project context.
-  const { userProjects } = useProjectContext();
+  const { getProjectConfig, userProjects } = useProjectContext();
   const subProjectPath = workspaceEntry?.subProjectPath;
+  const automationProjectPath =
+    subProjectPath && userProjects.has(subProjectPath) ? subProjectPath : projectPath;
+  const projectConfig = getProjectConfig(automationProjectPath);
+  const projectWorkflowScheduleMatch = getExistingWorkspaceProjectWorkflowScheduleMatch({
+    projectPath: automationProjectPath,
+    projectConfig,
+    userProjects,
+    workspaceId,
+  });
+  const projectWorkflowSchedule = projectWorkflowScheduleMatch?.schedule;
+  const automationScheduleProjectPath =
+    projectWorkflowScheduleMatch?.projectPath ?? automationProjectPath;
   const projectLabel =
     subProjectPath && userProjects.has(subProjectPath)
       ? formatProjectHierarchyLabel(subProjectPath, userProjects)
@@ -120,6 +141,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const { startSequence: startTutorial } = useTutorial();
   const [editorError, setEditorError] = useState<string | null>(null);
   const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
+  const [automationModalOpen, setAutomationModalOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
   const [availableSkills, setAvailableSkills] = useState<AgentSkillDescriptor[]>([]);
@@ -439,6 +461,26 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [workspaceHeartbeatsEnabled]);
+
+  // Keybind for opening workspace automation configuration
+  useEffect(() => {
+    if (!dynamicWorkflowsEnabled) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (
+        e.defaultPrevented ||
+        isDialogOpen() ||
+        isEditableElement(e.target) ||
+        !matchesKeybind(e, KEYBINDS.CONFIGURE_SCHEDULED_WORKFLOW)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      setAutomationModalOpen(true);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [dynamicWorkflowsEnabled]);
 
   // Keybind for sharing transcript — lives here (not AgentListItem) so it
   // works even when the left sidebar is collapsed and list items are unmounted.
@@ -760,6 +802,9 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
               onConfigureHeartbeat={
                 workspaceHeartbeatsEnabled ? () => setHeartbeatModalOpen(true) : null
               }
+              onConfigureAutomation={
+                dynamicWorkflowsEnabled ? () => setAutomationModalOpen(true) : null
+              }
               onOpenTouchFullscreenReview={
                 isTouchMobileScreen ? handleOpenTouchFullscreenReview : null
               }
@@ -782,6 +827,17 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
           </PopoverContent>
         </Popover>
       </div>
+      {dynamicWorkflowsEnabled && automationModalOpen && (
+        <AutomationModal
+          projectPath={automationScheduleProjectPath}
+          workspaceId={workspaceId}
+          workspaceName={workspaceTitle ?? workspaceName}
+          workspaceWorkflowSchedule={workspaceEntry?.workflowSchedule}
+          projectWorkflowSchedule={projectWorkflowSchedule}
+          open={automationModalOpen}
+          onOpenChange={setAutomationModalOpen}
+        />
+      )}
       {workspaceHeartbeatsEnabled && (
         <WorkspaceHeartbeatModal
           workspaceId={workspaceId}

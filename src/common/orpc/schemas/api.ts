@@ -29,7 +29,7 @@ import {
   GoalSetErrorSchema,
   GoalSetInputSchema,
 } from "./goal";
-import { ProjectConfigSchema } from "./project";
+import { ProjectConfigSchema, ProjectWorkflowScheduleSchema } from "./project";
 import {
   MemoryChangeEventSchema,
   MemoryConsolidationRecordSchema,
@@ -614,6 +614,13 @@ export const mcpOauth = {
   },
 };
 
+const ProjectWorkflowScheduleInputSchema = ProjectWorkflowScheduleSchema.omit({
+  id: true,
+  lastRunStartedAt: true,
+}).extend({
+  id: z.string().min(1).optional(),
+});
+
 // Projects
 export const projects = {
   create: {
@@ -719,6 +726,28 @@ export const projects = {
       })
       .passthrough(),
     output: z.void(),
+  },
+  workflowSchedules: {
+    set: {
+      input: z
+        .object({
+          projectPath: z.string().min(1),
+          schedule: ProjectWorkflowScheduleInputSchema,
+        })
+        .strict(),
+      output: ResultSchema(ProjectWorkflowScheduleSchema, z.string()),
+    },
+    run: {
+      input: z.object({ projectPath: z.string().min(1), scheduleId: z.string().min(1) }).strict(),
+      output: ResultSchema(
+        z.object({ runId: WorkflowRunIdSchema, status: WorkflowRunStatusSchema }),
+        z.string()
+      ),
+    },
+    remove: {
+      input: z.object({ projectPath: z.string().min(1), scheduleId: z.string().min(1) }).strict(),
+      output: ResultSchema(z.void(), z.string()),
+    },
   },
   mcp: {
     list: {
@@ -1820,15 +1849,20 @@ export const agentSkills = {
   },
 };
 
-const WorkflowDefinitionDiscoveryInputSchema = z
-  .object({
-    projectPath: z.string().min(1).optional(),
-    workspaceId: z.string().min(1).optional(),
-  })
-  .strict()
-  .refine((data) => Boolean(data.projectPath ?? data.workspaceId), {
-    message: "Either projectPath or workspaceId must be provided",
-  });
+const WorkflowDefinitionDiscoveryInputSchema = z.union([
+  z
+    .object({
+      projectPath: z.string().min(1),
+      workspaceId: z.never().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      workspaceId: z.string().min(1),
+      projectPath: z.string().min(1).optional(),
+    })
+    .strict(),
+]);
 
 // Workflows
 export const workflows = {

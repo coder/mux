@@ -45,7 +45,7 @@ import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverri
 import { McpOauthService } from "@/node/services/mcpOauthService";
 import { HeartbeatService } from "@/node/services/heartbeatService";
 import { WorkflowSchedulerService } from "@/node/services/workflows/WorkflowSchedulerService";
-import { resolveWorkflowContext } from "@/node/orpc/router";
+import { resolveWorkflowContext, sendWorkflowRunTerminalContinuation } from "@/node/orpc/router";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { AgentStatusService } from "@/node/services/agentStatusService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
@@ -75,6 +75,16 @@ import { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionMan
 import { DesktopTokenManager } from "@/node/services/desktop/DesktopTokenManager";
 import type { ORPCContext } from "@/node/orpc/context";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
+import {
+  getRuntimeConfigForScheduledNewWorkspaceTarget,
+  getSupportedWorkflowScheduleNewWorkspaceTemplate,
+  getWorkflowScheduleNewWorkspaceTargetUnavailableReason,
+} from "@/common/utils/workflowScheduleTarget";
+
+function trimToUndefined(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed != null && trimmed.length > 0 ? trimmed : undefined;
+}
 
 /**
  * ServiceContainer - Central dependency container for all backend services.
@@ -273,25 +283,213 @@ export class ServiceContainer {
       config,
       isEnabled: () =>
         this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS),
+      createWorkspaceForSchedule: async (input) => {
+        const unsupportedReason = getWorkflowScheduleNewWorkspaceTargetUnavailableReason({
+          sourceProjectPath: input.sourceProjectPath,
+          projects: input.sourceWorkspace.projects,
+          runtimeConfig: input.sourceWorkspace.runtimeConfig,
+        });
+        if (unsupportedReason != null) {
+          throw new Error(unsupportedReason);
+        }
+        const trunkBranch = input.target.trunkBranch.trim();
+        if (trunkBranch.length === 0) {
+          throw new Error("Automation new-workspace target requires a base branch");
+        }
+        const branchName = trimToUndefined(input.target.branchName);
+        const title = trimToUndefined(input.target.title);
+        const result = await this.workspaceService.create(
+          input.sourceProjectPath,
+          branchName,
+          trunkBranch,
+          title,
+          getRuntimeConfigForScheduledNewWorkspaceTarget(input.sourceWorkspace.runtimeConfig),
+          input.sourceWorkspace.subProjectPath,
+          false,
+          {
+            scheduledWorkflowSourceWorkspaceId: input.sourceWorkspaceId,
+            scheduledWorkflowName: input.workflowName,
+            scheduledWorkflowStartedAt: input.startedAt,
+          }
+        );
+        if (!result.success) {
+          throw new Error(result.error);
+        }
+        return { workspaceId: result.data.metadata.id };
+      },
+      createWorkspaceForProjectSchedule: async (input) => {
+        const ownerProjectPath = input.sourceProject.parentProjectPath ?? input.sourceProjectPath;
+        const ownerProject =
+          ownerProjectPath === input.sourceProjectPath
+            ? input.sourceProject
+            : this.config.loadConfigOrDefault().projects.get(ownerProjectPath);
+        if (ownerProject == null) {
+          throw new Error("Project automation owner project was not found");
+        }
+        const template = getSupportedWorkflowScheduleNewWorkspaceTemplate({
+          sourceProjectPath: input.sourceProjectPath,
+          workspaces: ownerProject.workspaces,
+        });
+        if (template.unavailableReason != null) {
+          throw new Error(template.unavailableReason);
+        }
+        const templateWorkspace = template.workspace;
+        const trunkBranch = input.target.trunkBranch.trim();
+        if (trunkBranch.length === 0) {
+          throw new Error("Project automation new-workspace target requires a base branch");
+        }
+        const branchName = trimToUndefined(input.target.branchName);
+        const title = trimToUndefined(input.target.title);
+        const result = await this.workspaceService.create(
+          input.sourceProjectPath,
+          branchName,
+          trunkBranch,
+          title,
+          getRuntimeConfigForScheduledNewWorkspaceTarget(templateWorkspace?.runtimeConfig),
+          // Project automations are scoped to the configured project; the template only donates runtime settings.
+          undefined,
+          false,
+          {
+            scheduledWorkflowProjectPath: input.sourceProjectPath,
+            scheduledWorkflowScheduleId: input.scheduleId,
+            scheduledWorkflowName: input.workflowName,
+            scheduledWorkflowStartedAt: input.startedAt,
+          }
+        );
+        if (!result.success) {
+          throw new Error(result.error);
+        }
+        return { workspaceId: result.data.metadata.id };
+      },
+      prepareContext: async (input) => {
+        const result = await this.workspaceService.prepareScheduledWorkflowContext(
+          input.workspaceId,
+          input.contextMode
+        );
+        if (!result.success) {
+          throw new Error(result.error);
+        }
+      },
+      cleanupWorkspaceForSchedule: async (input) => {
+        const result = await this.workspaceService.archive(input.workspaceId);
+        if (!result.success) {
+          throw new Error(result.error);
+        }
+        if (result.data.kind !== "archived") {
+          throw new Error("Automation target archive requires untracked-file confirmation");
+        }
+      },
+      onScheduleStamped: async (input) => {
+        if (input.type === "workspace") {
+          await this.workspaceService.emitCurrentWorkflowScheduleMetadata(input.workspaceId);
+        }
+      },
       startWorkflow: async (input) => {
         // Same construction as the workflows.* ORPC routes so scheduled runs
         // behave identically to manual ones (run store, trust, host actions).
+        const context = this.toORPCContext();
+        const rawCommand = `Automation: ${input.name}`;
+        let createdRunId: string | null = null;
+        const sendTerminalContinuation = async (
+          event: Parameters<typeof sendWorkflowRunTerminalContinuation>[0]["event"]
+        ) => {
+          try {
+            if (event.status !== "interrupted") {
+              await sendWorkflowRunTerminalContinuation({
+                context,
+                workspaceId: input.workspaceId,
+                rawCommand,
+                name: input.name,
+                event,
+              });
+            }
+          } finally {
+            await input.onTerminal?.(event);
+          }
+        };
         const { service, projectTrusted } = await resolveWorkflowContext(
-          this.toORPCContext(),
-          input.workspaceId
+          context,
+          input.workspaceId,
+          {
+            onBackgroundRunTerminal: sendTerminalContinuation,
+            notifyInterruptedBackgroundRunTerminal: input.onTerminal != null,
+            ...(input.projectScheduleId != null && input.sourceProjectPath != null
+              ? { projectPath: input.sourceProjectPath }
+              : {}),
+          }
         );
-        return service.startNamedWorkflow({
-          name: input.name,
-          workspaceId: input.workspaceId,
-          projectTrusted,
-          args: input.args,
-          // The scheduler's startWorkflow contract requires resolving only on
-          // a TERMINAL status: the runner's default (background on queued
-          // agent message, returning status "backgrounded" mid-run) would free
-          // the activeDispatches slot early and let the next tick double-
-          // dispatch, breaking skip-if-running.
-          backgroundOnMessageQueued: false,
+        let result: Awaited<ReturnType<typeof service.startNamedWorkflow>>;
+        try {
+          result = await service.startNamedWorkflow({
+            name: input.name,
+            workspaceId: input.workspaceId,
+            projectTrusted,
+            args: input.args,
+            onRunCreated: async (event) => {
+              createdRunId = event.runId;
+              try {
+                const persisted = await this.workspaceService.appendWorkflowRunInvocation({
+                  workspaceId: input.workspaceId,
+                  rawCommand,
+                  name: input.name,
+                  args: input.args,
+                  runId: event.runId,
+                  status: event.status,
+                  result: event.result,
+                  run: event.run,
+                  synthetic: true,
+                });
+                if (!persisted) {
+                  throw new Error("appendWorkflowRunInvocation returned false");
+                }
+              } catch (error) {
+                log.warn("Failed to persist automation invocation", {
+                  workspaceId: input.workspaceId,
+                  workflowName: input.name,
+                  runId: event.runId,
+                  error,
+                });
+              }
+            },
+            // Scheduled ticks require terminal waits for skip-if-running; manual
+            // runs opt into the runner's background-on-queued behavior so the UI
+            // play button returns after the workflow card is created.
+            backgroundOnMessageQueued: input.backgroundOnMessageQueued ?? false,
+          });
+        } catch (error) {
+          if (createdRunId == null) {
+            throw error;
+          }
+          const failedRun = await service.getRun({
+            workspaceId: input.workspaceId,
+            runId: createdRunId,
+          });
+          if (failedRun?.status !== "failed") {
+            throw error;
+          }
+          await sendTerminalContinuation({
+            runId: createdRunId,
+            status: failedRun.status,
+            result: null,
+            run: failedRun,
+          });
+          return { runId: createdRunId, status: failedRun.status, result: null };
+        }
+        if (result.status === "backgrounded") {
+          return result;
+        }
+
+        const run = await service.getRun({ workspaceId: input.workspaceId, runId: result.runId });
+        if (run == null) {
+          throw new Error("Automation terminal continuation requires a persisted run");
+        }
+        await sendTerminalContinuation({
+          runId: result.runId,
+          status: result.status,
+          result: result.result,
+          run,
         });
+        return result;
       },
     });
     this.windowService = new WindowService();
@@ -544,6 +742,7 @@ export class ServiceContainer {
     const resolveOnePasswordService = () => this.onePasswordService;
 
     return {
+      workflowSchedulerService: this.workflowSchedulerService,
       workflowRuntimeFactory: this.workflowRuntimeFactory,
       config: this.config,
       aiService: this.aiService,

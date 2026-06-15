@@ -7,6 +7,7 @@ import { installDom } from "../../../../tests/ui/dom";
 import type * as ReactDndModuleType from "react-dnd";
 import type * as ReactDndHtml5BackendModuleType from "react-dnd-html5-backend";
 import type * as APIModuleType from "@/browser/contexts/API";
+import type * as ProjectContextModuleType from "@/browser/contexts/ProjectContext";
 import type * as TelemetryEnabledContextModuleType from "@/browser/contexts/TelemetryEnabledContext";
 import type * as WorkspaceTitleEditContextModuleType from "@/browser/contexts/WorkspaceTitleEditContext";
 import type * as ContextMenuPositionModuleType from "@/browser/hooks/useContextMenuPosition";
@@ -133,6 +134,8 @@ function installAgentListItemTestDoubles() {
   const actualReactDndHtml5Backend =
     require("react-dnd-html5-backend?real=1") as typeof ReactDndHtml5BackendModuleType;
   const actualApi = require("@/browser/contexts/API?real=1") as typeof APIModuleType;
+  const actualProjectContext =
+    require("@/browser/contexts/ProjectContext?real=1") as typeof ProjectContextModuleType;
   const actualTelemetryEnabledContext =
     require("@/browser/contexts/TelemetryEnabledContext?real=1") as typeof TelemetryEnabledContextModuleType;
   const actualWorkspaceTitleEditContext =
@@ -172,6 +175,14 @@ function installAgentListItemTestDoubles() {
     }),
   }));
 
+  void mock.module("@/browser/contexts/ProjectContext", () => ({
+    ...actualProjectContext,
+    useProjectContext: () => ({
+      getProjectConfig: () => undefined,
+      userProjects: new Map(),
+    }),
+  }));
+
   void mock.module("@/browser/contexts/TelemetryEnabledContext", () => ({
     ...actualTelemetryEnabledContext,
     useLinkSharingEnabled: () => false,
@@ -191,6 +202,10 @@ function installAgentListItemTestDoubles() {
 
   void mock.module("../WorkspaceHeartbeatModal", () => ({
     WorkspaceHeartbeatModal: () => null,
+  }));
+
+  void mock.module("../AutomationModal", () => ({
+    AutomationModal: () => null,
   }));
 
   void mock.module("@/browser/hooks/useContextMenuPosition", () => ({

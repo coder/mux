@@ -20,6 +20,8 @@ import type {
   FrontendWorkspaceMetadata,
   WorkspaceActivitySnapshot,
 } from "@/common/types/workspace";
+import type { ProjectWorkflowSchedule } from "@/common/types/project";
+import type { WorkflowDefinitionDescriptor } from "@/common/types/workflow";
 import type { ProjectConfig } from "@/node/config";
 import {
   DEFAULT_LAYOUT_PRESETS_CONFIG,
@@ -131,6 +133,8 @@ export interface MockORPCClientOptions {
   taskSettings?: Partial<TaskSettings>;
   /** Initial unified AI defaults for agents (plan/exec/compact + subagents) */
   agentAiDefaults?: AgentAiDefaults;
+  /** Workflow definitions to expose via workflows.listDefinitions */
+  workflowDefinitions?: WorkflowDefinitionDescriptor[];
   /** Agent definitions to expose via agents.list */
   agentDefinitions?: AgentDefinitionDescriptor[];
   /** Initial per-subagent AI defaults for config.getConfig (e.g., Settings → Tasks section) */
@@ -383,6 +387,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     userPreferences: initialUserPreferences,
     taskSettings: initialTaskSettings,
     subagentAiDefaults: initialSubagentAiDefaults,
+    workflowDefinitions = [],
     agentAiDefaults: initialAgentAiDefaults,
     coderWorkspaceArchiveBehavior: initialCoderWorkspaceArchiveBehavior = "stop",
     worktreeArchiveBehavior: initialWorktreeArchiveBehavior = "keep",
@@ -463,6 +468,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     } while (terminalSessionsById.has(nextSessionId));
     return nextSessionId;
   };
+
+  let projectWorkflowScheduleCounter = 0;
 
   let createdWorkspaceCounter = 0;
 
@@ -1296,6 +1303,9 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         return Promise.resolve({ success: true as const, data: undefined });
       },
     },
+    workflows: {
+      listDefinitions: () => Promise.resolve(workflowDefinitions),
+    },
     projects: {
       list: () => Promise.resolve(Array.from(projects.entries())),
       create: () =>
@@ -1364,6 +1374,56 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           project.displayName = input.displayName ?? undefined;
         }
         return Promise.resolve();
+      },
+      workflowSchedules: {
+        set: (input: {
+          projectPath: string;
+          schedule: Omit<ProjectWorkflowSchedule, "lastRunStartedAt"> & { id?: string };
+        }) => {
+          const project = projects.get(input.projectPath);
+          if (!project) {
+            return Promise.resolve({ success: false as const, error: "Project not found" });
+          }
+          projectWorkflowScheduleCounter += 1;
+          const schedule: ProjectWorkflowSchedule = {
+            ...input.schedule,
+            id: input.schedule.id ?? `mock-project-schedule-${projectWorkflowScheduleCounter}`,
+          };
+          const existingSchedules = project.workflowSchedules ?? [];
+          project.workflowSchedules = [
+            ...existingSchedules.filter((existing) => existing.id !== schedule.id),
+            schedule,
+          ];
+          return Promise.resolve({ success: true as const, data: schedule });
+        },
+        run: (input: { projectPath: string; scheduleId: string }) => {
+          const project = projects.get(input.projectPath);
+          const schedule = project?.workflowSchedules?.find(
+            (entry) => entry.id === input.scheduleId
+          );
+          if (project == null || schedule == null) {
+            return Promise.resolve({
+              success: false as const,
+              error: "Project schedule not found",
+            });
+          }
+          schedule.lastRunStartedAt = new Date().toISOString();
+          return Promise.resolve({
+            success: true as const,
+            data: { runId: "wfr_mock_project_schedule_run", status: "backgrounded" as const },
+          });
+        },
+        remove: (input: { projectPath: string; scheduleId: string }) => {
+          const project = projects.get(input.projectPath);
+          if (!project) {
+            return Promise.resolve({ success: false as const, error: "Project not found" });
+          }
+          const existingSchedules = project.workflowSchedules ?? [];
+          project.workflowSchedules = existingSchedules.filter(
+            (schedule) => schedule.id !== input.scheduleId
+          );
+          return Promise.resolve({ success: true as const, data: undefined });
+        },
       },
       secrets: {
         get: (input: { projectPath: string }) =>
@@ -1472,6 +1532,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       preflightArchive: () => Promise.resolve({ success: true, data: { kind: "ready" as const } }),
       archive: () => Promise.resolve({ success: true }),
       unarchive: () => Promise.resolve({ success: true }),
+      setWorkflowSchedule: () => Promise.resolve({ success: true as const, data: undefined }),
       // Goal mocks: storybook stories don't drive lifecycle, but mounted
       // settings/right-sidebar goal surfaces read current goal state.
       getGoal: () => Promise.resolve({ goal: null }),

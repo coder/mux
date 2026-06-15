@@ -36,6 +36,7 @@ import * as PopoverErrorModule from "../PopoverError/PopoverError";
 import * as SectionHeaderModule from "../SectionHeader/SectionHeader";
 import * as WorkspaceSectionDropZoneModule from "../WorkspaceSectionDropZone/WorkspaceSectionDropZone";
 import * as WorkspaceDragLayerModule from "../WorkspaceDragLayer/WorkspaceDragLayer";
+import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type ProjectSidebarComponent from "./ProjectSidebar";
 import type * as WorkspaceStatusIndicatorModuleExports from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
@@ -142,6 +143,11 @@ let latestArchiveConfirmationModalProps: {
   confirmLabel?: string;
   onConfirm: () => void | Promise<void>;
   onCancel: () => void;
+} | null = null;
+let latestProjectAutomationsModalProps: {
+  open: boolean;
+  projectPath: string;
+  projectName: string;
 } | null = null;
 let preflightArchiveWorkspaceMock = mock(
   (_workspaceId: string): Promise<ArchivePreflightActionResult> => resolveArchivePreflight()
@@ -281,6 +287,7 @@ function installProjectSidebarTestDoubles() {
   confirmDialogMock = mock(() => Promise.resolve(true));
   latestArchiveWorkspaceHandler = null;
   latestArchiveConfirmationModalProps = null;
+  latestProjectAutomationsModalProps = null;
   void mock.module("@/browser/assets/logos/mux-logo-dark.svg?react", () => ({
     __esModule: true,
     default: () => <svg data-testid="mux-logo-dark" />,
@@ -623,11 +630,25 @@ function installProjectSidebarTestDoubles() {
   spyOn(WorkspaceDragLayerModule, "WorkspaceDragLayer").mockImplementation(
     (() => null) as unknown as typeof WorkspaceDragLayerModule.WorkspaceDragLayer
   );
+  void mock.module("@/browser/components/ProjectAutomationsModal/ProjectAutomationsModal", () => ({
+    ProjectAutomationsModal: (props: {
+      open: boolean;
+      projectPath: string;
+      projectName: string;
+      onOpenChange: (open: boolean) => void;
+    }) => {
+      latestProjectAutomationsModalProps = props;
+      return props.open ? (
+        <div data-testid="project-automations-modal">{props.projectName}</div>
+      ) : null;
+    },
+  }));
   void mock.module("../PositionedMenu/PositionedMenu", () => ({
     PositionedMenu: (props: { open: boolean; children: React.ReactNode }) =>
       props.open ? <div data-testid="project-actions-menu">{props.children}</div> : null,
     PositionedMenuItem: (props: {
       label: string;
+      shortcut?: string;
       disabled?: boolean;
       onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
     }) => (
@@ -639,6 +660,7 @@ function installProjectSidebarTestDoubles() {
         }}
       >
         {props.label}
+        {props.shortcut ? `(${props.shortcut})` : null}
       </button>
     ),
   }));
@@ -657,6 +679,7 @@ function createWorkspace(
     title?: string;
     bestOf?: FrontendWorkspaceMetadata["bestOf"];
     workflowTask?: FrontendWorkspaceMetadata["workflowTask"];
+    subProjectPath?: string;
   }
 ): FrontendWorkspaceMetadata {
   return {
@@ -670,6 +693,7 @@ function createWorkspace(
       { projectPath: "/projects/other-project", projectName: "other-project" },
     ],
     namedWorkspacePath: `/projects/demo-project/${id}`,
+    subProjectPath: opts?.subProjectPath,
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     parentWorkspaceId: opts?.parentWorkspaceId,
     taskStatus: opts?.taskStatus,
@@ -1991,10 +2015,71 @@ describe("ProjectSidebar project actions menu", () => {
     expect(menuButtons.map((button) => button.textContent)).toEqual([
       "Edit name",
       "Add sub-project",
+      `Automations...(${formatKeybind(KEYBINDS.CONFIGURE_PROJECT_AUTOMATIONS)})`,
       "Manage secrets",
       "Change color",
       "Delete...",
     ]);
+  });
+
+  test("opens project automations from the keyboard shortcut", () => {
+    const view = renderSidebar();
+
+    fireEvent.keyDown(window, {
+      key: KEYBINDS.CONFIGURE_PROJECT_AUTOMATIONS.key,
+      ctrlKey: true,
+      altKey: true,
+    });
+
+    expect(view.getByTestId("project-automations-modal").textContent).toBe("demo-project");
+    expect(latestProjectAutomationsModalProps?.projectPath).toBe(demoProjectPath);
+  });
+
+  test("opens sub-project automations from the keyboard shortcut when the selected workspace is scoped", () => {
+    const subProjectPath = `${demoProjectPath}/packages/api`;
+    const workspace = createWorkspace("ws-sub", { subProjectPath });
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([
+        [demoProjectPath, { workspaces: [{ path: workspace.namedWorkspacePath, subProjectPath }] }],
+        [subProjectPath, { parentProjectPath: demoProjectPath, workspaces: [] }],
+      ]),
+    });
+    spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
+      () =>
+        ({
+          selectedWorkspace: { workspaceId: workspace.id, projectPath: demoProjectPath },
+          setSelectedWorkspace: () => undefined,
+          preflightArchiveWorkspace: preflightArchiveWorkspaceMock,
+          archiveWorkspace: archiveWorkspaceActionMock,
+          removeWorkspace: () => Promise.resolve({ success: true }),
+          updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+          refreshWorkspaceMetadata: () => Promise.resolve(),
+          pendingNewWorkspaceProject: null,
+          pendingNewWorkspaceDraftId: null,
+          workspaceDraftsByProject: {},
+          workspaceDraftPromotionsByProject: {},
+          createWorkspaceDraft: () => undefined,
+          openWorkspaceDraft: () => undefined,
+          deleteWorkspaceDraft: () => undefined,
+        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
+    );
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={new Map([[demoProjectPath, [workspace]]])}
+        workspaceRecency={{}}
+      />
+    );
+
+    fireEvent.keyDown(window, {
+      key: KEYBINDS.CONFIGURE_PROJECT_AUTOMATIONS.key,
+      ctrlKey: true,
+      altKey: true,
+    });
+
+    expect(view.getByTestId("project-automations-modal").textContent).toBe("api");
+    expect(latestProjectAutomationsModalProps?.projectPath).toBe(subProjectPath);
   });
 
   test("opens the same project actions menu on right-click", () => {
