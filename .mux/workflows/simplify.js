@@ -265,6 +265,8 @@ export default function simplifyWorkflow({
     source: fixer,
     target: "parent",
     threeWay: true,
+    // simplify fixes the dirty changes it just reviewed, so patch onto that worktree.
+    force: true,
     onConflict: "return",
   });
 
