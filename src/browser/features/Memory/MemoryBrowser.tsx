@@ -319,6 +319,19 @@ function buildTree(files: MemoryFileInfo[]): TreeDir {
   return root;
 }
 
+/**
+ * Disclosure caret shared by the scope and directory rows: points down when
+ * expanded, right when collapsed. `className` is appended to the shared sizing
+ * classes so each row can add layout tweaks (e.g. `shrink-0`).
+ */
+function DisclosureChevron(props: { open: boolean; className?: string }) {
+  const Icon = props.open ? ChevronDown : ChevronRight;
+  const className = props.className
+    ? `text-muted h-3 w-3 ${props.className}`
+    : "text-muted h-3 w-3";
+  return <Icon className={className} aria-hidden="true" />;
+}
+
 /** Collapsible scope section, mirroring the GoalBoardSections shell. */
 function ScopeSection(props: ScopeSectionProps) {
   const [isOpen, setIsOpen] = useState(true);
@@ -330,11 +343,7 @@ function ScopeSection(props: ScopeSectionProps) {
         aria-expanded={isOpen}
         onClick={() => setIsOpen((prev) => !prev)}
       >
-        {isOpen ? (
-          <ChevronDown className="text-muted h-3 w-3" aria-hidden="true" />
-        ) : (
-          <ChevronRight className="text-muted h-3 w-3" aria-hidden="true" />
-        )}
+        <DisclosureChevron open={isOpen} />
         <span className="text-foreground font-medium">{props.title}</span>
         <span className="text-muted lowercase">({props.files.length})</span>
       </button>
@@ -393,11 +402,7 @@ function DirRow(props: TreeNodesProps) {
         aria-expanded={isOpen}
         onClick={() => setIsOpen((prev) => !prev)}
       >
-        {isOpen ? (
-          <ChevronDown className="text-muted h-3 w-3 shrink-0" aria-hidden="true" />
-        ) : (
-          <ChevronRight className="text-muted h-3 w-3 shrink-0" aria-hidden="true" />
-        )}
+        <DisclosureChevron open={isOpen} className="shrink-0" />
         {isOpen ? (
           <FolderOpen className="text-muted h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         ) : (
