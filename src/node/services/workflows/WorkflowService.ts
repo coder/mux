@@ -1005,7 +1005,9 @@ export class WorkflowService {
       definition: definition.descriptor,
       definitionSource: definition.source,
       args: input.args,
-      ...(this.defaultActionCwd != null ? { defaultActionCwd: this.defaultActionCwd } : {}),
+      ...(parent.defaultActionCwd != null || this.defaultActionCwd != null
+        ? { defaultActionCwd: parent.defaultActionCwd ?? this.defaultActionCwd }
+        : {}),
       parentWorkflow: {
         runId: input.parentRunId,
         stepId: input.stepId,

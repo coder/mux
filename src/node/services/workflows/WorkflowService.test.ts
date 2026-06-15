@@ -369,6 +369,73 @@ export default function workflow({ args, agent }) {
     ).toHaveLength(1);
   });
 
+  test("snapshots parent action cwd when replay creates a nested child run", async () => {
+    using tmp = new DisposableTempDir("workflow-service-nested-cwd");
+    const workspaceRoot = path.join(tmp.path, "project");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const actionProjectRoot = path.join(workspaceRoot, ".mux", "actions");
+    const actionGlobalRoot = path.join(tmp.path, "mux-home", "actions");
+    await writeWorkflow(
+      globalRoot,
+      "child-cwd",
+      "// description: Child cwd\nexport default function workflow() { return { reportMarkdown: 'child' }; }\n"
+    );
+    const parentSource = `// description: Parent cwd
+export default function workflow({ action }) {
+  return action.workflows.start({
+    id: "child-cwd",
+    input: { name: "child-cwd", args: {} },
+  });
+}\n`;
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const parentCwd = path.join(tmp.path, "parent-cwd");
+    await runStore.createRun({
+      id: "wfr_parent_cwd",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "parent-cwd",
+        description: "Parent cwd",
+        scope: "global",
+        executable: true,
+      },
+      definitionSource: parentSource,
+      args: {},
+      defaultActionCwd: parentCwd,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: actionProjectRoot,
+        globalRoot: actionGlobalRoot,
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      defaultActionCwd: path.join(tmp.path, "service-cwd"),
+      runnerId: "runner-a",
+    });
+
+    await service.resumeRun({
+      workspaceId: "workspace-1",
+      runId: "wfr_parent_cwd",
+      projectTrusted: true,
+    });
+    const parentRun = await runStore.getRun("wfr_parent_cwd");
+    const childRunId = parentRun.steps.find((step) => step.stepId === "child-cwd")?.taskId;
+    if (childRunId == null) {
+      throw new Error("Expected nested cwd workflow to record a child run id");
+    }
+    const childRun = await runStore.getRun(childRunId);
+
+    expect(childRun.defaultActionCwd).toBe(parentCwd);
+  });
+
   test("preserves explicit null args for nested child workflows", async () => {
     using tmp = new DisposableTempDir("workflow-service-nested-null-args");
     const workspaceRoot = path.join(tmp.path, "project");

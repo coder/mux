@@ -58,7 +58,9 @@ export class WorkflowActionRegistry {
 
   async listActions(options: { projectTrusted: boolean }): Promise<ScannedWorkflowAction[]> {
     if (this.projectRuntime != null) {
-      return [];
+      return scanBuiltInActions()
+        .filter((action) => isRunnerCoordinatedBuiltInAction(action.name))
+        .sort((a, b) => a.name.localeCompare(b.name));
     }
     const byName = await this.collectActions(options);
     return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));

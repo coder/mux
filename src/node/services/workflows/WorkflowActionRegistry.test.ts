@@ -211,7 +211,9 @@ describe("WorkflowActionRegistry", () => {
     await expectRuntimeProjectActionRejection(registry);
     const actions = await registry.listActions({ projectTrusted: true });
 
-    expect(actions).toEqual([]);
+    expect(actions.map((action) => ({ name: action.name, scope: action.scope }))).toEqual([
+      { name: "workflows.start", scope: "built-in" },
+    ]);
   });
 
   test("rejects runtime-backed global actions instead of using a remote cwd locally", async () => {
@@ -235,7 +237,9 @@ describe("WorkflowActionRegistry", () => {
     }
     const actions = await registry.listActions({ projectTrusted: true });
 
-    expect(actions).toEqual([]);
+    expect(actions.map((action) => ({ name: action.name, scope: action.scope }))).toEqual([
+      { name: "workflows.start", scope: "built-in" },
+    ]);
   });
 
   test("rejects runtime-backed built-in actions instead of using a remote cwd locally", async () => {
@@ -268,8 +272,12 @@ describe("WorkflowActionRegistry", () => {
     });
 
     const action = await registry.resolveAction("workflows.start", { projectTrusted: true });
+    const actions = await registry.listActions({ projectTrusted: true });
 
     expect(action).toMatchObject({ name: "workflows.start", scope: "built-in" });
+    expect(actions.map((action) => ({ name: action.name, scope: action.scope }))).toEqual([
+      { name: "workflows.start", scope: "built-in" },
+    ]);
   });
 
   test("blocks project-local actions without Project Trust while allowing global actions", async () => {
