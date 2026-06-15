@@ -9,9 +9,12 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { log } from "@/node/services/log";
 import { toUtcDateString } from "@/node/services/analytics/dateUtils";
-import { CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
+import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
 
-export const CHAT_FILE_NAME = "chat.jsonl";
+// Re-export the canonical chat history filename (defined in constants/paths.ts)
+// so existing analytics consumers (workspaceDiscovery, tests) can keep importing
+// it from this module without duplicating the "chat.jsonl" literal.
+export { CHAT_FILE_NAME };
 
 /**
  * Sealed pre-boundary history rotates from chat.jsonl into chat-archive.jsonl
