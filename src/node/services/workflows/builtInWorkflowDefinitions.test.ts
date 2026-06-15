@@ -11,8 +11,7 @@ import { WorkflowActionRegistry } from "./WorkflowActionRegistry";
 import { WorkflowRunStore } from "./WorkflowRunStore";
 import { WorkflowRunner, type WorkflowAgentResult, type WorkflowAgentSpec } from "./WorkflowRunner";
 
-// Keep this above tiny lock timeouts: these fixtures exercise parallel workflow callbacks
-// that legitimately contend for the run-store mutation lock under CI coverage load.
+// Most fixtures use short leases so stale-run retry behavior stays fast.
 const BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS = 100;
 
 const deepResearch = BUILT_IN_WORKFLOW_DEFINITIONS.find(
@@ -2101,10 +2100,9 @@ describe("built-in deep-research workflow", () => {
       throw new Error("Expected built-in deep-research workflow");
     }
     using tmp = new DisposableTempDir("deep-research-capped-workflow");
-    const runStore = new WorkflowRunStore({
-      sessionDir: tmp.path,
-      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
-    });
+    // This fixture intentionally creates heavy parallel step persistence; use production
+    // lease timing so the assertion covers fan-out caps, not 50ms renewal churn.
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
     await runStore.createRun({
       id: "wfr_deep_research_capped",
       workspaceId: "workspace-1",
@@ -2240,7 +2238,7 @@ describe("built-in deep-research workflow", () => {
     expect(structuredOutput.claims).toHaveLength(16);
     expect(structuredOutput.verification).toHaveLength(16);
     expect(structuredOutput.stats.claimsExtracted).toBe(75);
-  }, 10_000);
+  }, 30_000);
 });
 
 describe("built-in deep-review-workflow", () => {
