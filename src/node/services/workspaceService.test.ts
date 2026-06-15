@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach, spyOn, type Mock } from "bun:test";
 import { WorkspaceService, generateForkBranchName, generateForkTitle } from "./workspaceService";
+import type { IdleCompactionOutcome } from "./idleCompactionService";
 import type { AgentSession } from "./agentSession";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
 import { EventEmitter } from "events";
@@ -2821,6 +2822,98 @@ describe("WorkspaceService idle compaction dispatch", () => {
     }
     expect(executionError.message).toContain("idle-only send was skipped");
   });
+
+  test("reports a model_not_found outcome when the compaction model is invalid", async () => {
+    const workspaceId = "idle-model-not-found-ws";
+    const sendMessage = mock(() =>
+      Promise.resolve(
+        Err({
+          type: "invalid_model_string" as const,
+          message: "Invalid model string: openai:does-not-exist",
+        })
+      )
+    );
+    const buildIdleCompactionSendOptions = mock(() =>
+      Promise.resolve({ model: "openai:does-not-exist", agentId: "compact" })
+    );
+    const session = { isBusy: mock(() => false) } as unknown as AgentSession;
+
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).sendMessage = sendMessage;
+    (
+      workspaceService as unknown as {
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+      }
+    ).buildIdleCompactionSendOptions = buildIdleCompactionSendOptions;
+    (
+      workspaceService as unknown as {
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).getOrCreateSession = () => session;
+
+    const outcomes: Array<{ workspaceId: string; outcome: IdleCompactionOutcome }> = [];
+    workspaceService.setIdleCompactionOutcomeListener((id, outcome) =>
+      outcomes.push({ workspaceId: id, outcome })
+    );
+
+    let threw = false;
+    try {
+      await workspaceService.executeIdleCompaction(workspaceId);
+    } catch {
+      threw = true;
+    }
+
+    expect(threw).toBe(true);
+    expect(outcomes).toEqual([{ workspaceId, outcome: { success: false, modelNotFound: true } }]);
+  });
+
+  test("reports a non-model_not_found outcome for generic pre-stream failures", async () => {
+    const workspaceId = "idle-generic-failure-ws";
+    const sendMessage = mock(() => Promise.resolve(Err({ type: "unknown" as const, raw: "boom" })));
+    const buildIdleCompactionSendOptions = mock(() =>
+      Promise.resolve({ model: "openai:gpt-4o", agentId: "compact" })
+    );
+    const session = { isBusy: mock(() => false) } as unknown as AgentSession;
+
+    (
+      workspaceService as unknown as {
+        sendMessage: typeof sendMessage;
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).sendMessage = sendMessage;
+    (
+      workspaceService as unknown as {
+        buildIdleCompactionSendOptions: typeof buildIdleCompactionSendOptions;
+      }
+    ).buildIdleCompactionSendOptions = buildIdleCompactionSendOptions;
+    (
+      workspaceService as unknown as {
+        getOrCreateSession: (workspaceId: string) => AgentSession;
+      }
+    ).getOrCreateSession = () => session;
+
+    const outcomes: Array<{ workspaceId: string; outcome: IdleCompactionOutcome }> = [];
+    workspaceService.setIdleCompactionOutcomeListener((id, outcome) =>
+      outcomes.push({ workspaceId: id, outcome })
+    );
+
+    let threw = false;
+    try {
+      await workspaceService.executeIdleCompaction(workspaceId);
+    } catch {
+      threw = true;
+    }
+
+    expect(threw).toBe(true);
+    expect(outcomes).toEqual([{ workspaceId, outcome: { success: false, modelNotFound: false } }]);
+  });
+
   test("prefers global compact thinking default over exec and activity fallbacks", async () => {
     const projectPath = "/tmp/project";
     const workspacePath = "/tmp/project/ws";

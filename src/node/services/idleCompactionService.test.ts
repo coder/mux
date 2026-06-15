@@ -387,4 +387,51 @@ describe("IdleCompactionService", () => {
       expect(executeIdleCompactionMock).not.toHaveBeenCalled();
     });
   });
+
+  describe("recordOutcome (failure suppression)", () => {
+    const threshold24h = 24 * oneHourMs;
+
+    test("stops the loop after two consecutive failures", async () => {
+      service.recordOutcome(testWorkspaceId, { success: false, modelNotFound: false });
+
+      // One failure is not enough to suppress.
+      const afterOne = await service.checkEligibility(testWorkspaceId, threshold24h, now);
+      expect(afterOne.eligible).toBe(true);
+
+      service.recordOutcome(testWorkspaceId, { success: false, modelNotFound: false });
+
+      const afterTwo = await service.checkEligibility(testWorkspaceId, threshold24h, now);
+      expect(afterTwo.eligible).toBe(false);
+      expect(afterTwo.reason).toBe("suppressed_after_failures");
+    });
+
+    test("stops the loop immediately on a model_not_found failure", async () => {
+      service.recordOutcome(testWorkspaceId, { success: false, modelNotFound: true });
+
+      const result = await service.checkEligibility(testWorkspaceId, threshold24h, now);
+      expect(result.eligible).toBe(false);
+      expect(result.reason).toBe("suppressed_after_failures");
+    });
+
+    test("a success between failures resets the consecutive failure streak", async () => {
+      service.recordOutcome(testWorkspaceId, { success: false, modelNotFound: false });
+      service.recordOutcome(testWorkspaceId, { success: true });
+      service.recordOutcome(testWorkspaceId, { success: false, modelNotFound: false });
+
+      // Only one failure since the last success, so the workspace is still eligible.
+      const result = await service.checkEligibility(testWorkspaceId, threshold24h, now);
+      expect(result.eligible).toBe(true);
+    });
+
+    test("checkAllWorkspaces no longer queues a suppressed workspace", async () => {
+      // A non-recoverable failure suppresses the workspace immediately.
+      service.recordOutcome(testWorkspaceId, { success: false, modelNotFound: true });
+
+      await service.checkAllWorkspaces();
+
+      // Give the (fire-and-forget) queue a chance to run; it must not execute.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(executeIdleCompactionMock).not.toHaveBeenCalled();
+    });
+  });
 });

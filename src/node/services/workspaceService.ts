@@ -100,7 +100,10 @@ import type {
 } from "@/common/orpc/types";
 
 import type { z } from "zod";
-import type { SendMessageError } from "@/common/types/errors";
+import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
+// Aliased to avoid clashing with the private `formatSendMessageError` string formatter below.
+import { formatSendMessageError as classifySendMessageError } from "@/node/services/utils/sendMessageError";
+import type { IdleCompactionOutcome } from "@/node/services/idleCompactionService";
 import type {
   FrontendWorkspaceMetadata,
   GitStatus,
@@ -1458,6 +1461,13 @@ export class WorkspaceService extends EventEmitter {
   // can tag the stream, letting the frontend suppress notifications for maintenance work.
   private readonly idleCompactingWorkspaces = new Set<string>();
 
+  // Reports the terminal outcome of an idle compaction (success or failure, including
+  // mid-stream failures like model_not_found) back to IdleCompactionService so it can
+  // stop re-attempting a persistently failing workspace. Wired in ServiceContainer.
+  private idleCompactionOutcomeListener:
+    | ((workspaceId: string, outcome: IdleCompactionOutcome) => void)
+    | undefined;
+
   // Blocks new sends while a context reset is committing its durable boundary and cleanup.
   private readonly resettingContextWorkspaces = new Set<string>();
 
@@ -1743,7 +1753,9 @@ export class WorkspaceService extends EventEmitter {
       isWorkspaceEvent(v) &&
       (!("metadata" in (v as Record<string, unknown>)) || isObj((v as StreamEndEvent).metadata));
     const isStreamAbortEvent = (v: unknown): v is StreamAbortEvent => isWorkspaceEvent(v);
-    const isErrorEvent = (v: unknown): v is { workspaceId: string; error: string } =>
+    const isErrorEvent = (
+      v: unknown
+    ): v is { workspaceId: string; error: string; errorType?: StreamErrorType } =>
       isWorkspaceEvent(v) && "error" in v && typeof (v as { error: unknown }).error === "string";
     const isToolCallEndEvent = (v: unknown): v is ToolCallEndEvent =>
       isWorkspaceEvent(v) &&
@@ -1791,6 +1803,14 @@ export class WorkspaceService extends EventEmitter {
 
     this.aiService.on("error", (data: unknown) => {
       if (isErrorEvent(data)) {
+        // Read the idle-compaction marker before stopStreamingStatus clears it, so a
+        // mid-stream failure (e.g. provider rejecting the compaction model) stops the loop.
+        if (this.idleCompactingWorkspaces.has(data.workspaceId)) {
+          this.reportIdleCompactionOutcome(data.workspaceId, {
+            success: false,
+            modelNotFound: data.errorType === "model_not_found",
+          });
+        }
         void this.stopStreamingStatus(data.workspaceId);
         void this.workspaceGoalService?.applyPendingAfterStreamEnd(data.workspaceId);
       }
@@ -1975,6 +1995,12 @@ export class WorkspaceService extends EventEmitter {
   private async handleStreamCompletion(workspaceId: string): Promise<void> {
     const generation = this.streamingGenerations.get(workspaceId) ?? 0;
     const isIdleCompaction = this.idleCompactingWorkspaces.has(workspaceId);
+
+    if (isIdleCompaction) {
+      // A clean stream end means compaction succeeded; clear the failure streak.
+      // Mid-stream failures arrive via the "error" event instead.
+      this.reportIdleCompactionOutcome(workspaceId, { success: true });
+    }
 
     // Idle compaction is maintenance work, so preserve the pre-existing recency.
     // That keeps the workspace from jumping to the top of the sidebar and also
@@ -8242,6 +8268,21 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Register the callback that receives terminal idle-compaction outcomes.
+   * Wired by ServiceContainer to forward outcomes to IdleCompactionService so the
+   * idle loop can stop re-attempting a persistently failing workspace.
+   */
+  setIdleCompactionOutcomeListener(
+    listener: (workspaceId: string, outcome: IdleCompactionOutcome) => void
+  ): void {
+    this.idleCompactionOutcomeListener = listener;
+  }
+
+  private reportIdleCompactionOutcome(workspaceId: string, outcome: IdleCompactionOutcome): void {
+    this.idleCompactionOutcomeListener?.(workspaceId, outcome);
+  }
+
+  /**
    * Execute idle compaction for a workspace directly from the backend.
    *
    * This path is frontend-independent: compaction still runs even if no UI is open.
@@ -8301,6 +8342,13 @@ export class WorkspaceService extends EventEmitter {
                 ? rawError.type
                 : JSON.stringify(rawError)
           : String(rawError);
+      // Report the pre-stream failure (e.g. invalid/unavailable compaction model) so the
+      // idle loop can stop re-attempting this workspace. Mid-stream failures are reported
+      // separately from the stream error/completion listeners.
+      this.reportIdleCompactionOutcome(workspaceId, {
+        success: false,
+        modelNotFound: classifySendMessageError(sendResult.error).errorType === "model_not_found",
+      });
       throw new Error(`Failed to execute idle compaction: ${formattedError}`);
     }
 

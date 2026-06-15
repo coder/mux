@@ -254,6 +254,12 @@ export class ServiceContainer {
       this.extensionMetadata,
       (workspaceId) => this.workspaceService.executeIdleCompaction(workspaceId)
     );
+    // Forward terminal idle-compaction outcomes so the loop stops re-attempting a
+    // persistently failing workspace (immediately on model_not_found, otherwise after
+    // two consecutive failures).
+    this.workspaceService.setIdleCompactionOutcomeListener((workspaceId, outcome) =>
+      this.idleCompactionService.recordOutcome(workspaceId, outcome)
+    );
     // IdleDispatcher + goal continuation bridge are owned by createCoreServices
     // so the wiring works for `mux run` too. Share the same dispatcher with
     // HeartbeatService — its priority ordering ensures an active goal

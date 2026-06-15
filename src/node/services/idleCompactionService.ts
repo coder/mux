@@ -9,10 +9,28 @@ const INITIAL_CHECK_DELAY_MS = 60 * 1000; // 1 minute - let startup initializati
 const CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 const HOURS_TO_MS = 60 * 60 * 1000;
 
+/**
+ * Stop attempting idle compaction for a workspace once it has failed this many
+ * times in a row. The hourly loop would otherwise re-queue a persistently
+ * failing workspace forever (a failed compaction neither marks the workspace
+ * `compacted` nor refreshes recency, so it stays eligible).
+ */
+const MAX_CONSECUTIVE_IDLE_COMPACTION_FAILURES = 2;
+
 interface QueuedIdleCompaction {
   workspaceId: string;
   thresholdMs: number;
 }
+
+/**
+ * Terminal outcome of an idle compaction attempt, reported back to the service
+ * so it can decide whether to keep attempting compaction for a workspace.
+ *
+ * `modelNotFound` is treated as non-recoverable: the configured compaction model
+ * does not exist / is not available, and retrying will keep failing the same way,
+ * so we stop after a single occurrence rather than waiting for two failures.
+ */
+export type IdleCompactionOutcome = { success: true } | { success: false; modelNotFound: boolean };
 
 /**
  * IdleCompactionService monitors workspaces for idle time and executes
@@ -33,6 +51,11 @@ export class IdleCompactionService {
   private readonly activeWorkspaceIds = new Set<string>();
   private isProcessingQueue = false;
   private stopped = false;
+  // Per-workspace count of consecutive failed idle compactions (reset on success).
+  private readonly consecutiveFailures = new Map<string, number>();
+  // Workspaces for which the idle compaction loop has been stopped after repeated
+  // (or non-recoverable) failures. Sticky for the service lifetime; cleared on restart.
+  private readonly suppressedWorkspaceIds = new Set<string>();
 
   constructor(
     config: Config,
@@ -223,6 +246,12 @@ export class IdleCompactionService {
     thresholdMs: number,
     now: number
   ): Promise<{ eligible: boolean; reason?: string }> {
+    // 0. Has the loop been stopped for this workspace after repeated/non-recoverable
+    // failures? Skip before touching history so a failing workspace stops re-queuing.
+    if (this.suppressedWorkspaceIds.has(workspaceId)) {
+      return { eligible: false, reason: "suppressed_after_failures" };
+    }
+
     // 1. Has messages? Only need tail messages — recency + last-message checks don't need full history.
     const historyResult = await this.historyService.getLastMessages(workspaceId, 50);
     if (!historyResult.success || historyResult.data.length === 0) {
@@ -259,5 +288,36 @@ export class IdleCompactionService {
     }
 
     return { eligible: true };
+  }
+
+  /**
+   * Record the terminal outcome of an idle compaction attempt so the loop can
+   * stop re-attempting a persistently failing workspace.
+   *
+   * - Success resets the consecutive failure count.
+   * - A `model_not_found` failure is non-recoverable, so the loop stops immediately.
+   * - Any other failure stops the loop once it happens twice in a row.
+   *
+   * Suppression is in-memory and sticky for the service lifetime; restarting the
+   * app (e.g. after fixing the configured compaction model) clears it.
+   */
+  recordOutcome(workspaceId: string, outcome: IdleCompactionOutcome): void {
+    if (outcome.success) {
+      this.consecutiveFailures.delete(workspaceId);
+      return;
+    }
+
+    const failures = (this.consecutiveFailures.get(workspaceId) ?? 0) + 1;
+    this.consecutiveFailures.set(workspaceId, failures);
+
+    if (outcome.modelNotFound || failures >= MAX_CONSECUTIVE_IDLE_COMPACTION_FAILURES) {
+      this.suppressedWorkspaceIds.add(workspaceId);
+      this.consecutiveFailures.delete(workspaceId);
+      log.warn("Stopping idle compaction for workspace after failure", {
+        workspaceId,
+        reason: outcome.modelNotFound ? "model_not_found" : "consecutive_failures",
+        failures,
+      });
+    }
   }
 }
