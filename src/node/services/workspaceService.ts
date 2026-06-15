@@ -484,6 +484,11 @@ function isArchiveLossyUntrackedFilesConfirmation(
 const WORKSPACE_IDLE_WAIT_CANCELED_MESSAGE =
   "Workflow start canceled while waiting for workspace to become idle.";
 
+// Returned by sendMessage when an idle-only (requireIdle) send is skipped because the
+// workspace became active. This is an expected race, not a compaction failure, so the
+// idle-compaction loop must not count it toward suppression.
+const IDLE_ONLY_BUSY_SKIP_MESSAGE = "Workspace is busy; idle-only send was skipped.";
+
 async function waitForAgentSessionIdle(session: AgentSession, signal?: AbortSignal): Promise<void> {
   assert(session instanceof AgentSession, "waitForAgentSessionIdle requires an AgentSession");
   try {
@@ -6536,7 +6541,7 @@ export class WorkspaceService extends EventEmitter {
         if (internal?.requireIdle) {
           return Err({
             type: "unknown",
-            raw: "Workspace is busy; idle-only send was skipped.",
+            raw: IDLE_ONLY_BUSY_SKIP_MESSAGE,
           });
         }
 
@@ -8315,9 +8320,8 @@ export class WorkspaceService extends EventEmitter {
 
     const session = this.getOrCreateSession(workspaceId);
     if (session.isBusy()) {
-      throw new Error(
-        "Failed to execute idle compaction: Workspace is busy; idle-only send was skipped."
-      );
+      // Expected race (workspace became active), not a failure — do not report an outcome.
+      throw new Error(`Failed to execute idle compaction: ${IDLE_ONLY_BUSY_SKIP_MESSAGE}`);
     }
 
     const sendResult = await this.sendMessage(
@@ -8350,13 +8354,18 @@ export class WorkspaceService extends EventEmitter {
                 ? rawError.type
                 : JSON.stringify(rawError)
           : String(rawError);
-      // Report the pre-stream failure (e.g. invalid/unavailable compaction model) so the
+      // Report genuine pre-stream failures (e.g. invalid/unavailable compaction model) so the
       // idle loop can stop re-attempting this workspace. Mid-stream failures are reported
-      // separately from the stream error/completion listeners.
-      this.reportIdleCompactionOutcome(workspaceId, {
-        success: false,
-        modelNotFound: classifySendMessageError(sendResult.error).errorType === "model_not_found",
-      });
+      // separately from the stream error/completion listeners. The requireIdle busy-skip is an
+      // expected race (workspace became active), so it must NOT count toward suppression.
+      const isBusySkip =
+        sendResult.error.type === "unknown" && sendResult.error.raw === IDLE_ONLY_BUSY_SKIP_MESSAGE;
+      if (!isBusySkip) {
+        this.reportIdleCompactionOutcome(workspaceId, {
+          success: false,
+          modelNotFound: classifySendMessageError(sendResult.error).errorType === "model_not_found",
+        });
+      }
       throw new Error(`Failed to execute idle compaction: ${formattedError}`);
     }
 

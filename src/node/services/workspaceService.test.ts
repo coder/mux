@@ -2809,6 +2809,13 @@ describe("WorkspaceService idle compaction dispatch", () => {
       }
     ).buildIdleCompactionSendOptions = buildIdleCompactionSendOptions;
 
+    // The busy-skip is an expected race, so it must not be reported as a failure
+    // (otherwise two normal user-interaction races would suppress idle compaction).
+    const outcomes: Array<{ workspaceId: string; outcome: IdleCompactionOutcome }> = [];
+    workspaceService.setIdleCompactionOutcomeListener((id, outcome) =>
+      outcomes.push({ workspaceId: id, outcome })
+    );
+
     let executionError: unknown;
     try {
       await workspaceService.executeIdleCompaction(workspaceId);
@@ -2821,6 +2828,7 @@ describe("WorkspaceService idle compaction dispatch", () => {
       throw new Error("Expected idle compaction to throw when workspace is busy");
     }
     expect(executionError.message).toContain("idle-only send was skipped");
+    expect(outcomes).toEqual([]);
   });
 
   test("reports a model_not_found outcome when the compaction model is invalid", async () => {
