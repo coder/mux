@@ -26,6 +26,7 @@ import type {
   FrontendWorkspaceMetadataSchemaType,
   SendMessageOptions,
 } from "@/common/orpc/types";
+import type { ProjectWorkflowSchedule } from "@/common/types/project";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SshPromptEvent, SshPromptRequest } from "@/common/orpc/schemas/ssh";
 import {
@@ -42,7 +43,11 @@ import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMe
 
 import { getRuntimeType } from "@/node/runtime/initHook";
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
-import { createRuntimeForWorkspace, resolveWorkspaceRootPath } from "@/node/runtime/runtimeHelpers";
+import {
+  appendSubProjectRelativePath,
+  createRuntimeForWorkspace,
+  resolveWorkspaceRootPath,
+} from "@/node/runtime/runtimeHelpers";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import {
   parseMemoryPath,
@@ -93,6 +98,7 @@ import {
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveAgentVisibility } from "@/node/services/agentDefinitions/agentVisibility";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { getSupportedWorkflowScheduleNewWorkspaceTemplate } from "@/common/utils/workflowScheduleTarget";
 import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 import * as path from "node:path";
@@ -124,6 +130,8 @@ import {
 } from "@/node/services/workflows/WorkflowService";
 import { WorkflowTaskServiceAdapter } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
 import { resolveWorkflowScratchRoots } from "@/node/services/workflows/workflowScratchRoots";
+import { WORKFLOW_SCHEDULE_DEFAULT_CONTEXT_MODE } from "@/constants/workflowSchedule";
+import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
 
 import {
@@ -157,7 +165,7 @@ function isWorkspaceBusyIdleOnlySend(error: { type: string; raw?: string }): boo
   );
 }
 
-async function sendWorkflowRunTerminalContinuation(input: {
+export async function sendWorkflowRunTerminalContinuation(input: {
   context: ORPCContext;
   workspaceId: string;
   rawCommand: string;
@@ -339,6 +347,8 @@ export async function resolveWorkflowContext(
   workspaceId: string,
   options: {
     onBackgroundRunTerminal?: (event: WorkflowBackgroundRunTerminalEvent) => Promise<void> | void;
+    notifyInterruptedBackgroundRunTerminal?: boolean;
+    projectPath?: string;
   } = {}
 ): Promise<{ service: WorkflowService; projectTrusted: boolean }> {
   assert(workspaceId.length > 0, "resolveWorkflowContext: workspaceId is required");
@@ -349,9 +359,22 @@ export async function resolveWorkflowContext(
     throw new Error(metadataResult.error);
   }
   const metadata = metadataResult.data;
-  const projectTrusted = isTrustedProjectPath(context, metadata.projectPath);
+  const requestedWorkflowProjectPath = options.projectPath?.trim();
+  const workflowProjectPath =
+    requestedWorkflowProjectPath != null && requestedWorkflowProjectPath.length > 0
+      ? requestedWorkflowProjectPath
+      : metadata.projectPath;
+  const projectTrusted = isTrustedProjectPath(context, workflowProjectPath);
   const runtime = createRuntimeForWorkspace(metadata);
-  const workspacePath = resolveWorkspaceRootPath(metadata, runtime);
+  const workspaceRootPath = resolveWorkspaceRootPath(metadata, runtime);
+  const workspacePath =
+    options.projectPath != null
+      ? appendSubProjectRelativePath(
+          { ...metadata, subProjectPath: workflowProjectPath },
+          runtime,
+          workspaceRootPath
+        )
+      : workspaceRootPath;
   const runtimeType = getRuntimeType(metadata.runtimeConfig);
   const useRuntimeProjectIO = shouldUseRuntimeWorkflowProjectIO(runtimeType);
   const disableHostWorkflowActions = shouldDisableHostWorkflowActions(runtimeType);
@@ -376,6 +399,8 @@ export async function resolveWorkflowContext(
         projectRuntime: useRuntimeProjectIO ? runtime : undefined,
         projectCwd: useRuntimeProjectIO ? workspacePath : undefined,
       }),
+      notifyInterruptedBackgroundRunTerminal:
+        options.notifyInterruptedBackgroundRunTerminal === true,
       actionRegistry: new WorkflowActionRegistry({
         projectRoot: runtime.normalizePath(".mux/actions", workspacePath),
         globalRoot: path.join(context.config.rootDir, "actions"),
@@ -409,7 +434,7 @@ export async function resolveWorkflowContext(
             workspaceSessionDir: context.config.getSessionDir(workspaceId),
             trusted: projectTrusted,
           },
-          getProjectTrusted: () => isTrustedProjectPath(context, metadata.projectPath),
+          getProjectTrusted: () => isTrustedProjectPath(context, workflowProjectPath),
           experiments: {
             dynamicWorkflows: true,
             subagentFileReports: subagentFileReportsExperimentEnabled,
@@ -418,7 +443,7 @@ export async function resolveWorkflowContext(
       ...(options.onBackgroundRunTerminal != null
         ? { onBackgroundRunTerminal: options.onBackgroundRunTerminal }
         : {}),
-      getCurrentProjectTrusted: () => isTrustedProjectPath(context, metadata.projectPath),
+      getCurrentProjectTrusted: () => isTrustedProjectPath(context, workflowProjectPath),
       runnerId: `workflow-runner:${workspaceId}`,
     }),
   };
@@ -738,6 +763,80 @@ async function runBrowserCommandWithLoadingState<T extends { success: boolean }>
     await markBrowserCommandLoadedFromCurrentUrl({ ...params, commandToken });
     throw error;
   }
+}
+
+type ProjectWorkflowScheduleInput = Omit<ProjectWorkflowSchedule, "id" | "lastRunStartedAt"> & {
+  id?: string;
+};
+
+function normalizeProjectWorkflowScheduleForPersist(
+  schedule: ProjectWorkflowScheduleInput,
+  id: string
+): ProjectWorkflowSchedule {
+  const scheduleId = id.trim();
+  assert(scheduleId.length > 0, "Project workflow schedule requires a non-empty id");
+
+  const workflowName = schedule.workflowName.trim();
+  assert(workflowName.length > 0, "Project workflow schedule requires a non-empty workflowName");
+
+  const contextMode = schedule.contextMode ?? WORKFLOW_SCHEDULE_DEFAULT_CONTEXT_MODE;
+  assert(
+    contextMode === "normal" || contextMode === "compact" || contextMode === "reset",
+    `Unsupported project workflow schedule context mode: ${String(contextMode)}`
+  );
+
+  const title = schedule.title?.trim();
+  const target = schedule.target;
+  const normalizedTarget: ProjectWorkflowSchedule["target"] =
+    target.type === "existing-workspace"
+      ? {
+          type: "existing-workspace",
+          workspaceId: target.workspaceId.trim(),
+        }
+      : (() => {
+          const trunkBranch = target.trunkBranch.trim();
+          assert(
+            trunkBranch.length > 0,
+            "New-workspace project workflow schedules require a non-empty trunkBranch"
+          );
+          const branchName = target.branchName?.trim();
+          if (branchName) {
+            const branchNameValidation = validateWorkspaceName(branchName);
+            assert(
+              branchNameValidation.valid,
+              branchNameValidation.error ?? "Invalid project workflow target branch name"
+            );
+          }
+          const targetTitle = target.title?.trim();
+          return {
+            type: "new-workspace",
+            trunkBranch,
+            ...(branchName ? { branchName } : {}),
+            ...(targetTitle ? { title: targetTitle } : {}),
+          };
+        })();
+
+  if (normalizedTarget.type === "existing-workspace") {
+    assert(
+      normalizedTarget.workspaceId.length > 0,
+      "Existing-workspace project workflow schedules require a workspaceId"
+    );
+  }
+
+  const shouldPersistContextMode =
+    normalizedTarget.type === "existing-workspace" &&
+    contextMode !== WORKFLOW_SCHEDULE_DEFAULT_CONTEXT_MODE;
+
+  return {
+    id: scheduleId,
+    ...(title ? { title } : {}),
+    enabled: schedule.enabled,
+    workflowName,
+    ...(schedule.args != null ? { args: schedule.args } : {}),
+    intervalMs: schedule.intervalMs,
+    ...(shouldPersistContextMode ? { contextMode } : {}),
+    target: normalizedTarget,
+  };
 }
 
 export const router = (authToken?: string) => {
@@ -1875,13 +1974,13 @@ export const router = (authToken?: string) => {
             input.projectPath != null,
             "Workflow definition discovery requires a project path"
           );
+          const projectPath = stripTrailingSlashes(input.projectPath);
+          const projectTrusted = isTrustedProjectPath(context, projectPath);
           const definitionStore = new WorkflowDefinitionStore({
-            projectRoot: path.join(input.projectPath, ".mux", "workflows"),
+            projectRoot: path.join(projectPath, ".mux", "workflows"),
             globalRoot: path.join(context.config.rootDir, "workflows"),
           });
-          return definitionStore.listDefinitions({
-            projectTrusted: isTrustedProjectPath(context, input.projectPath),
-          });
+          return definitionStore.listDefinitions({ projectTrusted });
         }),
       readDefinition: t
         .input(schemas.workflows.readDefinition.input)
@@ -3186,6 +3285,152 @@ export const router = (authToken?: string) => {
             return config;
           });
         }),
+      workflowSchedules: {
+        set: t
+          .input(schemas.projects.workflowSchedules.set.input)
+          .output(schemas.projects.workflowSchedules.set.output)
+          .handler(async ({ context, input }) => {
+            if (input.schedule.enabled) {
+              assertDynamicWorkflowsEnabled(context);
+            }
+            try {
+              const normalizedPath = stripTrailingSlashes(input.projectPath);
+              const inputScheduleId = input.schedule.id?.trim();
+              const scheduleId =
+                inputScheduleId != null && inputScheduleId.length > 0
+                  ? inputScheduleId
+                  : context.config.generateStableId();
+              let savedSchedule: ProjectWorkflowSchedule | null = null;
+              await context.config.editConfig((config) => {
+                const project = config.projects.get(normalizedPath);
+                if (!project) {
+                  throw new Error(`Project not found: ${normalizedPath}`);
+                }
+                const normalizedSchedule = normalizeProjectWorkflowScheduleForPersist(
+                  input.schedule,
+                  scheduleId
+                );
+                const normalizedTarget = normalizedSchedule.target;
+                const ownerProjectPath = project.parentProjectPath ?? normalizedPath;
+                const ownerProject =
+                  ownerProjectPath === normalizedPath
+                    ? project
+                    : config.projects.get(ownerProjectPath);
+                assert(ownerProject != null, "Project automation owner project must exist");
+                if (normalizedTarget.type === "existing-workspace") {
+                  const targetWorkspace = ownerProject.workspaces.find(
+                    (workspace) => workspace.id === normalizedTarget.workspaceId
+                  );
+                  assert(
+                    targetWorkspace != null,
+                    "Existing-workspace project automation target must belong to the project"
+                  );
+                } else {
+                  const support = getSupportedWorkflowScheduleNewWorkspaceTemplate({
+                    sourceProjectPath: normalizedPath,
+                    workspaces: ownerProject.workspaces,
+                  });
+                  assert(
+                    support.unavailableReason == null,
+                    support.unavailableReason ??
+                      "New-workspace automations are unavailable for this project"
+                  );
+                }
+                const existingSchedules = project.workflowSchedules ?? [];
+                if (normalizedTarget.type === "existing-workspace") {
+                  const conflictingSchedule = Array.from(config.projects.entries())
+                    .flatMap(([candidateProjectPath, candidateProject]) => {
+                      const candidateOwnerPath =
+                        candidateProject.parentProjectPath ?? candidateProjectPath;
+                      if (candidateOwnerPath !== ownerProjectPath) {
+                        return [];
+                      }
+                      return (candidateProject.workflowSchedules ?? []).map((schedule) => ({
+                        projectPath: candidateProjectPath,
+                        schedule,
+                      }));
+                    })
+                    .find(
+                      (candidate) =>
+                        !(
+                          candidate.projectPath === normalizedPath &&
+                          candidate.schedule.id === normalizedSchedule.id
+                        ) &&
+                        candidate.schedule.target.type === "existing-workspace" &&
+                        candidate.schedule.target.workspaceId === normalizedTarget.workspaceId
+                    );
+                  assert(
+                    conflictingSchedule == null,
+                    "Existing-workspace project automation target already has an automation"
+                  );
+                }
+                project.workflowSchedules = [
+                  ...existingSchedules.filter((schedule) => schedule.id !== normalizedSchedule.id),
+                  normalizedSchedule,
+                ];
+                savedSchedule = normalizedSchedule;
+                return config;
+              });
+              assert(
+                savedSchedule != null,
+                "Project workflow schedule save must produce a schedule"
+              );
+              return Ok(savedSchedule);
+            } catch (error) {
+              return Err(`Failed to save project workflow schedule: ${getErrorMessage(error)}`);
+            }
+          }),
+        run: t
+          .input(schemas.projects.workflowSchedules.run.input)
+          .output(schemas.projects.workflowSchedules.run.output)
+          .handler(async ({ context, input }) => {
+            assertDynamicWorkflowsEnabled(context);
+            try {
+              const result = await context.workflowSchedulerService.runProjectScheduleNow({
+                projectPath: stripTrailingSlashes(input.projectPath),
+                scheduleId: input.scheduleId,
+              });
+              return Ok({
+                runId: result.runId,
+                status: schemas.WorkflowRunStatusSchema.parse(result.status),
+              });
+            } catch (error) {
+              return Err(`Failed to run project workflow schedule: ${getErrorMessage(error)}`);
+            }
+          }),
+        remove: t
+          .input(schemas.projects.workflowSchedules.remove.input)
+          .output(schemas.projects.workflowSchedules.remove.output)
+          .handler(async ({ context, input }) => {
+            try {
+              const normalizedPath = stripTrailingSlashes(input.projectPath);
+              let removed = false;
+              await context.config.editConfig((config) => {
+                const project = config.projects.get(normalizedPath);
+                if (!project) {
+                  throw new Error(`Project not found: ${normalizedPath}`);
+                }
+                const existingSchedules = project.workflowSchedules ?? [];
+                const nextSchedules = existingSchedules.filter(
+                  (schedule) => schedule.id !== input.scheduleId
+                );
+                removed = nextSchedules.length !== existingSchedules.length;
+                if (nextSchedules.length > 0) {
+                  project.workflowSchedules = nextSchedules;
+                } else {
+                  delete project.workflowSchedules;
+                }
+                return config;
+              });
+              if (!removed) {
+                return Err("Project workflow schedule not found");
+              }
+              return Ok(undefined);
+            } catch (error) {
+              return Err(`Failed to remove project workflow schedule: ${getErrorMessage(error)}`);
+            }
+          }),
+      },
       remove: t
         .input(schemas.projects.remove.input)
         .output(schemas.projects.remove.output)
@@ -4052,8 +4297,11 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.setWorkflowSchedule.output)
         .handler(async ({ context, input }) => {
           // Scheduled runs only dispatch under the dynamic-workflows experiment;
-          // reject configuration up-front instead of persisting a dormant schedule.
-          assertDynamicWorkflowsEnabled(context);
+          // reject non-null configuration up-front instead of persisting a dormant schedule.
+          // Clearing is always allowed so stale schedules can be removed after disabling the experiment.
+          if (input.schedule != null) {
+            assertDynamicWorkflowsEnabled(context);
+          }
           return context.workspaceService.setWorkflowSchedule(input.workspaceId, input.schedule);
         }),
       regenerateTitle: t

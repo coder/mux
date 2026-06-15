@@ -1,6 +1,6 @@
 import "../../../../tests/ui/dom";
 
-import type { PropsWithChildren } from "react";
+import type { ComponentProps, PropsWithChildren } from "react";
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
@@ -11,6 +11,7 @@ import * as ProjectContextModule from "@/browser/contexts/ProjectContext";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import * as GitStatusStoreModule from "@/browser/stores/GitStatusStore";
 import * as RuntimeStatusStoreModule from "@/browser/stores/RuntimeStatusStore";
+import * as ExperimentsModule from "@/browser/hooks/useExperiments";
 import * as OpenTerminalModule from "@/browser/hooks/useOpenTerminal";
 import * as OpenInEditorModule from "@/browser/hooks/useOpenInEditor";
 import * as PersistedStateModule from "@/browser/hooks/usePersistedState";
@@ -23,6 +24,8 @@ import * as GitStatusIndicatorModule from "../GitStatusIndicator/GitStatusIndica
 import * as MultiProjectGitStatusIndicatorModule from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
 import * as RuntimeBadgeModule from "../RuntimeBadge/RuntimeBadge";
 import * as BranchSelectorModule from "../BranchSelector/BranchSelector";
+import type { AutomationModal } from "../AutomationModal";
+import type { WorkspaceMenuBar as WorkspaceMenuBarComponent } from "./WorkspaceMenuBar";
 import * as WorkspaceMCPModalModule from "../WorkspaceMCPModal/WorkspaceMCPModal";
 import * as TooltipModule from "../Tooltip/Tooltip";
 import * as PopoverModule from "../Popover/Popover";
@@ -36,8 +39,19 @@ import * as WorkspaceActionsMenuContentModule from "../WorkspaceActionsMenuConte
 import * as WorkspaceTerminalIconModule from "../icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
 import * as SkillIndicatorModule from "../SkillIndicator/SkillIndicator";
 
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX } from "@/constants/layout";
-import { WorkspaceMenuBar } from "./WorkspaceMenuBar";
+
+let latestAutomationModalProps: ComponentProps<typeof AutomationModal> | null = null;
+
+void mock.module("../AutomationModal", () => ({
+  AutomationModal: (props: ComponentProps<typeof AutomationModal>) => {
+    latestAutomationModalProps = props;
+    return props.open ? <div data-testid="automation-modal" /> : null;
+  },
+}));
+let WorkspaceMenuBar!: typeof WorkspaceMenuBarComponent;
 
 let cleanupDom: (() => void) | null = null;
 const workspaceId = "workspace-1";
@@ -126,9 +140,10 @@ function installWorkspaceMenuBarTestDoubles() {
   );
   spyOn(ProjectContextModule, "useProjectContext").mockImplementation(
     () =>
-      ({ userProjects: new Map() }) as unknown as ReturnType<
-        typeof ProjectContextModule.useProjectContext
-      >
+      ({
+        getProjectConfig: () => undefined,
+        userProjects: new Map(),
+      }) as unknown as ReturnType<typeof ProjectContextModule.useProjectContext>
   );
   spyOn(WorkspaceStoreModule, "useWorkspaceSidebarState").mockImplementation(
     () =>
@@ -190,6 +205,7 @@ function installWorkspaceMenuBarTestDoubles() {
   spyOn(BranchSelectorModule, "BranchSelector").mockImplementation(
     (() => null) as unknown as typeof BranchSelectorModule.BranchSelector
   );
+  latestAutomationModalProps = null;
   spyOn(WorkspaceMCPModalModule, "WorkspaceMCPModal").mockImplementation(
     (() => null) as unknown as typeof WorkspaceMCPModalModule.WorkspaceMCPModal
   );
@@ -264,7 +280,7 @@ function installWorkspaceMenuBarTestDoubles() {
   );
 }
 
-const defaultProps: React.ComponentProps<typeof WorkspaceMenuBar> = {
+const defaultProps: ComponentProps<typeof WorkspaceMenuBarComponent> = {
   workspaceId,
   projectName: "demo",
   projectPath: "/projects/demo",
@@ -280,6 +296,11 @@ describe("WorkspaceMenuBar archive confirmations", () => {
   beforeEach(() => {
     cleanupDom = installDom();
     installWorkspaceMenuBarTestDoubles();
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    ({ WorkspaceMenuBar } = require("./WorkspaceMenuBar?workspace-menu-bar-test=1") as {
+      WorkspaceMenuBar: typeof WorkspaceMenuBarComponent;
+    });
+    /* eslint-enable @typescript-eslint/no-require-imports */
     if (!window.matchMedia) {
       window.matchMedia = (query: string): MediaQueryList => ({
         matches: false,
@@ -315,6 +336,153 @@ describe("WorkspaceMenuBar archive confirmations", () => {
     expect(view.getByTestId("workspace-menu-bar").style.paddingLeft).toBe(
       `${WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX}px`
     );
+  });
+
+  it("opens automation settings with the keybind when dynamic workflows are enabled", async () => {
+    spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(
+      (experimentId) => experimentId === EXPERIMENT_IDS.DYNAMIC_WORKFLOWS
+    );
+    render(<WorkspaceMenuBar {...defaultProps} />);
+
+    fireEvent.keyDown(window, {
+      key: KEYBINDS.CONFIGURE_SCHEDULED_WORKFLOW.key,
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    await waitFor(() => {
+      expect(latestAutomationModalProps?.open).toBe(true);
+    });
+  });
+
+  it("opens automation settings under the workspace sub-project when scoped", async () => {
+    spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(
+      (experimentId) => experimentId === EXPERIMENT_IDS.DYNAMIC_WORKFLOWS
+    );
+    const subProjectPath = "/projects/demo/packages/api";
+    spyOn(WorkspaceContextModule, "useWorkspaceContext").mockImplementation(
+      () =>
+        ({
+          workspaceMetadata: new Map([
+            [
+              workspaceId,
+              {
+                id: workspaceId,
+                name: "feature-branch",
+                projectName: "demo",
+                projectPath: defaultProps.projectPath,
+                namedWorkspacePath: defaultProps.namedWorkspacePath,
+                runtimeConfig: defaultProps.runtimeConfig,
+                subProjectPath,
+              },
+            ],
+          ]),
+        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceContext>
+    );
+    spyOn(ProjectContextModule, "useProjectContext").mockImplementation(
+      () =>
+        ({
+          getProjectConfig: (path: string) =>
+            path === subProjectPath
+              ? {
+                  parentProjectPath: defaultProps.projectPath,
+                  workspaces: [],
+                  workflowSchedules: [],
+                }
+              : { workspaces: [{ id: workspaceId, path: "/tmp/workspace", subProjectPath }] },
+          userProjects: new Map([
+            [defaultProps.projectPath, { workspaces: [] }],
+            [subProjectPath, { parentProjectPath: defaultProps.projectPath, workspaces: [] }],
+          ]),
+        }) as unknown as ReturnType<typeof ProjectContextModule.useProjectContext>
+    );
+    render(<WorkspaceMenuBar {...defaultProps} />);
+
+    fireEvent.keyDown(window, {
+      key: KEYBINDS.CONFIGURE_SCHEDULED_WORKFLOW.key,
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    await waitFor(() => {
+      expect(latestAutomationModalProps?.projectPath).toBe(subProjectPath);
+    });
+  });
+
+  it("passes the project automation targeting this workspace into automation settings", async () => {
+    spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(
+      (experimentId) => experimentId === EXPERIMENT_IDS.DYNAMIC_WORKFLOWS
+    );
+    const projectWorkflowSchedule = {
+      id: "workspace-automation",
+      enabled: true,
+      workflowName: "triage-issues",
+      intervalMs: 15 * 60_000,
+      target: { type: "existing-workspace" as const, workspaceId },
+    };
+    spyOn(ProjectContextModule, "useProjectContext").mockImplementation(
+      () =>
+        ({
+          getProjectConfig: () => ({
+            workspaces: [{ id: workspaceId, path: "/tmp/workspace" }],
+            workflowSchedules: [projectWorkflowSchedule],
+          }),
+          userProjects: new Map(),
+        }) as unknown as ReturnType<typeof ProjectContextModule.useProjectContext>
+    );
+    render(<WorkspaceMenuBar {...defaultProps} />);
+
+    fireEvent.keyDown(window, {
+      key: KEYBINDS.CONFIGURE_SCHEDULED_WORKFLOW.key,
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    await waitFor(() => {
+      expect(latestAutomationModalProps?.projectWorkflowSchedule).toEqual(projectWorkflowSchedule);
+    });
+  });
+
+  it("does not open automation settings while a modal dialog is open", () => {
+    spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(
+      (experimentId) => experimentId === EXPERIMENT_IDS.DYNAMIC_WORKFLOWS
+    );
+    render(
+      <>
+        <WorkspaceMenuBar {...defaultProps} />
+        <div role="dialog" aria-modal="true">
+          Existing dialog
+        </div>
+      </>
+    );
+
+    fireEvent.keyDown(window, {
+      key: KEYBINDS.CONFIGURE_SCHEDULED_WORKFLOW.key,
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    expect(latestAutomationModalProps?.open ?? false).toBe(false);
+  });
+
+  it("does not open automation settings from editable fields", () => {
+    spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(
+      (experimentId) => experimentId === EXPERIMENT_IDS.DYNAMIC_WORKFLOWS
+    );
+    const view = render(
+      <>
+        <WorkspaceMenuBar {...defaultProps} />
+        <input aria-label="Editable target" />
+      </>
+    );
+
+    fireEvent.keyDown(view.getByLabelText("Editable target"), {
+      key: KEYBINDS.CONFIGURE_SCHEDULED_WORKFLOW.key,
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    expect(latestAutomationModalProps?.open ?? false).toBe(false);
   });
 
   it("opens the archive confirmation modal when preflight finds untracked files", async () => {

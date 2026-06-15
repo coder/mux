@@ -10,7 +10,7 @@ import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import type { ORPCContext } from "./context";
-import { router } from "./router";
+import { resolveWorkflowContext, router } from "./router";
 
 describe("router workspace goal validation", () => {
   test("goal routes do not touch goal files for unknown workspaces", async () => {
@@ -116,8 +116,15 @@ describe("router workflow routes", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  function createContext(options: { enabled: boolean }): ORPCContext {
+  function createContext(options: { enabled: boolean; workspacePath?: string }): ORPCContext {
+    const workspacePath = options.workspacePath ?? projectPath;
     return {
+      workflowSchedulerService: {
+        runProjectScheduleNow: mock(async () => ({
+          runId: "wfr_manual_project_schedule",
+          status: "backgrounded",
+        })),
+      },
       workflowRuntimeFactory: new QuickJSRuntimeFactory(),
       config,
       aiService: {
@@ -131,7 +138,7 @@ describe("router workflow routes", () => {
             id: "workspace-1",
             name: "workspace-1",
             projectPath,
-            namedWorkspacePath: projectPath,
+            namedWorkspacePath: workspacePath,
             runtimeConfig: { type: "local", srcBaseDir: tempDir },
           },
         })),
@@ -180,6 +187,302 @@ describe("router workflow routes", () => {
         expect.objectContaining({ name: "demo", scope: "project", executable: true }),
       ])
     );
+  });
+
+  test("resolves scheduled sub-project workflow definitions inside the target workspace", async () => {
+    const workspacePath = path.join(tempDir, "workspace-checkout");
+    const subProjectPath = path.join(projectPath, "packages", "api");
+    const workspaceSubProjectPath = path.join(workspacePath, "packages", "api");
+    fs.mkdirSync(path.join(workspaceSubProjectPath, ".mux", "workflows"), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspaceSubProjectPath, ".mux", "workflows", "sub-scan.js"),
+      `// description: Sub-project scan\nexport default function workflow() { return {}; }\n`
+    );
+    await config.editConfig((current) => {
+      current.projects.set(subProjectPath, {
+        parentProjectPath: projectPath,
+        workspaces: [],
+      });
+      return current;
+    });
+    const context = createContext({ enabled: true, workspacePath });
+
+    const { service, projectTrusted } = await resolveWorkflowContext(context, "workspace-1", {
+      projectPath: subProjectPath,
+    });
+    const definitions = await service.listDefinitions({ projectTrusted });
+
+    expect(definitions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "sub-scan", scope: "project" })])
+    );
+    expect(definitions).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "demo" })])
+    );
+  });
+
+  test("project workflow discovery scans the requested project, not an active workspace checkout", async () => {
+    const workspacePath = path.join(tempDir, "workspace-checkout");
+    fs.mkdirSync(path.join(workspacePath, ".mux", "workflows"), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspacePath, ".mux", "workflows", "workspace-only.js"),
+      `// description: Workspace-only workflow\nexport default function workflow() { return {}; }\n`
+    );
+    await config.editConfig((current) => {
+      current.projects.set(projectPath, {
+        ...(current.projects.get(projectPath) ?? { workspaces: [] }),
+        workspaces: [{ id: "workspace-1", path: workspacePath }],
+      });
+      return current;
+    });
+    const client = createRouterClient(router(), {
+      context: createContext({ enabled: true, workspacePath }),
+    });
+
+    const definitions = await client.workflows.listDefinitions({ projectPath });
+
+    expect(definitions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "demo", scope: "project" })])
+    );
+    expect(definitions).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "workspace-only" })])
+    );
+  });
+
+  test("rejects ambiguous workflow definition discovery inputs", async () => {
+    const client = createRouterClient(router(), {
+      context: createContext({ enabled: true }),
+    });
+
+    await expect(
+      client.workflows.listDefinitions({ projectPath, workspaceId: "workspace-1" } as never)
+    ).rejects.toThrow();
+  });
+
+  test("validates sub-project new-workspace schedules against owner workspace templates", async () => {
+    const subProjectPath = path.join(projectPath, "packages", "api");
+    await config.editConfig((current) => {
+      current.projects.set(projectPath, {
+        trusted: true,
+        workspaces: [
+          {
+            id: "project-dir-template",
+            path: projectPath,
+            name: "project-dir-template",
+            runtimeConfig: { type: "local" },
+          },
+        ],
+      });
+      current.projects.set(subProjectPath, {
+        parentProjectPath: projectPath,
+        workspaces: [],
+      });
+      return current;
+    });
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    const result = await client.projects.workflowSchedules.set({
+      projectPath: subProjectPath,
+      schedule: {
+        enabled: true,
+        workflowName: "demo",
+        intervalMs: 60_000,
+        target: { type: "new-workspace", trunkBranch: "main" },
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("project-dir local workspaces"),
+    });
+  });
+
+  test("rejects existing-workspace conflicts across owner project schedules", async () => {
+    const subProjectPath = path.join(projectPath, "packages", "api");
+    await config.editConfig((current) => {
+      current.projects.set(projectPath, {
+        trusted: true,
+        workspaces: [{ id: "workspace-1", path: path.join(tempDir, "workspace-1") }],
+        workflowSchedules: [
+          {
+            id: "parent-schedule",
+            enabled: true,
+            workflowName: "demo",
+            intervalMs: 60_000,
+            target: { type: "existing-workspace", workspaceId: "workspace-1" },
+          },
+        ],
+      });
+      current.projects.set(subProjectPath, {
+        parentProjectPath: projectPath,
+        workspaces: [],
+      });
+      return current;
+    });
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    const result = await client.projects.workflowSchedules.set({
+      projectPath: subProjectPath,
+      schedule: {
+        enabled: true,
+        workflowName: "demo",
+        intervalMs: 60_000,
+        target: { type: "existing-workspace", workspaceId: "workspace-1" },
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("already has an automation"),
+    });
+  });
+
+  test("saves project workflow schedules through the API", async () => {
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    const result = await client.projects.workflowSchedules.set({
+      projectPath,
+      schedule: {
+        title: "GitHub triage",
+        enabled: true,
+        workflowName: "demo",
+        intervalMs: 6 * 60 * 60_000,
+        args: { label: "needs-triage" },
+        contextMode: "reset",
+        target: { type: "new-workspace", trunkBranch: "main", branchName: "scheduled-triage" },
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      data: {
+        title: "GitHub triage",
+        enabled: true,
+        workflowName: "demo",
+        intervalMs: 6 * 60 * 60_000,
+        args: { label: "needs-triage" },
+        target: { type: "new-workspace", trunkBranch: "main", branchName: "scheduled-triage" },
+      },
+    });
+    const storedSchedule = config.loadConfigOrDefault().projects.get(projectPath)
+      ?.workflowSchedules?.[0];
+    expect(storedSchedule?.contextMode).toBeUndefined();
+    expect(storedSchedule).toMatchObject({
+      id: expect.any(String),
+      title: "GitHub triage",
+      workflowName: "demo",
+    });
+  });
+
+  test("rejects multiple project schedules targeting the same existing workspace", async () => {
+    await config.editConfig((current) => {
+      current.projects.set(projectPath, {
+        ...(current.projects.get(projectPath) ?? { workspaces: [] }),
+        workspaces: [{ id: "workspace-1", path: path.join(projectPath, "workspace-1") }],
+      });
+      return current;
+    });
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    const first = await client.projects.workflowSchedules.set({
+      projectPath,
+      schedule: {
+        enabled: true,
+        workflowName: "demo",
+        intervalMs: 15 * 60_000,
+        target: { type: "existing-workspace", workspaceId: "workspace-1" },
+      },
+    });
+    expect(first.success).toBe(true);
+
+    if (!first.success) throw new Error("Expected first project schedule save to succeed");
+    const update = await client.projects.workflowSchedules.set({
+      projectPath,
+      schedule: {
+        id: first.data.id,
+        enabled: false,
+        workflowName: "demo",
+        intervalMs: 30 * 60_000,
+        target: { type: "existing-workspace", workspaceId: "workspace-1" },
+      },
+    });
+    expect(update.success).toBe(true);
+
+    const duplicate = await client.projects.workflowSchedules.set({
+      projectPath,
+      schedule: {
+        enabled: true,
+        workflowName: "demo",
+        intervalMs: 30 * 60_000,
+        target: { type: "existing-workspace", workspaceId: "workspace-1" },
+      },
+    });
+
+    expect(duplicate).toEqual({
+      success: false,
+      error:
+        "Failed to save project workflow schedule: Existing-workspace project automation target already has an automation",
+    });
+  });
+
+  test("rejects unsupported fresh-workspace project automations on save", async () => {
+    await config.editConfig((current) => {
+      current.projects.set(projectPath, {
+        ...(current.projects.get(projectPath) ?? { workspaces: [] }),
+        workspaces: [
+          {
+            id: "workspace-1",
+            path: projectPath,
+            runtimeConfig: { type: "local" },
+          },
+        ],
+      });
+      return current;
+    });
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    const result = await client.projects.workflowSchedules.set({
+      projectPath,
+      schedule: {
+        enabled: true,
+        workflowName: "demo",
+        intervalMs: 15 * 60_000,
+        target: { type: "new-workspace", trunkBranch: "main" },
+      },
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        "Failed to save project workflow schedule: New-workspace scheduled runs are not supported for project-dir local workspaces yet.",
+    });
+  });
+
+  test("runs project workflow schedules through the API", async () => {
+    const context = createContext({ enabled: true });
+    const runProjectScheduleNow = mock(
+      async (_input: { projectPath: string; scheduleId: string }) => ({
+        runId: "wfr_manual_project_schedule",
+        status: "backgrounded",
+      })
+    );
+    context.workflowSchedulerService = {
+      runProjectScheduleNow,
+    } as unknown as ORPCContext["workflowSchedulerService"];
+    const client = createRouterClient(router(), { context });
+
+    const result = await client.projects.workflowSchedules.run({
+      projectPath: `${projectPath}/`,
+      scheduleId: "automation-1",
+    });
+
+    expect(result).toEqual({
+      success: true,
+      data: { runId: "wfr_manual_project_schedule", status: "backgrounded" },
+    });
+    expect(runProjectScheduleNow).toHaveBeenCalledWith({
+      projectPath,
+      scheduleId: "automation-1",
+    });
   });
 
   test("promotes a scratch workflow run through the API", async () => {

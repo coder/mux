@@ -69,6 +69,10 @@ import { isProviderAutoRouteEligible } from "@/node/utils/providerRequirements";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 import { deriveProjectHierarchy } from "@/common/utils/subProjects";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  parsePersistedProjectWorkflowSchedule,
+  parsePersistedWorkflowSchedule,
+} from "@/common/utils/workflowSchedule";
 
 // Re-export project/provider types from dedicated schema/types files (for preload usage)
 export type { Workspace, ProjectConfig, ProjectsConfig, ProviderConfig, CanonicalProvidersConfig };
@@ -537,10 +541,20 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
     defaultRuntime?: unknown;
     runtimeOverridesEnabled?: unknown;
     projectKind?: unknown;
+    workflowSchedules?: unknown;
   };
   const runtimeEnablement = normalizeRuntimeEnablementOverrides(record.runtimeEnablement);
   const defaultRuntime = normalizeRuntimeEnablementId(record.defaultRuntime);
   const runtimeOverridesEnabled = record.runtimeOverridesEnabled === true ? true : undefined;
+
+  const workflowSchedules = Array.isArray(record.workflowSchedules)
+    ? record.workflowSchedules
+        .map((schedule) => parsePersistedProjectWorkflowSchedule(schedule))
+        .filter(
+          (schedule): schedule is NonNullable<ProjectConfig["workflowSchedules"]>[number] =>
+            schedule != null
+        )
+    : [];
 
   const next = { ...record };
   delete (next as ProjectConfig & { sections?: unknown }).sections;
@@ -567,6 +581,12 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
     next.projectKind = projectKind;
   } else {
     delete next.projectKind;
+  }
+
+  if (workflowSchedules.length > 0) {
+    next.workflowSchedules = workflowSchedules;
+  } else {
+    delete next.workflowSchedules;
   }
 
   return next;
@@ -1644,7 +1664,7 @@ export class Config {
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
               heartbeat: workspace.heartbeat,
-              workflowSchedule: workspace.workflowSchedule,
+              workflowSchedule: parsePersistedWorkflowSchedule(workspace.workflowSchedule),
               goalDefaults: workspace.goalDefaults,
               aiSettingsByAgent:
                 workspace.aiSettingsByAgent ??
@@ -1818,7 +1838,7 @@ export class Config {
               runtimeConfig: DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
               heartbeat: workspace.heartbeat,
-              workflowSchedule: workspace.workflowSchedule,
+              workflowSchedule: parsePersistedWorkflowSchedule(workspace.workflowSchedule),
               goalDefaults: workspace.goalDefaults,
               aiSettingsByAgent:
                 workspace.aiSettingsByAgent ??

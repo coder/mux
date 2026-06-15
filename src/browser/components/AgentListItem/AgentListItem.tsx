@@ -73,8 +73,11 @@ import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContex
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "../ShareTranscriptDialog/ShareTranscriptDialog";
 import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
+import { AutomationModal } from "../AutomationModal";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
 import { useAPI } from "@/browser/contexts/API";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { getExistingWorkspaceProjectWorkflowSchedule } from "@/browser/utils/projectWorkflowSchedules";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -432,6 +435,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath } = metadata;
+  const dynamicWorkflowsEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const isInitializing = metadata.isInitializing === true;
   const isRemoving = isRemovingProp === true || metadata.isRemoving === true;
@@ -485,9 +489,15 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
       ? `${groupLabel} · ${workspaceTitle}`
       : workspaceTitle;
   const isEditing = editingWorkspaceId === workspaceId;
+  const { getProjectConfig } = useProjectContext();
+  const projectWorkflowSchedule = getExistingWorkspaceProjectWorkflowSchedule({
+    projectConfig: getProjectConfig(projectPath),
+    workspaceId,
+  });
 
   const linkSharingEnabled = useLinkSharingEnabled();
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
+  const [automationModalOpen, setAutomationModalOpen] = useState(false);
   const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
   const overflowMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const overflowMenuFrameRef = useRef<number | null>(null);
@@ -931,6 +941,9 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     onConfigureHeartbeat={
                       workspaceHeartbeatsEnabled ? () => setHeartbeatModalOpen(true) : null
                     }
+                    onConfigureAutomation={
+                      dynamicWorkflowsEnabled ? () => setAutomationModalOpen(true) : null
+                    }
                     onStopRuntime={
                       isRuntimeRunning && onStopRuntime
                         ? () =>
@@ -996,6 +1009,16 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   />
                 </PopoverContent>
               </Popover>
+              {dynamicWorkflowsEnabled && automationModalOpen && (
+                <AutomationModal
+                  projectPath={projectPath}
+                  workspaceId={workspaceId}
+                  workspaceName={displayTitle}
+                  projectWorkflowSchedule={projectWorkflowSchedule}
+                  open={automationModalOpen}
+                  onOpenChange={setAutomationModalOpen}
+                />
+              )}
               {workspaceHeartbeatsEnabled && (
                 <WorkspaceHeartbeatModal
                   workspaceId={workspaceId}

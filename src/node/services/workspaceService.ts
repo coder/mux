@@ -8,6 +8,7 @@ import { isWorkspaceArchived } from "@/common/utils/archive";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { Config } from "@/node/config";
+import type { Workspace } from "@/common/types/project";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { normalizeTaskSettings } from "@/common/types/tasks";
@@ -107,6 +108,7 @@ import type {
   ProjectRef,
   WorkspaceActivitySnapshot,
   WorkspaceMetadata,
+  WorkspaceWorkflowSchedule,
 } from "@/common/types/workspace";
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import { buildAskUserQuestionSummary } from "@/common/utils/tools/askUserQuestionSummary";
@@ -161,6 +163,12 @@ import {
   HEARTBEAT_RESET_BOUNDARY_MESSAGE,
   type HeartbeatContextMode,
 } from "@/constants/heartbeat";
+import {
+  WORKFLOW_SCHEDULE_CONTEXT_PREPARATION_TIMEOUT_MS,
+  WORKFLOW_SCHEDULE_DEFAULT_CONTEXT_MODE,
+  type WorkflowScheduleContextMode,
+} from "@/constants/workflowSchedule";
+import { getWorkflowScheduleNewWorkspaceTargetUnavailableReason } from "@/common/utils/workflowScheduleTarget";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import {
   GOAL_BUDGET_LIMIT_KIND,
@@ -800,6 +808,20 @@ interface WorkspaceHistoryLoadMoreResult {
 
 function isCompactedSummaryMessage(message: MuxMessage): boolean {
   return isDurableCompactedMarker(message.metadata?.compacted);
+}
+
+function getLatestCompactionBoundaryEpoch(messages: MuxMessage[]): number {
+  let latestEpoch = 0;
+  for (const message of messages) {
+    if (
+      isDurableCompactedMarker(message.metadata?.compacted) &&
+      message.metadata?.compactionBoundary === true &&
+      isPositiveInteger(message.metadata.compactionEpoch)
+    ) {
+      latestEpoch = Math.max(latestEpoch, message.metadata.compactionEpoch);
+    }
+  }
+  return latestEpoch;
 }
 
 function getNextCompactionEpochForAppendBoundary(
@@ -3885,6 +3907,67 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  private normalizeWorkflowScheduleForPersist(
+    schedule: Omit<WorkspaceWorkflowSchedule, "lastRunStartedAt">,
+    source: { sourceProjectPath: string; sourceWorkspace: Workspace }
+  ): Omit<WorkspaceWorkflowSchedule, "lastRunStartedAt"> {
+    const workflowName = schedule.workflowName.trim();
+    assert(workflowName.length > 0, "Workflow schedule requires a non-empty workflowName");
+
+    const contextMode = schedule.contextMode ?? WORKFLOW_SCHEDULE_DEFAULT_CONTEXT_MODE;
+    assert(
+      contextMode === "normal" || contextMode === "compact" || contextMode === "reset",
+      `Unsupported workflow schedule context mode: ${String(contextMode)}`
+    );
+
+    const target = schedule.target;
+    let normalizedTarget: WorkspaceWorkflowSchedule["target"] | undefined;
+    if (target?.type === "new-workspace") {
+      const unsupportedReason = getWorkflowScheduleNewWorkspaceTargetUnavailableReason({
+        sourceProjectPath: source.sourceProjectPath,
+        projects: source.sourceWorkspace.projects,
+        runtimeConfig: source.sourceWorkspace.runtimeConfig,
+      });
+      assert(
+        unsupportedReason == null,
+        unsupportedReason ?? "Unsupported workflow schedule target"
+      );
+      const trunkBranch = target.trunkBranch.trim();
+      assert(
+        trunkBranch.length > 0,
+        "New-workspace workflow schedules require a non-empty trunkBranch"
+      );
+      const branchName = target.branchName?.trim();
+      if (branchName) {
+        const branchNameValidation = validateWorkspaceName(branchName);
+        assert(
+          branchNameValidation.valid,
+          branchNameValidation.error ?? "Invalid scheduled workflow target branch name"
+        );
+      }
+      const title = target.title?.trim();
+      normalizedTarget = {
+        type: "new-workspace",
+        trunkBranch,
+        ...(branchName ? { branchName } : {}),
+        ...(title ? { title } : {}),
+      };
+    } else if (target?.type === "current-workspace") {
+      normalizedTarget = undefined;
+    } else {
+      assert(target == null, "Unsupported workflow schedule target");
+    }
+
+    return {
+      enabled: schedule.enabled,
+      workflowName,
+      ...(schedule.args != null ? { args: schedule.args } : {}),
+      intervalMs: schedule.intervalMs,
+      ...(contextMode !== WORKFLOW_SCHEDULE_DEFAULT_CONTEXT_MODE ? { contextMode } : {}),
+      ...(normalizedTarget != null ? { target: normalizedTarget } : {}),
+    };
+  }
+
   /**
    * Set (or clear, with null) the workspace's scheduled workflow run.
    * Input shape/bounds are enforced at the oRPC schema boundary
@@ -3894,12 +3977,7 @@ export class WorkspaceService extends EventEmitter {
    */
   async setWorkflowSchedule(
     workspaceId: string,
-    schedule: {
-      enabled: boolean;
-      workflowName: string;
-      args?: Record<string, unknown>;
-      intervalMs: number;
-    } | null
+    schedule: Omit<WorkspaceWorkflowSchedule, "lastRunStartedAt"> | null
   ): Promise<Result<void, string>> {
     try {
       const normalizedWorkspaceId = workspaceId.trim();
@@ -3910,7 +3988,7 @@ export class WorkspaceService extends EventEmitter {
 
       let applied = false;
       await this.config.editConfig((config) => {
-        for (const projectConfig of config.projects.values()) {
+        for (const [sourceProjectPath, projectConfig] of config.projects) {
           const workspaceEntry = projectConfig.workspaces.find(
             (entry) => entry.id === normalizedWorkspaceId
           );
@@ -3920,12 +3998,10 @@ export class WorkspaceService extends EventEmitter {
           if (schedule == null) {
             delete workspaceEntry.workflowSchedule;
           } else {
-            workspaceEntry.workflowSchedule = {
-              enabled: schedule.enabled,
-              workflowName: schedule.workflowName,
-              ...(schedule.args != null ? { args: schedule.args } : {}),
-              intervalMs: schedule.intervalMs,
-            };
+            workspaceEntry.workflowSchedule = this.normalizeWorkflowScheduleForPersist(schedule, {
+              sourceProjectPath,
+              sourceWorkspace: workspaceEntry,
+            });
           }
           applied = true;
           break;
@@ -3941,6 +4017,10 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       return Err(`Failed to set workflow schedule: ${getErrorMessage(error)}`);
     }
+  }
+
+  async emitCurrentWorkflowScheduleMetadata(workspaceId: string): Promise<void> {
+    await this.emitCurrentWorkspaceMetadata(workspaceId);
   }
 
   /**
@@ -6228,6 +6308,7 @@ export class WorkspaceService extends EventEmitter {
     runId: string;
     status: string;
     result: unknown;
+    synthetic?: boolean;
     run?: WorkflowRunRecord;
   }): Promise<boolean> {
     assert(input.workspaceId.length > 0, "appendWorkflowRunInvocation requires workspaceId");
@@ -6244,6 +6325,7 @@ export class WorkspaceService extends EventEmitter {
       input.rawCommand,
       {
         timestamp: now,
+        ...(input.synthetic === true ? { synthetic: true, uiVisible: true } : {}),
         muxMetadata: {
           type: WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
           rawCommand: input.rawCommand,
@@ -7354,6 +7436,56 @@ export class WorkspaceService extends EventEmitter {
       return Ok("reset");
     } finally {
       this.resettingContextWorkspaces.delete(workspaceId);
+    }
+  }
+
+  async prepareScheduledWorkflowContext(
+    workspaceId: string,
+    contextMode: WorkflowScheduleContextMode
+  ): Promise<Result<"normal" | "reset" | "noop" | "compact", string>> {
+    switch (contextMode) {
+      case "normal":
+        return Ok("normal");
+      case "reset":
+        return this.resetContext(workspaceId);
+      case "compact": {
+        const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+        if (!historyResult.success) {
+          return Err(`Failed to read active context before compaction: ${historyResult.error}`);
+        }
+
+        const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
+          historyResult.data
+        );
+        if (!hasProviderEligibleMessages(activeContextMessages)) {
+          return Ok("noop");
+        }
+
+        const previousCompactionEpoch = getLatestCompactionBoundaryEpoch(historyResult.data);
+
+        try {
+          await this.executeIdleCompaction(workspaceId);
+          await this.waitForWorkspaceIdle(workspaceId, {
+            signal: AbortSignal.timeout(WORKFLOW_SCHEDULE_CONTEXT_PREPARATION_TIMEOUT_MS),
+          });
+          const compactedHistoryResult =
+            await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+          if (!compactedHistoryResult.success) {
+            return Err(`Failed to verify compaction boundary: ${compactedHistoryResult.error}`);
+          }
+          const nextCompactionEpoch = getLatestCompactionBoundaryEpoch(compactedHistoryResult.data);
+          if (nextCompactionEpoch <= previousCompactionEpoch) {
+            return Err("Compaction finished without writing a new context boundary");
+          }
+          return Ok("compact");
+        } catch (error) {
+          return Err(getErrorMessage(error));
+        }
+      }
+      default: {
+        const exhaustiveContextMode: never = contextMode;
+        return Err(`Unsupported workflow schedule context mode: ${String(exhaustiveContextMode)}`);
+      }
     }
   }
 

@@ -10,7 +10,9 @@ export function isProjectTrusted(config: Config, projectPath?: string | null): b
     return false;
   }
 
-  return (
-    config.loadConfigOrDefault().projects.get(stripTrailingSlashes(projectPath))?.trusted ?? false
-  );
+  const projects = config.loadConfigOrDefault().projects;
+  const normalizedProjectPath = stripTrailingSlashes(projectPath);
+  const project = projects.get(normalizedProjectPath);
+  const trustOwnerPath = project?.parentProjectPath ?? normalizedProjectPath;
+  return projects.get(trustOwnerPath)?.trusted ?? false;
 }

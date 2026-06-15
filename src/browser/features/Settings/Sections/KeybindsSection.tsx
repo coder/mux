@@ -34,6 +34,8 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   SHARE_TRANSCRIPT: "Share transcript",
   CONFIGURE_MCP: "Configure MCP servers",
   CONFIGURE_HEARTBEAT: "Configure heartbeat",
+  CONFIGURE_SCHEDULED_WORKFLOW: "Configure workspace automations",
+  CONFIGURE_PROJECT_AUTOMATIONS: "Configure project automations",
   OPEN_COMMAND_PALETTE: "Command palette",
   OPEN_COMMAND_PALETTE_ACTIONS: "Command palette (alternate)",
   TOGGLE_THINKING: "Toggle thinking",
@@ -103,6 +105,8 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "TOGGLE_NOTIFICATIONS",
       "SHARE_TRANSCRIPT",
       "CONFIGURE_MCP",
+      "CONFIGURE_SCHEDULED_WORKFLOW",
+      "CONFIGURE_PROJECT_AUTOMATIONS",
       "CONFIGURE_HEARTBEAT",
     ],
   },
@@ -198,6 +202,7 @@ const KEYBIND_DISPLAY_ALTERNATES: Partial<
 };
 
 export function KeybindsSection() {
+  const dynamicWorkflowsEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const visibleKeybindGroups = KEYBIND_GROUPS.map((group) => ({
     ...group,
@@ -205,7 +210,9 @@ export function KeybindsSection() {
     keys: group.keys.filter(
       (key) =>
         !isKeybindDeprecated(KEYBINDS[key]) &&
-        (key !== "CONFIGURE_HEARTBEAT" || workspaceHeartbeatsEnabled)
+        (key !== "CONFIGURE_HEARTBEAT" || workspaceHeartbeatsEnabled) &&
+        (key !== "CONFIGURE_SCHEDULED_WORKFLOW" || dynamicWorkflowsEnabled) &&
+        (key !== "CONFIGURE_PROJECT_AUTOMATIONS" || dynamicWorkflowsEnabled)
     ),
   })).filter((group) => group.keys.length > 0);
 

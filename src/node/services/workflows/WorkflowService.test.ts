@@ -609,6 +609,74 @@ export default function workflow({ action }) {
     expect(parentRun.steps.find((step) => step.stepId === "child-project")?.status).toBe("failed");
   });
 
+  test("notifies foreground run creation before the first workflow step blocks", async () => {
+    using tmp = new DisposableTempDir("workflow-service-created-callback");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await writeWorkflow(
+      globalRoot,
+      "scheduled-scan",
+      "// description: Scheduled scan\nexport default function workflow({ agent }) { return agent({ id: 'scope', prompt: 'scope security surface' }); }\n"
+    );
+
+    let releaseAgent: ((value: { taskId: string; reportMarkdown: string }) => void) | undefined;
+    const lifecycleEvents: string[] = [];
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          lifecycleEvents.push("agent-started");
+          return await new Promise<{ taskId: string; reportMarkdown: string }>((resolve) => {
+            releaseAgent = resolve;
+          });
+        },
+      },
+      generateRunId: () => "wfr_scheduled_scan",
+      runnerId: "runner-a",
+    });
+
+    const resultPromise = service.startNamedWorkflow({
+      name: "scheduled-scan",
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: { severity: "high" },
+      onRunCreated(event) {
+        lifecycleEvents.push("run-created");
+        expect(event).toMatchObject({
+          runId: "wfr_scheduled_scan",
+          status: "pending",
+          result: null,
+          run: {
+            id: "wfr_scheduled_scan",
+            workspaceId: "workspace-1",
+            status: "pending",
+            args: { severity: "high" },
+          },
+        });
+      },
+    });
+
+    await waitForCondition("foreground run creation callback", () =>
+      lifecycleEvents.includes("run-created")
+    );
+    expect(lifecycleEvents).toEqual(["run-created"]);
+    await waitForCondition("foreground agent to start", () => releaseAgent != null);
+    expect(lifecycleEvents).toEqual(["run-created", "agent-started"]);
+
+    releaseAgent?.({ taskId: "task_scope", reportMarkdown: "scoped" });
+    await expect(resultPromise).resolves.toEqual({
+      runId: "wfr_scheduled_scan",
+      status: "completed",
+      result: { reportMarkdown: "scoped", structuredOutput: undefined },
+    });
+    await expect(runStore.getRun("wfr_scheduled_scan")).resolves.toMatchObject({
+      status: "completed",
+    });
+  });
+
   test("runs workspace scratch workflow definitions authored as files", async () => {
     using tmp = new DisposableTempDir("workflow-service");
     const workspaceRoot = path.join(tmp.path, "project");

@@ -7,6 +7,7 @@ import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { HistoryService } from "./historyService";
 import type { InitStateManager } from "./initStateManager";
+import { createMuxMessage } from "@/common/types/message";
 import { WorkspaceService } from "./workspaceService";
 
 // setWorkflowSchedule persistence semantics (modeled on workspaceService.tags.test.ts):
@@ -19,6 +20,7 @@ const TEST_PROJECT_PATH = "/test/project";
 
 describe("WorkspaceService.setWorkflowSchedule", () => {
   let currentProjectsConfig: ProjectsConfig;
+  let historyServiceMock: { getHistoryFromLatestBoundary: ReturnType<typeof mock> };
   let service: WorkspaceService;
 
   beforeEach(() => {
@@ -34,9 +36,12 @@ describe("WorkspaceService.setWorkflowSchedule", () => {
       }),
     } as unknown as Config;
 
+    historyServiceMock = {
+      getHistoryFromLatestBoundary: mock(() => Promise.resolve({ success: true, data: [] })),
+    };
     service = new WorkspaceService(
       mockConfig,
-      {} as HistoryService,
+      historyServiceMock as unknown as HistoryService,
       new EventEmitter() as unknown as AIService,
       new EventEmitter() as unknown as InitStateManager,
       {} as ExtensionMetadataService,
@@ -76,6 +81,103 @@ describe("WorkspaceService.setWorkflowSchedule", () => {
     expect(storedSchedule()).toBeUndefined();
   });
 
+  test("persists new-workspace target and context mode while trimming optional fields", async () => {
+    const result = await service.setWorkflowSchedule(TEST_WORKSPACE_ID, {
+      enabled: true,
+      workflowName: " reconcile ",
+      intervalMs: 60_000,
+      contextMode: "compact",
+      target: {
+        type: "new-workspace",
+        branchName: " scheduled-triage ",
+        trunkBranch: " main ",
+        title: " Scheduled triage ",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(storedSchedule()).toEqual({
+      enabled: true,
+      workflowName: "reconcile",
+      intervalMs: 60_000,
+      contextMode: "compact",
+      target: {
+        type: "new-workspace",
+        branchName: "scheduled-triage",
+        trunkBranch: "main",
+        title: "Scheduled triage",
+      },
+    });
+  });
+
+  test("rejects invalid new-workspace branch names at save time", async () => {
+    const result = await service.setWorkflowSchedule(TEST_WORKSPACE_ID, {
+      enabled: true,
+      workflowName: "reconcile",
+      intervalMs: 60_000,
+      target: {
+        type: "new-workspace",
+        branchName: "Invalid Branch",
+        trunkBranch: "main",
+      },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("expected invalid branch name to be rejected");
+    expect(result.error).toContain(
+      "Workspace names can only contain lowercase letters, numbers, hyphens, and underscores"
+    );
+    expect(storedSchedule()).toBeUndefined();
+  });
+
+  test("rejects unsupported fresh target source workspaces", async () => {
+    const workspace = currentProjectsConfig.projects.get(TEST_PROJECT_PATH)?.workspaces.at(0);
+    if (workspace == null) throw new Error("workspace missing");
+
+    workspace.projects = [
+      { projectPath: "/test/project-a", projectName: "project-a" },
+      { projectPath: "/test/project-b", projectName: "project-b" },
+    ];
+    const multiProject = await service.setWorkflowSchedule(TEST_WORKSPACE_ID, {
+      enabled: true,
+      workflowName: "reconcile",
+      intervalMs: 60_000,
+      target: { type: "new-workspace", trunkBranch: "main" },
+    });
+    expect(multiProject.success).toBe(false);
+    if (multiProject.success) throw new Error("expected multi-project schedule to be rejected");
+    expect(multiProject.error).toContain("multi-project workspaces");
+
+    delete workspace.projects;
+    workspace.runtimeConfig = { type: "local" };
+    const localProjectDir = await service.setWorkflowSchedule(TEST_WORKSPACE_ID, {
+      enabled: true,
+      workflowName: "reconcile",
+      intervalMs: 60_000,
+      target: { type: "new-workspace", trunkBranch: "main" },
+    });
+    expect(localProjectDir.success).toBe(false);
+    if (localProjectDir.success) throw new Error("expected local schedule to be rejected");
+    expect(localProjectDir.error).toContain("project-dir local workspaces");
+
+    workspace.runtimeConfig = {
+      type: "ssh",
+      host: "coder://",
+      srcBaseDir: "/home/coder/.mux/src",
+      coder: { workspaceName: "existing-vm", existingWorkspace: true },
+    };
+    const existingCoder = await service.setWorkflowSchedule(TEST_WORKSPACE_ID, {
+      enabled: true,
+      workflowName: "reconcile",
+      intervalMs: 60_000,
+      target: { type: "new-workspace", trunkBranch: "main" },
+    });
+    expect(existingCoder.success).toBe(false);
+    if (existingCoder.success) throw new Error("expected existing Coder schedule to be rejected");
+    expect(existingCoder.error).toContain("existing Coder workspaces");
+    expect(storedSchedule()).toBeUndefined();
+  });
+
   test("re-setting drops scheduler-owned lastRunStartedAt so the schedule is due", async () => {
     await service.setWorkflowSchedule(TEST_WORKSPACE_ID, {
       enabled: true,
@@ -93,6 +195,62 @@ describe("WorkspaceService.setWorkflowSchedule", () => {
     });
     expect(storedSchedule()?.lastRunStartedAt).toBeUndefined();
     expect(storedSchedule()?.intervalMs).toBe(120_000);
+  });
+
+  test("compact context preparation waits for a new durable boundary", async () => {
+    const beforeMessages = [createMuxMessage("u1", "user", "before compaction")];
+    const afterMessages = [
+      createMuxMessage("summary", "assistant", "compacted summary", {
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      }),
+    ];
+    historyServiceMock.getHistoryFromLatestBoundary
+      .mockResolvedValueOnce({ success: true, data: beforeMessages })
+      .mockResolvedValueOnce({ success: true, data: afterMessages });
+    const serviceInternals = service as unknown as {
+      executeIdleCompaction: (workspaceId: string) => Promise<void>;
+      waitForWorkspaceIdle: (
+        workspaceId: string,
+        options: { signal?: AbortSignal }
+      ) => Promise<void>;
+    };
+    const executeIdleCompaction = mock((_workspaceId: string) => Promise.resolve());
+    const waitForWorkspaceIdle = mock((_workspaceId: string, _options: { signal?: AbortSignal }) =>
+      Promise.resolve()
+    );
+    serviceInternals.executeIdleCompaction = executeIdleCompaction;
+    serviceInternals.waitForWorkspaceIdle = waitForWorkspaceIdle;
+
+    const result = await service.prepareScheduledWorkflowContext(TEST_WORKSPACE_ID, "compact");
+
+    expect(result).toEqual({ success: true, data: "compact" });
+    expect(executeIdleCompaction).toHaveBeenCalledWith(TEST_WORKSPACE_ID);
+    expect(waitForWorkspaceIdle.mock.calls[0]?.[0]).toBe(TEST_WORKSPACE_ID);
+    expect(waitForWorkspaceIdle.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  test("compact context preparation fails when compaction writes no new boundary", async () => {
+    const activeMessages = [createMuxMessage("u1", "user", "before compaction")];
+    historyServiceMock.getHistoryFromLatestBoundary
+      .mockResolvedValueOnce({ success: true, data: activeMessages })
+      .mockResolvedValueOnce({ success: true, data: activeMessages });
+    const serviceInternals = service as unknown as {
+      executeIdleCompaction: (workspaceId: string) => Promise<void>;
+      waitForWorkspaceIdle: (
+        workspaceId: string,
+        options: { signal?: AbortSignal }
+      ) => Promise<void>;
+    };
+    serviceInternals.executeIdleCompaction = mock(() => Promise.resolve());
+    serviceInternals.waitForWorkspaceIdle = mock(() => Promise.resolve());
+
+    const result = await service.prepareScheduledWorkflowContext(TEST_WORKSPACE_ID, "compact");
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("expected compact preparation to fail");
+    expect(result.error).toContain("without writing a new context boundary");
   });
 
   test("fails for unknown workspaces without persisting", async () => {

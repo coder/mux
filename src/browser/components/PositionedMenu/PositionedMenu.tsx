@@ -115,7 +115,9 @@ export function PositionedMenuItem(props: PositionedMenuItemProps) {
         <span className="h-3 w-3 shrink-0 [&_svg]:h-3 [&_svg]:w-3">{props.icon}</span>
         {props.label}
         {props.shortcut && (
-          <span className="text-muted ml-auto text-[10px]">({props.shortcut})</span>
+          <span className="text-muted ml-auto hidden text-[10px] sm:inline">
+            ({props.shortcut})
+          </span>
         )}
       </span>
     </button>
