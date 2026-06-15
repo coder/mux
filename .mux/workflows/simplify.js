@@ -5,6 +5,15 @@ const DEFAULT_MAX_FINDINGS = 20;
 const REVIEW_DIFF_CHAR_BUDGET = 60000;
 const METADATA_ARRAY_ITEM_BUDGET = 200;
 const DIFF_STAT_CHAR_BUDGET = 20000;
+const NO_REVIEWABLE_CHANGES_SUMMARY = "No reviewable changes found.";
+const READ_ONLY_PROMPT =
+  "This is a read-only review step. Do not edit files, create commits, apply patches, push branches, or open PRs. Inspect repository evidence only as needed and report findings.";
+const VALUE_FLAGS = [
+  { name: "--base", key: "baseRef" },
+  { name: "--trunk", key: "trunkRef" },
+  { name: "--head", key: "headRef" },
+  { name: "--max-findings", key: "maxFindings" },
+];
 const REVIEW_AGENT_ID = "explore";
 const EXEC_AGENT_ID = "exec";
 const REVIEW_LANES = [
@@ -122,6 +131,14 @@ const FIXER_SCHEMA = {
   },
 };
 
+const EMPTY_SYNTHESIS = {
+  summary: NO_REVIEWABLE_CHANGES_SUMMARY,
+  shouldFix: false,
+  actionableFindings: [],
+  skippedFindings: [],
+  validationPlan: [],
+};
+
 export default function simplifyWorkflow({
   args,
   phase,
@@ -145,17 +162,17 @@ export default function simplifyWorkflow({
   log("Captured simplify context", {
     target: input.target || "current git changes",
     gitFailures: gitContext.failures.length,
-    diffCompactions: diffCompactions(contexts.outputGitContext).length,
+    diffCompactions: asArray(contexts.outputGitContext.diff?.workflowCompactions).length,
   });
 
   if (!hasReviewableContext(input, gitContext)) {
     return {
-      reportMarkdown: "## Simplify workflow result\n\nNo reviewable changes found.",
+      reportMarkdown: "## Simplify workflow result\n\n" + NO_REVIEWABLE_CHANGES_SUMMARY,
       structuredOutput: {
         mode: "no-reviewable-changes",
         gitContext: contexts.outputGitContext,
         reviews: [],
-        synthesis: emptySynthesis("No reviewable changes found."),
+        synthesis: EMPTY_SYNTHESIS,
       },
     };
   }
@@ -337,19 +354,14 @@ function hasReviewableContext(input, gitContext) {
   );
 }
 
-function emptySynthesis(summary) {
-  return {
-    summary: summary,
-    shouldFix: false,
-    actionableFindings: [],
-    skippedFindings: [],
-    validationPlan: [],
-  };
-}
-
 function promptContexts(input, gitContext) {
-  const reviewGitContext = compactMetadata(withCompactedDiff(gitContext, REVIEW_DIFF_CHAR_BUDGET));
-  const outputGitContext = compactMetadata(withoutDiffText(gitContext, reviewGitContext.diff));
+  const compactedGitContext = compactMetadata(gitContext);
+  const reviewDiff = compactDiff(gitContext.diff, REVIEW_DIFF_CHAR_BUDGET);
+  const reviewGitContext = { ...compactedGitContext, diff: reviewDiff };
+  const outputGitContext = {
+    ...compactedGitContext,
+    diff: diffSummary(gitContext.diff, reviewDiff),
+  };
   return {
     review: renderContext(input, reviewGitContext),
     compact: renderContext(input, outputGitContext),
@@ -424,14 +436,6 @@ function compactText(value, limit) {
   );
 }
 
-function withCompactedDiff(gitContext, budget) {
-  return { ...gitContext, diff: compactDiff(gitContext.diff, budget) };
-}
-
-function withoutDiffText(gitContext, compactedDiff) {
-  return { ...gitContext, diff: diffSummary(gitContext.diff, compactedDiff) };
-}
-
 function compactDiff(diff, budget) {
   if (!diff || typeof diff !== "object") return diff;
 
@@ -485,10 +489,6 @@ function diffSummary(diff, compactedDiff) {
   };
 }
 
-function diffCompactions(gitContext) {
-  return asArray(gitContext && gitContext.diff && gitContext.diff.workflowCompactions);
-}
-
 function diffOmittedMessage(field) {
   return (
     "\n\n[Workflow prompt budget omitted the rest of the " +
@@ -499,7 +499,7 @@ function diffOmittedMessage(field) {
 
 function reviewPrompt(lane, input, reviewContext) {
   return [
-    readOnlyPrompt(),
+    READ_ONLY_PROMPT,
     "You are the " + lane.title + " lane. Review every changed file in the supplied Git context.",
     "If an explicit target is provided and the Git diff is empty, inspect that target path in the workspace before making claims.",
     "Diff text is capped by workflowBudgetChars; if workflowCompactions or built-in truncated flags are present, inspect files directly before making claims about omitted hunks.",
@@ -514,7 +514,7 @@ function reviewPrompt(lane, input, reviewContext) {
 
 function synthesisPrompt(input, compactContext, reviewOutputs) {
   return [
-    readOnlyPrompt(),
+    READ_ONLY_PROMPT,
     "Deduplicate and triage these simplify review findings. Keep actionableFindings to the " +
       input.maxFindings +
       " highest-value issues.",
@@ -575,20 +575,14 @@ function parseArgs(args) {
 }
 
 function parseValueFlag(tokens, index) {
-  const flags = [
-    { name: "--base", key: "baseRef" },
-    { name: "--trunk", key: "trunkRef" },
-    { name: "--head", key: "headRef" },
-    { name: "--max-findings", key: "maxFindings" },
-  ];
   const token = tokens[index];
-  for (let flagIndex = 0; flagIndex < flags.length; flagIndex += 1) {
-    const flag = flags[flagIndex];
+  for (let flagIndex = 0; flagIndex < VALUE_FLAGS.length; flagIndex += 1) {
+    const flag = VALUE_FLAGS[flagIndex];
     if (token === flag.name) {
       if (index + 1 >= tokens.length) return { error: flag.name + " requires a value" };
       return { key: flag.key, value: tokens[index + 1], nextIndex: index + 2 };
     }
-    if (token.indexOf(flag.name + "=") === 0) {
+    if (token.startsWith(flag.name + "=")) {
       const value = token.slice(flag.name.length + 1);
       if (!value) return { error: flag.name + " requires a value" };
       return { key: flag.key, value: value, nextIndex: index + 1 };
@@ -623,10 +617,6 @@ function tokenize(input) {
   if (escaped) current += "\\";
   if (current) tokens.push(current);
   return { tokens: tokens, error: "" };
-}
-
-function readOnlyPrompt() {
-  return "This is a read-only review step. Do not edit files, create commits, apply patches, push branches, or open PRs. Inspect repository evidence only as needed and report findings.";
 }
 
 function reviewOnlyReport(input, markdown) {
@@ -697,11 +687,11 @@ function text(value) {
 }
 
 function hasArrayItems(value) {
-  return Array.isArray(value) && value.length > 0;
+  return asArray(value).length > 0;
 }
 
 function hasText(value) {
-  return typeof value === "string" && value.length > 0;
+  return stringLength(value) > 0;
 }
 
 function stringLength(value) {
