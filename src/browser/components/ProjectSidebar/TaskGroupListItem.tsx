@@ -48,6 +48,7 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
   const statusDescriptionId = `task-group-status-${props.groupId}`;
   const paddingLeft = getSidebarItemPaddingLeft(props.depth);
   const KindGlyph = props.kind === "workflow" ? Workflow : Layers3;
+  const showProgressFraction = props.kind !== "workflow";
   const statusParts: string[] = [];
   if (props.runningCount > 0) {
     statusParts.push(`${props.runningCount} running`);
@@ -109,7 +110,12 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
         />
       </span>
       <div className="ml-1.5 flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5">
+        <div
+          className={cn(
+            "grid min-w-0 items-center gap-1.5",
+            showProgressFraction ? "grid-cols-[minmax(0,1fr)_auto]" : "grid-cols-1"
+          )}
+        >
           <span className="flex min-w-0 items-center gap-1.5">
             <KindGlyph
               aria-hidden="true"
@@ -128,9 +134,11 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
               {formatSidebarTaskGroupHeader(props.kind, props.totalCount, props.title)}
             </span>
           </span>
-          <span className="text-muted text-[11px]">
-            {props.completedCount}/{props.totalCount}
-          </span>
+          {showProgressFraction && (
+            <span className="text-muted text-[11px]">
+              {props.completedCount}/{props.totalCount}
+            </span>
+          )}
         </div>
         <div
           id={statusDescriptionId}

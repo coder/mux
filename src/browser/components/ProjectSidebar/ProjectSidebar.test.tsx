@@ -942,6 +942,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(view.getByTestId(agentItemTestId("parent"))).toBeTruthy();
     const groupRow = view.getByTestId("task-group-best-of-demo");
     expect(groupRow.textContent).toContain("Best of 3");
+    expect(groupRow.textContent).toContain("0/3");
     expect(view.queryByTestId(agentItemTestId("child-1"))).toBeNull();
     expect(view.queryByTestId(agentItemTestId("child-2"))).toBeNull();
     expect(view.queryByTestId(agentItemTestId("child-3"))).toBeNull();
@@ -1287,9 +1288,13 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
 
     // One header per run, even though beta-1 interleaves between the alpha tasks.
     const alphaHeader = view.getByTestId("task-group-wfr_alpha");
-    expect(view.getByTestId("task-group-wfr_beta")).toBeTruthy();
+    const betaHeader = view.getByTestId("task-group-wfr_beta");
+    expect(betaHeader).toBeTruthy();
     // The stamped workflow name reaches the header label.
     expect(alphaHeader.textContent).toContain("review-pipeline");
+    // Workflow rows keep the live status text but omit the compact completed/total fraction.
+    expect(betaHeader.textContent).toContain("1 running");
+    expect(betaHeader.textContent).not.toContain("0/1");
 
     // Active workflow groups default to expanded (D6), so members render as
     // group members without an explicit toggle.
