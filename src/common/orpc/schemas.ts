@@ -120,6 +120,7 @@ export {
   WorkflowResultSchema,
   WorkflowRunEventSchema,
   WorkflowRunIdSchema,
+  WorkflowRunParentSchema,
   WorkflowRunRecordSchema,
   WorkflowRunStatusSchema,
   WorkflowRunStatusTransitionSchema,

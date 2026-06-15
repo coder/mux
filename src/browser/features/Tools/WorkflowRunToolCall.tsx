@@ -209,16 +209,19 @@ function getStructuredOutput(value: unknown): unknown {
 
 type WorkflowTaskEvent = Extract<WorkflowRunEvent, { type: "task" }>;
 type WorkflowActionEvent = Extract<WorkflowRunEvent, { type: "action" }>;
+type WorkflowChildEvent = Extract<WorkflowRunEvent, { type: "workflow" }>;
 type WorkflowPatchEvent = Extract<WorkflowRunEvent, { type: "patch" }>;
 
 type WorkflowDisplayRow =
   | { kind: "event"; event: WorkflowRunEvent }
   | { kind: "task"; firstEvent: WorkflowTaskEvent; latestEvent: WorkflowTaskEvent }
   | { kind: "action"; firstEvent: WorkflowActionEvent; latestEvent: WorkflowActionEvent }
+  | { kind: "workflow"; firstEvent: WorkflowChildEvent; latestEvent: WorkflowChildEvent }
   | { kind: "patch"; firstEvent: WorkflowPatchEvent; latestEvent: WorkflowPatchEvent };
 
 type WorkflowTaskRow = Extract<WorkflowDisplayRow, { kind: "task" }>;
 type WorkflowActionRow = Extract<WorkflowDisplayRow, { kind: "action" }>;
+type WorkflowChildRow = Extract<WorkflowDisplayRow, { kind: "workflow" }>;
 type WorkflowPatchRow = Extract<WorkflowDisplayRow, { kind: "patch" }>;
 interface PendingWorkflowActionRows {
   rows: WorkflowActionRow[];
@@ -227,6 +230,10 @@ interface PendingWorkflowActionRows {
 
 function getTaskEventKey(event: WorkflowTaskEvent): string {
   return `task:${event.stepId}:${event.taskId}`;
+}
+
+function getWorkflowChildEventKey(event: WorkflowChildEvent): string {
+  return `workflow:${event.stepId}:${event.runId}`;
 }
 
 function getPatchEventKey(event: WorkflowPatchEvent): string {
@@ -273,6 +280,7 @@ function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDi
   const rows: WorkflowDisplayRow[] = [];
   const taskRows = new Map<string, WorkflowTaskRow>();
   const actionRows = new Map<string, PendingWorkflowActionRows>();
+  const workflowRows = new Map<string, WorkflowChildRow>();
   const patchRows = new Map<string, WorkflowPatchRow>();
 
   for (const event of events) {
@@ -293,6 +301,24 @@ function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDi
         latestEvent: event,
       };
       taskRows.set(key, row);
+      rows.push(row);
+      continue;
+    }
+
+    if (event.type === "workflow") {
+      const key = getWorkflowChildEventKey(event);
+      const existingRow = workflowRows.get(key);
+      if (existingRow != null) {
+        existingRow.latestEvent = event;
+        continue;
+      }
+
+      const row: WorkflowChildRow = {
+        kind: "workflow",
+        firstEvent: event,
+        latestEvent: event,
+      };
+      workflowRows.set(key, row);
       rows.push(row);
       continue;
     }
@@ -377,6 +403,9 @@ function getDisplayRowKey(row: WorkflowDisplayRow): string {
   if (row.kind === "action") {
     return `${getActionEventKey(row.firstEvent)}:${row.firstEvent.sequence}`;
   }
+  if (row.kind === "workflow") {
+    return getWorkflowChildEventKey(row.firstEvent);
+  }
   if (row.kind === "patch") {
     return getPatchEventKey(row.firstEvent);
   }
@@ -396,6 +425,8 @@ function getWorkflowEventLabel(event: WorkflowRunEvent): string {
       // Prefer the human-readable sub-agent title (matches the spawned
       // workspace title); fall back to stepId for legacy events without one.
       return `${event.title ?? event.stepId} / ${event.taskId} / ${event.status}`;
+    case "workflow":
+      return `${event.stepId} / ${event.name} / ${event.runId} / ${event.status}`;
     case "patch":
       return `${event.stepId} / ${event.sourceTaskId} / ${event.status}`;
     case "action":
@@ -423,6 +454,8 @@ function getWorkflowEventDetail(event: WorkflowRunEvent): unknown {
       return event.data;
     case "result":
       return event.result;
+    case "workflow":
+      return event.details;
     case "patch":
       return event.details;
     case "action":
@@ -458,6 +491,13 @@ function getEventTone(event: WorkflowRunEvent): "normal" | "success" | "warning"
       return "success";
     }
     return event.status === "failed" ? "warning" : "normal";
+  }
+  if (event.type === "workflow") {
+    return event.status === "completed"
+      ? "success"
+      : event.status === "failed" || event.status === "interrupted"
+        ? "warning"
+        : "normal";
   }
   if (event.type === "result") {
     return "success";
@@ -551,7 +591,9 @@ function WorkflowEventTooltip(props: {
   );
 }
 
-function getWorkflowMergedRowDetail(row: WorkflowActionRow | WorkflowPatchRow): unknown {
+function getWorkflowMergedRowDetail(
+  row: WorkflowActionRow | WorkflowChildRow | WorkflowPatchRow
+): unknown {
   const firstDetail = getWorkflowEventDetail(row.firstEvent);
   const latestDetail = getWorkflowEventDetail(row.latestEvent);
   if (row.firstEvent === row.latestEvent || row.latestEvent.status === "started") {
@@ -1544,7 +1586,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
                         />
                       );
                     }
-                    if (row.kind === "action" || row.kind === "patch") {
+                    if (row.kind === "action" || row.kind === "workflow" || row.kind === "patch") {
                       return (
                         <WorkflowEventRow
                           key={getDisplayRowKey(row)}

@@ -22,10 +22,12 @@ import type { WorkflowRunStore } from "./WorkflowRunStore";
 import {
   WorkflowRunBackgroundedError,
   WorkflowRunner,
+  type WorkflowChildRunAdapter,
   type WorkflowRunnerClock,
   type WorkflowRunnerRunOptions,
   type WorkflowTaskAdapter,
 } from "./WorkflowRunner";
+import { MAX_NESTED_WORKFLOW_DEPTH } from "./nestedWorkflowRuns";
 
 export interface WorkflowBackgroundRunTerminalEvent {
   runId: string;
@@ -199,7 +201,9 @@ export class WorkflowService {
   async listRuns(input: { workspaceId: string }): Promise<WorkflowRunRecord[]> {
     assert(input.workspaceId.length > 0, "WorkflowService.listRuns: workspaceId is required");
     const runs = await this.runStore.listRuns();
-    return runs.filter((run) => run.workspaceId === input.workspaceId);
+    return runs.filter(
+      (run) => run.workspaceId === input.workspaceId && run.parentWorkflow == null
+    );
   }
 
   async resumeCrashedRuns(input: {
@@ -251,6 +255,7 @@ export class WorkflowService {
       "interrupted",
       this.clock?.nowIso() ?? new Date().toISOString()
     );
+    await this.interruptChildWorkflowRuns(input.runId, input.workspaceId, new Set([input.runId]));
     await (this.taskAdapterFactory?.(input.runId) ?? this.requireTaskAdapter()).interruptRun?.();
     return interrupted;
   }
@@ -763,6 +768,141 @@ export class WorkflowService {
     }
   }
 
+  private async interruptChildWorkflowRuns(
+    parentRunId: string,
+    workspaceId: string,
+    seenRunIds: Set<string>
+  ): Promise<void> {
+    const runs = await this.runStore.listRuns();
+    const activeChildren = runs.filter(
+      (run) =>
+        run.workspaceId === workspaceId &&
+        run.parentWorkflow?.runId === parentRunId &&
+        (run.status === "pending" || run.status === "running" || run.status === "backgrounded")
+    );
+    for (const child of activeChildren) {
+      if (seenRunIds.has(child.id)) {
+        continue;
+      }
+      seenRunIds.add(child.id);
+      this.abortActiveRunner(child.id);
+      await this.runStore.appendStatus(
+        child.id,
+        "interrupted",
+        this.clock?.nowIso() ?? new Date().toISOString()
+      );
+      await this.interruptChildWorkflowRuns(child.id, workspaceId, seenRunIds);
+      await (this.taskAdapterFactory?.(child.id) ?? this.requireTaskAdapter()).interruptRun?.();
+    }
+  }
+
+  private createChildRunAdapter(projectTrusted: boolean): WorkflowChildRunAdapter {
+    return {
+      runChildWorkflowToTerminal: async (input) => {
+        await this.ensureChildWorkflowRun({ ...input, projectTrusted });
+        const run = await this.runStore.getRun(input.childRunId);
+        if (run.status === "completed") {
+          return {
+            runId: input.childRunId,
+            status: "completed",
+            result: run.events.findLast((event) => event.type === "result")?.result ?? null,
+          };
+        }
+        if (run.status === "failed") {
+          return { runId: input.childRunId, status: "failed", result: null };
+        }
+
+        const runner = await this.createRunner(input.childRunId, projectTrusted);
+        try {
+          const result = await runner.run(input.childRunId, {
+            abortSignal: input.abortSignal,
+            backgroundOnMessageQueued: input.backgroundOnMessageQueued ?? false,
+            allowResumeFromInterrupted: run.status === "interrupted",
+          });
+          return { runId: input.childRunId, status: "completed", result };
+        } catch (error) {
+          if (error instanceof WorkflowRunBackgroundedError) {
+            const currentRun = await this.runStore.getRun(input.childRunId);
+            return { runId: input.childRunId, status: currentRun.status, result: null };
+          }
+          throw error;
+        }
+      },
+    };
+  }
+
+  private async ensureChildWorkflowRun(input: {
+    parentRunId: string;
+    stepId: string;
+    inputHash: string;
+    childRunId: string;
+    name: string;
+    args: unknown;
+    projectTrusted: boolean;
+  }): Promise<void> {
+    assert(
+      input.parentRunId.length > 0,
+      "WorkflowService.ensureChildWorkflowRun: parentRunId required"
+    );
+    assert(
+      input.childRunId.length > 0,
+      "WorkflowService.ensureChildWorkflowRun: childRunId required"
+    );
+    assert(input.stepId.length > 0, "WorkflowService.ensureChildWorkflowRun: stepId required");
+    assert(
+      input.inputHash.length > 0,
+      "WorkflowService.ensureChildWorkflowRun: inputHash required"
+    );
+    const parent = await this.runStore.getRun(input.parentRunId);
+    const depth = (parent.parentWorkflow?.depth ?? -1) + 1;
+    assert(
+      depth <= MAX_NESTED_WORKFLOW_DEPTH,
+      `Nested workflow depth limit exceeded (${MAX_NESTED_WORKFLOW_DEPTH})`
+    );
+
+    try {
+      const existing = await this.runStore.getRun(input.childRunId);
+      assert(
+        existing.workspaceId === parent.workspaceId,
+        "Child workflow workspace must match parent"
+      );
+      assert(
+        existing.definition.name === input.name,
+        "Child workflow name must match existing run"
+      );
+      assert(
+        existing.parentWorkflow?.runId === input.parentRunId &&
+          existing.parentWorkflow.stepId === input.stepId &&
+          existing.parentWorkflow.inputHash === input.inputHash,
+        "Existing child workflow run must match parent replay identity"
+      );
+      return;
+    } catch (error) {
+      if (!isMissingWorkflowRunError(error)) {
+        throw error;
+      }
+    }
+
+    const definition = await this.definitionStore.readDefinition(input.name, {
+      projectTrusted: input.projectTrusted,
+    });
+    await this.runStore.createRunIfAbsent({
+      id: input.childRunId,
+      workspaceId: parent.workspaceId,
+      definition: definition.descriptor,
+      definitionSource: definition.source,
+      args: input.args,
+      ...(this.defaultActionCwd != null ? { defaultActionCwd: this.defaultActionCwd } : {}),
+      parentWorkflow: {
+        runId: input.parentRunId,
+        stepId: input.stepId,
+        inputHash: input.inputHash,
+        depth,
+      },
+      now: this.clock?.nowIso() ?? new Date().toISOString(),
+    });
+  }
+
   private async createRunner(runId: string, projectTrusted: boolean): Promise<WorkflowRunner> {
     // The run record always exists by the time a runner is created (create/resume/retry
     // paths persist it first), so resolve the definition name for task labeling here.
@@ -775,6 +915,7 @@ export class WorkflowService {
       runtimeFactory: this.runtimeFactory,
       taskAdapter: this.taskAdapterFactory?.(runId, workflowName) ?? this.requireTaskAdapter(),
       actionRegistry: this.actionRegistry,
+      childRunAdapter: this.createChildRunAdapter(projectTrusted),
       actionRunner: this.actionRunner,
       getProjectTrusted: () => this.resolveCurrentProjectTrust(projectTrusted),
       projectTrusted,
@@ -801,6 +942,13 @@ export class WorkflowService {
     assert(this.taskAdapter != null, "WorkflowService: taskAdapter is required");
     return this.taskAdapter;
   }
+}
+
+function isMissingWorkflowRunError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (("code" in error && error.code === "ENOENT") || error.message.includes("ENOENT"))
+  );
 }
 
 function isWorkflowRunAlreadyActiveError(error: unknown, runId: string): boolean {

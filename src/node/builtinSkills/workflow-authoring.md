@@ -203,6 +203,31 @@ export async function execute(input, ctx) {
 }
 ```
 
+### `action.workflows.start(spec)`
+
+Starts another workflow in the same workspace and waits for its terminal result. This is a special built-in workflow action: project/global actions can still override `workflows.start`, but the built-in version is coordinated by the durable workflow runner rather than a normal action process.
+
+```js
+const child = action.workflows.start({
+  id: "research",
+  input: {
+    name: "deep-research",
+    args: { input: args.topic },
+  },
+});
+
+return { reportMarkdown: "Child said:\n\n" + child.reportMarkdown };
+```
+
+Replay semantics:
+
+- Parent `id` + child `{ name, args }` maps to exactly one deterministic child run ID.
+- Child workflow step IDs stay local to the child run; they do not collide with parent step IDs.
+- Parent replay/resume reuses the linked child run, even if the child workflow source has changed since the child run was created.
+- Child completion returns `{ runId, status, name, reportMarkdown, structuredOutput? }` to the parent.
+- Child failure fails the parent step; parent interruption cascades to active child workflow runs.
+- V1 is same-workspace and wait-to-terminal only; fire-and-forget child workflows are intentionally rejected.
+
 ### `applyPatch(spec)`
 
 Applies a workflow-owned child task's git patch artifact to the current parent workspace. The host always dry-runs first in a temporary worktree and only performs the real apply when the dry-run succeeds. The conductor never receives raw patch text and cannot apply arbitrary patches.

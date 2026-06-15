@@ -270,6 +270,105 @@ export default function workflow({ args, agent }) {
     expect(run.definition.scope).toBe("global");
   });
 
+  test("runs a nested workflow through action.workflows.start and reuses the child on replay", async () => {
+    using tmp = new DisposableTempDir("workflow-service-nested");
+    const workspaceRoot = path.join(tmp.path, "project");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const actionProjectRoot = path.join(workspaceRoot, ".mux", "actions");
+    const actionGlobalRoot = path.join(tmp.path, "mux-home", "actions");
+    await writeWorkflow(
+      globalRoot,
+      "child-simple",
+      "// description: Child workflow\nexport default function workflow({ args }) { return { reportMarkdown: 'Child: ' + args.topic }; }\n"
+    );
+    await writeWorkflow(
+      globalRoot,
+      "parent-simple",
+      `// description: Parent workflow
+      export default function workflow({ args, action }) {
+        const child = action.workflows.start({
+          id: "child-simple",
+          input: { name: "child-simple", args: { topic: args.topic } },
+        });
+        return { reportMarkdown: "Parent saw " + child.reportMarkdown, structuredOutput: { childRunId: child.runId } };
+      }\n`
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: actionProjectRoot,
+        globalRoot: actionGlobalRoot,
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      generateRunId: () => "wfr_parent_simple",
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:00.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await service.startNamedWorkflow({
+      name: "parent-simple",
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: { topic: "nested smoke" },
+    });
+    const parentRun = await runStore.getRun("wfr_parent_simple");
+    const childStep = parentRun.steps.find((step) => step.stepId === "child-simple");
+    expect(childStep?.taskId).toMatch(/^wfr_child_/);
+    const childRunId = childStep?.taskId;
+    if (childRunId == null) {
+      throw new Error("Expected nested workflow step to record a child run id");
+    }
+    const childRun = await runStore.getRun(childRunId);
+
+    expect(result).toEqual({
+      runId: "wfr_parent_simple",
+      status: "completed",
+      result: {
+        reportMarkdown: "Parent saw Child: nested smoke",
+        structuredOutput: { childRunId },
+      },
+    });
+    expect(childRun.id).toBe(childRunId);
+    expect(childRun.workspaceId).toBe("workspace-1");
+    expect(childRun.definition.name).toBe("child-simple");
+    expect(childRun.parentWorkflow?.runId).toBe("wfr_parent_simple");
+    expect(childRun.parentWorkflow?.stepId).toBe("child-simple");
+    expect(childRun.status).toBe("completed");
+    expect(parentRun.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "workflow",
+          stepId: "child-simple",
+          runId: childRunId,
+          status: "started",
+        }),
+        expect.objectContaining({
+          type: "workflow",
+          stepId: "child-simple",
+          runId: childRunId,
+          status: "completed",
+        }),
+      ])
+    );
+
+    const runsAfterCompletion = await runStore.listRuns();
+    expect(
+      runsAfterCompletion.filter((run) => run.parentWorkflow?.runId === "wfr_parent_simple")
+    ).toHaveLength(1);
+  });
+
   test("runs workspace scratch workflow definitions authored as files", async () => {
     using tmp = new DisposableTempDir("workflow-service");
     const workspaceRoot = path.join(tmp.path, "project");
@@ -608,6 +707,193 @@ export default function workflow({ args, agent }) {
     const runError = await runErrorPromise;
     expect(runError).toBeInstanceOf(Error);
     expect(runError instanceof Error ? runError.message : "").toMatch(/interrupted|aborted/i);
+  });
+
+  test("interruptRun cascades to an active nested child workflow", async () => {
+    using tmp = new DisposableTempDir("workflow-service-nested-interrupt");
+    const workspaceRoot = path.join(tmp.path, "project");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const actionProjectRoot = path.join(workspaceRoot, ".mux", "actions");
+    const actionGlobalRoot = path.join(tmp.path, "mux-home", "actions");
+    await writeWorkflow(
+      globalRoot,
+      "child-interruptible",
+      "// description: Child interruptible\nexport default function workflow({ agent }) { return agent({ id: 'slow-child', prompt: 'slow' }); }\n"
+    );
+    await writeWorkflow(
+      globalRoot,
+      "parent-interruptible",
+      `// description: Parent interruptible
+export default function workflow({ action }) {
+  return action.workflows.start({
+    id: "child-interruptible",
+    input: { name: "child-interruptible", args: {} },
+  });
+}\n`
+    );
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    let agentWaitStarted = false;
+    let agentAbortObserved = false;
+    const starterService = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: actionProjectRoot,
+        globalRoot: actionGlobalRoot,
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(_spec, _lifecycle, waitOptions) {
+          agentWaitStarted = true;
+          return await new Promise((_, reject) => {
+            waitOptions?.abortSignal?.addEventListener(
+              "abort",
+              () => {
+                agentAbortObserved = true;
+                reject(new Error("Task interrupted"));
+              },
+              { once: true }
+            );
+          });
+        },
+      },
+      generateRunId: () => "wfr_nested_interrupt_parent",
+      runnerId: "runner-a",
+    });
+    let interruptCalls = 0;
+    const interruptService = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: actionProjectRoot,
+        globalRoot: actionGlobalRoot,
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("interrupt service runAgent should not be called");
+        },
+        async interruptRun() {
+          interruptCalls += 1;
+        },
+      },
+      runnerId: "runner-b",
+    });
+
+    const runPromise = starterService.startNamedWorkflow({
+      name: "parent-interruptible",
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: {},
+    });
+    const runErrorPromise = runPromise.then(
+      () => null,
+      (error: unknown) => error
+    );
+    await waitForCondition("nested child agent to start", () => agentWaitStarted);
+
+    const interrupted = await interruptService.interruptRun({
+      workspaceId: "workspace-1",
+      runId: "wfr_nested_interrupt_parent",
+    });
+    const parentRun = await runStore.getRun("wfr_nested_interrupt_parent");
+    const childRunId = parentRun.steps.find(
+      (step) => step.stepId === "child-interruptible"
+    )?.taskId;
+    if (childRunId == null) {
+      throw new Error("Expected nested interrupt workflow to record a child run id");
+    }
+    const childRun = await runStore.getRun(childRunId);
+    const runError = await runErrorPromise;
+
+    expect(interrupted.status).toBe("interrupted");
+    expect(childRun.status).toBe("interrupted");
+    expect(agentAbortObserved).toBe(true);
+    expect(interruptCalls).toBeGreaterThanOrEqual(1);
+    expect(runError).toBeInstanceOf(Error);
+    expect(runError instanceof Error ? runError.message : "").toMatch(/interrupted|aborted/i);
+  });
+
+  test("backgrounds and resumes parent workflows when a nested child workflow backgrounds", async () => {
+    using tmp = new DisposableTempDir("workflow-service-nested-background");
+    const workspaceRoot = path.join(tmp.path, "project");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const actionProjectRoot = path.join(workspaceRoot, ".mux", "actions");
+    const actionGlobalRoot = path.join(tmp.path, "mux-home", "actions");
+    await writeWorkflow(
+      globalRoot,
+      "child-backgroundable",
+      "// description: Child backgroundable\nexport default function workflow({ agent }) { const result = agent({ id: 'slow-child', prompt: 'slow' }); return { reportMarkdown: 'Child ' + result.reportMarkdown }; }\n"
+    );
+    await writeWorkflow(
+      globalRoot,
+      "parent-backgroundable",
+      `// description: Parent backgroundable
+export default function workflow({ action }) {
+  const child = action.workflows.start({
+    id: "child-backgroundable",
+    input: { name: "child-backgroundable", args: {} },
+  });
+  return { reportMarkdown: "Parent " + child.reportMarkdown };
+}\n`
+    );
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    let calls = 0;
+    const backgroundFlags: Array<boolean | undefined> = [];
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: actionProjectRoot,
+        globalRoot: actionGlobalRoot,
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(_spec, _lifecycle, waitOptions) {
+          calls += 1;
+          backgroundFlags.push(waitOptions?.backgroundOnMessageQueued);
+          if (calls === 1) {
+            throw new ForegroundWaitBackgroundedError();
+          }
+          return { taskId: "task_slow_child", reportMarkdown: "done" };
+        },
+      },
+      generateRunId: () => "wfr_nested_background_parent",
+      runnerId: "runner-a",
+    });
+
+    const result = await service.startNamedWorkflow({
+      name: "parent-backgroundable",
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: {},
+    });
+
+    expect(result).toEqual({
+      runId: "wfr_nested_background_parent",
+      status: "backgrounded",
+      result: null,
+    });
+    await waitForWorkflowStatus(runStore, "wfr_nested_background_parent", "completed");
+    const parentRun = await runStore.getRun("wfr_nested_background_parent");
+    const childRunId = parentRun.steps.find(
+      (step) => step.stepId === "child-backgroundable"
+    )?.taskId;
+    if (childRunId == null) {
+      throw new Error("Expected nested background workflow to record a child run id");
+    }
+    const childRun = await runStore.getRun(childRunId);
+
+    expect(childRun.status).toBe("completed");
+    expect(parentRun.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "workflow", status: "backgrounded", runId: childRunId }),
+        expect.objectContaining({ type: "workflow", status: "completed", runId: childRunId }),
+      ])
+    );
+    expect(backgroundFlags).toEqual([true, false]);
   });
 
   test("moves foreground workflow runs to background when child waits are backgrounded", async () => {

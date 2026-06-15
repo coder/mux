@@ -626,6 +626,74 @@ describe("WorkflowRunToolCall", () => {
     expect(view.container.textContent).toContain("durationMs");
   });
 
+  test("coalesces nested workflow start and completion events into one row with child run details", () => {
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <TooltipProvider>
+          <WorkflowRunToolCall
+            args={{ name: "parent-simple", args: {}, run_in_background: false }}
+            status="completed"
+            result={{
+              status: "completed",
+              runId: "wfr_parent",
+              result: { reportMarkdown: "done" },
+              run: {
+                id: "wfr_parent",
+                workspaceId: "workspace-1",
+                definition: {
+                  name: "parent-simple",
+                  description: "Parent",
+                  scope: "scratch",
+                  executable: true,
+                },
+                definitionSource: "export default function workflow() { return null; }",
+                definitionHash: "sha256:parent",
+                args: {},
+                status: "completed",
+                createdAt: "2026-05-29T00:00:00.000Z",
+                updatedAt: "2026-05-29T00:00:01.000Z",
+                events: [
+                  {
+                    sequence: 1,
+                    type: "workflow",
+                    at: "2026-05-29T00:00:00.000Z",
+                    stepId: "child-simple",
+                    runId: "wfr_child_abc",
+                    name: "child-simple",
+                    status: "started",
+                  },
+                  {
+                    sequence: 2,
+                    type: "workflow",
+                    at: "2026-05-29T00:00:01.000Z",
+                    stepId: "child-simple",
+                    runId: "wfr_child_abc",
+                    name: "child-simple",
+                    status: "completed",
+                    details: { reportMarkdown: "child done", runId: "wfr_child_abc" },
+                  },
+                  {
+                    sequence: 3,
+                    type: "result",
+                    at: "2026-05-29T00:00:01.000Z",
+                    result: { reportMarkdown: "done" },
+                  },
+                ],
+                steps: [],
+              },
+            }}
+          />
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+
+    fireEvent.click(getWorkflowHeader(view));
+
+    expect(view.getByText("Workflow events (1)")).toBeTruthy();
+    expect(view.getByText("child-simple / child-simple / wfr_child_abc / completed")).toBeTruthy();
+    expect(view.queryByText("#2")).toBeNull();
+  });
+
   test("coalesces patch start and applied events into one row with combined details", () => {
     const view = render(
       <ThemeProvider forcedTheme="dark">

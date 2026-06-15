@@ -11,6 +11,7 @@ import type {
   WorkflowResultSchema,
   WorkflowRunEventSchema,
   WorkflowRunIdSchema,
+  WorkflowRunParentSchema,
   WorkflowRunRecordSchema,
   WorkflowRunStatusSchema,
   WorkflowStepRecordSchema,
@@ -33,7 +34,12 @@ export type WorkflowResult = z.infer<typeof WorkflowResultSchema>;
 export type StructuredTaskOutput = z.infer<typeof StructuredTaskOutputSchema>;
 export type WorkflowRunEvent = z.infer<typeof WorkflowRunEventSchema>;
 export type WorkflowStepRecord = z.infer<typeof WorkflowStepRecordSchema>;
+export type WorkflowRunParent = z.infer<typeof WorkflowRunParentSchema>;
 export type WorkflowRunRecord = z.infer<typeof WorkflowRunRecordSchema>;
+
+export function isNestedWorkflowRun(run: WorkflowRunRecord): boolean {
+  return run.parentWorkflow != null;
+}
 
 export function assertWorkflowRunStatusTransition(
   from: WorkflowRunStatus,

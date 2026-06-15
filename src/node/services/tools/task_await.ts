@@ -9,7 +9,11 @@ import {
   TOOL_DEFINITIONS,
 } from "@/common/utils/tools/toolDefinitions";
 import { canRetryWorkflowFromCheckpoint } from "@/common/utils/workflowRetryEligibility";
-import type { WorkflowRunRecord, WorkflowRunStatus } from "@/common/types/workflow";
+import {
+  isNestedWorkflowRun,
+  type WorkflowRunRecord,
+  type WorkflowRunStatus,
+} from "@/common/types/workflow";
 
 import { fromBashTaskId, isWorkflowRunTaskId, toBashTaskId } from "./taskId";
 import { formatBashOutputReport } from "./bashTaskReport";
@@ -280,7 +284,11 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         const runs = await config.workflowService.listRuns({ workspaceId });
         for (const rawRun of runs) {
           const parsed = WorkflowRunRecordSchema.safeParse(rawRun);
-          if (!parsed.success || !isWorkflowRunAwaitableStatus(parsed.data.status)) {
+          if (
+            !parsed.success ||
+            !isWorkflowRunAwaitableStatus(parsed.data.status) ||
+            isNestedWorkflowRun(parsed.data)
+          ) {
             continue;
           }
           workflowRunIds.push(parsed.data.id);

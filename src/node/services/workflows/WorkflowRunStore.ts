@@ -16,6 +16,7 @@ import type {
   StructuredTaskOutput,
   WorkflowDefinitionDescriptor,
   WorkflowRunEvent,
+  WorkflowRunParent,
   WorkflowRunRecord,
   WorkflowRunStatus,
   WorkflowStepRecord,
@@ -36,6 +37,7 @@ export interface CreateWorkflowRunInput {
   definitionSource: string;
   args: unknown;
   defaultActionCwd?: string;
+  parentWorkflow?: WorkflowRunParent;
   now: string;
 }
 
@@ -99,6 +101,7 @@ export class WorkflowRunStore {
       definitionHash: hashSource(input.definitionSource),
       args: input.args,
       ...(input.defaultActionCwd != null ? { defaultActionCwd: input.defaultActionCwd } : {}),
+      ...(input.parentWorkflow != null ? { parentWorkflow: input.parentWorkflow } : {}),
       status: "pending",
       createdAt: input.now,
       updatedAt: input.now,
@@ -108,6 +111,59 @@ export class WorkflowRunStore {
 
     await this.writeRunFile(input.id, run);
     return run;
+  }
+
+  async createRunIfAbsent(input: CreateWorkflowRunInput): Promise<WorkflowRunRecord> {
+    assert(input.id.length > 0, "WorkflowRunStore.createRunIfAbsent: id is required");
+    assert(
+      input.workspaceId.length > 0,
+      "WorkflowRunStore.createRunIfAbsent: workspaceId is required"
+    );
+    assert(
+      input.definitionSource.length > 0,
+      "WorkflowRunStore.createRunIfAbsent: definitionSource is required"
+    );
+
+    const runDir = this.runDir(input.id);
+    await fs.mkdir(this.workflowsDir(), { recursive: true });
+    try {
+      await fs.mkdir(runDir, { recursive: false });
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) {
+        throw error;
+      }
+      const existing = await this.getRun(input.id);
+      assertSameWorkflowRunIdentity(existing, input);
+      return existing;
+    }
+
+    try {
+      await fs.writeFile(path.join(runDir, "definition.js"), input.definitionSource, "utf-8");
+      await fs.writeFile(path.join(runDir, "events.jsonl"), "", { flag: "a" });
+      await fs.writeFile(path.join(runDir, "steps.jsonl"), "", { flag: "a" });
+
+      const run = WorkflowRunRecordSchema.parse({
+        id: input.id,
+        workspaceId: input.workspaceId,
+        definition: input.definition,
+        definitionSource: input.definitionSource,
+        definitionHash: hashSource(input.definitionSource),
+        args: input.args,
+        ...(input.defaultActionCwd != null ? { defaultActionCwd: input.defaultActionCwd } : {}),
+        ...(input.parentWorkflow != null ? { parentWorkflow: input.parentWorkflow } : {}),
+        status: "pending",
+        createdAt: input.now,
+        updatedAt: input.now,
+        events: [],
+        steps: [],
+      });
+
+      await this.writeRunFile(input.id, run);
+      return run;
+    } catch (error) {
+      await fs.rm(runDir, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   async getRun(runId: string): Promise<WorkflowRunRecord> {
@@ -849,6 +905,29 @@ function assertValidWorkflowRunId(runId: string): void {
   assert(
     WorkflowRunIdSchema.safeParse(runId).success,
     "WorkflowRunStore: runId must match wfr_[A-Za-z0-9_-]+"
+  );
+}
+
+function isAlreadyExistsError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EEXIST";
+}
+
+function assertSameWorkflowRunIdentity(
+  run: WorkflowRunRecord,
+  input: CreateWorkflowRunInput
+): void {
+  const expectedDefinitionHash = hashSource(input.definitionSource);
+  const sameIdentity =
+    run.id === input.id &&
+    run.workspaceId === input.workspaceId &&
+    run.definition.name === input.definition.name &&
+    run.definition.scope === input.definition.scope &&
+    run.definitionHash === expectedDefinitionHash &&
+    JSON.stringify(run.args) === JSON.stringify(input.args) &&
+    JSON.stringify(run.parentWorkflow ?? null) === JSON.stringify(input.parentWorkflow ?? null);
+  assert(
+    sameIdentity,
+    `WorkflowRunStore.createRunIfAbsent: existing run identity does not match requested run ${input.id}`
   );
 }
 
