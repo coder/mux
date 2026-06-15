@@ -171,7 +171,7 @@ export default function simplifyWorkflow({
     diffCompactions: asArray(contexts.outputGitContext.diff?.workflowCompactions).length,
   });
 
-  if (hasUntrackedChanges(gitContext)) {
+  if (hasOnlyUntrackedChanges(gitContext)) {
     const reason = untrackedChangesSkipReason();
     return {
       reportMarkdown: "## Simplify workflow result\n\n" + reason,
@@ -529,6 +529,18 @@ function isGitCommitSha(value) {
   return /^[0-9a-f]{7,40}$/i.test(value);
 }
 
+function hasOnlyUntrackedChanges(gitContext) {
+  return (
+    hasUntrackedChanges(gitContext) &&
+    !hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.branch) &&
+    !hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.staged) &&
+    !hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.unstaged) &&
+    !hasText(gitContext.diff && gitContext.diff.branch) &&
+    !hasText(gitContext.diff && gitContext.diff.staged) &&
+    !hasText(gitContext.diff && gitContext.diff.unstaged)
+  );
+}
+
 function hasUntrackedChanges(gitContext) {
   return (
     hasArrayItems(gitContext.status && gitContext.status.untracked) ||
@@ -715,6 +727,7 @@ function reviewPrompt(lane, input, reviewContext) {
     "You are the " + lane.title + " lane. Review every changed file in the supplied Git context.",
     "If an explicit target is provided and the Git diff is empty, inspect that target path in the workspace before making claims.",
     "Diff text is capped by workflowBudgetChars; if workflowCompactions or built-in truncated flags are present, inspect files directly before making claims about omitted hunks.",
+    "Untracked paths in Git metadata are names only. Do not make findings about untracked files unless their contents are visible in a diff or explicit target.",
     "Allowed severity values are: high, medium, low. Return high-signal, actionable findings only; an empty findings array is fine.",
     "The synthesis step will keep at most " +
       input.maxFindings +
