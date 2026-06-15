@@ -914,7 +914,9 @@ function tokenize(input) {
       current += char;
       escaped = false;
     } else if (quote && char === "\\") {
-      escaped = true;
+      const next = input[index + 1];
+      if (next === quote || next === "\\") escaped = true;
+      else current += char;
     } else if (quote) {
       if (char === quote) quote = "";
       else current += char;
