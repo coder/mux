@@ -233,6 +233,22 @@ export default function simplifyWorkflow({
     };
   }
 
+  // git am cannot apply onto a dirty index; keep the review result but skip auto-fix.
+  if (hasStagedChanges(gitContext)) {
+    return {
+      reportMarkdown:
+        synthesis.reportMarkdown +
+        "\n\n---\n\n## Simplify workflow result\n\n" +
+        "Auto-fix was skipped because staged changes are present. Unstage or commit staged changes, then rerun `/workflow simplify --fix`.",
+      structuredOutput: {
+        mode: "staged-changes-skip-fix",
+        gitContext: contexts.outputGitContext,
+        reviews: reviewOutputs,
+        synthesis: synthesized,
+      },
+    };
+  }
+
   phase("fix", { actionableFindingCount: actionableFindings.length });
   const fixer = agent({
     id: "fix-simplify-findings",
@@ -362,6 +378,13 @@ function shouldReadDiffs(changedFiles) {
     hasArrayItems(changedFiles.branch) ||
     hasArrayItems(changedFiles.staged) ||
     hasArrayItems(changedFiles.unstaged)
+  );
+}
+
+function hasStagedChanges(gitContext) {
+  return (
+    hasArrayItems(gitContext.status && gitContext.status.staged) ||
+    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.staged)
   );
 }
 
