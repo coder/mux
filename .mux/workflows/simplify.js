@@ -233,12 +233,12 @@ export default function simplifyWorkflow({
     };
   }
 
-  // git am cannot apply onto a dirty index; keep the review result but skip auto-fix.
-  if (hasStagedChanges(gitContext)) {
+  // Workflow child workspaces do not inherit parent dirt; keep the review result but skip auto-fix.
+  if (hasUncommittedChanges(gitContext)) {
     return skipFixResult(
       synthesis.reportMarkdown,
-      stagedChangesSkipReason(),
-      "staged-changes-skip-fix",
+      uncommittedChangesSkipReason(),
+      "uncommitted-changes-skip-fix",
       contexts.outputGitContext,
       reviewOutputs,
       synthesized
@@ -307,8 +307,6 @@ export default function simplifyWorkflow({
     target: "parent",
     threeWay: true,
     expectedHeadSha: applyPreflight.expectedHeadSha,
-    // simplify fixes the dirty changes it just reviewed, so patch onto that worktree.
-    force: true,
     onConflict: "return",
   });
 
@@ -361,8 +359,8 @@ function collectApplyPreflight(action, log, input, gitContext) {
   if (!status || typeof status !== "object") {
     return failedApplyPreflight("Auto-fix was skipped because fresh Git status was unavailable.");
   }
-  if (hasArrayItems(status.staged)) {
-    return failedApplyPreflight(stagedChangesSkipReason());
+  if (hasUncommittedStatus(status)) {
+    return failedApplyPreflight(uncommittedChangesSkipReason());
   }
 
   if (!isRequestedHeadCurrent(status, input)) {
@@ -392,8 +390,8 @@ function nonCurrentHeadSkipReason() {
   return "Auto-fix was skipped because the requested `--head` is not the current checkout. Check out that branch/ref or pass the current commit SHA before applying fixes.";
 }
 
-function stagedChangesSkipReason() {
-  return "Auto-fix was skipped because staged changes are present. Unstage or commit staged changes, then rerun `/workflow simplify --fix`.";
+function uncommittedChangesSkipReason() {
+  return "Auto-fix was skipped because uncommitted changes are present. Commit or stash them, then rerun `/workflow simplify --fix`.";
 }
 
 function collectGitContext(action, input, log) {
@@ -514,10 +512,20 @@ function isGitCommitSha(value) {
   return /^[0-9a-f]{7,40}$/i.test(value);
 }
 
-function hasStagedChanges(gitContext) {
+function hasUncommittedChanges(gitContext) {
   return (
-    hasArrayItems(gitContext.status && gitContext.status.staged) ||
-    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.staged)
+    hasUncommittedStatus(gitContext.status) ||
+    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.staged) ||
+    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.unstaged) ||
+    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.untracked)
+  );
+}
+
+function hasUncommittedStatus(status) {
+  return (
+    hasArrayItems(status && status.staged) ||
+    hasArrayItems(status && status.unstaged) ||
+    hasArrayItems(status && status.untracked)
   );
 }
 
