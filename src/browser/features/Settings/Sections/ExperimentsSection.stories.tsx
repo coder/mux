@@ -20,9 +20,8 @@ export const Experiments: Story = {
     <SettingsSectionStory
       setup={() =>
         setupSettingsStory({
-          // Explicit off-override: experiment localStorage keys leak between
-          // stories in the same browser session, so seed the parent off to keep
-          // the "sub-experiments hidden" assertion order-independent.
+          // Seed the parent off explicitly so the "sub-experiments hidden"
+          // assertion does not rely on the experiment's default value.
           experiments: { [EXPERIMENT_IDS.MEMORY]: false },
         })
       }

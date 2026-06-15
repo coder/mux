@@ -14,7 +14,11 @@ import { selectWorkspace } from "@/browser/stories/helpers/uiState";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { getProvidersConfigStore } from "@/browser/stores/ProvidersConfigStore";
-import { getExperimentKey, type ExperimentId } from "@/common/constants/experiments";
+import {
+  getExperimentKey,
+  getExperimentList,
+  type ExperimentId,
+} from "@/common/constants/experiments";
 import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage";
 import type { ServerAuthSession } from "@/common/orpc/types";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
@@ -29,10 +33,17 @@ interface SettingsSectionStoryProps {
   children: ReactNode;
 }
 
-function resetStorybookPersistedStateForStory(): void {
+export function resetStorybookPersistedStateForStory(): void {
   if (typeof localStorage !== "undefined") {
     localStorage.removeItem(SELECTED_WORKSPACE_KEY);
     localStorage.setItem(UI_THEME_KEY, JSON.stringify("dark"));
+
+    // Chromatic reuses one browser origin across stories, so experiment
+    // localStorage overrides from one story must not decide another story's
+    // switch positions. Each story can opt back in through setupSettingsStory().
+    for (const experiment of getExperimentList()) {
+      localStorage.removeItem(getExperimentKey(experiment.id));
+    }
   }
 }
 
