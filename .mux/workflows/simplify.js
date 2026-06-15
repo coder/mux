@@ -488,11 +488,15 @@ function shouldReadDiffs(changedFiles) {
 function isRequestedHeadCurrent(status, input) {
   if (!status || typeof status !== "object") return false;
   const currentHeadSha = typeof status.headSha === "string" ? status.headSha : "";
+  const requestedHead = input && input.headRef ? input.headRef : "";
   const requestedHeadSha =
-    typeof status.requestedHeadSha === "string" ? status.requestedHeadSha : currentHeadSha;
+    typeof status.requestedHeadSha === "string"
+      ? status.requestedHeadSha
+      : requestedHead
+        ? ""
+        : currentHeadSha;
   if (!currentHeadSha || !requestedHeadSha || currentHeadSha !== requestedHeadSha) return false;
 
-  const requestedHead = input && input.headRef ? input.headRef : "";
   if (!requestedHead || requestedHead === "HEAD") return true;
 
   const currentBranch = typeof status.branch === "string" ? status.branch : "";
