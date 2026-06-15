@@ -899,11 +899,23 @@ export class WorkflowService {
           }
 
           const runner = await this.createRunner(input.childRunId, currentProjectTrusted);
+          const childAbortController = new AbortController();
+          const removeParentAbortForwarding = forwardAbortSignal(
+            input.abortSignal,
+            childAbortController
+          );
+          let unregisterChildRunnerAbort: () => void = () => undefined;
           try {
             const result = await runner.run(input.childRunId, {
-              abortSignal: input.abortSignal,
+              abortSignal: childAbortController.signal,
               backgroundOnMessageQueued: input.backgroundOnMessageQueued ?? false,
               allowResumeFromInterrupted: run.status === "interrupted",
+              onLeaseAcquired: () => {
+                unregisterChildRunnerAbort = this.registerActiveRunnerAbortController(
+                  input.childRunId,
+                  childAbortController
+                );
+              },
             });
             return { runId: input.childRunId, status: "completed", result };
           } catch (error) {
@@ -938,6 +950,9 @@ export class WorkflowService {
               };
             }
             throw error;
+          } finally {
+            removeParentAbortForwarding();
+            unregisterChildRunnerAbort();
           }
         }
       },
@@ -1077,6 +1092,22 @@ function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
   if (typeof timer.unref === "function") {
     timer.unref();
   }
+}
+
+function forwardAbortSignal(
+  abortSignal: AbortSignal | undefined,
+  controller: AbortController
+): () => void {
+  if (abortSignal == null) {
+    return () => undefined;
+  }
+  if (abortSignal.aborted) {
+    controller.abort();
+    return () => undefined;
+  }
+  const abort = () => controller.abort();
+  abortSignal.addEventListener("abort", abort, { once: true });
+  return () => abortSignal.removeEventListener("abort", abort);
 }
 
 function isAbortSignalAborted(abortSignal?: AbortSignal): boolean {
