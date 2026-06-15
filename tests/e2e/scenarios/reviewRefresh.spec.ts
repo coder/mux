@@ -106,6 +106,11 @@ test.describe("review refresh", () => {
     const refreshButton = page.getByTestId("review-refresh");
     await expect(refreshButton).toBeVisible({ timeout: 10_000 });
 
+    // The review tutorial used to start 500ms after this panel mounted, leaving
+    // a backdrop over the tab strip and making the Stats tab click time out.
+    await page.waitForTimeout(600);
+    await expect(page.getByTestId("tutorial-backdrop")).toHaveCount(0);
+
     // Do a manual refresh
     await refreshButton.dispatchEvent("click");
 
