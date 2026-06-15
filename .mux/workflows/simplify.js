@@ -1,6 +1,8 @@
 // description: Review current changes for reuse, quality, and efficiency, then fix actionable issues.
 
 const DEFAULT_MAX_FINDINGS = 20;
+// Review agents get bounded diff text; synthesis/fix phases get metadata only.
+const REVIEW_DIFF_CHAR_BUDGET = 60000;
 const REVIEW_AGENT_ID = "explore";
 const EXEC_AGENT_ID = "exec";
 const REVIEW_LANES = [
@@ -119,29 +121,44 @@ const FIXER_SCHEMA = {
   },
 };
 
-export default function simplifyWorkflow({ args, phase, log, action, parallelAgents, agent, applyPatch }) {
+export default function simplifyWorkflow({
+  args,
+  phase,
+  log,
+  action,
+  parallelAgents,
+  agent,
+  applyPatch,
+}) {
   assert(action && parallelAgents && agent && applyPatch, "workflow runtime APIs are required");
 
-  const input = parseArgs(args);
+  const parsed = parseArgs(args);
+  if (parsed.error) return usageResult(parsed.error);
+
+  const input = parsed.input;
   if (input.help) return usageResult();
 
   phase("capture-context", { target: input.target || "current git changes", fix: input.fix });
   const gitContext = collectGitContext(action, input);
+  const contexts = promptContexts(input, gitContext);
   log("Captured simplify context", {
     target: input.target || "current git changes",
     gitFailures: gitContext.failures.length,
+    diffCompactions: diffCompactions(contexts.outputGitContext).length,
   });
 
-  const reviewContext = renderReviewContext(input, gitContext);
-
-  phase("review", { lanes: REVIEW_LANES.map(function (lane) { return lane.id; }) });
+  phase("review", {
+    lanes: REVIEW_LANES.map(function (lane) {
+      return lane.id;
+    }),
+  });
   const reviewOutputs = parallelAgents(
     REVIEW_LANES.map(function (lane) {
       return {
         id: lane.id + "-review",
         title: lane.title,
         agentId: REVIEW_AGENT_ID,
-        prompt: reviewPrompt(lane, input, reviewContext),
+        prompt: reviewPrompt(lane, input, contexts.review),
         outputSchema: REVIEW_SCHEMA,
       };
     }),
@@ -159,10 +176,13 @@ export default function simplifyWorkflow({ args, phase, log, action, parallelAge
     id: "synthesize-simplify-findings",
     title: "Simplify: synthesize findings",
     agentId: EXEC_AGENT_ID,
-    prompt: synthesisPrompt(input, reviewContext, reviewOutputs),
+    prompt: synthesisPrompt(input, contexts.compact, reviewOutputs),
     outputSchema: SYNTHESIS_SCHEMA,
   });
-  const synthesized = mustObject(synthesis.structuredOutput, "synthesis structured output is required");
+  const synthesized = mustObject(
+    synthesis.structuredOutput,
+    "synthesis structured output is required"
+  );
   const actionableFindings = asArray(synthesized.actionableFindings);
 
   if (!input.fix || !synthesized.shouldFix || actionableFindings.length === 0) {
@@ -170,7 +190,7 @@ export default function simplifyWorkflow({ args, phase, log, action, parallelAge
       reportMarkdown: reviewOnlyReport(input, synthesis.reportMarkdown),
       structuredOutput: {
         mode: input.fix ? "no-actionable-fixes" : "review-only",
-        gitContext: gitContext,
+        gitContext: contexts.outputGitContext,
         reviews: reviewOutputs,
         synthesis: synthesized,
       },
@@ -182,17 +202,20 @@ export default function simplifyWorkflow({ args, phase, log, action, parallelAge
     id: "fix-simplify-findings",
     title: "Simplify: fix actionable findings",
     agentId: EXEC_AGENT_ID,
-    prompt: fixPrompt(reviewContext, synthesized),
+    prompt: fixPrompt(contexts.compact, synthesized),
     outputSchema: FIXER_SCHEMA,
   });
   const fixerOutput = mustObject(fixer.structuredOutput, "fixer structured output is required");
 
   if (!fixerOutput.madeChanges) {
     return {
-      reportMarkdown: synthesis.reportMarkdown + "\n\n---\n\n## Fix pass\n\nThe fixer did not make file changes.\n\n" + fixer.reportMarkdown,
+      reportMarkdown:
+        synthesis.reportMarkdown +
+        "\n\n---\n\n## Fix pass\n\nThe fixer did not make file changes.\n\n" +
+        fixer.reportMarkdown,
       structuredOutput: {
         mode: "fixer-made-no-changes",
-        gitContext: gitContext,
+        gitContext: contexts.outputGitContext,
         reviews: reviewOutputs,
         synthesis: synthesized,
         fix: { fixer: fixerOutput, applied: null },
@@ -213,7 +236,7 @@ export default function simplifyWorkflow({ args, phase, log, action, parallelAge
     reportMarkdown: fixReport(synthesis.reportMarkdown, fixer.reportMarkdown, applied),
     structuredOutput: {
       mode: "fix-attempted",
-      gitContext: gitContext,
+      gitContext: contexts.outputGitContext,
       reviews: reviewOutputs,
       synthesis: synthesized,
       fix: { fixer: fixerOutput, applied: applied },
@@ -229,10 +252,15 @@ function collectGitContext(action, input) {
     refs: refs,
     failures: failures,
     status: gitSlice(failures, "status", function () {
-      return action.git.status({ id: "git-status", input: { includeIgnored: false }, builtInOnly: true }).output;
+      return action.git.status({
+        id: "git-status",
+        input: { includeIgnored: false },
+        builtInOnly: true,
+      }).output;
     }),
     changedFiles: gitSlice(failures, "changedFiles", function () {
-      return action.git.changedFiles({ id: "git-changed-files", input: refs, builtInOnly: true }).output;
+      return action.git.changedFiles({ id: "git-changed-files", input: refs, builtInOnly: true })
+        .output;
     }),
     diffStat: gitSlice(failures, "diffStat", function () {
       return action.git.diffStat({ id: "git-diff-stat", input: refs, builtInOnly: true }).output;
@@ -260,18 +288,110 @@ function gitRefs(input) {
   return refs;
 }
 
-function renderReviewContext(input, gitContext) {
+function promptContexts(input, gitContext) {
+  const reviewGitContext = withCompactedDiff(gitContext, REVIEW_DIFF_CHAR_BUDGET);
+  const outputGitContext = withoutDiffText(gitContext, reviewGitContext.diff);
+  return {
+    review: renderContext(input, reviewGitContext),
+    compact: renderContext(input, outputGitContext),
+    outputGitContext: outputGitContext,
+  };
+}
+
+function renderContext(input, gitContext) {
   return fencedJson({
-    input: {
-      target: input.target,
-      fix: input.fix,
-      baseRef: input.baseRef,
-      trunkRef: input.trunkRef,
-      headRef: input.headRef,
-      maxFindings: input.maxFindings,
-    },
+    input: { target: input.target, fix: input.fix, maxFindings: input.maxFindings },
     gitContext: gitContext,
   });
+}
+
+function withCompactedDiff(gitContext, budget) {
+  return {
+    target: gitContext.target,
+    refs: gitContext.refs,
+    failures: gitContext.failures,
+    status: gitContext.status,
+    changedFiles: gitContext.changedFiles,
+    diffStat: gitContext.diffStat,
+    diff: compactDiff(gitContext.diff, budget),
+  };
+}
+
+function withoutDiffText(gitContext, compactedDiff) {
+  return {
+    target: gitContext.target,
+    refs: gitContext.refs,
+    failures: gitContext.failures,
+    status: gitContext.status,
+    changedFiles: gitContext.changedFiles,
+    diffStat: gitContext.diffStat,
+    diff: diffSummary(gitContext.diff, compactedDiff),
+  };
+}
+
+function compactDiff(diff, budget) {
+  if (!diff || typeof diff !== "object") return diff;
+
+  const compacted = {
+    base: diff.base,
+    head: diff.head,
+    mergeBase: diff.mergeBase,
+    truncated: diff.truncated,
+    workflowBudgetChars: budget,
+    workflowCompactions: [],
+  };
+  let remaining = budget;
+
+  ["branch", "staged", "unstaged"].forEach(function (field) {
+    const value = diff[field];
+    if (typeof value !== "string") {
+      compacted[field] = value;
+      return;
+    }
+
+    const included = Math.max(0, Math.min(value.length, remaining));
+    compacted[field] =
+      included === value.length ? value : value.slice(0, included) + diffOmittedMessage(field);
+    remaining -= included;
+    if (included < value.length) {
+      compacted.workflowCompactions.push({
+        field: field,
+        originalChars: value.length,
+        includedChars: included,
+      });
+    }
+  });
+
+  return compacted;
+}
+
+function diffSummary(diff, compactedDiff) {
+  if (!diff || typeof diff !== "object") return diff;
+  return {
+    base: diff.base,
+    head: diff.head,
+    mergeBase: diff.mergeBase,
+    truncated: diff.truncated,
+    workflowBudgetChars: compactedDiff && compactedDiff.workflowBudgetChars,
+    workflowCompactions: diffCompactions({ diff: compactedDiff }),
+    chars: {
+      branch: stringLength(diff.branch),
+      staged: stringLength(diff.staged),
+      unstaged: stringLength(diff.unstaged),
+    },
+  };
+}
+
+function diffCompactions(gitContext) {
+  return asArray(gitContext && gitContext.diff && gitContext.diff.workflowCompactions);
+}
+
+function diffOmittedMessage(field) {
+  return (
+    "\n\n[Workflow prompt budget omitted the rest of the " +
+    field +
+    " diff. Inspect the file directly before making claims about omitted hunks.]"
+  );
 }
 
 function reviewPrompt(lane, input, reviewContext) {
@@ -279,30 +399,36 @@ function reviewPrompt(lane, input, reviewContext) {
     readOnlyPrompt(),
     "You are the " + lane.title + " lane. Review every changed file in the supplied Git context.",
     "If an explicit target is provided and the Git diff is empty, inspect that target path in the workspace before making claims.",
+    "Diff text is capped by workflowBudgetChars; if workflowCompactions or built-in truncated flags are present, inspect files directly before making claims about omitted hunks.",
     "Allowed severity values are: high, medium, low. Return high-signal, actionable findings only; an empty findings array is fine.",
-    "The synthesis step will keep at most " + input.maxFindings + " actionable findings. Use stable finding ids and arrays for filePaths/evidence.",
+    "The synthesis step will keep at most " +
+      input.maxFindings +
+      " actionable findings. Use stable finding ids and arrays for filePaths/evidence.",
     "\nLane checklist:\n- " + lane.instructions.join("\n- "),
     "\nReview context:\n" + reviewContext,
   ].join("\n\n");
 }
 
-function synthesisPrompt(input, reviewContext, reviewOutputs) {
+function synthesisPrompt(input, compactContext, reviewOutputs) {
   return [
     readOnlyPrompt(),
-    "Deduplicate and triage these simplify review findings. Keep actionableFindings to the " + input.maxFindings + " highest-value issues.",
+    "Deduplicate and triage these simplify review findings. Keep actionableFindings to the " +
+      input.maxFindings +
+      " highest-value issues.",
     "Fix actionable issues directly when fix mode is enabled. If a finding is false positive or not worth addressing, put it in skippedFindings without debating it.",
     "Allowed severity values are: high, medium, low. Prefer minimal cleanup over broad refactors.",
-    "\nOriginal review context:\n" + reviewContext,
+    "\nCompact review context without raw diff text:\n" + compactContext,
     "\nLane outputs:\n" + fencedJson(reviewOutputs),
   ].join("\n\n");
 }
 
-function fixPrompt(reviewContext, synthesized) {
+function fixPrompt(compactContext, synthesized) {
   return [
     "Fix the actionable simplify findings with minimal, correct, reviewable changes. Do not push, commit, or open a PR.",
+    "Use the compact context for file lists and diff metadata; inspect files directly instead of relying on raw diff text being embedded in this prompt.",
     "Preserve existing style and functionality. Run targeted validation for touched code when feasible and report exact commands/results.",
     "If a finding is false positive or not worth addressing, skip it and note why. Set madeChanges true only when files changed.",
-    "\nOriginal review context:\n" + reviewContext,
+    "\nCompact review context:\n" + compactContext,
     "\nSynthesized findings:\n" + fencedJson(synthesized),
   ].join("\n\n");
 }
@@ -318,23 +444,31 @@ function parseArgs(args) {
     headRef: text(raw.headRef || raw.head),
     maxFindings: positiveInt(raw.maxFindings, DEFAULT_MAX_FINDINGS),
   };
-  const targetParts = [];
-  const tokens = tokenize(String(raw.input || ""));
+  const tokenized = tokenize(String(raw.input || ""));
+  if (tokenized.error) return { input: input, error: tokenized.error };
 
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    const valueFlag = parseValueFlag(tokens, index);
+  const targetParts = [];
+  let index = 0;
+  while (index < tokenized.tokens.length) {
+    const token = tokenized.tokens[index];
+    const valueFlag = parseValueFlag(tokenized.tokens, index);
     if (token === "--help" || token === "-h") input.help = true;
     else if (token === "--review-only" || token === "--no-fix") input.fix = false;
     else if (token === "--fix") input.fix = true;
+    else if (valueFlag && valueFlag.error) return { input: input, error: valueFlag.error };
     else if (valueFlag) {
-      input[valueFlag.key] = valueFlag.key === "maxFindings" ? positiveInt(valueFlag.value, DEFAULT_MAX_FINDINGS) : valueFlag.value;
-      index = valueFlag.index;
+      input[valueFlag.key] =
+        valueFlag.key === "maxFindings"
+          ? positiveInt(valueFlag.value, DEFAULT_MAX_FINDINGS)
+          : valueFlag.value;
+      index = valueFlag.nextIndex;
+      continue;
     } else targetParts.push(token);
+    index += 1;
   }
 
   if (!input.target) input.target = targetParts.join(" ").trim();
-  return input;
+  return { input: input, error: "" };
 }
 
 function parseValueFlag(tokens, index) {
@@ -348,11 +482,13 @@ function parseValueFlag(tokens, index) {
   for (let flagIndex = 0; flagIndex < flags.length; flagIndex += 1) {
     const flag = flags[flagIndex];
     if (token === flag.name) {
-      assert(index + 1 < tokens.length, flag.name + " requires a value");
-      return { key: flag.key, value: tokens[index + 1], index: index + 1 };
+      if (index + 1 >= tokens.length) return { error: flag.name + " requires a value" };
+      return { key: flag.key, value: tokens[index + 1], nextIndex: index + 2 };
     }
     if (token.indexOf(flag.name + "=") === 0) {
-      return { key: flag.key, value: token.slice(flag.name.length + 1), index: index };
+      const value = token.slice(flag.name.length + 1);
+      if (!value) return { error: flag.name + " requires a value" };
+      return { key: flag.key, value: value, nextIndex: index + 1 };
     }
   }
   return null;
@@ -380,10 +516,10 @@ function tokenize(input) {
       current = "";
     } else current += char;
   }
-  assert(!quote, "unterminated quoted argument");
+  if (quote) return { tokens: tokens, error: "unterminated quoted argument" };
   if (escaped) current += "\\";
   if (current) tokens.push(current);
-  return tokens;
+  return { tokens: tokens, error: "" };
 }
 
 function readOnlyPrompt() {
@@ -391,40 +527,52 @@ function readOnlyPrompt() {
 }
 
 function reviewOnlyReport(input, markdown) {
-  const mode = input.fix ? "No actionable fixes were selected." : "Review-only mode; no fixes were applied.";
+  const mode = input.fix
+    ? "No actionable fixes were selected."
+    : "Review-only mode; no fixes were applied.";
   return markdown + "\n\n---\n\n## Simplify workflow result\n\n" + mode;
 }
 
 function fixReport(synthesisMarkdown, fixerMarkdown, applied) {
   const status = applied && applied.status ? applied.status : "unknown";
   const success = Boolean(applied && applied.success);
-  return synthesisMarkdown + "\n\n---\n\n## Fix pass\n\n" + fixerMarkdown + "\n\n### Patch application\n\n- Status: " + status + "\n- Success: " + String(success);
+  return (
+    synthesisMarkdown +
+    "\n\n---\n\n## Fix pass\n\n" +
+    fixerMarkdown +
+    "\n\n### Patch application\n\n- Status: " +
+    status +
+    "\n- Success: " +
+    String(success)
+  );
 }
 
-function usageResult() {
+function usageResult(error) {
+  const lines = [
+    "# simplify workflow",
+    "",
+    "Review current git changes for code reuse, quality, and efficiency, then fix actionable issues.",
+    "",
+    "## Usage",
+    "",
+    "- `/workflow simplify` — review current git changes and apply fixes.",
+    "- `/workflow simplify --review-only` — review and synthesize findings without applying fixes.",
+    "- `/workflow simplify --base main --head HEAD` — review a specific ref range.",
+    "- `/workflow simplify path/or/context` — provide an explicit target when there are no Git changes.",
+    "",
+    "## Options",
+    "",
+    "- `--review-only` / `--no-fix`",
+    "- `--fix`",
+    "- `--base <ref>`",
+    "- `--trunk <ref>`",
+    "- `--head <ref>`",
+    "- `--max-findings <n>`",
+  ];
+  if (error) lines.splice(2, 0, "", "**Argument error:** " + error);
   return {
-    reportMarkdown: [
-      "# simplify workflow",
-      "",
-      "Review current git changes for code reuse, quality, and efficiency, then fix actionable issues.",
-      "",
-      "## Usage",
-      "",
-      "- `/workflow simplify` — review current git changes and apply fixes.",
-      "- `/workflow simplify --review-only` — review and synthesize findings without applying fixes.",
-      "- `/workflow simplify --base main --head HEAD` — review a specific ref range.",
-      "- `/workflow simplify path/or/context` — provide an explicit target when there are no Git changes.",
-      "",
-      "## Options",
-      "",
-      "- `--review-only` / `--no-fix`",
-      "- `--fix`",
-      "- `--base <ref>`",
-      "- `--trunk <ref>`",
-      "- `--head <ref>`",
-      "- `--max-findings <n>`",
-    ].join("\n"),
-    structuredOutput: { help: true },
+    reportMarkdown: lines.join("\n"),
+    structuredOutput: { help: true, error: error || "" },
   };
 }
 
@@ -443,6 +591,10 @@ function mustObject(value, message) {
 
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function stringLength(value) {
+  return typeof value === "string" ? value.length : 0;
 }
 
 function positiveInt(value, fallback) {
