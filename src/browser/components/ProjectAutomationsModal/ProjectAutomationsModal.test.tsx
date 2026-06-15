@@ -191,6 +191,7 @@ describe("ProjectAutomationsModal", () => {
         ({
           getProjectConfig: () => undefined,
           refreshProjects: refreshProjectsMock,
+          userProjects: new Map(),
         }) as unknown as ReturnType<typeof ProjectContextModule.useProjectContext>
     );
   });
@@ -321,6 +322,7 @@ describe("ProjectAutomationsModal", () => {
                 })
               : undefined,
           refreshProjects: refreshProjectsMock,
+          userProjects: new Map(),
         }) as unknown as ReturnType<typeof ProjectContextModule.useProjectContext>
     );
     const view = render(
@@ -350,6 +352,54 @@ describe("ProjectAutomationsModal", () => {
     expect(view.getByRole("option", { name: "Control workspace" })).toBeTruthy();
   });
 
+  test("filters owner workspace targets claimed by parent automations", async () => {
+    const subProjectPath = "/repo/packages/api";
+    const parentConfig = createProjectConfig({
+      workflowSchedules: [
+        {
+          id: "parent-automation",
+          enabled: true,
+          workflowName: "triage-github-issues",
+          intervalMs: 15 * 60_000,
+          target: { type: "existing-workspace", workspaceId: "ws-1" },
+        },
+      ],
+    });
+    const subProjectConfig = createProjectConfig({ parentProjectPath: "/repo", workspaces: [] });
+    spyOn(ProjectContextModule, "useProjectContext").mockImplementation(
+      () =>
+        ({
+          getProjectConfig: (path: string) => (path === "/repo" ? parentConfig : undefined),
+          refreshProjects: refreshProjectsMock,
+          userProjects: new Map([
+            ["/repo", parentConfig],
+            [subProjectPath, subProjectConfig],
+          ]),
+        }) as unknown as ReturnType<typeof ProjectContextModule.useProjectContext>
+    );
+    const view = render(
+      <ProjectAutomationsModal
+        open={true}
+        projectPath={subProjectPath}
+        projectName="API"
+        projectConfig={subProjectConfig}
+        onOpenChange={() => undefined}
+      />
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "New automation" }));
+    await waitFor(() => {
+      expect((view.getByLabelText("Project automation workflow") as HTMLSelectElement).value).toBe(
+        "triage-github-issues"
+      );
+    });
+    fireEvent.change(view.getByLabelText("Project automation run target"), {
+      target: { value: "existing-workspace" },
+    });
+
+    expect(view.queryByRole("option", { name: "Control workspace" })).toBeNull();
+  });
+
   test("does not offer an existing workspace that already has an automation", async () => {
     const view = renderProjectAutomationsModal(
       createProjectConfig({
@@ -365,6 +415,44 @@ describe("ProjectAutomationsModal", () => {
             intervalMs: 15 * 60_000,
             target: { type: "existing-workspace", workspaceId: "ws-1" },
           },
+        ],
+      })
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "New automation" }));
+    await waitFor(() => {
+      expect((view.getByLabelText("Project automation workflow") as HTMLSelectElement).value).toBe(
+        "triage-github-issues"
+      );
+    });
+    fireEvent.change(view.getByLabelText("Project automation run target"), {
+      target: { value: "existing-workspace" },
+    });
+
+    const workspaceSelect = view.getByLabelText(
+      "Project automation existing workspace"
+    ) as HTMLSelectElement;
+    expect(workspaceSelect.value).toBe("ws-2");
+    expect(view.queryByRole("option", { name: "Control workspace" })).toBeNull();
+    expect(view.getByRole("option", { name: "Review workspace" })).toBeTruthy();
+  });
+
+  test("does not offer an existing workspace that already has a workspace schedule", async () => {
+    const view = renderProjectAutomationsModal(
+      createProjectConfig({
+        workspaces: [
+          {
+            path: "/repo/control",
+            id: "ws-1",
+            name: "control",
+            title: "Control workspace",
+            workflowSchedule: {
+              enabled: true,
+              workflowName: "triage-github-issues",
+              intervalMs: 15 * 60_000,
+            },
+          },
+          { path: "/repo/review", id: "ws-2", name: "review", title: "Review workspace" },
         ],
       })
     );

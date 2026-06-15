@@ -296,6 +296,42 @@ describe("router workflow routes", () => {
     });
   });
 
+  test("rejects existing-workspace conflicts with workspace schedules", async () => {
+    await config.editConfig((current) => {
+      current.projects.set(projectPath, {
+        trusted: true,
+        workspaces: [
+          {
+            id: "workspace-1",
+            path: path.join(tempDir, "workspace-1"),
+            workflowSchedule: {
+              enabled: true,
+              workflowName: "demo",
+              intervalMs: 60_000,
+            },
+          },
+        ],
+      });
+      return current;
+    });
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    const result = await client.projects.workflowSchedules.set({
+      projectPath,
+      schedule: {
+        enabled: true,
+        workflowName: "demo",
+        intervalMs: 60_000,
+        target: { type: "existing-workspace", workspaceId: "workspace-1" },
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining("already has an automation"),
+    });
+  });
+
   test("rejects existing-workspace conflicts across owner project schedules", async () => {
     const subProjectPath = path.join(projectPath, "packages", "api");
     await config.editConfig((current) => {

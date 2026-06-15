@@ -91,21 +91,29 @@ function getProjectScheduleId(schedule: ProjectWorkflowSchedule | null): string 
   return scheduleId != null && scheduleId.length > 0 ? scheduleId : null;
 }
 
-function getExistingWorkspaceAutomationConflict(input: {
-  projectConfig: ProjectConfig;
+function hasExistingWorkspaceAutomationConflict(input: {
+  workflowSchedules: readonly ProjectWorkflowSchedule[];
+  workspaces: readonly Workspace[];
   workspaceId: string;
   editingScheduleId: string | null;
-}): ProjectWorkflowSchedule | undefined {
+}): boolean {
   const workspaceId = input.workspaceId.trim();
   if (workspaceId.length === 0) {
-    return undefined;
+    return false;
   }
 
-  return (input.projectConfig.workflowSchedules ?? []).find(
+  const conflictingProjectSchedule = input.workflowSchedules.some(
     (schedule) =>
       schedule.id !== input.editingScheduleId &&
       schedule.target.type === "existing-workspace" &&
       schedule.target.workspaceId === workspaceId
+  );
+  if (conflictingProjectSchedule) {
+    return true;
+  }
+
+  return input.workspaces.some(
+    (workspace) => workspace.id === workspaceId && workspace.workflowSchedule != null
   );
 }
 
@@ -173,7 +181,7 @@ function getEnabledScheduleInput(
 
 export function ProjectAutomationsModal(props: ProjectAutomationsModalProps) {
   const { api } = useAPI();
-  const { getProjectConfig, refreshProjects } = useProjectContext();
+  const { getProjectConfig, refreshProjects, userProjects } = useProjectContext();
   const rows = props.projectConfig.workflowSchedules ?? [];
   const ownerProjectPath = props.projectConfig.parentProjectPath ?? props.projectPath;
   const ownerProjectConfig =
@@ -189,6 +197,14 @@ export function ProjectAutomationsModal(props: ProjectAutomationsModalProps) {
     ownerWorkspaces
       .filter((workspace) => workspace.id != null)
       .map((workspace) => [workspace.id!, workspace])
+  );
+  const projectScheduleSources =
+    userProjects.size > 0 ? userProjects : new Map([[props.projectPath, props.projectConfig]]);
+  const ownerProjectWorkflowSchedules = Array.from(projectScheduleSources.entries()).flatMap(
+    ([projectPath, projectConfig]) => {
+      const projectOwnerPath = projectConfig.parentProjectPath ?? projectPath;
+      return projectOwnerPath === ownerProjectPath ? (projectConfig.workflowSchedules ?? []) : [];
+    }
   );
   const [mode, setMode] = useState<"list" | "edit">("list");
   const [editingSchedule, setEditingSchedule] = useState<ProjectWorkflowSchedule | null>(null);
@@ -246,24 +262,34 @@ export function ProjectAutomationsModal(props: ProjectAutomationsModalProps) {
     workspaces: ownerWorkspaces,
   });
   const existingWorkspaceConflict =
-    draftTargetType === "existing-workspace"
-      ? getExistingWorkspaceAutomationConflict({
-          projectConfig: props.projectConfig,
-          workspaceId: draftExistingWorkspaceId,
-          editingScheduleId,
-        })
-      : undefined;
+    draftTargetType === "existing-workspace" &&
+    hasExistingWorkspaceAutomationConflict({
+      workflowSchedules: ownerProjectWorkflowSchedules,
+      workspaces: ownerWorkspaces,
+      workspaceId: draftExistingWorkspaceId,
+      editingScheduleId,
+    });
   const existingWorkspaceOptions = activeWorkspaces.filter((workspace) => {
     if (workspace.id == null) return false;
     if (workspace.id === draftExistingWorkspaceId) return true;
-    return (
-      getExistingWorkspaceAutomationConflict({
-        projectConfig: props.projectConfig,
-        workspaceId: workspace.id,
-        editingScheduleId,
-      }) == null
-    );
+    return !hasExistingWorkspaceAutomationConflict({
+      workflowSchedules: ownerProjectWorkflowSchedules,
+      workspaces: ownerWorkspaces,
+      workspaceId: workspace.id,
+      editingScheduleId,
+    });
   });
+  const firstAvailableWorkspaceId =
+    activeWorkspaces.find(
+      (workspace) =>
+        workspace.id != null &&
+        !hasExistingWorkspaceAutomationConflict({
+          workflowSchedules: ownerProjectWorkflowSchedules,
+          workspaces: ownerWorkspaces,
+          workspaceId: workspace.id,
+          editingScheduleId,
+        })
+    )?.id ?? "";
   const workflowValidationError = definitionsPending
     ? null
     : draftWorkflowName.length === 0
@@ -278,7 +304,7 @@ export function ProjectAutomationsModal(props: ProjectAutomationsModalProps) {
       ? null
       : draftExistingWorkspaceId.trim().length === 0
         ? "Choose an existing workspace or use a fresh workspace target."
-        : existingWorkspaceConflict != null
+        : existingWorkspaceConflict
           ? `${getWorkspaceLabel(workspacesById.get(draftExistingWorkspaceId))} already has an automation.`
           : null;
   const targetTrunkValidationError =
@@ -406,18 +432,6 @@ export function ProjectAutomationsModal(props: ProjectAutomationsModalProps) {
     lastInitializedEditKeyRef.current = editInitializationKey;
 
     const schedule = editingSchedule ?? undefined;
-    const editingScheduleId = getProjectScheduleId(editingSchedule);
-    const firstAvailableWorkspaceId =
-      ownerWorkspaces.find(
-        (workspace) =>
-          workspace.id != null &&
-          !isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt) &&
-          getExistingWorkspaceAutomationConflict({
-            projectConfig: props.projectConfig,
-            workspaceId: workspace.id,
-            editingScheduleId,
-          }) == null
-      )?.id ?? "";
     setSaveError(null);
     setDraftTitle(schedule?.title ?? "");
     setDraftEnabled(schedule?.enabled ?? true);
@@ -458,10 +472,9 @@ export function ProjectAutomationsModal(props: ProjectAutomationsModalProps) {
   }, [
     editInitializationKey,
     editingSchedule,
+    firstAvailableWorkspaceId,
     mode,
     newWorkspaceUnavailableReason,
-    ownerWorkspaces,
-    props.projectConfig,
     recommendedTrunk,
   ]);
 

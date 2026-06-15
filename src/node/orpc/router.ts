@@ -3359,8 +3359,13 @@ export const router = (authToken?: string) => {
                         candidate.schedule.target.type === "existing-workspace" &&
                         candidate.schedule.target.workspaceId === normalizedTarget.workspaceId
                     );
+                  const conflictingWorkspaceSchedule = ownerProject.workspaces.find(
+                    (workspace) =>
+                      workspace.id === normalizedTarget.workspaceId &&
+                      workspace.workflowSchedule != null
+                  );
                   assert(
-                    conflictingSchedule == null,
+                    conflictingSchedule == null && conflictingWorkspaceSchedule == null,
                     "Existing-workspace project automation target already has an automation"
                   );
                 }

@@ -490,8 +490,17 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
       : workspaceTitle;
   const isEditing = editingWorkspaceId === workspaceId;
   const { getProjectConfig } = useProjectContext();
+  const metadataSubProjectConfig =
+    metadata.subProjectPath != null ? getProjectConfig(metadata.subProjectPath) : undefined;
+  const sectionProjectConfig = sectionId != null ? getProjectConfig(sectionId) : undefined;
+  const automationProjectPath =
+    metadata.subProjectPath != null && metadataSubProjectConfig?.parentProjectPath != null
+      ? metadata.subProjectPath
+      : sectionId != null && sectionProjectConfig?.parentProjectPath != null
+        ? sectionId
+        : projectPath;
   const projectWorkflowSchedule = getExistingWorkspaceProjectWorkflowSchedule({
-    projectConfig: getProjectConfig(projectPath),
+    projectConfig: getProjectConfig(automationProjectPath),
     workspaceId,
   });
 
@@ -1011,7 +1020,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
               </Popover>
               {dynamicWorkflowsEnabled && automationModalOpen && (
                 <AutomationModal
-                  projectPath={projectPath}
+                  projectPath={automationProjectPath}
                   workspaceId={workspaceId}
                   workspaceName={displayTitle}
                   projectWorkflowSchedule={projectWorkflowSchedule}
