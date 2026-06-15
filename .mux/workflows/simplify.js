@@ -235,18 +235,24 @@ export default function simplifyWorkflow({
 
   // git am cannot apply onto a dirty index; keep the review result but skip auto-fix.
   if (hasStagedChanges(gitContext)) {
-    return {
-      reportMarkdown:
-        synthesis.reportMarkdown +
-        "\n\n---\n\n## Simplify workflow result\n\n" +
-        stagedChangesSkipReason(),
-      structuredOutput: {
-        mode: "staged-changes-skip-fix",
-        gitContext: contexts.outputGitContext,
-        reviews: reviewOutputs,
-        synthesis: synthesized,
-      },
-    };
+    return skipFixResult(
+      synthesis.reportMarkdown,
+      stagedChangesSkipReason(),
+      "staged-changes-skip-fix",
+      contexts.outputGitContext,
+      reviewOutputs,
+      synthesized
+    );
+  }
+  if (!isRequestedHeadCurrent(gitContext.status)) {
+    return skipFixResult(
+      synthesis.reportMarkdown,
+      nonCurrentHeadSkipReason(),
+      "non-current-head-skip-fix",
+      contexts.outputGitContext,
+      reviewOutputs,
+      synthesized
+    );
   }
 
   phase("fix", { actionableFindingCount: actionableFindings.length });
@@ -276,7 +282,7 @@ export default function simplifyWorkflow({
   }
 
   phase("apply-fixes", { madeChanges: true });
-  const applyPreflight = collectApplyPreflight(action, log, gitContext);
+  const applyPreflight = collectApplyPreflight(action, log, input, gitContext);
   if (applyPreflight.skippedReason) {
     return {
       reportMarkdown:
@@ -318,12 +324,31 @@ export default function simplifyWorkflow({
   };
 }
 
-function collectApplyPreflight(action, log, gitContext) {
+function skipFixResult(
+  synthesisMarkdown,
+  reason,
+  mode,
+  outputGitContext,
+  reviewOutputs,
+  synthesized
+) {
+  return {
+    reportMarkdown: synthesisMarkdown + "\n\n---\n\n## Simplify workflow result\n\n" + reason,
+    structuredOutput: {
+      mode: mode,
+      gitContext: outputGitContext,
+      reviews: reviewOutputs,
+      synthesis: synthesized,
+    },
+  };
+}
+
+function collectApplyPreflight(action, log, input, gitContext) {
   let status = null;
   try {
     status = action.git.status({
       id: "apply-git-status",
-      input: { includeIgnored: false },
+      input: gitStatusInput(input),
       builtInOnly: true,
       cache: false,
     }).output;
@@ -338,6 +363,10 @@ function collectApplyPreflight(action, log, gitContext) {
   }
   if (hasArrayItems(status.staged)) {
     return failedApplyPreflight(stagedChangesSkipReason());
+  }
+
+  if (!isRequestedHeadCurrent(status)) {
+    return failedApplyPreflight(nonCurrentHeadSkipReason());
   }
 
   const reviewedHeadSha = gitContext.status && gitContext.status.headSha;
@@ -359,6 +388,10 @@ function failedApplyPreflight(reason) {
   return { success: false, status: "failed", skippedReason: reason, error: reason };
 }
 
+function nonCurrentHeadSkipReason() {
+  return "Auto-fix was skipped because the requested `--head` is not the current checkout. Check out that ref or rerun without `--head` before applying fixes.";
+}
+
 function stagedChangesSkipReason() {
   return "Auto-fix was skipped because staged changes are present. Unstage or commit staged changes, then rerun `/workflow simplify --fix`.";
 }
@@ -369,7 +402,7 @@ function collectGitContext(action, input, log) {
   const status = gitSlice(log, failures, "status", function () {
     return action.git.status({
       id: "git-status",
-      input: { includeIgnored: false },
+      input: gitStatusInput(input),
       builtInOnly: true,
     }).output;
   });
@@ -416,6 +449,12 @@ function gitSlice(log, failures, name, read) {
   }
 }
 
+function gitStatusInput(input) {
+  const statusInput = { includeIgnored: false };
+  if (input.headRef) statusInput.head = input.headRef;
+  return statusInput;
+}
+
 function gitRefs(input) {
   const refs = {};
   if (input.baseRef) refs.base = input.baseRef;
@@ -444,6 +483,14 @@ function shouldReadDiffs(changedFiles) {
     hasArrayItems(changedFiles.staged) ||
     hasArrayItems(changedFiles.unstaged)
   );
+}
+
+function isRequestedHeadCurrent(status) {
+  if (!status || typeof status !== "object") return false;
+  const currentHeadSha = typeof status.headSha === "string" ? status.headSha : "";
+  const requestedHeadSha =
+    typeof status.requestedHeadSha === "string" ? status.requestedHeadSha : currentHeadSha;
+  return Boolean(currentHeadSha && requestedHeadSha && currentHeadSha === requestedHeadSha);
 }
 
 function hasStagedChanges(gitContext) {
