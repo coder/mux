@@ -1149,6 +1149,156 @@ describe("HistoryService", () => {
       }
     });
 
+    it("deduplicates rotation replay rows across archive and active history", async () => {
+      const workspaceId = "ws-compaction-epoch-rotation-replay";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const replayedPrefix = [
+        messageLine(
+          workspaceId,
+          createMuxMessage("old-boundary", "assistant", "old summary", {
+            historySequence: 0,
+            compactionBoundary: true,
+            compacted: "user",
+            compactionEpoch: 1,
+          })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("kept-user", "user", "durable preference", { historySequence: 1 })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("compact-request", "user", "Please compact", {
+            historySequence: 2,
+            muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+          })
+        ),
+      ];
+      const summary = messageLine(
+        workspaceId,
+        createMuxMessage("new-summary", "assistant", "new summary", {
+          historySequence: 3,
+          compactionBoundary: true,
+          compacted: "user",
+          compactionEpoch: 2,
+        })
+      );
+
+      await fs.writeFile(
+        path.join(workspaceDir, "chat-archive.jsonl"),
+        replayedPrefix.join("\n") + "\n"
+      );
+      await fs.writeFile(
+        path.join(workspaceDir, "chat.jsonl"),
+        [...replayedPrefix, summary].join("\n") + "\n"
+      );
+
+      const result = await service.getMessagesForCompactionEpoch(workspaceId, {
+        workspaceId,
+        summaryMessageId: "new-summary",
+        summaryHistorySequence: 3,
+        compactionEpoch: 2,
+        previousBoundaryHistorySequence: 0,
+        compactionRequestMessageId: "compact-request",
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.messages.map((message) => message.id)).toEqual(["kept-user"]);
+        expect(result.data.summary.id).toBe("new-summary");
+      }
+    });
+
+    it("holds the workspace lock while scanning archive and active history", async () => {
+      const workspaceId = "ws-compaction-epoch-lock";
+      await writeHistoryLines(config, workspaceId, [
+        messageLine(
+          workspaceId,
+          createMuxMessage("old-boundary", "assistant", "old summary", {
+            historySequence: 0,
+            compactionBoundary: true,
+            compacted: "user",
+            compactionEpoch: 1,
+          })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("kept-user", "user", "durable preference", { historySequence: 1 })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("compact-request", "user", "Please compact", {
+            historySequence: 2,
+            muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+          })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("summary", "assistant", "summary", {
+            historySequence: 3,
+            compactionBoundary: true,
+            compacted: "user",
+            compactionEpoch: 2,
+          })
+        ),
+      ]);
+
+      let releaseScan!: () => void;
+      const scanReleased = new Promise<void>((resolve) => {
+        releaseScan = resolve;
+      });
+      let markScanStarted!: () => void;
+      const scanStarted = new Promise<void>((resolve) => {
+        markScanStarted = resolve;
+      });
+      const originalIterateFullHistory: HistoryService["iterateFullHistory"] =
+        service.iterateFullHistory.bind(service);
+      const blockingIterateFullHistory: HistoryService["iterateFullHistory"] = async (
+        workspaceIdArg,
+        direction,
+        visitor
+      ) => {
+        markScanStarted();
+        await scanReleased;
+        return originalIterateFullHistory(workspaceIdArg, direction, visitor);
+      };
+      service.iterateFullHistory = blockingIterateFullHistory;
+
+      const scan = service.getMessagesForCompactionEpoch(workspaceId, {
+        workspaceId,
+        summaryMessageId: "summary",
+        summaryHistorySequence: 3,
+        compactionEpoch: 2,
+        previousBoundaryHistorySequence: 0,
+        compactionRequestMessageId: "compact-request",
+      });
+      await scanStarted;
+
+      interface WorkspaceLockProbe {
+        fileLocks: {
+          withLock<T>(key: string, operation: () => Promise<T>): Promise<T>;
+        };
+      }
+      const { fileLocks } = service as unknown as WorkspaceLockProbe;
+      let probeStarted = false;
+      const probe = fileLocks.withLock(workspaceId, () => {
+        probeStarted = true;
+        return Promise.resolve();
+      });
+      await Promise.resolve();
+
+      expect(probeStarted).toBe(false);
+      releaseScan();
+
+      const result = await scan;
+      await probe;
+
+      expect(result.success).toBe(true);
+      expect(probeStarted).toBe(true);
+    });
+
     it("uses reset boundaries as lower bounds and excludes the reset marker", async () => {
       const workspaceId = "ws-compaction-reset-epoch";
       await writeHistoryLines(config, workspaceId, [

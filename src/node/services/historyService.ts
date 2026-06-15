@@ -900,27 +900,35 @@ export class HistoryService {
       const messages: MuxMessage[] = [];
       let summary: MuxMessage | undefined;
       const lowerBound = metadata.previousBoundaryHistorySequence;
+      const seenHistorySequences = new Set<number>();
 
-      const iteration = await this.iterateFullHistory(workspaceId, "forward", (chunk) => {
-        for (const message of chunk) {
-          const sequence = message.metadata?.historySequence;
-          if (!isNonNegativeInteger(sequence)) continue;
+      // The just-compacted epoch can straddle chat-archive.jsonl and chat.jsonl after
+      // sealed-history rotation, so scan the full logical history under the workspace
+      // lock; otherwise a concurrent boundary rotation can move rows between files mid-scan.
+      const iteration = await this.fileLocks.withLock(workspaceId, () =>
+        this.iterateFullHistory(workspaceId, "forward", (chunk) => {
+          for (const message of chunk) {
+            const sequence = message.metadata?.historySequence;
+            if (!isNonNegativeInteger(sequence)) continue;
+            if (seenHistorySequences.has(sequence)) continue;
+            seenHistorySequences.add(sequence);
 
-          if (
-            sequence === metadata.summaryHistorySequence &&
-            message.id === metadata.summaryMessageId
-          ) {
-            summary = message;
-            continue;
+            if (
+              sequence === metadata.summaryHistorySequence &&
+              message.id === metadata.summaryMessageId
+            ) {
+              summary = message;
+              continue;
+            }
+
+            if (sequence >= metadata.summaryHistorySequence) continue;
+            if (lowerBound !== undefined && sequence <= lowerBound) continue;
+            if (message.id === metadata.compactionRequestMessageId) continue;
+            if (isDurableContextBoundaryMarker(message)) continue;
+            messages.push(message);
           }
-
-          if (sequence >= metadata.summaryHistorySequence) continue;
-          if (lowerBound !== undefined && sequence <= lowerBound) continue;
-          if (message.id === metadata.compactionRequestMessageId) continue;
-          if (isDurableContextBoundaryMarker(message)) continue;
-          messages.push(message);
-        }
-      });
+        })
+      );
       if (!iteration.success) {
         return Err(`Failed to read compaction epoch messages: ${iteration.error}`);
       }
