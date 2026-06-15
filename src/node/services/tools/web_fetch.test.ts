@@ -4,7 +4,6 @@ import * as runtimeHelpers from "@/node/utils/runtime/helpers";
 import { createWebFetchTool } from "./web_fetch";
 import type { WebFetchToolArgs, WebFetchToolResult } from "@/common/types/tools";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
-import { isMuxMdUrl, parseMuxMdUrl, uploadToMuxMd, deleteFromMuxMd } from "@/common/lib/muxMd";
 import type { ToolExecutionOptions } from "ai";
 import { WEB_FETCH_TIMEOUT_SECS } from "@/common/constants/toolLimits";
 
@@ -63,57 +62,6 @@ afterEach(() => {
   // reaches 0 when time stands still. Do not remove this without restoring
   // each global spy individually.
   mock.restore();
-});
-
-describe("mux.md URL helpers", () => {
-  describe("isMuxMdUrl", () => {
-    it("should detect valid mux.md URLs", () => {
-      expect(isMuxMdUrl("https://mux.md/abc123#key456")).toBe(true);
-      expect(isMuxMdUrl("https://mux.md/RQJe3#Fbbhosspt9q9Ig")).toBe(true);
-    });
-
-    it("should reject mux.md URLs without hash", () => {
-      expect(isMuxMdUrl("https://mux.md/abc123")).toBe(false);
-    });
-
-    it("should reject mux.md URLs with empty hash", () => {
-      expect(isMuxMdUrl("https://mux.md/abc123#")).toBe(false);
-    });
-
-    it("should reject non-mux.md URLs", () => {
-      expect(isMuxMdUrl("https://example.com/page#hash")).toBe(false);
-      expect(isMuxMdUrl("https://other.md/abc#key")).toBe(false);
-    });
-
-    it("should handle invalid URLs gracefully", () => {
-      expect(isMuxMdUrl("not-a-url")).toBe(false);
-      expect(isMuxMdUrl("")).toBe(false);
-    });
-  });
-
-  describe("parseMuxMdUrl", () => {
-    it("should extract id and key from valid mux.md URL", () => {
-      const result = parseMuxMdUrl("https://mux.md/abc123#key456");
-      expect(result).toEqual({ id: "abc123", key: "key456" });
-    });
-
-    it("should handle base64url characters in key", () => {
-      const result = parseMuxMdUrl("https://mux.md/RQJe3#Fbbhosspt9q9Ig");
-      expect(result).toEqual({ id: "RQJe3", key: "Fbbhosspt9q9Ig" });
-    });
-
-    it("should return null for URLs without hash", () => {
-      expect(parseMuxMdUrl("https://mux.md/abc123")).toBeNull();
-    });
-
-    it("should return null for URLs with empty id", () => {
-      expect(parseMuxMdUrl("https://mux.md/#key")).toBeNull();
-    });
-
-    it("should return null for invalid URLs", () => {
-      expect(parseMuxMdUrl("not-a-url")).toBeNull();
-    });
-  });
 });
 
 describe("web_fetch tool", () => {
@@ -480,31 +428,6 @@ describe("web_fetch tool", () => {
     }
   });
 
-  it("does not treat non-mux.md URLs with fragments as mux.md shares", async () => {
-    using testEnv = createTestWebFetchTool();
-
-    spyOn(runtimeHelpers, "execBuffered").mockResolvedValue({
-      stdout:
-        "HTTP/1.1 200 OK\r\n" +
-        "Content-Type: text/html; charset=utf-8\r\n\r\n" +
-        "<!DOCTYPE html><html><head><title>Fragment Page</title></head><body><article><h1>Hello</h1><p>This is a fragment test.</p></article></body></html>",
-      stderr: "",
-      exitCode: 0,
-      duration: 1,
-    });
-
-    const result = (await testEnv.tool.execute!(
-      { url: "https://93.184.216.34/page#section1" },
-      toolCallOptions
-    )) as WebFetchToolResult;
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.title).toBe("Fragment Page");
-      expect(result.content).toContain("This is a fragment test.");
-    }
-  });
-
   itIntegration("should include HTTP status code in error for non-2xx responses", async () => {
     using testEnv = createTestWebFetchTool();
     const args: WebFetchToolArgs = {
@@ -531,60 +454,6 @@ describe("web_fetch tool", () => {
     if (!result.success) {
       expect(result.error).toContain("Cloudflare");
       expect(result.error).toContain("JavaScript");
-    }
-  });
-
-  itIntegration("should handle expired/missing mux.md share links", async () => {
-    using testEnv = createTestWebFetchTool();
-    const args: WebFetchToolArgs = {
-      url: "https://mux.md/nonexistent123#somekey456",
-    };
-
-    const result = (await testEnv.tool.execute!(args, toolCallOptions)) as WebFetchToolResult;
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("expired or not found");
-    }
-  });
-
-  it("should return error for mux.md URLs without valid key format", async () => {
-    using testEnv = createTestWebFetchTool();
-    const args: WebFetchToolArgs = {
-      url: "https://mux.md/someid",
-    };
-
-    const result = (await testEnv.tool.execute!(args, toolCallOptions)) as WebFetchToolResult;
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("Invalid mux.md URL format");
-    }
-  });
-
-  itIntegration("should decrypt and return mux.md content correctly", async () => {
-    using testEnv = createTestWebFetchTool();
-
-    const testContent = "# Test Heading\n\nThis is **test content** for web_fetch decryption.";
-    const uploadResult = await uploadToMuxMd(
-      testContent,
-      { name: "test.md", type: "text/markdown", size: testContent.length },
-      { expiresAt: new Date(Date.now() + 60000) }
-    );
-
-    try {
-      const args: WebFetchToolArgs = { url: uploadResult.url };
-      const result = (await testEnv.tool.execute!(args, toolCallOptions)) as WebFetchToolResult;
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.content).toBe(testContent);
-        expect(result.title).toBe("test.md");
-        expect(result.url).toBe(uploadResult.url);
-        expect(result.length).toBe(testContent.length);
-      }
-    } finally {
-      await deleteFromMuxMd(uploadResult.id, uploadResult.mutateKey);
     }
   });
 });

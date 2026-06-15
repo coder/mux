@@ -26,7 +26,6 @@ describe("AppConfigOnDiskSchema", () => {
     const valid = {
       userPreferences: {
         appearance: { theme: "dark" },
-        sharing: { expiration: "24h", signing: false },
       },
     };
 

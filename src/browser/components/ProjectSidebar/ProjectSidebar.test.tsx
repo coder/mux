@@ -16,7 +16,6 @@ import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import * as DesktopTitlebarModule from "@/browser/hooks/useDesktopTitlebar";
 import * as ThemeContextModule from "@/browser/contexts/ThemeContext";
-import * as TelemetryEnabledContextModule from "@/browser/contexts/TelemetryEnabledContext";
 import * as APIModule from "@/browser/contexts/API";
 import * as ConfirmDialogContextModule from "@/browser/contexts/ConfirmDialogContext";
 import * as ProjectContextModule from "@/browser/contexts/ProjectContext";
@@ -456,7 +455,6 @@ function installProjectSidebarTestDoubles() {
   )) as typeof ReactColorfulModule.HexColorPicker);
 
   spyOn(DesktopTitlebarModule, "isDesktopMode").mockImplementation(() => false);
-  spyOn(TelemetryEnabledContextModule, "useLinkSharingEnabled").mockImplementation(() => false);
   spyOn(ThemeContextModule, "useTheme").mockImplementation(() => ({
     theme: "light",
     themePreference: "light",

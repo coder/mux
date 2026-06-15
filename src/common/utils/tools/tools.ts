@@ -589,8 +589,6 @@ export async function getToolsForModel(
         //
         // Known limitations when the native override is active:
         // - Cannot reach private/localhost URLs (Anthropic's servers can't see workspace network).
-        // - mux.md share links rely on client-side decryption via URL fragment (#key);
-        //   Anthropic drops the fragment when making HTTP requests, so decryption silently fails.
         // - Not bridgeable in the PTC sandbox (no execute()); see BridgeableToolName comment.
         // - Tool hooks (.mux/tool_pre/.mux/tool_post) are skipped because withHooks() returns
         //   early when execute() is absent — same limitation as web_search (provider-native).

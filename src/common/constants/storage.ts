@@ -371,20 +371,6 @@ export const PROVIDER_OPTIONS_GOOGLE_KEY = "provider_options_google";
 export const VIM_ENABLED_KEY = "vimEnabled";
 
 /**
- * Preferred expiration for mux.md shares (global)
- * Stores: "1h" | "24h" | "7d" | "30d" | "never"
- * Default: "7d"
- */
-export const SHARE_EXPIRATION_KEY = "shareExpiration";
-
-/**
- * Whether to sign shared messages by default.
- * Stores: boolean
- * Default: true
- */
-export const SHARE_SIGNING_KEY = "shareSigning";
-
-/**
  * Git status indicator display mode (global)
  * Stores: "line-delta" | "divergence"
  */

@@ -28,7 +28,6 @@ import { SettingsProvider } from "@/browser/contexts/SettingsContext";
 import { ConfirmDialogProvider } from "@/browser/contexts/ConfirmDialogContext";
 import { ExperimentsProvider } from "@/browser/contexts/ExperimentsContext";
 import { AboutDialogProvider } from "@/browser/contexts/AboutDialogContext";
-import { TelemetryEnabledProvider } from "@/browser/contexts/TelemetryEnabledContext";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { useWorkspaceRecency } from "@/browser/stores/WorkspaceStore";
 import { buildSortedWorkspacesByProject } from "@/browser/utils/ui/workspaceFiltering";
@@ -161,15 +160,13 @@ function LeftSidebarStoryShell(props: LeftSidebarStoryShellProps) {
               <TooltipProvider delayDuration={200}>
                 <SettingsProvider>
                   <AboutDialogProvider>
-                    <TelemetryEnabledProvider>
-                      <ConfirmDialogProvider>
-                        <ProjectProvider>
-                          <WorkspaceProvider>
-                            <LeftSidebarStoryScene leftSidebarProps={props.leftSidebarProps} />
-                          </WorkspaceProvider>
-                        </ProjectProvider>
-                      </ConfirmDialogProvider>
-                    </TelemetryEnabledProvider>
+                    <ConfirmDialogProvider>
+                      <ProjectProvider>
+                        <WorkspaceProvider>
+                          <LeftSidebarStoryScene leftSidebarProps={props.leftSidebarProps} />
+                        </WorkspaceProvider>
+                      </ProjectProvider>
+                    </ConfirmDialogProvider>
                   </AboutDialogProvider>
                 </SettingsProvider>
               </TooltipProvider>

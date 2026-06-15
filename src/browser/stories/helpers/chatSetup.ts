@@ -77,12 +77,6 @@ export interface SimpleChatSetupOptions {
   routePriority?: string[];
   /** Per-model route overrides for routing-aware stories */
   routeOverrides?: Record<string, string>;
-  /** Override signing capabilities (for testing warning states) */
-  signingCapabilities?: {
-    publicKey: string | null;
-    githubUser: string | null;
-    error: { message: string; hasEncryptedKey: boolean } | null;
-  };
   /** Custom executeBash mock (for file viewer stories) */
   executeBash?: (
     workspaceId: string,
@@ -186,7 +180,6 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     sessionUsage: sessionUsageMap,
     subagentTranscripts: opts.subagentTranscripts,
     idleCompactionHours,
-    signingCapabilities: opts.signingCapabilities,
     agentSkills: opts.agentSkills,
     invalidAgentSkills: opts.invalidAgentSkills,
     logEntries: opts.logEntries,

@@ -69,9 +69,7 @@ import {
   WORKSPACE_DRAG_TYPE,
   type WorkspaceDragItem,
 } from "../WorkspaceSectionDropZone/WorkspaceSectionDropZone";
-import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { ShareTranscriptDialog } from "../ShareTranscriptDialog/ShareTranscriptDialog";
 import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
 import { AutomationModal } from "../AutomationModal";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
@@ -510,8 +508,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const automationScheduleProjectPath =
     projectWorkflowScheduleMatch?.projectPath ?? automationProjectPath;
 
-  const linkSharingEnabled = useLinkSharingEnabled();
-  const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
   const [automationModalOpen, setAutomationModalOpen] = useState(false);
   const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
   const overflowMenuButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -571,9 +567,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
     node.focus();
   }, []);
-
-  // SHARE_TRANSCRIPT keybind is handled in WorkspaceMenuBar (always mounted),
-  // so it works even when the sidebar is collapsed and list items are unmounted.
 
   const startEditing = () => {
     if (requestEdit(workspaceId, workspaceTitle)) {
@@ -971,12 +964,10 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     onForkChat={(anchorEl) => {
                       void onForkWorkspace(workspaceId, anchorEl);
                     }}
-                    onShareTranscript={() => setShareTranscriptOpen(true)}
                     onArchiveChat={(anchorEl) => {
                       void onArchiveWorkspace(workspaceId, anchorEl);
                     }}
                     onCloseMenu={() => ctxMenu.close()}
-                    linkSharingEnabled={linkSharingEnabled === true}
                   />
                   {!isSelected && !isUnread && (
                     <PositionedMenuItem
@@ -1040,18 +1031,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   workspaceId={workspaceId}
                   open={heartbeatModalOpen}
                   onOpenChange={setHeartbeatModalOpen}
-                />
-              )}
-              {/* Share transcript dialog – rendered as a sibling to the overflow menu.
-                  Triggered by the menu item above or the Ctrl+Shift+L keybind.
-                  Uses a Dialog (modal) so it stays visible regardless of popover dismissal. */}
-              {linkSharingEnabled === true && (
-                <ShareTranscriptDialog
-                  workspaceId={workspaceId}
-                  workspaceName={metadata.name}
-                  workspaceTitle={displayTitle}
-                  open={shareTranscriptOpen}
-                  onOpenChange={setShareTranscriptOpen}
                 />
               )}
             </ActionButtonWrapper>

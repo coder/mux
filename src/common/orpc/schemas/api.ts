@@ -150,9 +150,6 @@ export const experiments = {
 // Re-export telemetry schemas
 export { telemetry, TelemetryEventSchema } from "./telemetry";
 
-// Re-export signing schemas
-export { signing, type SigningCapabilities, type SignatureEnvelope } from "./signing";
-
 // Re-export analytics schemas
 export { analytics } from "./analytics";
 export { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntry";

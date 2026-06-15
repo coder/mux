@@ -127,7 +127,6 @@ export default defineConfig(({ mode }) => {
       alias: aliasMap,
     },
     define: {
-      "globalThis.__MUX_MD_URL_OVERRIDE__": JSON.stringify(process.env.MUX_MD_URL_OVERRIDE ?? ""),
       "globalThis.__MUX_ENABLE_TUTORIALS_IN_SANDBOX__": enableTutorialsInSandboxDefine,
       ...(isProfiling ? { __PROFILE__: "true" } : {}),
     },

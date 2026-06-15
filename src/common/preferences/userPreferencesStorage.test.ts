@@ -126,7 +126,6 @@ describe("user preference localStorage registry", () => {
         vimEnabled: true,
       },
       navigation: { launchBehavior: "new-chat", projectOrder: ["/repo"] },
-      sharing: { expiration: "24h", signing: false },
       ai: {
         globalDefaults: { agentId: "exec", thinkingLevel: "medium" },
         projectDefaults: {

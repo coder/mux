@@ -17,10 +17,8 @@ import {
   SIDE_QUESTION_ANSWER_BLOCK_CLASS,
   SIDE_QUESTION_MESSAGE_WINDOW_CLASS,
 } from "./sideQuestionStyles";
-import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover/ShareMessagePopover";
 import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
 import { useAPI } from "@/browser/contexts/API";
-import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { Button } from "@/browser/components/Button/Button";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
 import React, { useState } from "react";
@@ -49,13 +47,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 }) => {
   const [showRaw, setShowRaw] = useState(false);
   const { api } = useAPI();
-  const workspaceContext = useOptionalWorkspaceContext();
   const forkError = usePopoverError();
-
-  // Get workspace name from context for share filename
-  const workspaceName = workspaceId
-    ? workspaceContext?.workspaceMetadata.get(workspaceId)?.name
-    : undefined;
 
   const content = message.content;
   const isStreaming = message.isStreaming;
@@ -119,7 +111,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
   if (!isStreaming && !isSideAnswer) {
     // Side answers intentionally show only Copy. The /btw side branch is
-    // meant to feel lightweight: Start Here / Fork / Share / Show Text
+    // meant to feel lightweight: Start Here / Fork / Show Text
     // would imply the message is a fork point in the main agent thread,
     // which it isn't. Keeping the action set minimal also keeps the pair
     // visually quiet against the main transcript.
@@ -136,17 +128,6 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       disabled: !workspaceId || !api,
       tooltip: "Fork a new workspace from this response",
       icon: <GitBranch />,
-    });
-    buttons.push({
-      label: "Share",
-      component: (
-        <ShareMessagePopover
-          content={content}
-          model={message.model}
-          disabled={!content}
-          workspaceName={workspaceName}
-        />
-      ),
     });
     buttons.push({
       label: showRaw ? "Show Markdown" : "Show Text",

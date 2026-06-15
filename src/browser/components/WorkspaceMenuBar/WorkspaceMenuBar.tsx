@@ -33,7 +33,6 @@ import { useRuntimeStatus, useRuntimeStatusStoreRaw } from "@/browser/stores/Run
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { Button } from "@/browser/components/Button/Button";
 import { isDevcontainerRuntime, type RuntimeConfig } from "@/common/types/runtime";
-import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
@@ -45,7 +44,6 @@ import { isDesktopMode, DESKTOP_TITLEBAR_HEIGHT_CLASS } from "@/browser/hooks/us
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { DebugLlmRequestModal } from "../DebugLlmRequestModal/DebugLlmRequestModal";
 import { WorkspaceLinks } from "../WorkspaceLinks/WorkspaceLinks";
-import { ShareTranscriptDialog } from "../ShareTranscriptDialog/ShareTranscriptDialog";
 import { ConfirmationModal } from "../ConfirmationModal/ConfirmationModal";
 import { PopoverError } from "../PopoverError/PopoverError";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
@@ -105,7 +103,6 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const { workspaceMetadata } = useWorkspaceContext();
   const dynamicWorkflowsEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
-  const linkSharingEnabled = useLinkSharingEnabled();
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
@@ -151,7 +148,6 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
 
   const skillsRequestIdRef = useRef(0);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   // Untracked paths from archive preflight that the user needs to acknowledge.
   // When set, the confirmation dialog warns about permanent file deletion.
@@ -482,21 +478,6 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     return () => window.removeEventListener("keydown", handler);
   }, [dynamicWorkflowsEnabled]);
 
-  // Keybind for sharing transcript — lives here (not AgentListItem) so it
-  // works even when the left sidebar is collapsed and list items are unmounted.
-  useEffect(() => {
-    if (linkSharingEnabled !== true) return;
-
-    const handler = (e: KeyboardEvent) => {
-      if (matchesKeybind(e, KEYBINDS.SHARE_TRANSCRIPT)) {
-        e.preventDefault();
-        setShareTranscriptOpen(true);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [linkSharingEnabled]);
-
   useEffect(() => {
     isSkillsMountedRef.current = true;
 
@@ -813,14 +794,12 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
               onForkChat={(anchorEl) => {
                 void handleForkChat(anchorEl);
               }}
-              onShareTranscript={() => setShareTranscriptOpen(true)}
               onArchiveChat={(anchorEl) => {
                 // handleArchiveChat runs preflight and opens a confirmation dialog
                 // when streaming or untracked files are detected.
                 void handleArchiveChat(anchorEl);
               }}
               onCloseMenu={() => setMoreMenuOpen(false)}
-              linkSharingEnabled={linkSharingEnabled === true}
               shortcutClassName="mobile-hide-shortcut-hints"
               configureMcpTestId="workspace-mcp-button"
             />
@@ -856,15 +835,6 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         open={debugLlmRequestOpen}
         onOpenChange={setDebugLlmRequestOpen}
       />
-      {linkSharingEnabled === true && (
-        <ShareTranscriptDialog
-          workspaceId={workspaceId}
-          workspaceName={workspaceName}
-          workspaceTitle={workspaceTitle}
-          open={shareTranscriptOpen}
-          onOpenChange={setShareTranscriptOpen}
-        />
-      )}
       {/* Combined confirmation for archive warnings (streaming + untracked files). */}
       <ConfirmationModal
         isOpen={archiveConfirmOpen}

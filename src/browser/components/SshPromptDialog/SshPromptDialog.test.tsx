@@ -10,8 +10,8 @@ import {
 import type { ReactNode } from "react";
 import { installDom } from "../../../../tests/ui/dom";
 
-// Self-contained dialog stub — bun's mock.module is process-global and
-// ShareTranscriptDialog.test.tsx registers an incomplete stub that omits
+// Self-contained dialog stub — bun's mock.module is process-global, so other
+// test files may register incomplete Dialog stubs that omit
 // DialogDescription/DialogFooter/Warning*. Our own complete mock prevents
 // Radix context errors when tests run in the same bun process.
 void mock.module("@/browser/components/Dialog/Dialog", () => ({

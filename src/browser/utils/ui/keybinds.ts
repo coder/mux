@@ -370,11 +370,6 @@ export const KEYBINDS = {
   // macOS: Cmd+Shift+E, Win/Linux: Ctrl+Shift+E
   OPEN_IN_EDITOR: { key: "E", ctrl: true, shift: true },
 
-  /** Share transcript for current workspace */
-  // macOS: Cmd+Shift+S, Win/Linux: Ctrl+Shift+S
-  // (was Cmd+Shift+L, but Chrome intercepts that in server/browser mode)
-  SHARE_TRANSCRIPT: { key: "S", ctrl: true, shift: true },
-
   /** Configure MCP servers for current workspace */
   // macOS: Cmd+Shift+M, Win/Linux: Ctrl+Shift+M
   CONFIGURE_MCP: { key: "M", ctrl: true, shift: true },

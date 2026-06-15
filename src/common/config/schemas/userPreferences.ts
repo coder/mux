@@ -18,7 +18,6 @@ import {
 } from "@/common/constants/storage";
 import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
 import { ThinkingLevelSchema } from "@/common/types/thinking";
-import { EXPIRATION_OPTIONS, type ExpirationValue } from "@/common/lib/shareExpiration";
 import {
   isRecord,
   parseAgentId,
@@ -29,11 +28,6 @@ import {
   parseStringArray,
   parseThinkingLevel,
 } from "@/common/preferences/userPreferenceParsing";
-
-const SHARE_EXPIRATION_VALUES = EXPIRATION_OPTIONS.map((option) => option.value) as [
-  ExpirationValue,
-  ...ExpirationValue[],
-];
 
 export const ThemePreferenceSchema = z.enum([
   "auto",
@@ -71,12 +65,6 @@ export const UserPreferencesSchema = z.object({
     .object({
       launchBehavior: LaunchBehaviorSchema.optional(),
       projectOrder: z.array(z.string()).optional(),
-    })
-    .optional(),
-  sharing: z
-    .object({
-      expiration: z.enum(SHARE_EXPIRATION_VALUES).optional(),
-      signing: z.boolean().optional(),
     })
     .optional(),
   ai: z
@@ -422,24 +410,6 @@ export function normalizeUserPreferences(value: unknown): UserPreferences | unde
     }
 
     preferences.navigation = navigation;
-  }
-
-  if (isRecord(value.sharing)) {
-    const sharing: NonNullable<UserPreferences["sharing"]> = {};
-    const expiration = parseEnum<ExpirationValue>(
-      EXPIRATION_OPTIONS.map((option) => option.value),
-      value.sharing.expiration
-    );
-    if (expiration) {
-      sharing.expiration = expiration;
-    }
-
-    const signing = parseBoolean(value.sharing.signing);
-    if (signing !== undefined) {
-      sharing.signing = signing;
-    }
-
-    preferences.sharing = sharing;
   }
 
   if (isRecord(value.ai)) {

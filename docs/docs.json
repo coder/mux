@@ -46,7 +46,6 @@
             "pages": [
               "workspaces",
               "workspaces/fork",
-              "workspaces/sharing",
               "workspaces/muxignore",
               {
                 "group": "Compaction",
@@ -166,8 +165,6 @@
     { "source": "/guides/compaction", "destination": "/workspaces/compaction" },
     { "source": "/guides/compaction/manual", "destination": "/workspaces/compaction/manual" },
     { "source": "/guides/compaction/automatic", "destination": "/workspaces/compaction/automatic" },
-    { "source": "/sharing", "destination": "/workspaces/sharing" },
-    { "source": "/guides/sharing", "destination": "/workspaces/sharing" },
     { "source": "/prompting-tips", "destination": "/agents/prompting-tips" },
     { "source": "/prompting-tips.html", "destination": "/agents/prompting-tips" },
     { "source": "/guides/prompting-tips", "destination": "/agents/prompting-tips" },

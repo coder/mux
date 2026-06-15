@@ -14,12 +14,6 @@ import {
 } from "@/common/constants/toolLimits";
 import { EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import * as runtimeHelpers from "@/node/utils/runtime/helpers";
-import {
-  downloadFromMuxMd,
-  getMuxMdAllowedHosts,
-  isMuxMdUrl,
-  parseMuxMdUrl,
-} from "@/common/lib/muxMd";
 import { getErrorMessage } from "@/common/utils/errors";
 
 const USER_AGENT = "Mux/1.0 (https://github.com/coder/mux; web-fetch tool)";
@@ -605,14 +599,6 @@ function tryExtractContent(
   }
 }
 
-function isAllowedMuxMdHost(url: string): boolean {
-  try {
-    return getMuxMdAllowedHosts().includes(new URL(url).host);
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Web fetch tool factory for AI assistant
  * Creates a tool that fetches web pages and extracts readable content as markdown
@@ -625,44 +611,6 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
     inputSchema: TOOL_DEFINITIONS.web_fetch.schema,
     execute: async ({ url }, { abortSignal }): Promise<WebFetchToolResult> => {
       try {
-        // Handle mux.md share links with client-side decryption.
-        // Important: `parseMuxMdUrl` does not validate the host, so we must guard with `isMuxMdUrl`
-        // to avoid treating arbitrary URLs (including those with `#fragment`) as share links.
-        if (isMuxMdUrl(url)) {
-          const muxMdParsed = parseMuxMdUrl(url);
-          if (!muxMdParsed) {
-            return { success: false, error: "Invalid mux.md URL format" };
-          }
-
-          const baseUrl = new URL(url).origin;
-
-          try {
-            const result = await downloadFromMuxMd(muxMdParsed.id, muxMdParsed.key, abortSignal, {
-              baseUrl,
-            });
-            let content = result.content;
-            if (content.length > WEB_FETCH_MAX_OUTPUT_BYTES) {
-              content = content.slice(0, WEB_FETCH_MAX_OUTPUT_BYTES) + "\n\n[Content truncated]";
-            }
-            return {
-              success: true,
-              title: result.fileInfo?.name ?? "Shared Message",
-              content,
-              url,
-              length: content.length,
-            };
-          } catch (err) {
-            return {
-              success: false,
-              error: err instanceof Error ? err.message : "Failed to download from mux.md",
-            };
-          }
-        }
-
-        if (isAllowedMuxMdHost(url)) {
-          return { success: false, error: "Invalid mux.md URL format" };
-        }
-
         const { result, finalUrl } = await executeWebFetchRequest(config, url, abortSignal);
 
         if (result.exitCode !== 0) {

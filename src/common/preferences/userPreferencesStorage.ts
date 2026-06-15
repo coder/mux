@@ -18,8 +18,6 @@ import {
   PROVIDER_OPTIONS_ANTHROPIC_KEY,
   PROVIDER_OPTIONS_GOOGLE_KEY,
   REVIEW_INCLUDE_UNCOMMITTED_KEY,
-  SHARE_EXPIRATION_KEY,
-  SHARE_SIGNING_KEY,
   TERMINAL_FONT_CONFIG_KEY,
   TRANSCRIPT_DENSITIES,
   TRANSCRIPT_DENSITY_KEY,
@@ -41,7 +39,6 @@ import {
   type LaunchBehavior,
   type TranscriptDensity,
 } from "@/common/constants/storage";
-import { EXPIRATION_OPTIONS, type ExpirationValue } from "@/common/lib/shareExpiration";
 import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
 import {
   isRecord,
@@ -78,8 +75,6 @@ const STATIC_USER_PREFERENCE_KEYS = new Set<string>([
   PROJECT_ORDER_KEY,
   PROVIDER_OPTIONS_ANTHROPIC_KEY,
   PROVIDER_OPTIONS_GOOGLE_KEY,
-  SHARE_EXPIRATION_KEY,
-  SHARE_SIGNING_KEY,
   REVIEW_INCLUDE_UNCOMMITTED_KEY,
   getAgentIdKey(GLOBAL_SCOPE_ID),
   getThinkingLevelKey(GLOBAL_SCOPE_ID),
@@ -115,12 +110,6 @@ function parseStoredValue(raw: string | null): unknown {
 
 function parseLaunchBehavior(value: unknown): LaunchBehavior | undefined {
   return parseEnum<LaunchBehavior>(LaunchBehaviorSchema.options, value);
-}
-
-function parseExpiration(value: unknown): ExpirationValue | undefined {
-  return typeof value === "string" && EXPIRATION_OPTIONS.some((option) => option.value === value)
-    ? (value as ExpirationValue)
-    : undefined;
 }
 
 function parseThreshold(value: unknown): number | undefined {
@@ -176,11 +165,6 @@ function ensureNavigation(
 ): NonNullable<UserPreferences["navigation"]> {
   preferences.navigation ??= {};
   return preferences.navigation;
-}
-
-function ensureSharing(preferences: UserPreferences): NonNullable<UserPreferences["sharing"]> {
-  preferences.sharing ??= {};
-  return preferences.sharing;
 }
 
 function ensureAi(preferences: UserPreferences): NonNullable<UserPreferences["ai"]> {
@@ -310,24 +294,6 @@ export function applyStoredUserPreference(
       return removeStoredUserPreference(next, key);
     }
     ensureNavigation(next).projectOrder = parsed;
-    return pruneUserPreferences(next);
-  }
-
-  if (key === SHARE_EXPIRATION_KEY) {
-    const parsed = parseExpiration(value);
-    if (!parsed) {
-      return removeStoredUserPreference(next, key);
-    }
-    ensureSharing(next).expiration = parsed;
-    return pruneUserPreferences(next);
-  }
-
-  if (key === SHARE_SIGNING_KEY) {
-    const parsed = parseBoolean(value);
-    if (parsed === undefined) {
-      return removeStoredUserPreference(next, key);
-    }
-    ensureSharing(next).signing = parsed;
     return pruneUserPreferences(next);
   }
 
@@ -490,8 +456,6 @@ export function removeStoredUserPreference(
   else if (key === VIM_ENABLED_KEY) delete next.appearance?.vimEnabled;
   else if (key === LAUNCH_BEHAVIOR_KEY) delete next.navigation?.launchBehavior;
   else if (key === PROJECT_ORDER_KEY) delete next.navigation?.projectOrder;
-  else if (key === SHARE_EXPIRATION_KEY) delete next.sharing?.expiration;
-  else if (key === SHARE_SIGNING_KEY) delete next.sharing?.signing;
   else if (key === getAgentIdKey(GLOBAL_SCOPE_ID)) delete next.ai?.globalDefaults?.agentId;
   else if (key === getThinkingLevelKey(GLOBAL_SCOPE_ID))
     delete next.ai?.globalDefaults?.thinkingLevel;
@@ -558,12 +522,6 @@ export function entriesFromUserPreferences(
     entries.push({ key: LAUNCH_BEHAVIOR_KEY, value: navigation.launchBehavior });
   if (navigation?.projectOrder !== undefined)
     entries.push({ key: PROJECT_ORDER_KEY, value: navigation.projectOrder });
-
-  const sharing = preferences.sharing;
-  if (sharing?.expiration !== undefined)
-    entries.push({ key: SHARE_EXPIRATION_KEY, value: sharing.expiration });
-  if (sharing?.signing !== undefined)
-    entries.push({ key: SHARE_SIGNING_KEY, value: sharing.signing });
 
   const ai = preferences.ai;
   if (ai?.globalDefaults?.agentId !== undefined)

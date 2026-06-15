@@ -17,7 +17,6 @@ import * as OpenInEditorModule from "@/browser/hooks/useOpenInEditor";
 import * as PersistedStateModule from "@/browser/hooks/usePersistedState";
 import * as PopoverErrorHookModule from "@/browser/hooks/usePopoverError";
 import * as DesktopTitlebarModule from "@/browser/hooks/useDesktopTitlebar";
-import * as TelemetryEnabledContextModule from "@/browser/contexts/TelemetryEnabledContext";
 import * as TutorialContextModule from "@/browser/contexts/TutorialContext";
 import * as ChatCommandsModule from "@/browser/utils/chatCommands";
 import * as GitStatusIndicatorModule from "../GitStatusIndicator/GitStatusIndicator";
@@ -32,7 +31,6 @@ import * as PopoverModule from "../Popover/Popover";
 import * as CheckboxModule from "../Checkbox/Checkbox";
 import * as DebugLlmRequestModalModule from "../DebugLlmRequestModal/DebugLlmRequestModal";
 import * as WorkspaceLinksModule from "../WorkspaceLinks/WorkspaceLinks";
-import * as ShareTranscriptDialogModule from "../ShareTranscriptDialog/ShareTranscriptDialog";
 import * as ConfirmationModalModule from "../ConfirmationModal/ConfirmationModal";
 import * as PopoverErrorModule from "../PopoverError/PopoverError";
 import * as WorkspaceActionsMenuContentModule from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
@@ -181,7 +179,6 @@ function installWorkspaceMenuBarTestDoubles() {
       }) as unknown as ReturnType<typeof PopoverErrorHookModule.usePopoverError>
   );
   spyOn(DesktopTitlebarModule, "isDesktopMode").mockImplementation(() => false);
-  spyOn(TelemetryEnabledContextModule, "useLinkSharingEnabled").mockImplementation(() => false);
   spyOn(TutorialContextModule, "useTutorial").mockImplementation(
     () =>
       ({ startSequence: () => undefined }) as unknown as ReturnType<
@@ -235,9 +232,6 @@ function installWorkspaceMenuBarTestDoubles() {
   );
   spyOn(WorkspaceLinksModule, "WorkspaceLinks").mockImplementation(
     (() => null) as unknown as typeof WorkspaceLinksModule.WorkspaceLinks
-  );
-  spyOn(ShareTranscriptDialogModule, "ShareTranscriptDialog").mockImplementation(
-    (() => null) as unknown as typeof ShareTranscriptDialogModule.ShareTranscriptDialog
   );
   spyOn(ConfirmationModalModule, "ConfirmationModal").mockImplementation(((props: {
     isOpen: boolean;

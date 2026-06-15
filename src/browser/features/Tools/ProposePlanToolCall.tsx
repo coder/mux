@@ -73,7 +73,6 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover/ShareMessagePopover";
 import { getErrorMessage } from "@/common/utils/errors";
 
 /**
@@ -192,12 +191,11 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const editorError = usePopoverError();
   const editButtonRef = useRef<HTMLDivElement>(null);
 
-  // Get runtimeConfig and name for the workspace (needed for SSH-aware editor opening and share filename)
+  // Get runtimeConfig for the workspace (needed for SSH-aware editor opening)
   const workspaceMetadata = workspaceId
     ? workspaceContext?.workspaceMetadata.get(workspaceId)
     : undefined;
   const runtimeConfig = workspaceMetadata?.runtimeConfig;
-  const workspaceName = workspaceMetadata?.name;
 
   // Fresh content from disk for the latest plan (external edit detection)
   // Only use cache for completed tools (page reload case) - not for in-flight tools
@@ -620,6 +618,8 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
 
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard();
+  // Separate instance so the "Copy file path" button has independent feedback.
+  const { copied: copiedPath, copyToClipboard: copyPathToClipboard } = useCopyToClipboard();
 
   const handleOpenInEditor = async () => {
     if (!planPath || !workspaceId) return;
@@ -652,19 +652,17 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     icon: copied ? <ClipboardCheck /> : <Clipboard />,
   };
 
-  const actionButtons: ButtonConfig[] = [
-    copyButton,
-    {
-      label: "Share",
-      component: (
-        <ShareMessagePopover
-          content={planContent}
-          disabled={!planContent}
-          workspaceName={workspaceName}
-        />
-      ),
-    },
-  ];
+  const actionButtons: ButtonConfig[] = [copyButton];
+
+  // Copy the plan's on-disk file path (replaces the former mux.md "Share" link action).
+  if (planPath) {
+    actionButtons.push({
+      label: copiedPath ? "Copied" : "Copy file path",
+      onClick: () => void copyPathToClipboard(planPath),
+      icon: copiedPath ? <ClipboardCheck /> : <Clipboard />,
+      tooltip: planPath,
+    });
+  }
 
   // Edit button config (rendered separately with ref for error positioning)
   const showEditButton = (isEphemeralPreview ?? isLatest) && planPath && workspaceId;

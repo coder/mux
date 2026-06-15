@@ -27,7 +27,6 @@ describe("WorkspaceActionsMenuContent", () => {
       <WorkspaceActionsMenuContent
         onConfigureAutomation={onConfigureAutomation}
         onCloseMenu={onCloseMenu}
-        linkSharingEnabled={false}
       />
     );
 

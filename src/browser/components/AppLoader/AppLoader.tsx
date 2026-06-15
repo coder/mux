@@ -18,7 +18,6 @@ import { PolicyBlockedScreen } from "@/browser/components/PolicyBlockedScreen/Po
 import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
 import { WorkspaceProvider, useWorkspaceContext } from "../../contexts/WorkspaceContext";
 import { RouterProvider } from "../../contexts/RouterContext";
-import { TelemetryEnabledProvider } from "../../contexts/TelemetryEnabledContext";
 import {
   hydrateUserPreferencesLocalCache,
   UserPreferencesProvider,
@@ -269,11 +268,9 @@ function AppLoaderInner() {
           transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.3, ease: "easeOut" }}
           className="bg-surface-primary h-full"
         >
-          <TelemetryEnabledProvider>
-            <TerminalRouterProvider>
-              <App />
-            </TerminalRouterProvider>
-          </TelemetryEnabledProvider>
+          <TerminalRouterProvider>
+            <App />
+          </TerminalRouterProvider>
         </motion.div>
       )}
     </AnimatePresence>

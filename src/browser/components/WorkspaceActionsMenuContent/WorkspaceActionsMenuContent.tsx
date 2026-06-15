@@ -4,7 +4,6 @@ import {
   CalendarClock,
   GitBranch,
   HeartPulse,
-  Link2,
   Maximize2,
   Pencil,
   Server,
@@ -56,10 +55,8 @@ interface WorkspaceActionsMenuContentProps {
   onEnterImmersiveReview?: (() => void) | null;
   onStopRuntime?: (() => void) | null;
   onForkChat?: ((anchorEl: HTMLElement) => void) | null;
-  onShareTranscript?: (() => void) | null;
   onArchiveChat?: ((anchorEl: HTMLElement) => void) | null;
   onCloseMenu: () => void;
-  linkSharingEnabled: boolean;
   shortcutClassName?: string;
   configureMcpTestId?: string;
 }
@@ -167,19 +164,6 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
             e.stopPropagation();
             props.onCloseMenu();
             props.onForkChat?.(e.currentTarget);
-          }}
-        />
-      )}
-      {props.onShareTranscript && props.linkSharingEnabled === true && (
-        <WorkspaceActionButton
-          label="Share transcript"
-          shortcut={formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)}
-          shortcutClassName={props.shortcutClassName}
-          icon={<Link2 className="h-3 w-3 shrink-0" />}
-          onClick={(e) => {
-            e.stopPropagation();
-            props.onCloseMenu();
-            props.onShareTranscript?.();
           }}
         />
       )}

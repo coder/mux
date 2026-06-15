@@ -267,12 +267,6 @@ export interface MockORPCClientOptions {
   }) => Promise<{ success: true } | { success: false; error: string }>;
   /** Idle compaction hours per project (null = disabled) */
   idleCompactionHours?: Map<string, number | null>;
-  /** Override signing capabilities response */
-  signingCapabilities?: {
-    publicKey: string | null;
-    githubUser: string | null;
-    error: { message: string; hasEncryptedKey: boolean } | null;
-  };
   /** Coder CLI availability info */
   coderInfo?: CoderInfo;
   /** Coder templates available for workspace creation */
@@ -408,7 +402,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     listBranches: customListBranches,
     gitInit: customGitInit,
     runtimeAvailability: customRuntimeAvailability,
-    signingCapabilities: customSigningCapabilities,
     coderInfo = { state: "unavailable" as const, reason: "missing" as const },
     coderTemplates = [],
     coderPresets = new Map<string, CoderPreset[]>(),
@@ -669,23 +662,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     splashScreens: {
       getViewedSplashScreens: () => Promise.resolve(["onboarding-wizard-v1"]),
       markSplashScreenViewed: () => Promise.resolve(undefined),
-    },
-    signing: {
-      capabilities: () =>
-        Promise.resolve(
-          customSigningCapabilities ?? {
-            publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey",
-            githubUser: "mockuser",
-            error: null,
-          }
-        ),
-      sign: () =>
-        Promise.resolve({
-          signature: "mockSignature==",
-          publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockKey",
-          githubUser: "mockuser",
-        }),
-      clearIdentityCache: () => Promise.resolve({ success: true }),
     },
     server: {
       getLaunchProject: () => Promise.resolve(null),

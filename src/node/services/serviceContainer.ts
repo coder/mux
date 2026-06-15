@@ -50,7 +50,6 @@ import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { AgentStatusService } from "@/node/services/agentStatusService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import type { IdleDispatcher } from "@/node/services/idleDispatcher";
-import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
 import { SshPromptService } from "@/node/services/sshPromptService";
 import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
@@ -139,7 +138,6 @@ export class ServiceContainer {
   public readonly browserSessionStateHub: BrowserSessionStateHub;
   public readonly analyticsService: AnalyticsService;
   public readonly experimentsService: ExperimentsService;
-  public readonly signingService: SigningService;
   public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
   public readonly serverAuthService: ServerAuthService;
@@ -552,7 +550,6 @@ export class ServiceContainer {
       this.policyService,
       opResolver
     );
-    this.signingService = getSigningService();
     this.coderService = coderService;
 
     this.serverAuthService = new ServerAuthService(config);
@@ -786,7 +783,6 @@ export class ServiceContainer {
       browserControlService: this.browserControlService,
       browserSessionStateHub: this.browserSessionStateHub,
       policyService: this.policyService,
-      signingService: this.signingService,
       coderService: this.coderService,
       serverAuthService: this.serverAuthService,
       sshPromptService: this.sshPromptService,

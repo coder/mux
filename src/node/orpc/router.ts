@@ -6086,27 +6086,6 @@ export const router = (authToken?: string) => {
           };
         }),
     },
-    signing: {
-      capabilities: t
-        .input(schemas.signing.capabilities.input)
-        .output(schemas.signing.capabilities.output)
-        .handler(async ({ context }) => {
-          return context.signingService.getCapabilities();
-        }),
-      signMessage: t
-        .input(schemas.signing.signMessage.input)
-        .output(schemas.signing.signMessage.output)
-        .handler(({ context, input }) => {
-          return context.signingService.signMessage(input.content);
-        }),
-      clearIdentityCache: t
-        .input(schemas.signing.clearIdentityCache.input)
-        .output(schemas.signing.clearIdentityCache.output)
-        .handler(({ context }) => {
-          context.signingService.clearIdentityCache();
-          return { success: true };
-        }),
-    },
     analytics: {
       getSummary: t
         .input(schemas.analytics.getSummary.input)

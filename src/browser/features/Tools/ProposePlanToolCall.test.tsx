@@ -105,10 +105,6 @@ void mock.module("@/browser/contexts/WorkspaceContext", () => ({
   }),
 }));
 
-void mock.module("@/browser/contexts/TelemetryEnabledContext", () => ({
-  useLinkSharingEnabled: () => true,
-}));
-
 void mock.module("@/browser/hooks/useReviews", () => ({
   useReviews: () => ({
     reviews: [],

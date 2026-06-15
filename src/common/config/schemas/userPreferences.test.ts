@@ -44,7 +44,6 @@ describe("UserPreferencesSchema", () => {
       notifications: {
         notifyOnResponseByWorkspace: { "ws-1": true },
       },
-      sharing: { expiration: "7d", signing: false },
       review: { includeUncommitted: true, defaultBaseByProject: { "/repo/a": "origin/main" } },
     });
 
