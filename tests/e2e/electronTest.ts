@@ -373,12 +373,13 @@ export const electronTest = base.extend<ElectronFixtures>({
     await window.waitForLoadState("domcontentloaded");
     await window.setViewportSize({ width: 1600, height: 900 });
 
-    // Disable tutorials for e2e tests by marking them as completed
-    // Must set before React reads the state, so we set and reload
+    // Disable tutorials for e2e tests before React reads the state, then reload.
+    // Otherwise delayed tutorial backdrops can race with Playwright clicks and make
+    // unrelated UI scenarios flaky when a new tutorial sequence is added.
     await window.evaluate(() => {
       const tutorialState = {
-        disabled: false,
-        completed: { settings: true, creation: true, workspace: true },
+        disabled: true,
+        completed: { creation: true, workspace: true, review: true },
       };
       localStorage.setItem("tutorialState", JSON.stringify(tutorialState));
     });
