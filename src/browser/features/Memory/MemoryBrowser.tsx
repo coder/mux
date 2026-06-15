@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { ConfirmationModal } from "@/browser/components/ConfirmationModal/ConfirmationModal";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { useAPI } from "@/browser/contexts/API";
 import { RowActionButton } from "@/browser/features/RightSidebar/GoalBoardSections";
 import { isAbortError } from "@/browser/utils/isAbortError";
@@ -555,16 +556,25 @@ function ConsolidationFooter(props: {
 
   return (
     <div className="border-border-light flex items-center justify-between gap-2 border-t px-3 py-2 text-xs">
-      <div className="text-muted min-w-0 flex-1 space-y-0.5" title={summaryTitle}>
-        <div className="counter-nums truncate">
-          Workspace: {formatConsolidationRecord(status?.workspaceRecord ?? null)}
+      <TooltipIfPresent
+        tooltip={
+          summaryTitle === "" ? null : <div className="whitespace-pre-line">{summaryTitle}</div>
+        }
+        side="top"
+        align="start"
+      >
+        {/* Use the shared, portaled tooltip only: a native title duplicates the UI tooltip and ignores z-index. */}
+        <div className="text-muted min-w-0 flex-1 space-y-0.5">
+          <div className="counter-nums truncate">
+            Workspace: {formatConsolidationRecord(status?.workspaceRecord ?? null)}
+          </div>
+          <div className="counter-nums truncate">Project: {projectLabel}</div>
+          <div className="counter-nums truncate">
+            Global: {formatConsolidationRecord(status?.globalRecord ?? null)}
+          </div>
+          {runError !== null && <div className="text-error truncate">{runError}</div>}
         </div>
-        <div className="counter-nums truncate">Project: {projectLabel}</div>
-        <div className="counter-nums truncate">
-          Global: {formatConsolidationRecord(status?.globalRecord ?? null)}
-        </div>
-        {runError !== null && <div className="text-error truncate">{runError}</div>}
-      </div>
+      </TooltipIfPresent>
       <button
         type="button"
         className="border-border-light text-foreground hover:bg-hover shrink-0 rounded border px-2 py-0.5 disabled:opacity-50"

@@ -268,6 +268,28 @@ describe("MemoryTab", () => {
     expect(getByText(/^Project:/).textContent).not.toContain("manual");
   });
 
+  test("consolidation summary does not leave a native title tooltip", async () => {
+    fake = createFakeMemoryApi([], {
+      consolidationStatus: {
+        workspaceRecord: {
+          ...DEFAULT_CONSOLIDATION_RECORD,
+          summary: "workspace summary",
+        },
+        projectRecord: null,
+        globalRecord: null,
+        projectAvailable: true,
+      },
+    });
+    const { findByText } = render(<MemoryTab workspaceId="ws-1" />);
+
+    const workspaceLine = await findByText(/^Workspace: .*manual/);
+    const statusBlock = workspaceLine.parentElement;
+    expect(statusBlock).not.toBeNull();
+    // Native title tooltips are rendered by the OS and appear in addition to our
+    // portaled app tooltip, so this block must not expose one.
+    expect(statusBlock!.getAttribute("title")).toBeNull();
+  });
+
   test("shows usage stats for used files and omits them for never-used files", async () => {
     fake = createFakeMemoryApi([
       fileInfo({
