@@ -3,6 +3,8 @@
 const DEFAULT_MAX_FINDINGS = 20;
 // Review agents get bounded diff text; synthesis/fix phases get metadata only.
 const REVIEW_DIFF_CHAR_BUDGET = 60000;
+const METADATA_ARRAY_ITEM_BUDGET = 200;
+const DIFF_STAT_CHAR_BUDGET = 20000;
 const REVIEW_AGENT_ID = "explore";
 const EXEC_AGENT_ID = "exec";
 const REVIEW_LANES = [
@@ -36,15 +38,18 @@ const REVIEW_LANES = [
 ];
 
 const SEVERITY_SCHEMA = { type: "string", enum: ["high", "medium", "low"] };
+const FINDING_CORE_PROPERTIES = {
+  id: { type: "string" },
+  title: { type: "string" },
+  severity: SEVERITY_SCHEMA,
+  filePaths: { type: "array", items: { type: "string" } },
+  rationale: { type: "string" },
+};
 const FINDING_SCHEMA = {
   type: "object",
   required: ["id", "title", "severity", "filePaths", "rationale", "recommendation", "evidence"],
   properties: {
-    id: { type: "string" },
-    title: { type: "string" },
-    severity: SEVERITY_SCHEMA,
-    filePaths: { type: "array", items: { type: "string" } },
-    rationale: { type: "string" },
+    ...FINDING_CORE_PROPERTIES,
     recommendation: { type: "string" },
     evidence: { type: "array", items: { type: "string" } },
   },
@@ -61,11 +66,7 @@ const SYNTHESIS_FINDING_SCHEMA = {
   type: "object",
   required: ["id", "title", "severity", "filePaths", "rationale", "fixPlan"],
   properties: {
-    id: { type: "string" },
-    title: { type: "string" },
-    severity: SEVERITY_SCHEMA,
-    filePaths: { type: "array", items: { type: "string" } },
-    rationale: { type: "string" },
+    ...FINDING_CORE_PROPERTIES,
     fixPlan: { type: "string" },
   },
 };
@@ -146,6 +147,18 @@ export default function simplifyWorkflow({
     gitFailures: gitContext.failures.length,
     diffCompactions: diffCompactions(contexts.outputGitContext).length,
   });
+
+  if (!hasReviewableContext(input, gitContext)) {
+    return {
+      reportMarkdown: "## Simplify workflow result\n\nNo reviewable changes found.",
+      structuredOutput: {
+        mode: "no-reviewable-changes",
+        gitContext: contexts.outputGitContext,
+        reviews: [],
+        synthesis: emptySynthesis("No reviewable changes found."),
+      },
+    };
+  }
 
   phase("review", {
     lanes: REVIEW_LANES.map(function (lane) {
@@ -306,9 +319,37 @@ function refsWithResolvedBase(refs, changedFiles) {
   return resolved;
 }
 
+function hasReviewableContext(input, gitContext) {
+  if (input.target) return true;
+  if (asArray(gitContext.failures).length > 0) return true;
+  if (!gitContext.status || gitContext.status.clean !== true) return true;
+  return (
+    hasArrayItems(gitContext.status.staged) ||
+    hasArrayItems(gitContext.status.unstaged) ||
+    hasArrayItems(gitContext.status.untracked) ||
+    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.branch) ||
+    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.staged) ||
+    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.unstaged) ||
+    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.untracked) ||
+    hasText(gitContext.diff && gitContext.diff.branch) ||
+    hasText(gitContext.diff && gitContext.diff.staged) ||
+    hasText(gitContext.diff && gitContext.diff.unstaged)
+  );
+}
+
+function emptySynthesis(summary) {
+  return {
+    summary: summary,
+    shouldFix: false,
+    actionableFindings: [],
+    skippedFindings: [],
+    validationPlan: [],
+  };
+}
+
 function promptContexts(input, gitContext) {
-  const reviewGitContext = withCompactedDiff(gitContext, REVIEW_DIFF_CHAR_BUDGET);
-  const outputGitContext = withoutDiffText(gitContext, reviewGitContext.diff);
+  const reviewGitContext = compactMetadata(withCompactedDiff(gitContext, REVIEW_DIFF_CHAR_BUDGET));
+  const outputGitContext = compactMetadata(withoutDiffText(gitContext, reviewGitContext.diff));
   return {
     review: renderContext(input, reviewGitContext),
     compact: renderContext(input, outputGitContext),
@@ -323,28 +364,72 @@ function renderContext(input, gitContext) {
   });
 }
 
-function withCompactedDiff(gitContext, budget) {
+function compactMetadata(gitContext) {
   return {
-    target: gitContext.target,
-    refs: gitContext.refs,
-    failures: gitContext.failures,
-    status: gitContext.status,
-    changedFiles: gitContext.changedFiles,
-    diffStat: gitContext.diffStat,
-    diff: compactDiff(gitContext.diff, budget),
+    ...gitContext,
+    status: compactStatus(gitContext.status),
+    changedFiles: compactChangedFiles(gitContext.changedFiles),
+    diffStat: compactDiffStat(gitContext.diffStat),
   };
 }
 
-function withoutDiffText(gitContext, compactedDiff) {
+function compactStatus(status) {
+  if (!status || typeof status !== "object") return status;
   return {
-    target: gitContext.target,
-    refs: gitContext.refs,
-    failures: gitContext.failures,
-    status: gitContext.status,
-    changedFiles: gitContext.changedFiles,
-    diffStat: gitContext.diffStat,
-    diff: diffSummary(gitContext.diff, compactedDiff),
+    ...status,
+    staged: compactArray(status.staged, METADATA_ARRAY_ITEM_BUDGET),
+    unstaged: compactArray(status.unstaged, METADATA_ARRAY_ITEM_BUDGET),
+    untracked: compactArray(status.untracked, METADATA_ARRAY_ITEM_BUDGET),
+    ignored: compactArray(status.ignored, METADATA_ARRAY_ITEM_BUDGET),
   };
+}
+
+function compactChangedFiles(changedFiles) {
+  if (!changedFiles || typeof changedFiles !== "object") return changedFiles;
+  return {
+    ...changedFiles,
+    branch: compactArray(changedFiles.branch, METADATA_ARRAY_ITEM_BUDGET),
+    staged: compactArray(changedFiles.staged, METADATA_ARRAY_ITEM_BUDGET),
+    unstaged: compactArray(changedFiles.unstaged, METADATA_ARRAY_ITEM_BUDGET),
+    untracked: compactArray(changedFiles.untracked, METADATA_ARRAY_ITEM_BUDGET),
+  };
+}
+
+function compactDiffStat(diffStat) {
+  if (!diffStat || typeof diffStat !== "object") return diffStat;
+  return {
+    ...diffStat,
+    branch: compactText(diffStat.branch, DIFF_STAT_CHAR_BUDGET),
+    staged: compactText(diffStat.staged, DIFF_STAT_CHAR_BUDGET),
+    unstaged: compactText(diffStat.unstaged, DIFF_STAT_CHAR_BUDGET),
+  };
+}
+
+function compactArray(value, limit) {
+  if (!Array.isArray(value) || value.length <= limit) return value;
+  return {
+    total: value.length,
+    shown: value.slice(0, limit),
+    omitted: value.length - limit,
+  };
+}
+
+function compactText(value, limit) {
+  if (typeof value !== "string" || value.length <= limit) return value;
+  return (
+    value.slice(0, limit) +
+    "\n\n[Workflow metadata budget omitted " +
+    (value.length - limit) +
+    " chars.]"
+  );
+}
+
+function withCompactedDiff(gitContext, budget) {
+  return { ...gitContext, diff: compactDiff(gitContext.diff, budget) };
+}
+
+function withoutDiffText(gitContext, compactedDiff) {
+  return { ...gitContext, diff: diffSummary(gitContext.diff, compactedDiff) };
 }
 
 function compactDiff(diff, budget) {
@@ -609,6 +694,14 @@ function mustObject(value, message) {
 
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function hasArrayItems(value) {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function hasText(value) {
+  return typeof value === "string" && value.length > 0;
 }
 
 function stringLength(value) {
