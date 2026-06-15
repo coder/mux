@@ -132,6 +132,16 @@ export const WorkflowRunEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     sequence: z.number().int().positive(),
+    type: z.literal("workflow"),
+    at: IsoDateTimeSchema,
+    stepId: z.string().min(1),
+    runId: WorkflowRunIdSchema,
+    name: WorkflowNameSchema,
+    status: z.enum(["started", "running", "backgrounded", "completed", "failed", "interrupted"]),
+    details: JsonValueSchema.optional(),
+  }),
+  z.object({
+    sequence: z.number().int().positive(),
     type: z.literal("patch"),
     at: IsoDateTimeSchema,
     stepId: z.string().min(1),
@@ -224,6 +234,15 @@ export const WorkflowRunStatusTransitionSchema = z
     path: ["to"],
   });
 
+export const WorkflowRunParentSchema = z
+  .object({
+    runId: WorkflowRunIdSchema,
+    stepId: z.string().min(1),
+    inputHash: z.string().min(1),
+    depth: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const WorkflowRunRecordSchema = z.object({
   id: WorkflowRunIdSchema,
   workspaceId: z.string().min(1),
@@ -232,6 +251,7 @@ export const WorkflowRunRecordSchema = z.object({
   definitionHash: z.string().min(1),
   args: JsonValueSchema,
   defaultActionCwd: z.string().min(1).optional(),
+  parentWorkflow: WorkflowRunParentSchema.optional(),
   status: WorkflowRunStatusSchema,
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,

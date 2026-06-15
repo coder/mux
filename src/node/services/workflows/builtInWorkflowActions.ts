@@ -881,7 +881,30 @@ module.exports.execute = async function (rawInput, ctx) {
 module.exports.reconcile = module.exports.execute;
 `;
 
+const WORKFLOWS_START_SOURCE = String.raw`
+module.exports.metadata = {
+  version: 1,
+  description: "Start a child workflow from the current workflow and wait for its terminal result",
+  effect: "workspace",
+  inputSchema: {
+    type: "object",
+    required: ["name"],
+    properties: {
+      name: { type: "string" },
+      args: {},
+    },
+  },
+  outputSchema: { type: "object" },
+  timeoutMs: 86400000,
+};
+
+module.exports.execute = async function () {
+  throw new Error("workflows.start is executed by the workflow runner");
+};
+`;
+
 const STATIC_BUILT_IN_WORKFLOW_ACTION_SOURCES: Record<string, string> = {
+  "workflows.start": WORKFLOWS_START_SOURCE,
   "git.status": GIT_STATUS_SOURCE,
   "git.commitsBetween": GIT_COMMITS_BETWEEN_SOURCE,
   "git.diff": GIT_DIFF_SOURCE,

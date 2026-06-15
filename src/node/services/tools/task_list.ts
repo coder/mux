@@ -5,6 +5,7 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
 import { TaskListToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
+import { isNestedWorkflowRun } from "@/common/types/workflow";
 import type { AgentTaskStatus } from "@/node/services/taskService";
 
 import { toBashTaskId } from "./taskId";
@@ -63,7 +64,11 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
         const runs = await config.workflowService.listRuns({ workspaceId });
         for (const rawRun of runs) {
           const parsed = WorkflowRunRecordSchema.safeParse(rawRun);
-          if (!parsed.success || !statuses.includes(parsed.data.status)) {
+          if (
+            !parsed.success ||
+            !statuses.includes(parsed.data.status) ||
+            isNestedWorkflowRun(parsed.data)
+          ) {
             continue;
           }
           tasks.push({
