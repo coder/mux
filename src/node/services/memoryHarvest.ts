@@ -169,6 +169,19 @@ async function writeInbox(args: {
   }
 }
 
+async function deleteInboxIfPresent(args: {
+  memoryService: MemoryService;
+  ctx: MemoryScopeContext;
+  inboxPath: string;
+}): Promise<void> {
+  const existing = await args.memoryService.readFileWithSha(args.ctx, args.inboxPath);
+  if (!existing.success) return;
+  const result = await args.memoryService.deletePath(args.ctx, args.inboxPath, "agent");
+  if (!result.success) {
+    throw new Error(result.error);
+  }
+}
+
 export async function runMemoryHarvest(args: {
   model: LanguageModel;
   agentBody: string;
@@ -252,6 +265,13 @@ export async function runMemoryHarvest(args: {
   }
 
   const inboxPath = `${HARVEST_INBOX_DIR}/compaction-${args.completionMetadata.compactionEpoch}.md`;
+  if (streamErrors.length === 0 && accepted.length === 0) {
+    await deleteInboxIfPresent({
+      memoryService: args.memoryService,
+      ctx: args.ctx,
+      inboxPath,
+    });
+  }
   if (streamErrors.length === 0 && accepted.length > 0) {
     await writeInbox({
       memoryService: args.memoryService,

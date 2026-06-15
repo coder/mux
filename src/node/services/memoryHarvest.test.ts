@@ -345,6 +345,26 @@ describe("runMemoryHarvest", () => {
     expect(streamCalls).toBeGreaterThan(1);
   });
 
+  it("removes a stale inbox when a clean retry accepts no candidates", async () => {
+    using fixture = createFixture();
+    const saved = await fixture.memoryService.saveFile(
+      fixture.ctx,
+      INBOX_PATH,
+      "stale candidate\n",
+      null,
+      "agent"
+    );
+    expect(saved.success).toBe(true);
+
+    const result = await runHarvest(fixture, modelFromChunks([finishChunk()]));
+
+    expect(result.streamError).toBeUndefined();
+    expect(result.acceptedCandidates).toBe(0);
+    expect(await fixture.memoryService.readFileWithSha(fixture.ctx, INBOX_PATH)).toMatchObject({
+      success: false,
+    });
+  });
+
   it("does not create an inbox when the model submits no candidates", async () => {
     using fixture = createFixture();
 

@@ -400,9 +400,6 @@ export class MemoryConsolidationService extends EventEmitter {
     options: MemoryConsolidationRunOptions = {}
   ): Promise<Result<MemoryConsolidationRecord, string>> {
     if (!this.enabled()) return Err("memory-consolidation experiment is disabled");
-    if (options.skipHarvestRecovery !== true) {
-      await this.recoverRetryableHarvests(workspaceId);
-    }
     const active = this.inFlight.get(workspaceId);
     if (active !== undefined) {
       // Archive is the workspace's one-shot final pass (workspace→global
@@ -421,11 +418,16 @@ export class MemoryConsolidationService extends EventEmitter {
     // populated before any other caller can observe it.
     const run = this.runLocked(workspaceId, trigger, options);
     this.inFlight.set(workspaceId, run);
+    let result: Result<MemoryConsolidationRecord, string>;
     try {
-      return await run;
+      result = await run;
     } finally {
       this.inFlight.delete(workspaceId);
     }
+    if (options.skipHarvestRecovery !== true) {
+      await this.recoverRetryableHarvests(workspaceId);
+    }
+    return result;
   }
 
   /** The actual run; only ever invoked by maybeRun while holding the lock. */
