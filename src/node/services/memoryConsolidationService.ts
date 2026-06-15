@@ -10,6 +10,7 @@
  * failed run logs and waits for the next trigger. Nothing here may block a
  * stream, compaction, archival, or app launch.
  */
+import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
@@ -59,17 +60,10 @@ export type MemoryConsolidationRecord = MemoryConsolidationRecordPayload;
 type MemoryHarvestRecord = MemoryHarvestRecordPayload;
 
 /**
- * Sidecar wire format. Validated with zod on load: hand-rolled checks once
- * let `{"workspaces": null}` through (typeof null === "object") and bricked
- * every later read with a TypeError.
+ * Sidecar wire format. Each top-level bucket is validated independently so a
+ * malformed harvest record cannot hide otherwise valid consolidation coverage.
  */
-const ConsolidationSidecarFileSchema = z.object({
-  workspaces: z.record(z.string(), MemoryConsolidationRecordSchema),
-  projects: z.record(z.string(), MemoryConsolidationRecordSchema).optional(),
-  harvestsByWorkspace: z
-    .record(z.string(), z.record(z.string(), MemoryHarvestRecordSchema))
-    .optional(),
-});
+const ConsolidationRecordMapSchema = z.record(z.string(), MemoryConsolidationRecordSchema);
 interface ConsolidationSidecarFile {
   workspaces: Record<string, MemoryConsolidationRecord>;
   projects: Record<string, MemoryConsolidationRecord>;
@@ -82,6 +76,7 @@ interface MemoryConsolidationRunOptions {
    * project sidecar record, not the workspace record, is the debounce anchor.
    */
   skipWorkspaceDebounce?: boolean;
+  skipHarvestRecovery?: boolean;
 }
 
 interface ExperimentsCheck {
@@ -193,6 +188,59 @@ function findNewestHarvestRecord(
   }, null);
 }
 
+const HARVEST_RECORD_RETENTION = 20;
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStalePendingHarvestRecord(record: MemoryHarvestRecord, now = Date.now()): boolean {
+  return record.status === "pending" && now - record.startedAt > MEMORY_CONSOLIDATION_TIMEOUT_MS;
+}
+
+function normalizeHarvestRecord(record: MemoryHarvestRecord): MemoryHarvestRecord {
+  if (!isStalePendingHarvestRecord(record) || record.attemptCount < HARVEST_MAX_ATTEMPTS) {
+    return record;
+  }
+  return {
+    ...record,
+    status: "failed",
+    completedAt: record.completedAt ?? Date.now(),
+    error: record.error ?? "stale pending harvest exceeded retry attempts",
+  };
+}
+
+function parseConsolidationRecordMap(value: unknown): Record<string, MemoryConsolidationRecord> {
+  const parsed = ConsolidationRecordMapSchema.safeParse(value);
+  return parsed.success ? parsed.data : {};
+}
+
+function parseHarvestRecords(value: unknown): Record<string, Record<string, MemoryHarvestRecord>> {
+  if (!isPlainRecord(value)) return {};
+  const parsed: Record<string, Record<string, MemoryHarvestRecord>> = {};
+  for (const [workspaceId, workspaceRecords] of Object.entries(value)) {
+    if (!isPlainRecord(workspaceRecords)) continue;
+    const records: Record<string, MemoryHarvestRecord> = {};
+    for (const [boundaryKey, record] of Object.entries(workspaceRecords)) {
+      const candidate = MemoryHarvestRecordSchema.safeParse(record);
+      if (candidate.success) records[boundaryKey] = normalizeHarvestRecord(candidate.data);
+    }
+    if (Object.keys(records).length > 0) parsed[workspaceId] = records;
+  }
+  return parsed;
+}
+
+function pruneHarvestRecords(records: Record<string, MemoryHarvestRecord>): void {
+  const ranked = Object.entries(records).sort(([, left], [, right]) => {
+    const leftTime = left.completedAt ?? left.startedAt;
+    const rightTime = right.completedAt ?? right.startedAt;
+    return rightTime - leftTime;
+  });
+  for (const [boundaryKey] of ranked.slice(HARVEST_RECORD_RETENTION)) {
+    delete records[boundaryKey];
+  }
+}
+
 const HARVEST_MAX_ATTEMPTS = 3;
 
 export class MemoryConsolidationService extends EventEmitter {
@@ -232,19 +280,20 @@ export class MemoryConsolidationService extends EventEmitter {
     );
   }
 
-  /** Self-healing load: malformed sidecar yields an empty file. */
+  /** Self-healing load: malformed buckets are dropped independently. */
   private async load(): Promise<ConsolidationSidecarFile> {
     try {
       const raw = await fsPromises.readFile(this.sidecarPath, "utf-8");
-      const parsed = ConsolidationSidecarFileSchema.safeParse(JSON.parse(raw));
-      if (parsed.success)
+      const parsed = JSON.parse(raw) as unknown;
+      if (isPlainRecord(parsed)) {
         return {
-          workspaces: parsed.data.workspaces,
-          projects: parsed.data.projects ?? {},
-          harvestsByWorkspace: parsed.data.harvestsByWorkspace ?? {},
+          workspaces: parseConsolidationRecordMap(parsed.workspaces),
+          projects: parseConsolidationRecordMap(parsed.projects),
+          harvestsByWorkspace: parseHarvestRecords(parsed.harvestsByWorkspace),
         };
+      }
     } catch {
-      // Missing or corrupt — start fresh (the next save overwrites the file).
+      // Missing or corrupt JSON — start fresh (the next save overwrites the file).
     }
     return { workspaces: {}, projects: {}, harvestsByWorkspace: {} };
   }
@@ -305,9 +354,40 @@ export class MemoryConsolidationService extends EventEmitter {
       const file = await this.load();
       file.harvestsByWorkspace[workspaceId] ??= {};
       file.harvestsByWorkspace[workspaceId][boundaryKey] = record;
+      pruneHarvestRecords(file.harvestsByWorkspace[workspaceId]);
       await writeFileAtomic(this.sidecarPath, JSON.stringify(file, null, 2));
     });
     this.emitStatusChange(workspaceId, projectPath);
+  }
+
+  private async recoverRetryableHarvests(workspaceId: string): Promise<void> {
+    const sidecar = await this.load();
+    const records = sidecar.harvestsByWorkspace[workspaceId];
+    if (records === undefined) return;
+
+    const retryable = Object.values(records)
+      .filter((record) => {
+        if (record.completionMetadata === undefined) return false;
+        if (record.attemptCount >= HARVEST_MAX_ATTEMPTS) return false;
+        return record.status === "failed" || isStalePendingHarvestRecord(record);
+      })
+      .sort((left, right) => left.startedAt - right.startedAt);
+
+    for (const record of retryable) {
+      assert(
+        record.completionMetadata !== undefined,
+        "retryable harvest record must have metadata"
+      );
+      const result = await this.maybeHarvestThenSweep(record.completionMetadata).catch(
+        (error: unknown) => Err(getErrorMessage(error))
+      );
+      if (!result.success) {
+        log.debug("[MemoryConsolidation] harvest recovery skipped", {
+          workspaceId,
+          reason: result.error,
+        });
+      }
+    }
   }
 
   /**
@@ -320,6 +400,9 @@ export class MemoryConsolidationService extends EventEmitter {
     options: MemoryConsolidationRunOptions = {}
   ): Promise<Result<MemoryConsolidationRecord, string>> {
     if (!this.enabled()) return Err("memory-consolidation experiment is disabled");
+    if (options.skipHarvestRecovery !== true) {
+      await this.recoverRetryableHarvests(workspaceId);
+    }
     const active = this.inFlight.get(workspaceId);
     if (active !== undefined) {
       // Archive is the workspace's one-shot final pass (workspace→global
@@ -457,8 +540,28 @@ export class MemoryConsolidationService extends EventEmitter {
     const boundaryKey = metadata.summaryMessageId;
     const sidecar = await this.load();
     const existing = sidecar.harvestsByWorkspace[metadata.workspaceId]?.[boundaryKey];
+    const existingAttemptCount = existing?.attemptCount ?? 0;
+    const stalePending = existing === undefined ? false : isStalePendingHarvestRecord(existing);
 
-    if (existing?.status !== "completed" && (existing?.attemptCount ?? 0) < HARVEST_MAX_ATTEMPTS) {
+    if (
+      existing?.status === "pending" &&
+      stalePending &&
+      existingAttemptCount >= HARVEST_MAX_ATTEMPTS
+    ) {
+      await this.saveHarvestRecord(
+        metadata.workspaceId,
+        boundaryKey,
+        {
+          ...existing,
+          status: "failed",
+          completedAt: Date.now(),
+          error: existing.error ?? "stale pending harvest exceeded retry attempts",
+        },
+        projectPath
+      );
+    }
+
+    if (existing?.status !== "completed" && existingAttemptCount < HARVEST_MAX_ATTEMPTS) {
       const startedAt = Date.now();
       await this.saveHarvestRecord(
         metadata.workspaceId,
@@ -466,9 +569,10 @@ export class MemoryConsolidationService extends EventEmitter {
         {
           status: "pending",
           startedAt,
-          attemptCount: (existing?.attemptCount ?? 0) + 1,
+          attemptCount: existingAttemptCount + 1,
           boundaryKey,
           compactionEpoch: metadata.compactionEpoch,
+          completionMetadata: metadata,
           acceptedCandidates: 0,
           skippedCandidates: 0,
         },
@@ -513,9 +617,10 @@ export class MemoryConsolidationService extends EventEmitter {
             status: "completed",
             startedAt,
             completedAt: Date.now(),
-            attemptCount: (existing?.attemptCount ?? 0) + 1,
+            attemptCount: existingAttemptCount + 1,
             boundaryKey,
             compactionEpoch: metadata.compactionEpoch,
+            completionMetadata: metadata,
             acceptedCandidates: harvest.acceptedCandidates,
             skippedCandidates: harvest.skippedCandidates,
             usage: harvest.usage,
@@ -530,9 +635,10 @@ export class MemoryConsolidationService extends EventEmitter {
             status: "failed",
             startedAt,
             completedAt: Date.now(),
-            attemptCount: (existing?.attemptCount ?? 0) + 1,
+            attemptCount: existingAttemptCount + 1,
             boundaryKey,
             compactionEpoch: metadata.compactionEpoch,
+            completionMetadata: metadata,
             acceptedCandidates: 0,
             skippedCandidates: 0,
             error: getErrorMessage(error),
@@ -550,6 +656,15 @@ export class MemoryConsolidationService extends EventEmitter {
     return this.runCompactionSweepAfterHarvest(metadata.workspaceId);
   }
 
+  private isWorkspaceCurrentlyArchived(workspaceId: string): boolean {
+    for (const project of this.config.loadConfigOrDefault().projects.values()) {
+      const workspace = project.workspaces.find((entry) => entry.id === workspaceId);
+      if (workspace === undefined) continue;
+      return isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt);
+    }
+    return false;
+  }
+
   private async runCompactionSweepAfterHarvest(
     workspaceId: string
   ): Promise<Result<MemoryConsolidationRecord, string>> {
@@ -560,8 +675,10 @@ export class MemoryConsolidationService extends EventEmitter {
         continue;
       }
 
-      const result = await this.maybeRun(workspaceId, "compaction", {
+      const trigger = this.isWorkspaceCurrentlyArchived(workspaceId) ? "archive" : "compaction";
+      const result = await this.maybeRun(workspaceId, trigger, {
         skipWorkspaceDebounce: true,
+        skipHarvestRecovery: true,
       });
       if (!result.success && result.error === "a consolidation run is already in flight") {
         continue;

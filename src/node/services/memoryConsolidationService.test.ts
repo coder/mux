@@ -459,6 +459,42 @@ describe("MemoryConsolidationService", () => {
     expect(status.globalRecord?.summary).toBe("old record");
   });
 
+  it("preserves consolidation status when a harvest sidecar record is malformed", async () => {
+    using fixture = await createFixture();
+    await fsPromises.writeFile(
+      path.join(fixture.muxHome, "memory-consolidation.json"),
+      JSON.stringify({
+        workspaces: {
+          "ws-dream": {
+            lastRunAt: 123,
+            trigger: "manual",
+            summary: "valid workspace record",
+            ops: [],
+          },
+        },
+        projects: {
+          "/projects/demo": {
+            lastRunAt: 124,
+            trigger: "manual",
+            summary: "valid project record",
+            ops: [],
+          },
+        },
+        harvestsByWorkspace: {
+          "ws-dream": {
+            broken: { status: "bogus" },
+          },
+        },
+      })
+    );
+
+    const status = await fixture.service.getStatus("ws-dream");
+
+    expect(status.workspaceRecord?.summary).toBe("valid workspace record");
+    expect(status.projectRecord?.summary).toBe("valid project record");
+    expect(status.latestHarvestRecord).toBeNull();
+  });
+
   it("harvests a compaction boundary before running the dream sweep", async () => {
     using fixture = await createFixture({ modelFactory: harvestCandidateModel });
     const metadata = await seedCompactionEpoch(fixture);
@@ -477,6 +513,42 @@ describe("MemoryConsolidationService", () => {
     const status = await fixture.service.getStatus("ws-dream");
     expect(status.workspaceRecord?.trigger).toBe("compaction");
     expect(status.latestHarvestRecord?.status).toBe("completed");
+  });
+
+  it("prunes old harvest sidecar records while preserving the newest status", async () => {
+    using fixture = await createFixture({ modelFactory: harvestCandidateModel });
+    const metadata = await seedCompactionEpoch(fixture);
+    const oldRecords = Object.fromEntries(
+      Array.from({ length: 25 }, (_, index) => [
+        `old-${index}`,
+        {
+          status: "completed",
+          startedAt: index,
+          completedAt: index,
+          attemptCount: 1,
+          boundaryKey: `old-${index}`,
+          compactionEpoch: index,
+          acceptedCandidates: 0,
+          skippedCandidates: 0,
+        },
+      ])
+    );
+    await fsPromises.writeFile(
+      path.join(fixture.muxHome, "memory-consolidation.json"),
+      JSON.stringify({ workspaces: {}, harvestsByWorkspace: { "ws-dream": oldRecords } })
+    );
+
+    expect((await fixture.service.maybeHarvestThenSweep(metadata)).success).toBe(true);
+
+    const raw = JSON.parse(
+      await fsPromises.readFile(path.join(fixture.muxHome, "memory-consolidation.json"), "utf-8")
+    ) as { harvestsByWorkspace?: Record<string, Record<string, unknown>> };
+    const records = raw.harvestsByWorkspace?.["ws-dream"] ?? {};
+    expect(Object.keys(records).length).toBeLessThanOrEqual(20);
+    expect(records[metadata.summaryMessageId]).toBeDefined();
+    expect((await fixture.service.getStatus("ws-dream")).latestHarvestRecord?.boundaryKey).toBe(
+      metadata.summaryMessageId
+    );
   });
 
   it("coalesces duplicate harvest requests for the same compaction boundary", async () => {
@@ -646,6 +718,80 @@ describe("MemoryConsolidationService", () => {
     expect(fixture.modelCalls).toHaveLength(3);
   });
 
+  it("runs an archive final pass after harvest if the workspace is archived mid-harvest", async () => {
+    let releaseHarvest!: () => void;
+    const harvestReleased = new Promise<void>((resolve) => {
+      releaseHarvest = resolve;
+    });
+    let markHarvestStarted!: () => void;
+    const harvestStarted = new Promise<void>((resolve) => {
+      markHarvestStarted = resolve;
+    });
+    using fixture = await createFixture({
+      modelFactory: () =>
+        new MockLanguageModelV3({
+          doStream: (options) => {
+            const isHarvest = userPromptText(options).includes("just-compacted transcript epoch");
+            if (isHarvest) {
+              markHarvestStarted();
+              return Promise.resolve({
+                stream: new ReadableStream<LanguageModelV3StreamPart>({
+                  async pull(controller) {
+                    await harvestReleased;
+                    controller.enqueue({
+                      type: "finish",
+                      finishReason: { unified: "stop", raw: "stop" },
+                      usage: {
+                        inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+                        outputTokens: { total: 0, text: 0, reasoning: 0 },
+                      },
+                    });
+                    controller.close();
+                  },
+                }),
+              });
+            }
+            return Promise.resolve({
+              stream: simulateReadableStream({
+                chunks: [
+                  { type: "text-start", id: "t1" },
+                  { type: "text-delta", id: "t1", delta: "sweep" },
+                  { type: "text-end", id: "t1" },
+                  {
+                    type: "finish",
+                    finishReason: { unified: "stop", raw: "stop" },
+                    usage: {
+                      inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+                      outputTokens: { total: 1, text: 1, reasoning: 0 },
+                    },
+                  },
+                ],
+              }),
+            });
+          },
+        }),
+    });
+    const metadata = await seedCompactionEpoch(fixture);
+
+    const harvestThenSweep = fixture.service.maybeHarvestThenSweep(metadata);
+    await harvestStarted;
+    await fixture.config.editConfig((cfg) => {
+      const workspace = cfg.projects
+        .get("/projects/demo")
+        ?.workspaces.find((entry) => entry.id === "ws-dream");
+      if (workspace === undefined) throw new Error("missing test workspace");
+      workspace.archivedAt = new Date().toISOString();
+      return cfg;
+    });
+    const archive = fixture.service.maybeRun("ws-dream", "archive");
+
+    releaseHarvest();
+    expect((await archive).success).toBe(true);
+    const result = await harvestThenSweep;
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.trigger).toBe("archive");
+  });
+
   it("does not re-harvest a completed compaction boundary on a later trigger", async () => {
     let harvestStreamCount = 0;
     using fixture = await createFixture({
@@ -802,6 +948,71 @@ describe("MemoryConsolidationService", () => {
     expect(status.latestHarvestRecord?.status).toBe("completed");
     expect(status.latestHarvestRecord?.attemptCount).toBe(2);
     expect(harvestAttempts).toBe(2);
+  });
+
+  it("recovers retryable failed harvest records before a production sweep trigger", async () => {
+    using fixture = await createFixture({ modelFactory: harvestCandidateModel });
+    const metadata = await seedCompactionEpoch(fixture);
+    await fsPromises.writeFile(
+      path.join(fixture.muxHome, "memory-consolidation.json"),
+      JSON.stringify({
+        workspaces: {},
+        harvestsByWorkspace: {
+          "ws-dream": {
+            [metadata.summaryMessageId]: {
+              status: "failed",
+              startedAt: Date.now() - 10_000,
+              completedAt: Date.now() - 9_000,
+              attemptCount: 1,
+              boundaryKey: metadata.summaryMessageId,
+              compactionEpoch: metadata.compactionEpoch,
+              acceptedCandidates: 0,
+              skippedCandidates: 0,
+              error: "transient provider error",
+              completionMetadata: metadata,
+            },
+          },
+        },
+      })
+    );
+
+    expect((await fixture.service.maybeRun("ws-dream", "manual")).success).toBe(true);
+
+    const status = await fixture.service.getStatus("ws-dream");
+    expect(status.latestHarvestRecord?.status).toBe("completed");
+    expect(status.latestHarvestRecord?.attemptCount).toBe(2);
+    expect(fixture.modelCalls).toHaveLength(3);
+  });
+
+  it("normalizes stale max-attempt pending harvest records to failed", async () => {
+    using fixture = await createFixture({ modelFactory: harvestCandidateModel });
+    const metadata = await seedCompactionEpoch(fixture);
+    await fsPromises.writeFile(
+      path.join(fixture.muxHome, "memory-consolidation.json"),
+      JSON.stringify({
+        workspaces: {},
+        harvestsByWorkspace: {
+          "ws-dream": {
+            [metadata.summaryMessageId]: {
+              status: "pending",
+              startedAt: Date.now() - 10 * 60 * 1000,
+              attemptCount: 3,
+              boundaryKey: metadata.summaryMessageId,
+              compactionEpoch: metadata.compactionEpoch,
+              acceptedCandidates: 0,
+              skippedCandidates: 0,
+              completionMetadata: metadata,
+            },
+          },
+        },
+      })
+    );
+
+    expect((await fixture.service.maybeHarvestThenSweep(metadata)).success).toBe(true);
+
+    const status = await fixture.service.getStatus("ws-dream");
+    expect(status.latestHarvestRecord?.status).toBe("failed");
+    expect(status.latestHarvestRecord?.attemptCount).toBe(3);
   });
 
   it("debounces automatic triggers but lets manual and archive runs through", async () => {

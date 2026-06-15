@@ -832,7 +832,7 @@ export class HistoryService {
           if (sequence >= metadata.summaryHistorySequence) continue;
           if (lowerBound !== undefined && sequence <= lowerBound) continue;
           if (message.id === metadata.compactionRequestMessageId) continue;
-          if (message.metadata?.compactionBoundary === true) continue;
+          if (isDurableContextBoundaryMarker(message)) continue;
           messages.push(message);
         }
       });

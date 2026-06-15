@@ -95,6 +95,15 @@ export const MemoryConsolidationRecordSchema = z.object({
 });
 export type MemoryConsolidationRecordPayload = z.infer<typeof MemoryConsolidationRecordSchema>;
 
+export const CompactionCompletionMetadataSchema = z.object({
+  workspaceId: z.string(),
+  summaryMessageId: z.string(),
+  summaryHistorySequence: z.number(),
+  compactionEpoch: z.number(),
+  previousBoundaryHistorySequence: z.number().optional(),
+  compactionRequestMessageId: z.string(),
+});
+
 export const MemoryHarvestRecordSchema = z.object({
   status: z.enum(["pending", "completed", "failed"]),
   startedAt: z.number(),
@@ -106,6 +115,7 @@ export const MemoryHarvestRecordSchema = z.object({
   skippedCandidates: z.number(),
   error: z.string().optional(),
   usage: z.object({ inputTokens: z.number(), outputTokens: z.number() }).optional(),
+  completionMetadata: CompactionCompletionMetadataSchema.optional(),
 });
 export type MemoryHarvestRecordPayload = z.infer<typeof MemoryHarvestRecordSchema>;
 

@@ -554,6 +554,8 @@ function ConsolidationFooter(props: {
   const harvestLabel = status?.latestHarvestRecord
     ? `${status.latestHarvestRecord.status}: ${status.latestHarvestRecord.acceptedCandidates} accepted / ${status.latestHarvestRecord.skippedCandidates} skipped`
     : "never";
+  const harvestError =
+    status?.latestHarvestRecord?.status === "failed" ? status.latestHarvestRecord.error : undefined;
   const summaryTitle = [
     status?.workspaceRecord?.summary,
     status?.projectRecord?.summary,
@@ -582,6 +584,11 @@ function ConsolidationFooter(props: {
             Global: {formatConsolidationRecord(status?.globalRecord ?? null)}
           </div>
           <div className="counter-nums truncate">Harvest: {harvestLabel}</div>
+          {harvestError !== undefined && (
+            <div role="alert" className="text-error truncate">
+              Harvest error: {harvestError}
+            </div>
+          )}
           {runError !== null && <div className="text-error truncate">{runError}</div>}
         </div>
       </TooltipIfPresent>

@@ -7,8 +7,10 @@ import * as os from "os";
 import * as path from "path";
 
 import type { EventEmitter } from "events";
+import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { MAX_EDITED_FILES } from "@/common/constants/attachments";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { StreamEndEvent } from "@/common/types/stream";
 import type { TelemetryService } from "./telemetryService";
 import type { TelemetryEventPayload } from "@/common/telemetry/payload";
@@ -205,6 +207,33 @@ describe("CompactionHandler", () => {
       const result = await handler.handleCompletion(event);
 
       expect(result).toBe(false);
+    });
+
+    it("reports the latest durable context boundary sequence in completion metadata", async () => {
+      const onCompactionComplete = mock((_metadata: CompactionCompletionMetadata) => undefined);
+      handler = new CompactionHandler({
+        workspaceId,
+        historyService,
+        sessionDir,
+        telemetryService,
+        emitter: mockEmitter,
+        onCompactionComplete,
+      });
+      await seedHistory(
+        createMuxMessage("stale-user", "user", "old preference"),
+        createMuxMessage("reset", "assistant", "Context reset", {
+          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+        }),
+        createMuxMessage("fresh-user", "user", "new preference"),
+        createCompactionRequest("compact-request")
+      );
+
+      const handled = await handler.handleCompletion(createStreamEndEvent("Summary"));
+
+      expect(handled).toBe(true);
+      expect(onCompactionComplete).toHaveBeenCalledTimes(1);
+      const metadata = onCompactionComplete.mock.calls[0]?.[0];
+      expect(metadata?.previousBoundaryHistorySequence).toBe(1);
     });
 
     it("should capture compaction_completed telemetry on successful compaction", async () => {

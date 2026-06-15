@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { HistoryService } from "./historyService";
 import { Config } from "@/node/config";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
@@ -1145,6 +1146,125 @@ describe("HistoryService", () => {
       if (result.success) {
         expect(result.data.messages.map((message) => message.id)).toEqual(["kept-user"]);
         expect(result.data.summary.id).toBe("new-summary");
+      }
+    });
+
+    it("uses reset boundaries as lower bounds and excludes the reset marker", async () => {
+      const workspaceId = "ws-compaction-reset-epoch";
+      await writeHistoryLines(config, workspaceId, [
+        messageLine(
+          workspaceId,
+          createMuxMessage("stale-user", "user", "old preference", { historySequence: 0 })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("reset", "assistant", "Context reset", {
+            historySequence: 1,
+            contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+          })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("kept-user", "user", "new preference", { historySequence: 2 })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("compact-request", "user", "Please compact", {
+            historySequence: 3,
+            muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+          })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("summary", "assistant", "summary", {
+            historySequence: 4,
+            compactionBoundary: true,
+            compacted: "user",
+            compactionEpoch: 1,
+          })
+        ),
+      ]);
+
+      const result = await service.getMessagesForCompactionEpoch(workspaceId, {
+        workspaceId,
+        summaryMessageId: "summary",
+        summaryHistorySequence: 4,
+        compactionEpoch: 1,
+        previousBoundaryHistorySequence: 1,
+        compactionRequestMessageId: "compact-request",
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.messages.map((message) => message.id)).toEqual(["kept-user"]);
+      }
+    });
+
+    it("does not treat malformed compactionBoundary rows as structural boundaries", async () => {
+      const workspaceId = "ws-compaction-malformed-boundary";
+      await writeHistoryLines(config, workspaceId, [
+        messageLine(
+          workspaceId,
+          createMuxMessage("valid-boundary", "assistant", "old summary", {
+            historySequence: 0,
+            compactionBoundary: true,
+            compacted: "user",
+            compactionEpoch: 1,
+          })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("before-malformed", "user", "valid evidence before malformed row", {
+            historySequence: 1,
+          })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("malformed-boundary", "user", "corrupt boundary-like row", {
+            historySequence: 2,
+            compactionBoundary: true,
+          })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("after-malformed", "user", "valid evidence after malformed row", {
+            historySequence: 3,
+          })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("compact-request", "user", "Please compact", {
+            historySequence: 4,
+            muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+          })
+        ),
+        messageLine(
+          workspaceId,
+          createMuxMessage("summary", "assistant", "summary", {
+            historySequence: 5,
+            compactionBoundary: true,
+            compacted: "user",
+            compactionEpoch: 2,
+          })
+        ),
+      ]);
+
+      const result = await service.getMessagesForCompactionEpoch(workspaceId, {
+        workspaceId,
+        summaryMessageId: "summary",
+        summaryHistorySequence: 5,
+        compactionEpoch: 2,
+        previousBoundaryHistorySequence: 0,
+        compactionRequestMessageId: "compact-request",
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.messages.map((message) => message.id)).toEqual([
+          "before-malformed",
+          "malformed-boundary",
+          "after-malformed",
+        ]);
       }
     });
   });

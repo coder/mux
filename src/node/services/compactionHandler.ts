@@ -37,6 +37,7 @@ import {
 } from "@/common/utils/messages/extractEditedFiles";
 import {
   isDurableCompactedMarker,
+  isDurableContextBoundaryMarker,
   sliceMessagesFromLatestCompactionBoundary,
 } from "@/common/utils/messages/compactionBoundary";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -252,8 +253,8 @@ function isCompactedSummaryMessage(message: MuxMessage): boolean {
 function getLatestBoundaryHistorySequence(messages: readonly MuxMessage[]): number | undefined {
   let latest: number | undefined;
   for (const message of messages) {
-    if (message.metadata?.compactionBoundary !== true) continue;
-    const sequence = message.metadata.historySequence;
+    if (!isDurableContextBoundaryMarker(message)) continue;
+    const sequence = message.metadata?.historySequence;
     if (!isNonNegativeInteger(sequence)) continue;
     if (latest === undefined || sequence > latest) latest = sequence;
   }
