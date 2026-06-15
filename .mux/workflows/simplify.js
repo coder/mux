@@ -171,7 +171,7 @@ export default function simplifyWorkflow({
     diffCompactions: asArray(contexts.outputGitContext.diff?.workflowCompactions).length,
   });
 
-  if (hasOnlyUntrackedChanges(gitContext)) {
+  if (!input.target && hasOnlyUntrackedChanges(gitContext)) {
     const reason = untrackedChangesSkipReason();
     return {
       reportMarkdown: "## Simplify workflow result\n\n" + reason,
