@@ -1055,6 +1055,76 @@ export default function workflow({ action }) {
     expect(runError instanceof Error ? runError.message : "").toMatch(/interrupted|aborted/i);
   });
 
+  test("interruptRun still interrupts tasks for already-interrupted nested children", async () => {
+    using tmp = new DisposableTempDir("workflow-service-nested-interrupted-task-cascade");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_parent_interrupted_child_task",
+      workspaceId: "workspace-1",
+      definition: { name: "parent", description: "Parent", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'parent' }; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus(
+      "wfr_parent_interrupted_child_task",
+      "running",
+      "2026-05-29T00:00:01.000Z"
+    );
+    await runStore.createRun({
+      id: "wfr_child_already_interrupted",
+      workspaceId: "workspace-1",
+      definition: { name: "child", description: "Child", scope: "built-in", executable: true },
+      definitionSource:
+        "export default function workflow() { return { reportMarkdown: 'child' }; }\n",
+      args: {},
+      parentWorkflow: {
+        runId: "wfr_parent_interrupted_child_task",
+        stepId: "child",
+        inputHash: "hash:child",
+        depth: 0,
+      },
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus(
+      "wfr_child_already_interrupted",
+      "running",
+      "2026-05-29T00:00:01.000Z"
+    );
+    await runStore.appendStatus(
+      "wfr_child_already_interrupted",
+      "interrupted",
+      "2026-05-29T00:00:02.000Z"
+    );
+    const interruptedTaskAdapters: string[] = [];
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapterFactory: (runId) => ({
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+        async interruptRun() {
+          interruptedTaskAdapters.push(runId);
+        },
+      }),
+      runnerId: "runner-a",
+    });
+
+    await service.interruptRun({
+      workspaceId: "workspace-1",
+      runId: "wfr_parent_interrupted_child_task",
+    });
+
+    expect(interruptedTaskAdapters).toContain("wfr_child_already_interrupted");
+  });
+
   test("interruptRun aborts an active nested child workflow by child run id", async () => {
     using tmp = new DisposableTempDir("workflow-service-nested-direct-interrupt");
     const workspaceRoot = path.join(tmp.path, "project");

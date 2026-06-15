@@ -780,7 +780,7 @@ export class WorkflowService {
       (run) =>
         run.workspaceId === workspaceId &&
         run.parentWorkflow?.runId === parentRunId &&
-        isInterruptibleWorkflowRunStatus(run.status)
+        (isInterruptibleWorkflowRunStatus(run.status) || run.status === "interrupted")
     );
     for (const child of activeChildren) {
       await this.interruptChildWorkflowRun(child, workspaceId, seenRunIds);
